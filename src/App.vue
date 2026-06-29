@@ -5,9 +5,11 @@ import CommunityFeed from './components/CommunityFeed.vue';
 import ProgressRing from './components/ProgressRing.vue';
 import { useChallenge } from './composables/useChallenge';
 import { useCommunity } from './composables/useCommunity';
+import { useTheme } from './composables/useTheme';
 
 const challenge = useChallenge();
 const community = useCommunity();
+const theme = useTheme();
 
 function checkIn() {
   community.addCheckIn(
@@ -20,6 +22,16 @@ function checkIn() {
 
 <template>
   <main class="app-shell">
+    <header class="topbar">
+      <div>
+        <span class="brand-mark">D</span>
+        <span class="brand-name">Dominion</span>
+      </div>
+      <button class="theme-toggle" @click="theme.toggleTheme">
+        {{ theme.label.value }} Theme
+      </button>
+    </header>
+
     <HeroSection />
 
     <section class="dashboard card">
