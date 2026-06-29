@@ -34,6 +34,36 @@ function checkIn() {
 
     <HeroSection />
 
+    <details class="card challenge-details">
+      <summary>
+        <span>
+          <span class="eyebrow">About the Challenge</span>
+          <strong>What is the 77-Day Dominion Challenge?</strong>
+        </span>
+        <span class="summary-icon">+</span>
+      </summary>
+      <div class="details-body">
+        <p>
+          The 77-Day Dominion Challenge is a focused season of spiritual, mental, and physical discipline. It is designed to help you honor God, steward your body, and train yourself to keep commitments even when motivation fades.
+        </p>
+        <p>
+          Each day is built around seven standards: reading 5–8 chapters of the Bible, praying morning and evening, listening only to worship music, completing two intentional workouts, and taking an intentional walk during the day.
+        </p>
+        <p>
+          Workouts do not have a required length. Some days may be intense. Other days may be recovery-focused with stretching, mobility, walking, or light movement. The goal is consistency, not recklessness.
+        </p>
+        <p>
+          Scheduled miss days are allowed when planned ahead. Unplanned misses because of laziness, busyness, tiredness, or poor planning are not the spirit of the challenge.
+        </p>
+        <ul>
+          <li><strong>Spirit:</strong> Bible reading, morning prayer, evening prayer.</li>
+          <li><strong>Mind:</strong> Worship music only.</li>
+          <li><strong>Body:</strong> Workout #1, intentional walk, workout #2.</li>
+          <li><strong>Accountability:</strong> Check in honestly and stay connected with others doing the challenge.</li>
+        </ul>
+      </div>
+    </details>
+
     <section class="dashboard card">
       <label>
         Your name
