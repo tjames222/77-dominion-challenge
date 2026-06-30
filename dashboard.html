@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#0e1116" />
+    <title>Dominion Dashboard</title>
+    <link rel="stylesheet" href="./src/assets/styles.css" />
+  </head>
+  <body>
+    <main class="app-shell">
+      <header class="topbar">
+        <a class="back-link" href="./index.html">Dominion</a>
+        <button class="theme-toggle" id="themeToggle">Dark Theme</button>
+      </header>
+
+      <section class="hero card compact-hero">
+        <p class="eyebrow">Member Dashboard</p>
+        <h1>Today’s Dominion</h1>
+        <p class="lead">Track your standards, post your check-in, and stay honest.</p>
+      </section>
+
+      <section class="dashboard card">
+        <label>Your name<input id="memberName" placeholder="Tim" /></label>
+        <label>Challenge start date<input id="startDate" type="date" /></label>
+        <div class="rings">
+          <div class="ring" id="challengeRing"><div class="ring-inner"><strong id="challengePercent">1%</strong><span>Challenge</span><small id="challengeDay">Day 1 of 77</small></div></div>
+          <div class="ring" id="todayRing"><div class="ring-inner"><strong id="todayPercent">0%</strong><span>Today</span><small id="todayCount">0 of 7 done</small></div></div>
+        </div>
+        <button class="primary" id="checkInButton" disabled>Post Check-In</button>
+      </section>
+
+      <section class="card checklist">
+        <div class="section-heading"><p class="eyebrow">Today's Standard</p><h2>Daily Scorecard</h2></div>
+        <div id="checklist"></div>
+        <button class="scheduled" id="scheduledButton">Scheduled miss day planned ahead</button>
+      </section>
+
+      <section class="card community">
+        <div class="section-heading"><p class="eyebrow">Accountability</p><h2 id="completedToday">3 people completed today</h2></div>
+        <div id="feed"></div>
+      </section>
+    </main>
+    <script src="./src/static/dashboard.js"></script>
+  </body>
+</html>
