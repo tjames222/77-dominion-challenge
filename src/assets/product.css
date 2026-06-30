@@ -13,7 +13,7 @@
 }
 .secondary-button {
   border: 1px solid var(--border);
-  border-radius: 18px;
+  border-radius: 16px;
   color: var(--text);
   background: var(--surface-elevated);
   font-weight: 900;
@@ -34,7 +34,7 @@
 .mini-proof-grid article {
   padding: 16px;
   border: 1px solid var(--border);
-  border-radius: 22px;
+  border-radius: 18px;
   background: var(--surface-elevated);
 }
 .landing-grid span,
@@ -43,9 +43,9 @@
   place-items: center;
   width: 42px;
   height: 42px;
-  border-radius: 16px;
+  border-radius: 14px;
   margin-bottom: 12px;
-  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  background: color-mix(in srgb, var(--accent) 16%, var(--surface));
 }
 .mini-proof-grid strong {
   display: block;
@@ -62,14 +62,51 @@
   display: grid;
   gap: 8px;
   color: var(--accent-strong);
-  font-size: .78rem;
+  font-size: .76rem;
   font-weight: 900;
   text-transform: uppercase;
-  letter-spacing: .08em;
+  letter-spacing: .1em;
 }
 .auth-note { color: var(--text-muted); text-align: center; }
 .auth-note a { color: var(--accent-strong); font-weight: 900; }
 .compact-hero h1 { font-size: clamp(2rem, 12vw, 3.4rem); }
+.bottom-nav {
+  position: fixed;
+  left: 50%;
+  bottom: 0;
+  z-index: 40;
+  width: min(100%, 540px);
+  transform: translateX(-50%);
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 2px;
+  padding: 8px 10px calc(8px + env(safe-area-inset-bottom));
+  background: color-mix(in srgb, var(--background) 94%, transparent);
+  border-top: 1px solid var(--border);
+  backdrop-filter: blur(18px);
+}
+.bottom-nav a {
+  display: grid;
+  place-items: center;
+  gap: 3px;
+  color: var(--text-muted);
+  font-weight: 800;
+  font-size: .68rem;
+}
+.bottom-nav span {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 999px;
+  font-size: 1rem;
+}
+.bottom-nav a.active {
+  color: var(--accent-strong);
+}
+.bottom-nav a.active span {
+  background: color-mix(in srgb, var(--accent) 18%, var(--surface-elevated));
+}
 @media (min-width: 560px) {
   .cta-row { grid-template-columns: 1fr 1fr; }
   .landing-grid,
