@@ -18,19 +18,27 @@
   background: var(--surface-elevated);
   font-weight: 900;
 }
-.landing-grid {
+.section-copy {
+  color: var(--text-muted);
+  line-height: 1.58;
+  margin: 14px 0 0;
+}
+.landing-grid,
+.mini-proof-grid {
   display: grid;
   grid-template-columns: 1fr;
   gap: 12px;
   margin-top: 16px;
 }
-.landing-grid article {
+.landing-grid article,
+.mini-proof-grid article {
   padding: 16px;
   border: 1px solid var(--border);
   border-radius: 22px;
   background: var(--surface-elevated);
 }
-.landing-grid span {
+.landing-grid span,
+.mini-proof-grid span {
   display: grid;
   place-items: center;
   width: 42px;
@@ -39,7 +47,14 @@
   margin-bottom: 12px;
   background: color-mix(in srgb, var(--accent) 18%, transparent);
 }
+.mini-proof-grid strong {
+  display: block;
+  margin-bottom: 6px;
+  color: var(--text);
+  line-height: 1.25;
+}
 .landing-grid p,
+.mini-proof-grid p,
 .final-cta p { color: var(--text-muted); line-height: 1.5; }
 .auth-shell { min-height: 100vh; display: grid; align-content: start; }
 .auth-card form { display: grid; gap: 12px; margin-top: 18px; }
@@ -57,5 +72,9 @@
 .compact-hero h1 { font-size: clamp(2rem, 12vw, 3.4rem); }
 @media (min-width: 560px) {
   .cta-row { grid-template-columns: 1fr 1fr; }
-  .landing-grid { grid-template-columns: repeat(2, 1fr); }
+  .landing-grid,
+  .mini-proof-grid { grid-template-columns: repeat(2, 1fr); }
+}
+@media (min-width: 760px) {
+  .mini-proof-grid { grid-template-columns: repeat(3, 1fr); }
 }
