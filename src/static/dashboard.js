@@ -47,8 +47,8 @@ function render() {
   $('todayRing').style.setProperty('--value', `${todayPercent}%`);
   $('checkInButton').disabled = entry.completed.length !== standards.length && !entry.scheduledMiss;
   $('scheduledButton').classList.toggle('active', !!entry.scheduledMiss);
-  $('checklist').innerHTML = standards.map(([id, label, detail]) => `<button class="check-row ${entry.completed.includes(id) ? 'checked' : ''}" data-standard="${id}"><span class="box">✓</span><span><strong>${label}</strong><small>${detail}</small></span></button>`).join('');
-  $('feed').innerHTML = feed.slice(0, 6).map(item => `<article class="feed-item"><div><strong>${item.name}</strong><p>Day ${item.day} ${item.status === 'complete' ? 'complete' : 'scheduled miss'}</p></div><span>${item.status === 'complete' ? '✓' : '↺'}</span></article>`).join('');
+  $('checklist').innerHTML = standards.map(([id, label, detail]) => `<button class="check-row ${entry.completed.includes(id) ? 'checked' : ''}" data-standard="${id}"><span class="box"><span class="app-icon icon-sm icon-check" aria-hidden="true"></span></span><span><strong>${label}</strong><small>${detail}</small></span></button>`).join('');
+  $('feed').innerHTML = feed.slice(0, 6).map(item => `<article class="feed-item"><div><strong>${item.name}</strong><p>Day ${item.day} ${item.status === 'complete' ? 'complete' : 'scheduled miss'}</p></div><span class="feed-status"><span class="app-icon icon-sm ${item.status === 'complete' ? 'icon-check' : 'icon-repeat'}" aria-hidden="true"></span></span></article>`).join('');
   $('completedToday').textContent = `${feed.filter(item => item.status === 'complete' && item.timestamp === 'Today').length} people completed today`;
 }
 $('themeToggle').addEventListener('click', () => { theme = theme === 'dark' ? 'light' : 'dark'; save('dominion:theme', theme); render(); });
