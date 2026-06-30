@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#0e1116" />
+    <title>Join | Dominion</title>
+    <link rel="stylesheet" href="./src/assets/styles.css" />
+  </head>
+  <body>
+    <main class="app-shell auth-shell">
+      <header class="topbar">
+        <a class="back-link" href="./index.html">‹ Home</a>
+        <button class="theme-toggle" id="themeToggle">Dark Theme</button>
+      </header>
+      <section class="card auth-card">
+        <p class="eyebrow">Join the Challenge</p>
+        <h1>Create account</h1>
+        <p class="lead">Start your 77-day commitment and unlock your dashboard.</p>
+        <form id="authForm">
+          <label>Name<input id="name" placeholder="Tim" required /></label>
+          <label>Email<input id="email" type="email" placeholder="you@example.com" required /></label>
+          <label>Password<input id="password" type="password" placeholder="••••••••" required /></label>
+          <button class="primary" type="submit">Create Account</button>
+        </form>
+        <p class="auth-note">Already joined? <a href="./login.html">Log in</a></p>
+      </section>
+    </main>
+    <script src="./src/static/auth.js"></script>
+  </body>
+</html>
