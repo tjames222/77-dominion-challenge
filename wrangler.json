@@ -1,0 +1,7 @@
+{
+  "name": "77-dominion-challenge",
+  "compatibility_date": "2026-06-30",
+  "assets": {
+    "directory": "./dist"
+  }
+}
