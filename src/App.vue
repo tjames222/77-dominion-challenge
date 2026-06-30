@@ -40,7 +40,24 @@ function checkIn() {
           <span class="eyebrow">About the Challenge</span>
           <strong>What is the 77-Day Dominion Challenge?</strong>
         </span>
-        <span class="summary-icon">+</span>
+        <span class="summary-icon">
+				  <svg
+			    width="18"
+			    height="18"
+			    viewBox="0 0 24 24"
+			    fill="none"
+			    xmlns="http://www.w3.org/2000/svg"
+			    aria-hidden="true"
+				  >
+				    <path
+			      d="M6 9L12 15L18 9"
+			      stroke="currentColor"
+			      stroke-width="2.5"
+			      stroke-linecap="round"
+			      stroke-linejoin="round"
+				    />
+				  </svg>
+				</span>
       </summary>
       <div class="details-body">
         <p>
