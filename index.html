@@ -8,161 +8,63 @@
     <link rel="stylesheet" href="./src/assets/styles.css" />
   </head>
   <body>
-    <main class="app-shell">
+    <main class="app-shell landing-shell">
       <header class="topbar">
         <div><span class="brand-mark">D</span><span class="brand-name">Dominion</span></div>
         <button class="theme-toggle" id="themeToggle">Dark Theme</button>
       </header>
 
-      <section class="hero card">
+      <section class="hero card landing-hero reveal is-visible">
         <p class="eyebrow">77-Day Dominion Challenge</p>
         <h1>Honor God. Master Yourself.</h1>
-        <p class="lead">Build discipline in spirit, mind, and body through daily prayer, Scripture, worship, movement, and accountability.</p>
+        <p class="lead">A 77-day discipline challenge for growing in Scripture, prayer, worship, movement, and accountability.</p>
+        <div class="cta-row">
+          <a class="primary cta-button" href="./register.html">Join the Challenge</a>
+          <a class="secondary-button" href="./login.html">Log in</a>
+        </div>
         <blockquote>
           “But I discipline my body and keep it under control, lest after preaching to others I myself should be disqualified.”
           <strong>1 Corinthians 9:27</strong>
         </blockquote>
       </section>
 
-      <a class="feature-link card" href="./science.html">
+      <section class="card landing-section reveal">
+        <p class="eyebrow">What It Entails</p>
+        <h2>Seven standards. Seventy-seven days.</h2>
+        <div class="landing-grid">
+          <article><span>📖</span><h3>Read Scripture</h3><p>Read 5–8 Bible chapters every day.</p></article>
+          <article><span>🙏</span><h3>Pray Twice</h3><p>Begin and end the day in prayer.</p></article>
+          <article><span>🎧</span><h3>Worship Only</h3><p>Limit music with lyrics to worship music.</p></article>
+          <article><span>💪</span><h3>Train Daily</h3><p>Complete two intentional workouts.</p></article>
+          <article><span>🚶</span><h3>Walk</h3><p>Take an intentional walk during the day.</p></article>
+          <article><span>🤝</span><h3>Check In</h3><p>Stay accountable with others in the challenge.</p></article>
+        </div>
+      </section>
+
+      <a class="feature-link card reveal" href="./science.html">
         <span class="science-icon">🧠</span>
         <span><span class="eyebrow">Science + Scripture</span><strong>See the reasoning behind the challenge</strong><small>Habit formation, discipline, stewardship, and biblical purpose.</small></span>
         <span class="feature-arrow">›</span>
       </a>
 
-      <details class="card challenge-details">
-        <summary>
-          <span><span class="eyebrow">About the Challenge</span><strong>What is the 77-Day Dominion Challenge?</strong></span>
-          <span class="summary-icon">+</span>
-        </summary>
-        <div class="details-body">
-          <p>The 77-Day Dominion Challenge is a focused season of spiritual, mental, and physical discipline. It is designed to help you honor God, steward your body, and train yourself to keep commitments even when motivation fades.</p>
-          <p>Each day is built around seven standards: reading 5–8 chapters of the Bible, praying morning and evening, listening only to worship music, completing two intentional workouts, and taking an intentional walk during the day.</p>
-          <p>Workouts do not have a required length. Some days may be intense. Other days may be recovery-focused with stretching, mobility, walking, or light movement. The goal is consistency, not recklessness.</p>
-          <p>Scheduled miss days are allowed when planned ahead. Unplanned misses because of laziness, busyness, tiredness, or poor planning are not the spirit of the challenge.</p>
-          <ul>
-            <li><strong>Spirit:</strong> Bible reading, morning prayer, evening prayer.</li>
-            <li><strong>Mind:</strong> Worship music only.</li>
-            <li><strong>Body:</strong> Workout #1, intentional walk, workout #2.</li>
-            <li><strong>Accountability:</strong> Check in honestly and stay connected with others doing the challenge.</li>
-          </ul>
+      <section class="card landing-section reveal">
+        <p class="eyebrow">How It Works</p>
+        <div class="timeline">
+          <article><span>01</span><div><h3>Create your account</h3><p>Join the challenge and set your start date.</p></div></article>
+          <article><span>02</span><div><h3>Open your dashboard</h3><p>Your daily scorecard, progress, and check-ins live there.</p></div></article>
+          <article><span>03</span><div><h3>Complete the standards</h3><p>Adapt wisely when needed, but do not drift into excuses.</p></div></article>
+          <article><span>04</span><div><h3>Finish stronger</h3><p>Build discipline that becomes part of your identity.</p></div></article>
         </div>
-      </details>
-
-      <section class="dashboard card">
-        <label>Your name<input id="memberName" placeholder="Tim" /></label>
-        <label>Challenge start date<input id="startDate" type="date" /></label>
-        <div class="rings">
-          <div class="ring" id="challengeRing"><div class="ring-inner"><strong id="challengePercent">1%</strong><span>Challenge</span><small id="challengeDay">Day 1 of 77</small></div></div>
-          <div class="ring" id="todayRing"><div class="ring-inner"><strong id="todayPercent">0%</strong><span>Today</span><small id="todayCount">0 of 7 done</small></div></div>
-        </div>
-        <button class="primary" id="checkInButton" disabled>Post Check-In</button>
       </section>
 
-      <section class="card checklist">
-        <div class="section-heading"><p class="eyebrow">Today's Standard</p><h2>Daily Scorecard</h2></div>
-        <div id="checklist"></div>
-        <button class="scheduled" id="scheduledButton">Scheduled miss day planned ahead</button>
-      </section>
-
-      <section class="card rules">
-        <p class="eyebrow">Rules</p>
-        <ul>
-          <li>Commit to 77 days of intentional discipline.</li>
-          <li>Scheduled miss days are allowed only when planned ahead.</li>
-          <li>No missing because of laziness, tiredness, busyness, or poor planning.</li>
-          <li>When life changes, adapt the standard instead of abandoning it.</li>
-        </ul>
-      </section>
-
-      <section class="card community">
-        <div class="section-heading"><p class="eyebrow">Accountability</p><h2 id="completedToday">3 people completed today</h2></div>
-        <div id="feed"></div>
+      <section class="card final-cta reveal">
+        <p class="eyebrow">Ready?</p>
+        <h2>Start your 77 days.</h2>
+        <p class="lead">Create an account and move from interest to action.</p>
+        <a class="primary cta-button" href="./register.html">Create Account</a>
       </section>
     </main>
 
-    <script>
-      const TOTAL_DAYS = 77;
-      const standards = [
-        ['bible', 'Bible Reading', '5–8 chapters'],
-        ['morningPrayer', 'Morning Prayer', 'Spirit'],
-        ['eveningPrayer', 'Evening Prayer', 'Spirit'],
-        ['worshipOnly', 'Worship Music Only', 'Instrumental, podcasts, and audiobooks permitted'],
-        ['workoutOne', 'Workout #1', 'No required length'],
-        ['walk', 'Intentional Walk', 'During the day'],
-        ['workoutTwo', 'Workout #2', 'No required length'],
-      ];
-      const starterFeed = [
-        { name: 'Josh', day: 12, status: 'complete', timestamp: 'Today' },
-        { name: 'Sarah', day: 12, status: 'complete', timestamp: 'Today' },
-        { name: 'Matt', day: 11, status: 'scheduled', timestamp: 'Yesterday' },
-        { name: 'Tim', day: 12, status: 'complete', timestamp: 'Today' },
-      ];
-      const todayKey = () => new Date().toISOString().slice(0, 10);
-      const load = (key, fallback) => JSON.parse(localStorage.getItem(key) || JSON.stringify(fallback));
-      const save = (key, value) => localStorage.setItem(key, JSON.stringify(value));
-
-      let theme = load('dominion:theme', 'dark');
-      let startDate = load('dominion:startDate', todayKey());
-      let memberName = load('dominion:memberName', '');
-      let entries = load('dominion:entries', []);
-      let feed = load('dominion:feed', starterFeed);
-
-      const $ = (id) => document.getElementById(id);
-      const todayEntry = () => entries.find(entry => entry.date === todayKey()) || { date: todayKey(), completed: [] };
-      const saveEntry = (entry) => {
-        const index = entries.findIndex(item => item.date === entry.date);
-        if (index >= 0) entries[index] = entry;
-        else entries.push(entry);
-        save('dominion:entries', entries);
-      };
-      const currentDay = () => Math.min(Math.max(Math.floor((new Date(todayKey() + 'T00:00:00') - new Date(startDate + 'T00:00:00')) / 86400000) + 1, 1), TOTAL_DAYS);
-
-      function render() {
-        document.documentElement.dataset.theme = theme;
-        $('themeToggle').textContent = `${theme === 'dark' ? 'Dark' : 'Light'} Theme`;
-        $('memberName').value = memberName;
-        $('startDate').value = startDate;
-
-        const entry = todayEntry();
-        const challengePercent = Math.round((currentDay() / TOTAL_DAYS) * 100);
-        const todayPercent = Math.round((entry.completed.length / standards.length) * 100);
-        $('challengePercent').textContent = `${challengePercent}%`;
-        $('challengeDay').textContent = `Day ${currentDay()} of 77`;
-        $('challengeRing').style.setProperty('--value', `${challengePercent}%`);
-        $('todayPercent').textContent = `${todayPercent}%`;
-        $('todayCount').textContent = `${entry.completed.length} of 7 done`;
-        $('todayRing').style.setProperty('--value', `${todayPercent}%`);
-        $('checkInButton').disabled = entry.completed.length !== standards.length && !entry.scheduledMiss;
-        $('scheduledButton').classList.toggle('active', !!entry.scheduledMiss);
-
-        $('checklist').innerHTML = standards.map(([id, label, detail]) => `
-          <button class="check-row ${entry.completed.includes(id) ? 'checked' : ''}" data-standard="${id}">
-            <span class="box">✓</span><span><strong>${label}</strong><small>${detail}</small></span>
-          </button>
-        `).join('');
-
-        $('feed').innerHTML = feed.slice(0, 6).map(item => `
-          <article class="feed-item"><div><strong>${item.name}</strong><p>Day ${item.day} ${item.status === 'complete' ? 'complete' : 'scheduled miss'}</p></div><span>${item.status === 'complete' ? '✓' : '↺'}</span></article>
-        `).join('');
-        $('completedToday').textContent = `${feed.filter(item => item.status === 'complete' && item.timestamp === 'Today').length} people completed today`;
-      }
-
-      $('themeToggle').addEventListener('click', () => { theme = theme === 'dark' ? 'light' : 'dark'; save('dominion:theme', theme); render(); });
-      $('memberName').addEventListener('input', event => { memberName = event.target.value; save('dominion:memberName', memberName); });
-      $('startDate').addEventListener('input', event => { startDate = event.target.value || todayKey(); save('dominion:startDate', startDate); render(); });
-      $('checklist').addEventListener('click', event => {
-        const row = event.target.closest('[data-standard]');
-        if (!row) return;
-        const entry = { ...todayEntry(), completed: [...todayEntry().completed] };
-        const id = row.dataset.standard;
-        entry.completed = entry.completed.includes(id) ? entry.completed.filter(item => item !== id) : [...entry.completed, id];
-        saveEntry(entry); render();
-      });
-      $('scheduledButton').addEventListener('click', () => { const entry = { ...todayEntry(), scheduledMiss: !todayEntry().scheduledMiss }; saveEntry(entry); render(); });
-      $('checkInButton').addEventListener('click', () => { feed.unshift({ name: memberName || 'Anonymous', day: currentDay(), status: todayEntry().scheduledMiss ? 'scheduled' : 'complete', timestamp: 'Today' }); save('dominion:feed', feed); render(); });
-
-      render();
-    </script>
+    <script src="./src/static/landing.js"></script>
   </body>
 </html>
