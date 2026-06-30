@@ -1,0 +1,61 @@
+.cta-row {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 10px;
+  margin: 18px 0;
+}
+.cta-button,
+.secondary-button {
+  display: grid;
+  place-items: center;
+  text-align: center;
+  min-height: 52px;
+}
+.secondary-button {
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  color: var(--text);
+  background: var(--surface-elevated);
+  font-weight: 900;
+}
+.landing-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 12px;
+  margin-top: 16px;
+}
+.landing-grid article {
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: 22px;
+  background: var(--surface-elevated);
+}
+.landing-grid span {
+  display: grid;
+  place-items: center;
+  width: 42px;
+  height: 42px;
+  border-radius: 16px;
+  margin-bottom: 12px;
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+}
+.landing-grid p,
+.final-cta p { color: var(--text-muted); line-height: 1.5; }
+.auth-shell { min-height: 100vh; display: grid; align-content: start; }
+.auth-card form { display: grid; gap: 12px; margin-top: 18px; }
+.auth-card label {
+  display: grid;
+  gap: 8px;
+  color: var(--accent-strong);
+  font-size: .78rem;
+  font-weight: 900;
+  text-transform: uppercase;
+  letter-spacing: .08em;
+}
+.auth-note { color: var(--text-muted); text-align: center; }
+.auth-note a { color: var(--accent-strong); font-weight: 900; }
+.compact-hero h1 { font-size: clamp(2rem, 12vw, 3.4rem); }
+@media (min-width: 560px) {
+  .cta-row { grid-template-columns: 1fr 1fr; }
+  .landing-grid { grid-template-columns: repeat(2, 1fr); }
+}
