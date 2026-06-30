@@ -17,6 +17,6 @@ Branch workflow:
 - develop = staging and active development
 - feature branches = preview deployments
 
-The repo includes wrangler.toml with the Pages output directory set to dist.
+The repo uses Cloudflare Pages for preview deployments.
 
 Current app note: authentication and dashboard state are still mocked with localStorage. Real accounts will require a backend or hosted auth provider later.
