@@ -25,6 +25,25 @@
   line-height: 1.58;
   margin: 14px 0 0;
 }
+.statement-card {
+  border: 1px solid color-mix(in srgb, var(--accent) 42%, var(--border));
+  border-radius: 26px;
+  padding: 24px 18px;
+  margin-bottom: 14px;
+  background:
+    linear-gradient(135deg, color-mix(in srgb, var(--accent) 12%, transparent), transparent 48%),
+    var(--surface);
+  text-align: center;
+}
+.statement-card p {
+  margin: 0;
+  color: var(--text);
+  font-size: clamp(1.55rem, 8vw, 2.75rem);
+  line-height: 1.02;
+  font-weight: 1000;
+  letter-spacing: -.05em;
+}
+.statement-card p:nth-child(2) { color: var(--accent-strong); }
 .landing-grid,
 .mini-proof-grid {
   display: grid;
@@ -39,6 +58,16 @@
   border-radius: 18px;
   background: var(--surface-elevated);
 }
+.compact-grid {
+  grid-template-columns: repeat(2, 1fr);
+}
+.compact-grid article {
+  display: grid;
+  justify-items: start;
+  gap: 12px;
+  min-height: 116px;
+}
+.compact-grid h3 { margin: 0; }
 .landing-grid span,
 .mini-proof-grid span {
   display: grid;
@@ -49,6 +78,7 @@
   margin-bottom: 12px;
   background: color-mix(in srgb, var(--accent) 16%, var(--surface));
 }
+.compact-grid span { margin-bottom: 0; }
 .mini-proof-grid strong {
   display: block;
   margin-bottom: 6px;
@@ -58,6 +88,8 @@
 .landing-grid p,
 .mini-proof-grid p,
 .final-cta p { color: var(--text-muted); line-height: 1.5; }
+.short-timeline article { align-items: center; }
+.short-timeline h3 { margin: 0; }
 .auth-shell { min-height: 100vh; display: grid; align-content: start; }
 .auth-card form { display: grid; gap: 12px; margin-top: 18px; }
 .auth-card label {
@@ -72,43 +104,6 @@
 .auth-note { color: var(--text-muted); text-align: center; }
 .auth-note a { color: var(--accent-strong); font-weight: 900; }
 .compact-hero h1 { font-size: clamp(2rem, 12vw, 3.4rem); }
-.bottom-nav {
-  position: fixed;
-  left: 50%;
-  bottom: 0;
-  z-index: 40;
-  width: min(100%, 540px);
-  transform: translateX(-50%);
-  display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  gap: 2px;
-  padding: 8px 10px calc(8px + env(safe-area-inset-bottom));
-  background: color-mix(in srgb, var(--background) 94%, transparent);
-  border-top: 1px solid var(--border);
-  backdrop-filter: blur(18px);
-}
-.bottom-nav a {
-  display: grid;
-  place-items: center;
-  gap: 3px;
-  color: var(--text-muted);
-  font-weight: 800;
-  font-size: .68rem;
-}
-.bottom-nav span {
-  display: grid;
-  place-items: center;
-  width: 28px;
-  height: 28px;
-  border-radius: 999px;
-  font-size: 1rem;
-}
-.bottom-nav a.active {
-  color: var(--accent-strong);
-}
-.bottom-nav a.active span {
-  background: color-mix(in srgb, var(--accent) 18%, var(--surface-elevated));
-}
 @media (min-width: 560px) {
   .cta-row { grid-template-columns: 1fr 1fr; }
   .landing-grid,
