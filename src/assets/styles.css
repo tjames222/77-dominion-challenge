@@ -406,9 +406,13 @@ input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in sr
 }
 .sources-card ul { margin: 14px 0 0; padding-left: 20px; }
 .reveal {
+  opacity: 1;
+  transform: translateY(0);
+  transition: opacity 520ms ease, transform 520ms cubic-bezier(.2, .8, .2, 1);
+}
+.reveal.pending-reveal {
   opacity: 0;
   transform: translateY(18px);
-  transition: opacity 520ms ease, transform 520ms cubic-bezier(.2, .8, .2, 1);
 }
 .reveal.is-visible {
   opacity: 1;
@@ -420,5 +424,5 @@ input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in sr
 }
 @media (prefers-reduced-motion: reduce) {
   html { scroll-behavior: auto; }
-  .reveal, .reveal.is-visible { opacity: 1; transform: none; transition: none; animation: none; }
+  .reveal, .reveal.is-visible, .reveal.pending-reveal { opacity: 1; transform: none; transition: none; animation: none; }
 }
