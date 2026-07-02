@@ -25,25 +25,16 @@
   line-height: 1.58;
   margin: 14px 0 0;
 }
-.statement-card {
-  border: 1px solid color-mix(in srgb, var(--accent) 42%, var(--border));
-  border-radius: 26px;
-  padding: 24px 18px;
-  margin-bottom: 14px;
-  background:
-    linear-gradient(135deg, color-mix(in srgb, var(--accent) 12%, transparent), transparent 48%),
-    var(--surface);
-  text-align: center;
+.hero-poster {
+  margin: 18px 0 18px;
 }
-.statement-card p {
-  margin: 0;
-  color: var(--text);
-  font-size: clamp(1.55rem, 8vw, 2.75rem);
-  line-height: 1.02;
-  font-weight: 1000;
-  letter-spacing: -.05em;
+.hero-poster img {
+  display: block;
+  width: 100%;
+  border-radius: 24px;
+  object-fit: cover;
+  background: var(--surface);
 }
-.statement-card p:nth-child(2) { color: var(--accent-strong); }
 .landing-grid,
 .mini-proof-grid {
   display: grid;
