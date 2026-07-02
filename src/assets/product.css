@@ -25,6 +25,42 @@
   line-height: 1.58;
   margin: 14px 0 0;
 }
+.verse-card {
+  position: relative;
+  display: grid;
+  gap: 10px;
+  margin-top: 18px;
+  padding: 18px;
+  border: 1px solid color-mix(in srgb, var(--accent) 58%, var(--border));
+  border-radius: 20px;
+  background:
+    radial-gradient(circle at top right, color-mix(in srgb, var(--accent) 16%, transparent), transparent 42%),
+    color-mix(in srgb, var(--accent) 5%, var(--surface-elevated));
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 10%, transparent);
+}
+.verse-card-icon {
+  width: 34px;
+  height: 34px;
+  border-radius: 12px;
+  color: var(--accent-strong);
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+}
+.verse-card-icon::before {
+  width: 18px;
+  height: 18px;
+}
+.verse-card p {
+  margin: 0;
+  color: var(--text);
+  line-height: 1.5;
+  font-weight: 700;
+}
+.verse-card strong {
+  color: var(--accent-strong);
+  font-size: .82rem;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+}
 .hero-poster {
   margin: 18px 0 18px;
 }
