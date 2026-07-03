@@ -114,7 +114,20 @@
 }
 .landing-grid p,
 .mini-proof-grid p,
-.final-cta p { color: var(--text-muted); line-height: 1.5; }
+.final-cta {
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+}
+
+.final-cta .eyebrow,
+.final-cta h2 {
+  margin: 0;
+}
+
+.final-cta .cta-button {
+  margin-top: 0.25rem;
+}
 .short-timeline article { align-items: center; }
 .short-timeline h3 { margin: 0; }
 .auth-shell { min-height: 100vh; display: grid; align-content: start; }
