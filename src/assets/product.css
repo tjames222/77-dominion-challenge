@@ -31,6 +31,83 @@
   line-height: 1.58;
   margin: 14px 0 0;
 }
+.countdown-card {
+  position: relative;
+  display: grid;
+  gap: 16px;
+  overflow: hidden;
+  border-color: color-mix(in srgb, var(--accent) 42%, var(--border));
+  background:
+    linear-gradient(135deg, color-mix(in srgb, var(--accent) 12%, var(--surface)) 0%, var(--surface) 46%, color-mix(in srgb, var(--success) 8%, var(--surface)) 100%);
+}
+.countdown-topline {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+.countdown-icon {
+  color: var(--accent-strong);
+  background: color-mix(in srgb, var(--accent) 16%, var(--surface-elevated));
+}
+.countdown-display {
+  display: grid;
+  gap: 4px;
+}
+.countdown-display strong {
+  color: var(--text);
+  font-size: 2.35rem;
+  line-height: 1;
+  letter-spacing: 0;
+}
+.countdown-display small {
+  color: var(--text-muted);
+  font-weight: 800;
+  line-height: 1.35;
+}
+.countdown-progress {
+  height: 11px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface-elevated);
+}
+.countdown-progress span {
+  display: block;
+  width: var(--progress, 0%);
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, var(--accent), var(--success));
+  box-shadow: 0 0 18px color-mix(in srgb, var(--accent) 26%, transparent);
+  transition: width 500ms ease;
+}
+.countdown-callout {
+  margin: 0;
+  padding: 14px;
+  border: 1px solid color-mix(in srgb, var(--accent) 24%, var(--border));
+  border-radius: 16px;
+  background: color-mix(in srgb, var(--accent) 8%, var(--surface-elevated));
+  color: var(--text);
+  font-weight: 850;
+  line-height: 1.45;
+}
+.countdown-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.countdown-meta span {
+  min-width: 0;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--surface-elevated) 78%, transparent);
+  color: var(--text-muted);
+  font-size: .78rem;
+  font-weight: 850;
+  line-height: 1.2;
+}
 .verse-card {
   position: relative;
   display: grid;
@@ -284,7 +361,31 @@
 .compact-hero h1 { font-size: 2.25rem; }
 @media (min-width: 560px) {
   .compact-hero h1 { font-size: 3rem; }
+  .countdown-card {
+    grid-template-columns: 1fr auto;
+    align-items: center;
+  }
+  .countdown-progress,
+  .countdown-callout,
+  .countdown-meta {
+    grid-column: 1 / -1;
+  }
+  .countdown-display {
+    justify-items: end;
+    text-align: right;
+  }
+  .countdown-display strong {
+    font-size: 2.8rem;
+  }
   .action-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 380px) {
+  .countdown-display strong {
+    font-size: 1.95rem;
+  }
+  .countdown-meta span {
+    width: 100%;
+  }
 }
 @media (min-width: 840px) {
   .landing-hero {

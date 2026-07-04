@@ -25,6 +25,20 @@ const fallbackVerse = {
   text: 'His mercies never come to an end; they are new every morning.',
   reference: 'Lamentations 3:22-23',
 };
+const countdownCallouts = [
+  'Do the next right action before the day gets louder.',
+  'Discipline gets lighter once you start. Pick one standard and move.',
+  'You do not need the perfect window. You need the next faithful step.',
+  'Small obedience now beats a rushed apology tonight.',
+  'Your check-in is built one action at a time. Stack the next win.',
+  'The clock is not here to shame you. It is here to wake you up.',
+  'Protect the standard while the day is still in your hands.',
+  'Start with the action you are most likely to avoid. That is the hinge.',
+  'A complete day is still available. Take the next clean step.',
+  'Make the next 20 minutes count. Momentum will meet you there.',
+  'Do not negotiate with drift. Choose the standard and begin.',
+  'You are training your future self right now.',
+];
 const worshipPlaylists = [
   { label: 'Morning worship focus', url: 'https://open.spotify.com/search/morning%20worship%20playlist' },
   { label: 'Acoustic worship reset', url: 'https://open.spotify.com/search/acoustic%20worship%20playlist' },
@@ -65,6 +79,8 @@ let memberName = load('dominion:memberName', load('dominion:user', { name: '' })
 let entries = load('dominion:entries', []);
 let feed = load('dominion:feed', starterFeed);
 let workoutDifficulty = load('dominion:workoutDifficulty', { one: 'medium', two: 'medium' });
+let countdownTimer = null;
+let activeCountdownCallout = '';
 const $ = (id) => document.getElementById(id);
 const verseText = $('verseText');
 const verseReference = $('verseReference');
@@ -79,6 +95,48 @@ const saveEntry = (entry) => {
   save('dominion:entries', entries);
 };
 const currentDay = () => Math.min(Math.max(Math.floor((new Date(todayKey() + 'T00:00:00') - new Date(startDate + 'T00:00:00')) / 86400000) + 1, 1), TOTAL_DAYS);
+const padClock = (value) => String(value).padStart(2, '0');
+function getDayTiming(now = new Date()) {
+  const start = new Date(now);
+  start.setHours(0, 0, 0, 0);
+  const end = new Date(now);
+  end.setHours(24, 0, 0, 0);
+  const dayMs = end - start;
+  const elapsedMs = Math.min(Math.max(now - start, 0), dayMs);
+  const remainingSeconds = Math.max(Math.ceil((end - now) / 1000), 0);
+  return {
+    elapsedPercent: Math.min(Math.round((elapsedMs / dayMs) * 100), 100),
+    remainingSeconds,
+  };
+}
+function formatRemainingTime(totalSeconds) {
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+  return `${hours}h ${padClock(minutes)}m ${padClock(seconds)}s`;
+}
+function updateCountdownCard() {
+  const countdownTime = $('countdownTime');
+  const countdownProgress = $('countdownProgress');
+  const countdownCallout = $('countdownCallout');
+  const countdownProgressLabel = $('countdownProgressLabel');
+  const countdownActionsLabel = $('countdownActionsLabel');
+  if (!countdownTime || !countdownProgress || !countdownCallout) return;
+
+  const entry = todayEntry();
+  const { elapsedPercent, remainingSeconds } = getDayTiming();
+  const calloutSlot = Math.floor(Date.now() / (30 * 60 * 1000));
+  const callout = countdownCallouts[(dayIndex() + calloutSlot + entry.completed.length) % countdownCallouts.length];
+
+  countdownTime.textContent = formatRemainingTime(remainingSeconds);
+  countdownProgress.style.setProperty('--progress', `${elapsedPercent}%`);
+  if (activeCountdownCallout !== callout) {
+    countdownCallout.textContent = callout;
+    activeCountdownCallout = callout;
+  }
+  if (countdownProgressLabel) countdownProgressLabel.textContent = `${elapsedPercent}% of the day used`;
+  if (countdownActionsLabel) countdownActionsLabel.textContent = `${entry.completed.length} of 7 actions complete`;
+}
 function applyVerse(verse) {
   if (!verseText || !verseReference) return;
   verseText.textContent = verse.text;
@@ -185,6 +243,12 @@ function render() {
   if (completedToday) completedToday.textContent = `${feed.filter(item => item.status === 'complete' && item.timestamp === 'Today').length} people completed today`;
   if (verseAppLink) verseAppLink.href = YOUVERSION_APP_URL;
   applyDailyActions();
+  updateCountdownCard();
+}
+function startCountdownCard() {
+  if (countdownTimer) window.clearInterval(countdownTimer);
+  updateCountdownCard();
+  countdownTimer = window.setInterval(updateCountdownCard, 1000);
 }
 const themeToggle = $('themeToggle');
 const memberNameInput = $('memberName');
@@ -240,4 +304,5 @@ if (checkInButton) checkInButton.addEventListener('click', () => {
 render();
 loadVerseOfDay();
 applyDailyActions();
+startCountdownCard();
 requestAnimationFrame(() => initReveal());
