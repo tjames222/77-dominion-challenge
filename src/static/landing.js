@@ -1,3 +1,5 @@
+import { initReveal } from './reveal';
+
 const load = (key, fallback) => JSON.parse(localStorage.getItem(key) || JSON.stringify(fallback));
 const save = (key, value) => localStorage.setItem(key, JSON.stringify(value));
 let theme = load('dominion:theme', 'dark');
@@ -14,6 +16,4 @@ if (themeToggle) {
   });
 }
 applyTheme();
-document.querySelectorAll('.reveal').forEach(function (element) {
-  setTimeout(function () { element.classList.add('is-visible'); }, 80);
-});
+initReveal();

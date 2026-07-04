@@ -101,8 +101,12 @@
   gap: 12px;
   min-height: 116px;
 }
-.compact-grid h3 { overflow-wrap: anywhere; }
-.compact-grid h3 { margin: 0; }
+.compact-grid h3 {
+  margin: 0;
+  font-size: 1.02rem;
+  line-height: 1.12;
+  overflow-wrap: normal;
+}
 .landing-grid span,
 .mini-proof-grid span {
   display: grid;

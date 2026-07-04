@@ -84,27 +84,6 @@
       </section>
     </main>
 
-    <script>
-      const load = (key, fallback) => JSON.parse(localStorage.getItem(key) || JSON.stringify(fallback));
-      const save = (key, value) => localStorage.setItem(key, JSON.stringify(value));
-      let theme = load('dominion:theme', 'dark');
-      const themeToggle = document.getElementById('themeToggle');
-      const applyTheme = () => {
-        document.documentElement.dataset.theme = theme;
-        themeToggle.textContent = `${theme === 'dark' ? 'Dark' : 'Light'} Theme`;
-      };
-      themeToggle.addEventListener('click', () => {
-        theme = theme === 'dark' ? 'light' : 'dark';
-        save('dominion:theme', theme);
-        applyTheme();
-      });
-      applyTheme();
-      const observer = new IntersectionObserver((entries) => {
-        entries.forEach((entry) => {
-          if (entry.isIntersecting) entry.target.classList.add('is-visible');
-        });
-      }, { threshold: 0.18 });
-      document.querySelectorAll('.reveal').forEach((el) => observer.observe(el));
-    </script>
+    <script type="module" src="./src/static/science.js"></script>
   </body>
 </html>

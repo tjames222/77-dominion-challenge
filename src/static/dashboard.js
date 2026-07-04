@@ -1,3 +1,5 @@
+import { initReveal } from './reveal';
+
 const TOTAL_DAYS = 77;
 const standards = [
   ['bible', 'Bible Reading', '5–8 chapters'],
@@ -74,3 +76,4 @@ $('checkInButton').addEventListener('click', () => {
   render();
 });
 render();
+requestAnimationFrame(() => initReveal());
