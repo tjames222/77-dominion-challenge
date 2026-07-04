@@ -45,15 +45,18 @@ body {
   min-width: 320px;
   background: var(--background);
   color: var(--text);
+  overflow-x: hidden;
 }
 a { color: inherit; text-decoration: none; }
+img, svg { max-width: 100%; }
 button, input { font: inherit; }
 button { cursor: pointer; }
 
 .app-shell {
-  width: min(100%, 540px);
+  --shell-pad: clamp(12px, 4vw, 24px);
+  width: min(100%, 720px);
   margin: 0 auto;
-  padding: max(16px, env(safe-area-inset-top)) 16px 92px;
+  padding: max(var(--shell-pad), env(safe-area-inset-top)) var(--shell-pad) max(72px, calc(72px + env(safe-area-inset-bottom)));
 }
 
 .topbar {
@@ -64,16 +67,18 @@ button { cursor: pointer; }
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  margin: -16px -16px 14px;
-  padding: max(14px, env(safe-area-inset-top)) 16px 12px;
+  min-width: 0;
+  margin: calc(-1 * var(--shell-pad)) calc(-1 * var(--shell-pad)) 14px;
+  padding: max(12px, env(safe-area-inset-top)) var(--shell-pad) 12px;
   background: color-mix(in srgb, var(--background) 92%, transparent);
   border-bottom: 1px solid var(--border);
   backdrop-filter: blur(18px);
 }
-.topbar > div { display: inline-flex; align-items: center; gap: 10px; }
+.topbar > div { display: inline-flex; align-items: center; gap: 10px; min-width: 0; }
 .brand-mark {
   width: 34px;
   height: 34px;
+  flex: 0 0 auto;
   display: grid;
   place-items: center;
   border-radius: 50%;
@@ -88,9 +93,13 @@ button { cursor: pointer; }
   font-weight: 900;
   letter-spacing: .13em;
   text-transform: uppercase;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .theme-toggle,
 .back-link {
+  flex: 0 0 auto;
   border: 1px solid var(--border);
   background: var(--surface);
   color: var(--text);
@@ -98,15 +107,17 @@ button { cursor: pointer; }
   padding: 9px 12px;
   font-size: .76rem;
   font-weight: 800;
+  white-space: nowrap;
 }
 
 .card {
   background: var(--surface);
   border: 1px solid var(--border);
-  border-radius: 22px;
-  padding: 18px;
+  border-radius: 20px;
+  padding: clamp(16px, 4vw, 22px);
   box-shadow: none;
   margin-bottom: 14px;
+  min-width: 0;
 }
 
 .hero {
@@ -134,10 +145,10 @@ button { cursor: pointer; }
   margin: 0 0 8px;
 }
 h1 {
-  font-size: clamp(2.35rem, 13vw, 4rem);
-  line-height: .92;
-  letter-spacing: -.06em;
+  font-size: 2.45rem;
+  line-height: .95;
   margin: 0 0 14px;
+  text-wrap: balance;
 }
 h2 { font-size: 1.4rem; margin: 0; line-height: 1.1; }
 h3 { margin: 0 0 6px; }
@@ -178,6 +189,7 @@ blockquote strong { display: block; margin-top: 10px; color: var(--accent-strong
   justify-content: space-between;
   gap: 16px;
   cursor: pointer;
+  min-width: 0;
 }
 .challenge-details summary::-webkit-details-marker { display: none; }
 .challenge-details summary strong {
@@ -235,6 +247,8 @@ input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in sr
 .rings { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; margin: 16px 0; }
 .ring {
   aspect-ratio: 1;
+  width: min(100%, 220px);
+  justify-self: center;
   border-radius: 50%;
   display: grid;
   place-items: center;
@@ -254,7 +268,11 @@ input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in sr
 }
 .ring strong { font-size: 1.45rem; }
 .ring span { color: var(--text); font-size: .86rem; }
-.ring small { color: var(--text-muted); }
+.ring small {
+  color: var(--text-muted);
+  max-width: 86%;
+  overflow-wrap: anywhere;
+}
 .primary {
   width: 100%;
   padding: 16px;
@@ -279,6 +297,7 @@ input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in sr
   border-radius: 16px;
   padding: 14px;
   margin-bottom: 10px;
+  min-width: 0;
 }
 .check-row .box {
   display: grid;
@@ -289,6 +308,9 @@ input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in sr
   border: 1px solid color-mix(in srgb, var(--text-muted) 45%, transparent);
   color: transparent;
 }
+.check-row > span:last-child { min-width: 0; }
+.check-row strong,
+.check-row small { overflow-wrap: anywhere; }
 .check-row small { display: block; color: var(--text-muted); margin-top: 2px; }
 .check-row.checked {
   background: color-mix(in srgb, var(--accent) 12%, var(--surface-elevated));
@@ -315,9 +337,11 @@ input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in sr
   display: flex;
   justify-content: space-between;
   align-items: center;
+  gap: 16px;
   padding: 14px 0;
   border-top: 1px solid var(--border);
 }
+.feed-item > div { min-width: 0; }
 .feed-item p { margin: 2px 0 0; color: var(--text-muted); }
 .feed-item span,
 .science-icon {
@@ -329,13 +353,14 @@ input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in sr
   background: color-mix(in srgb, var(--accent) 16%, var(--surface-elevated));
   color: var(--accent-strong);
   font-weight: 900;
+  flex: 0 0 auto;
 }
 
 .science-page { padding-bottom: 92px; }
-.science-hero h1 { font-size: clamp(2.55rem, 14vw, 4.2rem); }
+.science-hero h1 { font-size: 2.55rem; }
 .science-stats {
   display: grid;
-  grid-template-columns: 1fr;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 210px), 1fr));
   gap: 12px;
   margin-bottom: 16px;
 }
@@ -366,6 +391,7 @@ input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in sr
   border: 1px solid var(--border);
   border-radius: 18px;
   background: var(--surface-elevated);
+  min-width: 0;
 }
 .timeline article > span {
   display: grid;
@@ -385,6 +411,7 @@ input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in sr
 .sources-card li { color: var(--text-muted); line-height: 1.55; margin: 0; }
 .verse-grid {
   display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 250px), 1fr));
   gap: 12px;
   margin-top: 18px;
 }
@@ -418,9 +445,58 @@ input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in sr
   opacity: 1;
   transform: translateY(0);
 }
-@media (min-width: 720px) {
-  .science-stats { grid-template-columns: repeat(3, 1fr); }
-  .verse-grid { grid-template-columns: repeat(2, 1fr); }
+@media (max-width: 380px) {
+  .brand-name { max-width: 132px; }
+  .theme-toggle,
+  .back-link {
+    padding: 8px 10px;
+    font-size: .72rem;
+  }
+  .card { border-radius: 16px; }
+  h1 { font-size: 2.15rem; }
+  h2 { font-size: 1.22rem; }
+  .lead { font-size: .96rem; }
+  .rings { gap: 8px; }
+  .ring { padding: 5px; }
+  .ring strong { font-size: 1.18rem; }
+  .ring span { font-size: .78rem; }
+  .ring small { font-size: .68rem; }
+  .timeline article,
+  .standard-stack article {
+    grid-template-columns: 1fr;
+  }
+}
+@media (min-width: 560px) {
+  h1 { font-size: 3.2rem; }
+  .science-hero h1 { font-size: 3.35rem; }
+  .card { margin-bottom: 16px; }
+  .dashboard {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 14px;
+  }
+  .dashboard label { margin-bottom: 0; }
+  .dashboard .rings,
+  .dashboard .primary { grid-column: 1 / -1; }
+  .rings { gap: 16px; }
+}
+@media (min-width: 840px) {
+  .app-shell {
+    width: min(100%, 760px);
+  }
+  h1 { font-size: 3.75rem; }
+  .science-page {
+    width: min(100%, 1080px);
+  }
+  .science-hero h1 { font-size: 4rem; }
+  .science-page .science-hero,
+  .science-page .sources-card {
+    width: min(100%, 760px);
+    margin-inline: auto;
+  }
+  .science-page > .card:not(.science-hero):not(.sources-card) {
+    margin-bottom: 18px;
+  }
 }
 @media (prefers-reduced-motion: reduce) {
   html { scroll-behavior: auto; }

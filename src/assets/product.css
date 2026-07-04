@@ -1,8 +1,12 @@
 @import url('./icons.css');
 
+.landing-shell {
+  width: min(100%, 1120px);
+}
+
 .cta-row {
   display: grid;
-  grid-template-columns: 1fr;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 210px), 1fr));
   gap: 10px;
   margin: 18px 0;
 }
@@ -12,6 +16,8 @@
   place-items: center;
   text-align: center;
   min-height: 52px;
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 .secondary-button {
   border: 1px solid var(--border);
@@ -67,6 +73,7 @@
 .hero-poster img {
   display: block;
   width: 100%;
+  max-height: 720px;
   border-radius: 24px;
   object-fit: cover;
   background: var(--surface);
@@ -74,7 +81,7 @@
 .landing-grid,
 .mini-proof-grid {
   display: grid;
-  grid-template-columns: 1fr;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 230px), 1fr));
   gap: 12px;
   margin-top: 16px;
 }
@@ -86,7 +93,7 @@
   background: var(--surface-elevated);
 }
 .compact-grid {
-  grid-template-columns: repeat(2, 1fr);
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 150px), 1fr));
 }
 .compact-grid article {
   display: grid;
@@ -94,6 +101,7 @@
   gap: 12px;
   min-height: 116px;
 }
+.compact-grid h3 { overflow-wrap: anywhere; }
 .compact-grid h3 { margin: 0; }
 .landing-grid span,
 .mini-proof-grid span {
@@ -130,7 +138,12 @@
 }
 .short-timeline article { align-items: center; }
 .short-timeline h3 { margin: 0; }
-.auth-shell { min-height: 100vh; display: grid; align-content: start; }
+.auth-shell {
+  min-height: 100vh;
+  display: grid;
+  align-content: start;
+  width: min(100%, 620px);
+}
 .auth-card form { display: grid; gap: 12px; margin-top: 18px; }
 .auth-card label {
   display: grid;
@@ -143,12 +156,46 @@
 }
 .auth-note { color: var(--text-muted); text-align: center; }
 .auth-note a { color: var(--accent-strong); font-weight: 900; }
-.compact-hero h1 { font-size: clamp(2rem, 12vw, 3.4rem); }
+.compact-hero h1 { font-size: 2.25rem; }
 @media (min-width: 560px) {
-  .cta-row { grid-template-columns: 1fr 1fr; }
-  .landing-grid,
-  .mini-proof-grid { grid-template-columns: repeat(2, 1fr); }
+  .compact-hero h1 { font-size: 3rem; }
 }
-@media (min-width: 760px) {
-  .mini-proof-grid { grid-template-columns: repeat(3, 1fr); }
+@media (min-width: 840px) {
+  .landing-hero {
+    padding: 34px;
+  }
+  .landing-hero h1 {
+    max-width: 9ch;
+  }
+  .landing-hero .lead {
+    max-width: 58ch;
+  }
+  .hero-poster {
+    margin: 20px auto;
+    width: min(100%, 860px);
+  }
+  .landing-section,
+  .feature-link,
+  .final-cta {
+    width: min(100%, 860px);
+    margin-inline: auto;
+  }
+  .compact-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+@media (max-width: 380px) {
+  .compact-grid {
+    grid-template-columns: 1fr 1fr;
+  }
+  .compact-grid article {
+    min-height: 104px;
+    padding: 14px;
+  }
+  .landing-grid span,
+  .mini-proof-grid span {
+    width: 38px;
+    height: 38px;
+    border-radius: 12px;
+  }
 }
