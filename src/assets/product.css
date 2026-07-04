@@ -113,6 +113,81 @@
   font-size: 1rem;
   line-height: 1;
 }
+.daily-actions {
+  display: grid;
+  gap: 14px;
+}
+.action-grid {
+  display: grid;
+  gap: 12px;
+}
+.action-card {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  background: var(--surface-elevated);
+}
+.action-card-header {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 12px;
+  align-items: start;
+}
+.action-card h3 {
+  margin: 0 0 4px;
+  line-height: 1.15;
+}
+.action-card p,
+.action-card small {
+  margin: 0;
+  color: var(--text-muted);
+  line-height: 1.45;
+}
+.action-select-label {
+  display: grid;
+  gap: 7px;
+  color: var(--accent-strong);
+  font-size: .7rem;
+  font-weight: 900;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+.action-select {
+  width: 100%;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--input);
+  color: var(--text);
+  padding: 12px 14px;
+}
+.workout-recommendation {
+  padding: 12px;
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--accent) 10%, var(--surface));
+}
+.action-button {
+  display: grid;
+  place-items: center;
+  min-height: 48px;
+  border: 1px solid color-mix(in srgb, var(--accent) 42%, var(--border));
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--accent) 18%, var(--surface));
+  color: var(--text);
+  font-weight: 900;
+  text-align: center;
+  transition: transform 180ms ease, border-color 180ms ease, background 180ms ease;
+}
+.action-button:hover {
+  transform: translateY(-1px);
+  border-color: color-mix(in srgb, var(--accent) 64%, var(--border));
+  background: color-mix(in srgb, var(--accent) 26%, var(--surface));
+}
+.action-button.ghost {
+  background: transparent;
+  color: var(--accent-strong);
+}
 .hero-poster {
   margin: 18px 0 18px;
 }
@@ -209,6 +284,7 @@
 .compact-hero h1 { font-size: 2.25rem; }
 @media (min-width: 560px) {
   .compact-hero h1 { font-size: 3rem; }
+  .action-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 @media (min-width: 840px) {
   .landing-hero {

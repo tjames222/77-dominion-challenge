@@ -3,6 +3,9 @@ import { initReveal } from './reveal';
 const TOTAL_DAYS = 77;
 const YOUVERSION_VERSE_URL = import.meta.env.VITE_YOUVERSION_VERSE_URL || '';
 const YOUVERSION_APP_URL = import.meta.env.VITE_YOUVERSION_APP_URL || 'https://www.bible.com/';
+const YOUVERSION_PRAYER_URL = import.meta.env.VITE_YOUVERSION_PRAYER_URL || 'https://www.bible.com/prayer';
+const APPLE_FITNESS_URL = import.meta.env.VITE_APPLE_FITNESS_URL || 'https://fitness.apple.com/';
+const WALK_ALARM_URL = import.meta.env.VITE_WALK_ALARM_URL || '';
 const standards = [
   ['bible', 'Bible Reading', '5–8 chapters'],
   ['morningPrayer', 'Morning Prayer', 'Spirit'],
@@ -22,6 +25,37 @@ const fallbackVerse = {
   text: 'His mercies never come to an end; they are new every morning.',
   reference: 'Lamentations 3:22-23',
 };
+const worshipPlaylists = [
+  { label: 'Morning worship focus', url: 'https://open.spotify.com/search/morning%20worship%20playlist' },
+  { label: 'Acoustic worship reset', url: 'https://open.spotify.com/search/acoustic%20worship%20playlist' },
+  { label: 'Praise and worship lift', url: 'https://open.spotify.com/search/praise%20and%20worship%20playlist' },
+  { label: 'Instrumental worship flow', url: 'https://open.spotify.com/search/instrumental%20worship%20playlist' },
+  { label: 'Gospel worship strength', url: 'https://open.spotify.com/search/gospel%20worship%20playlist' },
+  { label: 'Evening worship surrender', url: 'https://open.spotify.com/search/evening%20worship%20playlist' },
+  { label: 'Christian worship today', url: 'https://open.spotify.com/search/christian%20worship%20playlist' },
+];
+const workoutPlans = {
+  easy: [
+    '20 min mobility, light core, and a relaxed cooldown.',
+    '25 min low-impact strength with slow reps and steady breathing.',
+    '30 min recovery ride or walk with 10 min stretching.',
+  ],
+  medium: [
+    '35 min full-body strength with a controlled finisher.',
+    '30 min intervals plus 10 min core.',
+    '40 min upper/lower split at a sustainable pace.',
+  ],
+  hard: [
+    '45 min strength circuit with short rests and a hard finisher.',
+    '35 min HIIT plus 15 min mobility recovery.',
+    '50 min legs, core, and conditioning.',
+  ],
+  extreme: [
+    '60 min advanced strength and conditioning. Warm up seriously.',
+    '45 min high-output intervals plus 20 min accessory work.',
+    '75 min endurance push. Hydrate and scale if form slips.',
+  ],
+};
 const todayKey = () => new Date().toISOString().slice(0, 10);
 const load = (key, fallback) => JSON.parse(localStorage.getItem(key) || JSON.stringify(fallback));
 const save = (key, value) => localStorage.setItem(key, JSON.stringify(value));
@@ -30,10 +64,13 @@ let startDate = load('dominion:startDate', todayKey());
 let memberName = load('dominion:memberName', load('dominion:user', { name: '' }).name || '');
 let entries = load('dominion:entries', []);
 let feed = load('dominion:feed', starterFeed);
+let workoutDifficulty = load('dominion:workoutDifficulty', { one: 'medium', two: 'medium' });
 const $ = (id) => document.getElementById(id);
 const verseText = $('verseText');
 const verseReference = $('verseReference');
 const verseAppLink = $('verseAppLink');
+const dayIndex = () => Math.floor(new Date(`${todayKey()}T00:00:00`).getTime() / 86400000);
+const pickDaily = (items, offset = 0) => items[(dayIndex() + offset) % items.length];
 const todayEntry = () => entries.find(entry => entry.date === todayKey()) || { date: todayKey(), completed: [] };
 const saveEntry = (entry) => {
   const index = entries.findIndex(item => item.date === entry.date);
@@ -46,6 +83,38 @@ function applyVerse(verse) {
   if (!verseText || !verseReference) return;
   verseText.textContent = verse.text;
   verseReference.textContent = verse.reference;
+}
+function applyDailyActions() {
+  const morningPrayerLink = $('morningPrayerLink');
+  const eveningPrayerLink = $('eveningPrayerLink');
+  const worshipLink = $('worshipLink');
+  const worshipPrompt = $('worshipPrompt');
+  const workoutOneDifficulty = $('workoutOneDifficulty');
+  const workoutTwoDifficulty = $('workoutTwoDifficulty');
+  const workoutOneRecommendation = $('workoutOneRecommendation');
+  const workoutTwoRecommendation = $('workoutTwoRecommendation');
+  const workoutOneLink = $('workoutOneLink');
+  const workoutTwoLink = $('workoutTwoLink');
+
+  if (morningPrayerLink) morningPrayerLink.href = YOUVERSION_PRAYER_URL;
+  if (eveningPrayerLink) eveningPrayerLink.href = YOUVERSION_PRAYER_URL;
+
+  const worship = pickDaily(worshipPlaylists);
+  if (worshipLink) {
+    worshipLink.href = worship.url;
+    worshipLink.textContent = 'Open today’s worship';
+  }
+  if (worshipPrompt) worshipPrompt.textContent = worship.label;
+
+  if (workoutOneDifficulty) workoutOneDifficulty.value = workoutDifficulty.one || 'medium';
+  if (workoutTwoDifficulty) workoutTwoDifficulty.value = workoutDifficulty.two || 'medium';
+
+  const onePlan = pickDaily(workoutPlans[workoutDifficulty.one || 'medium'], 0);
+  const twoPlan = pickDaily(workoutPlans[workoutDifficulty.two || 'medium'], 1);
+  if (workoutOneRecommendation) workoutOneRecommendation.textContent = onePlan;
+  if (workoutTwoRecommendation) workoutTwoRecommendation.textContent = twoPlan;
+  if (workoutOneLink) workoutOneLink.href = APPLE_FITNESS_URL;
+  if (workoutTwoLink) workoutTwoLink.href = APPLE_FITNESS_URL;
 }
 async function loadVerseOfDay() {
   if (!YOUVERSION_VERSE_URL) {
@@ -115,6 +184,7 @@ function render() {
   }
   if (completedToday) completedToday.textContent = `${feed.filter(item => item.status === 'complete' && item.timestamp === 'Today').length} people completed today`;
   if (verseAppLink) verseAppLink.href = YOUVERSION_APP_URL;
+  applyDailyActions();
 }
 const themeToggle = $('themeToggle');
 const memberNameInput = $('memberName');
@@ -122,9 +192,32 @@ const startDateInput = $('startDate');
 const checklist = $('checklist');
 const scheduledButton = $('scheduledButton');
 const checkInButton = $('checkInButton');
+const walkReminderButton = $('walkReminderButton');
 if (themeToggle) themeToggle.addEventListener('click', () => { theme = theme === 'dark' ? 'light' : 'dark'; save('dominion:theme', theme); render(); });
 if (memberNameInput) memberNameInput.addEventListener('input', event => { memberName = event.target.value; save('dominion:memberName', memberName); });
 if (startDateInput) startDateInput.addEventListener('input', event => { startDate = event.target.value || todayKey(); save('dominion:startDate', startDate); render(); });
+document.querySelectorAll('[data-workout]').forEach((select) => {
+  select.addEventListener('change', (event) => {
+    const target = event.target;
+    workoutDifficulty = { ...workoutDifficulty, [target.dataset.workout]: target.value };
+    save('dominion:workoutDifficulty', workoutDifficulty);
+    applyDailyActions();
+  });
+});
+document.querySelectorAll('[data-native-health]').forEach((button) => {
+  button.addEventListener('click', () => {
+    window.alert('Apple Health activity rings and step data require a native iOS/watchOS app with HealthKit permission. For now, keep using the daily checkboxes here; this is ready for the native bridge later.');
+  });
+});
+if (walkReminderButton) walkReminderButton.addEventListener('click', () => {
+  if (WALK_ALARM_URL) {
+    window.location.href = WALK_ALARM_URL;
+    return;
+  }
+  const time = window.prompt('What time should your walk alarm be?', '12:30 PM');
+  const status = $('walkReminderStatus');
+  if (time && status) status.textContent = `Set an alarm in Clock for ${time} and label it Dominion Walk.`;
+});
 if (checklist) checklist.addEventListener('click', event => {
   const row = event.target.closest('[data-standard]');
   if (!row) return;
@@ -146,4 +239,5 @@ if (checkInButton) checkInButton.addEventListener('click', () => {
 });
 render();
 loadVerseOfDay();
+applyDailyActions();
 requestAnimationFrame(() => initReveal());

@@ -35,6 +35,85 @@
         </div>
       </section>
 
+      <section class="card daily-actions reveal">
+        <div class="section-heading">
+          <p class="eyebrow">Today’s Actions</p>
+          <h2>Stay faithful in the next step</h2>
+        </div>
+        <div class="action-grid">
+          <article class="action-card">
+            <div class="action-card-header">
+              <span class="app-icon icon-prayer" aria-hidden="true"></span>
+              <div><h3>Morning Prayer</h3><p>Start surrendered before the day starts speaking for you.</p></div>
+            </div>
+            <a class="action-button" id="morningPrayerLink" href="https://www.bible.com/prayer" target="_blank" rel="noreferrer">Open guided prayer</a>
+          </article>
+
+          <article class="action-card">
+            <div class="action-card-header">
+              <span class="app-icon icon-music" aria-hidden="true"></span>
+              <div><h3>Worship</h3><p>Let today’s soundtrack aim your attention back at God.</p></div>
+            </div>
+            <a class="action-button" id="worshipLink" href="https://open.spotify.com/search/worship%20playlist" target="_blank" rel="noreferrer">Open today’s playlist</a>
+            <small id="worshipPrompt">A fresh worship direction loads each day.</small>
+          </article>
+
+          <article class="action-card">
+            <div class="action-card-header">
+              <span class="app-icon icon-dumbbell" aria-hidden="true"></span>
+              <div><h3>Workout #1</h3><p>Move with intention. The goal is discipline, not ego.</p></div>
+            </div>
+            <label class="action-select-label">Intensity
+              <select id="workoutOneDifficulty" class="action-select" data-workout="one">
+                <option value="easy">Easy</option>
+                <option value="medium">Medium</option>
+                <option value="hard">Hard</option>
+                <option value="extreme">Extreme</option>
+              </select>
+            </label>
+            <p class="workout-recommendation" id="workoutOneRecommendation"></p>
+            <a class="action-button" id="workoutOneLink" href="https://fitness.apple.com/" target="_blank" rel="noreferrer">Open Apple Fitness</a>
+            <button class="action-button ghost" type="button" data-native-health>Connect Apple Health</button>
+          </article>
+
+          <article class="action-card">
+            <div class="action-card-header">
+              <span class="app-icon icon-walk" aria-hidden="true"></span>
+              <div><h3>Intentional Walk</h3><p>Break the drift. Get outside, breathe, and reset your mind.</p></div>
+            </div>
+            <button class="action-button" type="button" id="walkReminderButton">Set walk alarm</button>
+            <button class="action-button ghost" type="button" data-native-health>Connect steps</button>
+            <small id="walkReminderStatus">Apple Health and Clock handoff require native app permissions.</small>
+          </article>
+
+          <article class="action-card">
+            <div class="action-card-header">
+              <span class="app-icon icon-run" aria-hidden="true"></span>
+              <div><h3>Workout #2</h3><p>Finish the physical standard with patience and resolve.</p></div>
+            </div>
+            <label class="action-select-label">Intensity
+              <select id="workoutTwoDifficulty" class="action-select" data-workout="two">
+                <option value="easy">Easy</option>
+                <option value="medium">Medium</option>
+                <option value="hard">Hard</option>
+                <option value="extreme">Extreme</option>
+              </select>
+            </label>
+            <p class="workout-recommendation" id="workoutTwoRecommendation"></p>
+            <a class="action-button" id="workoutTwoLink" href="https://fitness.apple.com/" target="_blank" rel="noreferrer">Open Apple Fitness</a>
+            <button class="action-button ghost" type="button" data-native-health>Connect Apple Health</button>
+          </article>
+
+          <article class="action-card">
+            <div class="action-card-header">
+              <span class="app-icon icon-prayer" aria-hidden="true"></span>
+              <div><h3>Evening Prayer</h3><p>Close the loop with gratitude, confession, and trust.</p></div>
+            </div>
+            <a class="action-button" id="eveningPrayerLink" href="https://www.bible.com/prayer" target="_blank" rel="noreferrer">Open guided prayer</a>
+          </article>
+        </div>
+      </section>
+
       <section class="dashboard card">
         <label>Your name<input id="memberName" placeholder="Tim" /></label>
         <label>Challenge start date<input id="startDate" type="date" /></label>
