@@ -112,7 +112,6 @@
   position: relative;
   display: grid;
   gap: 10px;
-  margin-top: 18px;
   padding: 18px;
   border: 1px solid color-mix(in srgb, var(--accent) 58%, var(--border));
   border-radius: 20px;
@@ -120,6 +119,9 @@
     radial-gradient(circle at top right, color-mix(in srgb, var(--accent) 16%, transparent), transparent 42%),
     color-mix(in srgb, var(--accent) 5%, var(--surface-elevated));
   box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 10%, transparent);
+}
+.daily-actions .verse-card {
+  margin-top: 0;
 }
 .verse-card-kicker {
   color: var(--accent-strong);
@@ -193,6 +195,9 @@
 .daily-actions {
   display: grid;
   gap: 14px;
+}
+.daily-actions .action-grid {
+  margin-top: 2px;
 }
 .action-grid {
   display: grid;
