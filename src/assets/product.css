@@ -264,6 +264,32 @@
   text-align: center;
   transition: transform 180ms ease, border-color 180ms ease, background 180ms ease;
 }
+.action-button.with-icon {
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  justify-content: start;
+  gap: 12px;
+  padding-inline: 14px;
+  text-align: left;
+}
+.verse-card-link.action-button {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.action-button-icon {
+  width: 26px;
+  height: 26px;
+  border-radius: 999px;
+  background: color-mix(in srgb, currentColor 14%, transparent);
+}
+.action-button-icon::before {
+  width: 15px;
+  height: 15px;
+}
+.action-button.with-icon span:nth-child(2) {
+  min-width: 0;
+}
 .action-button:hover {
   transform: translateY(-1px);
   border-color: color-mix(in srgb, var(--accent) 64%, var(--border));
@@ -272,6 +298,9 @@
 .action-button.ghost {
   background: transparent;
   color: var(--accent-strong);
+}
+.action-button.ghost .action-button-icon {
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
 }
 .hero-poster {
   margin: 18px 0 18px;
