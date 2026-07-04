@@ -44,6 +44,27 @@
         <button class="action-button countdown-action" type="button" id="countdownCheckInButton">Go to check-in</button>
       </section>
 
+      <section class="dashboard card">
+        <label>Your name<input id="memberName" placeholder="Tim" /></label>
+        <label>Challenge start date<input id="startDate" type="date" /></label>
+        <div class="rings">
+          <div class="ring" id="challengeRing"><div class="ring-inner"><strong id="challengePercent">1%</strong><span>Challenge</span><small id="challengeDay">Day 1 of 77</small></div></div>
+          <div class="ring" id="todayRing"><div class="ring-inner"><strong id="todayPercent">0%</strong><span>Today</span><small id="todayCount">0 of 7 done</small></div></div>
+        </div>
+        <button class="primary" id="checkInButton" disabled>Post Check-In</button>
+      </section>
+
+      <section class="card checklist">
+        <div class="section-heading"><p class="eyebrow">Today's Standard</p><h2>Daily Scorecard</h2></div>
+        <div id="checklist"></div>
+        <button class="scheduled" id="scheduledButton">Scheduled miss day planned ahead</button>
+      </section>
+
+      <section class="card community">
+        <div class="section-heading"><p class="eyebrow">Accountability</p><h2 id="completedToday">3 people completed today</h2></div>
+        <div id="feed"></div>
+      </section>
+
       <section class="card daily-actions reveal">
         <div class="section-heading">
           <p class="eyebrow">Today’s Actions</p>
@@ -162,27 +183,6 @@
             </a>
           </article>
         </div>
-      </section>
-
-      <section class="dashboard card">
-        <label>Your name<input id="memberName" placeholder="Tim" /></label>
-        <label>Challenge start date<input id="startDate" type="date" /></label>
-        <div class="rings">
-          <div class="ring" id="challengeRing"><div class="ring-inner"><strong id="challengePercent">1%</strong><span>Challenge</span><small id="challengeDay">Day 1 of 77</small></div></div>
-          <div class="ring" id="todayRing"><div class="ring-inner"><strong id="todayPercent">0%</strong><span>Today</span><small id="todayCount">0 of 7 done</small></div></div>
-        </div>
-        <button class="primary" id="checkInButton" disabled>Post Check-In</button>
-      </section>
-
-      <section class="card checklist">
-        <div class="section-heading"><p class="eyebrow">Today's Standard</p><h2>Daily Scorecard</h2></div>
-        <div id="checklist"></div>
-        <button class="scheduled" id="scheduledButton">Scheduled miss day planned ahead</button>
-      </section>
-
-      <section class="card community">
-        <div class="section-heading"><p class="eyebrow">Accountability</p><h2 id="completedToday">3 people completed today</h2></div>
-        <div id="feed"></div>
       </section>
     </main>
     <script type="module" src="./src/static/dashboard.js"></script>
