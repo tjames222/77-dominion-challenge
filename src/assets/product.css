@@ -108,6 +108,9 @@
   font-weight: 850;
   line-height: 1.2;
 }
+.countdown-action {
+  width: 100%;
+}
 .verse-card {
   position: relative;
   display: grid;

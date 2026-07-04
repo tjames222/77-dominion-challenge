@@ -256,6 +256,7 @@ const startDateInput = $('startDate');
 const checklist = $('checklist');
 const scheduledButton = $('scheduledButton');
 const checkInButton = $('checkInButton');
+const countdownCheckInButton = $('countdownCheckInButton');
 const walkReminderButton = $('walkReminderButton');
 if (themeToggle) themeToggle.addEventListener('click', () => { theme = theme === 'dark' ? 'light' : 'dark'; save('dominion:theme', theme); render(); });
 if (memberNameInput) memberNameInput.addEventListener('input', event => { memberName = event.target.value; save('dominion:memberName', memberName); });
@@ -300,6 +301,10 @@ if (checkInButton) checkInButton.addEventListener('click', () => {
   feed.unshift({ name: memberName || 'Anonymous', day: currentDay(), status: todayEntry().scheduledMiss ? 'scheduled' : 'complete', timestamp: 'Today' });
   save('dominion:feed', feed);
   render();
+});
+if (countdownCheckInButton && checkInButton) countdownCheckInButton.addEventListener('click', () => {
+  checkInButton.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  checkInButton.focus({ preventScroll: true });
 });
 render();
 loadVerseOfDay();
