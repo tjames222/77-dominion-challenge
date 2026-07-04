@@ -79,7 +79,6 @@ const load = (key, fallback) => JSON.parse(localStorage.getItem(key) || JSON.str
 const save = (key, value) => localStorage.setItem(key, JSON.stringify(value));
 let theme = load('dominion:theme', 'dark');
 let startDate = load('dominion:startDate', todayKey());
-let memberName = load('dominion:memberName', load('dominion:user', { name: '' }).name || '');
 let entries = load('dominion:entries', []);
 let feed = load('dominion:feed', starterFeed);
 let workoutDifficulty = load('dominion:workoutDifficulty', { one: 'medium', two: 'medium' });
@@ -211,7 +210,6 @@ async function loadVerseOfDay() {
 function render() {
   document.documentElement.dataset.theme = theme;
   const themeToggle = $('themeToggle');
-  const memberNameInput = $('memberName');
   const startDateInput = $('startDate');
   const challengePercentEl = $('challengePercent');
   const challengeDayEl = $('challengeDay');
@@ -225,7 +223,6 @@ function render() {
   const feedEl = $('feed');
   const completedToday = $('completedToday');
   if (themeToggle) themeToggle.textContent = `${theme === 'dark' ? 'Dark' : 'Light'} Theme`;
-  if (memberNameInput) memberNameInput.value = memberName;
   if (startDateInput) startDateInput.value = startDate;
   const entry = todayEntry();
   const challengePercent = Math.round((currentDay() / TOTAL_DAYS) * 100);
@@ -255,7 +252,6 @@ function startCountdownCard() {
   countdownTimer = window.setInterval(updateCountdownCard, 1000);
 }
 const themeToggle = $('themeToggle');
-const memberNameInput = $('memberName');
 const startDateInput = $('startDate');
 const checklist = $('checklist');
 const scheduledButton = $('scheduledButton');
@@ -263,7 +259,6 @@ const checkInButton = $('checkInButton');
 const countdownCheckInButton = $('countdownCheckInButton');
 const walkReminderButton = $('walkReminderButton');
 if (themeToggle) themeToggle.addEventListener('click', () => { theme = theme === 'dark' ? 'light' : 'dark'; save('dominion:theme', theme); render(); });
-if (memberNameInput) memberNameInput.addEventListener('input', event => { memberName = event.target.value; save('dominion:memberName', memberName); });
 if (startDateInput) startDateInput.addEventListener('input', event => { startDate = event.target.value || todayKey(); save('dominion:startDate', startDate); render(); });
 document.querySelectorAll('[data-workout]').forEach((select) => {
   select.addEventListener('change', (event) => {
@@ -302,7 +297,7 @@ if (scheduledButton) scheduledButton.addEventListener('click', () => {
   render();
 });
 if (checkInButton) checkInButton.addEventListener('click', () => {
-  feed.unshift({ name: memberName || 'Anonymous', day: currentDay(), status: todayEntry().scheduledMiss ? 'scheduled' : 'complete', timestamp: 'Today' });
+  feed.unshift({ name: 'You', day: currentDay(), status: todayEntry().scheduledMiss ? 'scheduled' : 'complete', timestamp: 'Today' });
   save('dominion:feed', feed);
   render();
 });

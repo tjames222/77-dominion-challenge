@@ -226,7 +226,11 @@ blockquote strong { display: block; margin-top: 10px; color: var(--accent-strong
 .details-body ul { margin: 14px 0 0; padding-left: 20px; }
 .details-body strong { color: var(--text); }
 
-.dashboard label {
+.progress {
+  display: grid;
+  gap: 14px;
+}
+.progress label {
   display: grid;
   gap: 8px;
   color: var(--accent-strong);
@@ -235,6 +239,11 @@ blockquote strong { display: block; margin-top: 10px; color: var(--accent-strong
   text-transform: uppercase;
   letter-spacing: .1em;
   margin-bottom: 12px;
+}
+.progress-standard {
+  display: grid;
+  gap: 12px;
+  padding-top: 4px;
 }
 input,
 select {
@@ -612,14 +621,10 @@ select {
   h1 { font-size: 3.2rem; }
   .science-hero h1 { font-size: 3.35rem; }
   .card { margin-bottom: 16px; }
-  .dashboard {
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 14px;
-  }
-  .dashboard label { margin-bottom: 0; }
-  .dashboard .rings,
-  .dashboard .primary { grid-column: 1 / -1; }
+  .progress label { margin-bottom: 0; }
+  .progress .rings,
+  .progress .primary,
+  .progress .progress-standard { grid-column: 1 / -1; }
   .rings { gap: 16px; }
 }
 @media (min-width: 840px) {
