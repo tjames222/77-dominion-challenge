@@ -85,7 +85,9 @@ button { cursor: pointer; }
   background: var(--accent);
   color: #080706;
   font-weight: 1000;
-  letter-spacing: -0.08em;
+  font-size: .9rem;
+  line-height: 1;
+  letter-spacing: -.05em;
 }
 .brand-name {
   color: var(--text);

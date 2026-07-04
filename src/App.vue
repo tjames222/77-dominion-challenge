@@ -25,7 +25,7 @@ function checkIn() {
   <main class="app-shell">
     <header class="topbar">
       <div>
-        <span class="brand-mark">D</span>
+        <span class="brand-mark">77</span>
         <span class="brand-name">Dominion</span>
       </div>
       <button class="theme-toggle" @click="theme.toggleTheme">
