@@ -241,11 +241,17 @@
 }
 .action-select {
   width: 100%;
+  min-width: 0;
+  min-height: 52px;
   border: 1px solid var(--border);
-  border-radius: 14px;
   background: var(--input);
   color: var(--text);
-  padding: 12px 14px;
+  border-radius: 14px;
+  padding: 14px 16px;
+  box-sizing: border-box;
+  appearance: none;
+  -webkit-appearance: none;
+  -moz-appearance: none;
 }
 .workout-recommendation {
   padding: 12px;
