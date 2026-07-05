@@ -182,7 +182,9 @@ function applyDailyActions() {
   const worship = pickDaily(worshipPlaylists);
   if (worshipLink) {
     worshipLink.href = worship.url;
-    worshipLink.textContent = 'Open today’s worship';
+    const worshipLinkLabel = worshipLink.querySelector('span:nth-child(2)');
+    if (worshipLinkLabel) worshipLinkLabel.textContent = 'Open today’s worship';
+    else worshipLink.textContent = 'Open today’s worship';
   }
   if (worshipPrompt) worshipPrompt.textContent = worship.label;
 

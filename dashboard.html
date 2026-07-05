@@ -9,19 +9,19 @@
     <link rel="stylesheet" href="./src/assets/product.css" />
   </head>
   <body>
-    <main class="app-shell">
+    <main class="app-shell dashboard-shell">
       <header class="topbar">
         <a class="back-link" href="./index.html">Dominion</a>
         <button class="theme-toggle" id="themeToggle">Dark Theme</button>
       </header>
 
-      <section class="hero card compact-hero">
+      <section class="dashboard-hero compact-hero reveal">
         <p class="eyebrow">Member Dashboard</p>
         <h1>Today’s Dominion</h1>
         <p class="lead">Track your standards, post your check-in, and stay honest.</p>
       </section>
 
-      <section class="countdown-card card reveal" id="countdownCard">
+      <section class="countdown-card spotlight-panel reveal" id="countdownCard">
         <div class="countdown-topline">
           <span class="app-icon icon-clock countdown-icon" aria-hidden="true"></span>
           <div>
@@ -44,7 +44,7 @@
         <button class="action-button countdown-action" type="button" id="countdownCheckInButton">Go to check-in</button>
       </section>
 
-      <section class="card progress reveal">
+      <section class="progress dashboard-section reveal">
         <div class="section-heading">
           <p class="eyebrow">Progress</p>
           <h2>How today is tracking</h2>
@@ -62,17 +62,17 @@
         </div>
       </section>
 
-      <section class="card community">
+      <section class="community dashboard-section reveal">
         <div class="section-heading"><p class="eyebrow">Accountability</p><h2 id="completedToday">3 people completed today</h2></div>
         <div id="feed"></div>
       </section>
 
-      <section class="card daily-actions reveal">
+      <section class="daily-actions dashboard-section reveal">
         <div class="section-heading">
           <p class="eyebrow">Today’s Actions</p>
           <h2>Stay faithful in the next step</h2>
         </div>
-        <section class="verse-card card reveal" id="verseCard" aria-live="polite">
+        <section class="verse-card reveal" id="verseCard" aria-live="polite">
           <span class="app-icon icon-book verse-card-icon" aria-hidden="true"></span>
           <span class="verse-card-kicker">Today’s Reading</span>
           <p id="verseText">Loading today’s verse...</p>

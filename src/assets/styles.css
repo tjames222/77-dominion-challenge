@@ -228,27 +228,36 @@ blockquote strong { display: block; margin-top: 10px; color: var(--accent-strong
 
 .progress {
   display: grid;
-  gap: 14px;
+  gap: 18px;
+  padding-block: 4px 22px;
+  border-bottom: 1px solid color-mix(in srgb, var(--accent) 22%, var(--border));
 }
 .progress label {
   display: grid;
   gap: 8px;
+  max-width: 360px;
   color: var(--accent-strong);
   font-size: .76rem;
   font-weight: 900;
   text-transform: uppercase;
   letter-spacing: .1em;
-  margin-bottom: 12px;
+  margin-bottom: 0;
 }
 .progress-standard {
   display: grid;
-  gap: 12px;
-  padding-top: 14px;
-  border-top: 1px solid var(--border);
+  gap: 18px;
+  padding-top: 22px;
+  border-top: 1px solid color-mix(in srgb, var(--accent) 22%, var(--border));
 }
 .checklist-group {
   display: grid;
-  gap: 10px;
+  gap: 12px;
+  padding-bottom: 16px;
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 72%, transparent);
+}
+.checklist-group:last-child {
+  padding-bottom: 0;
+  border-bottom: 0;
 }
 .checklist-group-header {
   display: flex;
@@ -276,7 +285,7 @@ blockquote strong { display: block; margin-top: 10px; color: var(--accent-strong
 }
 #checklist {
   display: grid;
-  gap: 14px;
+  gap: 18px;
 }
 input,
 select {
@@ -316,10 +325,10 @@ input[type="date"]::-webkit-calendar-picker-indicator {
 select {
   min-height: 52px;
 }
-.rings { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; margin: 16px 0; }
+.rings { display: grid; grid-template-columns: repeat(2, 1fr); gap: 16px; margin: 6px 0 4px; }
 .ring {
   aspect-ratio: 1;
-  width: min(100%, 220px);
+  width: min(100%, 210px);
   justify-self: center;
   border-radius: 50%;
   display: grid;
@@ -349,7 +358,7 @@ select {
   width: 100%;
   padding: 16px;
   border: 0;
-  border-radius: 16px;
+  border-radius: 8px;
   font-weight: 950;
   color: #070604;
   background: var(--accent);
@@ -363,11 +372,11 @@ select {
   align-items: center;
   gap: 13px;
   text-align: left;
-  border: 1px solid var(--border);
-  background: var(--surface-elevated);
+  border: 1px solid transparent;
+  background: transparent;
   color: var(--text);
-  border-radius: 16px;
-  padding: 14px;
+  border-radius: 8px;
+  padding: 12px;
   margin-bottom: 0;
   min-width: 0;
 }
@@ -385,8 +394,8 @@ select {
 .check-row small { overflow-wrap: anywhere; }
 .check-row small { display: block; color: var(--text-muted); margin-top: 2px; }
 .check-row.checked {
-  background: color-mix(in srgb, var(--accent) 12%, var(--surface-elevated));
-  border-color: color-mix(in srgb, var(--accent) 50%, var(--border));
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 24%, transparent);
 }
 .check-row.checked .box {
   color: #070604;
