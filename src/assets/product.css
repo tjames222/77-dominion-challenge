@@ -266,27 +266,63 @@
 .action-grid {
   display: grid;
   gap: 16px;
+  align-items: start;
 }
 .action-card {
+  --card-accent: var(--accent);
+  --card-glow: color-mix(in srgb, var(--card-accent) 12%, transparent);
   display: grid;
   gap: 14px;
   padding: 18px;
   border: 1px solid color-mix(in srgb, var(--border) 82%, transparent);
-  border-left: 3px solid color-mix(in srgb, var(--accent) 62%, var(--border));
+  border-left: 3px solid color-mix(in srgb, var(--card-accent) 62%, var(--border));
   border-radius: 8px;
   background: color-mix(in srgb, var(--surface-elevated) 82%, transparent);
 }
-.action-card:nth-child(2n) {
-  border-left-color: color-mix(in srgb, var(--success) 60%, var(--border));
+.prayer-card {
+  --card-accent: var(--accent-strong);
+  align-content: space-between;
+  background:
+    linear-gradient(135deg, color-mix(in srgb, var(--accent) 12%, transparent), transparent 54%),
+    color-mix(in srgb, var(--surface-elevated) 78%, transparent);
 }
-.action-card:nth-child(3n) {
-  border-left-color: color-mix(in srgb, var(--accent-strong) 70%, var(--border));
+.worship-card {
+  --card-accent: var(--success);
+  gap: 16px;
+  background:
+    linear-gradient(160deg, color-mix(in srgb, var(--success) 14%, transparent), transparent 46%),
+    color-mix(in srgb, var(--surface-elevated) 82%, transparent);
+}
+.workout-card {
+  --card-accent: #d89c50;
+  background:
+    linear-gradient(180deg, color-mix(in srgb, #d89c50 12%, transparent), transparent 58%),
+    color-mix(in srgb, var(--surface-elevated) 84%, transparent);
+}
+.workout-card-secondary {
+  --card-accent: #c9c160;
+}
+.walk-card {
+  --card-accent: #7ab08a;
+  background:
+    linear-gradient(135deg, color-mix(in srgb, #7ab08a 14%, transparent), transparent 52%),
+    color-mix(in srgb, var(--surface-elevated) 80%, transparent);
+}
+.evening-prayer-card {
+  background:
+    linear-gradient(145deg, color-mix(in srgb, var(--accent) 8%, transparent), transparent 46%),
+    linear-gradient(315deg, color-mix(in srgb, var(--success) 10%, transparent), transparent 52%),
+    color-mix(in srgb, var(--surface-elevated) 78%, transparent);
 }
 .action-card-header {
   display: grid;
   grid-template-columns: auto 1fr;
   gap: 12px;
   align-items: start;
+}
+.action-card-header > .app-icon {
+  background: color-mix(in srgb, var(--card-accent) 16%, var(--surface-elevated));
+  color: color-mix(in srgb, var(--card-accent) 82%, var(--text));
 }
 .action-card h3 {
   margin: 0 0 4px;
@@ -298,10 +334,57 @@
   color: var(--text-muted);
   line-height: 1.45;
 }
+.action-microcopy {
+  padding: 12px 14px;
+  border: 1px solid color-mix(in srgb, var(--card-accent) 24%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--card-accent) 8%, transparent);
+  color: var(--text);
+  font-size: .9rem;
+  font-weight: 800;
+}
+.playlist-visual {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  align-items: end;
+  gap: 8px;
+  height: 76px;
+  padding: 14px;
+  border: 1px solid color-mix(in srgb, var(--card-accent) 20%, transparent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--card-accent) 8%, transparent);
+}
+.playlist-visual span {
+  display: block;
+  border-radius: 999px 999px 4px 4px;
+  background: linear-gradient(to top, color-mix(in srgb, var(--card-accent) 84%, var(--surface)), color-mix(in srgb, var(--accent-strong) 70%, var(--card-accent)));
+}
+.playlist-visual span:nth-child(1) { height: 34%; }
+.playlist-visual span:nth-child(2) { height: 74%; }
+.playlist-visual span:nth-child(3) { height: 48%; }
+.playlist-visual span:nth-child(4) { height: 88%; }
+.walk-path {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 42px;
+  padding-inline: 10px;
+}
+.walk-path span {
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--card-accent) 82%, var(--surface));
+  box-shadow: 0 0 0 7px color-mix(in srgb, var(--card-accent) 11%, transparent);
+}
+.walk-path span:nth-child(2),
+.walk-path span:nth-child(4) {
+  transform: translateY(12px);
+}
 .action-select-label {
   display: grid;
   gap: 7px;
-  color: var(--accent-strong);
+  color: color-mix(in srgb, var(--card-accent) 82%, var(--accent-strong));
   font-size: .7rem;
   font-weight: 900;
   letter-spacing: .08em;
@@ -322,18 +405,31 @@
   -moz-appearance: none;
 }
 .workout-recommendation {
+  position: relative;
   padding: 14px;
   border-radius: 8px;
-  background: color-mix(in srgb, var(--accent) 10%, transparent);
-  border: 1px solid color-mix(in srgb, var(--accent) 20%, transparent);
+  background: color-mix(in srgb, var(--card-accent) 10%, transparent);
+  border: 1px solid color-mix(in srgb, var(--card-accent) 24%, transparent);
+  color: var(--text);
+  font-weight: 750;
+}
+.workout-recommendation::before {
+  content: "Today's set";
+  display: block;
+  margin-bottom: 6px;
+  color: color-mix(in srgb, var(--card-accent) 84%, var(--accent-strong));
+  font-size: .66rem;
+  font-weight: 950;
+  letter-spacing: .12em;
+  text-transform: uppercase;
 }
 .action-button {
   display: grid;
   place-items: center;
   min-height: 48px;
-  border: 1px solid color-mix(in srgb, var(--accent) 42%, var(--border));
+  border: 1px solid color-mix(in srgb, var(--card-accent, var(--accent)) 42%, var(--border));
   border-radius: 14px;
-  background: color-mix(in srgb, var(--accent) 18%, var(--surface));
+  background: color-mix(in srgb, var(--card-accent, var(--accent)) 18%, var(--surface));
   color: var(--text);
   font-weight: 900;
   text-align: center;
@@ -367,15 +463,15 @@
 }
 .action-button:hover {
   transform: translateY(-1px);
-  border-color: color-mix(in srgb, var(--accent) 64%, var(--border));
-  background: color-mix(in srgb, var(--accent) 26%, var(--surface));
+  border-color: color-mix(in srgb, var(--card-accent, var(--accent)) 64%, var(--border));
+  background: color-mix(in srgb, var(--card-accent, var(--accent)) 26%, var(--surface));
 }
 .action-button.ghost {
   background: transparent;
-  color: var(--accent-strong);
+  color: color-mix(in srgb, var(--card-accent, var(--accent)) 82%, var(--accent-strong));
 }
 .action-button.ghost .action-button-icon {
-  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  background: color-mix(in srgb, var(--card-accent, var(--accent)) 14%, transparent);
 }
 .hero-poster {
   margin: 18px 0 18px;
@@ -490,6 +586,12 @@
     font-size: 2.8rem;
   }
   .action-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .daily-actions .verse-card {
+    grid-column: 1 / -1;
+  }
+  .workout-card {
+    min-height: 420px;
+  }
 }
 @media (max-width: 380px) {
   .countdown-display strong {
