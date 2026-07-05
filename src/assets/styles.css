@@ -299,7 +299,19 @@ select:focus {
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent);
 }
 input[type="date"] {
+  appearance: none;
+  -webkit-appearance: none;
+  display: block;
+  width: 100%;
+  max-width: 100%;
   min-height: 52px;
+  padding-right: 44px;
+  font-variant-numeric: tabular-nums;
+}
+input[type="date"]::-webkit-calendar-picker-indicator {
+  opacity: .7;
+  cursor: pointer;
+  filter: var(--calendar-picker-filter, none);
 }
 select {
   min-height: 52px;
