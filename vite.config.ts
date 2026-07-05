@@ -11,6 +11,7 @@ export default defineConfig({
         login: 'login.html',
         register: 'register.html',
         dashboard: 'dashboard.html',
+        todayActions: 'today-actions.html',
         science: 'science.html',
       },
     },
