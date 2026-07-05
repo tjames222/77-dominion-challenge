@@ -243,7 +243,40 @@ blockquote strong { display: block; margin-top: 10px; color: var(--accent-strong
 .progress-standard {
   display: grid;
   gap: 12px;
-  padding-top: 4px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+}
+.checklist-group {
+  display: grid;
+  gap: 10px;
+}
+.checklist-group-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+.checklist-group-title {
+  margin: 0;
+  color: var(--accent-strong);
+  font-size: .74rem;
+  font-weight: 900;
+  letter-spacing: .14em;
+  text-transform: uppercase;
+}
+.checklist-group-header span {
+  color: var(--text-muted);
+  font-size: .78rem;
+  font-weight: 800;
+  white-space: nowrap;
+}
+.checklist-group-items {
+  display: grid;
+  gap: 10px;
+}
+#checklist {
+  display: grid;
+  gap: 14px;
 }
 input,
 select {
@@ -323,7 +356,7 @@ select {
   color: var(--text);
   border-radius: 16px;
   padding: 14px;
-  margin-bottom: 10px;
+  margin-bottom: 0;
   min-width: 0;
 }
 .check-row .box {

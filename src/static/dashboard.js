@@ -6,15 +6,34 @@ const YOUVERSION_APP_URL = import.meta.env.VITE_YOUVERSION_APP_URL || 'https://w
 const YOUVERSION_PRAYER_URL = import.meta.env.VITE_YOUVERSION_PRAYER_URL || 'https://www.bible.com/prayer';
 const APPLE_FITNESS_URL = import.meta.env.VITE_APPLE_FITNESS_URL || 'https://fitness.apple.com/';
 const WALK_ALARM_URL = import.meta.env.VITE_WALK_ALARM_URL || '';
-const standards = [
-  ['bible', 'Bible Reading', '5–8 chapters'],
-  ['morningPrayer', 'Morning Prayer', 'Spirit'],
-  ['eveningPrayer', 'Evening Prayer', 'Spirit'],
-  ['worshipOnly', 'Worship Music Only', 'Instrumental, podcasts, and audiobooks permitted'],
-  ['workoutOne', 'Workout #1', 'No required length'],
-  ['walk', 'Intentional Walk', 'During the day'],
-  ['workoutTwo', 'Workout #2', 'No required length'],
+const scorecardGroups = [
+  {
+    key: 'mind',
+    label: 'Mind',
+    items: [
+      ['bible', 'Bible Reading', '5–8 chapters'],
+    ],
+  },
+  {
+    key: 'spirit',
+    label: 'Spirit',
+    items: [
+      ['morningPrayer', 'Morning Prayer', 'Start surrendered before the day starts speaking for you.'],
+      ['worshipOnly', 'Worship Music Only', 'Instrumental, podcasts, and audiobooks permitted'],
+      ['eveningPrayer', 'Evening Prayer', 'Close the loop with gratitude, confession, and trust.'],
+    ],
+  },
+  {
+    key: 'body',
+    label: 'Body',
+    items: [
+      ['workoutOne', 'Workout #1', 'No required length'],
+      ['walk', 'Intentional Walk', 'During the day'],
+      ['workoutTwo', 'Workout #2', 'No required length'],
+    ],
+  },
 ];
+const standards = scorecardGroups.flatMap(group => group.items);
 const starterFeed = [
   { name: 'Josh', day: 12, status: 'complete', timestamp: 'Today' },
   { name: 'Sarah', day: 12, status: 'complete', timestamp: 'Today' },
@@ -231,12 +250,16 @@ function render() {
   if (challengeDayEl) challengeDayEl.textContent = `Day ${currentDay()} of 77`;
   if (challengeRing) challengeRing.style.setProperty('--value', `${challengePercent}%`);
   if (todayPercentEl) todayPercentEl.textContent = `${todayPercent}%`;
-  if (todayCountEl) todayCountEl.textContent = `${entry.completed.length} of 7 done`;
+  if (todayCountEl) todayCountEl.textContent = `${entry.completed.length} of ${standards.length} done`;
   if (todayRing) todayRing.style.setProperty('--value', `${todayPercent}%`);
   if (checkInButton) checkInButton.disabled = entry.completed.length !== standards.length && !entry.scheduledMiss;
   if (scheduledButton) scheduledButton.classList.toggle('active', !!entry.scheduledMiss);
   if (checklist) {
-    checklist.innerHTML = standards.map(([id, label, detail]) => `<button class="check-row ${entry.completed.includes(id) ? 'checked' : ''}" data-standard="${id}"><span class="box"><span class="app-icon icon-sm icon-check" aria-hidden="true"></span></span><span><strong>${label}</strong><small>${detail}</small></span></button>`).join('');
+    checklist.innerHTML = scorecardGroups.map((group) => {
+      const rows = group.items.map(([id, label, detail]) => `<button class="check-row ${entry.completed.includes(id) ? 'checked' : ''}" data-standard="${id}"><span class="box"><span class="app-icon icon-sm icon-check" aria-hidden="true"></span></span><span><strong>${label}</strong><small>${detail}</small></span></button>`).join('');
+      const itemLabel = group.items.length === 1 ? 'action' : 'actions';
+      return `<section class="checklist-group"><div class="checklist-group-header"><p class="checklist-group-title">${group.label}</p><span>${group.items.length} ${itemLabel}</span></div><div class="checklist-group-items">${rows}</div></section>`;
+    }).join('');
   }
   if (feedEl) {
     feedEl.innerHTML = feed.slice(0, 6).map(item => `<article class="feed-item"><div><strong>${item.name}</strong><p>Day ${item.day} ${item.status === 'complete' ? 'complete' : 'scheduled miss'}</p></div><span class="feed-status"><span class="app-icon icon-sm ${item.status === 'complete' ? 'icon-check' : 'icon-repeat'}" aria-hidden="true"></span></span></article>`).join('');
