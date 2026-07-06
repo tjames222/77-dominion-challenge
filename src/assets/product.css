@@ -217,6 +217,33 @@
   object-fit: cover;
   object-position: center;
 }
+.profile-appearance {
+  gap: 14px;
+}
+.appearance-toggle {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+.appearance-option {
+  min-height: 54px;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  background: var(--surface-elevated);
+  color: var(--text);
+  font-weight: 900;
+  transition: border-color 180ms ease, background 180ms ease, transform 180ms ease, box-shadow 180ms ease;
+}
+.appearance-option:hover {
+  transform: translateY(-1px);
+  border-color: color-mix(in srgb, var(--accent) 48%, var(--border));
+}
+.appearance-option.active {
+  border-color: color-mix(in srgb, var(--accent) 62%, var(--border));
+  background: color-mix(in srgb, var(--accent) 16%, var(--surface));
+  box-shadow: inset 0 1px 0 color-mix(in srgb, #ffffff 12%, transparent);
+  color: var(--accent-strong);
+}
 .verse-card {
   position: relative;
   display: grid;

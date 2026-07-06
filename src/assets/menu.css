@@ -89,6 +89,11 @@
 }
 .menu-open .global-menu-backdrop { pointer-events: auto; opacity: 1; }
 .menu-open .global-menu { transform: translateX(0); }
+.menu-open .topbar-login {
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+}
 .global-menu-header {
   display: grid;
   grid-template-columns: 1fr;

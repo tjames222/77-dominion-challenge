@@ -9,18 +9,23 @@ const load = (key, fallback) => {
 };
 const save = (key, value) => localStorage.setItem(key, JSON.stringify(value));
 let theme = load('dominion:theme', 'dark');
-const themeToggle = document.getElementById('themeToggle');
+const themeOptions = [...document.querySelectorAll('[data-theme-mode]')];
 function applyTheme() {
   document.documentElement.dataset.theme = theme;
-  if (themeToggle) themeToggle.textContent = `${theme === 'dark' ? 'Dark' : 'Light'} Theme`;
+  document.documentElement.style.colorScheme = theme;
+  themeOptions.forEach((option) => {
+    const isActive = option.dataset.themeMode === theme;
+    option.classList.toggle('active', isActive);
+    option.setAttribute('aria-pressed', String(isActive));
+  });
 }
-if (themeToggle) {
-  themeToggle.addEventListener('click', () => {
-    theme = theme === 'dark' ? 'light' : 'dark';
+themeOptions.forEach((option) => {
+  option.addEventListener('click', () => {
+    theme = option.dataset.themeMode || 'dark';
     save('dominion:theme', theme);
     applyTheme();
   });
-}
+});
 applyTheme();
 
 const user = load('dominion:user', { name: 'Member', email: 'Logged in' });
