@@ -470,6 +470,36 @@ select {
 
 .science-page { padding-bottom: 92px; }
 .science-hero h1 { font-size: 2.55rem; }
+.science-photo-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 280px), 1fr));
+  gap: 14px;
+  margin-bottom: 16px;
+}
+.science-photo-panel {
+  margin: 0;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--accent) 34%, var(--border));
+  border-radius: 20px;
+  background:
+    linear-gradient(to bottom, color-mix(in srgb, var(--accent) 8%, transparent), transparent 28%),
+    var(--surface);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 6%, transparent);
+}
+.science-photo-panel img {
+  display: block;
+  width: 100%;
+  aspect-ratio: 1280 / 853;
+  object-fit: cover;
+  object-position: center;
+}
+.science-photo-panel figcaption {
+  padding: 14px 16px 16px;
+  color: var(--text-muted);
+  font-size: .9rem;
+  line-height: 1.45;
+  font-weight: 700;
+}
 .science-stats {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(min(100%, 210px), 1fr));
@@ -765,6 +795,10 @@ select {
   .science-page .science-hero,
   .science-page .sources-card {
     width: min(100%, 760px);
+    margin-inline: auto;
+  }
+  .science-page .science-photo-grid {
+    width: min(100%, 980px);
     margin-inline: auto;
   }
   .science-page > .card:not(.science-hero):not(.sources-card) {
