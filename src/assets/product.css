@@ -34,7 +34,7 @@
 .dashboard-shell {
   width: min(100%, 1120px);
   display: grid;
-  gap: clamp(24px, 4vw, 42px);
+  gap: clamp(34px, 5vw, 58px);
 }
 .dashboard-shell > section {
   margin-bottom: 0;
@@ -76,7 +76,7 @@
 .dashboard-section {
   display: grid;
   gap: 18px;
-  padding-block: 10px 18px;
+  padding-block: 14px 24px;
 }
 .dashboard-section > .section-heading {
   margin-bottom: 0;

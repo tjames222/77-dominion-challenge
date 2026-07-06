@@ -232,6 +232,10 @@ blockquote strong { display: block; margin-top: 10px; color: var(--accent-strong
   padding-block: 4px 22px;
   border-bottom: 1px solid color-mix(in srgb, var(--accent) 22%, var(--border));
 }
+.progress-intro {
+  display: grid;
+  gap: 10px;
+}
 .progress label {
   display: grid;
   gap: 8px;
@@ -716,21 +720,19 @@ select {
     column-gap: clamp(22px, 3vw, 34px);
     align-items: start;
   }
-  .progress > .section-heading {
+  .progress > .progress-intro {
     grid-column: 1;
-    margin-bottom: 0;
   }
   .progress .progress-standard {
     grid-column: 1 / -1;
   }
   .progress label {
-    grid-column: 1;
     max-width: none;
   }
   .progress .rings {
     grid-column: 2;
-    grid-row: 1 / span 2;
-    align-self: center;
+    grid-row: 1;
+    align-self: start;
     margin: 0;
   }
   #checklist {
