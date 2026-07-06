@@ -7,41 +7,94 @@
     <title>Dominion Dashboard</title>
     <link rel="stylesheet" href="./src/assets/styles.css" />
     <link rel="stylesheet" href="./src/assets/product.css" />
+    <link rel="stylesheet" href="./src/assets/menu.css" />
   </head>
   <body>
-    <main class="app-shell">
+    <main class="app-shell dashboard-shell">
       <header class="topbar">
         <a class="back-link" href="./index.html">Dominion</a>
         <button class="theme-toggle" id="themeToggle">Dark Theme</button>
       </header>
 
-      <section class="hero card compact-hero">
+      <section class="dashboard-hero compact-hero reveal">
         <p class="eyebrow">Member Dashboard</p>
         <h1>Today’s Dominion</h1>
         <p class="lead">Track your standards, post your check-in, and stay honest.</p>
       </section>
 
-      <section class="dashboard card">
-        <label>Your name<input id="memberName" placeholder="Tim" /></label>
-        <label>Challenge start date<input id="startDate" type="date" /></label>
+      <section class="countdown-card spotlight-panel reveal" id="countdownCard">
+        <div class="countdown-topline">
+          <span class="app-icon icon-clock countdown-icon" aria-hidden="true"></span>
+          <div>
+            <p class="eyebrow">Daily Countdown</p>
+            <h2>Today is moving</h2>
+          </div>
+        </div>
+        <div class="countdown-display">
+          <strong id="countdownTime">--h --m --s</strong>
+          <small>left to complete today’s 7 actions</small>
+        </div>
+        <div class="countdown-progress" aria-hidden="true">
+          <span id="countdownProgress"></span>
+        </div>
+        <p class="countdown-callout" id="countdownCallout" aria-live="polite">A fresh challenge reminder will load here.</p>
+        <div class="countdown-meta">
+          <span id="countdownProgressLabel">0% of the day used</span>
+          <span id="countdownActionsLabel">0 of 7 actions complete</span>
+        </div>
+        <button class="action-button countdown-action" type="button" id="countdownCheckInButton">Go to check-in</button>
+      </section>
+
+      <section class="dashboard-brand-panel reveal" aria-label="77 Dominion Challenge mark">
+        <img src="/images/dominion-77-mark.jpg" alt="77 Dominion Challenge" />
+      </section>
+
+      <section class="actions-handoff dashboard-section reveal">
+        <div>
+          <p class="eyebrow">Today's Actions</p>
+          <h2>Open the full playbook</h2>
+          <p>The dashboard keeps score. The action page gives you the details, links, and recommendations for each standard.</p>
+        </div>
+        <a class="action-button with-icon actions-handoff-link" href="./today-actions.html">
+          <span class="app-icon icon-check action-button-icon" aria-hidden="true"></span>
+          <span>Go to today’s actions</span>
+          <span aria-hidden="true">↗</span>
+        </a>
+      </section>
+
+      <section class="progress dashboard-section reveal" id="check-in">
+        <div class="progress-intro">
+          <div class="section-heading">
+            <p class="eyebrow">Progress</p>
+            <h2>How today is tracking</h2>
+          </div>
+          <label>Challenge start date<input id="startDate" type="date" /></label>
+        </div>
         <div class="rings">
           <div class="ring" id="challengeRing"><div class="ring-inner"><strong id="challengePercent">1%</strong><span>Challenge</span><small id="challengeDay">Day 1 of 77</small></div></div>
           <div class="ring" id="todayRing"><div class="ring-inner"><strong id="todayPercent">0%</strong><span>Today</span><small id="todayCount">0 of 7 done</small></div></div>
         </div>
-        <button class="primary" id="checkInButton" disabled>Post Check-In</button>
+        <div class="progress-standard">
+          <div class="section-heading"><p class="eyebrow">Today's Scorecard</p><h3>Mind, Spirit, Body</h3></div>
+          <div id="checklist"></div>
+          <div class="scorecard-actions">
+            <button class="scheduled" id="scheduledButton">Scheduled miss day planned ahead</button>
+            <button class="primary" id="checkInButton" disabled>Post Check-In</button>
+          </div>
+        </div>
       </section>
 
-      <section class="card checklist">
-        <div class="section-heading"><p class="eyebrow">Today's Standard</p><h2>Daily Scorecard</h2></div>
-        <div id="checklist"></div>
-        <button class="scheduled" id="scheduledButton">Scheduled miss day planned ahead</button>
-      </section>
-
-      <section class="card community">
+      <section class="community dashboard-section reveal">
         <div class="section-heading"><p class="eyebrow">Accountability</p><h2 id="completedToday">3 people completed today</h2></div>
         <div id="feed"></div>
+        <a class="action-button with-icon actions-handoff-link" href="./community.html">
+          <span class="app-icon icon-users action-button-icon" aria-hidden="true"></span>
+          <span>Open Community</span>
+          <span aria-hidden="true">↗</span>
+        </a>
       </section>
     </main>
+    <script type="module" src="./src/static/menu.js"></script>
     <script type="module" src="./src/static/dashboard.js"></script>
   </body>
 </html>

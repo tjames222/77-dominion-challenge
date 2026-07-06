@@ -1,0 +1,132 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#000000" />
+    <title>Dominion Community</title>
+    <link rel="stylesheet" href="./src/assets/styles.css" />
+    <link rel="stylesheet" href="./src/assets/product.css" />
+    <link rel="stylesheet" href="./src/assets/community.css" />
+    <link rel="stylesheet" href="./src/assets/menu.css" />
+  </head>
+  <body>
+    <main class="app-shell community-shell">
+      <header class="topbar">
+        <a class="back-link" href="./dashboard.html">Dashboard</a>
+        <span class="brand-name">Community</span>
+      </header>
+
+      <section class="community-hero reveal is-visible">
+        <p class="eyebrow">77-Day Dominion Challenge</p>
+        <h1>Walk together.</h1>
+        <p class="lead">Encourage your crew, connect with people on your same challenge day, and keep your own journey honest.</p>
+      </section>
+
+      <nav class="community-tabs" aria-label="Community layers">
+        <button class="community-tab active" type="button" data-tab="crew">My Crew</button>
+        <button class="community-tab" type="button" data-tab="global">Global</button>
+        <button class="community-tab" type="button" data-tab="journey">My Journey</button>
+      </nav>
+
+      <section class="community-panel active" id="crew" aria-labelledby="crew-tab">
+        <div class="community-summary card">
+          <span class="app-icon icon-users" aria-hidden="true"></span>
+          <div>
+            <p class="eyebrow">Private Group</p>
+            <h2>San Marcos Men</h2>
+            <p>8 of 11 checked in today. This is the accountability layer, because apparently doing hard things with names you recognize works better than yelling into the internet.</p>
+          </div>
+        </div>
+
+        <div class="community-stats">
+          <article class="card"><strong>8/11</strong><span>Checked in</span></article>
+          <article class="card"><strong>Day 18</strong><span>Group pace</span></article>
+          <article class="card"><strong>3</strong><span>Need follow-up</span></article>
+        </div>
+
+        <section class="composer-card card">
+          <p class="eyebrow">Encourage Your Crew</p>
+          <textarea placeholder="Share a win, prayer request, or challenge from today..."></textarea>
+          <button class="primary" type="button">Post to Crew</button>
+        </section>
+
+        <div class="feed-list">
+          <article class="feed-card card">
+            <div><strong>Brandon</strong><span>Completed Day 18</span></div>
+            <p>Got the second workout done after the kids went down. Not pretty. Still counts.</p>
+            <div class="reaction-row"><button>🔥 12</button><button>🙏 4</button><button>Encourage</button></div>
+          </article>
+          <article class="feed-card card">
+            <div><strong>Josh</strong><span>Needs prayer</span></div>
+            <p>Long workday. Pray I do not negotiate with myself tonight.</p>
+            <div class="reaction-row"><button>🙏 I’ll pray</button><button>Text him</button></div>
+          </article>
+        </div>
+      </section>
+
+      <section class="community-panel" id="global" aria-labelledby="global-tab">
+        <div class="community-summary card">
+          <span class="app-icon icon-globe" aria-hidden="true"></span>
+          <div>
+            <p class="eyebrow">Global Community</p>
+            <h2>Day 18 Community</h2>
+            <p>See people on the same challenge day, no matter when they started. Shared struggle beats random chronological noise, shocking discovery.</p>
+          </div>
+        </div>
+
+        <section class="day-pulse card">
+          <p class="eyebrow">Today’s Pulse</p>
+          <h2>183 people are on Day 18</h2>
+          <div class="pulse-bar"><span style="width: 68%"></span></div>
+          <small>124 checked in so far today</small>
+        </section>
+
+        <div class="feed-list">
+          <article class="feed-card card featured-card">
+            <p class="eyebrow">Featured Encouragement</p>
+            <strong>Almost quit this morning. Walked anyway.</strong>
+            <p>Day 18 feels like the day discipline starts becoming less dramatic and more normal.</p>
+            <div class="reaction-row"><button>🔥 86</button><button>🙏 22</button></div>
+          </article>
+          <article class="feed-card card">
+            <div><strong>Emily</strong><span>Completed Day 77</span></div>
+            <p>Finished today. The biggest change was not fitness. It was attention.</p>
+            <div class="reaction-row"><button>Celebrate</button><button>🔥 141</button></div>
+          </article>
+          <article class="feed-card card">
+            <div><strong>Marcus</strong><span>Prayer request</span></div>
+            <p>Pray for consistency. I have been strong on workouts and weak on mornings.</p>
+            <div class="reaction-row"><button>🙏 I’m praying</button></div>
+          </article>
+        </div>
+      </section>
+
+      <section class="community-panel" id="journey" aria-labelledby="journey-tab">
+        <div class="community-summary card">
+          <span class="app-icon icon-book" aria-hidden="true"></span>
+          <div>
+            <p class="eyebrow">Private Journal</p>
+            <h2>My Journey</h2>
+            <p>Your personal record of check-ins, notes, verses, prayers, and what God is building in you over 77 days.</p>
+          </div>
+        </div>
+
+        <section class="composer-card card">
+          <p class="eyebrow">Today’s Note</p>
+          <textarea placeholder="What did today reveal about your discipline, prayer, body, or attention?"></textarea>
+          <button class="primary" type="button">Save Private Note</button>
+        </section>
+
+        <div class="journey-timeline">
+          <article class="card timeline-note"><span>Day 18</span><strong>Completed 7 of 7 standards</strong><p>Morning prayer was the difference today.</p></article>
+          <article class="card timeline-note"><span>Day 17</span><strong>Scheduled miss day</strong><p>Planned ahead. No laziness, no drift.</p></article>
+          <article class="card timeline-note"><span>Day 16</span><strong>Hardest day yet</strong><p>Did the walk during lunch instead of skipping it.</p></article>
+        </div>
+      </section>
+    </main>
+
+    <script type="module" src="./src/static/menu.js"></script>
+    <script type="module" src="./src/static/community.js"></script>
+  </body>
+</html>

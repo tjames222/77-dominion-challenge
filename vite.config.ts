@@ -2,7 +2,7 @@ import { defineConfig } from 'vite';
 import vue from '@vitejs/plugin-vue';
 
 export default defineConfig({
-  base: '/77-dominion-challenge/',
+  base: './',
   plugins: [vue()],
   build: {
     rollupOptions: {
@@ -11,6 +11,9 @@ export default defineConfig({
         login: 'login.html',
         register: 'register.html',
         dashboard: 'dashboard.html',
+        todayActions: 'today-actions.html',
+        community: 'community.html',
+        profilePage: 'profile.html',
         science: 'science.html',
       },
     },

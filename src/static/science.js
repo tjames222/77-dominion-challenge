@@ -4,10 +4,12 @@ const load = (key, fallback) => JSON.parse(localStorage.getItem(key) || JSON.str
 const save = (key, value) => localStorage.setItem(key, JSON.stringify(value));
 let theme = load('dominion:theme', 'dark');
 const themeToggle = document.getElementById('themeToggle');
+
 function applyTheme() {
   document.documentElement.dataset.theme = theme;
   if (themeToggle) themeToggle.textContent = `${theme === 'dark' ? 'Dark' : 'Light'} Theme`;
 }
+
 if (themeToggle) {
   themeToggle.addEventListener('click', () => {
     theme = theme === 'dark' ? 'light' : 'dark';
@@ -15,22 +17,6 @@ if (themeToggle) {
     applyTheme();
   });
 }
-applyTheme();
 
-const form = document.getElementById('authForm');
-if (form) {
-  form.addEventListener('submit', (event) => {
-    event.preventDefault();
-    const nameInput = document.getElementById('name');
-    const emailInput = document.getElementById('email');
-    const user = {
-      name: nameInput ? nameInput.value.trim() : load('dominion:user', { name: 'Member' }).name || 'Member',
-      email: emailInput.value.trim(),
-      authenticated: true,
-    };
-    save('dominion:user', user);
-    if (user.name) save('dominion:memberName', user.name);
-    window.location.href = './dashboard.html';
-  });
-}
+applyTheme();
 initReveal();

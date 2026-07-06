@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#0e1116" />
+    <title>Profile | Dominion</title>
+    <link rel="stylesheet" href="./src/assets/styles.css" />
+    <link rel="stylesheet" href="./src/assets/product.css" />
+    <link rel="stylesheet" href="./src/assets/menu.css" />
+  </head>
+  <body>
+    <main class="app-shell dashboard-shell">
+      <header class="topbar">
+        <a class="back-link" href="./dashboard.html">Dashboard</a>
+        <button class="theme-toggle" id="themeToggle">Dark Theme</button>
+      </header>
+
+      <section class="dashboard-hero compact-hero reveal is-visible">
+        <p class="eyebrow">Profile</p>
+        <h1>Your Dominion</h1>
+        <p class="lead">Manage your challenge identity, group, and account details.</p>
+      </section>
+
+      <section class="card reveal">
+        <p class="eyebrow">Account</p>
+        <h2 id="profileName">Member</h2>
+        <p class="section-copy" id="profileEmail">Logged in</p>
+      </section>
+
+      <section class="card reveal">
+        <p class="eyebrow">Challenge</p>
+        <h2>77-Day Dominion Challenge</h2>
+        <p class="section-copy">Group: San Marcos Men</p>
+        <p class="section-copy">Status: Active</p>
+      </section>
+    </main>
+
+    <script type="module" src="./src/static/menu.js"></script>
+    <script type="module" src="./src/static/profile.js"></script>
+  </body>
+</html>
