@@ -32,9 +32,9 @@
   margin: 14px 0 0;
 }
 .dashboard-shell {
-  width: min(100%, 920px);
+  width: min(100%, 1120px);
   display: grid;
-  gap: 28px;
+  gap: clamp(24px, 4vw, 42px);
 }
 .dashboard-shell > section {
   margin-bottom: 0;
@@ -65,7 +65,7 @@
   position: relative;
 }
 .dashboard-hero h1 {
-  max-width: 8ch;
+  max-width: 9ch;
   font-size: 3.1rem;
   letter-spacing: 0;
 }
@@ -637,6 +637,48 @@
   }
   .workout-card {
     min-height: 420px;
+  }
+}
+@media (min-width: 960px) {
+  .dashboard-shell {
+    --shell-pad: clamp(24px, 3vw, 40px);
+  }
+  .dashboard-hero {
+    min-height: clamp(280px, 30vw, 360px);
+    padding: 64px 0 34px;
+  }
+  .dashboard-hero h1 {
+    max-width: 12ch;
+    font-size: 4.2rem;
+  }
+  .dashboard-hero .lead {
+    max-width: 58ch;
+  }
+  .spotlight-panel {
+    padding: clamp(26px, 3vw, 34px);
+  }
+  .countdown-display strong {
+    font-size: 3.35rem;
+  }
+  .daily-actions {
+    gap: 22px;
+  }
+  .action-grid {
+    gap: 18px;
+  }
+  .action-card {
+    padding: 20px;
+  }
+}
+@media (min-width: 1180px) {
+  .dashboard-shell {
+    width: min(100%, 1240px);
+  }
+  .daily-actions .action-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+  .workout-card {
+    min-height: 440px;
   }
 }
 @media (max-width: 380px) {

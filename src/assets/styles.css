@@ -287,6 +287,9 @@ blockquote strong { display: block; margin-top: 10px; color: var(--accent-strong
   display: grid;
   gap: 18px;
 }
+#feed {
+  display: grid;
+}
 input,
 select {
   width: 100%;
@@ -680,6 +683,44 @@ select {
   .progress .primary,
   .progress .progress-standard { grid-column: 1 / -1; }
   .rings { gap: 16px; }
+}
+@media (min-width: 900px) {
+  .progress {
+    grid-template-columns: minmax(240px, 320px) minmax(0, 1fr);
+    column-gap: clamp(22px, 3vw, 34px);
+    align-items: end;
+  }
+  .progress > .section-heading,
+  .progress .progress-standard {
+    grid-column: 1 / -1;
+  }
+  .progress label {
+    grid-column: 1;
+    max-width: none;
+  }
+  .progress .rings {
+    grid-column: 2;
+    margin: 0;
+  }
+  .progress .primary {
+    grid-column: 1;
+  }
+  #checklist {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    align-items: start;
+  }
+  .checklist-group {
+    height: 100%;
+  }
+  #feed {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0 20px;
+  }
+}
+@media (min-width: 1180px) {
+  #checklist {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
 }
 @media (min-width: 840px) {
   .app-shell {
