@@ -251,6 +251,7 @@ blockquote strong { display: block; margin-top: 10px; color: var(--accent-strong
 }
 .checklist-group {
   display: grid;
+  align-content: start;
   gap: 12px;
   padding-bottom: 16px;
   border-bottom: 1px solid color-mix(in srgb, var(--border) 72%, transparent);
@@ -281,6 +282,8 @@ blockquote strong { display: block; margin-top: 10px; color: var(--accent-strong
 }
 .checklist-group-items {
   display: grid;
+  align-content: start;
+  grid-auto-rows: max-content;
   gap: 10px;
 }
 #checklist {
@@ -371,6 +374,7 @@ select {
 .section-heading { margin-bottom: 14px; }
 .check-row {
   width: 100%;
+  align-self: start;
   display: flex;
   align-items: center;
   gap: 13px;
@@ -710,7 +714,8 @@ select {
     align-items: start;
   }
   .checklist-group {
-    height: 100%;
+    padding-bottom: 0;
+    border-bottom: 0;
   }
   #feed {
     grid-template-columns: repeat(2, minmax(0, 1fr));
