@@ -96,6 +96,11 @@ const workoutPlans = {
 const todayKey = () => new Date().toISOString().slice(0, 10);
 const load = (key, fallback) => JSON.parse(localStorage.getItem(key) || JSON.stringify(fallback));
 const save = (key, value) => localStorage.setItem(key, JSON.stringify(value));
+const statusLabel = (item) => {
+  if (item.status === 'scheduled') return 'scheduled miss';
+  if (item.status === 'partial') return `partial check-in${item.completedCount ? ` (${item.completedCount}/7)` : ''}`;
+  return 'complete';
+};
 let theme = load('dominion:theme', 'dark');
 let startDate = load('dominion:startDate', todayKey());
 let entries = load('dominion:entries', []);
@@ -109,7 +114,14 @@ const verseReference = $('verseReference');
 const verseAppLink = $('verseAppLink');
 const dayIndex = () => Math.floor(new Date(`${todayKey()}T00:00:00`).getTime() / 86400000);
 const pickDaily = (items, offset = 0) => items[(dayIndex() + offset) % items.length];
-const todayEntry = () => entries.find(entry => entry.date === todayKey()) || { date: todayKey(), completed: [] };
+const todayEntry = () => {
+  const entry = entries.find(item => item.date === todayKey()) || {};
+  return {
+    date: todayKey(),
+    ...entry,
+    completed: Array.isArray(entry.completed) ? entry.completed : [],
+  };
+};
 const saveEntry = (entry) => {
   const index = entries.findIndex(item => item.date === entry.date);
   if (index >= 0) entries[index] = entry;
@@ -135,7 +147,7 @@ function formatRemainingTime(totalSeconds) {
   const hours = Math.floor(totalSeconds / 3600);
   const minutes = Math.floor((totalSeconds % 3600) / 60);
   const seconds = totalSeconds % 60;
-  return `${hours}h ${padClock(minutes)}m ${padClock(seconds)}s`;
+  return `${padClock(hours)}h ${padClock(minutes)}m ${padClock(seconds)}s`;
 }
 function updateCountdownCard() {
   const countdownTime = $('countdownTime');
@@ -248,23 +260,33 @@ function render() {
   const entry = todayEntry();
   const challengePercent = Math.round((currentDay() / TOTAL_DAYS) * 100);
   const todayPercent = Math.round((entry.completed.length / standards.length) * 100);
+  const hasCompletedActions = entry.completed.length > 0;
+  const hasPostableCheckIn = hasCompletedActions || entry.scheduledMiss;
   if (challengePercentEl) challengePercentEl.textContent = `${challengePercent}%`;
   if (challengeDayEl) challengeDayEl.textContent = `Day ${currentDay()} of 77`;
   if (challengeRing) challengeRing.style.setProperty('--value', `${challengePercent}%`);
   if (todayPercentEl) todayPercentEl.textContent = `${todayPercent}%`;
-  if (todayCountEl) todayCountEl.textContent = `${entry.completed.length} of ${standards.length} done`;
+  if (todayCountEl) todayCountEl.textContent = entry.scheduledMiss ? 'Scheduled miss day' : `${entry.completed.length} of ${standards.length} done`;
   if (todayRing) todayRing.style.setProperty('--value', `${todayPercent}%`);
-  if (checkInButton) checkInButton.disabled = entry.completed.length !== standards.length && !entry.scheduledMiss;
-  if (scheduledButton) scheduledButton.classList.toggle('active', !!entry.scheduledMiss);
+  if (checkInButton) checkInButton.disabled = !hasPostableCheckIn;
+  if (scheduledButton) {
+    scheduledButton.classList.toggle('active', !!entry.scheduledMiss);
+    scheduledButton.disabled = hasCompletedActions && !entry.scheduledMiss;
+    scheduledButton.textContent = entry.scheduledMiss ? 'Scheduled miss selected' : 'Scheduled miss day planned ahead';
+    scheduledButton.setAttribute('aria-pressed', String(!!entry.scheduledMiss));
+  }
   if (checklist) {
     checklist.innerHTML = scorecardGroups.map((group) => {
-      const rows = group.items.map(([id, label, detail]) => `<button class="check-row ${entry.completed.includes(id) ? 'checked' : ''}" data-standard="${id}"><span class="box"><span class="app-icon icon-sm icon-check" aria-hidden="true"></span></span><span><strong>${label}</strong><small>${detail}</small></span></button>`).join('');
+      const rows = group.items.map(([id, label, detail]) => {
+        const isChecked = entry.completed.includes(id);
+        return `<button class="check-row ${isChecked ? 'checked' : ''}" data-standard="${id}" aria-pressed="${isChecked}" ${entry.scheduledMiss ? 'disabled' : ''}><span class="box"><span class="app-icon icon-sm icon-check" aria-hidden="true"></span></span><span><strong>${label}</strong><small>${detail}</small></span></button>`;
+      }).join('');
       const itemLabel = group.items.length === 1 ? 'action' : 'actions';
       return `<section class="checklist-group"><div class="checklist-group-header"><p class="checklist-group-title">${group.label}</p><span>${group.items.length} ${itemLabel}</span></div><div class="checklist-group-items">${rows}</div></section>`;
     }).join('');
   }
   if (feedEl) {
-    feedEl.innerHTML = feed.slice(0, 6).map(item => `<article class="feed-item"><div><strong>${item.name}</strong><p>Day ${item.day} ${item.status === 'complete' ? 'complete' : 'scheduled miss'}</p></div><span class="feed-status"><span class="app-icon icon-sm ${item.status === 'complete' ? 'icon-check' : 'icon-repeat'}" aria-hidden="true"></span></span></article>`).join('');
+    feedEl.innerHTML = feed.slice(0, 6).map(item => `<article class="feed-item"><div><strong>${item.name}</strong><p>Day ${item.day} ${statusLabel(item)}</p></div><span class="feed-status"><span class="app-icon icon-sm ${item.status === 'complete' ? 'icon-check' : 'icon-repeat'}" aria-hidden="true"></span></span></article>`).join('');
   }
   if (completedToday) completedToday.textContent = `${feed.filter(item => item.status === 'complete' && item.timestamp === 'Today').length} people completed today`;
   if (verseAppLink) verseAppLink.href = YOUVERSION_APP_URL;
@@ -310,19 +332,25 @@ if (walkReminderButton) walkReminderButton.addEventListener('click', () => {
 if (checklist) checklist.addEventListener('click', event => {
   const row = event.target.closest('[data-standard]');
   if (!row) return;
-  const entry = { ...todayEntry(), completed: [...todayEntry().completed] };
+  if (todayEntry().scheduledMiss) return;
+  const entry = { ...todayEntry(), completed: [...todayEntry().completed], scheduledMiss: false };
   const id = row.dataset.standard;
   entry.completed = entry.completed.includes(id) ? entry.completed.filter(item => item !== id) : [...entry.completed, id];
   saveEntry(entry);
   render();
 });
 if (scheduledButton) scheduledButton.addEventListener('click', () => {
-  const entry = { ...todayEntry(), scheduledMiss: !todayEntry().scheduledMiss };
+  const currentEntry = todayEntry();
+  if (currentEntry.completed.length > 0 && !currentEntry.scheduledMiss) return;
+  const entry = { ...currentEntry, completed: [], scheduledMiss: !currentEntry.scheduledMiss };
   saveEntry(entry);
   render();
 });
 if (checkInButton) checkInButton.addEventListener('click', () => {
-  feed.unshift({ name: 'You', day: currentDay(), status: todayEntry().scheduledMiss ? 'scheduled' : 'complete', timestamp: 'Today' });
+  const entry = todayEntry();
+  if (!entry.scheduledMiss && entry.completed.length === 0) return;
+  const status = entry.scheduledMiss ? 'scheduled' : entry.completed.length === standards.length ? 'complete' : 'partial';
+  feed.unshift({ name: 'You', day: currentDay(), status, completedCount: entry.completed.length, timestamp: 'Today' });
   save('dominion:feed', feed);
   render();
 });

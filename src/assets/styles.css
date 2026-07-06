@@ -247,7 +247,6 @@ blockquote strong { display: block; margin-top: 10px; color: var(--accent-strong
   display: grid;
   gap: 18px;
   padding-top: 22px;
-  border-top: 1px solid color-mix(in srgb, var(--accent) 22%, var(--border));
 }
 .checklist-group {
   display: grid;
@@ -370,6 +369,12 @@ select {
   background: var(--accent);
 }
 .primary:disabled { opacity: .45; cursor: not-allowed; }
+.scorecard-actions {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 12px;
+  align-items: stretch;
+}
 
 .section-heading { margin-bottom: 14px; }
 .check-row {
@@ -409,6 +414,13 @@ select {
   background: var(--accent);
   border-color: var(--accent);
 }
+.check-row:disabled {
+  cursor: not-allowed;
+  color: var(--text-muted);
+}
+.check-row:disabled .box {
+  border-color: color-mix(in srgb, var(--text-muted) 34%, transparent);
+}
 .scheduled {
   width: 100%;
   border: 1px solid color-mix(in srgb, var(--accent) 55%, var(--border));
@@ -418,7 +430,15 @@ select {
   padding: 14px;
   font-weight: 900;
 }
-.scheduled.active { background: color-mix(in srgb, var(--accent) 12%, transparent); }
+.scheduled.active {
+  background: color-mix(in srgb, var(--accent) 15%, transparent);
+  border-color: var(--accent);
+  color: var(--accent-strong);
+}
+.scheduled:disabled {
+  opacity: .45;
+  cursor: not-allowed;
+}
 
 .rules ul { margin: 10px 0 0; padding-left: 20px; color: var(--text-muted); line-height: 1.55; }
 .feed-item {
@@ -684,17 +704,22 @@ select {
   .card { margin-bottom: 16px; }
   .progress label { margin-bottom: 0; }
   .progress .rings,
-  .progress .primary,
   .progress .progress-standard { grid-column: 1 / -1; }
   .rings { gap: 16px; }
+  .scorecard-actions {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 @media (min-width: 900px) {
   .progress {
     grid-template-columns: minmax(240px, 320px) minmax(0, 1fr);
     column-gap: clamp(22px, 3vw, 34px);
-    align-items: end;
+    align-items: start;
   }
-  .progress > .section-heading,
+  .progress > .section-heading {
+    grid-column: 1;
+    margin-bottom: 0;
+  }
   .progress .progress-standard {
     grid-column: 1 / -1;
   }
@@ -704,10 +729,9 @@ select {
   }
   .progress .rings {
     grid-column: 2;
+    grid-row: 1 / span 2;
+    align-self: center;
     margin: 0;
-  }
-  .progress .primary {
-    grid-column: 1;
   }
   #checklist {
     grid-template-columns: repeat(2, minmax(0, 1fr));

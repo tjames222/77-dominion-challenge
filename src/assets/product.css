@@ -132,10 +132,14 @@
   gap: 4px;
 }
 .countdown-display strong {
+  display: inline-block;
+  min-width: 11ch;
   color: var(--text);
   font-size: 2.75rem;
+  font-variant-numeric: tabular-nums;
   line-height: 1;
   letter-spacing: 0;
+  white-space: nowrap;
 }
 .countdown-display small {
   color: var(--text-muted);
