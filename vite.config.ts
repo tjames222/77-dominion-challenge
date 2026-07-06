@@ -12,6 +12,7 @@ export default defineConfig({
         register: 'register.html',
         dashboard: 'dashboard.html',
         todayActions: 'today-actions.html',
+        community: 'community.html',
         science: 'science.html',
       },
     },
