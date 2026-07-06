@@ -13,6 +13,7 @@ export default defineConfig({
         dashboard: 'dashboard.html',
         todayActions: 'today-actions.html',
         community: 'community.html',
+        profilePage: 'profile.html',
         science: 'science.html',
       },
     },
