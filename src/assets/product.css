@@ -194,7 +194,6 @@
 .dashboard-brand-panel {
   position: relative;
   overflow: hidden;
-  border: 1px solid color-mix(in srgb, var(--accent) 34%, var(--border));
   border-radius: 24px;
   background:
     radial-gradient(circle at top center, color-mix(in srgb, var(--accent) 10%, transparent), transparent 46%),

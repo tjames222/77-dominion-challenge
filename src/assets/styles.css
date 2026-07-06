@@ -493,9 +493,6 @@ select {
 .science-photo-panel-reading img {
   object-position: center top;
 }
-.science-photo-panel-training img {
-  object-position: center 22%;
-}
 .science-stats {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(min(100%, 210px), 1fr));
@@ -794,17 +791,12 @@ select {
     margin-inline: auto;
   }
   .science-page .science-photo-grid {
-    width: min(100%, 980px);
+    width: min(100%, 760px);
     margin-inline: auto;
-    grid-template-columns: minmax(0, .92fr) minmax(0, 1.08fr);
-    gap: 28px;
-    align-items: start;
+    grid-template-columns: 1fr;
   }
   .science-page .science-photo-panel-reading {
-    margin-top: 42px;
-  }
-  .science-page .science-photo-panel-training {
-    margin-bottom: 26px;
+    margin-top: 0;
   }
   .science-page > .card:not(.science-hero):not(.sources-card) {
     margin-bottom: 18px;
