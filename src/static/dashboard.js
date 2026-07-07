@@ -3,6 +3,7 @@ import {
   getBillingState,
   getDashboard,
   hasSupabaseAuth,
+  isLocalDemoMode,
   postCheckIn,
   redirectToLogin,
   saveChallengeEntry,
@@ -105,16 +106,17 @@ const workoutPlans = {
 const todayKey = () => new Date().toISOString().slice(0, 10);
 const load = (key, fallback) => JSON.parse(localStorage.getItem(key) || JSON.stringify(fallback));
 const save = (key, value) => localStorage.setItem(key, JSON.stringify(value));
+const localDemoMode = isLocalDemoMode();
 const statusLabel = (item) => {
   if (item.status === 'scheduled') return 'scheduled miss';
   if (item.status === 'partial') return `partial check-in${item.completedCount ? ` (${item.completedCount}/7)` : ''}`;
   return 'complete';
 };
 let theme = load('dominion:theme', 'dark');
-let startDate = load('dominion:startDate', todayKey());
-let entries = load('dominion:entries', []);
-let feed = load('dominion:feed', starterFeed);
-let workoutDifficulty = load('dominion:workoutDifficulty', { one: 'medium', two: 'medium' });
+let startDate = localDemoMode ? load('dominion:startDate', todayKey()) : todayKey();
+let entries = localDemoMode ? load('dominion:entries', []) : [];
+let feed = localDemoMode ? load('dominion:feed', starterFeed) : starterFeed;
+let workoutDifficulty = localDemoMode ? load('dominion:workoutDifficulty', { one: 'medium', two: 'medium' }) : { one: 'medium', two: 'medium' };
 let countdownTimer = null;
 let activeCountdownCallout = '';
 const $ = (id) => document.getElementById(id);
@@ -135,7 +137,7 @@ const saveEntry = (entry) => {
   const index = entries.findIndex(item => item.date === entry.date);
   if (index >= 0) entries[index] = entry;
   else entries.push(entry);
-  if (!hasSupabaseAuth()) save('dominion:entries', entries);
+  if (localDemoMode) save('dominion:entries', entries);
   if (hasSupabaseAuth()) {
     saveChallengeEntry(entry).catch((error) => console.warn('Unable to sync challenge entry', error));
   }
@@ -346,7 +348,7 @@ const walkReminderButton = $('walkReminderButton');
 if (themeToggle) themeToggle.addEventListener('click', () => { theme = theme === 'dark' ? 'light' : 'dark'; save('dominion:theme', theme); render(); });
 if (startDateInput) startDateInput.addEventListener('input', event => {
   startDate = event.target.value || todayKey();
-  if (!hasSupabaseAuth()) save('dominion:startDate', startDate);
+  if (localDemoMode) save('dominion:startDate', startDate);
   if (hasSupabaseAuth()) {
     updateProfile({ challengeStartDate: startDate }).catch((error) => console.warn('Unable to sync profile', error));
   }
@@ -396,7 +398,7 @@ if (checkInButton) checkInButton.addEventListener('click', () => {
   if (!entry.scheduledMiss && entry.completed.length === 0) return;
   const status = entry.scheduledMiss ? 'scheduled' : entry.completed.length === standards.length ? 'complete' : 'partial';
   feed.unshift({ name: 'You', day: currentDay(), status, completedCount: entry.completed.length, timestamp: 'Today' });
-  if (!hasSupabaseAuth()) save('dominion:feed', feed);
+  if (localDemoMode) save('dominion:feed', feed);
   if (hasSupabaseAuth()) {
     postCheckIn({
       date: entry.date,
@@ -413,6 +415,11 @@ if (countdownCheckInButton && checkInButton) countdownCheckInButton.addEventList
 });
 
 async function bootDashboard() {
+  if (!hasSupabaseAuth() && !localDemoMode) {
+    redirectToLogin();
+    return;
+  }
+
   if (hasSupabaseAuth()) {
     const billing = await getBillingState();
     if (!billing.authenticated) {

@@ -1,4 +1,4 @@
-import { getBillingState, getCommunityFeed, hasSupabaseAuth, redirectToLogin } from './api';
+import { getBillingState, getCommunityFeed, hasSupabaseAuth, isLocalDemoMode, redirectToLogin } from './api';
 
 const tabs = Array.from(document.querySelectorAll('.community-tab'));
 const panels = Array.from(document.querySelectorAll('.community-panel'));
@@ -22,7 +22,11 @@ function statusLabel(item) {
 }
 
 async function hydrateCommunityFeed() {
-  if (!hasSupabaseAuth()) return;
+  if (!hasSupabaseAuth() && isLocalDemoMode()) return;
+  if (!hasSupabaseAuth()) {
+    redirectToLogin('./community.html');
+    return;
+  }
 
   try {
     const billing = await getBillingState();

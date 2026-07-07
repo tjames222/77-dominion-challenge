@@ -2,8 +2,10 @@ import { initReveal } from './reveal';
 import {
   createCustomerPortalSession,
   getBillingState,
+  getLocalOrSessionUser,
   getProfile,
   hasSupabaseAuth,
+  isLocalDemoMode,
   redirectToLogin,
 } from './api';
 
@@ -35,9 +37,8 @@ themeOptions.forEach((option) => {
 });
 applyTheme();
 
-const user = load('dominion:user', { name: 'Member', email: 'Logged in' });
-document.getElementById('profileName').textContent = user?.name || 'Member';
-document.getElementById('profileEmail').textContent = user?.email || 'Logged in';
+const profileNameEl = document.getElementById('profileName');
+const profileEmailEl = document.getElementById('profileEmail');
 const manageBillingButton = document.getElementById('profileManageBillingButton');
 
 function updateBillingSummary(state) {
@@ -58,13 +59,21 @@ function updateBillingSummary(state) {
 }
 
 async function hydrateProfile() {
-  if (!hasSupabaseAuth()) {
+  if (!hasSupabaseAuth() && isLocalDemoMode()) {
+    const user = load('dominion:user', { name: 'Member', email: 'Logged in' });
+    if (profileNameEl) profileNameEl.textContent = user?.name || 'Member';
+    if (profileEmailEl) profileEmailEl.textContent = user?.email || 'Logged in';
     updateBillingSummary({
       challengeAccess: true,
       membershipActive: false,
       challengePurchase: null,
       membershipSubscription: null,
     });
+    return;
+  }
+
+  if (!hasSupabaseAuth()) {
+    redirectToLogin('./profile.html');
     return;
   }
 
@@ -75,15 +84,16 @@ async function hydrateProfile() {
       return;
     }
 
+    const sessionUser = await getLocalOrSessionUser();
     const profile = await getProfile();
     const syncedUser = {
-      name: profile.name || 'Member',
-      email: profile.email || 'Logged in',
+      name: profile.name || sessionUser?.name || 'Member',
+      email: profile.email || sessionUser?.email || 'Logged in',
       authenticated: true,
     };
     save('dominion:user', syncedUser);
-    document.getElementById('profileName').textContent = syncedUser.name;
-    document.getElementById('profileEmail').textContent = syncedUser.email;
+    if (profileNameEl) profileNameEl.textContent = syncedUser.name;
+    if (profileEmailEl) profileEmailEl.textContent = syncedUser.email;
     updateBillingSummary(billing);
   } catch (error) {
     console.warn('Unable to load profile from Supabase', error);

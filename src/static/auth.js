@@ -2,6 +2,7 @@ import { initReveal } from './reveal';
 import {
   getBillingState,
   hasSupabaseAuth,
+  isLocalDemoMode,
   saveLocalUserFromSession,
   sanitizeReturnTo,
   signInWithPassword,
@@ -34,7 +35,7 @@ if (form) {
     const passwordInput = document.getElementById('password');
     const submitButton = form.querySelector('button[type="submit"]');
     const originalLabel = submitButton?.textContent;
-    const name = nameInput ? nameInput.value.trim() : load('dominion:user', { name: 'Member' }).name || 'Member';
+    const name = nameInput ? nameInput.value.trim() : 'Member';
     const email = emailInput.value.trim();
     const password = passwordInput?.value || '';
 
@@ -63,6 +64,11 @@ if (form) {
 
         const billing = await getBillingState();
         window.location.href = billing.challengeAccess ? './dashboard.html' : './billing.html';
+        return;
+      }
+
+      if (!isLocalDemoMode()) {
+        window.alert('Authentication is not configured for this production deployment yet.');
         return;
       }
 

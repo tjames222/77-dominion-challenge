@@ -5,6 +5,7 @@ import {
   formatDateLabel,
   getBillingState,
   hasSupabaseAuth,
+  isLocalDemoMode,
   redirectToLogin,
 } from './api';
 import { initReveal } from './reveal';
@@ -95,7 +96,7 @@ async function pollAfterCheckout(productKey) {
 }
 
 async function hydrateBillingPage() {
-  if (!hasSupabaseAuth()) {
+  if (!hasSupabaseAuth() && isLocalDemoMode()) {
     billingStatusTitle.textContent = 'Billing is bypassed in local demo mode.';
     billingStatusCopy.textContent = 'Supabase or Stripe is not configured here, so the challenge stays open for local development.';
     if (challengeStatusPill) challengeStatusPill.textContent = 'Challenge open';
@@ -103,6 +104,11 @@ async function hydrateBillingPage() {
     if (challengeButton) challengeButton.textContent = 'Open dashboard';
     if (membershipButton) membershipButton.hidden = true;
     if (manageBillingButton) manageBillingButton.hidden = true;
+    return;
+  }
+
+  if (!hasSupabaseAuth()) {
+    redirectToLogin('./billing.html');
     return;
   }
 

@@ -1,13 +1,5 @@
 import { clearAuthSession, getLocalOrSessionUser } from './api';
 
-const load = (key, fallback) => {
-  try {
-    return JSON.parse(localStorage.getItem(key) || JSON.stringify(fallback));
-  } catch {
-    return fallback;
-  }
-};
-
 const topbar = document.querySelector('.topbar');
 
 const loggedInLinks = [
@@ -39,7 +31,7 @@ function openMenu() {
 async function buildMenu() {
   if (!topbar || document.querySelector('.global-menu')) return;
 
-  const user = await getLocalOrSessionUser() || load('dominion:user', null);
+  const user = await getLocalOrSessionUser();
   const isLoggedIn = Boolean(user?.authenticated);
 
   const button = document.createElement('button');

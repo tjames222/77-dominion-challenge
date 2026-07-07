@@ -25,7 +25,8 @@ npm run dev
 2. Run `supabase/schema.sql` in the Supabase SQL editor.
 3. Copy `.env.example` to `.env`.
 4. Fill in `VITE_SUPABASE_URL` and `VITE_SUPABASE_PUBLISHABLE_KEY`.
-5. In Supabase Auth URL Configuration, set the Site URL to the production frontend URL and add local dev URLs for testing.
+5. In Supabase Auth URL Configuration, set the Site URL to the Cloudflare Pages production URL for this app and add local dev URLs for testing.
+6. This project is deployed from the Cloudflare production branch only. Supabase redirect URLs do not need a preview branch entry.
 
 The frontend uses Supabase Auth for login/register and writes directly to Supabase Postgres with Row Level Security policies.
 

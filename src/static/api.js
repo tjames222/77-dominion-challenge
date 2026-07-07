@@ -16,6 +16,10 @@ export const supabase = isSupabaseConfigured()
       },
     })
   : null;
+export function isLocalDemoMode() {
+  if (typeof window === 'undefined') return false;
+  return import.meta.env.DEV || ['localhost', '127.0.0.1', '::1'].includes(window.location.hostname) || window.location.protocol === 'file:';
+}
 const CHALLENGE_ACCESS_KEY = 'challenge_77_access';
 const MEMBERSHIP_ACCESS_KEY = 'membership_active';
 
@@ -49,6 +53,18 @@ const localBypassBillingState = () => ({
   authenticated: Boolean(readJson('dominion:user', null)?.authenticated),
   billingEnabled: false,
   challengeAccess: true,
+  membershipActive: false,
+  challengePurchase: null,
+  membershipSubscription: null,
+  purchases: [],
+  subscriptions: [],
+  entitlements: [],
+});
+
+const lockedBillingState = () => ({
+  authenticated: false,
+  billingEnabled: true,
+  challengeAccess: false,
   membershipActive: false,
   challengePurchase: null,
   membershipSubscription: null,
@@ -119,7 +135,8 @@ export function saveLocalUserFromSession(session, fallbackName) {
 export async function getLocalOrSessionUser() {
   const session = await getAuthSession();
   if (session?.user) return sessionToUser(session);
-  return readJson('dominion:user', null);
+  if (isLocalDemoMode()) return readJson('dominion:user', null);
+  return null;
 }
 
 export async function upsertProfile({ name, challengeStartDate } = {}) {
@@ -275,7 +292,7 @@ export async function updateProfile(profile) {
 }
 
 export async function getBillingState() {
-  if (!supabase) return localBypassBillingState();
+  if (!supabase) return isLocalDemoMode() ? localBypassBillingState() : lockedBillingState();
 
   const session = await getAuthSession();
   if (!session?.user) {
