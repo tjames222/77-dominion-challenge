@@ -151,7 +151,7 @@ const mapEntry = (entry) => ({
 
 const mapFeedItem = (item) => ({
   id: item.id,
-  name: item.name || item.display_name || 'Member',
+  name: item.display_name || item.name || 'Member',
   day: item.day || item.challenge_day,
   status: item.status,
   completedCount: item.completed_count || 0,
@@ -191,8 +191,8 @@ export async function getDashboard() {
       .order('entry_date', { ascending: false })
       .limit(90),
     client
-      .from('community_feed')
-      .select('id, name, day, status, completed_count, created_at')
+      .from('community_feed_items')
+      .select('id, display_name, challenge_day, status, completed_count, created_at')
       .order('created_at', { ascending: false })
       .limit(30),
   ]);
@@ -228,7 +228,7 @@ export async function saveChallengeEntry(entry) {
 export async function postCheckIn(checkIn) {
   const client = requireSupabase();
   const user = await requireUser();
-  const { data, error } = await client
+  const { error } = await client
     .from('check_ins')
     .insert({
       user_id: user.id,
@@ -236,21 +236,26 @@ export async function postCheckIn(checkIn) {
       challenge_day: checkIn.day,
       status: checkIn.status,
       completed_count: checkIn.completedCount,
-    })
-    .select('id, challenge_day, status, completed_count, created_at')
-    .single();
+    });
 
   if (error) throw error;
   const profile = readJson('dominion:user', { name: 'You' });
-  return mapFeedItem({ ...data, name: profile?.name || 'You' });
+  return mapFeedItem({
+    id: globalThis.crypto?.randomUUID?.() || `${checkIn.date}-${Date.now()}`,
+    display_name: profile?.name || 'You',
+    challenge_day: checkIn.day,
+    status: checkIn.status,
+    completed_count: checkIn.completedCount,
+    created_at: new Date().toISOString(),
+  });
 }
 
 export async function getCommunityFeed() {
   const client = requireSupabase();
   await requireUser();
   const { data, error } = await client
-    .from('community_feed')
-    .select('id, name, day, status, completed_count, created_at')
+    .from('community_feed_items')
+    .select('id, display_name, challenge_day, status, completed_count, created_at')
     .order('created_at', { ascending: false })
     .limit(30);
 
