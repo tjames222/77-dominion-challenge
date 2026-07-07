@@ -1,7 +1,10 @@
-import { getCommunityFeed, hasSupabaseAuth } from './api';
+import { getBillingState, getCommunityFeed, hasSupabaseAuth, redirectToLogin } from './api';
 
 const tabs = Array.from(document.querySelectorAll('.community-tab'));
 const panels = Array.from(document.querySelectorAll('.community-panel'));
+const membershipTitle = document.getElementById('communityMembershipTitle');
+const membershipCopy = document.getElementById('communityMembershipCopy');
+const membershipLink = document.getElementById('communityMembershipLink');
 
 tabs.forEach((tab) => {
   tab.addEventListener('click', () => {
@@ -22,6 +25,37 @@ async function hydrateCommunityFeed() {
   if (!hasSupabaseAuth()) return;
 
   try {
+    const billing = await getBillingState();
+    if (!billing.authenticated) {
+      redirectToLogin('./community.html');
+      return;
+    }
+
+    if (membershipTitle && membershipCopy) {
+      if (billing.membershipActive) {
+        membershipTitle.textContent = 'Membership is active.';
+        membershipCopy.textContent = 'Your premium accountability tools are available, including richer crew follow-up and private journaling layers.';
+        if (membershipLink) {
+          membershipLink.textContent = 'Manage membership';
+          membershipLink.href = './profile.html#billing';
+        }
+      } else {
+        membershipTitle.textContent = 'Basic community is open.';
+        membershipCopy.textContent = 'Membership unlocks premium accountability circles, private crew tools, and richer follow-up after the 77-day challenge.';
+      }
+    }
+
+    document.querySelectorAll('[data-premium-action]').forEach((button) => {
+      if (billing.membershipActive) {
+        button.disabled = false;
+        return;
+      }
+      button.textContent = 'Unlock membership to use this';
+      button.addEventListener('click', () => {
+        window.location.href = './billing.html?intent=membership';
+      });
+    });
+
     const feed = await getCommunityFeed();
     if (!Array.isArray(feed) || !feed.length) return;
     const lists = document.querySelectorAll('.feed-list');

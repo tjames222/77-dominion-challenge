@@ -1,8 +1,10 @@
 import { initReveal } from './reveal';
 import {
+  getBillingState,
   getDashboard,
   hasSupabaseAuth,
   postCheckIn,
+  redirectToLogin,
   saveChallengeEntry,
   updateProfile,
 } from './api';
@@ -409,9 +411,30 @@ if (countdownCheckInButton && checkInButton) countdownCheckInButton.addEventList
   checkInButton.scrollIntoView({ behavior: 'smooth', block: 'center' });
   checkInButton.focus({ preventScroll: true });
 });
-render();
-hydrateDashboardFromApi();
-loadVerseOfDay();
-applyDailyActions();
-startCountdownCard();
-requestAnimationFrame(() => initReveal());
+
+async function bootDashboard() {
+  if (hasSupabaseAuth()) {
+    const billing = await getBillingState();
+    if (!billing.authenticated) {
+      redirectToLogin();
+      return;
+    }
+    if (!billing.challengeAccess) {
+      window.location.href = './billing.html?intent=challenge';
+      return;
+    }
+  }
+
+  render();
+  hydrateDashboardFromApi();
+  loadVerseOfDay();
+  applyDailyActions();
+  startCountdownCard();
+  requestAnimationFrame(() => initReveal());
+}
+
+bootDashboard().catch((error) => {
+  console.warn('Unable to boot dashboard', error);
+  render();
+  requestAnimationFrame(() => initReveal());
+});

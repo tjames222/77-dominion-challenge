@@ -41,6 +41,60 @@ create table if not exists public.check_ins (
   created_at timestamptz not null default now()
 );
 
+create table if not exists public.billing_customers (
+  user_id uuid primary key references auth.users(id) on delete cascade,
+  stripe_customer_id text not null unique,
+  email text not null default '',
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create table if not exists public.purchases (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references auth.users(id) on delete cascade,
+  product_key text not null check (product_key in ('challenge_77')),
+  status text not null check (status in ('pending', 'paid', 'refunded', 'failed', 'expired')),
+  stripe_checkout_session_id text unique,
+  stripe_payment_intent_id text,
+  stripe_customer_id text,
+  stripe_price_id text,
+  amount_total integer,
+  currency text not null default 'usd',
+  purchased_at timestamptz,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create table if not exists public.subscriptions (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references auth.users(id) on delete cascade,
+  product_key text not null check (product_key in ('dominion_membership')),
+  status text not null,
+  stripe_customer_id text,
+  stripe_subscription_id text not null unique,
+  stripe_price_id text,
+  cancel_at_period_end boolean not null default false,
+  current_period_start timestamptz,
+  current_period_end timestamptz,
+  canceled_at timestamptz,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create table if not exists public.entitlements (
+  user_id uuid not null references auth.users(id) on delete cascade,
+  entitlement_key text not null check (entitlement_key in ('challenge_77_access', 'membership_active')),
+  status text not null check (status in ('active', 'inactive', 'revoked', 'expired')) default 'inactive',
+  source_type text not null,
+  source_id text,
+  starts_at timestamptz,
+  ends_at timestamptz,
+  metadata jsonb not null default '{}'::jsonb,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  primary key (user_id, entitlement_key)
+);
+
 drop view if exists public.community_feed;
 
 create table if not exists public.community_feed_items (
@@ -63,6 +117,15 @@ create index if not exists check_ins_created_at_idx
 create index if not exists check_ins_user_date_idx
   on public.check_ins (user_id, entry_date desc);
 
+create index if not exists purchases_user_created_at_idx
+  on public.purchases (user_id, created_at desc);
+
+create index if not exists subscriptions_user_created_at_idx
+  on public.subscriptions (user_id, created_at desc);
+
+create index if not exists entitlements_user_status_idx
+  on public.entitlements (user_id, status);
+
 create index if not exists community_feed_items_created_at_idx
   on public.community_feed_items (created_at desc);
 
@@ -77,6 +140,26 @@ create trigger set_profiles_updated_at
 drop trigger if exists set_challenge_entries_updated_at on public.challenge_entries;
 create trigger set_challenge_entries_updated_at
   before update on public.challenge_entries
+  for each row execute function public.set_updated_at();
+
+drop trigger if exists set_billing_customers_updated_at on public.billing_customers;
+create trigger set_billing_customers_updated_at
+  before update on public.billing_customers
+  for each row execute function public.set_updated_at();
+
+drop trigger if exists set_purchases_updated_at on public.purchases;
+create trigger set_purchases_updated_at
+  before update on public.purchases
+  for each row execute function public.set_updated_at();
+
+drop trigger if exists set_subscriptions_updated_at on public.subscriptions;
+create trigger set_subscriptions_updated_at
+  before update on public.subscriptions
+  for each row execute function public.set_updated_at();
+
+drop trigger if exists set_entitlements_updated_at on public.entitlements;
+create trigger set_entitlements_updated_at
+  before update on public.entitlements
   for each row execute function public.set_updated_at();
 
 create or replace function public.create_community_feed_item()
@@ -161,6 +244,10 @@ on conflict (check_in_id) do nothing;
 alter table public.profiles enable row level security;
 alter table public.challenge_entries enable row level security;
 alter table public.check_ins enable row level security;
+alter table public.billing_customers enable row level security;
+alter table public.purchases enable row level security;
+alter table public.subscriptions enable row level security;
+alter table public.entitlements enable row level security;
 alter table public.community_feed_items enable row level security;
 
 drop policy if exists "Users can read own profile" on public.profiles;
@@ -214,6 +301,27 @@ create policy "Users can insert own check ins"
   to authenticated
   with check ((select auth.uid()) = user_id);
 
+drop policy if exists "Users can read own purchases" on public.purchases;
+create policy "Users can read own purchases"
+  on public.purchases
+  for select
+  to authenticated
+  using ((select auth.uid()) = user_id);
+
+drop policy if exists "Users can read own subscriptions" on public.subscriptions;
+create policy "Users can read own subscriptions"
+  on public.subscriptions
+  for select
+  to authenticated
+  using ((select auth.uid()) = user_id);
+
+drop policy if exists "Users can read own entitlements" on public.entitlements;
+create policy "Users can read own entitlements"
+  on public.entitlements
+  for select
+  to authenticated
+  using ((select auth.uid()) = user_id);
+
 drop policy if exists "Authenticated users can read community feed" on public.community_feed_items;
 create policy "Authenticated users can read community feed"
   on public.community_feed_items
@@ -231,12 +339,23 @@ create policy "Users can insert own community feed items"
 revoke all on public.profiles from anon;
 revoke all on public.challenge_entries from anon;
 revoke all on public.check_ins from anon;
+revoke all on public.billing_customers from anon;
+revoke all on public.billing_customers from authenticated;
+revoke all on public.purchases from anon;
+revoke all on public.purchases from authenticated;
+revoke all on public.subscriptions from anon;
+revoke all on public.subscriptions from authenticated;
+revoke all on public.entitlements from anon;
+revoke all on public.entitlements from authenticated;
 revoke all on public.community_feed_items from anon;
 revoke all on public.community_feed_items from authenticated;
 
 grant select, insert, update on public.profiles to authenticated;
 grant select, insert, update on public.challenge_entries to authenticated;
 grant insert on public.check_ins to authenticated;
+grant select on public.purchases to authenticated;
+grant select on public.subscriptions to authenticated;
+grant select on public.entitlements to authenticated;
 grant insert on public.community_feed_items to authenticated;
 grant select (id, display_name, challenge_day, status, completed_count, created_at)
   on public.community_feed_items to authenticated;

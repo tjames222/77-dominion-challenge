@@ -1,7 +1,9 @@
 import { initReveal } from './reveal';
 import {
+  getBillingState,
   hasSupabaseAuth,
   saveLocalUserFromSession,
+  sanitizeReturnTo,
   signInWithPassword,
   signUpWithPassword,
 } from './api';
@@ -53,7 +55,14 @@ if (form) {
         }
 
         saveLocalUserFromSession(result.session, name);
-        window.location.href = './dashboard.html';
+        const returnTo = sanitizeReturnTo(new URLSearchParams(window.location.search).get('returnTo'));
+        if (returnTo && returnTo !== './dashboard.html') {
+          window.location.href = returnTo;
+          return;
+        }
+
+        const billing = await getBillingState();
+        window.location.href = billing.challengeAccess ? './dashboard.html' : './billing.html';
         return;
       }
 

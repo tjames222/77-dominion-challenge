@@ -12,6 +12,7 @@ const topbar = document.querySelector('.topbar');
 
 const loggedInLinks = [
   ['Dashboard', './dashboard.html'],
+  ['Billing', './billing.html'],
   ['Community', './community.html'],
   ["Today’s Actions", './today-actions.html'],
   ['Check-In', './dashboard.html#check-in'],

@@ -16,6 +16,8 @@ export const supabase = isSupabaseConfigured()
       },
     })
   : null;
+const CHALLENGE_ACCESS_KEY = 'challenge_77_access';
+const MEMBERSHIP_ACCESS_KEY = 'membership_active';
 
 const readJson = (key, fallback) => {
   try {
@@ -43,6 +45,18 @@ const requireSupabase = () => {
   return supabase;
 };
 
+const localBypassBillingState = () => ({
+  authenticated: Boolean(readJson('dominion:user', null)?.authenticated),
+  billingEnabled: false,
+  challengeAccess: true,
+  membershipActive: false,
+  challengePurchase: null,
+  membershipSubscription: null,
+  purchases: [],
+  subscriptions: [],
+  entitlements: [],
+});
+
 const requireUser = async () => {
   const client = requireSupabase();
   const { data, error } = await client.auth.getUser();
@@ -65,6 +79,29 @@ export async function getAuthSession() {
   if (!supabase) return null;
   const { data } = await supabase.auth.getSession();
   return data.session;
+}
+
+export function getCurrentAppPath() {
+  if (typeof window === 'undefined') return './dashboard.html';
+  const path = window.location.pathname.split('/').pop() || 'dashboard.html';
+  return `./${path}${window.location.search}${window.location.hash}`;
+}
+
+export function redirectToLogin(returnTo = getCurrentAppPath()) {
+  const target = encodeURIComponent(returnTo);
+  window.location.href = `./login.html?returnTo=${target}`;
+}
+
+export function sanitizeReturnTo(returnTo, fallback = './dashboard.html') {
+  if (!returnTo) return fallback;
+  try {
+    const resolved = new URL(returnTo, window.location.origin);
+    if (resolved.origin !== window.location.origin) return fallback;
+    const path = resolved.pathname.split('/').pop() || 'dashboard.html';
+    return `./${path}${resolved.search}${resolved.hash}`;
+  } catch {
+    return fallback;
+  }
 }
 
 export async function clearAuthSession() {
@@ -159,6 +196,64 @@ const mapFeedItem = (item) => ({
   createdAt: item.created_at,
 });
 
+const mapPurchase = (purchase) => purchase ? ({
+  id: purchase.id,
+  productKey: purchase.product_key,
+  status: purchase.status,
+  amountTotal: purchase.amount_total,
+  currency: purchase.currency || 'usd',
+  purchasedAt: purchase.purchased_at,
+  createdAt: purchase.created_at,
+}) : null;
+
+const mapSubscription = (subscription) => subscription ? ({
+  id: subscription.id,
+  productKey: subscription.product_key,
+  status: subscription.status,
+  cancelAtPeriodEnd: Boolean(subscription.cancel_at_period_end),
+  currentPeriodStart: subscription.current_period_start,
+  currentPeriodEnd: subscription.current_period_end,
+  canceledAt: subscription.canceled_at,
+  createdAt: subscription.created_at,
+}) : null;
+
+const mapEntitlement = (entitlement) => entitlement ? ({
+  key: entitlement.entitlement_key,
+  status: entitlement.status,
+  startsAt: entitlement.starts_at,
+  endsAt: entitlement.ends_at,
+  sourceType: entitlement.source_type,
+  sourceId: entitlement.source_id,
+  metadata: entitlement.metadata || {},
+}) : null;
+
+export function hasActiveEntitlement(entitlements, entitlementKey) {
+  const now = Date.now();
+  return entitlements.some((item) => {
+    if (item.key !== entitlementKey || item.status !== 'active') return false;
+    if (!item.endsAt) return true;
+    return new Date(item.endsAt).getTime() > now;
+  });
+}
+
+export function formatCurrency(amount, currency = 'usd') {
+  if (amount === null || amount === undefined) return null;
+  return new Intl.NumberFormat('en-US', {
+    style: 'currency',
+    currency: currency.toUpperCase(),
+    maximumFractionDigits: 0,
+  }).format(amount / 100);
+}
+
+export function formatDateLabel(value) {
+  if (!value) return null;
+  return new Intl.DateTimeFormat('en-US', {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+  }).format(new Date(value));
+}
+
 export async function getProfile() {
   const client = requireSupabase();
   const user = await requireUser();
@@ -177,6 +272,80 @@ export async function updateProfile(profile) {
     name: profile.name,
     challengeStartDate: profile.challengeStartDate,
   });
+}
+
+export async function getBillingState() {
+  if (!supabase) return localBypassBillingState();
+
+  const session = await getAuthSession();
+  if (!session?.user) {
+    return {
+      authenticated: false,
+      billingEnabled: true,
+      challengeAccess: false,
+      membershipActive: false,
+      challengePurchase: null,
+      membershipSubscription: null,
+      purchases: [],
+      subscriptions: [],
+      entitlements: [],
+    };
+  }
+
+  const client = requireSupabase();
+  const userId = session.user.id;
+  const [entitlementsResult, purchasesResult, subscriptionsResult] = await Promise.all([
+    client
+      .from('entitlements')
+      .select('entitlement_key, status, starts_at, ends_at, source_type, source_id, metadata')
+      .eq('user_id', userId),
+    client
+      .from('purchases')
+      .select('id, product_key, status, amount_total, currency, purchased_at, created_at')
+      .eq('user_id', userId)
+      .order('created_at', { ascending: false }),
+    client
+      .from('subscriptions')
+      .select('id, product_key, status, cancel_at_period_end, current_period_start, current_period_end, canceled_at, created_at')
+      .eq('user_id', userId)
+      .order('created_at', { ascending: false }),
+  ]);
+
+  if (entitlementsResult.error) throw entitlementsResult.error;
+  if (purchasesResult.error) throw purchasesResult.error;
+  if (subscriptionsResult.error) throw subscriptionsResult.error;
+
+  const entitlements = (entitlementsResult.data || []).map(mapEntitlement);
+  const purchases = (purchasesResult.data || []).map(mapPurchase);
+  const subscriptions = (subscriptionsResult.data || []).map(mapSubscription);
+
+  return {
+    authenticated: true,
+    billingEnabled: true,
+    challengeAccess: hasActiveEntitlement(entitlements, CHALLENGE_ACCESS_KEY),
+    membershipActive: hasActiveEntitlement(entitlements, MEMBERSHIP_ACCESS_KEY),
+    challengePurchase: purchases.find((item) => item.productKey === 'challenge_77' && item.status === 'paid') || null,
+    membershipSubscription: subscriptions.find((item) => item.productKey === 'dominion_membership') || null,
+    purchases,
+    subscriptions,
+    entitlements,
+  };
+}
+
+async function invokeSupabaseFunction(name, body = {}) {
+  const client = requireSupabase();
+  const { data, error } = await client.functions.invoke(name, { body });
+  if (error) throw error;
+  if (!data?.url) throw new Error('Billing session did not return a destination URL.');
+  return data;
+}
+
+export async function createCheckoutSession(productKey) {
+  return invokeSupabaseFunction('create-checkout-session', { productKey });
+}
+
+export async function createCustomerPortalSession() {
+  return invokeSupabaseFunction('create-customer-portal-session');
 }
 
 export async function getDashboard() {

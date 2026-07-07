@@ -31,7 +31,21 @@
         <p class="eyebrow">Challenge</p>
         <h2>77-Day Dominion Challenge</h2>
         <p class="section-copy">Group: San Marcos Men</p>
-        <p class="section-copy">Status: Active</p>
+        <p class="section-copy" id="profileChallengeStatus">Status: Checking access</p>
+      </section>
+
+      <section class="card reveal profile-billing" id="billing">
+        <p class="eyebrow">Billing</p>
+        <h2 id="profileBillingTitle">Billing access</h2>
+        <p class="section-copy" id="profileBillingCopy">Loading your challenge and membership details.</p>
+        <div class="billing-pill-row">
+          <span class="billing-pill" id="profileChallengePill">Challenge locked</span>
+          <span class="billing-pill" id="profileMembershipPill">Membership inactive</span>
+        </div>
+        <div class="profile-billing-actions">
+          <a class="primary" href="./billing.html">Open billing</a>
+          <button class="secondary-button" id="profileManageBillingButton" type="button" hidden>Manage subscription</button>
+        </div>
       </section>
 
       <section class="card reveal profile-appearance">
