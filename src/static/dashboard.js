@@ -1,4 +1,11 @@
 import { initReveal } from './reveal';
+import {
+  getDashboard,
+  hasSupabaseAuth,
+  postCheckIn,
+  saveChallengeEntry,
+  updateProfile,
+} from './api';
 
 const TOTAL_DAYS = 77;
 const YOUVERSION_VERSE_URL = import.meta.env.VITE_YOUVERSION_VERSE_URL || '';
@@ -126,7 +133,10 @@ const saveEntry = (entry) => {
   const index = entries.findIndex(item => item.date === entry.date);
   if (index >= 0) entries[index] = entry;
   else entries.push(entry);
-  save('dominion:entries', entries);
+  if (!hasSupabaseAuth()) save('dominion:entries', entries);
+  if (hasSupabaseAuth()) {
+    saveChallengeEntry(entry).catch((error) => console.warn('Unable to sync challenge entry', error));
+  }
 };
 const currentDay = () => Math.min(Math.max(Math.floor((new Date(todayKey() + 'T00:00:00') - new Date(startDate + 'T00:00:00')) / 86400000) + 1, 1), TOTAL_DAYS);
 const padClock = (value) => String(value).padStart(2, '0');
@@ -298,6 +308,32 @@ function startCountdownCard() {
   updateCountdownCard();
   countdownTimer = window.setInterval(updateCountdownCard, 1000);
 }
+async function hydrateDashboardFromApi() {
+  if (!hasSupabaseAuth()) return;
+
+  try {
+    const dashboard = await getDashboard();
+    if (dashboard?.profile?.challengeStartDate) {
+      startDate = dashboard.profile.challengeStartDate;
+      save('dominion:startDate', startDate);
+    }
+    if (Array.isArray(dashboard?.entries)) {
+      entries = dashboard.entries.map((entry) => ({
+        date: entry.date,
+        completed: Array.isArray(entry.completed) ? entry.completed : [],
+        scheduledMiss: Boolean(entry.scheduledMiss),
+      }));
+      save('dominion:entries', entries);
+    }
+    if (Array.isArray(dashboard?.feed) && dashboard.feed.length) {
+      feed = dashboard.feed;
+      save('dominion:feed', feed);
+    }
+    render();
+  } catch (error) {
+    console.warn('Unable to load dashboard from Supabase', error);
+  }
+}
 const themeToggle = $('themeToggle');
 const startDateInput = $('startDate');
 const checklist = $('checklist');
@@ -306,7 +342,14 @@ const checkInButton = $('checkInButton');
 const countdownCheckInButton = $('countdownCheckInButton');
 const walkReminderButton = $('walkReminderButton');
 if (themeToggle) themeToggle.addEventListener('click', () => { theme = theme === 'dark' ? 'light' : 'dark'; save('dominion:theme', theme); render(); });
-if (startDateInput) startDateInput.addEventListener('input', event => { startDate = event.target.value || todayKey(); save('dominion:startDate', startDate); render(); });
+if (startDateInput) startDateInput.addEventListener('input', event => {
+  startDate = event.target.value || todayKey();
+  if (!hasSupabaseAuth()) save('dominion:startDate', startDate);
+  if (hasSupabaseAuth()) {
+    updateProfile({ challengeStartDate: startDate }).catch((error) => console.warn('Unable to sync profile', error));
+  }
+  render();
+});
 document.querySelectorAll('[data-workout]').forEach((select) => {
   select.addEventListener('change', (event) => {
     const target = event.target;
@@ -351,7 +394,15 @@ if (checkInButton) checkInButton.addEventListener('click', () => {
   if (!entry.scheduledMiss && entry.completed.length === 0) return;
   const status = entry.scheduledMiss ? 'scheduled' : entry.completed.length === standards.length ? 'complete' : 'partial';
   feed.unshift({ name: 'You', day: currentDay(), status, completedCount: entry.completed.length, timestamp: 'Today' });
-  save('dominion:feed', feed);
+  if (!hasSupabaseAuth()) save('dominion:feed', feed);
+  if (hasSupabaseAuth()) {
+    postCheckIn({
+      date: entry.date,
+      day: currentDay(),
+      status,
+      completedCount: entry.completed.length,
+    }).catch((error) => console.warn('Unable to sync check-in', error));
+  }
   render();
 });
 if (countdownCheckInButton && checkInButton) countdownCheckInButton.addEventListener('click', () => {
@@ -359,6 +410,7 @@ if (countdownCheckInButton && checkInButton) countdownCheckInButton.addEventList
   checkInButton.focus({ preventScroll: true });
 });
 render();
+hydrateDashboardFromApi();
 loadVerseOfDay();
 applyDailyActions();
 startCountdownCard();

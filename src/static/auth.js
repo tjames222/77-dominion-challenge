@@ -1,4 +1,10 @@
 import { initReveal } from './reveal';
+import {
+  hasSupabaseAuth,
+  saveLocalUserFromSession,
+  signInWithPassword,
+  signUpWithPassword,
+} from './api';
 
 const load = (key, fallback) => JSON.parse(localStorage.getItem(key) || JSON.stringify(fallback));
 const save = (key, value) => localStorage.setItem(key, JSON.stringify(value));
@@ -19,18 +25,54 @@ applyTheme();
 
 const form = document.getElementById('authForm');
 if (form) {
-  form.addEventListener('submit', (event) => {
+  form.addEventListener('submit', async (event) => {
     event.preventDefault();
     const nameInput = document.getElementById('name');
     const emailInput = document.getElementById('email');
-    const user = {
-      name: nameInput ? nameInput.value.trim() : load('dominion:user', { name: 'Member' }).name || 'Member',
-      email: emailInput.value.trim(),
-      authenticated: true,
-    };
-    save('dominion:user', user);
-    if (user.name) save('dominion:memberName', user.name);
-    window.location.href = './dashboard.html';
+    const passwordInput = document.getElementById('password');
+    const submitButton = form.querySelector('button[type="submit"]');
+    const originalLabel = submitButton?.textContent;
+    const name = nameInput ? nameInput.value.trim() : load('dominion:user', { name: 'Member' }).name || 'Member';
+    const email = emailInput.value.trim();
+    const password = passwordInput?.value || '';
+
+    if (submitButton) {
+      submitButton.disabled = true;
+      submitButton.textContent = 'Working...';
+    }
+
+    try {
+      if (hasSupabaseAuth()) {
+        const result = nameInput
+          ? await signUpWithPassword({ name, email, password })
+          : await signInWithPassword({ email, password });
+
+        if (!result.session?.access_token) {
+          window.alert('Check your email to confirm your account, then log in.');
+          return;
+        }
+
+        saveLocalUserFromSession(result.session, name);
+        window.location.href = './dashboard.html';
+        return;
+      }
+
+      const user = {
+        name,
+        email,
+        authenticated: true,
+      };
+      save('dominion:user', user);
+      if (user.name) save('dominion:memberName', user.name);
+      window.location.href = './dashboard.html';
+    } catch (error) {
+      window.alert(error?.message || 'Unable to authenticate right now.');
+    } finally {
+      if (submitButton) {
+        submitButton.disabled = false;
+        submitButton.textContent = originalLabel;
+      }
+    }
   });
 }
 initReveal();

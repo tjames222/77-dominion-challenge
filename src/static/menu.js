@@ -1,3 +1,5 @@
+import { clearAuthSession, getLocalOrSessionUser } from './api';
+
 const load = (key, fallback) => {
   try {
     return JSON.parse(localStorage.getItem(key) || JSON.stringify(fallback));
@@ -6,8 +8,6 @@ const load = (key, fallback) => {
   }
 };
 
-const user = load('dominion:user', null);
-const isLoggedIn = Boolean(user?.authenticated);
 const topbar = document.querySelector('.topbar');
 
 const loggedInLinks = [
@@ -35,8 +35,11 @@ function openMenu() {
   document.querySelector('.global-menu-button')?.setAttribute('aria-expanded', 'true');
 }
 
-function buildMenu() {
+async function buildMenu() {
   if (!topbar || document.querySelector('.global-menu')) return;
+
+  const user = await getLocalOrSessionUser() || load('dominion:user', null);
+  const isLoggedIn = Boolean(user?.authenticated);
 
   const button = document.createElement('button');
   button.className = 'global-menu-button';
@@ -80,8 +83,8 @@ function buildMenu() {
   });
   overlay.addEventListener('click', closeMenu);
   menu.querySelector('.global-menu-close')?.addEventListener('click', closeMenu);
-  menu.querySelector('.global-menu-logout')?.addEventListener('click', () => {
-    localStorage.removeItem('dominion:user');
+  menu.querySelector('.global-menu-logout')?.addEventListener('click', async () => {
+    await clearAuthSession();
     closeMenu();
     window.location.href = './index.html';
   });

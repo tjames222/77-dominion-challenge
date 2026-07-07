@@ -10,6 +10,9 @@ Recommended settings:
 - Build command: npm run build
 - Build output directory: dist
 - Root directory: /
+- Environment variables:
+  - VITE_SUPABASE_URL
+  - VITE_SUPABASE_ANON_KEY
 
 Branch workflow:
 
@@ -17,6 +20,4 @@ Branch workflow:
 - develop = staging and active development
 - feature branches = preview deployments
 
-The repo uses Cloudflare Pages for preview deployments.
-
-Current app note: authentication and dashboard state are still mocked with localStorage. Real accounts will require a backend or hosted auth provider later.
+The repo uses Cloudflare Pages for preview deployments. Authentication and challenge data are backed by Supabase Auth and Postgres; localStorage is only used for local UI preferences and fallback behavior when Supabase env vars are not configured.
