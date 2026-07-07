@@ -12,7 +12,7 @@ Recommended settings:
 - Root directory: /
 - Environment variables:
   - VITE_SUPABASE_URL
-  - VITE_SUPABASE_ANON_KEY
+  - VITE_SUPABASE_PUBLISHABLE_KEY
 
 Branch workflow:
 
