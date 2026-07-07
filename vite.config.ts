@@ -10,6 +10,7 @@ export default defineConfig({
         main: 'index.html',
         login: 'login.html',
         register: 'register.html',
+        billing: 'billing.html',
         dashboard: 'dashboard.html',
         todayActions: 'today-actions.html',
         community: 'community.html',
