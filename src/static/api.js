@@ -213,6 +213,60 @@ const mapFeedItem = (item) => ({
   createdAt: item.created_at,
 });
 
+const mapCrew = (item) => {
+  const crew = item.crews || item;
+  return crew ? {
+    id: crew.id || item.crew_id,
+    name: crew.name || 'Crew',
+    description: crew.description || '',
+    challengeStartDate: crew.challenge_start_date,
+    createdBy: crew.created_by,
+    createdAt: crew.created_at,
+    role: item.role || crew.role || 'member',
+    joinedAt: item.joined_at,
+  } : null;
+};
+
+const mapPost = (post, likes = [], comments = [], currentUserId = '') => ({
+  id: post.id,
+  authorId: post.author_id,
+  name: post.display_name || 'Member',
+  crewId: post.crew_id,
+  scope: post.scope,
+  body: post.body,
+  postType: post.post_type || 'message',
+  day: post.challenge_day,
+  status: post.status,
+  completedCount: post.completed_count || 0,
+  createdAt: post.created_at,
+  timestamp: post.created_at ? todayLabel(post.created_at) : 'Today',
+  likeCount: likes.length,
+  likedByMe: likes.some((item) => item.user_id === currentUserId),
+  comments: comments.map((comment) => ({
+    id: comment.id,
+    postId: comment.post_id,
+    userId: comment.user_id,
+    name: comment.display_name || 'Member',
+    body: comment.body,
+    createdAt: comment.created_at,
+    timestamp: comment.created_at ? todayLabel(comment.created_at) : 'Today',
+  })),
+});
+
+const mapJournalEntry = (entry, photos = []) => ({
+  id: entry.id,
+  date: entry.entry_date,
+  day: entry.challenge_day,
+  note: entry.note || '',
+  win: entry.win || '',
+  prayer: entry.prayer || '',
+  mood: entry.mood || '',
+  energy: entry.energy || '',
+  createdAt: entry.created_at,
+  updatedAt: entry.updated_at,
+  photos,
+});
+
 const mapPurchase = (purchase) => purchase ? ({
   id: purchase.id,
   productKey: purchase.product_key,
@@ -447,4 +501,308 @@ export async function getCommunityFeed() {
 
   if (error) throw error;
   return data.map(mapFeedItem);
+}
+
+async function getCurrentDisplayName() {
+  const profile = await getProfile();
+  return profile?.name || 'Member';
+}
+
+export async function getCrews() {
+  const client = requireSupabase();
+  await requireUser();
+  const { data, error } = await client
+    .from('crew_members')
+    .select('crew_id, role, display_name, joined_at, crews(id, name, description, challenge_start_date, created_by, created_at)')
+    .order('joined_at', { ascending: false });
+
+  if (error) throw error;
+  return (data || []).map(mapCrew).filter(Boolean);
+}
+
+export async function createCrew({ name, description = '', challengeStartDate = null }) {
+  const client = requireSupabase();
+  const user = await requireUser();
+  const displayName = await getCurrentDisplayName();
+  const { data: crew, error: crewError } = await client
+    .from('crews')
+    .insert({
+      name,
+      description,
+      challenge_start_date: challengeStartDate || null,
+      created_by: user.id,
+    })
+    .select('id, name, description, challenge_start_date, created_by, created_at')
+    .single();
+
+  if (crewError) throw crewError;
+
+  const { error: memberError } = await client
+    .from('crew_members')
+    .insert({
+      crew_id: crew.id,
+      user_id: user.id,
+      display_name: displayName,
+      role: 'owner',
+    });
+
+  if (memberError) throw memberError;
+  return mapCrew({ ...crew, role: 'owner' });
+}
+
+export async function getCrewMembers(crewId) {
+  const client = requireSupabase();
+  await requireUser();
+  const { data, error } = await client
+    .from('crew_members')
+    .select('crew_id, user_id, display_name, role, joined_at')
+    .eq('crew_id', crewId)
+    .order('joined_at', { ascending: true });
+
+  if (error) throw error;
+  return (data || []).map((member) => ({
+    crewId: member.crew_id,
+    userId: member.user_id,
+    name: member.display_name || 'Member',
+    role: member.role,
+    joinedAt: member.joined_at,
+  }));
+}
+
+export async function getOrCreateCrewInvite(crewId) {
+  const client = requireSupabase();
+  const user = await requireUser();
+  const { data: existing, error: existingError } = await client
+    .from('crew_invites')
+    .select('id, crew_id, token, expires_at, revoked_at, created_at')
+    .eq('crew_id', crewId)
+    .is('revoked_at', null)
+    .gt('expires_at', new Date().toISOString())
+    .order('created_at', { ascending: false })
+    .limit(1);
+
+  if (existingError) throw existingError;
+  if (existing?.[0]) return existing[0];
+
+  const { data, error } = await client
+    .from('crew_invites')
+    .insert({ crew_id: crewId, created_by: user.id })
+    .select('id, crew_id, token, expires_at, revoked_at, created_at')
+    .single();
+
+  if (error) throw error;
+  return data;
+}
+
+export async function joinCrewByInvite(token) {
+  const client = requireSupabase();
+  const { data, error } = await client.rpc('join_crew_by_invite', { invite_token: token });
+  if (error) throw error;
+  const crew = data?.[0];
+  return crew ? mapCrew({
+    id: crew.crew_id,
+    name: crew.name,
+    description: crew.description,
+    challenge_start_date: crew.challenge_start_date,
+    role: 'member',
+  }) : null;
+}
+
+export async function getCommunityPosts({ scope = 'global', crewId = null, limit = 25 } = {}) {
+  const client = requireSupabase();
+  const user = await requireUser();
+  let query = client
+    .from('community_posts')
+    .select('id, author_id, display_name, crew_id, scope, body, post_type, challenge_day, status, completed_count, created_at')
+    .eq('scope', scope)
+    .order('created_at', { ascending: false })
+    .limit(limit);
+
+  if (scope === 'crew') query = query.eq('crew_id', crewId);
+  const { data: posts, error } = await query;
+  if (error) throw error;
+  if (!posts?.length) return [];
+
+  const postIds = posts.map((post) => post.id);
+  const [likesResult, commentsResult] = await Promise.all([
+    client
+      .from('post_likes')
+      .select('post_id, user_id')
+      .in('post_id', postIds),
+    client
+      .from('post_comments')
+      .select('id, post_id, user_id, display_name, body, created_at')
+      .in('post_id', postIds)
+      .order('created_at', { ascending: true }),
+  ]);
+
+  if (likesResult.error) throw likesResult.error;
+  if (commentsResult.error) throw commentsResult.error;
+
+  return posts.map((post) => mapPost(
+    post,
+    (likesResult.data || []).filter((like) => like.post_id === post.id),
+    (commentsResult.data || []).filter((comment) => comment.post_id === post.id),
+    user.id,
+  ));
+}
+
+export async function createCommunityPost({ scope, crewId = null, body, postType = 'message' }) {
+  const client = requireSupabase();
+  const user = await requireUser();
+  const displayName = await getCurrentDisplayName();
+  const { data, error } = await client
+    .from('community_posts')
+    .insert({
+      author_id: user.id,
+      display_name: displayName,
+      crew_id: scope === 'crew' ? crewId : null,
+      scope,
+      body,
+      post_type: postType,
+    })
+    .select('id, author_id, display_name, crew_id, scope, body, post_type, challenge_day, status, completed_count, created_at')
+    .single();
+
+  if (error) throw error;
+  return mapPost(data, [], [], user.id);
+}
+
+export async function setPostLiked(postId, shouldLike) {
+  const client = requireSupabase();
+  const user = await requireUser();
+  if (shouldLike) {
+    const { error } = await client
+      .from('post_likes')
+      .insert({ post_id: postId, user_id: user.id });
+    if (error && error.code !== '23505') throw error;
+    return;
+  }
+
+  const { error } = await client
+    .from('post_likes')
+    .delete()
+    .eq('post_id', postId)
+    .eq('user_id', user.id);
+  if (error) throw error;
+}
+
+export async function addPostComment(postId, body) {
+  const client = requireSupabase();
+  const user = await requireUser();
+  const displayName = await getCurrentDisplayName();
+  const { data, error } = await client
+    .from('post_comments')
+    .insert({
+      post_id: postId,
+      user_id: user.id,
+      display_name: displayName,
+      body,
+    })
+    .select('id, post_id, user_id, display_name, body, created_at')
+    .single();
+
+  if (error) throw error;
+  return {
+    id: data.id,
+    postId: data.post_id,
+    userId: data.user_id,
+    name: data.display_name || 'Member',
+    body: data.body,
+    createdAt: data.created_at,
+    timestamp: data.created_at ? todayLabel(data.created_at) : 'Today',
+  };
+}
+
+async function createSignedPhoto(photo) {
+  if (!photo?.storage_path) return null;
+  const client = requireSupabase();
+  const { data } = await client.storage
+    .from('journal-progress')
+    .createSignedUrl(photo.storage_path, 3600);
+
+  return {
+    id: photo.id,
+    entryId: photo.journal_entry_id,
+    storagePath: photo.storage_path,
+    caption: photo.caption || '',
+    createdAt: photo.created_at,
+    url: data?.signedUrl || '',
+  };
+}
+
+export async function getJournalEntries() {
+  const client = requireSupabase();
+  await requireUser();
+  const { data: entries, error } = await client
+    .from('journal_entries')
+    .select('id, user_id, entry_date, challenge_day, note, win, prayer, mood, energy, created_at, updated_at')
+    .order('entry_date', { ascending: false })
+    .limit(30);
+
+  if (error) throw error;
+  if (!entries?.length) return [];
+
+  const entryIds = entries.map((entry) => entry.id);
+  const { data: photos, error: photosError } = await client
+    .from('journal_photos')
+    .select('id, journal_entry_id, storage_path, caption, created_at')
+    .in('journal_entry_id', entryIds)
+    .order('created_at', { ascending: false });
+
+  if (photosError) throw photosError;
+  const signedPhotos = (await Promise.all((photos || []).map(createSignedPhoto))).filter(Boolean);
+  return entries.map((entry) => mapJournalEntry(
+    entry,
+    signedPhotos.filter((photo) => photo.entryId === entry.id),
+  ));
+}
+
+export async function saveJournalEntry(entry) {
+  const client = requireSupabase();
+  const user = await requireUser();
+  const { data, error } = await client
+    .from('journal_entries')
+    .upsert({
+      user_id: user.id,
+      entry_date: entry.date,
+      challenge_day: entry.day || null,
+      note: entry.note || '',
+      win: entry.win || '',
+      prayer: entry.prayer || '',
+      mood: entry.mood || '',
+      energy: entry.energy || '',
+    }, { onConflict: 'user_id,entry_date' })
+    .select('id, user_id, entry_date, challenge_day, note, win, prayer, mood, energy, created_at, updated_at')
+    .single();
+
+  if (error) throw error;
+  return mapJournalEntry(data, []);
+}
+
+export async function uploadJournalPhoto({ entryId, file, caption = '' }) {
+  const client = requireSupabase();
+  const user = await requireUser();
+  const extension = file.name?.split('.').pop()?.toLowerCase() || 'jpg';
+  const safeName = `${Date.now()}-${globalThis.crypto?.randomUUID?.() || Math.random().toString(16).slice(2)}.${extension}`;
+  const storagePath = `${user.id}/${entryId}/${safeName}`;
+  const { error: uploadError } = await client.storage
+    .from('journal-progress')
+    .upload(storagePath, file, { cacheControl: '3600', upsert: false });
+
+  if (uploadError) throw uploadError;
+
+  const { data, error } = await client
+    .from('journal_photos')
+    .insert({
+      user_id: user.id,
+      journal_entry_id: entryId,
+      storage_path: storagePath,
+      caption,
+    })
+    .select('id, journal_entry_id, storage_path, caption, created_at')
+    .single();
+
+  if (error) throw error;
+  return createSignedPhoto(data);
 }

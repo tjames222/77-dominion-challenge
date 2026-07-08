@@ -26,11 +26,13 @@
       <section class="community-membership card reveal is-visible">
         <div>
           <p class="eyebrow">Dominion Membership</p>
-          <h2 id="communityMembershipTitle">Basic community is open.</h2>
-          <p id="communityMembershipCopy">Membership unlocks premium accountability circles, private crew tools, and richer follow-up after the 77-day challenge.</p>
+          <h2 id="communityMembershipTitle">Community is loading.</h2>
+          <p id="communityMembershipCopy">We are checking your challenge access and preparing your crew tools.</p>
         </div>
-        <a class="primary" id="communityMembershipLink" href="./billing.html?intent=membership">Unlock premium community</a>
+        <a class="primary" id="communityMembershipLink" href="./billing.html?intent=membership">View access</a>
       </section>
+
+      <div class="community-feedback" id="communityFeedback" role="status" aria-live="polite"></div>
 
       <nav class="community-tabs" aria-label="Community layers">
         <button class="community-tab active" type="button" data-tab="crew">My Crew</button>
@@ -43,35 +45,59 @@
           <span class="app-icon icon-users" aria-hidden="true"></span>
           <div>
             <p class="eyebrow">Private Group</p>
-            <h2>San Marcos Men</h2>
-            <p>8 of 11 checked in today. This is the accountability layer, because apparently doing hard things with names you recognize works better than yelling into the internet.</p>
+            <h2 id="crewTitle">Create or join a crew.</h2>
+            <p id="crewDescription">Private crews keep accountability close: one start date, one channel, and people you actually know.</p>
           </div>
         </div>
 
-        <div class="community-stats">
-          <article class="card"><strong>8/11</strong><span>Checked in</span></article>
-          <article class="card"><strong>Day 18</strong><span>Group pace</span></article>
-          <article class="card"><strong>3</strong><span>Need follow-up</span></article>
-        </div>
-
-        <section class="composer-card card">
-          <p class="eyebrow">Encourage Your Crew</p>
-          <textarea placeholder="Share a win, prayer request, or challenge from today..."></textarea>
-          <button class="primary" type="button" data-premium-action>Post to Crew</button>
+        <section class="community-tools card" id="crewCreateCard">
+          <div>
+            <p class="eyebrow">Start a Crew</p>
+            <h2>Build your private channel.</h2>
+          </div>
+          <form class="community-form" id="crewForm">
+            <label>
+              <span>Crew name</span>
+              <input id="crewNameInput" name="name" type="text" maxlength="80" placeholder="San Marcos Men" required />
+            </label>
+            <label>
+              <span>Challenge start date</span>
+              <input id="crewStartDateInput" name="challengeStartDate" type="date" required />
+            </label>
+            <label class="full-span">
+              <span>Description</span>
+              <textarea id="crewDescriptionInput" name="description" rows="3" placeholder="Who is this crew for?"></textarea>
+            </label>
+            <button class="primary" type="submit">Create Crew</button>
+          </form>
         </section>
 
-        <div class="feed-list">
-          <article class="feed-card card">
-            <div><strong>Brandon</strong><span>Completed Day 18</span></div>
-            <p>Got the second workout done after the kids went down. Not pretty. Still counts.</p>
-            <div class="reaction-row"><button>🔥 12</button><button>🙏 4</button><button>Encourage</button></div>
-          </article>
-          <article class="feed-card card">
-            <div><strong>Josh</strong><span>Needs prayer</span></div>
-            <p>Long workday. Pray I do not negotiate with myself tonight.</p>
-            <div class="reaction-row"><button>🙏 I’ll pray</button><button>Text him</button></div>
-          </article>
+        <section class="community-tools card" id="crewManageCard" hidden>
+          <div class="crew-toolbar">
+            <label>
+              <span>Active crew</span>
+              <select id="crewSelect"></select>
+            </label>
+            <button class="secondary" id="copyInviteButton" type="button">Copy Invite Link</button>
+          </div>
+          <p class="invite-link" id="inviteLinkText"></p>
+        </section>
+
+        <div class="community-stats" id="crewStats">
+          <article class="card"><strong id="crewMemberCount">0</strong><span>Members</span></article>
+          <article class="card"><strong id="crewDayCount">Day 1</strong><span>Group pace</span></article>
+          <article class="card"><strong id="crewPostCount">0</strong><span>Posts</span></article>
         </div>
+
+        <section class="composer-card card" id="crewComposerCard" hidden>
+          <p class="eyebrow">Encourage Your Crew</p>
+          <form id="crewPostForm">
+            <textarea id="crewPostBody" placeholder="Share a win, prayer request, or challenge from today..." required></textarea>
+            <button class="primary" type="submit">Post to Crew</button>
+          </form>
+        </section>
+
+        <div class="feed-list" id="crewFeed"></div>
       </section>
 
       <section class="community-panel" id="global" aria-labelledby="global-tab">
@@ -79,36 +105,20 @@
           <span class="app-icon icon-globe" aria-hidden="true"></span>
           <div>
             <p class="eyebrow">Global Community</p>
-            <h2>Day 18 Community</h2>
-            <p>See people on the same challenge day, no matter when they started. Shared struggle beats random chronological noise, shocking discovery.</p>
+            <h2>Challenge-wide encouragement.</h2>
+            <p>Post a win, a prayer request, or a word of encouragement for everyone currently walking the 77.</p>
           </div>
         </div>
 
-        <section class="day-pulse card">
-          <p class="eyebrow">Today’s Pulse</p>
-          <h2>183 people are on Day 18</h2>
-          <div class="pulse-bar"><span style="width: 68%"></span></div>
-          <small>124 checked in so far today</small>
+        <section class="composer-card card">
+          <p class="eyebrow">Post to Global</p>
+          <form id="globalPostForm">
+            <textarea id="globalPostBody" placeholder="Encourage the broader Dominion community..." required></textarea>
+            <button class="primary" type="submit">Post Globally</button>
+          </form>
         </section>
 
-        <div class="feed-list">
-          <article class="feed-card card featured-card">
-            <p class="eyebrow">Featured Encouragement</p>
-            <strong>Almost quit this morning. Walked anyway.</strong>
-            <p>Day 18 feels like the day discipline starts becoming less dramatic and more normal.</p>
-            <div class="reaction-row"><button>🔥 86</button><button>🙏 22</button></div>
-          </article>
-          <article class="feed-card card">
-            <div><strong>Emily</strong><span>Completed Day 77</span></div>
-            <p>Finished today. The biggest change was not fitness. It was attention.</p>
-            <div class="reaction-row"><button>Celebrate</button><button>🔥 141</button></div>
-          </article>
-          <article class="feed-card card">
-            <div><strong>Marcus</strong><span>Prayer request</span></div>
-            <p>Pray for consistency. I have been strong on workouts and weak on mornings.</p>
-            <div class="reaction-row"><button>🙏 I’m praying</button></div>
-          </article>
-        </div>
+        <div class="feed-list" id="globalFeed"></div>
       </section>
 
       <section class="community-panel" id="journey" aria-labelledby="journey-tab">
@@ -123,15 +133,56 @@
 
         <section class="composer-card card">
           <p class="eyebrow">Today’s Note</p>
-          <textarea placeholder="What did today reveal about your discipline, prayer, body, or attention?"></textarea>
-          <button class="primary" type="button" data-premium-action>Save Private Note</button>
+          <form class="journal-form" id="journalForm">
+            <label>
+              <span>Date</span>
+              <input id="journalDate" type="date" required />
+            </label>
+            <label>
+              <span>Mood</span>
+              <select id="journalMood">
+                <option value="">Choose one</option>
+                <option>Steady</option>
+                <option>Focused</option>
+                <option>Tired</option>
+                <option>Tested</option>
+                <option>Grateful</option>
+              </select>
+            </label>
+            <label>
+              <span>Energy</span>
+              <select id="journalEnergy">
+                <option value="">Choose one</option>
+                <option>Low</option>
+                <option>Medium</option>
+                <option>High</option>
+              </select>
+            </label>
+            <label class="full-span">
+              <span>What did today reveal?</span>
+              <textarea id="journalNote" placeholder="What did today reveal about your discipline, prayer, body, or attention?"></textarea>
+            </label>
+            <label class="full-span">
+              <span>Win</span>
+              <input id="journalWin" type="text" placeholder="Name one concrete win from today." />
+            </label>
+            <label class="full-span">
+              <span>Prayer or reflection</span>
+              <textarea id="journalPrayer" placeholder="What are you praying through or surrendering?"></textarea>
+            </label>
+            <label>
+              <span>Progress photo</span>
+              <input id="journalPhoto" type="file" accept="image/*" />
+            </label>
+            <label>
+              <span>Photo caption</span>
+              <input id="journalPhotoCaption" type="text" placeholder="Optional caption" />
+            </label>
+            <button class="primary" type="submit">Save Private Entry</button>
+          </form>
         </section>
 
-        <div class="journey-timeline">
-          <article class="card timeline-note"><span>Day 18</span><strong>Completed 7 of 7 standards</strong><p>Morning prayer was the difference today.</p></article>
-          <article class="card timeline-note"><span>Day 17</span><strong>Scheduled miss day</strong><p>Planned ahead. No laziness, no drift.</p></article>
-          <article class="card timeline-note"><span>Day 16</span><strong>Hardest day yet</strong><p>Did the walk during lunch instead of skipping it.</p></article>
-        </div>
+        <div class="journey-timeline" id="journalTimeline"></div>
       </section>
     </main>
 
