@@ -8,6 +8,7 @@ export default defineConfig({
     rollupOptions: {
       input: {
         main: 'index.html',
+        membership: 'membership.html',
         login: 'login.html',
         register: 'register.html',
         billing: 'billing.html',

@@ -51,15 +51,15 @@ function renderStatus(state) {
       ? `Your $7/month subscription is active through ${renewalDate}. Dashboard, daily actions, community, and journal are open.`
       : 'Your $7/month subscription is active. Dashboard, daily actions, community, and journal are open.';
   } else {
-    billingStatusTitle.textContent = 'Subscribe to unlock Dominion.';
-    billingStatusCopy.textContent = 'Start the 77-day challenge, track your daily actions, join community, and keep your private journal for $7/month.';
+    billingStatusTitle.textContent = 'Finish setup and start the work.';
+    billingStatusCopy.textContent = 'Activate membership for $7/month. You are one step from the tools that help daily decisions become lasting discipline.';
   }
 
   if (subscriptionButton) {
     subscriptionButton.disabled = state.subscriptionActive;
     subscriptionButton.textContent = state.subscriptionActive
       ? `Subscribed${renewalDate ? ` · renews ${renewalDate}` : ''}`
-      : 'Subscribe for $7/month';
+      : 'Activate membership';
   }
 
   if (manageBillingButton) manageBillingButton.hidden = !state.subscription;

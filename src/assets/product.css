@@ -39,6 +39,19 @@
   color: var(--text-muted);
   line-height: 1.5;
 }
+.landing-subscription-close {
+  display: grid;
+  gap: 8px;
+}
+.landing-subscription-close h2 {
+  margin: 0;
+  font-size: 1.45rem;
+}
+.landing-subscription-close p {
+  margin: 0;
+  color: var(--text-muted);
+  line-height: 1.5;
+}
 
 .cta-row {
   display: grid;
@@ -350,6 +363,96 @@
 .billing-roadmap-grid span {
   color: var(--text-muted);
   line-height: 1.45;
+}
+.membership-shell {
+  width: min(100%, 1040px);
+  display: grid;
+  gap: clamp(22px, 4vw, 40px);
+}
+.membership-hero {
+  display: grid;
+  gap: 18px;
+  padding: clamp(24px, 5vw, 44px);
+  background:
+    linear-gradient(135deg, color-mix(in srgb, var(--accent) 17%, var(--surface)) 0%, color-mix(in srgb, var(--surface) 86%, var(--background)) 54%, color-mix(in srgb, var(--success) 13%, var(--surface)) 100%);
+}
+.membership-hero h1 {
+  max-width: 15ch;
+  font-size: 2.35rem;
+  line-height: .95;
+  letter-spacing: 0;
+}
+.membership-hero .lead {
+  max-width: 58ch;
+}
+.membership-hero-actions {
+  display: grid;
+  gap: 10px;
+  width: min(100%, 440px);
+}
+.membership-hero-actions span {
+  color: var(--text-muted);
+  font-weight: 800;
+  line-height: 1.45;
+}
+.membership-includes {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 250px), 1fr));
+  gap: 14px;
+}
+.membership-feature-card {
+  display: grid;
+  gap: 12px;
+  align-content: start;
+  min-height: 230px;
+  padding: 20px;
+  border: 1px solid color-mix(in srgb, var(--border) 88%, transparent);
+  border-radius: 8px;
+  background:
+    linear-gradient(145deg, color-mix(in srgb, var(--accent) 8%, transparent), transparent 58%),
+    color-mix(in srgb, var(--surface-elevated) 86%, transparent);
+}
+.membership-feature-card .app-icon {
+  color: var(--accent-strong);
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+}
+.membership-feature-card strong {
+  font-size: 1.1rem;
+  line-height: 1.2;
+}
+.membership-feature-card p,
+.membership-change-panel p {
+  margin: 0;
+  color: var(--text-muted);
+  line-height: 1.52;
+}
+.membership-change-panel,
+.membership-final {
+  display: grid;
+  gap: 18px;
+  padding: clamp(22px, 4vw, 34px);
+  border: 1px solid color-mix(in srgb, var(--accent) 35%, var(--border));
+  border-radius: 8px;
+  background:
+    radial-gradient(circle at top right, color-mix(in srgb, var(--accent) 12%, transparent), transparent 44%),
+    color-mix(in srgb, var(--surface) 92%, var(--background));
+}
+.membership-change-panel h2,
+.membership-final h2 {
+  margin: 0;
+  max-width: 17ch;
+  font-size: 1.95rem;
+  letter-spacing: 0;
+}
+.membership-final {
+  align-items: center;
+}
+.membership-final .cta-button {
+  width: min(100%, 360px);
+}
+.membership-steps {
+  display: grid;
+  gap: 10px;
 }
 .profile-appearance {
   gap: 14px;
@@ -788,6 +891,23 @@
   width: min(100%, 620px);
 }
 .auth-card form { display: grid; gap: 12px; margin-top: 18px; }
+.auth-encouragement {
+  display: grid;
+  gap: 6px;
+  margin-top: 14px;
+  padding: 14px;
+  border: 1px solid color-mix(in srgb, var(--accent) 35%, var(--border));
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+}
+.auth-encouragement strong {
+  color: var(--accent-strong);
+  line-height: 1.2;
+}
+.auth-encouragement span {
+  color: var(--text-muted);
+  line-height: 1.45;
+}
 .auth-card label {
   display: grid;
   gap: 8px;
@@ -890,6 +1010,9 @@
   .landing-hero h1 {
     max-width: 9ch;
   }
+  .landing-subscription-close h2 {
+    font-size: 2rem;
+  }
   .landing-hero .lead {
     max-width: 58ch;
   }
@@ -899,10 +1022,19 @@
   }
   .landing-section,
   .feature-link,
-  .final-cta,
   .pricing-preview {
     width: min(100%, 860px);
     margin-inline: auto;
+  }
+  .membership-final {
+    grid-template-columns: 1fr auto;
+  }
+  .membership-hero h1 {
+    font-size: 4.4rem;
+  }
+  .membership-change-panel h2,
+  .membership-final h2 {
+    font-size: 3rem;
   }
   .compact-grid {
     grid-template-columns: repeat(3, minmax(0, 1fr));

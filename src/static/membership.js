@@ -5,28 +5,28 @@ const load = (key, fallback) => JSON.parse(localStorage.getItem(key) || JSON.str
 const save = (key, value) => localStorage.setItem(key, JSON.stringify(value));
 let theme = load('dominion:theme', 'dark');
 const themeToggle = document.getElementById('themeToggle');
+
 function applyTheme() {
   document.documentElement.dataset.theme = theme;
   if (themeToggle) themeToggle.textContent = `${theme === 'dark' ? 'Dark' : 'Light'} Theme`;
 }
+
 if (themeToggle) {
-  themeToggle.addEventListener('click', function () {
+  themeToggle.addEventListener('click', () => {
     theme = theme === 'dark' ? 'light' : 'dark';
     save('dominion:theme', theme);
     applyTheme();
   });
 }
-applyTheme();
 
-async function hydrateLandingCtas() {
-  const primaryCtas = [...document.querySelectorAll('[data-primary-cta]')];
-  const billingCta = document.getElementById('pricingCta');
-  if (!primaryCtas.length && !billingCta) return;
+async function hydrateMembershipCtas() {
+  const ctas = [...document.querySelectorAll('[data-membership-cta]')];
+  if (!ctas.length) return;
 
   const user = await getLocalOrSessionUser();
   const isLoggedIn = Boolean(user?.authenticated);
-  let target = './membership.html';
-  let label = 'See the membership';
+  let target = './register.html?returnTo=./billing.html';
+  let label = 'Sign up now';
 
   if (isLoggedIn) {
     target = './billing.html';
@@ -39,21 +39,17 @@ async function hydrateLandingCtas() {
           label = 'Open dashboard';
         }
       } catch (error) {
-        console.warn('Unable to personalize landing CTA', error);
+        console.warn('Unable to personalize membership CTA', error);
       }
     }
   }
 
-  primaryCtas.forEach((link) => {
-    link.href = target;
-    link.textContent = label;
+  ctas.forEach((cta) => {
+    cta.href = target;
+    cta.textContent = label;
   });
-
-  if (billingCta) {
-    billingCta.href = target;
-    billingCta.textContent = isLoggedIn ? label : 'See what you get';
-  }
 }
 
-hydrateLandingCtas();
+applyTheme();
+hydrateMembershipCtas();
 initReveal();

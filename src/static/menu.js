@@ -13,9 +13,9 @@ const loggedInLinks = [
 
 const publicLinks = [
   ['Home', './index.html'],
+  ['Membership', './membership.html'],
   ['Learn Why', './science.html'],
   ['Log In', './login.html'],
-  ['Register', './register.html'],
 ];
 
 function closeMenu() {
