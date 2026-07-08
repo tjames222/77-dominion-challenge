@@ -39,17 +39,28 @@ function renderStatus(state) {
   const renewalDate = state.subscription?.currentPeriodEnd
     ? formatDateLabel(state.subscription.currentPeriodEnd)
     : null;
+  const isPreviewBilling = state.billingEnabled === false;
 
   if (billingDashboardLink) billingDashboardLink.hidden = !state.appAccess;
   if (subscriptionStatusPill) {
-    subscriptionStatusPill.textContent = state.subscriptionActive ? 'Subscription active' : 'Subscription needed';
+    subscriptionStatusPill.textContent = isPreviewBilling
+      ? 'Preview mock'
+      : state.subscriptionActive ? 'Subscription active' : 'Subscription needed';
   }
 
-  if (state.subscriptionActive) {
+  if (state.subscriptionActive && isPreviewBilling) {
+    billingStatusTitle.textContent = 'Preview membership is active.';
+    billingStatusCopy.textContent = renewalDate
+      ? `Your mock $7/month membership is active through ${renewalDate}. Dashboard, daily actions, community, and journal are open in this preview.`
+      : 'Your mock $7/month membership is active. Dashboard, daily actions, community, and journal are open in this preview.';
+  } else if (state.subscriptionActive) {
     billingStatusTitle.textContent = 'Your Dominion subscription is active.';
     billingStatusCopy.textContent = renewalDate
       ? `Your $7/month subscription is active through ${renewalDate}. Dashboard, daily actions, community, and journal are open.`
       : 'Your $7/month subscription is active. Dashboard, daily actions, community, and journal are open.';
+  } else if (isPreviewBilling) {
+    billingStatusTitle.textContent = 'Preview membership checkout.';
+    billingStatusCopy.textContent = 'Activate a mock $7/month membership to test the dashboard, daily actions, community, and journal without touching Stripe.';
   } else {
     billingStatusTitle.textContent = 'Finish setup and start the work.';
     billingStatusCopy.textContent = 'Activate membership for $7/month. You are one step from the tools that help daily decisions become lasting discipline.';
@@ -58,8 +69,8 @@ function renderStatus(state) {
   if (subscriptionButton) {
     subscriptionButton.disabled = state.subscriptionActive;
     subscriptionButton.textContent = state.subscriptionActive
-      ? `Subscribed${renewalDate ? ` · renews ${renewalDate}` : ''}`
-      : 'Activate membership';
+      ? `${isPreviewBilling ? 'Preview active' : 'Subscribed'}${renewalDate ? ` · renews ${renewalDate}` : ''}`
+      : isPreviewBilling ? 'Activate preview membership' : 'Activate membership';
   }
 
   if (manageBillingButton) manageBillingButton.hidden = !state.subscription;
@@ -76,16 +87,7 @@ async function pollAfterCheckout() {
 }
 
 async function hydrateBillingPage() {
-  if (!hasSupabaseAuth() && isLocalDemoMode()) {
-    billingStatusTitle.textContent = 'Billing is bypassed in local demo mode.';
-    billingStatusCopy.textContent = 'Supabase or Stripe is not configured here, so the app stays open for local development.';
-    if (subscriptionStatusPill) subscriptionStatusPill.textContent = 'Local demo';
-    if (subscriptionButton) subscriptionButton.textContent = 'Open dashboard';
-    if (manageBillingButton) manageBillingButton.hidden = true;
-    return;
-  }
-
-  if (!hasSupabaseAuth()) {
+  if (!hasSupabaseAuth() && !isLocalDemoMode()) {
     redirectToLogin('./billing.html');
     return;
   }
@@ -116,8 +118,8 @@ async function hydrateBillingPage() {
 }
 
 subscriptionButton?.addEventListener('click', async () => {
-  if (!hasSupabaseAuth()) {
-    window.location.href = './dashboard.html';
+  if (!hasSupabaseAuth() && !isLocalDemoMode()) {
+    redirectToLogin('./billing.html');
     return;
   }
   const release = setButtonBusy(subscriptionButton, 'Opening checkout...');
@@ -131,7 +133,7 @@ subscriptionButton?.addEventListener('click', async () => {
 });
 
 manageBillingButton?.addEventListener('click', async () => {
-  if (!hasSupabaseAuth()) return;
+  if (!hasSupabaseAuth() && !isLocalDemoMode()) return;
   const release = setButtonBusy(manageBillingButton, 'Opening portal...');
   try {
     const { url } = await createCustomerPortalSession();

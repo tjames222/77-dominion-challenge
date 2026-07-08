@@ -79,7 +79,8 @@ if (form) {
       };
       save('dominion:user', user);
       if (user.name) save('dominion:memberName', user.name);
-      window.location.href = './dashboard.html';
+      const returnTo = sanitizeReturnTo(new URLSearchParams(window.location.search).get('returnTo'));
+      window.location.href = returnTo || './dashboard.html';
     } catch (error) {
       window.alert(error?.message || 'Unable to authenticate right now.');
     } finally {

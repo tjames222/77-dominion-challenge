@@ -5,9 +5,10 @@ const SUPABASE_KEY =
   import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY ||
   import.meta.env.VITE_SUPABASE_ANON_KEY ||
   '';
+const ENABLE_MOCKS = String(import.meta.env.VITE_ENABLE_MOCKS || '').toLowerCase() === 'true';
 const isPlaceholder = (value) => !value || value.includes('YOUR_');
 const isSupabaseConfigured = () => !isPlaceholder(SUPABASE_URL) && !isPlaceholder(SUPABASE_KEY);
-export const supabase = isSupabaseConfigured()
+export const supabase = isSupabaseConfigured() && !ENABLE_MOCKS
   ? createClient(SUPABASE_URL, SUPABASE_KEY, {
       auth: {
         persistSession: true,
@@ -18,10 +19,17 @@ export const supabase = isSupabaseConfigured()
   : null;
 export function isLocalDemoMode() {
   if (typeof window === 'undefined') return false;
-  return import.meta.env.DEV && ['localhost', '127.0.0.1', '::1'].includes(window.location.hostname);
+  return ENABLE_MOCKS || (import.meta.env.DEV && ['localhost', '127.0.0.1', '::1'].includes(window.location.hostname));
 }
 const MEMBERSHIP_ACCESS_KEY = 'membership_active';
 const MEMBERSHIP_PRODUCT_KEY = 'dominion_membership';
+const MOCK_USER_ID_KEY = 'dominion:mockUserId';
+const MOCK_SUBSCRIPTION_KEY = 'dominion:mockSubscription';
+const MOCK_CREWS_KEY = 'dominion:mockCrews';
+const MOCK_CREW_MEMBERS_KEY = 'dominion:mockCrewMembers';
+const MOCK_INVITES_KEY = 'dominion:mockCrewInvites';
+const MOCK_POSTS_KEY = 'dominion:mockCommunityPosts';
+const MOCK_JOURNAL_KEY = 'dominion:mockJournalEntries';
 
 const readJson = (key, fallback) => {
   try {
@@ -29,6 +37,50 @@ const readJson = (key, fallback) => {
   } catch {
     return fallback;
   }
+};
+
+const writeJson = (key, value) => localStorage.setItem(key, JSON.stringify(value));
+
+const randomId = (prefix) => `${prefix}_${globalThis.crypto?.randomUUID?.() || Math.random().toString(16).slice(2)}`;
+
+const getMockUserId = () => {
+  let userId = localStorage.getItem(MOCK_USER_ID_KEY);
+  if (!userId) {
+    userId = randomId('mock_user');
+    localStorage.setItem(MOCK_USER_ID_KEY, userId);
+  }
+  return userId;
+};
+
+const getMockUser = () => readJson('dominion:user', {
+  name: 'Preview Member',
+  email: 'preview@77dominion.test',
+  authenticated: true,
+});
+
+const getMockSubscription = () => readJson(MOCK_SUBSCRIPTION_KEY, null);
+
+const getMockBillingState = () => {
+  const user = readJson('dominion:user', null);
+  const subscription = getMockSubscription();
+  const active = Boolean(subscription?.subscriptionActive);
+  return {
+    authenticated: Boolean(user?.authenticated),
+    billingEnabled: false,
+    appAccess: active,
+    subscriptionActive: active,
+    subscription: active ? subscription : null,
+    subscriptions: active ? [subscription] : [],
+    entitlements: active ? [{
+      key: MEMBERSHIP_ACCESS_KEY,
+      status: 'active',
+      startsAt: subscription.currentPeriodStart,
+      endsAt: subscription.currentPeriodEnd,
+      sourceType: 'mock',
+      sourceId: subscription.id,
+      metadata: { preview: true },
+    }] : [],
+  };
 };
 
 const todayLabel = (createdAt) => {
@@ -45,19 +97,12 @@ const todayLabel = (createdAt) => {
 };
 
 const requireSupabase = () => {
+  if (isLocalDemoMode()) throw new Error('Supabase is disabled in preview mock mode.');
   if (!supabase) throw new Error('Supabase is not configured.');
   return supabase;
 };
 
-const localBypassBillingState = () => ({
-  authenticated: Boolean(readJson('dominion:user', null)?.authenticated),
-  billingEnabled: false,
-  appAccess: true,
-  subscriptionActive: true,
-  subscription: null,
-  subscriptions: [],
-  entitlements: [],
-});
+const localBypassBillingState = () => getMockBillingState();
 
 const lockedBillingState = () => ({
   authenticated: false,
@@ -85,10 +130,10 @@ export function sessionToUser(session, fallbackName = 'Member') {
   return { name, email, authenticated: Boolean(session?.access_token) };
 }
 
-export const hasSupabaseAuth = () => Boolean(supabase);
+export const hasSupabaseAuth = () => Boolean(supabase) && !isLocalDemoMode();
 
 export async function getAuthSession() {
-  if (!supabase) return null;
+  if (!supabase || isLocalDemoMode()) return null;
   const { data } = await supabase.auth.getSession();
   return data.session;
 }
@@ -119,6 +164,7 @@ export function sanitizeReturnTo(returnTo, fallback = './dashboard.html') {
 export async function clearAuthSession() {
   if (supabase) await supabase.auth.signOut();
   localStorage.removeItem('dominion:user');
+  localStorage.removeItem(MOCK_SUBSCRIPTION_KEY);
 }
 
 export function saveLocalUserFromSession(session, fallbackName) {
@@ -129,9 +175,9 @@ export function saveLocalUserFromSession(session, fallbackName) {
 }
 
 export async function getLocalOrSessionUser() {
+  if (isLocalDemoMode()) return readJson('dominion:user', null);
   const session = await getAuthSession();
   if (session?.user) return sessionToUser(session);
-  if (isLocalDemoMode()) return readJson('dominion:user', null);
   return null;
 }
 
@@ -377,7 +423,8 @@ export async function updateProfile(profile) {
 }
 
 export async function getBillingState() {
-  if (!supabase) return isLocalDemoMode() ? localBypassBillingState() : lockedBillingState();
+  if (isLocalDemoMode()) return localBypassBillingState();
+  if (!supabase) return lockedBillingState();
 
   const session = await getAuthSession();
   if (!session?.user) {
@@ -434,10 +481,31 @@ async function invokeSupabaseFunction(name, body = {}) {
 }
 
 export async function createCheckoutSession(productKey) {
+  if (isLocalDemoMode()) {
+    if (productKey !== MEMBERSHIP_PRODUCT_KEY) throw new Error('Unsupported preview product selection.');
+    const now = new Date();
+    const currentPeriodEnd = new Date(now);
+    currentPeriodEnd.setMonth(currentPeriodEnd.getMonth() + 1);
+    const subscription = {
+      id: 'preview_subscription',
+      productKey,
+      status: 'active',
+      subscriptionActive: true,
+      cancelAtPeriodEnd: false,
+      currentPeriodStart: now.toISOString(),
+      currentPeriodEnd: currentPeriodEnd.toISOString(),
+      canceledAt: null,
+      createdAt: now.toISOString(),
+      preview: true,
+    };
+    writeJson(MOCK_SUBSCRIPTION_KEY, subscription);
+    return { url: './billing.html?checkout=success&preview=1', preview: true };
+  }
   return invokeSupabaseFunction('create-checkout-session', { productKey });
 }
 
 export async function createCustomerPortalSession() {
+  if (isLocalDemoMode()) return { url: './profile.html#billing', preview: true };
   return invokeSupabaseFunction('create-customer-portal-session');
 }
 
@@ -586,6 +654,7 @@ export async function getGameSummary() {
 }
 
 export async function getLeaderboard({ scope = 'global', crewId = null, window = 'week' } = {}) {
+  if (isLocalDemoMode()) return getMockLeaderboard({ scope, crewId, window });
   const client = requireSupabase();
   await requireUser();
   const rpcName = scope === 'crew' ? 'get_crew_leaderboard' : 'get_global_leaderboard';
@@ -597,12 +666,142 @@ export async function getLeaderboard({ scope = 'global', crewId = null, window =
   return (data || []).map(mapLeaderboardRow);
 }
 
+function ensureMockCrews() {
+  const user = getMockUser();
+  const userId = getMockUserId();
+  let crews = readJson(MOCK_CREWS_KEY, null);
+  let members = readJson(MOCK_CREW_MEMBERS_KEY, null);
+
+  if (!Array.isArray(crews)) {
+    const createdAt = new Date().toISOString();
+    crews = [{
+      id: 'preview_crew_alpha',
+      name: 'Preview Crew',
+      description: 'A private mock crew for testing invites, posts, comments, and leaderboards.',
+      challengeStartDate: new Date().toISOString().slice(0, 10),
+      createdBy: userId,
+      createdAt,
+      role: 'owner',
+      joinedAt: createdAt,
+    }];
+    writeJson(MOCK_CREWS_KEY, crews);
+  }
+
+  if (!members || typeof members !== 'object') {
+    members = {};
+  }
+
+  crews.forEach((crew) => {
+    if (!members[crew.id]) {
+      members[crew.id] = [
+        { crewId: crew.id, userId, name: user.name || 'Preview Member', role: 'owner', joinedAt: crew.createdAt || new Date().toISOString() },
+        { crewId: crew.id, userId: 'preview_member_josh', name: 'Josh', role: 'member', joinedAt: crew.createdAt || new Date().toISOString() },
+        { crewId: crew.id, userId: 'preview_member_sarah', name: 'Sarah', role: 'member', joinedAt: crew.createdAt || new Date().toISOString() },
+      ];
+    }
+  });
+
+  writeJson(MOCK_CREW_MEMBERS_KEY, members);
+  return { crews, members };
+}
+
+function ensureMockPosts() {
+  ensureMockCrews();
+  let posts = readJson(MOCK_POSTS_KEY, null);
+  if (Array.isArray(posts)) return posts;
+
+  const now = new Date().toISOString();
+  posts = [
+    {
+      id: 'preview_global_post_1',
+      authorId: 'preview_member_josh',
+      name: 'Josh',
+      crewId: null,
+      scope: 'global',
+      body: 'Day 12 done. The walk was the action I wanted to skip, so I did it first.',
+      postType: 'message',
+      day: 12,
+      status: 'complete',
+      completedCount: 7,
+      createdAt: now,
+      timestamp: 'Today',
+      likeCount: 4,
+      likedByMe: false,
+      comments: [
+        { id: 'preview_comment_1', postId: 'preview_global_post_1', userId: 'preview_member_sarah', name: 'Sarah', body: 'That is the kind of move that builds a streak.', createdAt: now, timestamp: 'Today' },
+      ],
+    },
+    {
+      id: 'preview_crew_post_1',
+      authorId: 'preview_member_sarah',
+      name: 'Sarah',
+      crewId: 'preview_crew_alpha',
+      scope: 'crew',
+      body: 'Crew check: I am doing Bible reading before lunch today. Hold me to it.',
+      postType: 'message',
+      day: 8,
+      status: 'partial',
+      completedCount: 4,
+      createdAt: now,
+      timestamp: 'Today',
+      likeCount: 2,
+      likedByMe: true,
+      comments: [],
+    },
+  ];
+  writeJson(MOCK_POSTS_KEY, posts);
+  return posts;
+}
+
+function saveMockPosts(posts) {
+  writeJson(MOCK_POSTS_KEY, posts);
+}
+
+function getMockLeaderboard({ scope = 'global', crewId = null } = {}) {
+  const user = getMockUser();
+  const stats = readJson('dominion:gameStats', {});
+  const badges = readJson('dominion:badges', []);
+  const rows = [
+    {
+      userId: getMockUserId(),
+      name: user.name || 'You',
+      points: stats.totalPoints || stats.challengePoints || 777,
+      currentAppStreak: stats.currentAppStreak || 3,
+      latestChallengeDay: 12,
+      badges,
+    },
+    {
+      userId: 'preview_member_josh',
+      name: 'Josh',
+      points: 690,
+      currentAppStreak: 5,
+      latestChallengeDay: 12,
+      badges: [{ key: 'iron_standard', name: 'Iron Standard', tier: 'silver', icon: 'dumbbell' }],
+    },
+    {
+      userId: 'preview_member_sarah',
+      name: 'Sarah',
+      points: 620,
+      currentAppStreak: 4,
+      latestChallengeDay: 12,
+      badges: [{ key: 'faithful_start', name: 'Faithful Start', tier: 'bronze', icon: 'shield' }],
+    },
+  ];
+
+  if (scope === 'crew' && !crewId) return [];
+  return rows
+    .sort((left, right) => right.points - left.points)
+    .map((row, index) => ({ ...row, rank: index + 1 }));
+}
+
 async function getCurrentDisplayName() {
+  if (isLocalDemoMode()) return getMockUser().name || 'Preview Member';
   const profile = await getProfile();
   return profile?.name || 'Member';
 }
 
 export async function getCrews() {
+  if (isLocalDemoMode()) return ensureMockCrews().crews;
   const client = requireSupabase();
   await requireUser();
   const { data, error } = await client
@@ -615,6 +814,32 @@ export async function getCrews() {
 }
 
 export async function createCrew({ name, description = '', challengeStartDate = null }) {
+  if (isLocalDemoMode()) {
+    const { crews, members } = ensureMockCrews();
+    const now = new Date().toISOString();
+    const crew = {
+      id: randomId('preview_crew'),
+      name,
+      description,
+      challengeStartDate: challengeStartDate || null,
+      createdBy: getMockUserId(),
+      createdAt: now,
+      role: 'owner',
+      joinedAt: now,
+    };
+    crews.unshift(crew);
+    members[crew.id] = [{
+      crewId: crew.id,
+      userId: getMockUserId(),
+      name: getMockUser().name || 'Preview Member',
+      role: 'owner',
+      joinedAt: now,
+    }];
+    writeJson(MOCK_CREWS_KEY, crews);
+    writeJson(MOCK_CREW_MEMBERS_KEY, members);
+    return crew;
+  }
+
   const client = requireSupabase();
   const user = await requireUser();
   const displayName = await getCurrentDisplayName();
@@ -645,6 +870,11 @@ export async function createCrew({ name, description = '', challengeStartDate = 
 }
 
 export async function getCrewMembers(crewId) {
+  if (isLocalDemoMode()) {
+    const { members } = ensureMockCrews();
+    return members[crewId] || [];
+  }
+
   const client = requireSupabase();
   await requireUser();
   const { data, error } = await client
@@ -664,6 +894,22 @@ export async function getCrewMembers(crewId) {
 }
 
 export async function getOrCreateCrewInvite(crewId) {
+  if (isLocalDemoMode()) {
+    const invites = readJson(MOCK_INVITES_KEY, {});
+    if (!invites[crewId]) {
+      invites[crewId] = {
+        id: randomId('preview_invite'),
+        crew_id: crewId,
+        token: `preview-${crewId}`,
+        expires_at: new Date(Date.now() + 14 * 86400000).toISOString(),
+        revoked_at: null,
+        created_at: new Date().toISOString(),
+      };
+      writeJson(MOCK_INVITES_KEY, invites);
+    }
+    return invites[crewId];
+  }
+
   const client = requireSupabase();
   const user = await requireUser();
   const { data: existing, error: existingError } = await client
@@ -689,6 +935,30 @@ export async function getOrCreateCrewInvite(crewId) {
 }
 
 export async function joinCrewByInvite(token) {
+  if (isLocalDemoMode()) {
+    const { crews, members } = ensureMockCrews();
+    const invites = readJson(MOCK_INVITES_KEY, {});
+    const invite = Object.values(invites).find((item) => item.token === token) ||
+      (String(token).startsWith('preview-') ? { crew_id: String(token).replace('preview-', '') } : null);
+    const crew = crews.find((item) => item.id === invite?.crew_id);
+    if (!crew) return null;
+
+    const crewMembers = members[crew.id] || [];
+    const userId = getMockUserId();
+    if (!crewMembers.some((member) => member.userId === userId)) {
+      crewMembers.push({
+        crewId: crew.id,
+        userId,
+        name: getMockUser().name || 'Preview Member',
+        role: 'member',
+        joinedAt: new Date().toISOString(),
+      });
+      members[crew.id] = crewMembers;
+      writeJson(MOCK_CREW_MEMBERS_KEY, members);
+    }
+    return { ...crew, role: 'member' };
+  }
+
   const client = requireSupabase();
   const { data, error } = await client.rpc('join_crew_by_invite', { invite_token: token });
   if (error) throw error;
@@ -703,6 +973,13 @@ export async function joinCrewByInvite(token) {
 }
 
 export async function getCommunityPosts({ scope = 'global', crewId = null, limit = 25 } = {}) {
+  if (isLocalDemoMode()) {
+    return ensureMockPosts()
+      .filter((post) => post.scope === scope && (scope !== 'crew' || post.crewId === crewId))
+      .sort((left, right) => new Date(right.createdAt) - new Date(left.createdAt))
+      .slice(0, limit);
+  }
+
   const client = requireSupabase();
   const user = await requireUser();
   let query = client
@@ -742,6 +1019,31 @@ export async function getCommunityPosts({ scope = 'global', crewId = null, limit
 }
 
 export async function createCommunityPost({ scope, crewId = null, body, postType = 'message' }) {
+  if (isLocalDemoMode()) {
+    const posts = ensureMockPosts();
+    const now = new Date().toISOString();
+    const post = {
+      id: randomId('preview_post'),
+      authorId: getMockUserId(),
+      name: getMockUser().name || 'Preview Member',
+      crewId: scope === 'crew' ? crewId : null,
+      scope,
+      body,
+      postType,
+      day: null,
+      status: null,
+      completedCount: 0,
+      createdAt: now,
+      timestamp: 'Today',
+      likeCount: 0,
+      likedByMe: false,
+      comments: [],
+    };
+    posts.unshift(post);
+    saveMockPosts(posts);
+    return post;
+  }
+
   const client = requireSupabase();
   const user = await requireUser();
   const displayName = await getCurrentDisplayName();
@@ -763,6 +1065,17 @@ export async function createCommunityPost({ scope, crewId = null, body, postType
 }
 
 export async function setPostLiked(postId, shouldLike) {
+  if (isLocalDemoMode()) {
+    const posts = ensureMockPosts();
+    const post = posts.find((item) => item.id === postId);
+    if (!post) return;
+    if (shouldLike && !post.likedByMe) post.likeCount = (post.likeCount || 0) + 1;
+    if (!shouldLike && post.likedByMe) post.likeCount = Math.max((post.likeCount || 0) - 1, 0);
+    post.likedByMe = Boolean(shouldLike);
+    saveMockPosts(posts);
+    return;
+  }
+
   const client = requireSupabase();
   const user = await requireUser();
   if (shouldLike) {
@@ -782,6 +1095,25 @@ export async function setPostLiked(postId, shouldLike) {
 }
 
 export async function addPostComment(postId, body) {
+  if (isLocalDemoMode()) {
+    const posts = ensureMockPosts();
+    const post = posts.find((item) => item.id === postId);
+    if (!post) throw new Error('Preview post not found.');
+    const now = new Date().toISOString();
+    const comment = {
+      id: randomId('preview_comment'),
+      postId,
+      userId: getMockUserId(),
+      name: getMockUser().name || 'Preview Member',
+      body,
+      createdAt: now,
+      timestamp: 'Today',
+    };
+    post.comments = [...(post.comments || []), comment];
+    saveMockPosts(posts);
+    return comment;
+  }
+
   const client = requireSupabase();
   const user = await requireUser();
   const displayName = await getCurrentDisplayName();
@@ -825,7 +1157,22 @@ async function createSignedPhoto(photo) {
   };
 }
 
+function sortJournalEntries(entries) {
+  return [...entries].sort((left, right) => new Date(right.date || right.entry_date) - new Date(left.date || left.entry_date));
+}
+
+function fileToDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ''));
+    reader.onerror = () => reject(reader.error || new Error('Unable to read preview photo.'));
+    reader.readAsDataURL(file);
+  });
+}
+
 export async function getJournalEntries() {
+  if (isLocalDemoMode()) return sortJournalEntries(readJson(MOCK_JOURNAL_KEY, []));
+
   const client = requireSupabase();
   await requireUser();
   const { data: entries, error } = await client
@@ -853,6 +1200,30 @@ export async function getJournalEntries() {
 }
 
 export async function saveJournalEntry(entry) {
+  if (isLocalDemoMode()) {
+    const entries = readJson(MOCK_JOURNAL_KEY, []);
+    const existingIndex = entries.findIndex((item) => item.date === entry.date);
+    const existing = existingIndex >= 0 ? entries[existingIndex] : {};
+    const now = new Date().toISOString();
+    const nextEntry = {
+      id: existing.id || randomId('preview_journal'),
+      date: entry.date,
+      day: entry.day || null,
+      note: entry.note || '',
+      win: entry.win || '',
+      prayer: entry.prayer || '',
+      mood: entry.mood || '',
+      energy: entry.energy || '',
+      photos: existing.photos || [],
+      createdAt: existing.createdAt || now,
+      updatedAt: now,
+    };
+    if (existingIndex >= 0) entries[existingIndex] = nextEntry;
+    else entries.unshift(nextEntry);
+    writeJson(MOCK_JOURNAL_KEY, sortJournalEntries(entries));
+    return nextEntry;
+  }
+
   const client = requireSupabase();
   const user = await requireUser();
   const { data, error } = await client
@@ -875,6 +1246,25 @@ export async function saveJournalEntry(entry) {
 }
 
 export async function uploadJournalPhoto({ entryId, file, caption = '' }) {
+  if (isLocalDemoMode()) {
+    const entries = readJson(MOCK_JOURNAL_KEY, []);
+    const entry = entries.find((item) => item.id === entryId);
+    if (!entry) throw new Error('Save the preview journal entry before adding a photo.');
+    const now = new Date().toISOString();
+    const photo = {
+      id: randomId('preview_photo'),
+      entryId,
+      storagePath: `preview/${entryId}/${file.name || 'progress-photo'}`,
+      caption,
+      createdAt: now,
+      url: await fileToDataUrl(file),
+    };
+    entry.photos = [photo, ...(entry.photos || [])];
+    entry.updatedAt = now;
+    writeJson(MOCK_JOURNAL_KEY, sortJournalEntries(entries));
+    return photo;
+  }
+
   const client = requireSupabase();
   const user = await requireUser();
   const extension = file.name?.split('.').pop()?.toLowerCase() || 'jpg';

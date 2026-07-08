@@ -1,4 +1,4 @@
-import { getBillingState, getLocalOrSessionUser, hasSupabaseAuth } from './api';
+import { getBillingState, getLocalOrSessionUser, hasSupabaseAuth, isLocalDemoMode } from './api';
 import { initReveal } from './reveal';
 
 const load = (key, fallback) => JSON.parse(localStorage.getItem(key) || JSON.stringify(fallback));
@@ -31,7 +31,7 @@ async function hydrateMembershipCtas() {
   if (isLoggedIn) {
     target = './billing.html';
     label = 'Activate membership';
-    if (hasSupabaseAuth()) {
+    if (hasSupabaseAuth() || isLocalDemoMode()) {
       try {
         const billing = await getBillingState();
         if (billing.appAccess) {

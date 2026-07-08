@@ -10,14 +10,20 @@ Recommended settings:
 - Build command: npm run build
 - Build output directory: dist
 - Root directory: /
-- Environment variables:
+- Production environment variables:
   - VITE_SUPABASE_URL
   - VITE_SUPABASE_PUBLISHABLE_KEY
+  - VITE_ENABLE_MOCKS=false
+
+Preview environment variables:
+
+- VITE_ENABLE_MOCKS=true
+- VITE_SUPABASE_URL and VITE_SUPABASE_PUBLISHABLE_KEY are optional in preview because mock mode ignores Supabase and Stripe.
 
 Branch workflow:
 
-- main = production
-- develop = preview deployment for full workflow testing
+- main = production with real Supabase Auth, Postgres, and Stripe billing
+- develop = preview deployment with mock auth, mock membership, mock community, and mock journal state
 - feature branches = local/PR work only unless you intentionally enable previews later
 
 Supabase Auth must allow both production and preview callbacks:
@@ -38,4 +44,4 @@ Supabase Edge Functions allow the production host and Cloudflare preview subdoma
 - `STRIPE_WEBHOOK_SECRET`
 - `STRIPE_MEMBERSHIP_PRICE_ID`
 
-Authentication and challenge data are backed by Supabase Auth and Postgres. Production and preview builds require real Supabase environment variables and do not use demo auth or billing fallbacks. Local demo bypasses are limited to Vite dev on localhost.
+Authentication and challenge data are backed by Supabase Auth and Postgres in production. Preview builds set `VITE_ENABLE_MOCKS=true`, which disables Supabase/Stripe calls and uses local mock state so the full user flow can be tested without real billing. Production must leave mocks disabled.

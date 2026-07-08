@@ -56,13 +56,14 @@ function updateBillingSummary(state) {
 async function hydrateProfile() {
   if (!hasSupabaseAuth() && isLocalDemoMode()) {
     const user = load('dominion:user', { name: 'Member', email: 'Logged in' });
+    const billing = await getBillingState();
+    if (!billing.authenticated) {
+      redirectToLogin('./profile.html');
+      return;
+    }
     if (profileNameEl) profileNameEl.textContent = user?.name || 'Member';
     if (profileEmailEl) profileEmailEl.textContent = user?.email || 'Logged in';
-    updateBillingSummary({
-      appAccess: true,
-      subscriptionActive: true,
-      subscription: null,
-    });
+    updateBillingSummary(billing);
     return;
   }
 
@@ -95,6 +96,7 @@ async function hydrateProfile() {
 }
 
 manageBillingButton?.addEventListener('click', async () => {
+  if (!hasSupabaseAuth() && !isLocalDemoMode()) return;
   const original = manageBillingButton.textContent;
   manageBillingButton.disabled = true;
   manageBillingButton.textContent = 'Opening...';

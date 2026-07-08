@@ -349,15 +349,7 @@ async function bootCommunity() {
   $('crewStartDateInput').value = todayKey();
   $('journalDate').value = todayKey();
 
-  if (!hasSupabaseAuth() && isLocalDemoMode()) {
-    setFeedback('Community features need Supabase. Local demo mode can show the page, but live crews and journals are disabled.');
-    document.querySelectorAll('form button, input, textarea, select').forEach((control) => {
-      control.disabled = true;
-    });
-    return;
-  }
-
-  if (!hasSupabaseAuth()) {
+  if (!hasSupabaseAuth() && !isLocalDemoMode()) {
     redirectToLogin('./community.html');
     return;
   }
@@ -373,6 +365,7 @@ async function bootCommunity() {
   }
 
   renderAccess();
+  if (isLocalDemoMode()) setFeedback('Preview mode: crews, posts, comments, leaderboards, and journal entries are using mock local data.');
   await redeemInviteIfPresent();
   await Promise.all([refreshCrews(), refreshGlobal(), refreshJournal()]);
 }

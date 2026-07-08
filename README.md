@@ -10,7 +10,7 @@ Responsive Vue 3 website for tracking the 77-Day Dominion Challenge with Supabas
 - TypeScript
 - Supabase Auth
 - Supabase Postgres
-- localStorage for local UI preferences, with demo bypasses limited to Vite dev on localhost
+- localStorage for local UI preferences and preview-only mock workflow state
 
 ## Run locally
 
@@ -38,10 +38,10 @@ The frontend uses Supabase Auth for login/register and writes directly to Supaba
 
 ## Deployment workflow
 
-- `main` is production.
-- `develop` is the Cloudflare Pages preview branch for full workflow testing.
-- Production and preview builds both require real Supabase environment variables and do not use local demo auth or billing fallbacks.
-- Local demo bypasses only run in `npm run dev` on localhost when Supabase env vars are not configured.
+- `main` is production and must use real Supabase Auth, Postgres, and Stripe billing.
+- `develop` is the Cloudflare Pages preview branch and should set `VITE_ENABLE_MOCKS=true` so auth, membership, dashboard, community, and journal flows use local mock state instead of Supabase or Stripe.
+- Production should not set `VITE_ENABLE_MOCKS`; the default is `false`.
+- Local Vite dev on localhost also enables mock mode for rapid UI testing.
 
 ## Billing and monetization
 

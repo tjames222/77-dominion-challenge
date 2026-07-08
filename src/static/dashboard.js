@@ -642,7 +642,7 @@ async function bootDashboard() {
     return;
   }
 
-  if (hasSupabaseAuth()) {
+  if (hasSupabaseAuth() || localDemoMode) {
     const billing = await getBillingState();
     if (!billing.authenticated) {
       redirectToLogin();
