@@ -2,7 +2,8 @@ import { createAdminClient, requireUser } from "../_shared/supabase.ts";
 import { createFormBody, getPriceId, getSiteUrl, stripeRequest } from "../_shared/stripe.ts";
 import { jsonResponse, optionsResponse } from "../_shared/http.ts";
 
-const challengeProducts = new Set(["challenge_77", "dominion_membership"]);
+const subscriptionProductKey = "dominion_membership";
+const subscriptionEntitlementKey = "membership_active";
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return optionsResponse();
@@ -12,7 +13,7 @@ Deno.serve(async (req) => {
     const user = await requireUser(req);
     const { productKey } = await req.json();
 
-    if (!challengeProducts.has(productKey)) {
+    if (productKey !== subscriptionProductKey) {
       return jsonResponse({ error: "Unsupported product selection." }, 400);
     }
 
@@ -34,15 +35,12 @@ Deno.serve(async (req) => {
         .maybeSingle(),
     ]);
 
-    const challengeActive = existingEntitlements?.some((item) => item.entitlement_key === "challenge_77_access" && item.status === "active");
-    const membershipActive = existingEntitlements?.some((item) => item.entitlement_key === "membership_active" && item.status === "active");
+    const subscriptionActive = existingEntitlements?.some((item) =>
+      item.entitlement_key === subscriptionEntitlementKey && item.status === "active"
+    );
 
-    if (productKey === "challenge_77" && challengeActive) {
+    if (subscriptionActive) {
       return jsonResponse({ url: `${getSiteUrl(req)}/dashboard.html`, alreadyOwned: true });
-    }
-
-    if (productKey === "dominion_membership" && membershipActive) {
-      return jsonResponse({ url: `${getSiteUrl(req)}/profile.html#billing`, alreadyOwned: true });
     }
 
     let stripeCustomerId = existingCustomer?.stripe_customer_id || null;
@@ -70,9 +68,8 @@ Deno.serve(async (req) => {
     const priceId = getPriceId(productKey);
     const successUrl = `${siteUrl}/billing.html?checkout=success&product=${encodeURIComponent(productKey)}`;
     const cancelUrl = `${siteUrl}/billing.html?checkout=canceled&product=${encodeURIComponent(productKey)}`;
-    const isMembership = productKey === "dominion_membership";
     const sessionBody = createFormBody({
-      mode: isMembership ? "subscription" : "payment",
+      mode: "subscription",
       customer: stripeCustomerId,
       "line_items[0][price]": priceId,
       "line_items[0][quantity]": 1,
@@ -83,11 +80,9 @@ Deno.serve(async (req) => {
       "metadata[user_id]": user.id,
       "metadata[product_key]": productKey,
       "metadata[price_id]": priceId,
-      ...(isMembership ? {
-        "subscription_data[metadata][user_id]": user.id,
-        "subscription_data[metadata][product_key]": productKey,
-        "subscription_data[metadata][price_id]": priceId,
-      } : {}),
+      "subscription_data[metadata][user_id]": user.id,
+      "subscription_data[metadata][product_key]": productKey,
+      "subscription_data[metadata][price_id]": priceId,
     });
 
     const session = await stripeRequest("/v1/checkout/sessions", "POST", sessionBody);

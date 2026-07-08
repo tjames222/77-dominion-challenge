@@ -266,6 +266,8 @@
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(min(100%, 280px), 1fr));
   gap: 16px;
+  width: min(100%, 720px);
+  margin-inline: auto;
 }
 .billing-offer {
   display: grid;
@@ -278,7 +280,8 @@
     radial-gradient(circle at top right, color-mix(in srgb, var(--accent) 16%, transparent), transparent 44%),
     color-mix(in srgb, var(--surface-elevated) 84%, transparent);
 }
-.billing-offer-membership {
+.billing-offer-membership,
+.billing-offer-subscription {
   background:
     radial-gradient(circle at top right, color-mix(in srgb, var(--success) 16%, transparent), transparent 44%),
     color-mix(in srgb, var(--surface-elevated) 84%, transparent);

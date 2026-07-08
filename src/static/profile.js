@@ -42,20 +42,15 @@ const profileEmailEl = document.getElementById('profileEmail');
 const manageBillingButton = document.getElementById('profileManageBillingButton');
 
 function updateBillingSummary(state) {
-  document.getElementById('profileChallengeStatus').textContent = state.challengeAccess ? 'Status: Active' : 'Status: Locked';
-  document.getElementById('profileBillingTitle').textContent = state.membershipActive
-    ? 'Challenge and membership active'
-    : state.challengeAccess
-      ? 'Challenge active'
-      : 'Billing needed';
-  document.getElementById('profileBillingCopy').textContent = state.membershipActive
-    ? 'Your monthly membership is active, so premium community and future challenge content stay open.'
-    : state.challengeAccess
-      ? 'Your flagship challenge is unlocked. Add membership when you want premium community and fresh programs after day 77.'
-      : 'Buy the 77-day challenge to unlock the dashboard, daily action page, and full tracking flow.';
-  document.getElementById('profileChallengePill').textContent = state.challengeAccess ? 'Challenge unlocked' : 'Challenge locked';
-  document.getElementById('profileMembershipPill').textContent = state.membershipActive ? 'Membership active' : 'Membership inactive';
-  manageBillingButton.hidden = !state.challengePurchase && !state.membershipSubscription;
+  document.getElementById('profileChallengeStatus').textContent = state.appAccess ? 'Status: Active' : 'Status: Subscription required';
+  document.getElementById('profileBillingTitle').textContent = state.subscriptionActive
+    ? 'Subscription active'
+    : 'Subscription needed';
+  document.getElementById('profileBillingCopy').textContent = state.subscriptionActive
+    ? 'Your $7/month subscription is active, so the dashboard, daily actions, community, journal, and future member content stay open.'
+    : 'Subscribe for $7/month to unlock the dashboard, daily action page, community, journal, and full tracking flow.';
+  document.getElementById('profileSubscriptionPill').textContent = state.subscriptionActive ? 'Subscription active' : 'Subscription needed';
+  manageBillingButton.hidden = !state.subscription;
 }
 
 async function hydrateProfile() {
@@ -64,10 +59,9 @@ async function hydrateProfile() {
     if (profileNameEl) profileNameEl.textContent = user?.name || 'Member';
     if (profileEmailEl) profileEmailEl.textContent = user?.email || 'Logged in';
     updateBillingSummary({
-      challengeAccess: true,
-      membershipActive: false,
-      challengePurchase: null,
-      membershipSubscription: null,
+      appAccess: true,
+      subscriptionActive: true,
+      subscription: null,
     });
     return;
   }

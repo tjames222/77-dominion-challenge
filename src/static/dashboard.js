@@ -426,8 +426,8 @@ async function bootDashboard() {
       redirectToLogin();
       return;
     }
-    if (!billing.challengeAccess) {
-      window.location.href = './billing.html?intent=challenge';
+    if (!billing.appAccess) {
+      window.location.href = './billing.html?intent=subscription';
       return;
     }
   }

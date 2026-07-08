@@ -19,7 +19,6 @@ export function getSiteUrl(req: Request) {
 }
 
 export function getPriceId(productKey: string) {
-  if (productKey === "challenge_77") return getEnv("STRIPE_CHALLENGE_PRICE_ID");
   if (productKey === "dominion_membership") return getEnv("STRIPE_MEMBERSHIP_PRICE_ID");
   throw new Error(`Unsupported product key: ${productKey}`);
 }

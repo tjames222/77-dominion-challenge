@@ -49,21 +49,7 @@ create table if not exists public.billing_customers (
   updated_at timestamptz not null default now()
 );
 
-create table if not exists public.purchases (
-  id uuid primary key default gen_random_uuid(),
-  user_id uuid not null references auth.users(id) on delete cascade,
-  product_key text not null check (product_key in ('challenge_77')),
-  status text not null check (status in ('pending', 'paid', 'refunded', 'failed', 'expired')),
-  stripe_checkout_session_id text unique,
-  stripe_payment_intent_id text,
-  stripe_customer_id text,
-  stripe_price_id text,
-  amount_total integer,
-  currency text not null default 'usd',
-  purchased_at timestamptz,
-  created_at timestamptz not null default now(),
-  updated_at timestamptz not null default now()
-);
+drop table if exists public.purchases cascade;
 
 create table if not exists public.subscriptions (
   id uuid primary key default gen_random_uuid(),
@@ -83,7 +69,7 @@ create table if not exists public.subscriptions (
 
 create table if not exists public.entitlements (
   user_id uuid not null references auth.users(id) on delete cascade,
-  entitlement_key text not null check (entitlement_key in ('challenge_77_access', 'membership_active')),
+  entitlement_key text not null check (entitlement_key in ('membership_active')),
   status text not null check (status in ('active', 'inactive', 'revoked', 'expired')) default 'inactive',
   source_type text not null,
   source_id text,
@@ -94,6 +80,16 @@ create table if not exists public.entitlements (
   updated_at timestamptz not null default now(),
   primary key (user_id, entitlement_key)
 );
+
+delete from public.entitlements
+where entitlement_key <> 'membership_active';
+
+alter table public.entitlements
+  drop constraint if exists entitlements_entitlement_key_check;
+
+alter table public.entitlements
+  add constraint entitlements_entitlement_key_check
+  check (entitlement_key in ('membership_active'));
 
 drop view if exists public.community_feed;
 
@@ -206,9 +202,6 @@ create index if not exists check_ins_created_at_idx
 create index if not exists check_ins_user_date_idx
   on public.check_ins (user_id, entry_date desc);
 
-create index if not exists purchases_user_created_at_idx
-  on public.purchases (user_id, created_at desc);
-
 create index if not exists subscriptions_user_created_at_idx
   on public.subscriptions (user_id, created_at desc);
 
@@ -258,11 +251,6 @@ create trigger set_challenge_entries_updated_at
 drop trigger if exists set_billing_customers_updated_at on public.billing_customers;
 create trigger set_billing_customers_updated_at
   before update on public.billing_customers
-  for each row execute function public.set_updated_at();
-
-drop trigger if exists set_purchases_updated_at on public.purchases;
-create trigger set_purchases_updated_at
-  before update on public.purchases
   for each row execute function public.set_updated_at();
 
 drop trigger if exists set_subscriptions_updated_at on public.subscriptions;
@@ -355,8 +343,8 @@ begin
     raise exception 'You need to log in to join this crew.';
   end if;
 
-  if not public.has_active_entitlement('challenge_77_access') then
-    raise exception 'Challenge access is required to join a crew.';
+  if not public.has_active_entitlement('membership_active') then
+    raise exception 'An active subscription is required to join a crew.';
   end if;
 
   select ci.crew_id
@@ -446,8 +434,9 @@ as $$
     select 1
     from public.community_posts cp
     where cp.id = target_post_id
+      and public.has_active_entitlement('membership_active')
       and (
-        (cp.scope = 'global' and public.has_active_entitlement('challenge_77_access'))
+        cp.scope = 'global'
         or public.is_crew_member(cp.crew_id)
       )
   );
@@ -510,7 +499,6 @@ alter table public.profiles enable row level security;
 alter table public.challenge_entries enable row level security;
 alter table public.check_ins enable row level security;
 alter table public.billing_customers enable row level security;
-alter table public.purchases enable row level security;
 alter table public.subscriptions enable row level security;
 alter table public.entitlements enable row level security;
 alter table public.community_feed_items enable row level security;
@@ -550,36 +538,44 @@ create policy "Users can read own challenge entries"
   on public.challenge_entries
   for select
   to authenticated
-  using ((select auth.uid()) = user_id);
+  using (
+    (select auth.uid()) = user_id
+    and public.has_active_entitlement('membership_active')
+  );
 
 drop policy if exists "Users can insert own challenge entries" on public.challenge_entries;
 create policy "Users can insert own challenge entries"
   on public.challenge_entries
   for insert
   to authenticated
-  with check ((select auth.uid()) = user_id);
+  with check (
+    (select auth.uid()) = user_id
+    and public.has_active_entitlement('membership_active')
+  );
 
 drop policy if exists "Users can update own challenge entries" on public.challenge_entries;
 create policy "Users can update own challenge entries"
   on public.challenge_entries
   for update
   to authenticated
-  using ((select auth.uid()) = user_id)
-  with check ((select auth.uid()) = user_id);
+  using (
+    (select auth.uid()) = user_id
+    and public.has_active_entitlement('membership_active')
+  )
+  with check (
+    (select auth.uid()) = user_id
+    and public.has_active_entitlement('membership_active')
+  );
 
 drop policy if exists "Users can insert own check ins" on public.check_ins;
 create policy "Users can insert own check ins"
   on public.check_ins
   for insert
   to authenticated
-  with check ((select auth.uid()) = user_id);
-
-drop policy if exists "Users can read own purchases" on public.purchases;
-create policy "Users can read own purchases"
-  on public.purchases
-  for select
-  to authenticated
-  using ((select auth.uid()) = user_id);
+  with check (
+    (select auth.uid()) = user_id
+    and public.has_active_entitlement('membership_active')
+  );
 
 drop policy if exists "Users can read own subscriptions" on public.subscriptions;
 create policy "Users can read own subscriptions"
@@ -600,21 +596,27 @@ create policy "Authenticated users can read community feed"
   on public.community_feed_items
   for select
   to authenticated
-  using (true);
+  using (public.has_active_entitlement('membership_active'));
 
 drop policy if exists "Users can insert own community feed items" on public.community_feed_items;
 create policy "Users can insert own community feed items"
   on public.community_feed_items
   for insert
   to authenticated
-  with check ((select auth.uid()) = user_id);
+  with check (
+    (select auth.uid()) = user_id
+    and public.has_active_entitlement('membership_active')
+  );
 
 drop policy if exists "Crew members can read crews" on public.crews;
 create policy "Crew members can read crews"
   on public.crews
   for select
   to authenticated
-  using (public.is_crew_member(id) or created_by = (select auth.uid()));
+  using (
+    public.has_active_entitlement('membership_active')
+    and (public.is_crew_member(id) or created_by = (select auth.uid()))
+  );
 
 drop policy if exists "Users can create own crews" on public.crews;
 create policy "Users can create own crews"
@@ -623,7 +625,7 @@ create policy "Users can create own crews"
   to authenticated
   with check (
     created_by = (select auth.uid())
-    and public.has_active_entitlement('challenge_77_access')
+    and public.has_active_entitlement('membership_active')
   );
 
 drop policy if exists "Crew admins can update crews" on public.crews;
@@ -631,15 +633,24 @@ create policy "Crew admins can update crews"
   on public.crews
   for update
   to authenticated
-  using (public.can_manage_crew(id) or created_by = (select auth.uid()))
-  with check (public.can_manage_crew(id) or created_by = (select auth.uid()));
+  using (
+    public.has_active_entitlement('membership_active')
+    and (public.can_manage_crew(id) or created_by = (select auth.uid()))
+  )
+  with check (
+    public.has_active_entitlement('membership_active')
+    and (public.can_manage_crew(id) or created_by = (select auth.uid()))
+  );
 
 drop policy if exists "Crew members can read members" on public.crew_members;
 create policy "Crew members can read members"
   on public.crew_members
   for select
   to authenticated
-  using (public.is_crew_member(crew_id));
+  using (
+    public.has_active_entitlement('membership_active')
+    and public.is_crew_member(crew_id)
+  );
 
 drop policy if exists "Crew owners can add themselves" on public.crew_members;
 create policy "Crew owners can add themselves"
@@ -649,6 +660,7 @@ create policy "Crew owners can add themselves"
   with check (
     user_id = (select auth.uid())
     and role = 'owner'
+    and public.has_active_entitlement('membership_active')
     and exists (
       select 1
       from public.crews c
@@ -662,7 +674,10 @@ create policy "Crew admins can read invites"
   on public.crew_invites
   for select
   to authenticated
-  using (public.can_manage_crew(crew_id));
+  using (
+    public.has_active_entitlement('membership_active')
+    and public.can_manage_crew(crew_id)
+  );
 
 drop policy if exists "Crew admins can create invites" on public.crew_invites;
 create policy "Crew admins can create invites"
@@ -671,6 +686,7 @@ create policy "Crew admins can create invites"
   to authenticated
   with check (
     created_by = (select auth.uid())
+    and public.has_active_entitlement('membership_active')
     and public.can_manage_crew(crew_id)
   );
 
@@ -679,8 +695,14 @@ create policy "Crew admins can update invites"
   on public.crew_invites
   for update
   to authenticated
-  using (public.can_manage_crew(crew_id))
-  with check (public.can_manage_crew(crew_id));
+  using (
+    public.has_active_entitlement('membership_active')
+    and public.can_manage_crew(crew_id)
+  )
+  with check (
+    public.has_active_entitlement('membership_active')
+    and public.can_manage_crew(crew_id)
+  );
 
 drop policy if exists "Authenticated users can read visible posts" on public.community_posts;
 create policy "Authenticated users can read visible posts"
@@ -688,8 +710,8 @@ create policy "Authenticated users can read visible posts"
   for select
   to authenticated
   using (
-    (scope = 'global' and public.has_active_entitlement('challenge_77_access'))
-    or public.is_crew_member(crew_id)
+    public.has_active_entitlement('membership_active')
+    and (scope = 'global' or public.is_crew_member(crew_id))
   );
 
 drop policy if exists "Users can create visible posts" on public.community_posts;
@@ -699,11 +721,11 @@ create policy "Users can create visible posts"
   to authenticated
   with check (
     author_id = (select auth.uid())
+    and public.has_active_entitlement('membership_active')
     and (
       (
         scope = 'global'
         and crew_id is null
-        and public.has_active_entitlement('challenge_77_access')
       )
       or (scope = 'crew' and public.is_crew_member(crew_id))
     )
@@ -714,8 +736,14 @@ create policy "Authors can update own posts"
   on public.community_posts
   for update
   to authenticated
-  using (author_id = (select auth.uid()))
-  with check (author_id = (select auth.uid()));
+  using (
+    author_id = (select auth.uid())
+    and public.has_active_entitlement('membership_active')
+  )
+  with check (
+    author_id = (select auth.uid())
+    and public.has_active_entitlement('membership_active')
+  );
 
 drop policy if exists "Users can read likes on visible posts" on public.post_likes;
 create policy "Users can read likes on visible posts"
@@ -739,7 +767,10 @@ create policy "Users can remove own likes"
   on public.post_likes
   for delete
   to authenticated
-  using (user_id = (select auth.uid()));
+  using (
+    user_id = (select auth.uid())
+    and public.has_active_entitlement('membership_active')
+  );
 
 drop policy if exists "Users can read comments on visible posts" on public.post_comments;
 create policy "Users can read comments on visible posts"
@@ -763,74 +794,108 @@ create policy "Users can update own comments"
   on public.post_comments
   for update
   to authenticated
-  using (user_id = (select auth.uid()))
-  with check (user_id = (select auth.uid()));
+  using (
+    user_id = (select auth.uid())
+    and public.has_active_entitlement('membership_active')
+  )
+  with check (
+    user_id = (select auth.uid())
+    and public.has_active_entitlement('membership_active')
+  );
 
 drop policy if exists "Users can read own journal entries" on public.journal_entries;
 create policy "Users can read own journal entries"
   on public.journal_entries
   for select
   to authenticated
-  using (user_id = (select auth.uid()));
+  using (
+    user_id = (select auth.uid())
+    and public.has_active_entitlement('membership_active')
+  );
 
 drop policy if exists "Users can insert own journal entries" on public.journal_entries;
 create policy "Users can insert own journal entries"
   on public.journal_entries
   for insert
   to authenticated
-  with check (user_id = (select auth.uid()));
+  with check (
+    user_id = (select auth.uid())
+    and public.has_active_entitlement('membership_active')
+  );
 
 drop policy if exists "Users can update own journal entries" on public.journal_entries;
 create policy "Users can update own journal entries"
   on public.journal_entries
   for update
   to authenticated
-  using (user_id = (select auth.uid()))
-  with check (user_id = (select auth.uid()));
+  using (
+    user_id = (select auth.uid())
+    and public.has_active_entitlement('membership_active')
+  )
+  with check (
+    user_id = (select auth.uid())
+    and public.has_active_entitlement('membership_active')
+  );
 
 drop policy if exists "Users can delete own journal entries" on public.journal_entries;
 create policy "Users can delete own journal entries"
   on public.journal_entries
   for delete
   to authenticated
-  using (user_id = (select auth.uid()));
+  using (
+    user_id = (select auth.uid())
+    and public.has_active_entitlement('membership_active')
+  );
 
 drop policy if exists "Users can read own journal photos" on public.journal_photos;
 create policy "Users can read own journal photos"
   on public.journal_photos
   for select
   to authenticated
-  using (user_id = (select auth.uid()));
+  using (
+    user_id = (select auth.uid())
+    and public.has_active_entitlement('membership_active')
+  );
 
 drop policy if exists "Users can insert own journal photos" on public.journal_photos;
 create policy "Users can insert own journal photos"
   on public.journal_photos
   for insert
   to authenticated
-  with check (user_id = (select auth.uid()));
+  with check (
+    user_id = (select auth.uid())
+    and public.has_active_entitlement('membership_active')
+  );
 
 drop policy if exists "Users can update own journal photos" on public.journal_photos;
 create policy "Users can update own journal photos"
   on public.journal_photos
   for update
   to authenticated
-  using (user_id = (select auth.uid()))
-  with check (user_id = (select auth.uid()));
+  using (
+    user_id = (select auth.uid())
+    and public.has_active_entitlement('membership_active')
+  )
+  with check (
+    user_id = (select auth.uid())
+    and public.has_active_entitlement('membership_active')
+  );
 
 drop policy if exists "Users can delete own journal photos" on public.journal_photos;
 create policy "Users can delete own journal photos"
   on public.journal_photos
   for delete
   to authenticated
-  using (user_id = (select auth.uid()));
+  using (
+    user_id = (select auth.uid())
+    and public.has_active_entitlement('membership_active')
+  );
 
 revoke all on public.profiles from anon;
 revoke all on public.challenge_entries from anon;
 revoke all on public.check_ins from anon;
 revoke all on public.billing_customers from anon;
 revoke all on public.billing_customers from authenticated;
-revoke all on public.purchases from anon;
-revoke all on public.purchases from authenticated;
 revoke all on public.subscriptions from anon;
 revoke all on public.subscriptions from authenticated;
 revoke all on public.entitlements from anon;
@@ -857,7 +922,6 @@ revoke all on public.journal_photos from authenticated;
 grant select, insert, update on public.profiles to authenticated;
 grant select, insert, update on public.challenge_entries to authenticated;
 grant insert on public.check_ins to authenticated;
-grant select on public.purchases to authenticated;
 grant select on public.subscriptions to authenticated;
 grant select on public.entitlements to authenticated;
 grant insert on public.community_feed_items to authenticated;
@@ -893,6 +957,7 @@ create policy "Users can read own journal photo objects"
   using (
     bucket_id = 'journal-progress'
     and (storage.foldername(name))[1] = (select auth.uid())::text
+    and public.has_active_entitlement('membership_active')
   );
 
 drop policy if exists "Users can upload own journal photo objects" on storage.objects;
@@ -903,6 +968,7 @@ create policy "Users can upload own journal photo objects"
   with check (
     bucket_id = 'journal-progress'
     and (storage.foldername(name))[1] = (select auth.uid())::text
+    and public.has_active_entitlement('membership_active')
   );
 
 drop policy if exists "Users can update own journal photo objects" on storage.objects;
@@ -913,10 +979,12 @@ create policy "Users can update own journal photo objects"
   using (
     bucket_id = 'journal-progress'
     and (storage.foldername(name))[1] = (select auth.uid())::text
+    and public.has_active_entitlement('membership_active')
   )
   with check (
     bucket_id = 'journal-progress'
     and (storage.foldername(name))[1] = (select auth.uid())::text
+    and public.has_active_entitlement('membership_active')
   );
 
 drop policy if exists "Users can delete own journal photo objects" on storage.objects;
@@ -927,4 +995,5 @@ create policy "Users can delete own journal photo objects"
   using (
     bucket_id = 'journal-progress'
     and (storage.foldername(name))[1] = (select auth.uid())::text
+    and public.has_active_entitlement('membership_active')
   );

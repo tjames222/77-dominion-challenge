@@ -32,22 +32,18 @@ The frontend uses Supabase Auth for login/register and writes directly to Supaba
 
 ## Billing and monetization
 
-The app now supports a hybrid monetization model:
+The app uses one subscription product:
 
-- `77-Day Dominion Challenge` for `$77` one time
-- `Dominion Membership` for `$19/month`
+- `Dominion Subscription` for `$7/month`
 
-Stripe powers checkout and the customer portal. Supabase stores purchases, subscriptions, and entitlements. Challenge pages are gated by the `challenge_77_access` entitlement, and premium ongoing access is gated by `membership_active`.
+Stripe powers checkout and the customer portal. Supabase stores subscriptions and entitlements. App access is gated by the `membership_active` entitlement.
 
 ### Required Stripe setup
 
-1. Create two Stripe prices:
-   - one-time price for the 77-day challenge
-   - recurring monthly price for Dominion Membership
+1. Create one recurring monthly Stripe price for the `$7/month` Dominion Subscription.
 2. Set these Supabase function secrets:
    - `STRIPE_SECRET_KEY`
    - `STRIPE_WEBHOOK_SECRET`
-   - `STRIPE_CHALLENGE_PRICE_ID`
    - `STRIPE_MEMBERSHIP_PRICE_ID`
    - `PUBLIC_SITE_URL`
 3. Deploy the Edge Functions:
@@ -57,11 +53,9 @@ Stripe powers checkout and the customer portal. Supabase stores purchases, subsc
 4. Point a Stripe webhook endpoint at the deployed `stripe-webhook` function and subscribe at minimum to:
    - `checkout.session.completed`
    - `checkout.session.async_payment_succeeded`
-   - `checkout.session.expired`
    - `customer.subscription.created`
    - `customer.subscription.updated`
    - `customer.subscription.deleted`
-   - `charge.refunded`
 5. Run the updated `supabase/schema.sql` before testing billing flows.
 
 ## Build

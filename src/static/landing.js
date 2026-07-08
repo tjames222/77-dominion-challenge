@@ -26,7 +26,7 @@ async function hydrateLandingCtas() {
   const user = await getLocalOrSessionUser();
   const isLoggedIn = Boolean(user?.authenticated);
   let target = './register.html';
-  let label = 'Start for $77';
+  let label = 'Start for $7/month';
 
   if (isLoggedIn) {
     target = './billing.html';
@@ -34,7 +34,7 @@ async function hydrateLandingCtas() {
     if (hasSupabaseAuth()) {
       try {
         const billing = await getBillingState();
-        if (billing.challengeAccess) {
+        if (billing.appAccess) {
           target = './dashboard.html';
           label = 'Open dashboard';
         }

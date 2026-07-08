@@ -20,8 +20,8 @@ export function isLocalDemoMode() {
   if (typeof window === 'undefined') return false;
   return import.meta.env.DEV || ['localhost', '127.0.0.1', '::1'].includes(window.location.hostname) || window.location.protocol === 'file:';
 }
-const CHALLENGE_ACCESS_KEY = 'challenge_77_access';
 const MEMBERSHIP_ACCESS_KEY = 'membership_active';
+const MEMBERSHIP_PRODUCT_KEY = 'dominion_membership';
 
 const readJson = (key, fallback) => {
   try {
@@ -52,11 +52,9 @@ const requireSupabase = () => {
 const localBypassBillingState = () => ({
   authenticated: Boolean(readJson('dominion:user', null)?.authenticated),
   billingEnabled: false,
-  challengeAccess: true,
-  membershipActive: false,
-  challengePurchase: null,
-  membershipSubscription: null,
-  purchases: [],
+  appAccess: true,
+  subscriptionActive: true,
+  subscription: null,
   subscriptions: [],
   entitlements: [],
 });
@@ -64,11 +62,9 @@ const localBypassBillingState = () => ({
 const lockedBillingState = () => ({
   authenticated: false,
   billingEnabled: true,
-  challengeAccess: false,
-  membershipActive: false,
-  challengePurchase: null,
-  membershipSubscription: null,
-  purchases: [],
+  appAccess: false,
+  subscriptionActive: false,
+  subscription: null,
   subscriptions: [],
   entitlements: [],
 });
@@ -267,16 +263,6 @@ const mapJournalEntry = (entry, photos = []) => ({
   photos,
 });
 
-const mapPurchase = (purchase) => purchase ? ({
-  id: purchase.id,
-  productKey: purchase.product_key,
-  status: purchase.status,
-  amountTotal: purchase.amount_total,
-  currency: purchase.currency || 'usd',
-  purchasedAt: purchase.purchased_at,
-  createdAt: purchase.created_at,
-}) : null;
-
 const mapSubscription = (subscription) => subscription ? ({
   id: subscription.id,
   productKey: subscription.product_key,
@@ -353,11 +339,9 @@ export async function getBillingState() {
     return {
       authenticated: false,
       billingEnabled: true,
-      challengeAccess: false,
-      membershipActive: false,
-      challengePurchase: null,
-      membershipSubscription: null,
-      purchases: [],
+      appAccess: false,
+      subscriptionActive: false,
+      subscription: null,
       subscriptions: [],
       entitlements: [],
     };
@@ -365,16 +349,11 @@ export async function getBillingState() {
 
   const client = requireSupabase();
   const userId = session.user.id;
-  const [entitlementsResult, purchasesResult, subscriptionsResult] = await Promise.all([
+  const [entitlementsResult, subscriptionsResult] = await Promise.all([
     client
       .from('entitlements')
       .select('entitlement_key, status, starts_at, ends_at, source_type, source_id, metadata')
       .eq('user_id', userId),
-    client
-      .from('purchases')
-      .select('id, product_key, status, amount_total, currency, purchased_at, created_at')
-      .eq('user_id', userId)
-      .order('created_at', { ascending: false }),
     client
       .from('subscriptions')
       .select('id, product_key, status, cancel_at_period_end, current_period_start, current_period_end, canceled_at, created_at')
@@ -383,21 +362,19 @@ export async function getBillingState() {
   ]);
 
   if (entitlementsResult.error) throw entitlementsResult.error;
-  if (purchasesResult.error) throw purchasesResult.error;
   if (subscriptionsResult.error) throw subscriptionsResult.error;
 
   const entitlements = (entitlementsResult.data || []).map(mapEntitlement);
-  const purchases = (purchasesResult.data || []).map(mapPurchase);
   const subscriptions = (subscriptionsResult.data || []).map(mapSubscription);
+  const subscriptionActive = hasActiveEntitlement(entitlements, MEMBERSHIP_ACCESS_KEY);
+  const subscription = subscriptions.find((item) => item.productKey === MEMBERSHIP_PRODUCT_KEY) || null;
 
   return {
     authenticated: true,
     billingEnabled: true,
-    challengeAccess: hasActiveEntitlement(entitlements, CHALLENGE_ACCESS_KEY),
-    membershipActive: hasActiveEntitlement(entitlements, MEMBERSHIP_ACCESS_KEY),
-    challengePurchase: purchases.find((item) => item.productKey === 'challenge_77' && item.status === 'paid') || null,
-    membershipSubscription: subscriptions.find((item) => item.productKey === 'dominion_membership') || null,
-    purchases,
+    appAccess: subscriptionActive,
+    subscriptionActive,
+    subscription,
     subscriptions,
     entitlements,
   };

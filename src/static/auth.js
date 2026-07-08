@@ -63,7 +63,7 @@ if (form) {
         }
 
         const billing = await getBillingState();
-        window.location.href = billing.challengeAccess ? './dashboard.html' : './billing.html';
+        window.location.href = billing.appAccess ? './dashboard.html' : './billing.html';
         return;
       }
 

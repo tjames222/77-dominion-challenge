@@ -83,18 +83,18 @@ function renderAccess() {
   const link = $('communityMembershipLink');
   if (!title || !copy || !link || !state.billing) return;
 
-  if (state.billing.membershipActive) {
-    title.textContent = 'Challenge community and membership are active.';
-    copy.textContent = 'Your private crews, global encouragement, and future premium community tools are open.';
-    link.textContent = 'Manage membership';
+  if (state.billing.subscriptionActive) {
+    title.textContent = 'Your Dominion subscription is active.';
+    copy.textContent = 'Private crews, global encouragement, comments, likes, and your journal are open.';
+    link.textContent = 'Manage subscription';
     link.href = './profile.html#billing';
     return;
   }
 
-  title.textContent = 'Private crews are open with challenge access.';
-  copy.textContent = 'Create a crew, share an invite link, and keep accountability close while membership stays available for future premium layers.';
-  link.textContent = 'View membership';
-  link.href = './billing.html?intent=membership';
+  title.textContent = 'Subscription needed.';
+  copy.textContent = 'Subscribe for $7/month to unlock private crews, community posts, comments, likes, and your journal.';
+  link.textContent = 'Subscribe';
+  link.href = './billing.html?intent=subscription';
 }
 
 function emptyCard(message) {
@@ -288,8 +288,8 @@ async function bootCommunity() {
     redirectToLogin('./community.html');
     return;
   }
-  if (!state.billing.challengeAccess) {
-    window.location.href = './billing.html?intent=challenge';
+  if (!state.billing.appAccess) {
+    window.location.href = './billing.html?intent=subscription';
     return;
   }
 
