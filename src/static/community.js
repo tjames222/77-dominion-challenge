@@ -7,6 +7,7 @@ import {
   getCrews,
   getCrewMembers,
   getJournalEntries,
+  getLeaderboard,
   getOrCreateCrewInvite,
   hasSupabaseAuth,
   isLocalDemoMode,
@@ -36,6 +37,10 @@ const state = {
   crewMembers: [],
   crewPosts: [],
   globalPosts: [],
+  leaderboards: {
+    crew: { window: 'week', rows: [] },
+    global: { window: 'week', rows: [] },
+  },
   journalEntries: [],
 };
 
@@ -101,6 +106,73 @@ function emptyCard(message) {
   return `<article class="empty-state card"><p>${escapeHtml(message)}</p></article>`;
 }
 
+function badgeChip(badge) {
+  return `<span class="badge-chip ${badge.tier || 'bronze'}"><span>${escapeHtml(badge.name || 'Badge')}</span></span>`;
+}
+
+function renderLeaderboard(scope) {
+  const board = state.leaderboards[scope];
+  const container = $(`${scope}Leaderboard`);
+  if (!board || !container) return;
+
+  document.querySelectorAll(`[data-leaderboard-scope="${scope}"]`).forEach((button) => {
+    button.classList.toggle('active', button.dataset.leaderboardWindow === board.window);
+  });
+
+  const crew = activeCrew();
+  if (scope === 'crew' && !crew) {
+    container.innerHTML = '<article class="leaderboard-empty">Create or join a crew to unlock a private leaderboard.</article>';
+    return;
+  }
+
+  if (!board.rows.length) {
+    container.innerHTML = `<article class="leaderboard-empty">${scope === 'crew' ? 'Crew points will show here after check-ins.' : 'Global points will show here after members post check-ins.'}</article>`;
+    return;
+  }
+
+  container.innerHTML = board.rows.map((row) => {
+    const badges = row.badges?.length
+      ? `<div class="badge-shelf">${row.badges.slice(0, 3).map(badgeChip).join('')}</div>`
+      : '<div class="badge-shelf"><span class="badge-empty">Badges coming soon</span></div>';
+    const dayLabelText = row.latestChallengeDay ? `Day ${row.latestChallengeDay}` : 'Challenge active';
+    return `
+      <article class="leaderboard-row">
+        <span class="leaderboard-rank">${row.rank || '-'}</span>
+        <div class="leaderboard-player">
+          <strong>${escapeHtml(row.name)}</strong>
+          <small>${dayLabelText} · ${row.currentAppStreak || 0} day app streak</small>
+          ${badges}
+        </div>
+        <div class="leaderboard-points">
+          <strong>${Number(row.points || 0).toLocaleString()}</strong>
+          <span>pts</span>
+        </div>
+      </article>
+    `;
+  }).join('');
+}
+
+async function refreshLeaderboard(scope) {
+  const crew = activeCrew();
+  if (scope === 'crew' && !crew) {
+    state.leaderboards.crew.rows = [];
+    renderLeaderboard('crew');
+    return;
+  }
+
+  try {
+    state.leaderboards[scope].rows = await getLeaderboard({
+      scope,
+      crewId: scope === 'crew' ? crew.id : null,
+      window: state.leaderboards[scope].window,
+    });
+  } catch (error) {
+    console.warn(`Unable to load ${scope} leaderboard`, error);
+    state.leaderboards[scope].rows = [];
+  }
+  renderLeaderboard(scope);
+}
+
 function renderCrewShell() {
   const crew = activeCrew();
   const select = $('crewSelect');
@@ -125,6 +197,8 @@ function renderCrewShell() {
     $('crewDayCount').textContent = 'Day 1';
     $('crewPostCount').textContent = '0';
     $('crewFeed').innerHTML = emptyCard('Create a crew or open an invite link to start a private channel.');
+    state.leaderboards.crew.rows = [];
+    renderLeaderboard('crew');
     return;
   }
 
@@ -222,6 +296,7 @@ async function refreshCrew() {
   const [members, posts] = await Promise.all([
     getCrewMembers(crew.id),
     getCommunityPosts({ scope: 'crew', crewId: crew.id }),
+    refreshLeaderboard('crew'),
   ]);
   state.crewMembers = members;
   state.crewPosts = posts;
@@ -231,7 +306,11 @@ async function refreshCrew() {
 }
 
 async function refreshGlobal() {
-  state.globalPosts = await getCommunityPosts({ scope: 'global' });
+  const [posts] = await Promise.all([
+    getCommunityPosts({ scope: 'global' }),
+    refreshLeaderboard('global'),
+  ]);
+  state.globalPosts = posts;
   renderPosts(state.globalPosts, 'globalFeed');
 }
 
@@ -303,6 +382,17 @@ $('crewSelect')?.addEventListener('change', async (event) => {
   localStorage.setItem('dominion:activeCrewId', state.activeCrewId);
   setFeedback('');
   await refreshCrew();
+});
+
+document.querySelectorAll('[data-leaderboard-window]').forEach((button) => {
+  button.addEventListener('click', async () => {
+    const scope = button.dataset.leaderboardScope;
+    const nextWindow = button.dataset.leaderboardWindow;
+    if (!state.leaderboards[scope] || state.leaderboards[scope].window === nextWindow) return;
+    state.leaderboards[scope].window = nextWindow;
+    renderLeaderboard(scope);
+    await refreshLeaderboard(scope);
+  });
 });
 
 $('crewForm')?.addEventListener('submit', async (event) => {

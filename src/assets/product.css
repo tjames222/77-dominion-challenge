@@ -240,6 +240,168 @@
 .countdown-action {
   width: 100%;
 }
+.game-summary-card {
+  position: relative;
+  display: grid;
+  gap: 18px;
+  overflow: hidden;
+  padding: clamp(20px, 4vw, 28px);
+  border: 1px solid color-mix(in srgb, var(--accent) 38%, var(--border));
+  border-radius: 8px;
+  background:
+    linear-gradient(135deg, color-mix(in srgb, var(--accent) 16%, transparent), transparent 44%),
+    linear-gradient(315deg, color-mix(in srgb, var(--success) 11%, transparent), transparent 50%),
+    color-mix(in srgb, var(--surface) 90%, var(--background));
+}
+.game-summary-card::before {
+  content: "";
+  position: absolute;
+  inset: 0 0 auto;
+  height: 3px;
+  background: linear-gradient(90deg, var(--accent), var(--success), var(--accent-strong));
+}
+.game-summary-card > * {
+  position: relative;
+}
+.game-summary-card h2 {
+  font-size: 2rem;
+  line-height: 1;
+  letter-spacing: 0;
+}
+.game-stat-strip {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+.game-stat-strip span {
+  display: grid;
+  gap: 4px;
+  min-height: 82px;
+  align-content: center;
+  padding: 14px;
+  border: 1px solid color-mix(in srgb, var(--accent) 20%, var(--border));
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--surface-elevated) 74%, transparent);
+}
+.game-stat-strip strong {
+  color: var(--accent-strong);
+  font-size: 1.65rem;
+  line-height: 1;
+}
+.game-stat-strip small {
+  color: var(--text-muted);
+  font-size: .78rem;
+  font-weight: 850;
+  line-height: 1.25;
+}
+.badge-shelf {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+.badge-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 34px;
+  max-width: 100%;
+  padding: 0 11px;
+  border: 1px solid color-mix(in srgb, var(--accent) 30%, var(--border));
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--surface-elevated) 78%, transparent);
+  color: var(--text);
+  font-size: .78rem;
+  font-weight: 900;
+  line-height: 1.1;
+}
+.badge-chip::before {
+  content: "";
+  flex: 0 0 auto;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 14%, transparent);
+}
+.badge-chip.gold {
+  border-color: color-mix(in srgb, var(--accent-strong) 60%, var(--border));
+  background: color-mix(in srgb, var(--accent) 18%, var(--surface));
+}
+.badge-chip.silver::before {
+  background: color-mix(in srgb, var(--text) 72%, var(--text-muted));
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--text) 9%, transparent);
+}
+.badge-chip.bronze::before {
+  background: #c08b55;
+  box-shadow: 0 0 0 4px color-mix(in srgb, #c08b55 14%, transparent);
+}
+.badge-empty {
+  color: var(--text-muted);
+  font-size: .88rem;
+  font-weight: 800;
+  line-height: 1.4;
+}
+.confetti-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  overflow: hidden;
+  pointer-events: none;
+}
+.confetti-layer span {
+  position: absolute;
+  top: -28px;
+  left: var(--x);
+  width: 8px;
+  height: 16px;
+  border-radius: 2px;
+  opacity: .95;
+  animation: dominion-confetti 2100ms cubic-bezier(.18, .78, .28, 1) var(--delay) forwards;
+}
+.reward-toast {
+  position: fixed;
+  right: max(16px, env(safe-area-inset-right));
+  bottom: max(16px, env(safe-area-inset-bottom));
+  z-index: 90;
+  display: grid;
+  gap: 10px;
+  width: min(calc(100vw - 32px), 380px);
+  padding: 18px;
+  border: 1px solid color-mix(in srgb, var(--accent) 52%, var(--border));
+  border-radius: 8px;
+  background:
+    linear-gradient(135deg, color-mix(in srgb, var(--accent) 18%, transparent), transparent 50%),
+    color-mix(in srgb, var(--surface) 94%, var(--background));
+  box-shadow: 0 24px 70px color-mix(in srgb, #000000 52%, transparent);
+  opacity: 0;
+  transform: translateY(22px);
+  transition: opacity 220ms ease, transform 220ms ease;
+}
+.reward-toast.active {
+  opacity: 1;
+  transform: translateY(0);
+}
+.reward-toast p {
+  margin: 0;
+  color: var(--text-muted);
+  line-height: 1.45;
+}
+.reward-toast .eyebrow {
+  color: var(--accent-strong);
+}
+@keyframes dominion-confetti {
+  0% {
+    transform: translate3d(0, 0, 0) rotate(0deg);
+  }
+  82% {
+    opacity: .95;
+  }
+  100% {
+    opacity: 0;
+    transform: translate3d(var(--dx), 112vh, 0) rotate(var(--spin));
+  }
+}
 .dashboard-brand-panel {
   position: relative;
   overflow: hidden;
@@ -942,6 +1104,13 @@
   .countdown-display strong {
     font-size: 2.8rem;
   }
+  .game-summary-card {
+    grid-template-columns: minmax(0, 1fr) minmax(220px, .55fr);
+    align-items: center;
+  }
+  .game-summary-card .badge-shelf {
+    grid-column: 1 / -1;
+  }
   .action-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .daily-actions .verse-card {
     grid-column: 1 / -1;
@@ -970,6 +1139,13 @@
   }
   .countdown-display strong {
     font-size: 3.35rem;
+  }
+  .game-summary-card {
+    grid-template-columns: minmax(0, 1fr) minmax(220px, .45fr) minmax(260px, .7fr);
+  }
+  .game-summary-card .badge-shelf {
+    grid-column: auto;
+    justify-content: flex-end;
   }
   .daily-actions {
     gap: 22px;

@@ -85,12 +85,12 @@ async function syncSubscriptionFromStripe(admin: ReturnType<typeof createAdminCl
 }
 
 Deno.serve(async (req) => {
-  if (req.method === "OPTIONS") return optionsResponse();
-  if (req.method !== "POST") return jsonResponse({ error: "Method not allowed." }, 405);
+  if (req.method === "OPTIONS") return optionsResponse(req);
+  if (req.method !== "POST") return jsonResponse({ error: "Method not allowed." }, 405, req);
 
   const payload = await req.text();
   const isValid = await verifyStripeSignature(payload, req.headers.get("stripe-signature"));
-  if (!isValid) return jsonResponse({ error: "Invalid Stripe signature." }, 400);
+  if (!isValid) return jsonResponse({ error: "Invalid Stripe signature." }, 400, req);
 
   try {
     const event = JSON.parse(payload);
@@ -116,9 +116,9 @@ Deno.serve(async (req) => {
         break;
     }
 
-    return jsonResponse({ received: true });
+    return jsonResponse({ received: true }, 200, req);
   } catch (error) {
     console.error(error);
-    return jsonResponse({ error: error instanceof Error ? error.message : "Webhook processing failed." }, 500);
+    return jsonResponse({ error: error instanceof Error ? error.message : "Webhook processing failed." }, 500, req);
   }
 });

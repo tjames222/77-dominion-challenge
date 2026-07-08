@@ -1,3 +1,5 @@
+import { resolveSiteOrigin } from "./http.ts";
+
 const encoder = new TextEncoder();
 
 type StripeMethod = "GET" | "POST";
@@ -9,13 +11,7 @@ function getEnv(name: string) {
 }
 
 export function getSiteUrl(req: Request) {
-  const configured = Deno.env.get("PUBLIC_SITE_URL");
-  if (configured) return configured.replace(/\/$/, "");
-
-  const origin = req.headers.get("origin");
-  if (origin) return origin.replace(/\/$/, "");
-
-  return "http://localhost:5173";
+  return resolveSiteOrigin(req);
 }
 
 export function getPriceId(productKey: string) {

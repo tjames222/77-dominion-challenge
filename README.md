@@ -10,7 +10,7 @@ Responsive Vue 3 website for tracking the 77-Day Dominion Challenge with Supabas
 - TypeScript
 - Supabase Auth
 - Supabase Postgres
-- localStorage fallback for local UI preferences when Supabase env vars are not configured
+- localStorage for local UI preferences, with demo bypasses limited to Vite dev on localhost
 
 ## Run locally
 
@@ -25,10 +25,23 @@ npm run dev
 2. Run `supabase/schema.sql` in the Supabase SQL editor.
 3. Copy `.env.example` to `.env`.
 4. Fill in `VITE_SUPABASE_URL` and `VITE_SUPABASE_PUBLISHABLE_KEY`.
-5. In Supabase Auth URL Configuration, set the Site URL to the Cloudflare Pages production URL for this app and add local dev URLs for testing.
-6. This project is deployed from the Cloudflare production branch only. Supabase redirect URLs do not need a preview branch entry.
+5. In Supabase Auth URL Configuration, set the Site URL to the Cloudflare Pages production URL for this app.
+6. Add redirect URLs for production, Cloudflare preview deployments, and local development:
+   - `https://77-dominion-challenge.pages.dev/**`
+   - `https://*.77-dominion-challenge.pages.dev/**`
+   - `http://localhost:5173/**`
+   - `http://127.0.0.1:5173/**`
+   - `http://localhost:4173/**`
+   - `http://127.0.0.1:4173/**`
 
 The frontend uses Supabase Auth for login/register and writes directly to Supabase Postgres with Row Level Security policies.
+
+## Deployment workflow
+
+- `main` is production.
+- `develop` is the Cloudflare Pages preview branch for full workflow testing.
+- Production and preview builds both require real Supabase environment variables and do not use local demo auth or billing fallbacks.
+- Local demo bypasses only run in `npm run dev` on localhost when Supabase env vars are not configured.
 
 ## Billing and monetization
 
@@ -46,6 +59,8 @@ Stripe powers checkout and the customer portal. Supabase stores subscriptions an
    - `STRIPE_WEBHOOK_SECRET`
    - `STRIPE_MEMBERSHIP_PRICE_ID`
    - `PUBLIC_SITE_URL`
+   - `CLOUDFLARE_PAGES_PROJECT_HOST`
+   - `PUBLIC_ALLOWED_SITE_URLS`
 3. Deploy the Edge Functions:
    - `create-checkout-session`
    - `create-customer-portal-session`

@@ -3,8 +3,8 @@ import { createFormBody, getSiteUrl, stripeRequest } from "../_shared/stripe.ts"
 import { jsonResponse, optionsResponse } from "../_shared/http.ts";
 
 Deno.serve(async (req) => {
-  if (req.method === "OPTIONS") return optionsResponse();
-  if (req.method !== "POST") return jsonResponse({ error: "Method not allowed." }, 405);
+  if (req.method === "OPTIONS") return optionsResponse(req);
+  if (req.method !== "POST") return jsonResponse({ error: "Method not allowed." }, 405, req);
 
   try {
     const user = await requireUser(req);
@@ -17,7 +17,7 @@ Deno.serve(async (req) => {
 
     if (error) throw error;
     if (!customer?.stripe_customer_id) {
-      return jsonResponse({ error: "No billing account found yet." }, 404);
+      return jsonResponse({ error: "No billing account found yet." }, 404, req);
     }
 
     const session = await stripeRequest(
@@ -29,9 +29,9 @@ Deno.serve(async (req) => {
       }),
     );
 
-    return jsonResponse({ url: session.url });
+    return jsonResponse({ url: session.url }, 200, req);
   } catch (error) {
     console.error(error);
-    return jsonResponse({ error: error instanceof Error ? error.message : "Unable to open billing portal." }, 500);
+    return jsonResponse({ error: error instanceof Error ? error.message : "Unable to open billing portal." }, 500, req);
   }
 });

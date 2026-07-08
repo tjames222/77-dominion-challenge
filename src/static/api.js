@@ -18,7 +18,7 @@ export const supabase = isSupabaseConfigured()
   : null;
 export function isLocalDemoMode() {
   if (typeof window === 'undefined') return false;
-  return import.meta.env.DEV || ['localhost', '127.0.0.1', '::1'].includes(window.location.hostname) || window.location.protocol === 'file:';
+  return import.meta.env.DEV && ['localhost', '127.0.0.1', '::1'].includes(window.location.hostname);
 }
 const MEMBERSHIP_ACCESS_KEY = 'membership_active';
 const MEMBERSHIP_PRODUCT_KEY = 'dominion_membership';
@@ -205,6 +205,7 @@ const mapFeedItem = (item) => ({
   day: item.day || item.challenge_day,
   status: item.status,
   completedCount: item.completed_count || 0,
+  pointsAwarded: item.points_awarded || 0,
   timestamp: item.created_at ? todayLabel(item.created_at) : item.timestamp || 'Today',
   createdAt: item.created_at,
 });
@@ -247,6 +248,50 @@ const mapPost = (post, likes = [], comments = [], currentUserId = '') => ({
     createdAt: comment.created_at,
     timestamp: comment.created_at ? todayLabel(comment.created_at) : 'Today',
   })),
+});
+
+const mapBadge = (badge) => {
+  const definition = badge.badge_definitions || badge;
+  return badge ? {
+    key: badge.badge_key || badge.key,
+    name: definition?.name || badge.name || 'Badge',
+    description: definition?.description || badge.description || '',
+    category: definition?.category || badge.category || 'challenge',
+    tier: definition?.tier || badge.tier || 'bronze',
+    icon: definition?.icon || badge.icon || 'shield',
+    earnedAt: badge.earned_at || badge.earnedAt || null,
+    metadata: badge.metadata || {},
+  } : null;
+};
+
+const mapGameStats = (stats) => stats ? ({
+  totalPoints: stats.total_points || stats.totalPoints || 0,
+  challengePoints: stats.challenge_points || stats.challengePoints || 0,
+  currentAppStreak: stats.current_app_streak || stats.currentAppStreak || 0,
+  bestAppStreak: stats.best_app_streak || stats.bestAppStreak || 0,
+  currentFullDayStreak: stats.current_full_day_streak || stats.currentFullDayStreak || 0,
+  bestFullDayStreak: stats.best_full_day_streak || stats.bestFullDayStreak || 0,
+  lastSeenDate: stats.last_seen_date || stats.lastSeenDate || null,
+  lastFullDayDate: stats.last_full_day_date || stats.lastFullDayDate || null,
+}) : {
+  totalPoints: 0,
+  challengePoints: 0,
+  currentAppStreak: 0,
+  bestAppStreak: 0,
+  currentFullDayStreak: 0,
+  bestFullDayStreak: 0,
+  lastSeenDate: null,
+  lastFullDayDate: null,
+};
+
+const mapLeaderboardRow = (row) => ({
+  rank: row.rank_position || row.rank || 0,
+  userId: row.user_id || row.userId,
+  name: row.display_name || row.name || 'Member',
+  points: row.points || 0,
+  currentAppStreak: row.current_app_streak || row.currentAppStreak || 0,
+  latestChallengeDay: row.latest_challenge_day || row.latestChallengeDay || 0,
+  badges: Array.isArray(row.badges) ? row.badges.map(mapBadge).filter(Boolean) : [],
 });
 
 const mapJournalEntry = (entry, photos = []) => ({
@@ -399,7 +444,7 @@ export async function createCustomerPortalSession() {
 export async function getDashboard() {
   const client = requireSupabase();
   const user = await requireUser();
-  const [profile, entriesResult, feedResult] = await Promise.all([
+  const [profile, entriesResult, feedResult, statsResult, badgesResult] = await Promise.all([
     getProfile(),
     client
       .from('challenge_entries')
@@ -409,18 +454,33 @@ export async function getDashboard() {
       .limit(90),
     client
       .from('community_feed_items')
-      .select('id, display_name, challenge_day, status, completed_count, created_at')
+      .select('id, display_name, challenge_day, status, completed_count, points_awarded, created_at')
       .order('created_at', { ascending: false })
       .limit(30),
+    client
+      .from('user_game_stats')
+      .select('total_points, challenge_points, current_app_streak, best_app_streak, current_full_day_streak, best_full_day_streak, last_seen_date, last_full_day_date')
+      .eq('user_id', user.id)
+      .maybeSingle(),
+    client
+      .from('user_badges')
+      .select('badge_key, earned_at, metadata, badge_definitions(name, description, category, tier, icon)')
+      .eq('user_id', user.id)
+      .order('earned_at', { ascending: false })
+      .limit(12),
   ]);
 
   if (entriesResult.error) throw entriesResult.error;
   if (feedResult.error) throw feedResult.error;
+  if (statsResult.error) throw statsResult.error;
+  if (badgesResult.error) throw badgesResult.error;
 
   return {
     profile,
     entries: entriesResult.data.map(mapEntry),
     feed: feedResult.data.map(mapFeedItem),
+    gameStats: mapGameStats(statsResult.data),
+    badges: (badgesResult.data || []).map(mapBadge).filter(Boolean),
   };
 }
 
@@ -445,7 +505,7 @@ export async function saveChallengeEntry(entry) {
 export async function postCheckIn(checkIn) {
   const client = requireSupabase();
   const user = await requireUser();
-  const { error } = await client
+  const { data, error } = await client
     .from('check_ins')
     .insert({
       user_id: user.id,
@@ -453,17 +513,22 @@ export async function postCheckIn(checkIn) {
       challenge_day: checkIn.day,
       status: checkIn.status,
       completed_count: checkIn.completedCount,
-    });
+      completed: checkIn.completed || [],
+      workout_difficulty: checkIn.workoutDifficulty || {},
+    })
+    .select('id, challenge_day, status, completed_count, points_awarded, created_at')
+    .single();
 
   if (error) throw error;
   const profile = readJson('dominion:user', { name: 'You' });
   return mapFeedItem({
-    id: globalThis.crypto?.randomUUID?.() || `${checkIn.date}-${Date.now()}`,
+    id: data?.id || globalThis.crypto?.randomUUID?.() || `${checkIn.date}-${Date.now()}`,
     display_name: profile?.name || 'You',
-    challenge_day: checkIn.day,
-    status: checkIn.status,
-    completed_count: checkIn.completedCount,
-    created_at: new Date().toISOString(),
+    challenge_day: data?.challenge_day || checkIn.day,
+    status: data?.status || checkIn.status,
+    completed_count: data?.completed_count || checkIn.completedCount,
+    points_awarded: data?.points_awarded || 0,
+    created_at: data?.created_at || new Date().toISOString(),
   });
 }
 
@@ -472,12 +537,64 @@ export async function getCommunityFeed() {
   await requireUser();
   const { data, error } = await client
     .from('community_feed_items')
-    .select('id, display_name, challenge_day, status, completed_count, created_at')
+    .select('id, display_name, challenge_day, status, completed_count, points_awarded, created_at')
     .order('created_at', { ascending: false })
     .limit(30);
 
   if (error) throw error;
   return data.map(mapFeedItem);
+}
+
+export async function recordAppVisit() {
+  const client = requireSupabase();
+  await requireUser();
+  const { data, error } = await client.rpc('record_app_visit');
+  if (error) throw error;
+  const result = Array.isArray(data) ? data[0] : data;
+  return result ? {
+    totalPoints: result.total_points || 0,
+    currentAppStreak: result.current_app_streak || 0,
+    bestAppStreak: result.best_app_streak || 0,
+    newBadges: result.new_badges || [],
+  } : null;
+}
+
+export async function getGameSummary() {
+  const client = requireSupabase();
+  const user = await requireUser();
+  const [statsResult, badgesResult] = await Promise.all([
+    client
+      .from('user_game_stats')
+      .select('total_points, challenge_points, current_app_streak, best_app_streak, current_full_day_streak, best_full_day_streak, last_seen_date, last_full_day_date')
+      .eq('user_id', user.id)
+      .maybeSingle(),
+    client
+      .from('user_badges')
+      .select('badge_key, earned_at, metadata, badge_definitions(name, description, category, tier, icon)')
+      .eq('user_id', user.id)
+      .order('earned_at', { ascending: false })
+      .limit(12),
+  ]);
+
+  if (statsResult.error) throw statsResult.error;
+  if (badgesResult.error) throw badgesResult.error;
+
+  return {
+    gameStats: mapGameStats(statsResult.data),
+    badges: (badgesResult.data || []).map(mapBadge).filter(Boolean),
+  };
+}
+
+export async function getLeaderboard({ scope = 'global', crewId = null, window = 'week' } = {}) {
+  const client = requireSupabase();
+  await requireUser();
+  const rpcName = scope === 'crew' ? 'get_crew_leaderboard' : 'get_global_leaderboard';
+  const payload = scope === 'crew'
+    ? { target_crew_id: crewId, target_window: window }
+    : { target_window: window };
+  const { data, error } = await client.rpc(rpcName, payload);
+  if (error) throw error;
+  return (data || []).map(mapLeaderboardRow);
 }
 
 async function getCurrentDisplayName() {

@@ -6,15 +6,15 @@ const subscriptionProductKey = "dominion_membership";
 const subscriptionEntitlementKey = "membership_active";
 
 Deno.serve(async (req) => {
-  if (req.method === "OPTIONS") return optionsResponse();
-  if (req.method !== "POST") return jsonResponse({ error: "Method not allowed." }, 405);
+  if (req.method === "OPTIONS") return optionsResponse(req);
+  if (req.method !== "POST") return jsonResponse({ error: "Method not allowed." }, 405, req);
 
   try {
     const user = await requireUser(req);
     const { productKey } = await req.json();
 
     if (productKey !== subscriptionProductKey) {
-      return jsonResponse({ error: "Unsupported product selection." }, 400);
+      return jsonResponse({ error: "Unsupported product selection." }, 400, req);
     }
 
     const admin = createAdminClient();
@@ -40,7 +40,7 @@ Deno.serve(async (req) => {
     );
 
     if (subscriptionActive) {
-      return jsonResponse({ url: `${getSiteUrl(req)}/dashboard.html`, alreadyOwned: true });
+      return jsonResponse({ url: `${getSiteUrl(req)}/dashboard.html`, alreadyOwned: true }, 200, req);
     }
 
     let stripeCustomerId = existingCustomer?.stripe_customer_id || null;
@@ -86,9 +86,9 @@ Deno.serve(async (req) => {
     });
 
     const session = await stripeRequest("/v1/checkout/sessions", "POST", sessionBody);
-    return jsonResponse({ url: session.url });
+    return jsonResponse({ url: session.url }, 200, req);
   } catch (error) {
     console.error(error);
-    return jsonResponse({ error: error instanceof Error ? error.message : "Unable to create checkout session." }, 500);
+    return jsonResponse({ error: error instanceof Error ? error.message : "Unable to create checkout session." }, 500, req);
   }
 });

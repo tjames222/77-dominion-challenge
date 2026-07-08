@@ -2,9 +2,11 @@ import { initReveal } from './reveal';
 import {
   getBillingState,
   getDashboard,
+  getGameSummary,
   hasSupabaseAuth,
   isLocalDemoMode,
   postCheckIn,
+  recordAppVisit,
   redirectToLogin,
   saveChallengeEntry,
   updateProfile,
@@ -103,6 +105,16 @@ const workoutPlans = {
     '6 rounds: 25 pushups, 30 squats, 20 tuck jumps, 1-minute sprint or fast stair climb.',
   ],
 };
+const difficultyPointMap = { easy: 2, medium: 5, hard: 10, extreme: 15 };
+const demoBadgeDefinitions = {
+  faithful_start: { key: 'faithful_start', name: 'Faithful Start', tier: 'bronze', icon: 'shield' },
+  honest_partial: { key: 'honest_partial', name: 'Honest Standard', tier: 'bronze', icon: 'check' },
+  first_sweat: { key: 'first_sweat', name: 'First Sweat', tier: 'bronze', icon: 'spark' },
+  steady_grind: { key: 'steady_grind', name: 'Steady Grind', tier: 'bronze', icon: 'flame' },
+  iron_standard: { key: 'iron_standard', name: 'Iron Standard', tier: 'silver', icon: 'dumbbell' },
+  hard_path: { key: 'hard_path', name: 'Hard Path', tier: 'silver', icon: 'run' },
+  extreme_fire: { key: 'extreme_fire', name: 'Extreme Fire', tier: 'gold', icon: 'flame' },
+};
 const todayKey = () => new Date().toISOString().slice(0, 10);
 const load = (key, fallback) => JSON.parse(localStorage.getItem(key) || JSON.stringify(fallback));
 const save = (key, value) => localStorage.setItem(key, JSON.stringify(value));
@@ -112,11 +124,127 @@ const statusLabel = (item) => {
   if (item.status === 'partial') return `partial check-in${item.completedCount ? ` (${item.completedCount}/7)` : ''}`;
   return 'complete';
 };
+const escapeHtml = (value = '') => String(value).replace(/[&<>"']/g, (char) => ({
+  '&': '&amp;',
+  '<': '&lt;',
+  '>': '&gt;',
+  '"': '&quot;',
+  "'": '&#039;',
+}[char]));
+const badgeChip = (badge) => `<span class="badge-chip ${badge.tier || 'bronze'}"><span>${escapeHtml(badge.name || 'Badge')}</span></span>`;
+const calculateLocalPoints = (entry, status) => {
+  const completed = entry.completed || [];
+  let points = completed.length * 10;
+  if (status === 'complete') points += 30;
+  if (status === 'partial') points += 10;
+  if (status === 'scheduled') points += 15;
+  if (completed.includes('workoutOne')) points += difficultyPointMap[workoutDifficulty.one || 'medium'] || 0;
+  if (completed.includes('workoutTwo')) points += difficultyPointMap[workoutDifficulty.two || 'medium'] || 0;
+  return points;
+};
+function awardLocalBadges(entry, status) {
+  const earned = [];
+  const existing = new Set(badges.map((badge) => badge.key));
+  const maybeAward = (key) => {
+    if (existing.has(key) || !demoBadgeDefinitions[key]) return;
+    const badge = { ...demoBadgeDefinitions[key], earnedAt: new Date().toISOString() };
+    badges.unshift(badge);
+    earned.push(badge);
+    existing.add(key);
+  };
+
+  maybeAward('faithful_start');
+  if (status === 'partial') maybeAward('honest_partial');
+  if (status === 'complete') maybeAward('iron_standard');
+  if ((entry.completed || []).includes('workoutOne') && workoutDifficulty.one === 'easy') maybeAward('first_sweat');
+  if ((entry.completed || []).includes('workoutTwo') && workoutDifficulty.two === 'easy') maybeAward('first_sweat');
+  if ((entry.completed || []).includes('workoutOne') && workoutDifficulty.one === 'medium') maybeAward('steady_grind');
+  if ((entry.completed || []).includes('workoutTwo') && workoutDifficulty.two === 'medium') maybeAward('steady_grind');
+  if ((entry.completed || []).includes('workoutOne') && workoutDifficulty.one === 'hard') maybeAward('hard_path');
+  if ((entry.completed || []).includes('workoutTwo') && workoutDifficulty.two === 'hard') maybeAward('hard_path');
+  if ((entry.completed || []).includes('workoutOne') && workoutDifficulty.one === 'extreme') maybeAward('extreme_fire');
+  if ((entry.completed || []).includes('workoutTwo') && workoutDifficulty.two === 'extreme') maybeAward('extreme_fire');
+
+  if (localDemoMode) save('dominion:badges', badges);
+  return earned;
+}
+function renderGameSummary() {
+  const gamePointsTotal = $('gamePointsTotal');
+  const gameStreakSummary = $('gameStreakSummary');
+  const appStreakCount = $('appStreakCount');
+  const fullDayStreakCount = $('fullDayStreakCount');
+  const badgeShelf = $('badgeShelf');
+  const totalPoints = gameStats.totalPoints || gameStats.challengePoints || 0;
+  const appStreak = gameStats.currentAppStreak || 0;
+  const fullDayStreak = gameStats.currentFullDayStreak || 0;
+
+  if (gamePointsTotal) gamePointsTotal.textContent = `${totalPoints.toLocaleString()} points`;
+  if (gameStreakSummary) {
+    gameStreakSummary.textContent = `${appStreak} day app streak · ${fullDayStreak} full-standard day streak`;
+  }
+  if (appStreakCount) appStreakCount.textContent = String(appStreak);
+  if (fullDayStreakCount) fullDayStreakCount.textContent = String(fullDayStreak);
+  if (badgeShelf) {
+    badgeShelf.innerHTML = badges.length
+      ? badges.slice(0, 6).map(badgeChip).join('')
+      : '<span class="badge-empty">Badges unlock as you check in.</span>';
+  }
+}
+function launchConfetti() {
+  const layer = $('confettiLayer');
+  if (!layer) return;
+  const colors = ['#d6ad54', '#f0c96a', '#5fa36f', '#f8f5ef', '#2c2a27'];
+  layer.innerHTML = '';
+  for (let index = 0; index < 90; index += 1) {
+    const piece = document.createElement('span');
+    piece.style.setProperty('--x', `${Math.random() * 100}vw`);
+    piece.style.setProperty('--dx', `${(Math.random() - 0.5) * 240}px`);
+    piece.style.setProperty('--delay', `${Math.random() * 140}ms`);
+    piece.style.setProperty('--spin', `${Math.random() * 720 - 360}deg`);
+    piece.style.background = colors[index % colors.length];
+    layer.appendChild(piece);
+  }
+  window.setTimeout(() => { layer.innerHTML = ''; }, 2200);
+}
+function showRewardToast({ points = 0, earnedBadges = [], status = 'complete' }) {
+  const rewardToast = $('rewardToast');
+  const rewardTitle = $('rewardTitle');
+  const rewardCopy = $('rewardCopy');
+  const rewardBadges = $('rewardBadges');
+  if (!rewardToast || !rewardTitle || !rewardCopy) return;
+
+  if (status === 'visit') rewardTitle.textContent = 'Streak updated.';
+  else rewardTitle.textContent = status === 'complete' ? 'Full day complete.' : 'Check-in posted.';
+  rewardCopy.textContent = points
+    ? `+${points} points added. Keep stacking the standard.`
+    : status === 'visit'
+      ? 'You showed up today. Keep the streak alive.'
+      : 'Your check-in is posted. Points are being synced.';
+  if (rewardBadges) {
+    rewardBadges.innerHTML = earnedBadges.length
+      ? earnedBadges.map(badgeChip).join('')
+      : '<span class="badge-empty">Badges update as streaks grow.</span>';
+  }
+  rewardToast.hidden = false;
+  rewardToast.classList.add('active');
+  window.setTimeout(() => {
+    rewardToast.classList.remove('active');
+    rewardToast.hidden = true;
+  }, 5200);
+}
 let theme = load('dominion:theme', 'dark');
 let startDate = localDemoMode ? load('dominion:startDate', todayKey()) : todayKey();
 let entries = localDemoMode ? load('dominion:entries', []) : [];
 let feed = localDemoMode ? load('dominion:feed', starterFeed) : starterFeed;
 let workoutDifficulty = localDemoMode ? load('dominion:workoutDifficulty', { one: 'medium', two: 'medium' }) : { one: 'medium', two: 'medium' };
+let gameStats = localDemoMode ? load('dominion:gameStats', {
+  totalPoints: 0,
+  currentAppStreak: 1,
+  bestAppStreak: 1,
+  currentFullDayStreak: 0,
+  bestFullDayStreak: 0,
+}) : {};
+let badges = localDemoMode ? load('dominion:badges', []) : [];
 let countdownTimer = null;
 let activeCountdownCallout = '';
 const $ = (id) => document.getElementById(id);
@@ -300,11 +428,15 @@ function render() {
     }).join('');
   }
   if (feedEl) {
-    feedEl.innerHTML = feed.slice(0, 6).map(item => `<article class="feed-item"><div><strong>${item.name}</strong><p>Day ${item.day} ${statusLabel(item)}</p></div><span class="feed-status"><span class="app-icon icon-sm ${item.status === 'complete' ? 'icon-check' : 'icon-repeat'}" aria-hidden="true"></span></span></article>`).join('');
+    feedEl.innerHTML = feed.slice(0, 6).map((item) => {
+      const points = item.pointsAwarded ? ` · +${item.pointsAwarded} pts` : '';
+      return `<article class="feed-item"><div><strong>${escapeHtml(item.name)}</strong><p>Day ${item.day} ${statusLabel(item)}${points}</p></div><span class="feed-status"><span class="app-icon icon-sm ${item.status === 'complete' ? 'icon-check' : 'icon-repeat'}" aria-hidden="true"></span></span></article>`;
+    }).join('');
   }
   if (completedToday) completedToday.textContent = `${feed.filter(item => item.status === 'complete' && item.timestamp === 'Today').length} people completed today`;
   if (verseAppLink) verseAppLink.href = YOUVERSION_APP_URL;
   applyDailyActions();
+  renderGameSummary();
   updateCountdownCard();
 }
 function startCountdownCard() {
@@ -333,11 +465,54 @@ async function hydrateDashboardFromApi() {
       feed = dashboard.feed;
       save('dominion:feed', feed);
     }
+    if (dashboard?.gameStats) {
+      gameStats = dashboard.gameStats;
+      save('dominion:gameStats', gameStats);
+    }
+    if (Array.isArray(dashboard?.badges)) {
+      badges = dashboard.badges;
+      save('dominion:badges', badges);
+    }
     render();
   } catch (error) {
     console.warn('Unable to load dashboard from Supabase', error);
   }
 }
+
+async function refreshGameSummary(previousBadgeKeys = new Set()) {
+  if (!hasSupabaseAuth()) return [];
+  const summary = await getGameSummary();
+  gameStats = summary.gameStats;
+  badges = summary.badges || [];
+  save('dominion:gameStats', gameStats);
+  save('dominion:badges', badges);
+  return badges.filter((badge) => !previousBadgeKeys.has(badge.key));
+}
+
+async function recordDailyAppVisit() {
+  if (!hasSupabaseAuth()) return;
+  const previousBadgeKeys = new Set(badges.map((badge) => badge.key));
+  try {
+    const visit = await recordAppVisit();
+    if (visit) {
+      gameStats = {
+        ...gameStats,
+        totalPoints: visit.totalPoints,
+        currentAppStreak: visit.currentAppStreak,
+        bestAppStreak: visit.bestAppStreak,
+      };
+      save('dominion:gameStats', gameStats);
+    }
+    const earnedBadges = await refreshGameSummary(previousBadgeKeys);
+    if (earnedBadges.length) {
+      showRewardToast({ points: 0, earnedBadges, status: 'visit' });
+    }
+    render();
+  } catch (error) {
+    console.warn('Unable to record daily app visit', error);
+  }
+}
+
 const themeToggle = $('themeToggle');
 const startDateInput = $('startDate');
 const checklist = $('checklist');
@@ -393,21 +568,68 @@ if (scheduledButton) scheduledButton.addEventListener('click', () => {
   saveEntry(entry);
   render();
 });
-if (checkInButton) checkInButton.addEventListener('click', () => {
+if (checkInButton) checkInButton.addEventListener('click', async () => {
   const entry = todayEntry();
   if (!entry.scheduledMiss && entry.completed.length === 0) return;
   const status = entry.scheduledMiss ? 'scheduled' : entry.completed.length === standards.length ? 'complete' : 'partial';
-  feed.unshift({ name: 'You', day: currentDay(), status, completedCount: entry.completed.length, timestamp: 'Today' });
-  if (localDemoMode) save('dominion:feed', feed);
-  if (hasSupabaseAuth()) {
-    postCheckIn({
-      date: entry.date,
-      day: currentDay(),
-      status,
-      completedCount: entry.completed.length,
-    }).catch((error) => console.warn('Unable to sync check-in', error));
+  const previousBadgeKeys = new Set(badges.map((badge) => badge.key));
+  const originalLabel = checkInButton.textContent;
+  let feedItem = {
+    name: 'You',
+    day: currentDay(),
+    status,
+    completedCount: entry.completed.length,
+    pointsAwarded: 0,
+    timestamp: 'Today',
+  };
+  let earnedBadges = [];
+
+  checkInButton.disabled = true;
+  checkInButton.textContent = 'Posting...';
+
+  try {
+    if (hasSupabaseAuth()) {
+      feedItem = {
+        ...(await postCheckIn({
+          date: entry.date,
+          day: currentDay(),
+          status,
+          completedCount: entry.completed.length,
+          completed: entry.completed,
+          workoutDifficulty,
+        })),
+        name: 'You',
+        timestamp: 'Today',
+      };
+      earnedBadges = await refreshGameSummary(previousBadgeKeys);
+    } else {
+      let points = calculateLocalPoints(entry, status);
+      if (status === 'complete') {
+        const nextStreak = (gameStats.currentFullDayStreak || 0) + 1;
+        const streakBonus = { 3: 25, 7: 75, 14: 150, 30: 300, 77: 777 }[nextStreak] || 0;
+        points += streakBonus;
+        gameStats.currentFullDayStreak = nextStreak;
+        gameStats.bestFullDayStreak = Math.max(gameStats.bestFullDayStreak || 0, nextStreak);
+      }
+      gameStats.totalPoints = (gameStats.totalPoints || 0) + points;
+      gameStats.challengePoints = (gameStats.challengePoints || 0) + points;
+      feedItem.pointsAwarded = points;
+      earnedBadges = awardLocalBadges(entry, status);
+      save('dominion:gameStats', gameStats);
+      save('dominion:badges', badges);
+    }
+
+    feed = [feedItem, ...feed].slice(0, 30);
+    if (localDemoMode) save('dominion:feed', feed);
+    if (status === 'complete') launchConfetti();
+    showRewardToast({ points: feedItem.pointsAwarded, earnedBadges, status });
+  } catch (error) {
+    console.warn('Unable to sync check-in', error);
+    window.alert(error?.message || 'Unable to post that check-in right now.');
+  } finally {
+    checkInButton.textContent = originalLabel;
+    render();
   }
-  render();
 });
 if (countdownCheckInButton && checkInButton) countdownCheckInButton.addEventListener('click', () => {
   checkInButton.scrollIntoView({ behavior: 'smooth', block: 'center' });
@@ -433,7 +655,8 @@ async function bootDashboard() {
   }
 
   render();
-  hydrateDashboardFromApi();
+  await hydrateDashboardFromApi();
+  recordDailyAppVisit();
   loadVerseOfDay();
   applyDailyActions();
   startCountdownCard();

@@ -89,6 +89,20 @@
           <article class="card"><strong id="crewPostCount">0</strong><span>Posts</span></article>
         </div>
 
+        <section class="leaderboard-card card">
+          <div class="leaderboard-header">
+            <div>
+              <p class="eyebrow">Crew Leaderboard</p>
+              <h2>Standards stacked together.</h2>
+            </div>
+            <div class="leaderboard-toggle" role="group" aria-label="Crew leaderboard range">
+              <button class="active" type="button" data-leaderboard-scope="crew" data-leaderboard-window="week">Week</button>
+              <button type="button" data-leaderboard-scope="crew" data-leaderboard-window="challenge">Challenge</button>
+            </div>
+          </div>
+          <div class="leaderboard-list" id="crewLeaderboard"></div>
+        </section>
+
         <section class="composer-card card" id="crewComposerCard" hidden>
           <p class="eyebrow">Encourage Your Crew</p>
           <form id="crewPostForm">
@@ -109,6 +123,20 @@
             <p>Post a win, a prayer request, or a word of encouragement for everyone currently walking the 77.</p>
           </div>
         </div>
+
+        <section class="leaderboard-card card">
+          <div class="leaderboard-header">
+            <div>
+              <p class="eyebrow">Global Leaderboard</p>
+              <h2>Points, streaks, and badges.</h2>
+            </div>
+            <div class="leaderboard-toggle" role="group" aria-label="Global leaderboard range">
+              <button class="active" type="button" data-leaderboard-scope="global" data-leaderboard-window="week">Week</button>
+              <button type="button" data-leaderboard-scope="global" data-leaderboard-window="challenge">Challenge</button>
+            </div>
+          </div>
+          <div class="leaderboard-list" id="globalLeaderboard"></div>
+        </section>
 
         <section class="composer-card card">
           <p class="eyebrow">Post to Global</p>

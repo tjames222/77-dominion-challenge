@@ -44,6 +44,19 @@
         <button class="action-button countdown-action" type="button" id="countdownCheckInButton">Go to check-in</button>
       </section>
 
+      <section class="game-summary-card reveal" id="gameSummaryCard">
+        <div>
+          <p class="eyebrow">Your Level</p>
+          <h2 id="gamePointsTotal">0 points</h2>
+          <p class="section-copy" id="gameStreakSummary">Open the app daily and stack faithful days to build your streak.</p>
+        </div>
+        <div class="game-stat-strip">
+          <span><strong id="appStreakCount">0</strong><small>App streak</small></span>
+          <span><strong id="fullDayStreakCount">0</strong><small>Full-day streak</small></span>
+        </div>
+        <div class="badge-shelf" id="badgeShelf" aria-label="Recent badges"></div>
+      </section>
+
       <section class="dashboard-brand-panel reveal" aria-label="77 Dominion Challenge mark">
         <img src="/images/dominion-77-mark.jpg" alt="77 Dominion Challenge" />
       </section>
@@ -92,6 +105,14 @@
           <span aria-hidden="true">↗</span>
         </a>
       </section>
+
+      <div class="confetti-layer" id="confettiLayer" aria-hidden="true"></div>
+      <div class="reward-toast" id="rewardToast" role="status" aria-live="polite" hidden>
+        <p class="eyebrow">Day Complete</p>
+        <h2 id="rewardTitle">Dominion earned.</h2>
+        <p id="rewardCopy">Points and badges are being tallied.</p>
+        <div class="badge-shelf" id="rewardBadges"></div>
+      </div>
     </main>
     <script type="module" src="./src/static/menu.js"></script>
     <script type="module" src="./src/static/dashboard.js"></script>
