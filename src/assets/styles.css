@@ -384,6 +384,8 @@ select {
 .check-row {
   width: 100%;
   align-self: start;
+  position: relative;
+  isolation: isolate;
   display: flex;
   align-items: center;
   gap: 13px;
@@ -395,15 +397,65 @@ select {
   padding: 12px;
   margin-bottom: 0;
   min-width: 0;
+  cursor: pointer;
+  transform: translateZ(0);
+  transition:
+    background 260ms ease,
+    border-color 260ms ease,
+    box-shadow 260ms ease,
+    color 220ms ease,
+    transform 220ms cubic-bezier(.16, 1, .3, 1);
+  will-change: transform;
+}
+.check-row::before {
+  content: "";
+  position: absolute;
+  inset: -1px;
+  z-index: -1;
+  border-radius: inherit;
+  background:
+    radial-gradient(circle at 22px 50%, color-mix(in srgb, var(--accent) 20%, transparent), transparent 34%),
+    color-mix(in srgb, var(--accent) 7%, transparent);
+  opacity: 0;
+  transition: opacity 260ms ease;
+}
+.check-row:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--surface-elevated) 72%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 18%, transparent);
+  transform: translateY(-1px);
+}
+.check-row:active:not(:disabled) {
+  transform: translateY(0) scale(.992);
 }
 .check-row .box {
   display: grid;
   place-items: center;
+  flex: 0 0 30px;
+  width: 30px;
   min-width: 30px;
   height: 30px;
   border-radius: 999px;
   border: 1px solid color-mix(in srgb, var(--text-muted) 45%, transparent);
   color: transparent;
+  background: color-mix(in srgb, var(--surface-elevated) 72%, transparent);
+  overflow: hidden;
+  transform: translateZ(0);
+  transition:
+    background 280ms ease,
+    border-color 280ms ease,
+    box-shadow 280ms ease,
+    color 180ms ease,
+    transform 280ms cubic-bezier(.16, 1, .3, 1);
+}
+.check-row .box .app-icon {
+  opacity: 0;
+  transform: scale(.42) rotate(-14deg);
+  transition:
+    opacity 180ms ease,
+    transform 320ms cubic-bezier(.2, 1.35, .32, 1);
+}
+.check-row:hover .box .app-icon {
+  transform: scale(.42) rotate(-14deg);
 }
 .check-row > span:last-child { min-width: 0; }
 .check-row strong,
@@ -412,18 +464,31 @@ select {
 .check-row.checked {
   background: color-mix(in srgb, var(--accent) 8%, transparent);
   border-color: color-mix(in srgb, var(--accent) 24%, transparent);
+  box-shadow: 0 12px 26px color-mix(in srgb, var(--accent) 7%, transparent);
+}
+.check-row.checked::before {
+  opacity: 1;
 }
 .check-row.checked .box {
   color: #070604;
   background: var(--accent);
   border-color: var(--accent);
+  box-shadow: 0 0 0 5px color-mix(in srgb, var(--accent) 10%, transparent);
+  transform: scale(1.04);
+}
+.check-row.checked .box .app-icon,
+.check-row.checked:hover .box .app-icon {
+  opacity: 1;
+  transform: scale(1) rotate(0);
 }
 .check-row:disabled {
   cursor: not-allowed;
   color: var(--text-muted);
+  transform: none;
 }
 .check-row:disabled .box {
   border-color: color-mix(in srgb, var(--text-muted) 34%, transparent);
+  box-shadow: none;
 }
 .scheduled {
   width: 100%;
@@ -612,7 +677,6 @@ select {
 .pending-reveal .science-icon,
 .pending-reveal .summary-icon,
 .pending-reveal .feed-item,
-.pending-reveal .check-row,
 .pending-reveal .landing-grid article,
 .pending-reveal .mini-proof-grid article,
 .pending-reveal .timeline article,
@@ -629,7 +693,6 @@ select {
   animation: icon-pop 620ms cubic-bezier(.2, 1.3, .32, 1) both;
 }
 .reveal.is-visible .feed-item,
-.reveal.is-visible .check-row,
 .reveal.is-visible .landing-grid article,
 .reveal.is-visible .mini-proof-grid article,
 .reveal.is-visible .timeline article,
@@ -639,22 +702,16 @@ select {
 .reveal.is-visible.stat-card {
   animation: item-rise 620ms cubic-bezier(.16, 1, .3, 1) both;
 }
-.reveal.is-visible .check-row:nth-of-type(2),
 .reveal.is-visible .feed-item:nth-of-type(2),
 .reveal.is-visible article:nth-child(2) { animation-delay: 80ms; }
-.reveal.is-visible .check-row:nth-of-type(3),
 .reveal.is-visible .feed-item:nth-of-type(3),
 .reveal.is-visible article:nth-child(3) { animation-delay: 140ms; }
-.reveal.is-visible .check-row:nth-of-type(4),
 .reveal.is-visible .feed-item:nth-of-type(4),
 .reveal.is-visible article:nth-child(4) { animation-delay: 200ms; }
-.reveal.is-visible .check-row:nth-of-type(5),
 .reveal.is-visible .feed-item:nth-of-type(5),
 .reveal.is-visible article:nth-child(5) { animation-delay: 260ms; }
-.reveal.is-visible .check-row:nth-of-type(6),
 .reveal.is-visible .feed-item:nth-of-type(6),
 .reveal.is-visible article:nth-child(6) { animation-delay: 320ms; }
-.reveal.is-visible .check-row:nth-of-type(7),
 .reveal.is-visible .feed-item:nth-of-type(7),
 .reveal.is-visible article:nth-child(7) { animation-delay: 380ms; }
 .brand-mark {
@@ -830,7 +887,6 @@ select {
   .pending-reveal .science-icon,
   .pending-reveal .summary-icon,
   .pending-reveal .feed-item,
-  .pending-reveal .check-row,
   .pending-reveal .landing-grid article,
   .pending-reveal .mini-proof-grid article,
   .pending-reveal .timeline article,

@@ -345,9 +345,12 @@
 .confetti-layer {
   position: fixed;
   inset: 0;
-  z-index: 80;
+  width: 100vw;
+  height: 100vh;
+  z-index: 1000;
   overflow: hidden;
   pointer-events: none;
+  isolation: isolate;
 }
 .confetti-layer span {
   position: absolute;
@@ -362,13 +365,9 @@
   box-shadow: 0 0 10px color-mix(in srgb, currentColor 12%, transparent);
 }
 .confetti-layer span.ribbon {
-  width: calc(var(--w, 8px) * .72);
-  height: calc(var(--h, 16px) * 1.45);
   border-radius: 999px;
 }
 .confetti-layer span.round {
-  width: calc(var(--w, 8px) * 1.1);
-  height: calc(var(--w, 8px) * 1.1);
   border-radius: 50%;
 }
 .celebration-shake {
@@ -410,10 +409,10 @@
     transform: translate3d(0, -10vh, 0) rotate(0deg);
   }
   12% {
-    transform: translate3d(var(--drift), 8vh, 0) rotate(calc(var(--spin) * .12));
+    transform: translate3d(var(--drift), 8vh, 0) rotate(var(--spin-early));
   }
   45% {
-    transform: translate3d(calc(var(--dx) * .45), 55vh, 0) rotate(calc(var(--spin) * .55));
+    transform: translate3d(var(--dx-mid), 55vh, 0) rotate(var(--spin-mid));
   }
   82% {
     opacity: .95;

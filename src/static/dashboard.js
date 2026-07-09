@@ -193,6 +193,7 @@ function renderGameSummary() {
 function launchConfetti() {
   const layer = $('confettiLayer');
   if (!layer) return;
+  if (layer.parentElement !== document.body) document.body.appendChild(layer);
   const shell = document.querySelector('.dashboard-shell');
   const colors = ['#d6ad54', '#f0c96a', '#5fa36f', '#f8f5ef', '#5fa36f', '#2c2a27'];
   const reduceMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
@@ -213,21 +214,28 @@ function launchConfetti() {
   for (let index = 0; index < totalPieces; index += 1) {
     const piece = document.createElement('span');
     const burst = Math.floor(index / (totalPieces / 4));
-    const width = 5 + Math.random() * 8;
-    const height = width * (1.4 + Math.random() * 1.4);
+    const shape = index % 5 === 0 ? 'round' : index % 3 === 0 ? 'ribbon' : '';
+    const baseWidth = 5 + Math.random() * 8;
+    const width = shape === 'ribbon' ? baseWidth * 0.72 : shape === 'round' ? baseWidth * 1.1 : baseWidth;
+    const height = shape === 'round' ? width : baseWidth * (shape === 'ribbon' ? 2.2 : 1.4 + Math.random() * 1.4);
     const duration = 5400 + Math.random() * 3200;
+    const dx = (Math.random() - 0.5) * 420;
+    const spin = Math.random() * 1440 - 720;
 
-    piece.style.setProperty('--x', `${Math.random() * 100}vw`);
-    piece.style.setProperty('--dx', `${(Math.random() - 0.5) * 420}px`);
+    piece.style.setProperty('--x', `${-4 + Math.random() * 108}vw`);
+    piece.style.setProperty('--dx', `${dx}px`);
+    piece.style.setProperty('--dx-mid', `${dx * 0.45}px`);
     piece.style.setProperty('--delay', `${burst * 950 + Math.random() * 900}ms`);
     piece.style.setProperty('--duration', `${duration}ms`);
-    piece.style.setProperty('--spin', `${Math.random() * 1440 - 720}deg`);
+    piece.style.setProperty('--spin', `${spin}deg`);
+    piece.style.setProperty('--spin-early', `${spin * 0.12}deg`);
+    piece.style.setProperty('--spin-mid', `${spin * 0.55}deg`);
     piece.style.setProperty('--w', `${width}px`);
     piece.style.setProperty('--h', `${height}px`);
     piece.style.setProperty('--drift', `${(Math.random() - 0.5) * 110}px`);
     piece.style.background = colors[index % colors.length];
     piece.style.color = colors[index % colors.length];
-    piece.className = index % 5 === 0 ? 'round' : index % 3 === 0 ? 'ribbon' : '';
+    piece.className = shape;
     layer.appendChild(piece);
   }
   window.setTimeout(() => {
@@ -300,6 +308,29 @@ const saveEntry = (entry) => {
   }
 };
 const currentDay = () => Math.min(Math.max(Math.floor((new Date(todayKey() + 'T00:00:00') - new Date(startDate + 'T00:00:00')) / 86400000) + 1, 1), TOTAL_DAYS);
+function renderChecklist(entry) {
+  const checklist = $('checklist');
+  if (!checklist) return;
+
+  if (!checklist.dataset.mounted) {
+    checklist.innerHTML = scorecardGroups.map((group) => {
+      const rows = group.items.map(([id, label, detail]) => (
+        `<button class="check-row" data-standard="${id}" aria-pressed="false" type="button"><span class="box"><span class="app-icon icon-sm icon-check" aria-hidden="true"></span></span><span><strong>${escapeHtml(label)}</strong><small>${escapeHtml(detail)}</small></span></button>`
+      )).join('');
+      const itemLabel = group.items.length === 1 ? 'action' : 'actions';
+      return `<section class="checklist-group"><div class="checklist-group-header"><p class="checklist-group-title">${escapeHtml(group.label)}</p><span>${group.items.length} ${itemLabel}</span></div><div class="checklist-group-items">${rows}</div></section>`;
+    }).join('');
+    checklist.dataset.mounted = 'true';
+  }
+
+  const completed = new Set(entry.completed);
+  checklist.querySelectorAll('[data-standard]').forEach((row) => {
+    const isChecked = completed.has(row.dataset.standard);
+    row.classList.toggle('checked', isChecked);
+    row.disabled = Boolean(entry.scheduledMiss);
+    row.setAttribute('aria-pressed', String(isChecked));
+  });
+}
 const padClock = (value) => String(value).padStart(2, '0');
 function getDayTiming(now = new Date()) {
   const start = new Date(now);
@@ -446,16 +477,7 @@ function render() {
     scheduledButton.textContent = entry.scheduledMiss ? 'Scheduled miss selected' : 'Scheduled miss day planned ahead';
     scheduledButton.setAttribute('aria-pressed', String(!!entry.scheduledMiss));
   }
-  if (checklist) {
-    checklist.innerHTML = scorecardGroups.map((group) => {
-      const rows = group.items.map(([id, label, detail]) => {
-        const isChecked = entry.completed.includes(id);
-        return `<button class="check-row ${isChecked ? 'checked' : ''}" data-standard="${id}" aria-pressed="${isChecked}" ${entry.scheduledMiss ? 'disabled' : ''}><span class="box"><span class="app-icon icon-sm icon-check" aria-hidden="true"></span></span><span><strong>${label}</strong><small>${detail}</small></span></button>`;
-      }).join('');
-      const itemLabel = group.items.length === 1 ? 'action' : 'actions';
-      return `<section class="checklist-group"><div class="checklist-group-header"><p class="checklist-group-title">${group.label}</p><span>${group.items.length} ${itemLabel}</span></div><div class="checklist-group-items">${rows}</div></section>`;
-    }).join('');
-  }
+  if (checklist) renderChecklist(entry);
   if (feedEl) {
     feedEl.innerHTML = feed.slice(0, 6).map((item) => {
       const points = item.pointsAwarded ? ` · +${item.pointsAwarded} pts` : '';
@@ -586,7 +608,8 @@ if (checklist) checklist.addEventListener('click', event => {
   if (todayEntry().scheduledMiss) return;
   const entry = { ...todayEntry(), completed: [...todayEntry().completed], scheduledMiss: false };
   const id = row.dataset.standard;
-  entry.completed = entry.completed.includes(id) ? entry.completed.filter(item => item !== id) : [...entry.completed, id];
+  const willBeChecked = !entry.completed.includes(id);
+  entry.completed = willBeChecked ? [...entry.completed, id] : entry.completed.filter(item => item !== id);
   saveEntry(entry);
   render();
 });
