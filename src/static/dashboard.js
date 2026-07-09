@@ -193,18 +193,47 @@ function renderGameSummary() {
 function launchConfetti() {
   const layer = $('confettiLayer');
   if (!layer) return;
-  const colors = ['#d6ad54', '#f0c96a', '#5fa36f', '#f8f5ef', '#2c2a27'];
+  const shell = document.querySelector('.dashboard-shell');
+  const colors = ['#d6ad54', '#f0c96a', '#5fa36f', '#f8f5ef', '#5fa36f', '#2c2a27'];
+  const reduceMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+  const totalPieces = reduceMotion ? 80 : 360;
+  const celebrationMs = reduceMotion ? 2400 : 8600;
+
   layer.innerHTML = '';
-  for (let index = 0; index < 90; index += 1) {
+  if (!reduceMotion) {
+    shell?.classList.remove('celebration-shake');
+    void shell?.offsetWidth;
+    shell?.classList.add('celebration-shake');
+  }
+
+  if (!reduceMotion && 'vibrate' in navigator) {
+    navigator.vibrate([45, 35, 70, 45, 35, 30, 90]);
+  }
+
+  for (let index = 0; index < totalPieces; index += 1) {
     const piece = document.createElement('span');
+    const burst = Math.floor(index / (totalPieces / 4));
+    const width = 5 + Math.random() * 8;
+    const height = width * (1.4 + Math.random() * 1.4);
+    const duration = 5400 + Math.random() * 3200;
+
     piece.style.setProperty('--x', `${Math.random() * 100}vw`);
-    piece.style.setProperty('--dx', `${(Math.random() - 0.5) * 240}px`);
-    piece.style.setProperty('--delay', `${Math.random() * 140}ms`);
-    piece.style.setProperty('--spin', `${Math.random() * 720 - 360}deg`);
+    piece.style.setProperty('--dx', `${(Math.random() - 0.5) * 420}px`);
+    piece.style.setProperty('--delay', `${burst * 950 + Math.random() * 900}ms`);
+    piece.style.setProperty('--duration', `${duration}ms`);
+    piece.style.setProperty('--spin', `${Math.random() * 1440 - 720}deg`);
+    piece.style.setProperty('--w', `${width}px`);
+    piece.style.setProperty('--h', `${height}px`);
+    piece.style.setProperty('--drift', `${(Math.random() - 0.5) * 110}px`);
     piece.style.background = colors[index % colors.length];
+    piece.style.color = colors[index % colors.length];
+    piece.className = index % 5 === 0 ? 'round' : index % 3 === 0 ? 'ribbon' : '';
     layer.appendChild(piece);
   }
-  window.setTimeout(() => { layer.innerHTML = ''; }, 2200);
+  window.setTimeout(() => {
+    layer.innerHTML = '';
+    shell?.classList.remove('celebration-shake');
+  }, celebrationMs);
 }
 function showRewardToast({ points = 0, earnedBadges = [], status = 'complete' }) {
   const rewardToast = $('rewardToast');
