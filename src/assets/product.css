@@ -375,7 +375,7 @@
   border-radius: 2px 2px 5px 5px;
   opacity: 0;
   transform-origin: 50% 50%;
-  animation: dominion-confetti var(--duration, 4200ms) cubic-bezier(.16, .62, .32, .98) var(--delay) both;
+  animation: dominion-confetti var(--duration, 4200ms) linear var(--delay) both;
   box-shadow:
     0 0 10px color-mix(in srgb, currentColor 14%, transparent),
     0 4px 10px color-mix(in srgb, #000000 20%, transparent);
@@ -589,27 +589,26 @@
 @keyframes dominion-confetti {
   0% {
     opacity: 0;
-    transform: translate3d(0, -22vh, 0) rotate(0deg) scale(.86);
+    transform: translate3d(0, -24vh, 0) rotate(0deg) scale(.9);
   }
-  3% {
-    opacity: .96;
+  4% {
+    opacity: .98;
   }
-  18% {
+  25% {
     transform: translate3d(var(--dx-early), 20vh, 0) rotate(var(--spin-early)) scale(1);
   }
-  42% {
-    transform: translate3d(var(--dx-mid), 54vh, 0) rotate(var(--spin-mid)) scale(.96);
+  50% {
+    transform: translate3d(var(--dx-mid), 62vh, 0) rotate(var(--spin-mid)) scale(.98);
   }
-  68% {
-    transform: translate3d(var(--dx-sway), 84vh, 0) rotate(var(--spin-late)) scale(1.02);
+  75% {
+    transform: translate3d(var(--dx-sway), 104vh, 0) rotate(var(--spin-late)) scale(1);
   }
-  88% {
-    opacity: .96;
-    transform: translate3d(var(--dx-late), 112vh, 0) rotate(var(--spin-late)) scale(.98);
+  90% {
+    opacity: .94;
   }
   100% {
     opacity: 0;
-    transform: translate3d(var(--dx), 142vh, 0) rotate(var(--spin)) scale(.92);
+    transform: translate3d(var(--dx), 150vh, 0) rotate(var(--spin)) scale(.94);
   }
 }
 @keyframes dominion-celebration-glow {
