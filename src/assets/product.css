@@ -352,17 +352,33 @@
   pointer-events: none;
   isolation: isolate;
 }
+.confetti-layer::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  background:
+    radial-gradient(circle at 50% 32%, color-mix(in srgb, var(--accent-strong) 20%, transparent), transparent 32%),
+    radial-gradient(circle at 50% 60%, color-mix(in srgb, var(--success) 12%, transparent), transparent 44%);
+  opacity: 0;
+}
+.confetti-layer.active::before {
+  animation: dominion-celebration-glow 2100ms ease-out both;
+}
 .confetti-layer span {
   position: absolute;
-  top: -28px;
+  z-index: 1;
+  top: -34px;
   left: var(--x);
   width: var(--w, 8px);
   height: var(--h, 16px);
   border-radius: 2px 2px 5px 5px;
   opacity: 0;
   transform-origin: 50% 50%;
-  animation: dominion-confetti var(--duration, 6800ms) linear var(--delay) both;
-  box-shadow: 0 0 10px color-mix(in srgb, currentColor 12%, transparent);
+  animation: dominion-confetti var(--duration, 4200ms) cubic-bezier(.16, .62, .32, .98) var(--delay) both;
+  box-shadow:
+    0 0 10px color-mix(in srgb, currentColor 14%, transparent),
+    0 4px 10px color-mix(in srgb, #000000 20%, transparent);
   will-change: transform, opacity;
 }
 .confetti-layer span.ribbon {
@@ -370,6 +386,27 @@
 }
 .confetti-layer span.round {
   border-radius: 50%;
+}
+.confetti-layer span.coin {
+  border-radius: 50%;
+  box-shadow:
+    0 0 12px color-mix(in srgb, var(--accent-strong) 22%, transparent),
+    inset 0 1px 2px color-mix(in srgb, #ffffff 42%, transparent),
+    inset 0 -2px 4px color-mix(in srgb, #5c3a0a 32%, transparent);
+}
+.confetti-layer span.spark {
+  border-radius: 1px;
+  clip-path: polygon(50% 0, 63% 36%, 100% 50%, 63% 64%, 50% 100%, 37% 64%, 0 50%, 37% 36%);
+  box-shadow:
+    0 0 12px color-mix(in srgb, #ffffff 60%, transparent),
+    0 0 18px color-mix(in srgb, var(--accent-strong) 34%, transparent);
+}
+.confetti-layer span.near {
+  filter: saturate(1.1);
+}
+.confetti-layer span.far {
+  opacity: 0;
+  filter: blur(.45px) saturate(.8);
 }
 .celebration-shake {
   animation: dominion-celebration-shake 720ms cubic-bezier(.22, .72, .34, 1) both;
@@ -552,24 +589,40 @@
 @keyframes dominion-confetti {
   0% {
     opacity: 0;
-    transform: translate3d(0, -18vh, 0) rotate(0deg);
+    transform: translate3d(0, -22vh, 0) rotate(0deg) scale(.86);
   }
-  4% {
+  3% {
     opacity: .96;
   }
-  24% {
-    transform: translate3d(var(--drift), 28vh, 0) rotate(var(--spin-early));
+  18% {
+    transform: translate3d(var(--dx-early), 20vh, 0) rotate(var(--spin-early)) scale(1);
   }
-  52% {
-    transform: translate3d(var(--dx-mid), 66vh, 0) rotate(var(--spin-mid));
+  42% {
+    transform: translate3d(var(--dx-mid), 54vh, 0) rotate(var(--spin-mid)) scale(.96);
   }
-  84% {
+  68% {
+    transform: translate3d(var(--dx-sway), 84vh, 0) rotate(var(--spin-late)) scale(1.02);
+  }
+  88% {
     opacity: .96;
-    transform: translate3d(var(--dx-late), 106vh, 0) rotate(var(--spin-late));
+    transform: translate3d(var(--dx-late), 112vh, 0) rotate(var(--spin-late)) scale(.98);
   }
   100% {
     opacity: 0;
-    transform: translate3d(var(--dx), 132vh, 0) rotate(var(--spin));
+    transform: translate3d(var(--dx), 142vh, 0) rotate(var(--spin)) scale(.92);
+  }
+}
+@keyframes dominion-celebration-glow {
+  0% {
+    opacity: 0;
+    transform: scale(.92);
+  }
+  20% {
+    opacity: .9;
+  }
+  100% {
+    opacity: 0;
+    transform: scale(1.08);
   }
 }
 @keyframes badge-stage-in {

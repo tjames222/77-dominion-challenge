@@ -205,11 +205,14 @@ function launchConfetti() {
   const shell = document.querySelector('.dashboard-shell');
   const colors = ['#d6ad54', '#f0c96a', '#5fa36f', '#f8f5ef', '#5fa36f', '#2c2a27'];
   const reduceMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
-  const totalPieces = reduceMotion ? 120 : 680;
-  const burstCount = reduceMotion ? 2 : 7;
+  const totalPieces = reduceMotion ? 120 : 720;
+  const burstCount = reduceMotion ? 2 : 8;
   const celebrationMs = reduceMotion ? REDUCED_CONFETTI_DURATION_MS : CONFETTI_DURATION_MS;
 
   layer.innerHTML = '';
+  layer.classList.remove('active');
+  void layer.offsetWidth;
+  layer.classList.add('active');
   if (!reduceMotion) {
     shell?.classList.remove('celebration-shake');
     void shell?.offsetWidth;
@@ -223,17 +226,22 @@ function launchConfetti() {
   for (let index = 0; index < totalPieces; index += 1) {
     const piece = document.createElement('span');
     const burst = Math.floor(index / (totalPieces / burstCount));
-    const shape = index % 5 === 0 ? 'round' : index % 3 === 0 ? 'ribbon' : '';
+    const shape = index % 11 === 0 ? 'spark' : index % 7 === 0 ? 'coin' : index % 5 === 0 ? 'round' : index % 3 === 0 ? 'ribbon' : '';
+    const depth = index % 6 === 0 ? 'near' : index % 4 === 0 ? 'far' : 'mid';
     const baseWidth = 5 + Math.random() * 8;
-    const width = shape === 'ribbon' ? baseWidth * 0.72 : shape === 'round' ? baseWidth * 1.1 : baseWidth;
-    const height = shape === 'round' ? width : baseWidth * (shape === 'ribbon' ? 2.2 : 1.4 + Math.random() * 1.4);
-    const duration = 3400 + Math.random() * 1700;
-    const dx = (Math.random() - 0.5) * 420;
-    const spin = Math.random() * 1440 - 720;
+    const width = shape === 'spark' ? baseWidth * 0.72 : shape === 'ribbon' ? baseWidth * 0.72 : shape === 'round' || shape === 'coin' ? baseWidth * 1.1 : baseWidth;
+    const height = shape === 'spark' || shape === 'round' || shape === 'coin' ? width : baseWidth * (shape === 'ribbon' ? 2.2 : 1.4 + Math.random() * 1.4);
+    const duration = 3000 + Math.random() * 1400;
+    const dx = (Math.random() - 0.5) * (depth === 'near' ? 520 : depth === 'far' ? 280 : 420);
+    const drift = (Math.random() - 0.5) * (depth === 'near' ? 170 : 115);
+    const sway = (Math.random() - 0.5) * 74;
+    const spin = Math.random() * (depth === 'near' ? 1920 : 1440) - 720;
 
     piece.style.setProperty('--x', `${-4 + Math.random() * 108}vw`);
     piece.style.setProperty('--dx', `${dx}px`);
-    piece.style.setProperty('--dx-mid', `${dx * 0.45}px`);
+    piece.style.setProperty('--dx-early', `${drift + sway}px`);
+    piece.style.setProperty('--dx-mid', `${dx * 0.36 - sway}px`);
+    piece.style.setProperty('--dx-sway', `${dx * 0.62 + sway * 0.45}px`);
     piece.style.setProperty('--dx-late', `${dx * 0.82}px`);
     piece.style.setProperty('--delay', `${burst * 1100 + Math.random() * 650}ms`);
     piece.style.setProperty('--duration', `${duration}ms`);
@@ -243,14 +251,19 @@ function launchConfetti() {
     piece.style.setProperty('--spin-late', `${spin * 0.82}deg`);
     piece.style.setProperty('--w', `${width}px`);
     piece.style.setProperty('--h', `${height}px`);
-    piece.style.setProperty('--drift', `${(Math.random() - 0.5) * 110}px`);
-    piece.style.background = colors[index % colors.length];
+    piece.style.setProperty('--drift', `${drift}px`);
+    piece.style.background = shape === 'coin'
+      ? 'radial-gradient(circle at 35% 28%, #fff7c8 0 15%, #f0c96a 36%, #9d6c22 100%)'
+      : shape === 'spark'
+        ? '#f8f5ef'
+        : colors[index % colors.length];
     piece.style.color = colors[index % colors.length];
-    piece.className = shape;
+    piece.className = `${shape} ${depth}`.trim();
     layer.appendChild(piece);
   }
   window.setTimeout(() => {
     layer.innerHTML = '';
+    layer.classList.remove('active');
     shell?.classList.remove('celebration-shake');
   }, celebrationMs);
   return celebrationMs;
