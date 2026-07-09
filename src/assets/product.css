@@ -422,15 +422,42 @@
   padding: clamp(20px, 5vw, 30px);
   border: 1px solid color-mix(in srgb, var(--accent) 52%, var(--border));
   border-radius: 18px;
+  overflow: hidden;
   background:
+    radial-gradient(circle at 50% 0%, color-mix(in srgb, var(--accent-strong) 18%, transparent), transparent 42%),
     linear-gradient(135deg, color-mix(in srgb, var(--accent) 18%, transparent), transparent 50%),
     color-mix(in srgb, var(--surface) 94%, var(--background));
-  box-shadow: 0 24px 70px color-mix(in srgb, #000000 52%, transparent);
+  box-shadow:
+    0 0 0 8px color-mix(in srgb, var(--accent) 8%, transparent),
+    0 28px 84px color-mix(in srgb, #000000 58%, transparent),
+    0 0 54px color-mix(in srgb, var(--accent) 18%, transparent),
+    inset 0 1px 0 color-mix(in srgb, #ffffff 16%, transparent);
   opacity: 0;
   pointer-events: none;
   text-align: center;
+  transform-origin: 50% 62%;
   transform: translate3d(-50%, calc(-50% + 18px), 0) scale(.94);
-  transition: opacity 260ms ease, transform 320ms cubic-bezier(.16, 1, .3, 1);
+  will-change: transform, opacity;
+}
+.reward-toast::before {
+  content: "";
+  position: absolute;
+  inset: -38% 8%;
+  background: linear-gradient(105deg, transparent 25%, color-mix(in srgb, #ffffff 34%, transparent) 50%, transparent 70%);
+  transform: translateX(-170%) rotate(16deg);
+  pointer-events: none;
+}
+.reward-toast::after {
+  content: "";
+  position: absolute;
+  inset: 12px;
+  border: 1px solid color-mix(in srgb, var(--accent-strong) 20%, transparent);
+  border-radius: 14px;
+  pointer-events: none;
+}
+.reward-toast > * {
+  position: relative;
+  z-index: 1;
 }
 .reward-toast[hidden],
 .badge-celebration[hidden] {
@@ -438,7 +465,12 @@
 }
 .reward-toast.active {
   opacity: 1;
-  transform: translate3d(-50%, -50%, 0) scale(1);
+  animation:
+    reward-toast-swoosh 920ms cubic-bezier(.16, 1.18, .28, 1) both,
+    reward-toast-float 2500ms ease-in-out 920ms infinite;
+}
+.reward-toast.active::before {
+  animation: reward-toast-shine 2200ms ease-in-out 220ms infinite;
 }
 .reward-toast p {
   margin: 0;
@@ -672,6 +704,41 @@
     transform: translateX(170%) rotate(18deg);
   }
 }
+@keyframes reward-toast-swoosh {
+  0% {
+    opacity: 0;
+    transform: translate3d(-50%, calc(-50% + 118px), 0) scale(.82) rotateX(14deg);
+  }
+  54% {
+    opacity: 1;
+    transform: translate3d(-50%, calc(-50% - 18px), 0) scale(1.07) rotateX(0);
+  }
+  74% {
+    transform: translate3d(-50%, calc(-50% + 5px), 0) scale(.98);
+  }
+  100% {
+    opacity: 1;
+    transform: translate3d(-50%, -50%, 0) scale(1);
+  }
+}
+@keyframes reward-toast-float {
+  0%,
+  100% {
+    transform: translate3d(-50%, -50%, 0) scale(1);
+  }
+  50% {
+    transform: translate3d(-50%, calc(-50% - 9px), 0) scale(1.025);
+  }
+}
+@keyframes reward-toast-shine {
+  0% {
+    transform: translateX(-170%) rotate(16deg);
+  }
+  48%,
+  100% {
+    transform: translateX(170%) rotate(16deg);
+  }
+}
 @keyframes dominion-celebration-shake {
   0%,
   100% {
@@ -700,8 +767,13 @@
   .confetti-layer span {
     animation-duration: 2200ms;
   }
+  .reward-toast.active,
+  .reward-toast.active::before,
   .celebration-shake {
-    animation: none;
+    animation: none !important;
+  }
+  .reward-toast.active {
+    transform: translate3d(-50%, -50%, 0) scale(1);
   }
   .badge-celebration.active,
   .badge-celebration.exiting,

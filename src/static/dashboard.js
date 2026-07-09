@@ -231,7 +231,7 @@ function launchConfetti() {
     const baseWidth = 5 + Math.random() * 8;
     const width = shape === 'spark' ? baseWidth * 0.72 : shape === 'ribbon' ? baseWidth * 0.72 : shape === 'round' || shape === 'coin' ? baseWidth * 1.1 : baseWidth;
     const height = shape === 'spark' || shape === 'round' || shape === 'coin' ? width : baseWidth * (shape === 'ribbon' ? 2.2 : 1.4 + Math.random() * 1.4);
-    const duration = 3000 + Math.random() * 1400;
+    const duration = 2000 + Math.random() * 1400;
     const dx = (Math.random() - 0.5) * (depth === 'near' ? 520 : depth === 'far' ? 280 : 420);
     const drift = (Math.random() - 0.5) * (depth === 'near' ? 170 : 115);
     const sway = (Math.random() - 0.5) * 74;
