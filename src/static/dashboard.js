@@ -106,7 +106,7 @@ const workoutPlans = {
   ],
 };
 const difficultyPointMap = { easy: 2, medium: 5, hard: 10, extreme: 15 };
-const CONFETTI_DURATION_MS = 8600;
+const CONFETTI_DURATION_MS = 12800;
 const REDUCED_CONFETTI_DURATION_MS = 2400;
 const REWARD_TOAST_DURATION_MS = 5200;
 const BADGE_REVEAL_DURATION_MS = 5600;
@@ -205,7 +205,8 @@ function launchConfetti() {
   const shell = document.querySelector('.dashboard-shell');
   const colors = ['#d6ad54', '#f0c96a', '#5fa36f', '#f8f5ef', '#5fa36f', '#2c2a27'];
   const reduceMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
-  const totalPieces = reduceMotion ? 80 : 360;
+  const totalPieces = reduceMotion ? 120 : 680;
+  const burstCount = reduceMotion ? 2 : 7;
   const celebrationMs = reduceMotion ? REDUCED_CONFETTI_DURATION_MS : CONFETTI_DURATION_MS;
 
   layer.innerHTML = '';
@@ -221,12 +222,12 @@ function launchConfetti() {
 
   for (let index = 0; index < totalPieces; index += 1) {
     const piece = document.createElement('span');
-    const burst = Math.floor(index / (totalPieces / 4));
+    const burst = Math.floor(index / (totalPieces / burstCount));
     const shape = index % 5 === 0 ? 'round' : index % 3 === 0 ? 'ribbon' : '';
     const baseWidth = 5 + Math.random() * 8;
     const width = shape === 'ribbon' ? baseWidth * 0.72 : shape === 'round' ? baseWidth * 1.1 : baseWidth;
     const height = shape === 'round' ? width : baseWidth * (shape === 'ribbon' ? 2.2 : 1.4 + Math.random() * 1.4);
-    const duration = 5400 + Math.random() * 3200;
+    const duration = 3400 + Math.random() * 1700;
     const dx = (Math.random() - 0.5) * 420;
     const spin = Math.random() * 1440 - 720;
 
@@ -234,7 +235,7 @@ function launchConfetti() {
     piece.style.setProperty('--dx', `${dx}px`);
     piece.style.setProperty('--dx-mid', `${dx * 0.45}px`);
     piece.style.setProperty('--dx-late', `${dx * 0.82}px`);
-    piece.style.setProperty('--delay', `${burst * 950 + Math.random() * 900}ms`);
+    piece.style.setProperty('--delay', `${burst * 1100 + Math.random() * 650}ms`);
     piece.style.setProperty('--duration', `${duration}ms`);
     piece.style.setProperty('--spin', `${spin}deg`);
     piece.style.setProperty('--spin-early', `${spin * 0.12}deg`);
