@@ -106,6 +106,10 @@ const workoutPlans = {
   ],
 };
 const difficultyPointMap = { easy: 2, medium: 5, hard: 10, extreme: 15 };
+const CONFETTI_DURATION_MS = 8600;
+const REDUCED_CONFETTI_DURATION_MS = 2400;
+const REWARD_TOAST_DURATION_MS = 5200;
+const BADGE_REVEAL_DURATION_MS = 5600;
 const demoBadgeDefinitions = {
   faithful_start: { key: 'faithful_start', name: 'Faithful Start', tier: 'bronze', icon: 'shield' },
   honest_partial: { key: 'honest_partial', name: 'Honest Standard', tier: 'bronze', icon: 'check' },
@@ -132,6 +136,10 @@ const escapeHtml = (value = '') => String(value).replace(/[&<>"']/g, (char) => (
   "'": '&#039;',
 }[char]));
 const badgeChip = (badge) => `<span class="badge-chip ${badge.tier || 'bronze'}"><span>${escapeHtml(badge.name || 'Badge')}</span></span>`;
+const badgeIconClass = (badge) => {
+  const icon = String(badge?.icon || '').replace(/[^a-z-]/g, '');
+  return ['shield', 'check', 'spark', 'flame', 'dumbbell', 'run'].includes(icon) ? `icon-${icon}` : 'icon-shield';
+};
 const calculateLocalPoints = (entry, status) => {
   const completed = entry.completed || [];
   let points = completed.length * 10;
@@ -198,7 +206,7 @@ function launchConfetti() {
   const colors = ['#d6ad54', '#f0c96a', '#5fa36f', '#f8f5ef', '#5fa36f', '#2c2a27'];
   const reduceMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
   const totalPieces = reduceMotion ? 80 : 360;
-  const celebrationMs = reduceMotion ? 2400 : 8600;
+  const celebrationMs = reduceMotion ? REDUCED_CONFETTI_DURATION_MS : CONFETTI_DURATION_MS;
 
   layer.innerHTML = '';
   if (!reduceMotion) {
@@ -225,11 +233,13 @@ function launchConfetti() {
     piece.style.setProperty('--x', `${-4 + Math.random() * 108}vw`);
     piece.style.setProperty('--dx', `${dx}px`);
     piece.style.setProperty('--dx-mid', `${dx * 0.45}px`);
+    piece.style.setProperty('--dx-late', `${dx * 0.82}px`);
     piece.style.setProperty('--delay', `${burst * 950 + Math.random() * 900}ms`);
     piece.style.setProperty('--duration', `${duration}ms`);
     piece.style.setProperty('--spin', `${spin}deg`);
     piece.style.setProperty('--spin-early', `${spin * 0.12}deg`);
     piece.style.setProperty('--spin-mid', `${spin * 0.55}deg`);
+    piece.style.setProperty('--spin-late', `${spin * 0.82}deg`);
     piece.style.setProperty('--w', `${width}px`);
     piece.style.setProperty('--h', `${height}px`);
     piece.style.setProperty('--drift', `${(Math.random() - 0.5) * 110}px`);
@@ -242,6 +252,7 @@ function launchConfetti() {
     layer.innerHTML = '';
     shell?.classList.remove('celebration-shake');
   }, celebrationMs);
+  return celebrationMs;
 }
 function showRewardToast({ points = 0, earnedBadges = [], status = 'complete' }) {
   const rewardToast = $('rewardToast');
@@ -263,11 +274,53 @@ function showRewardToast({ points = 0, earnedBadges = [], status = 'complete' })
       : '<span class="badge-empty">Badges update as streaks grow.</span>';
   }
   rewardToast.hidden = false;
+  rewardToast.classList.remove('active');
+  void rewardToast.offsetWidth;
   rewardToast.classList.add('active');
-  window.setTimeout(() => {
+  if (rewardToast.hideTimer) window.clearTimeout(rewardToast.hideTimer);
+  rewardToast.hideTimer = window.setTimeout(() => {
     rewardToast.classList.remove('active');
     rewardToast.hidden = true;
-  }, 5200);
+    rewardToast.hideTimer = null;
+  }, REWARD_TOAST_DURATION_MS);
+  return REWARD_TOAST_DURATION_MS;
+}
+function showBadgeCelebration(badge) {
+  const stage = $('badgeCelebration');
+  const icon = $('badgeCelebrationIcon');
+  const title = $('badgeCelebrationTitle');
+  const copy = $('badgeCelebrationCopy');
+  if (!stage || !badge) return;
+
+  if (title) title.textContent = badge.name || 'Badge Earned';
+  if (copy) {
+    const tier = badge.tier ? `${badge.tier} badge` : 'badge';
+    copy.textContent = `You unlocked a ${tier}. Keep stacking faithful days.`;
+  }
+  if (icon) {
+    icon.className = `badge-medal-icon app-icon ${badgeIconClass(badge)}`;
+  }
+
+  if (stage.hideTimer) window.clearTimeout(stage.hideTimer);
+  if (stage.exitTimer) window.clearTimeout(stage.exitTimer);
+  stage.hidden = false;
+  stage.classList.remove('active', 'exiting');
+  void stage.offsetWidth;
+  stage.classList.add('active');
+  stage.exitTimer = window.setTimeout(() => {
+    stage.classList.add('exiting');
+  }, BADGE_REVEAL_DURATION_MS);
+  stage.hideTimer = window.setTimeout(() => {
+    stage.classList.remove('active', 'exiting');
+    stage.hidden = true;
+    stage.exitTimer = null;
+    stage.hideTimer = null;
+  }, BADGE_REVEAL_DURATION_MS + 420);
+}
+function queueBadgeCelebrations(earnedBadges = [], delay = 0) {
+  earnedBadges.slice(0, 4).forEach((badge, index) => {
+    window.setTimeout(() => showBadgeCelebration(badge), delay + index * (BADGE_REVEAL_DURATION_MS + 900));
+  });
 }
 let theme = load('dominion:theme', 'dark');
 let startDate = localDemoMode ? load('dominion:startDate', todayKey()) : todayKey();
@@ -556,7 +609,8 @@ async function recordDailyAppVisit() {
     }
     const earnedBadges = await refreshGameSummary(previousBadgeKeys);
     if (earnedBadges.length) {
-      showRewardToast({ points: 0, earnedBadges, status: 'visit' });
+      const toastDuration = showRewardToast({ points: 0, earnedBadges, status: 'visit' }) || 0;
+      queueBadgeCelebrations(earnedBadges, toastDuration + 350);
     }
     render();
   } catch (error) {
@@ -673,8 +727,9 @@ if (checkInButton) checkInButton.addEventListener('click', async () => {
 
     feed = [feedItem, ...feed].slice(0, 30);
     if (localDemoMode) save('dominion:feed', feed);
-    if (status === 'complete') launchConfetti();
-    showRewardToast({ points: feedItem.pointsAwarded, earnedBadges, status });
+    const confettiDuration = status === 'complete' ? launchConfetti() || 0 : 0;
+    const toastDuration = showRewardToast({ points: feedItem.pointsAwarded, earnedBadges, status }) || 0;
+    queueBadgeCelebrations(earnedBadges, Math.max(confettiDuration, toastDuration) + 350);
   } catch (error) {
     console.warn('Unable to sync check-in', error);
     window.alert(error?.message || 'Unable to post that check-in right now.');
