@@ -106,6 +106,8 @@ const workoutPlans = {
   ],
 };
 const difficultyPointMap = { easy: 2, medium: 5, hard: 10, extreme: 15 };
+const difficultyOptions = Object.keys(difficultyPointMap);
+const defaultWorkoutDifficulty = { one: 'medium', two: 'medium' };
 const CONFETTI_DURATION_MS = 10800;
 const REDUCED_CONFETTI_DURATION_MS = 2200;
 const REWARD_TOAST_DURATION_MS = 5200;
@@ -209,6 +211,10 @@ const badgePriorityRank = new Map(badgePriority.map((key, index) => [key, index]
 const todayKey = () => new Date().toISOString().slice(0, 10);
 const load = (key, fallback) => JSON.parse(localStorage.getItem(key) || JSON.stringify(fallback));
 const save = (key, value) => localStorage.setItem(key, JSON.stringify(value));
+const normalizeWorkoutDifficulty = (difficulty = {}) => ({
+  one: difficultyOptions.includes(difficulty.one) ? difficulty.one : defaultWorkoutDifficulty.one,
+  two: difficultyOptions.includes(difficulty.two) ? difficulty.two : defaultWorkoutDifficulty.two,
+});
 const localDemoMode = isLocalDemoMode();
 const statusLabel = (item) => {
   if (item.status === 'scheduled') return 'scheduled miss';
@@ -508,7 +514,7 @@ let theme = load('dominion:theme', 'dark');
 let startDate = localDemoMode ? load('dominion:startDate', todayKey()) : todayKey();
 let entries = localDemoMode ? load('dominion:entries', []) : [];
 let feed = localDemoMode ? load('dominion:feed', starterFeed) : starterFeed;
-let workoutDifficulty = localDemoMode ? load('dominion:workoutDifficulty', { one: 'medium', two: 'medium' }) : { one: 'medium', two: 'medium' };
+let workoutDifficulty = normalizeWorkoutDifficulty(load('dominion:workoutDifficulty', defaultWorkoutDifficulty));
 let gameStats = localDemoMode ? load('dominion:gameStats', {
   totalPoints: 0,
   currentAppStreak: 1,
@@ -653,11 +659,12 @@ function applyDailyActions() {
   }
   if (worshipPrompt) worshipPrompt.textContent = worship.label;
 
-  if (workoutOneDifficulty) workoutOneDifficulty.value = workoutDifficulty.one || 'medium';
-  if (workoutTwoDifficulty) workoutTwoDifficulty.value = workoutDifficulty.two || 'medium';
+  workoutDifficulty = normalizeWorkoutDifficulty(workoutDifficulty);
+  if (workoutOneDifficulty) workoutOneDifficulty.value = workoutDifficulty.one;
+  if (workoutTwoDifficulty) workoutTwoDifficulty.value = workoutDifficulty.two;
 
-  const onePlan = pickDaily(workoutPlans[workoutDifficulty.one || 'medium'], 0);
-  const twoPlan = pickDaily(workoutPlans[workoutDifficulty.two || 'medium'], 1);
+  const onePlan = pickDaily(workoutPlans[workoutDifficulty.one], 0);
+  const twoPlan = pickDaily(workoutPlans[workoutDifficulty.two], 1);
   if (workoutOneRecommendation) workoutOneRecommendation.textContent = onePlan;
   if (workoutTwoRecommendation) workoutTwoRecommendation.textContent = twoPlan;
   if (workoutOneLink) workoutOneLink.href = APPLE_FITNESS_URL;
@@ -710,6 +717,7 @@ function render() {
   const todayRing = $('todayRing');
   const checkInButton = $('checkInButton');
   const scheduledButton = $('scheduledButton');
+  const selectAllActionsButton = $('selectAllActionsButton');
   const checklist = $('checklist');
   const feedEl = $('feed');
   const completedToday = $('completedToday');
@@ -719,10 +727,12 @@ function render() {
   if (themeToggle) themeToggle.textContent = `${theme === 'dark' ? 'Dark' : 'Light'} Theme`;
   if (startDateInput) startDateInput.value = startDate;
   const entry = todayEntry();
+  const completedStandards = new Set(entry.completed);
   const challengePercent = finished ? 100 : Math.round((currentDay() / TOTAL_DAYS) * 100);
   const todayPercent = Math.round((entry.completed.length / standards.length) * 100);
   const hasCompletedActions = entry.completed.length > 0;
   const hasPostableCheckIn = !finished && (hasCompletedActions || entry.scheduledMiss);
+  const allActionsCompleted = standards.every(([id]) => completedStandards.has(id));
   if (challengePercentEl) challengePercentEl.textContent = `${challengePercent}%`;
   if (challengeDayEl) challengeDayEl.textContent = `Day ${currentDay()} of 77`;
   if (challengeRing) challengeRing.style.setProperty('--value', `${challengePercent}%`);
@@ -735,6 +745,12 @@ function render() {
     scheduledButton.disabled = finished || (hasCompletedActions && !entry.scheduledMiss);
     scheduledButton.textContent = entry.scheduledMiss ? 'Scheduled miss selected' : 'Scheduled miss day planned ahead';
     scheduledButton.setAttribute('aria-pressed', String(!!entry.scheduledMiss));
+  }
+  if (selectAllActionsButton) {
+    selectAllActionsButton.classList.toggle('active', allActionsCompleted);
+    selectAllActionsButton.disabled = finished || !!entry.scheduledMiss;
+    selectAllActionsButton.textContent = allActionsCompleted ? 'Unselect all' : 'Select all';
+    selectAllActionsButton.setAttribute('aria-pressed', String(allActionsCompleted));
   }
   if (checklist) renderChecklist(entry);
   if (feedEl) {
@@ -826,6 +842,7 @@ const themeToggle = $('themeToggle');
 const startDateInput = $('startDate');
 const checklist = $('checklist');
 const scheduledButton = $('scheduledButton');
+const selectAllActionsButton = $('selectAllActionsButton');
 const checkInButton = $('checkInButton');
 const countdownCheckInButton = $('countdownCheckInButton');
 const walkReminderButton = $('walkReminderButton');
@@ -841,7 +858,7 @@ if (startDateInput) startDateInput.addEventListener('input', event => {
 document.querySelectorAll('[data-workout]').forEach((select) => {
   select.addEventListener('change', (event) => {
     const target = event.target;
-    workoutDifficulty = { ...workoutDifficulty, [target.dataset.workout]: target.value };
+    workoutDifficulty = normalizeWorkoutDifficulty({ ...workoutDifficulty, [target.dataset.workout]: target.value });
     save('dominion:workoutDifficulty', workoutDifficulty);
     applyDailyActions();
   });
@@ -877,6 +894,20 @@ if (scheduledButton) scheduledButton.addEventListener('click', () => {
   const currentEntry = todayEntry();
   if (currentEntry.completed.length > 0 && !currentEntry.scheduledMiss) return;
   const entry = { ...currentEntry, completed: [], scheduledMiss: !currentEntry.scheduledMiss };
+  saveEntry(entry);
+  render();
+});
+if (selectAllActionsButton) selectAllActionsButton.addEventListener('click', () => {
+  if (isChallengeFinished()) return;
+  const currentEntry = todayEntry();
+  if (currentEntry.scheduledMiss) return;
+  const completedStandards = new Set(currentEntry.completed);
+  const allActionsCompleted = standards.every(([id]) => completedStandards.has(id));
+  const entry = {
+    ...currentEntry,
+    completed: allActionsCompleted ? [] : standards.map(([id]) => id),
+    scheduledMiss: false,
+  };
   saveEntry(entry);
   render();
 });

@@ -94,6 +94,27 @@
         </div>
         <div class="progress-standard">
           <div class="section-heading"><p class="eyebrow">Today's Scorecard</p><h3>Mind, Spirit, Body</h3></div>
+          <div class="scorecard-toolbar">
+            <div class="scorecard-difficulty-controls" aria-label="Workout difficulty">
+              <label class="scorecard-select-label" for="workoutOneDifficulty">Workout 1 difficulty
+                <select id="workoutOneDifficulty" data-workout="one">
+                  <option value="easy">Easy</option>
+                  <option value="medium">Medium</option>
+                  <option value="hard">Hard</option>
+                  <option value="extreme">Extreme</option>
+                </select>
+              </label>
+              <label class="scorecard-select-label" for="workoutTwoDifficulty">Workout 2 difficulty
+                <select id="workoutTwoDifficulty" data-workout="two">
+                  <option value="easy">Easy</option>
+                  <option value="medium">Medium</option>
+                  <option value="hard">Hard</option>
+                  <option value="extreme">Extreme</option>
+                </select>
+              </label>
+            </div>
+            <button class="scorecard-select-all" id="selectAllActionsButton" type="button" aria-pressed="false">Select all</button>
+          </div>
           <div id="checklist"></div>
           <div class="scorecard-actions">
             <button class="scheduled" id="scheduledButton">Scheduled miss day planned ahead</button>
