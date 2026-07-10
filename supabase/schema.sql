@@ -327,6 +327,15 @@ values
   ('seven_day_start', 'Seven-Day Start', 'Reached the first seven days of the challenge.', 'milestone', 'bronze', 'calendar', 55),
   ('streak_flame', 'Streak Flame', 'Held a three-day full-standard streak.', 'streak', 'silver', 'flame', 60),
   ('seven_sealed', 'Seven Sealed', 'Held a seven-day full-standard streak.', 'streak', 'gold', 'repeat', 70),
+  ('full_streak_14', '14-Day Full Streak', 'Held a fourteen-day full-standard streak.', 'streak', 'silver', 'shield', 101),
+  ('full_streak_21', '21-Day Full Streak', 'Held a twenty-one-day full-standard streak.', 'streak', 'silver', 'target', 102),
+  ('full_streak_28', '28-Day Full Streak', 'Held a twenty-eight-day full-standard streak.', 'streak', 'silver', 'dumbbell', 103),
+  ('full_streak_35', '35-Day Full Streak', 'Held a thirty-five-day full-standard streak.', 'streak', 'gold', 'flame', 104),
+  ('full_streak_42', '42-Day Full Streak', 'Held a forty-two-day full-standard streak.', 'streak', 'gold', 'eye', 105),
+  ('full_streak_49', '49-Day Full Streak', 'Held a forty-nine-day full-standard streak.', 'streak', 'gold', 'repeat', 106),
+  ('full_streak_56', '56-Day Full Streak', 'Held a fifty-six-day full-standard streak.', 'streak', 'gold', 'mountain', 107),
+  ('full_streak_63', '63-Day Full Streak', 'Held a sixty-three-day full-standard streak.', 'streak', 'gold', 'star', 108),
+  ('full_streak_70', '70-Day Full Streak', 'Held a seventy-day full-standard streak.', 'streak', 'gold', 'flag', 109),
   ('two_week_guard', 'Two-Week Guard', 'Reached day 14 with the standard still in sight.', 'milestone', 'silver', 'shield', 72),
   ('three_week_wall', 'Three-Week Wall', 'Reached day 21 and pushed through the early wall.', 'milestone', 'silver', 'target', 74),
   ('third_way', 'One-Third Dominion', 'Crossed one-third of the 77-day challenge.', 'milestone', 'gold', 'flag', 76),
@@ -681,6 +690,33 @@ begin
       elsif new.challenge_day >= 7 and not exists (select 1 from public.user_badges where user_id = new.user_id and badge_key = 'seven_day_start') then
         selected_badge_key := 'seven_day_start';
         selected_badge_metadata := jsonb_build_object('challengeDay', new.challenge_day);
+      elsif next_full_streak >= 70 and not exists (select 1 from public.user_badges where user_id = new.user_id and badge_key = 'full_streak_70') then
+        selected_badge_key := 'full_streak_70';
+        selected_badge_metadata := jsonb_build_object('streak', next_full_streak);
+      elsif next_full_streak >= 63 and not exists (select 1 from public.user_badges where user_id = new.user_id and badge_key = 'full_streak_63') then
+        selected_badge_key := 'full_streak_63';
+        selected_badge_metadata := jsonb_build_object('streak', next_full_streak);
+      elsif next_full_streak >= 56 and not exists (select 1 from public.user_badges where user_id = new.user_id and badge_key = 'full_streak_56') then
+        selected_badge_key := 'full_streak_56';
+        selected_badge_metadata := jsonb_build_object('streak', next_full_streak);
+      elsif next_full_streak >= 49 and not exists (select 1 from public.user_badges where user_id = new.user_id and badge_key = 'full_streak_49') then
+        selected_badge_key := 'full_streak_49';
+        selected_badge_metadata := jsonb_build_object('streak', next_full_streak);
+      elsif next_full_streak >= 42 and not exists (select 1 from public.user_badges where user_id = new.user_id and badge_key = 'full_streak_42') then
+        selected_badge_key := 'full_streak_42';
+        selected_badge_metadata := jsonb_build_object('streak', next_full_streak);
+      elsif next_full_streak >= 35 and not exists (select 1 from public.user_badges where user_id = new.user_id and badge_key = 'full_streak_35') then
+        selected_badge_key := 'full_streak_35';
+        selected_badge_metadata := jsonb_build_object('streak', next_full_streak);
+      elsif next_full_streak >= 28 and not exists (select 1 from public.user_badges where user_id = new.user_id and badge_key = 'full_streak_28') then
+        selected_badge_key := 'full_streak_28';
+        selected_badge_metadata := jsonb_build_object('streak', next_full_streak);
+      elsif next_full_streak >= 21 and not exists (select 1 from public.user_badges where user_id = new.user_id and badge_key = 'full_streak_21') then
+        selected_badge_key := 'full_streak_21';
+        selected_badge_metadata := jsonb_build_object('streak', next_full_streak);
+      elsif next_full_streak >= 14 and not exists (select 1 from public.user_badges where user_id = new.user_id and badge_key = 'full_streak_14') then
+        selected_badge_key := 'full_streak_14';
+        selected_badge_metadata := jsonb_build_object('streak', next_full_streak);
       elsif next_full_streak >= 7 and not exists (select 1 from public.user_badges where user_id = new.user_id and badge_key = 'seven_sealed') then
         selected_badge_key := 'seven_sealed';
         selected_badge_metadata := jsonb_build_object('streak', next_full_streak);

@@ -134,6 +134,15 @@ const demoBadgeDefinitions = {
   final_watch: { key: 'final_watch', name: 'Final Watch', tier: 'gold', icon: 'eye' },
   streak_flame: { key: 'streak_flame', name: 'Streak Flame', tier: 'silver', icon: 'flame' },
   seven_sealed: { key: 'seven_sealed', name: 'Seven Sealed', tier: 'gold', icon: 'repeat' },
+  full_streak_14: { key: 'full_streak_14', name: '14-Day Full Streak', tier: 'silver', icon: 'shield' },
+  full_streak_21: { key: 'full_streak_21', name: '21-Day Full Streak', tier: 'silver', icon: 'target' },
+  full_streak_28: { key: 'full_streak_28', name: '28-Day Full Streak', tier: 'silver', icon: 'dumbbell' },
+  full_streak_35: { key: 'full_streak_35', name: '35-Day Full Streak', tier: 'gold', icon: 'flame' },
+  full_streak_42: { key: 'full_streak_42', name: '42-Day Full Streak', tier: 'gold', icon: 'eye' },
+  full_streak_49: { key: 'full_streak_49', name: '49-Day Full Streak', tier: 'gold', icon: 'repeat' },
+  full_streak_56: { key: 'full_streak_56', name: '56-Day Full Streak', tier: 'gold', icon: 'mountain' },
+  full_streak_63: { key: 'full_streak_63', name: '63-Day Full Streak', tier: 'gold', icon: 'star' },
+  full_streak_70: { key: 'full_streak_70', name: '70-Day Full Streak', tier: 'gold', icon: 'flag' },
   morning_watch: { key: 'morning_watch', name: 'Morning Watch', tier: 'bronze', icon: 'eye' },
   watchman_week: { key: 'watchman_week', name: 'Watchman Week', tier: 'silver', icon: 'eye' },
   day_77_finisher: { key: 'day_77_finisher', name: '77-Day Finisher', tier: 'gold', icon: 'crown' },
@@ -150,6 +159,18 @@ const milestoneBadges = {
   70: 'final_watch',
   77: 'day_77_finisher',
 };
+const fullStreakBadges = {
+  7: 'seven_sealed',
+  14: 'full_streak_14',
+  21: 'full_streak_21',
+  28: 'full_streak_28',
+  35: 'full_streak_35',
+  42: 'full_streak_42',
+  49: 'full_streak_49',
+  56: 'full_streak_56',
+  63: 'full_streak_63',
+  70: 'full_streak_70',
+};
 const specialCelebrationBadges = new Set(['third_way', 'halfway_fire']);
 const finaleBadgeKey = 'day_77_finisher';
 const badgePriority = [
@@ -163,6 +184,15 @@ const badgePriority = [
   'three_week_wall',
   'two_week_guard',
   'seven_day_start',
+  'full_streak_70',
+  'full_streak_63',
+  'full_streak_56',
+  'full_streak_49',
+  'full_streak_42',
+  'full_streak_35',
+  'full_streak_28',
+  'full_streak_21',
+  'full_streak_14',
   'seven_sealed',
   'streak_flame',
   'watchman_week',
@@ -234,7 +264,11 @@ function badgeCandidatesForEntry(entry, status, nextFullStreak = 0) {
       .forEach(([threshold, key]) => {
         if (day >= Number(threshold)) candidates.push(key);
       });
-    if (nextFullStreak >= 7) candidates.push('seven_sealed');
+    Object.entries(fullStreakBadges)
+      .sort(([left], [right]) => Number(right) - Number(left))
+      .forEach(([threshold, key]) => {
+        if (nextFullStreak >= Number(threshold)) candidates.push(key);
+      });
     if (nextFullStreak >= 3) candidates.push('streak_flame');
     if ((gameStats.currentAppStreak || 0) >= 7) candidates.push('watchman_week');
     if ((gameStats.currentAppStreak || 0) >= 3) candidates.push('morning_watch');
