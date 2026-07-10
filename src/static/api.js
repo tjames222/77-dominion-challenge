@@ -306,6 +306,7 @@ const mapBadge = (badge) => {
     tier: definition?.tier || badge.tier || 'bronze',
     icon: definition?.icon || badge.icon || 'shield',
     earnedAt: badge.earned_at || badge.earnedAt || null,
+    entryDate: badge.entry_date || badge.entryDate || badge.metadata?.entryDate || null,
     metadata: badge.metadata || {},
   } : null;
 };
@@ -532,7 +533,7 @@ export async function getDashboard() {
       .maybeSingle(),
     client
       .from('user_badges')
-      .select('badge_key, earned_at, metadata, badge_definitions(name, description, category, tier, icon)')
+      .select('badge_key, earned_at, entry_date, metadata, badge_definitions(name, description, category, tier, icon)')
       .eq('user_id', user.id)
       .order('earned_at', { ascending: false })
       .limit(12),
@@ -638,7 +639,7 @@ export async function getGameSummary() {
       .maybeSingle(),
     client
       .from('user_badges')
-      .select('badge_key, earned_at, metadata, badge_definitions(name, description, category, tier, icon)')
+      .select('badge_key, earned_at, entry_date, metadata, badge_definitions(name, description, category, tier, icon)')
       .eq('user_id', user.id)
       .order('earned_at', { ascending: false })
       .limit(12),

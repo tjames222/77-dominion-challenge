@@ -35,7 +35,7 @@ create table if not exists public.check_ins (
   id uuid primary key default gen_random_uuid(),
   user_id uuid not null references auth.users(id) on delete cascade,
   entry_date date not null,
-  challenge_day integer not null,
+  challenge_day integer not null check (challenge_day between 1 and 77),
   status text not null check (status in ('complete', 'partial', 'scheduled')),
   completed_count integer not null default 0,
   completed text[] not null default '{}',
@@ -302,6 +302,10 @@ create index if not exists journal_photos_user_created_at_idx
 create index if not exists user_badges_user_earned_idx
   on public.user_badges (user_id, earned_at desc);
 
+create unique index if not exists user_badges_user_entry_date_unique
+  on public.user_badges (user_id, entry_date)
+  where entry_date is not null;
+
 create index if not exists game_point_events_user_created_idx
   on public.game_point_events (user_id, created_at desc);
 
@@ -320,11 +324,20 @@ values
   ('iron_standard', 'Iron Standard', 'Completed all seven daily actions in one day.', 'challenge', 'silver', 'dumbbell', 30),
   ('hard_path', 'Hard Path', 'Completed a workout marked hard.', 'workout', 'silver', 'run', 40),
   ('extreme_fire', 'Extreme Fire', 'Completed a workout marked extreme.', 'workout', 'gold', 'flame', 50),
+  ('seven_day_start', 'Seven-Day Start', 'Reached the first seven days of the challenge.', 'milestone', 'bronze', 'calendar', 55),
   ('streak_flame', 'Streak Flame', 'Held a three-day full-standard streak.', 'streak', 'silver', 'flame', 60),
   ('seven_sealed', 'Seven Sealed', 'Held a seven-day full-standard streak.', 'streak', 'gold', 'repeat', 70),
-  ('morning_watch', 'Morning Watch', 'Opened the app three days in a row.', 'presence', 'bronze', 'eye', 80),
-  ('watchman_week', 'Watchman Week', 'Opened the app seven days in a row.', 'presence', 'silver', 'eye', 90),
-  ('day_77_finisher', 'Day 77 Finisher', 'Finished the final day of the 77-day challenge.', 'challenge', 'gold', 'crown', 100)
+  ('two_week_guard', 'Two-Week Guard', 'Reached day 14 with the standard still in sight.', 'milestone', 'silver', 'shield', 72),
+  ('three_week_wall', 'Three-Week Wall', 'Reached day 21 and pushed through the early wall.', 'milestone', 'silver', 'target', 74),
+  ('third_way', 'One-Third Dominion', 'Crossed one-third of the 77-day challenge.', 'milestone', 'gold', 'flag', 76),
+  ('deep_roots', 'Deep Roots', 'Reached day 33 with deeper habits forming.', 'milestone', 'silver', 'mountain', 78),
+  ('halfway_fire', 'Halfway Fire', 'Crossed the halfway point of the 77-day challenge.', 'milestone', 'gold', 'spark', 80),
+  ('fifty_faithful', 'Fifty Faithful', 'Reached day 50 with faithful momentum.', 'milestone', 'silver', 'star', 84),
+  ('sixty_strong', 'Sixty Strong', 'Reached day 60 and kept showing up.', 'milestone', 'gold', 'dumbbell', 88),
+  ('final_watch', 'Final Watch', 'Reached day 70 and entered the final stretch.', 'milestone', 'gold', 'eye', 92),
+  ('morning_watch', 'Morning Watch', 'Opened the app three days in a row.', 'presence', 'bronze', 'eye', 94),
+  ('watchman_week', 'Watchman Week', 'Opened the app seven days in a row.', 'presence', 'silver', 'eye', 96),
+  ('day_77_finisher', '77-Day Finisher', 'Finished the final day of the 77-day challenge.', 'challenge', 'gold', 'crown', 100)
 on conflict (badge_key) do update set
   name = excluded.name,
   description = excluded.description,
@@ -408,9 +421,18 @@ as $$
 declare
   inserted_key text;
 begin
+  if target_entry_date is not null and exists (
+    select 1
+    from public.user_badges
+    where user_id = target_user_id
+      and entry_date = target_entry_date
+  ) then
+    return false;
+  end if;
+
   insert into public.user_badges (user_id, badge_key, entry_date, metadata)
   values (target_user_id, target_badge_key, target_entry_date, target_metadata)
-  on conflict (user_id, badge_key) do nothing
+  on conflict do nothing
   returning badge_key into inserted_key;
 
   return inserted_key is not null;
@@ -527,7 +549,13 @@ declare
   stats_row public.user_game_stats%rowtype;
   next_full_streak integer := 0;
   streak_bonus integer := 0;
+  selected_badge_key text := null;
+  selected_badge_metadata jsonb := '{}'::jsonb;
 begin
+  if new.challenge_day < 1 or new.challenge_day > 77 then
+    raise exception 'The 77-day challenge is complete.';
+  end if;
+
   if cardinality(new.completed) > 0 then
     new.completed_count := cardinality(new.completed);
   end if;
@@ -575,35 +603,7 @@ begin
     return new;
   end if;
 
-  perform public.award_badge(new.user_id, 'faithful_start', new.entry_date, jsonb_build_object('challengeDay', new.challenge_day));
-
-  if new.status = 'partial' then
-    perform public.award_badge(new.user_id, 'honest_partial', new.entry_date, jsonb_build_object('completedCount', new.completed_count));
-  end if;
-
-  if ('workoutOne' = any(new.completed) and difficulty_one = 'easy')
-    or ('workoutTwo' = any(new.completed) and difficulty_two = 'easy') then
-    perform public.award_badge(new.user_id, 'first_sweat', new.entry_date, new.workout_difficulty);
-  end if;
-
-  if ('workoutOne' = any(new.completed) and difficulty_one = 'medium')
-    or ('workoutTwo' = any(new.completed) and difficulty_two = 'medium') then
-    perform public.award_badge(new.user_id, 'steady_grind', new.entry_date, new.workout_difficulty);
-  end if;
-
-  if ('workoutOne' = any(new.completed) and difficulty_one = 'hard')
-    or ('workoutTwo' = any(new.completed) and difficulty_two = 'hard') then
-    perform public.award_badge(new.user_id, 'hard_path', new.entry_date, new.workout_difficulty);
-  end if;
-
-  if ('workoutOne' = any(new.completed) and difficulty_one = 'extreme')
-    or ('workoutTwo' = any(new.completed) and difficulty_two = 'extreme') then
-    perform public.award_badge(new.user_id, 'extreme_fire', new.entry_date, new.workout_difficulty);
-  end if;
-
   if new.status = 'complete' then
-    perform public.award_badge(new.user_id, 'iron_standard', new.entry_date, jsonb_build_object('challengeDay', new.challenge_day));
-
     select * into stats_row
     from public.user_game_stats
     where user_id = new.user_id
@@ -625,16 +625,6 @@ begin
       updated_at = now()
     where user_id = new.user_id;
 
-    if next_full_streak >= 3 then
-      perform public.award_badge(new.user_id, 'streak_flame', new.entry_date, jsonb_build_object('streak', next_full_streak));
-    end if;
-    if next_full_streak >= 7 then
-      perform public.award_badge(new.user_id, 'seven_sealed', new.entry_date, jsonb_build_object('streak', next_full_streak));
-    end if;
-    if new.challenge_day >= 77 then
-      perform public.award_badge(new.user_id, 'day_77_finisher', new.entry_date, jsonb_build_object('challengeDay', new.challenge_day));
-    end if;
-
     streak_bonus := public.full_streak_bonus_points(next_full_streak);
     if streak_bonus > 0 then
       perform public.add_game_points(
@@ -647,6 +637,100 @@ begin
         jsonb_build_object('streak', next_full_streak),
         'fullstreak:' || new.user_id::text || ':' || next_full_streak::text
       );
+    end if;
+  end if;
+
+  select * into stats_row
+  from public.user_game_stats
+  where user_id = new.user_id;
+
+  if not exists (
+    select 1
+    from public.user_badges
+    where user_id = new.user_id
+      and entry_date = new.entry_date
+  ) then
+    if new.status = 'complete' then
+      if new.challenge_day >= 77 and not exists (select 1 from public.user_badges where user_id = new.user_id and badge_key = 'day_77_finisher') then
+        selected_badge_key := 'day_77_finisher';
+        selected_badge_metadata := jsonb_build_object('challengeDay', new.challenge_day);
+      elsif new.challenge_day >= 70 and not exists (select 1 from public.user_badges where user_id = new.user_id and badge_key = 'final_watch') then
+        selected_badge_key := 'final_watch';
+        selected_badge_metadata := jsonb_build_object('challengeDay', new.challenge_day);
+      elsif new.challenge_day >= 60 and not exists (select 1 from public.user_badges where user_id = new.user_id and badge_key = 'sixty_strong') then
+        selected_badge_key := 'sixty_strong';
+        selected_badge_metadata := jsonb_build_object('challengeDay', new.challenge_day);
+      elsif new.challenge_day >= 50 and not exists (select 1 from public.user_badges where user_id = new.user_id and badge_key = 'fifty_faithful') then
+        selected_badge_key := 'fifty_faithful';
+        selected_badge_metadata := jsonb_build_object('challengeDay', new.challenge_day);
+      elsif new.challenge_day >= 39 and not exists (select 1 from public.user_badges where user_id = new.user_id and badge_key = 'halfway_fire') then
+        selected_badge_key := 'halfway_fire';
+        selected_badge_metadata := jsonb_build_object('challengeDay', new.challenge_day);
+      elsif new.challenge_day >= 33 and not exists (select 1 from public.user_badges where user_id = new.user_id and badge_key = 'deep_roots') then
+        selected_badge_key := 'deep_roots';
+        selected_badge_metadata := jsonb_build_object('challengeDay', new.challenge_day);
+      elsif new.challenge_day >= 26 and not exists (select 1 from public.user_badges where user_id = new.user_id and badge_key = 'third_way') then
+        selected_badge_key := 'third_way';
+        selected_badge_metadata := jsonb_build_object('challengeDay', new.challenge_day);
+      elsif new.challenge_day >= 21 and not exists (select 1 from public.user_badges where user_id = new.user_id and badge_key = 'three_week_wall') then
+        selected_badge_key := 'three_week_wall';
+        selected_badge_metadata := jsonb_build_object('challengeDay', new.challenge_day);
+      elsif new.challenge_day >= 14 and not exists (select 1 from public.user_badges where user_id = new.user_id and badge_key = 'two_week_guard') then
+        selected_badge_key := 'two_week_guard';
+        selected_badge_metadata := jsonb_build_object('challengeDay', new.challenge_day);
+      elsif new.challenge_day >= 7 and not exists (select 1 from public.user_badges where user_id = new.user_id and badge_key = 'seven_day_start') then
+        selected_badge_key := 'seven_day_start';
+        selected_badge_metadata := jsonb_build_object('challengeDay', new.challenge_day);
+      elsif next_full_streak >= 7 and not exists (select 1 from public.user_badges where user_id = new.user_id and badge_key = 'seven_sealed') then
+        selected_badge_key := 'seven_sealed';
+        selected_badge_metadata := jsonb_build_object('streak', next_full_streak);
+      elsif next_full_streak >= 3 and not exists (select 1 from public.user_badges where user_id = new.user_id and badge_key = 'streak_flame') then
+        selected_badge_key := 'streak_flame';
+        selected_badge_metadata := jsonb_build_object('streak', next_full_streak);
+      elsif coalesce(stats_row.current_app_streak, 0) >= 7 and not exists (select 1 from public.user_badges where user_id = new.user_id and badge_key = 'watchman_week') then
+        selected_badge_key := 'watchman_week';
+        selected_badge_metadata := jsonb_build_object('appStreak', stats_row.current_app_streak);
+      elsif coalesce(stats_row.current_app_streak, 0) >= 3 and not exists (select 1 from public.user_badges where user_id = new.user_id and badge_key = 'morning_watch') then
+        selected_badge_key := 'morning_watch';
+        selected_badge_metadata := jsonb_build_object('appStreak', stats_row.current_app_streak);
+      elsif (('workoutOne' = any(new.completed) and difficulty_one = 'extreme')
+        or ('workoutTwo' = any(new.completed) and difficulty_two = 'extreme'))
+        and not exists (select 1 from public.user_badges where user_id = new.user_id and badge_key = 'extreme_fire') then
+        selected_badge_key := 'extreme_fire';
+        selected_badge_metadata := new.workout_difficulty;
+      elsif (('workoutOne' = any(new.completed) and difficulty_one = 'hard')
+        or ('workoutTwo' = any(new.completed) and difficulty_two = 'hard'))
+        and not exists (select 1 from public.user_badges where user_id = new.user_id and badge_key = 'hard_path') then
+        selected_badge_key := 'hard_path';
+        selected_badge_metadata := new.workout_difficulty;
+      elsif (('workoutOne' = any(new.completed) and difficulty_one = 'medium')
+        or ('workoutTwo' = any(new.completed) and difficulty_two = 'medium'))
+        and not exists (select 1 from public.user_badges where user_id = new.user_id and badge_key = 'steady_grind') then
+        selected_badge_key := 'steady_grind';
+        selected_badge_metadata := new.workout_difficulty;
+      elsif (('workoutOne' = any(new.completed) and difficulty_one = 'easy')
+        or ('workoutTwo' = any(new.completed) and difficulty_two = 'easy'))
+        and not exists (select 1 from public.user_badges where user_id = new.user_id and badge_key = 'first_sweat') then
+        selected_badge_key := 'first_sweat';
+        selected_badge_metadata := new.workout_difficulty;
+      elsif not exists (select 1 from public.user_badges where user_id = new.user_id and badge_key = 'iron_standard') then
+        selected_badge_key := 'iron_standard';
+        selected_badge_metadata := jsonb_build_object('challengeDay', new.challenge_day);
+      end if;
+    elsif new.status = 'partial' then
+      if not exists (select 1 from public.user_badges where user_id = new.user_id and badge_key = 'honest_partial') then
+        selected_badge_key := 'honest_partial';
+        selected_badge_metadata := jsonb_build_object('completedCount', new.completed_count);
+      end if;
+    end if;
+
+    if selected_badge_key is null and not exists (select 1 from public.user_badges where user_id = new.user_id and badge_key = 'faithful_start') then
+      selected_badge_key := 'faithful_start';
+      selected_badge_metadata := jsonb_build_object('challengeDay', new.challenge_day);
+    end if;
+
+    if selected_badge_key is not null then
+      perform public.award_badge(new.user_id, selected_badge_key, new.entry_date, selected_badge_metadata);
     end if;
   end if;
 
@@ -901,14 +985,6 @@ begin
       jsonb_build_object('appStreak', next_app_streak),
       'appstreak:' || current_user_id::text || ':' || next_app_streak::text
     );
-  end if;
-
-  if next_app_streak >= 3 and public.award_badge(current_user_id, 'morning_watch', today, jsonb_build_object('appStreak', next_app_streak)) then
-    awarded_badges := awarded_badges || jsonb_build_array('morning_watch');
-  end if;
-
-  if next_app_streak >= 7 and public.award_badge(current_user_id, 'watchman_week', today, jsonb_build_object('appStreak', next_app_streak)) then
-    awarded_badges := awarded_badges || jsonb_build_array('watchman_week');
   end if;
 
   select * into stats_row

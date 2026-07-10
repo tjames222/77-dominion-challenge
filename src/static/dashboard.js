@@ -106,20 +106,76 @@ const workoutPlans = {
   ],
 };
 const difficultyPointMap = { easy: 2, medium: 5, hard: 10, extreme: 15 };
-const CONFETTI_DURATION_MS = 11600;
+const CONFETTI_DURATION_MS = 10800;
 const REDUCED_CONFETTI_DURATION_MS = 2200;
 const REWARD_TOAST_DURATION_MS = 5200;
 const DAY_COMPLETE_TOAST_DURATION_MS = CONFETTI_DURATION_MS + 650;
 const BADGE_REVEAL_DURATION_MS = 5600;
+const COMPLETION_HERO = {
+  title: 'Congratulations, you did it!',
+  lead: 'You reached the 77-day finish line. Hold the ground you gained while the next challenge is prepared.',
+};
 const demoBadgeDefinitions = {
   faithful_start: { key: 'faithful_start', name: 'Faithful Start', tier: 'bronze', icon: 'shield' },
   honest_partial: { key: 'honest_partial', name: 'Honest Standard', tier: 'bronze', icon: 'check' },
   first_sweat: { key: 'first_sweat', name: 'First Sweat', tier: 'bronze', icon: 'spark' },
   steady_grind: { key: 'steady_grind', name: 'Steady Grind', tier: 'bronze', icon: 'flame' },
-  iron_standard: { key: 'iron_standard', name: 'Iron Standard', tier: 'silver', icon: 'dumbbell' },
   hard_path: { key: 'hard_path', name: 'Hard Path', tier: 'silver', icon: 'run' },
   extreme_fire: { key: 'extreme_fire', name: 'Extreme Fire', tier: 'gold', icon: 'flame' },
+  iron_standard: { key: 'iron_standard', name: 'Iron Standard', tier: 'silver', icon: 'dumbbell' },
+  seven_day_start: { key: 'seven_day_start', name: 'Seven-Day Start', tier: 'bronze', icon: 'calendar' },
+  two_week_guard: { key: 'two_week_guard', name: 'Two-Week Guard', tier: 'silver', icon: 'shield' },
+  three_week_wall: { key: 'three_week_wall', name: 'Three-Week Wall', tier: 'silver', icon: 'target' },
+  third_way: { key: 'third_way', name: 'One-Third Dominion', tier: 'gold', icon: 'flag' },
+  deep_roots: { key: 'deep_roots', name: 'Deep Roots', tier: 'silver', icon: 'mountain' },
+  halfway_fire: { key: 'halfway_fire', name: 'Halfway Fire', tier: 'gold', icon: 'spark' },
+  fifty_faithful: { key: 'fifty_faithful', name: 'Fifty Faithful', tier: 'silver', icon: 'star' },
+  sixty_strong: { key: 'sixty_strong', name: 'Sixty Strong', tier: 'gold', icon: 'dumbbell' },
+  final_watch: { key: 'final_watch', name: 'Final Watch', tier: 'gold', icon: 'eye' },
+  streak_flame: { key: 'streak_flame', name: 'Streak Flame', tier: 'silver', icon: 'flame' },
+  seven_sealed: { key: 'seven_sealed', name: 'Seven Sealed', tier: 'gold', icon: 'repeat' },
+  morning_watch: { key: 'morning_watch', name: 'Morning Watch', tier: 'bronze', icon: 'eye' },
+  watchman_week: { key: 'watchman_week', name: 'Watchman Week', tier: 'silver', icon: 'eye' },
+  day_77_finisher: { key: 'day_77_finisher', name: '77-Day Finisher', tier: 'gold', icon: 'crown' },
 };
+const milestoneBadges = {
+  7: 'seven_day_start',
+  14: 'two_week_guard',
+  21: 'three_week_wall',
+  26: 'third_way',
+  33: 'deep_roots',
+  39: 'halfway_fire',
+  50: 'fifty_faithful',
+  60: 'sixty_strong',
+  70: 'final_watch',
+  77: 'day_77_finisher',
+};
+const specialCelebrationBadges = new Set(['third_way', 'halfway_fire']);
+const finaleBadgeKey = 'day_77_finisher';
+const badgePriority = [
+  'day_77_finisher',
+  'halfway_fire',
+  'third_way',
+  'final_watch',
+  'sixty_strong',
+  'fifty_faithful',
+  'deep_roots',
+  'three_week_wall',
+  'two_week_guard',
+  'seven_day_start',
+  'seven_sealed',
+  'streak_flame',
+  'watchman_week',
+  'morning_watch',
+  'extreme_fire',
+  'hard_path',
+  'steady_grind',
+  'first_sweat',
+  'iron_standard',
+  'honest_partial',
+  'faithful_start',
+];
+const badgePriorityRank = new Map(badgePriority.map((key, index) => [key, index]));
 const todayKey = () => new Date().toISOString().slice(0, 10);
 const load = (key, fallback) => JSON.parse(localStorage.getItem(key) || JSON.stringify(fallback));
 const save = (key, value) => localStorage.setItem(key, JSON.stringify(value));
@@ -136,11 +192,16 @@ const escapeHtml = (value = '') => String(value).replace(/[&<>"']/g, (char) => (
   '"': '&quot;',
   "'": '&#039;',
 }[char]));
-const badgeChip = (badge) => `<span class="badge-chip ${badge.tier || 'bronze'}"><span>${escapeHtml(badge.name || 'Badge')}</span></span>`;
+const badgeChip = (badge) => `<span class="badge-chip ${badge.tier || 'bronze'}"><span class="app-icon icon-sm ${badgeIconClass(badge)}" aria-hidden="true"></span><span>${escapeHtml(badge.name || 'Badge')}</span></span>`;
 const badgeIconClass = (badge) => {
   const icon = String(badge?.icon || '').replace(/[^a-z-]/g, '');
-  return ['shield', 'check', 'spark', 'flame', 'dumbbell', 'run'].includes(icon) ? `icon-${icon}` : 'icon-shield';
+  return ['shield', 'check', 'spark', 'flame', 'dumbbell', 'run', 'repeat', 'eye', 'crown', 'calendar', 'target', 'flag', 'mountain', 'star'].includes(icon) ? `icon-${icon}` : 'icon-shield';
 };
+const badgeRank = (badge) => badgePriorityRank.get(badge?.key) ?? 999;
+const oneBadgeForDisplay = (earnedBadges = []) => earnedBadges
+  .filter(Boolean)
+  .sort((left, right) => badgeRank(left) - badgeRank(right) || String(right.earnedAt || '').localeCompare(String(left.earnedAt || '')))
+  .slice(0, 1);
 const calculateLocalPoints = (entry, status) => {
   const completed = entry.completed || [];
   let points = completed.length * 10;
@@ -151,31 +212,58 @@ const calculateLocalPoints = (entry, status) => {
   if (completed.includes('workoutTwo')) points += difficultyPointMap[workoutDifficulty.two || 'medium'] || 0;
   return points;
 };
-function awardLocalBadges(entry, status) {
-  const earned = [];
-  const existing = new Set(badges.map((badge) => badge.key));
-  const maybeAward = (key) => {
-    if (existing.has(key) || !demoBadgeDefinitions[key]) return;
-    const badge = { ...demoBadgeDefinitions[key], earnedAt: new Date().toISOString() };
-    badges.unshift(badge);
-    earned.push(badge);
-    existing.add(key);
-  };
+const badgeEarnedDate = (badge) => badge.entryDate || badge.earnedDate || badge.metadata?.entryDate || String(badge.earnedAt || '').slice(0, 10);
+const badgeExistsForDate = (date) => badges.some((badge) => badgeEarnedDate(badge) === date);
+const workoutBadgeCandidates = (entry) => {
+  const candidates = [];
+  if ((entry.completed || []).includes('workoutOne')) candidates.push(workoutDifficulty.one || 'medium');
+  if ((entry.completed || []).includes('workoutTwo')) candidates.push(workoutDifficulty.two || 'medium');
+  if (candidates.includes('extreme')) return ['extreme_fire'];
+  if (candidates.includes('hard')) return ['hard_path'];
+  if (candidates.includes('medium')) return ['steady_grind'];
+  if (candidates.includes('easy')) return ['first_sweat'];
+  return [];
+};
+function badgeCandidatesForEntry(entry, status, nextFullStreak = 0) {
+  const day = currentDay();
+  const candidates = [];
 
-  maybeAward('faithful_start');
-  if (status === 'partial') maybeAward('honest_partial');
-  if (status === 'complete') maybeAward('iron_standard');
-  if ((entry.completed || []).includes('workoutOne') && workoutDifficulty.one === 'easy') maybeAward('first_sweat');
-  if ((entry.completed || []).includes('workoutTwo') && workoutDifficulty.two === 'easy') maybeAward('first_sweat');
-  if ((entry.completed || []).includes('workoutOne') && workoutDifficulty.one === 'medium') maybeAward('steady_grind');
-  if ((entry.completed || []).includes('workoutTwo') && workoutDifficulty.two === 'medium') maybeAward('steady_grind');
-  if ((entry.completed || []).includes('workoutOne') && workoutDifficulty.one === 'hard') maybeAward('hard_path');
-  if ((entry.completed || []).includes('workoutTwo') && workoutDifficulty.two === 'hard') maybeAward('hard_path');
-  if ((entry.completed || []).includes('workoutOne') && workoutDifficulty.one === 'extreme') maybeAward('extreme_fire');
-  if ((entry.completed || []).includes('workoutTwo') && workoutDifficulty.two === 'extreme') maybeAward('extreme_fire');
+  if (status === 'complete') {
+    Object.entries(milestoneBadges)
+      .sort(([left], [right]) => Number(right) - Number(left))
+      .forEach(([threshold, key]) => {
+        if (day >= Number(threshold)) candidates.push(key);
+      });
+    if (nextFullStreak >= 7) candidates.push('seven_sealed');
+    if (nextFullStreak >= 3) candidates.push('streak_flame');
+    if ((gameStats.currentAppStreak || 0) >= 7) candidates.push('watchman_week');
+    if ((gameStats.currentAppStreak || 0) >= 3) candidates.push('morning_watch');
+    candidates.push(...workoutBadgeCandidates(entry), 'iron_standard');
+  } else if (status === 'partial') {
+    candidates.push('honest_partial');
+  }
+
+  candidates.push('faithful_start');
+  return candidates;
+}
+function awardLocalBadges(entry, status, nextFullStreak = 0) {
+  if (badgeExistsForDate(entry.date)) return [];
+  const existing = new Set(badges.map((badge) => badge.key));
+  const key = badgeCandidatesForEntry(entry, status, nextFullStreak)
+    .find((candidate) => !existing.has(candidate) && demoBadgeDefinitions[candidate]);
+
+  if (!key) return [];
+
+  const badge = {
+    ...demoBadgeDefinitions[key],
+    earnedAt: new Date().toISOString(),
+    entryDate: entry.date,
+    metadata: { entryDate: entry.date, challengeDay: currentDay() },
+  };
+  badges.unshift(badge);
 
   if (localDemoMode) save('dominion:badges', badges);
-  return earned;
+  return [badge];
 }
 function renderGameSummary() {
   const gamePointsTotal = $('gamePointsTotal');
@@ -199,28 +287,36 @@ function renderGameSummary() {
       : '<span class="badge-empty">Badges unlock as you check in.</span>';
   }
 }
-function launchConfetti() {
+function launchConfetti({ endless = false } = {}) {
   const layer = $('confettiLayer');
   if (!layer) return;
   if (layer.parentElement !== document.body) document.body.appendChild(layer);
   const shell = document.querySelector('.dashboard-shell');
   const colors = ['#d6ad54', '#f0c96a', '#5fa36f', '#f8f5ef', '#5fa36f', '#2c2a27'];
   const reduceMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
-  const totalPieces = reduceMotion ? 120 : 720;
-  const burstCount = reduceMotion ? 2 : 8;
+  const totalPieces = endless ? (reduceMotion ? 72 : 360) : (reduceMotion ? 120 : 720);
+  const burstCount = endless ? (reduceMotion ? 1 : 5) : (reduceMotion ? 2 : 8);
   const celebrationMs = reduceMotion ? REDUCED_CONFETTI_DURATION_MS : CONFETTI_DURATION_MS;
+  const runId = confettiRunId + 1;
+  confettiRunId = runId;
+
+  if (confettiTimer) {
+    window.clearTimeout(confettiTimer);
+    confettiTimer = null;
+  }
 
   layer.innerHTML = '';
-  layer.classList.remove('active');
+  layer.classList.remove('active', 'endless');
   void layer.offsetWidth;
   layer.classList.add('active');
-  if (!reduceMotion) {
+  if (endless) layer.classList.add('endless');
+  if (!reduceMotion && !endless) {
     shell?.classList.remove('celebration-shake');
     void shell?.offsetWidth;
     shell?.classList.add('celebration-shake');
   }
 
-  if (!reduceMotion && 'vibrate' in navigator) {
+  if (!reduceMotion && !endless && 'vibrate' in navigator) {
     navigator.vibrate([45, 35, 70, 45, 35, 30, 90]);
   }
 
@@ -232,7 +328,7 @@ function launchConfetti() {
     const baseWidth = 5 + Math.random() * 8;
     const width = shape === 'spark' ? baseWidth * 0.72 : shape === 'ribbon' ? baseWidth * 0.72 : shape === 'round' || shape === 'coin' ? baseWidth * 1.1 : baseWidth;
     const height = shape === 'spark' || shape === 'round' || shape === 'coin' ? width : baseWidth * (shape === 'ribbon' ? 2.2 : 1.4 + Math.random() * 1.4);
-    const duration = 1800 + Math.random() * 1200;
+    const duration = endless ? 3800 + Math.random() * 2400 : 1650 + Math.random() * 1050;
     const dx = (Math.random() - 0.5) * (depth === 'near' ? 520 : depth === 'far' ? 280 : 420);
     const drift = (Math.random() - 0.5) * (depth === 'near' ? 170 : 115);
     const sway = (Math.random() - 0.5) * 74;
@@ -244,7 +340,10 @@ function launchConfetti() {
     piece.style.setProperty('--dx-mid', `${dx * 0.36 - sway}px`);
     piece.style.setProperty('--dx-sway', `${dx * 0.62 + sway * 0.45}px`);
     piece.style.setProperty('--dx-late', `${dx * 0.82}px`);
-    piece.style.setProperty('--delay', `${burst * 900 + 180 + Math.random() * 420}ms`);
+    const delay = endless
+      ? -(Math.random() * duration)
+      : burst * 760 + 120 + Math.random() * 360;
+    piece.style.setProperty('--delay', `${delay}ms`);
     piece.style.setProperty('--duration', `${duration}ms`);
     piece.style.setProperty('--spin', `${spin}deg`);
     piece.style.setProperty('--spin-early', `${spin * 0.12}deg`);
@@ -262,12 +361,33 @@ function launchConfetti() {
     piece.className = `${shape} ${depth}`.trim();
     layer.appendChild(piece);
   }
-  window.setTimeout(() => {
+
+  if (endless) return 0;
+
+  confettiTimer = window.setTimeout(() => {
+    if (confettiRunId !== runId || layer.classList.contains('endless')) return;
     layer.innerHTML = '';
-    layer.classList.remove('active');
+    layer.classList.remove('active', 'endless');
     shell?.classList.remove('celebration-shake');
+    confettiTimer = null;
   }, celebrationMs);
   return celebrationMs;
+}
+function startEndlessConfetti() {
+  const layer = $('confettiLayer');
+  if (layer?.classList.contains('endless') && layer.children.length) return;
+  launchConfetti({ endless: true });
+}
+function stopEndlessConfetti() {
+  const layer = $('confettiLayer');
+  if (!layer?.classList.contains('endless')) return;
+  confettiRunId += 1;
+  if (confettiTimer) {
+    window.clearTimeout(confettiTimer);
+    confettiTimer = null;
+  }
+  layer.innerHTML = '';
+  layer.classList.remove('active', 'endless');
 }
 function showRewardToast({ points = 0, earnedBadges = [], status = 'complete' }) {
   const rewardToast = $('rewardToast');
@@ -275,6 +395,7 @@ function showRewardToast({ points = 0, earnedBadges = [], status = 'complete' })
   const rewardCopy = $('rewardCopy');
   const rewardBadges = $('rewardBadges');
   if (!rewardToast || !rewardTitle || !rewardCopy) return;
+  const displayBadges = oneBadgeForDisplay(earnedBadges);
 
   if (status === 'visit') rewardTitle.textContent = 'Streak updated.';
   else rewardTitle.textContent = status === 'complete' ? 'Full day complete.' : 'Check-in posted.';
@@ -284,8 +405,8 @@ function showRewardToast({ points = 0, earnedBadges = [], status = 'complete' })
       ? 'You showed up today. Keep the streak alive.'
       : 'Your check-in is posted. Points are being synced.';
   if (rewardBadges) {
-    rewardBadges.innerHTML = earnedBadges.length
-      ? earnedBadges.map(badgeChip).join('')
+    rewardBadges.innerHTML = displayBadges.length
+      ? displayBadges.map(badgeChip).join('')
       : '<span class="badge-empty">Badges update as streaks grow.</span>';
   }
   rewardToast.hidden = false;
@@ -312,11 +433,15 @@ function showBadgeCelebration(badge) {
   const title = $('badgeCelebrationTitle');
   const copy = $('badgeCelebrationCopy');
   if (!stage || !badge) return;
+  const isFinale = badge.key === finaleBadgeKey;
+  const isSpecial = specialCelebrationBadges.has(badge.key);
 
   if (title) title.textContent = badge.name || 'Badge Earned';
   if (copy) {
     const tier = badge.tier ? `${badge.tier} badge` : 'badge';
-    copy.textContent = `You unlocked a ${tier}. Keep stacking faithful days.`;
+    if (isFinale) copy.textContent = 'You completed all 77 days. Dominion finished strong.';
+    else if (isSpecial) copy.textContent = `Milestone reached. You unlocked a ${tier} for crossing a major line.`;
+    else copy.textContent = `You unlocked a ${tier}. Keep stacking faithful days.`;
   }
   if (icon) {
     icon.className = `badge-medal-icon app-icon ${badgeIconClass(badge)}`;
@@ -325,7 +450,9 @@ function showBadgeCelebration(badge) {
   if (stage.hideTimer) window.clearTimeout(stage.hideTimer);
   if (stage.exitTimer) window.clearTimeout(stage.exitTimer);
   stage.hidden = false;
-  stage.classList.remove('active', 'exiting');
+  stage.classList.remove('active', 'exiting', 'milestone', 'finale');
+  stage.classList.toggle('milestone', isSpecial);
+  stage.classList.toggle('finale', isFinale);
   void stage.offsetWidth;
   stage.classList.add('active');
   stage.exitTimer = window.setTimeout(() => {
@@ -339,7 +466,7 @@ function showBadgeCelebration(badge) {
   }, BADGE_REVEAL_DURATION_MS + 420);
 }
 function queueBadgeCelebrations(earnedBadges = [], delay = 0) {
-  earnedBadges.slice(0, 4).forEach((badge, index) => {
+  oneBadgeForDisplay(earnedBadges).forEach((badge, index) => {
     window.setTimeout(() => showBadgeCelebration(badge), delay + index * (BADGE_REVEAL_DURATION_MS + 900));
   });
 }
@@ -358,6 +485,8 @@ let gameStats = localDemoMode ? load('dominion:gameStats', {
 let badges = localDemoMode ? load('dominion:badges', []) : [];
 let countdownTimer = null;
 let activeCountdownCallout = '';
+let confettiTimer = null;
+let confettiRunId = 0;
 const $ = (id) => document.getElementById(id);
 const verseText = $('verseText');
 const verseReference = $('verseReference');
@@ -381,7 +510,10 @@ const saveEntry = (entry) => {
     saveChallengeEntry(entry).catch((error) => console.warn('Unable to sync challenge entry', error));
   }
 };
-const currentDay = () => Math.min(Math.max(Math.floor((new Date(todayKey() + 'T00:00:00') - new Date(startDate + 'T00:00:00')) / 86400000) + 1, 1), TOTAL_DAYS);
+const rawChallengeDay = () => Math.floor((new Date(todayKey() + 'T00:00:00') - new Date(startDate + 'T00:00:00')) / 86400000) + 1;
+const currentDay = () => Math.min(Math.max(rawChallengeDay(), 1), TOTAL_DAYS);
+const hasFinalBadge = () => badges.some((badge) => badge.key === finaleBadgeKey);
+const isChallengeFinished = () => hasFinalBadge() || rawChallengeDay() > TOTAL_DAYS;
 function renderChecklist(entry) {
   const checklist = $('checklist');
   if (!checklist) return;
@@ -398,10 +530,11 @@ function renderChecklist(entry) {
   }
 
   const completed = new Set(entry.completed);
+  const locked = Boolean(entry.scheduledMiss) || isChallengeFinished();
   checklist.querySelectorAll('[data-standard]').forEach((row) => {
     const isChecked = completed.has(row.dataset.standard);
     row.classList.toggle('checked', isChecked);
-    row.disabled = Boolean(entry.scheduledMiss);
+    row.disabled = locked;
     row.setAttribute('aria-pressed', String(isChecked));
   });
 }
@@ -434,6 +567,16 @@ function updateCountdownCard() {
   if (!countdownTime || !countdownProgress || !countdownCallout) return;
 
   const entry = todayEntry();
+  if (isChallengeFinished()) {
+    countdownTime.textContent = '77 days complete';
+    countdownProgress.style.setProperty('--progress', '100%');
+    countdownCallout.textContent = 'You finished the 77-day challenge. Keep guarding what changed.';
+    activeCountdownCallout = countdownCallout.textContent;
+    if (countdownProgressLabel) countdownProgressLabel.textContent = 'Challenge complete';
+    if (countdownActionsLabel) countdownActionsLabel.textContent = 'More challenges coming soon';
+    return;
+  }
+
   const { elapsedPercent, remainingSeconds } = getDayTiming();
   const calloutSlot = Math.floor(Date.now() / (30 * 60 * 1000));
   const callout = countdownCallouts[(dayIndex() + calloutSlot + entry.completed.length) % countdownCallouts.length];
@@ -518,7 +661,12 @@ async function loadVerseOfDay() {
 }
 function render() {
   document.documentElement.dataset.theme = theme;
+  const finished = isChallengeFinished();
+  document.body.classList.toggle('challenge-finished', finished);
   const themeToggle = $('themeToggle');
+  const dashboardTitle = $('dashboardTitle');
+  const dashboardLead = $('dashboardLead');
+  const challengeCompletePanel = $('challengeCompletePanel');
   const startDateInput = $('startDate');
   const challengePercentEl = $('challengePercent');
   const challengeDayEl = $('challengeDay');
@@ -531,13 +679,16 @@ function render() {
   const checklist = $('checklist');
   const feedEl = $('feed');
   const completedToday = $('completedToday');
+  if (dashboardTitle) dashboardTitle.textContent = finished ? COMPLETION_HERO.title : 'Today’s Dominion';
+  if (dashboardLead) dashboardLead.textContent = finished ? COMPLETION_HERO.lead : 'Track your standards, post your check-in, and stay honest.';
+  if (challengeCompletePanel) challengeCompletePanel.hidden = !finished;
   if (themeToggle) themeToggle.textContent = `${theme === 'dark' ? 'Dark' : 'Light'} Theme`;
   if (startDateInput) startDateInput.value = startDate;
   const entry = todayEntry();
-  const challengePercent = Math.round((currentDay() / TOTAL_DAYS) * 100);
+  const challengePercent = finished ? 100 : Math.round((currentDay() / TOTAL_DAYS) * 100);
   const todayPercent = Math.round((entry.completed.length / standards.length) * 100);
   const hasCompletedActions = entry.completed.length > 0;
-  const hasPostableCheckIn = hasCompletedActions || entry.scheduledMiss;
+  const hasPostableCheckIn = !finished && (hasCompletedActions || entry.scheduledMiss);
   if (challengePercentEl) challengePercentEl.textContent = `${challengePercent}%`;
   if (challengeDayEl) challengeDayEl.textContent = `Day ${currentDay()} of 77`;
   if (challengeRing) challengeRing.style.setProperty('--value', `${challengePercent}%`);
@@ -547,7 +698,7 @@ function render() {
   if (checkInButton) checkInButton.disabled = !hasPostableCheckIn;
   if (scheduledButton) {
     scheduledButton.classList.toggle('active', !!entry.scheduledMiss);
-    scheduledButton.disabled = hasCompletedActions && !entry.scheduledMiss;
+    scheduledButton.disabled = finished || (hasCompletedActions && !entry.scheduledMiss);
     scheduledButton.textContent = entry.scheduledMiss ? 'Scheduled miss selected' : 'Scheduled miss day planned ahead';
     scheduledButton.setAttribute('aria-pressed', String(!!entry.scheduledMiss));
   }
@@ -563,6 +714,8 @@ function render() {
   applyDailyActions();
   renderGameSummary();
   updateCountdownCard();
+  if (finished) startEndlessConfetti();
+  else stopEndlessConfetti();
 }
 function startCountdownCard() {
   if (countdownTimer) window.clearInterval(countdownTimer);
@@ -628,11 +781,7 @@ async function recordDailyAppVisit() {
       };
       save('dominion:gameStats', gameStats);
     }
-    const earnedBadges = await refreshGameSummary(previousBadgeKeys);
-    if (earnedBadges.length) {
-      const toastDuration = showRewardToast({ points: 0, earnedBadges, status: 'visit' }) || 0;
-      queueBadgeCelebrations(earnedBadges, toastDuration + 350);
-    }
+    await refreshGameSummary(previousBadgeKeys);
     render();
   } catch (error) {
     console.warn('Unable to record daily app visit', error);
@@ -680,6 +829,7 @@ if (walkReminderButton) walkReminderButton.addEventListener('click', () => {
 if (checklist) checklist.addEventListener('click', event => {
   const row = event.target.closest('[data-standard]');
   if (!row) return;
+  if (isChallengeFinished()) return;
   if (todayEntry().scheduledMiss) return;
   const entry = { ...todayEntry(), completed: [...todayEntry().completed], scheduledMiss: false };
   const id = row.dataset.standard;
@@ -689,6 +839,7 @@ if (checklist) checklist.addEventListener('click', event => {
   render();
 });
 if (scheduledButton) scheduledButton.addEventListener('click', () => {
+  if (isChallengeFinished()) return;
   const currentEntry = todayEntry();
   if (currentEntry.completed.length > 0 && !currentEntry.scheduledMiss) return;
   const entry = { ...currentEntry, completed: [], scheduledMiss: !currentEntry.scheduledMiss };
@@ -697,6 +848,11 @@ if (scheduledButton) scheduledButton.addEventListener('click', () => {
 });
 if (checkInButton) checkInButton.addEventListener('click', async () => {
   const entry = todayEntry();
+  if (isChallengeFinished()) {
+    window.alert('The 77-day challenge is complete. More challenges are coming soon.');
+    render();
+    return;
+  }
   if (!entry.scheduledMiss && entry.completed.length === 0) return;
   const status = entry.scheduledMiss ? 'scheduled' : entry.completed.length === standards.length ? 'complete' : 'partial';
   const previousBadgeKeys = new Set(badges.map((badge) => badge.key));
@@ -728,11 +884,13 @@ if (checkInButton) checkInButton.addEventListener('click', async () => {
         name: 'You',
         timestamp: 'Today',
       };
-      earnedBadges = await refreshGameSummary(previousBadgeKeys);
+      earnedBadges = oneBadgeForDisplay((await refreshGameSummary(previousBadgeKeys))
+        .filter((badge) => badgeEarnedDate(badge) === entry.date));
     } else {
       let points = calculateLocalPoints(entry, status);
+      let nextStreak = gameStats.currentFullDayStreak || 0;
       if (status === 'complete') {
-        const nextStreak = (gameStats.currentFullDayStreak || 0) + 1;
+        nextStreak += 1;
         const streakBonus = { 3: 25, 7: 75, 14: 150, 30: 300, 77: 777 }[nextStreak] || 0;
         points += streakBonus;
         gameStats.currentFullDayStreak = nextStreak;
@@ -741,7 +899,7 @@ if (checkInButton) checkInButton.addEventListener('click', async () => {
       gameStats.totalPoints = (gameStats.totalPoints || 0) + points;
       gameStats.challengePoints = (gameStats.challengePoints || 0) + points;
       feedItem.pointsAwarded = points;
-      earnedBadges = awardLocalBadges(entry, status);
+      earnedBadges = awardLocalBadges(entry, status, nextStreak);
       save('dominion:gameStats', gameStats);
       save('dominion:badges', badges);
     }
