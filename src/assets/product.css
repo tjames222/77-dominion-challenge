@@ -525,6 +525,25 @@ body.challenge-finished .confetti-layer {
 .celebration-shake {
   animation: dominion-celebration-shake 720ms cubic-bezier(.22, .72, .34, 1) both;
 }
+.reward-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 990;
+  pointer-events: none;
+  background:
+    radial-gradient(circle at 50% 48%, color-mix(in srgb, var(--accent) 14%, transparent), transparent 42%),
+    color-mix(in srgb, #000000 24%, transparent);
+  opacity: 0;
+  will-change: opacity;
+}
+.reward-backdrop.active {
+  opacity: 1;
+  animation: reward-backdrop-dissolve-in 220ms ease-out both;
+}
+.reward-backdrop.exiting {
+  opacity: 0;
+  animation: reward-backdrop-dissolve-out 320ms ease both;
+}
 .reward-toast {
   position: fixed;
   top: 50%;
@@ -573,6 +592,7 @@ body.challenge-finished .confetti-layer {
   position: relative;
   z-index: 1;
 }
+.reward-backdrop[hidden],
 .reward-toast[hidden],
 .badge-celebration[hidden] {
   display: none;
@@ -581,11 +601,17 @@ body.challenge-finished .confetti-layer {
   opacity: 1;
   transform: translate3d(-50%, -50%, 0) scale(1);
   animation:
-    reward-toast-swoosh 1320ms cubic-bezier(.16, 1.18, .28, 1) both,
-    reward-toast-float 2700ms ease-in-out 1320ms infinite;
+    reward-toast-swoosh 760ms cubic-bezier(.16, 1, .3, 1) both,
+    reward-toast-float 2700ms ease-in-out 760ms infinite;
 }
 .reward-toast.active::before {
   animation: reward-toast-shine 2200ms ease-in-out 220ms infinite;
+}
+.reward-toast.exiting {
+  animation: reward-toast-dissolve-out 320ms cubic-bezier(.4, 0, .2, 1) both;
+}
+.reward-toast.exiting::before {
+  animation: none;
 }
 .reward-toast p {
   margin: 0;
@@ -869,22 +895,18 @@ body.challenge-finished .confetti-layer {
 @keyframes reward-toast-swoosh {
   0% {
     opacity: 0;
-    top: calc(50% + 240px);
+    transform: translate3d(-50%, calc(-50% + 72px), 0) scale(.96);
   }
-  14% {
-    opacity: .85;
-    top: calc(50% + 170px);
-  }
-  62% {
+  52% {
     opacity: 1;
-    top: calc(50% - 26px);
+    transform: translate3d(-50%, calc(-50% - 8px), 0) scale(1.015);
   }
-  82% {
-    top: calc(50% + 6px);
+  74% {
+    transform: translate3d(-50%, calc(-50% + 3px), 0) scale(.998);
   }
   100% {
     opacity: 1;
-    top: 50%;
+    transform: translate3d(-50%, -50%, 0) scale(1);
   }
 }
 @keyframes reward-toast-float {
@@ -903,6 +925,34 @@ body.challenge-finished .confetti-layer {
   48%,
   100% {
     transform: translateX(170%) rotate(16deg);
+  }
+}
+@keyframes reward-backdrop-dissolve-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+@keyframes reward-backdrop-dissolve-out {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+  }
+}
+@keyframes reward-toast-dissolve-out {
+  from {
+    opacity: 1;
+    filter: blur(0);
+    transform: translate3d(-50%, -50%, 0) scale(1);
+  }
+  to {
+    opacity: 0;
+    filter: blur(2px);
+    transform: translate3d(-50%, calc(-50% - 10px), 0) scale(.98);
   }
 }
 @keyframes dominion-celebration-shake {
@@ -935,6 +985,9 @@ body.challenge-finished .confetti-layer {
   }
   .reward-toast.active,
   .reward-toast.active::before,
+  .reward-toast.exiting,
+  .reward-backdrop.active,
+  .reward-backdrop.exiting,
   .celebration-shake {
     animation: none !important;
   }
