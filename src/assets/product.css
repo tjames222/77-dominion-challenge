@@ -528,14 +528,12 @@ body.challenge-finished .confetti-layer {
 .reward-backdrop {
   position: fixed;
   inset: 0;
-  z-index: 1190;
+  z-index: 990;
   pointer-events: none;
   background:
-    radial-gradient(circle at 50% 48%, color-mix(in srgb, var(--accent) 20%, transparent), transparent 38%),
-    color-mix(in srgb, #000000 44%, transparent);
+    radial-gradient(circle at 50% 48%, color-mix(in srgb, var(--accent) 14%, transparent), transparent 42%),
+    color-mix(in srgb, #000000 24%, transparent);
   opacity: 0;
-  backdrop-filter: blur(5px) saturate(112%);
-  -webkit-backdrop-filter: blur(5px) saturate(112%);
   will-change: opacity;
 }
 .reward-backdrop.active {
