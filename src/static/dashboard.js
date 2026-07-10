@@ -112,6 +112,7 @@ const CONFETTI_DURATION_MS = 10800;
 const REDUCED_CONFETTI_DURATION_MS = 2200;
 const REWARD_TOAST_DURATION_MS = 5200;
 const DAY_COMPLETE_TOAST_DURATION_MS = CONFETTI_DURATION_MS + 650;
+const REWARD_TOAST_EXIT_MS = 320;
 const BADGE_REVEAL_DURATION_MS = 5600;
 const COMPLETION_HERO = {
   title: 'Congratulations, you did it!',
@@ -429,8 +430,41 @@ function stopEndlessConfetti() {
   layer.innerHTML = '';
   layer.classList.remove('active', 'endless');
 }
+function finishRewardToastDismiss(rewardToast, rewardBackdrop) {
+  if (rewardToast.exitTimer) {
+    window.clearTimeout(rewardToast.exitTimer);
+    rewardToast.exitTimer = null;
+  }
+  if (rewardToast.exitAnimationListener) {
+    rewardToast.removeEventListener('animationend', rewardToast.exitAnimationListener);
+    rewardToast.exitAnimationListener = null;
+  }
+  rewardToast.classList.remove('active', 'exiting');
+  rewardToast.hidden = true;
+  if (rewardBackdrop) {
+    rewardBackdrop.classList.remove('active', 'exiting');
+    rewardBackdrop.hidden = true;
+  }
+}
+function dismissRewardToast(rewardToast, rewardBackdrop) {
+  const finishDismissal = () => finishRewardToastDismiss(rewardToast, rewardBackdrop);
+  const onAnimationEnd = (event) => {
+    if (event.target === rewardToast && event.animationName === 'reward-toast-dissolve-out') {
+      finishDismissal();
+    }
+  };
+
+  rewardToast.exitAnimationListener = onAnimationEnd;
+  rewardToast.addEventListener('animationend', onAnimationEnd);
+  rewardToast.classList.remove('active');
+  rewardToast.classList.add('exiting');
+  rewardBackdrop?.classList.remove('active');
+  rewardBackdrop?.classList.add('exiting');
+  rewardToast.exitTimer = window.setTimeout(finishDismissal, REWARD_TOAST_EXIT_MS + 80);
+}
 function showRewardToast({ points = 0, earnedBadges = [], status = 'complete' }) {
   const rewardToast = $('rewardToast');
+  const rewardBackdrop = $('rewardBackdrop');
   const rewardTitle = $('rewardTitle');
   const rewardCopy = $('rewardCopy');
   const rewardBadges = $('rewardBadges');
@@ -449,23 +483,37 @@ function showRewardToast({ points = 0, earnedBadges = [], status = 'complete' })
       ? displayBadges.map(badgeChip).join('')
       : '<span class="badge-empty">Badges update as streaks grow.</span>';
   }
+  if (rewardToast.hideTimer) {
+    window.clearTimeout(rewardToast.hideTimer);
+    rewardToast.hideTimer = null;
+  }
+  if (rewardToast.exitTimer) {
+    window.clearTimeout(rewardToast.exitTimer);
+    rewardToast.exitTimer = null;
+  }
+  if (rewardToast.exitAnimationListener) {
+    rewardToast.removeEventListener('animationend', rewardToast.exitAnimationListener);
+    rewardToast.exitAnimationListener = null;
+  }
   rewardToast.hidden = false;
-  rewardToast.classList.remove('active');
+  if (rewardBackdrop) rewardBackdrop.hidden = false;
+  rewardToast.classList.remove('active', 'exiting');
+  rewardBackdrop?.classList.remove('active', 'exiting');
   rewardToast.getAnimations?.().forEach((animation) => animation.cancel());
+  rewardBackdrop?.getAnimations?.().forEach((animation) => animation.cancel());
   void rewardToast.offsetWidth;
   requestAnimationFrame(() => {
     requestAnimationFrame(() => {
+      rewardBackdrop?.classList.add('active');
       rewardToast.classList.add('active');
     });
   });
-  if (rewardToast.hideTimer) window.clearTimeout(rewardToast.hideTimer);
   const toastDuration = status === 'complete' ? DAY_COMPLETE_TOAST_DURATION_MS : REWARD_TOAST_DURATION_MS;
   rewardToast.hideTimer = window.setTimeout(() => {
-    rewardToast.classList.remove('active');
-    rewardToast.hidden = true;
     rewardToast.hideTimer = null;
+    dismissRewardToast(rewardToast, rewardBackdrop);
   }, toastDuration);
-  return toastDuration;
+  return toastDuration + REWARD_TOAST_EXIT_MS;
 }
 function showBadgeCelebration(badge) {
   const stage = $('badgeCelebration');
