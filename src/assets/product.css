@@ -601,8 +601,8 @@ body.challenge-finished .confetti-layer {
   opacity: 1;
   transform: translate3d(-50%, -50%, 0) scale(1);
   animation:
-    reward-toast-swoosh 1320ms cubic-bezier(.16, 1.18, .28, 1) both,
-    reward-toast-float 2700ms ease-in-out 1320ms infinite;
+    reward-toast-swoosh 760ms cubic-bezier(.16, 1, .3, 1) both,
+    reward-toast-float 2700ms ease-in-out 760ms infinite;
 }
 .reward-toast.active::before {
   animation: reward-toast-shine 2200ms ease-in-out 220ms infinite;
@@ -895,22 +895,18 @@ body.challenge-finished .confetti-layer {
 @keyframes reward-toast-swoosh {
   0% {
     opacity: 0;
-    top: calc(50% + 240px);
+    transform: translate3d(-50%, calc(-50% + 72px), 0) scale(.96);
   }
-  14% {
-    opacity: .85;
-    top: calc(50% + 170px);
-  }
-  62% {
+  52% {
     opacity: 1;
-    top: calc(50% - 26px);
+    transform: translate3d(-50%, calc(-50% - 8px), 0) scale(1.015);
   }
-  82% {
-    top: calc(50% + 6px);
+  74% {
+    transform: translate3d(-50%, calc(-50% + 3px), 0) scale(.998);
   }
   100% {
     opacity: 1;
-    top: 50%;
+    transform: translate3d(-50%, -50%, 0) scale(1);
   }
 }
 @keyframes reward-toast-float {
