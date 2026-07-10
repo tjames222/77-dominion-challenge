@@ -11,8 +11,9 @@ import { useTheme } from './composables/useTheme';
 const challenge = useChallenge();
 const community = useCommunity();
 const theme = useTheme();
+const lightDominionPoster = 'https://pub-53499389187a4de4984349b4f9b36b74.r2.dev/dominion-athlete-poster-light.png';
 const dominionPoster = computed(() => (
-  theme.isDark.value ? '/images/dominion-athlete-poster.png' : '/images/dominion-athlete-poster-light.svg'
+  theme.isDark.value ? '/images/dominion-athlete-poster.png' : lightDominionPoster
 ));
 
 function checkIn() {
