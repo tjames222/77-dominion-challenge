@@ -465,9 +465,10 @@
 }
 .reward-toast.active {
   opacity: 1;
+  transform: translate3d(-50%, -50%, 0) scale(1);
   animation:
-    reward-toast-swoosh 920ms cubic-bezier(.16, 1.18, .28, 1) both,
-    reward-toast-float 2500ms ease-in-out 920ms infinite;
+    reward-toast-swoosh 1320ms cubic-bezier(.16, 1.18, .28, 1) both,
+    reward-toast-float 2700ms ease-in-out 1320ms infinite;
 }
 .reward-toast.active::before {
   animation: reward-toast-shine 2200ms ease-in-out 220ms infinite;
@@ -543,6 +544,8 @@
     inset 0 1px 0 color-mix(in srgb, #ffffff 20%, transparent),
     inset 0 -38px 70px color-mix(in srgb, #000000 36%, transparent);
   transform-origin: center;
+}
+.badge-celebration.active .badge-medal {
   animation:
     badge-grow-spin 1350ms cubic-bezier(.18, 1.18, .28, 1) both,
     badge-float 2800ms ease-in-out 1350ms infinite;
@@ -571,6 +574,8 @@
   inset: -40% 8%;
   background: linear-gradient(102deg, transparent 22%, color-mix(in srgb, #ffffff 42%, transparent) 48%, transparent 68%);
   transform: translateX(-180%) rotate(18deg);
+}
+.badge-celebration.active .badge-medal::after {
   animation: badge-shine 2400ms ease-in-out 1400ms infinite;
 }
 .badge-medal .eyebrow,
@@ -621,21 +626,26 @@
 @keyframes dominion-confetti {
   0% {
     opacity: 0;
-    transform: translate3d(0, -24vh, 0) rotate(0deg) scale(.9);
+    transform: translate3d(0, -38vh, 0) rotate(0deg) scale(.9);
   }
-  4% {
+  14% {
+    opacity: 0;
+    transform: translate3d(0, -24vh, 0) rotate(0deg) scale(.92);
+  }
+  22% {
     opacity: .98;
+    transform: translate3d(0, -7vh, 0) rotate(var(--spin-early)) scale(.98);
   }
-  25% {
+  40% {
     transform: translate3d(var(--dx-early), 20vh, 0) rotate(var(--spin-early)) scale(1);
   }
-  50% {
+  62% {
     transform: translate3d(var(--dx-mid), 62vh, 0) rotate(var(--spin-mid)) scale(.98);
   }
-  75% {
+  84% {
     transform: translate3d(var(--dx-sway), 104vh, 0) rotate(var(--spin-late)) scale(1);
   }
-  90% {
+  92% {
     opacity: .94;
   }
   100% {
@@ -707,18 +717,22 @@
 @keyframes reward-toast-swoosh {
   0% {
     opacity: 0;
-    transform: translate3d(-50%, calc(-50% + 118px), 0) scale(.82) rotateX(14deg);
+    top: calc(50% + 240px);
   }
-  54% {
+  14% {
+    opacity: .85;
+    top: calc(50% + 170px);
+  }
+  62% {
     opacity: 1;
-    transform: translate3d(-50%, calc(-50% - 18px), 0) scale(1.07) rotateX(0);
+    top: calc(50% - 26px);
   }
-  74% {
-    transform: translate3d(-50%, calc(-50% + 5px), 0) scale(.98);
+  82% {
+    top: calc(50% + 6px);
   }
   100% {
     opacity: 1;
-    transform: translate3d(-50%, -50%, 0) scale(1);
+    top: 50%;
   }
 }
 @keyframes reward-toast-float {

@@ -106,9 +106,10 @@ const workoutPlans = {
   ],
 };
 const difficultyPointMap = { easy: 2, medium: 5, hard: 10, extreme: 15 };
-const CONFETTI_DURATION_MS = 12800;
-const REDUCED_CONFETTI_DURATION_MS = 2400;
+const CONFETTI_DURATION_MS = 11600;
+const REDUCED_CONFETTI_DURATION_MS = 2200;
 const REWARD_TOAST_DURATION_MS = 5200;
+const DAY_COMPLETE_TOAST_DURATION_MS = CONFETTI_DURATION_MS + 650;
 const BADGE_REVEAL_DURATION_MS = 5600;
 const demoBadgeDefinitions = {
   faithful_start: { key: 'faithful_start', name: 'Faithful Start', tier: 'bronze', icon: 'shield' },
@@ -231,7 +232,7 @@ function launchConfetti() {
     const baseWidth = 5 + Math.random() * 8;
     const width = shape === 'spark' ? baseWidth * 0.72 : shape === 'ribbon' ? baseWidth * 0.72 : shape === 'round' || shape === 'coin' ? baseWidth * 1.1 : baseWidth;
     const height = shape === 'spark' || shape === 'round' || shape === 'coin' ? width : baseWidth * (shape === 'ribbon' ? 2.2 : 1.4 + Math.random() * 1.4);
-    const duration = 2000 + Math.random() * 1400;
+    const duration = 1800 + Math.random() * 1200;
     const dx = (Math.random() - 0.5) * (depth === 'near' ? 520 : depth === 'far' ? 280 : 420);
     const drift = (Math.random() - 0.5) * (depth === 'near' ? 170 : 115);
     const sway = (Math.random() - 0.5) * 74;
@@ -243,7 +244,7 @@ function launchConfetti() {
     piece.style.setProperty('--dx-mid', `${dx * 0.36 - sway}px`);
     piece.style.setProperty('--dx-sway', `${dx * 0.62 + sway * 0.45}px`);
     piece.style.setProperty('--dx-late', `${dx * 0.82}px`);
-    piece.style.setProperty('--delay', `${burst * 1100 + Math.random() * 650}ms`);
+    piece.style.setProperty('--delay', `${burst * 900 + 180 + Math.random() * 420}ms`);
     piece.style.setProperty('--duration', `${duration}ms`);
     piece.style.setProperty('--spin', `${spin}deg`);
     piece.style.setProperty('--spin-early', `${spin * 0.12}deg`);
@@ -289,15 +290,21 @@ function showRewardToast({ points = 0, earnedBadges = [], status = 'complete' })
   }
   rewardToast.hidden = false;
   rewardToast.classList.remove('active');
+  rewardToast.getAnimations?.().forEach((animation) => animation.cancel());
   void rewardToast.offsetWidth;
-  rewardToast.classList.add('active');
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => {
+      rewardToast.classList.add('active');
+    });
+  });
   if (rewardToast.hideTimer) window.clearTimeout(rewardToast.hideTimer);
+  const toastDuration = status === 'complete' ? DAY_COMPLETE_TOAST_DURATION_MS : REWARD_TOAST_DURATION_MS;
   rewardToast.hideTimer = window.setTimeout(() => {
     rewardToast.classList.remove('active');
     rewardToast.hidden = true;
     rewardToast.hideTimer = null;
-  }, REWARD_TOAST_DURATION_MS);
-  return REWARD_TOAST_DURATION_MS;
+  }, toastDuration);
+  return toastDuration;
 }
 function showBadgeCelebration(badge) {
   const stage = $('badgeCelebration');
