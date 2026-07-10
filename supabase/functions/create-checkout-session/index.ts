@@ -1,4 +1,5 @@
 import { createAdminClient, requireUser } from "../_shared/supabase.ts";
+import { getOrCreateStripeCustomer } from "../_shared/billing.ts";
 import { createFormBody, getPriceId, getSiteUrl, stripeRequest } from "../_shared/stripe.ts";
 import { jsonResponse, optionsResponse } from "../_shared/http.ts";
 
@@ -18,22 +19,12 @@ Deno.serve(async (req) => {
     }
 
     const admin = createAdminClient();
-    const [{ data: profile }, { data: existingEntitlements }, { data: existingCustomer }] = await Promise.all([
-      admin
-        .from("profiles")
-        .select("name, email")
-        .eq("user_id", user.id)
-        .maybeSingle(),
-      admin
-        .from("entitlements")
-        .select("entitlement_key, status")
-        .eq("user_id", user.id),
-      admin
-        .from("billing_customers")
-        .select("stripe_customer_id")
-        .eq("user_id", user.id)
-        .maybeSingle(),
-    ]);
+    const { data: existingEntitlements, error: entitlementsError } = await admin
+      .from("entitlements")
+      .select("entitlement_key, status")
+      .eq("user_id", user.id);
+
+    if (entitlementsError) throw entitlementsError;
 
     const subscriptionActive = existingEntitlements?.some((item) =>
       item.entitlement_key === subscriptionEntitlementKey && item.status === "active"
@@ -43,27 +34,7 @@ Deno.serve(async (req) => {
       return jsonResponse({ url: `${getSiteUrl(req)}/dashboard.html`, alreadyOwned: true }, 200, req);
     }
 
-    let stripeCustomerId = existingCustomer?.stripe_customer_id || null;
-    if (!stripeCustomerId) {
-      const customer = await stripeRequest(
-        "/v1/customers",
-        "POST",
-        createFormBody({
-          email: user.email || profile?.email || "",
-          name: profile?.name || user.user_metadata?.name || "",
-          "metadata[user_id]": user.id,
-        }),
-      );
-
-      stripeCustomerId = customer.id;
-
-      await admin.from("billing_customers").upsert({
-        user_id: user.id,
-        stripe_customer_id: stripeCustomerId,
-        email: user.email || profile?.email || "",
-      }, { onConflict: "user_id" });
-    }
-
+    const stripeCustomerId = await getOrCreateStripeCustomer(admin, user);
     const siteUrl = getSiteUrl(req);
     const priceId = getPriceId(productKey);
     const successUrl = `${siteUrl}/billing.html?checkout=success&product=${encodeURIComponent(productKey)}`;

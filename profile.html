@@ -21,10 +21,34 @@
         <p class="lead">Manage your challenge identity, group, and account details.</p>
       </section>
 
-      <section class="card reveal">
+      <section class="card reveal profile-account-card">
         <p class="eyebrow">Account</p>
-        <h2 id="profileName">Member</h2>
-        <p class="section-copy" id="profileEmail">Logged in</p>
+        <div class="profile-account-summary">
+          <div class="profile-avatar-frame" aria-hidden="true">
+            <img id="profileAvatarImage" alt="" hidden />
+            <span id="profileAvatarFallback">M</span>
+          </div>
+          <div>
+            <h2 id="profileName">Member</h2>
+            <p class="section-copy" id="profileEmail">Logged in</p>
+          </div>
+        </div>
+        <form class="profile-form" id="profileForm">
+          <label class="profile-photo-field">
+            <span>Profile picture</span>
+            <input id="profilePhotoInput" type="file" accept="image/jpeg,image/png,image/webp,image/heic,image/heif" />
+          </label>
+          <label>
+            Name
+            <input id="profileNameInput" type="text" autocomplete="name" required />
+          </label>
+          <label>
+            Email
+            <input id="profileEmailInput" type="email" autocomplete="email" required />
+          </label>
+          <p class="profile-feedback" id="profileFeedback" role="status" aria-live="polite"></p>
+          <button class="primary" type="submit">Save profile</button>
+        </form>
       </section>
 
       <section class="card reveal">

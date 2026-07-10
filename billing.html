@@ -16,9 +16,9 @@
       </header>
 
       <section class="dashboard-hero compact-hero reveal is-visible">
-        <p class="eyebrow">Step 2 of 2</p>
-        <h1>Activate the rhythm.</h1>
-        <p class="lead">You are one step from the dashboard, the daily standard, and the accountability that helps discipline turn into a new normal.</p>
+        <p class="eyebrow" id="billingHeroStep">Step 2 of 2</p>
+        <h1 id="billingHeroTitle">Activate the rhythm.</h1>
+        <p class="lead" id="billingHeroLead">You are one step from the dashboard, the daily standard, and the accountability that helps discipline turn into a new normal.</p>
       </section>
 
       <section class="card reveal billing-status-card">
@@ -30,6 +30,8 @@
         </div>
         <div class="billing-inline-actions">
           <button class="secondary-button" id="manageBillingButton" type="button" hidden>Manage billing</button>
+          <button class="secondary-button" id="paymentMethodButton" type="button">Add payment information</button>
+          <button class="danger-button" id="cancelMembershipButton" type="button" hidden>Cancel membership</button>
           <a class="back-link billing-dashboard-link" id="billingDashboardLink" href="./dashboard.html">Open dashboard</a>
         </div>
         <div class="billing-feedback" id="billingFeedback" aria-live="polite"></div>

@@ -75,6 +75,25 @@
   background: var(--surface-elevated);
   font-weight: 900;
 }
+.danger-button {
+  display: grid;
+  place-items: center;
+  min-height: 52px;
+  min-width: 0;
+  padding: 0 18px;
+  border: 1px solid color-mix(in srgb, var(--danger) 56%, var(--border));
+  border-radius: 16px;
+  background: color-mix(in srgb, var(--danger) 14%, var(--surface-elevated));
+  color: var(--text);
+  font-weight: 900;
+  text-align: center;
+  overflow-wrap: anywhere;
+}
+.danger-button:disabled,
+.secondary-button:disabled {
+  cursor: not-allowed;
+  opacity: .48;
+}
 .section-copy {
   color: var(--text-muted);
   line-height: 1.58;
@@ -1144,6 +1163,88 @@ body.challenge-finished .confetti-layer {
 .membership-steps {
   display: grid;
   gap: 10px;
+}
+.profile-account-card {
+  display: grid;
+  gap: 18px;
+}
+.profile-account-summary {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 16px;
+  align-items: center;
+}
+.profile-account-summary h2,
+.profile-account-summary .section-copy {
+  overflow-wrap: anywhere;
+}
+.profile-avatar-frame {
+  display: grid;
+  place-items: center;
+  width: 88px;
+  height: 88px;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--accent) 34%, var(--border));
+  border-radius: 18px;
+  background:
+    linear-gradient(145deg, color-mix(in srgb, var(--accent) 18%, transparent), transparent 62%),
+    var(--surface-elevated);
+  color: var(--accent-strong);
+  box-shadow: inset 0 1px 0 color-mix(in srgb, #ffffff 10%, transparent);
+}
+.profile-avatar-frame img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.profile-avatar-frame span {
+  font-size: 1.65rem;
+  font-weight: 950;
+}
+.profile-form {
+  display: grid;
+  gap: 12px;
+}
+.profile-form label {
+  display: grid;
+  gap: 8px;
+  color: var(--text-muted);
+  font-size: .78rem;
+  font-weight: 950;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+.profile-form input[type="text"],
+.profile-form input[type="email"],
+.profile-form input[type="file"] {
+  width: 100%;
+  min-height: 52px;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: 14px;
+  background: var(--input);
+  color: var(--text);
+  font: inherit;
+  line-height: 1.45;
+}
+.profile-form input[type="file"] {
+  color: var(--text-muted);
+}
+.profile-form input:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent);
+}
+.profile-feedback {
+  min-height: 1.2rem;
+  margin: 0;
+  color: var(--accent-strong);
+  font-size: .88rem;
+  font-weight: 850;
+  line-height: 1.4;
+}
+.profile-feedback.error {
+  color: var(--danger);
 }
 .profile-appearance {
   gap: 14px;

@@ -2,7 +2,7 @@ import { resolveSiteOrigin } from "./http.ts";
 
 const encoder = new TextEncoder();
 
-type StripeMethod = "GET" | "POST";
+type StripeMethod = "DELETE" | "GET" | "POST";
 
 function getEnv(name: string) {
   const value = Deno.env.get(name);

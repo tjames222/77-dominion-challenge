@@ -23,6 +23,7 @@ export function isLocalDemoMode() {
 }
 const MEMBERSHIP_ACCESS_KEY = 'membership_active';
 const MEMBERSHIP_PRODUCT_KEY = 'dominion_membership';
+const PROFILE_PHOTO_BUCKET = 'profile-photos';
 const MOCK_USER_ID_KEY = 'dominion:mockUserId';
 const MOCK_SUBSCRIPTION_KEY = 'dominion:mockSubscription';
 const MOCK_CREWS_KEY = 'dominion:mockCrews';
@@ -55,6 +56,7 @@ const getMockUserId = () => {
 const getMockUser = () => readJson('dominion:user', {
   name: 'Preview Member',
   email: 'preview@77dominion.test',
+  avatarUrl: '',
   authenticated: true,
 });
 
@@ -127,7 +129,8 @@ export function sessionToUser(session, fallbackName = 'Member') {
   const metadata = user.user_metadata || {};
   const email = user.email || '';
   const name = metadata.name || metadata.full_name || fallbackName || email.split('@')[0] || 'Member';
-  return { name, email, authenticated: Boolean(session?.access_token) };
+  const avatarUrl = metadata.avatar_url || metadata.picture || '';
+  return { name, email, avatarUrl, authenticated: Boolean(session?.access_token) };
 }
 
 export const hasSupabaseAuth = () => Boolean(supabase) && !isLocalDemoMode();
@@ -181,7 +184,7 @@ export async function getLocalOrSessionUser() {
   return null;
 }
 
-export async function upsertProfile({ name, challengeStartDate } = {}) {
+export async function upsertProfile({ name, email, avatarUrl, challengeStartDate } = {}) {
   const client = requireSupabase();
   const user = await requireUser();
   const metadata = user.user_metadata || {};
@@ -190,14 +193,15 @@ export async function upsertProfile({ name, challengeStartDate } = {}) {
   const payload = {
     user_id: user.id,
     name: displayName,
-    email: user.email || '',
+    email: email || user.email || '',
   };
+  if (avatarUrl !== undefined) payload.avatar_url = avatarUrl || '';
   if (challengeStartDate !== undefined) payload.challenge_start_date = challengeStartDate || null;
 
   const { data, error } = await client
     .from('profiles')
     .upsert(payload, { onConflict: 'user_id' })
-    .select('user_id, name, email, challenge_start_date, created_at, updated_at')
+    .select('user_id, name, email, avatar_url, challenge_start_date, created_at, updated_at')
     .single();
 
   if (error) throw error;
@@ -233,6 +237,7 @@ const mapProfile = (profile) => profile ? ({
   userId: profile.user_id,
   name: profile.name,
   email: profile.email,
+  avatarUrl: profile.avatar_url || '',
   challengeStartDate: profile.challenge_start_date,
   createdAt: profile.created_at,
   updatedAt: profile.updated_at,
@@ -408,7 +413,7 @@ export async function getProfile() {
   const user = await requireUser();
   const { data, error } = await client
     .from('profiles')
-    .select('user_id, name, email, challenge_start_date, created_at, updated_at')
+    .select('user_id, name, email, avatar_url, challenge_start_date, created_at, updated_at')
     .eq('user_id', user.id)
     .maybeSingle();
 
@@ -417,10 +422,84 @@ export async function getProfile() {
 }
 
 export async function updateProfile(profile) {
-  return upsertProfile({
-    name: profile.name,
+  if (isLocalDemoMode()) {
+    const existing = getMockUser();
+    const nextUser = {
+      ...existing,
+      name: profile.name || existing.name || 'Member',
+      email: profile.email || existing.email || '',
+      avatarUrl: profile.avatarUrl ?? existing.avatarUrl ?? '',
+      authenticated: true,
+    };
+    writeJson('dominion:user', nextUser);
+    if (nextUser.name) writeJson('dominion:memberName', nextUser.name);
+    return nextUser;
+  }
+
+  const client = requireSupabase();
+  const user = await requireUser();
+  const metadata = user.user_metadata || {};
+  const authUpdates = {};
+  const dataUpdates = {};
+  const nextName = profile.name || metadata.name || metadata.full_name || user.email?.split('@')[0] || 'Member';
+  const nextEmail = profile.email || user.email || '';
+
+  if (profile.name !== undefined) {
+    dataUpdates.name = nextName;
+    dataUpdates.full_name = nextName;
+  }
+  if (profile.avatarUrl !== undefined) {
+    dataUpdates.avatar_url = profile.avatarUrl || '';
+    dataUpdates.picture = profile.avatarUrl || '';
+  }
+  if (Object.keys(dataUpdates).length) authUpdates.data = dataUpdates;
+  if (profile.email && profile.email !== user.email) authUpdates.email = profile.email;
+
+  let emailChangeRequested = false;
+  if (Object.keys(authUpdates).length) {
+    const { data, error } = await client.auth.updateUser(authUpdates);
+    if (error) throw error;
+    emailChangeRequested = Boolean(profile.email && profile.email !== user.email && data?.user?.email !== profile.email);
+  }
+
+  const savedProfile = await upsertProfile({
+    name: nextName,
+    email: nextEmail,
+    avatarUrl: profile.avatarUrl,
     challengeStartDate: profile.challengeStartDate,
   });
+
+  return {
+    ...savedProfile,
+    emailChangeRequested,
+  };
+}
+
+export async function uploadProfilePhoto(file) {
+  if (!file) throw new Error('Choose a profile picture first.');
+  if (!file.type?.startsWith('image/')) throw new Error('Profile picture must be an image file.');
+  if (file.size > 5 * 1024 * 1024) throw new Error('Profile picture must be smaller than 5 MB.');
+
+  if (isLocalDemoMode()) return fileToDataUrl(file);
+
+  const client = requireSupabase();
+  const user = await requireUser();
+  const extensionFromType = file.type.split('/')[1]?.replace('jpeg', 'jpg') || '';
+  const extensionFromName = file.name?.split('.').pop()?.toLowerCase() || '';
+  const extension = extensionFromType || extensionFromName || 'jpg';
+  const safeExtension = ['jpg', 'png', 'webp', 'heic', 'heif'].includes(extension) ? extension : 'jpg';
+  const storagePath = `${user.id}/avatar-${Date.now()}.${safeExtension}`;
+  const { error } = await client.storage
+    .from(PROFILE_PHOTO_BUCKET)
+    .upload(storagePath, file, { cacheControl: '3600', upsert: true });
+
+  if (error) throw error;
+
+  const { data } = client.storage
+    .from(PROFILE_PHOTO_BUCKET)
+    .getPublicUrl(storagePath);
+
+  return data?.publicUrl || '';
 }
 
 export async function getBillingState() {
@@ -473,10 +552,16 @@ export async function getBillingState() {
   };
 }
 
-async function invokeSupabaseFunction(name, body = {}) {
+async function invokeSupabaseAction(name, body = {}) {
   const client = requireSupabase();
   const { data, error } = await client.functions.invoke(name, { body });
   if (error) throw error;
+  if (data?.error) throw new Error(data.error);
+  return data || {};
+}
+
+async function invokeSupabaseFunction(name, body = {}) {
+  const data = await invokeSupabaseAction(name, body);
   if (!data?.url) throw new Error('Billing session did not return a destination URL.');
   return data;
 }
@@ -505,9 +590,24 @@ export async function createCheckoutSession(productKey) {
   return invokeSupabaseFunction('create-checkout-session', { productKey });
 }
 
-export async function createCustomerPortalSession() {
-  if (isLocalDemoMode()) return { url: './profile.html#billing', preview: true };
-  return invokeSupabaseFunction('create-customer-portal-session');
+export async function createCustomerPortalSession(options = {}) {
+  const flow = options?.flow || '';
+  const returnPath = options?.returnPath || '';
+  if (isLocalDemoMode()) {
+    const url = flow === 'payment_method_update'
+      ? './billing.html?payment=updated&preview=1'
+      : './profile.html#billing';
+    return { url, preview: true };
+  }
+  return invokeSupabaseFunction('create-customer-portal-session', { flow, returnPath });
+}
+
+export async function cancelMembership() {
+  if (isLocalDemoMode()) {
+    localStorage.removeItem(MOCK_SUBSCRIPTION_KEY);
+    return { canceled: true, accessRemoved: true, preview: true };
+  }
+  return invokeSupabaseAction('cancel-membership');
 }
 
 export async function getDashboard() {

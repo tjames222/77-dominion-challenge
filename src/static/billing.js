@@ -1,4 +1,5 @@
 import {
+  cancelMembership,
   createCheckoutSession,
   createCustomerPortalSession,
   formatDateLabel,
@@ -18,6 +19,11 @@ const FEEDBACK = {
 
 const subscriptionButton = document.getElementById('subscriptionCheckoutButton');
 const manageBillingButton = document.getElementById('manageBillingButton');
+const paymentMethodButton = document.getElementById('paymentMethodButton');
+const cancelMembershipButton = document.getElementById('cancelMembershipButton');
+const billingHeroStep = document.getElementById('billingHeroStep');
+const billingHeroTitle = document.getElementById('billingHeroTitle');
+const billingHeroLead = document.getElementById('billingHeroLead');
 const billingStatusTitle = document.getElementById('billingStatusTitle');
 const billingStatusCopy = document.getElementById('billingStatusCopy');
 const billingFeedback = document.getElementById('billingFeedback');
@@ -40,6 +46,14 @@ function renderStatus(state) {
     ? formatDateLabel(state.subscription.currentPeriodEnd)
     : null;
   const isPreviewBilling = state.billingEnabled === false;
+
+  if (billingHeroStep) billingHeroStep.textContent = state.subscriptionActive ? 'Membership active' : 'Step 2 of 2';
+  if (billingHeroTitle) billingHeroTitle.textContent = state.subscriptionActive ? 'You are signed up.' : 'Activate the rhythm.';
+  if (billingHeroLead) {
+    billingHeroLead.textContent = state.subscriptionActive
+      ? 'Your Dominion membership is active. The dashboard, daily standard, community, journal, and member tools are open.'
+      : 'You are one step from the dashboard, the daily standard, and the accountability that helps discipline turn into a new normal.';
+  }
 
   if (billingDashboardLink) billingDashboardLink.hidden = !state.appAccess;
   if (subscriptionStatusPill) {
@@ -74,6 +88,11 @@ function renderStatus(state) {
   }
 
   if (manageBillingButton) manageBillingButton.hidden = !state.subscription;
+  if (paymentMethodButton) {
+    paymentMethodButton.hidden = false;
+    paymentMethodButton.textContent = state.subscriptionActive ? 'Edit payment information' : 'Add payment information';
+  }
+  if (cancelMembershipButton) cancelMembershipButton.hidden = !state.subscriptionActive;
 }
 
 async function pollAfterCheckout() {
@@ -102,6 +121,8 @@ async function hydrateBillingPage() {
 
   const searchParams = new URLSearchParams(window.location.search);
   const checkoutStatus = searchParams.get('checkout');
+  const paymentStatus = searchParams.get('payment');
+  const canceledStatus = searchParams.get('membership');
   if (checkoutStatus && billingFeedback) {
     billingFeedback.textContent = FEEDBACK[checkoutStatus] || '';
     if (checkoutStatus === 'success') {
@@ -114,6 +135,12 @@ async function hydrateBillingPage() {
         }, 1200);
       }
     }
+  }
+  if (paymentStatus === 'updated' && billingFeedback) {
+    billingFeedback.textContent = 'Payment information updated in Stripe.';
+  }
+  if (canceledStatus === 'canceled' && billingFeedback) {
+    billingFeedback.textContent = 'Membership canceled. App access has been removed.';
   }
 }
 
@@ -140,6 +167,42 @@ manageBillingButton?.addEventListener('click', async () => {
     window.location.href = url;
   } catch (error) {
     window.alert(error?.message || 'Unable to open billing portal right now.');
+    release();
+  }
+});
+
+paymentMethodButton?.addEventListener('click', async () => {
+  if (!hasSupabaseAuth() && !isLocalDemoMode()) {
+    redirectToLogin('./billing.html');
+    return;
+  }
+  const release = setButtonBusy(paymentMethodButton, 'Opening Stripe...');
+  try {
+    const { url } = await createCustomerPortalSession({
+      flow: 'payment_method_update',
+      returnPath: './billing.html?payment=updated',
+    });
+    window.location.href = url;
+  } catch (error) {
+    window.alert(error?.message || 'Unable to open payment information right now.');
+    release();
+  }
+});
+
+cancelMembershipButton?.addEventListener('click', async () => {
+  if (!hasSupabaseAuth() && !isLocalDemoMode()) return;
+  const confirmed = window.confirm('Cancel your membership now? This removes access to the dashboard, daily actions, community, and journal immediately.');
+  if (!confirmed) return;
+
+  const release = setButtonBusy(cancelMembershipButton, 'Canceling...');
+  try {
+    await cancelMembership();
+    const state = await getBillingState();
+    renderStatus(state);
+    if (billingFeedback) billingFeedback.textContent = 'Membership canceled. App access has been removed.';
+  } catch (error) {
+    window.alert(error?.message || 'Unable to cancel membership right now.');
+  } finally {
     release();
   }
 });

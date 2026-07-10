@@ -49,7 +49,7 @@ The app uses one subscription product:
 
 - `Dominion Subscription` for `$7/month`
 
-Stripe powers checkout and the customer portal. Supabase stores subscriptions and entitlements. App access is gated by the `membership_active` entitlement.
+Stripe powers checkout, payment method updates, and membership cancellation. Supabase stores subscriptions and entitlements. App access is gated by the `membership_active` entitlement.
 
 ### Required Stripe setup
 
@@ -61,17 +61,19 @@ Stripe powers checkout and the customer portal. Supabase stores subscriptions an
    - `PUBLIC_SITE_URL`
    - `CLOUDFLARE_PAGES_PROJECT_HOST`
    - `PUBLIC_ALLOWED_SITE_URLS`
-3. Deploy the Edge Functions:
+3. Configure the Stripe customer portal to allow payment method updates.
+4. Deploy the Edge Functions:
    - `create-checkout-session`
    - `create-customer-portal-session`
+   - `cancel-membership`
    - `stripe-webhook`
-4. Point a Stripe webhook endpoint at the deployed `stripe-webhook` function and subscribe at minimum to:
+5. Point a Stripe webhook endpoint at the deployed `stripe-webhook` function and subscribe at minimum to:
    - `checkout.session.completed`
    - `checkout.session.async_payment_succeeded`
    - `customer.subscription.created`
    - `customer.subscription.updated`
    - `customer.subscription.deleted`
-5. Run the updated `supabase/schema.sql` before testing billing flows.
+6. Run the updated `supabase/schema.sql` before testing billing flows.
 
 ## Build
 
