@@ -977,12 +977,15 @@ body.challenge-finished .confetti-layer {
   position: fixed;
   inset: 0;
   z-index: 990;
-  pointer-events: none;
+  pointer-events: auto;
   background:
     radial-gradient(circle at 50% 48%, color-mix(in srgb, var(--accent) 14%, transparent), transparent 42%),
     color-mix(in srgb, #000000 24%, transparent);
   opacity: 0;
   will-change: opacity;
+}
+body.challenge-finished .reward-backdrop {
+  z-index: 1190;
 }
 .reward-backdrop.active {
   opacity: 1;
@@ -1014,7 +1017,7 @@ body.challenge-finished .confetti-layer {
     0 0 54px color-mix(in srgb, var(--accent) 18%, transparent),
     inset 0 1px 0 color-mix(in srgb, #ffffff 16%, transparent);
   opacity: 0;
-  pointer-events: none;
+  pointer-events: auto;
   text-align: center;
   transform-origin: 50% 62%;
   transform: translate3d(-50%, calc(-50% + 18px), 0) scale(.94);

@@ -528,6 +528,11 @@ function finishRewardToastDismiss(rewardToast, rewardBackdrop) {
   }
 }
 function dismissRewardToast(rewardToast, rewardBackdrop) {
+  if (rewardToast.hidden || rewardToast.classList.contains('exiting')) return;
+  if (rewardToast.hideTimer) {
+    window.clearTimeout(rewardToast.hideTimer);
+    rewardToast.hideTimer = null;
+  }
   const finishDismissal = () => finishRewardToastDismiss(rewardToast, rewardBackdrop);
   const onAnimationEnd = (event) => {
     if (event.target === rewardToast && event.animationName === 'reward-toast-dissolve-out') {
@@ -1078,7 +1083,12 @@ const selectAllActionsButton = $('selectAllActionsButton');
 const checkInButton = $('checkInButton');
 const countdownCheckInButton = $('countdownCheckInButton');
 const walkReminderButton = $('walkReminderButton');
+const rewardBackdrop = $('rewardBackdrop');
+const rewardToast = $('rewardToast');
 if (themeToggle) themeToggle.addEventListener('click', () => { theme = theme === 'dark' ? 'light' : 'dark'; save('dominion:theme', theme); render(); });
+if (rewardBackdrop && rewardToast) {
+  rewardBackdrop.addEventListener('click', () => dismissRewardToast(rewardToast, rewardBackdrop));
+}
 if (startDateInput) startDateInput.addEventListener('input', event => {
   startDate = event.target.value || todayKey();
   if (localDemoMode) save('dominion:startDate', startDate);
