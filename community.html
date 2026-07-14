@@ -52,13 +52,13 @@
 
       <div class="community-feedback" id="communityFeedback" role="status" aria-live="polite"></div>
 
-      <nav class="community-tabs" aria-label="Community layers">
-        <button class="community-tab active" type="button" data-tab="crew">My Crew</button>
-        <button class="community-tab" type="button" data-tab="global">Global</button>
-        <button class="community-tab" type="button" data-tab="journey">My Journey</button>
+      <nav class="community-tabs" role="tablist" aria-label="Community layers">
+        <button class="community-tab active" id="crew-tab" type="button" role="tab" aria-selected="true" aria-controls="crew" data-tab="crew">Private Group</button>
+        <button class="community-tab" id="global-tab" type="button" role="tab" aria-selected="false" aria-controls="global" data-tab="global">Global</button>
+        <button class="community-tab" id="journey-tab" type="button" role="tab" aria-selected="false" aria-controls="journey" data-tab="journey">My Journey</button>
       </nav>
 
-      <section class="community-panel active" id="crew" aria-labelledby="crew-tab">
+      <section class="community-panel active" id="crew" role="tabpanel" aria-labelledby="crew-tab">
         <div class="community-summary card">
           <span class="app-icon icon-users" aria-hidden="true"></span>
           <div>
@@ -104,8 +104,19 @@
         <div class="community-stats" id="crewStats">
           <article class="card"><strong id="crewMemberCount">0</strong><span>Members</span></article>
           <article class="card"><strong id="crewDayCount">Day 1</strong><span>Group pace</span></article>
-          <article class="card"><strong id="crewPostCount">0</strong><span>Posts</span></article>
+          <article class="card"><strong id="crewPostCount">0</strong><span>Posts loaded</span></article>
         </div>
+
+        <section class="member-activity card" id="crewMembersCard" hidden>
+          <div class="section-heading-row">
+            <div>
+              <p class="eyebrow">Group Activity</p>
+              <h2>Your people, in the room.</h2>
+            </div>
+            <span class="privacy-badge">Members only</span>
+          </div>
+          <div class="member-list" id="crewMemberList" tabindex="0" aria-label="Private group members" aria-live="polite"></div>
+        </section>
 
         <section class="leaderboard-card card">
           <div class="leaderboard-header">
@@ -124,15 +135,47 @@
         <section class="composer-card card" id="crewComposerCard" hidden>
           <p class="eyebrow">Encourage Your Crew</p>
           <form id="crewPostForm">
-            <textarea id="crewPostBody" placeholder="Share a win, prayer request, or challenge from today..." required></textarea>
-            <button class="primary" type="submit">Post to Crew</button>
+            <label class="sr-only" for="crewPostBody">Post message</label>
+            <textarea id="crewPostBody" maxlength="2000" placeholder="Share a win, challenge, or word of encouragement..."></textarea>
+            <div class="composer-upload-row">
+              <label class="photo-picker" for="crewPostImage">
+                <input id="crewPostImage" type="file" accept="image/jpeg,image/png,image/webp,image/heic,image/heif" />
+                <span>Add a photo</span>
+              </label>
+              <small>JPG, PNG, WebP, HEIC · 10 MB max</small>
+            </div>
+            <div class="post-image-preview" id="crewPostImagePreview" hidden>
+              <img id="crewPostImagePreviewImage" alt="Selected post preview" />
+              <button class="secondary compact" id="removeCrewPostImage" type="button">Remove photo</button>
+            </div>
+            <label class="post-image-alt" id="crewPostImageAltLabel" hidden>
+              <span>Photo description <small>(helps members using screen readers)</small></span>
+              <input id="crewPostImageAlt" type="text" maxlength="240" placeholder="Describe what is in the photo" />
+            </label>
+            <div class="composer-actions">
+              <small id="crewPostCharacterCount">0 / 2,000</small>
+              <button class="primary" type="submit">Post to Private Group</button>
+            </div>
           </form>
         </section>
 
-        <div class="feed-list" id="crewFeed"></div>
+        <section class="private-feed-section" id="crewFeedSection" hidden>
+          <div class="section-heading-row feed-heading">
+            <div>
+              <p class="eyebrow">Private Group Feed</p>
+              <h2>Latest encouragement.</h2>
+            </div>
+            <button class="secondary compact" id="refreshCrewFeedButton" type="button">Refresh</button>
+          </div>
+          <div class="pull-refresh-indicator" id="crewPullRefreshIndicator" role="status" aria-live="polite">Pull down to refresh</div>
+          <div class="private-feed-scroll" id="crewFeedScroll" tabindex="0" aria-label="Private group posts">
+            <div class="feed-list" id="crewFeed" aria-busy="true"></div>
+            <div class="feed-sentinel" id="crewFeedSentinel"></div>
+          </div>
+        </section>
       </section>
 
-      <section class="community-panel" id="global" aria-labelledby="global-tab">
+      <section class="community-panel" id="global" role="tabpanel" aria-labelledby="global-tab" hidden>
         <div class="community-summary card">
           <span class="app-icon icon-globe" aria-hidden="true"></span>
           <div>
@@ -164,10 +207,10 @@
           </form>
         </section>
 
-        <div class="feed-list" id="globalFeed"></div>
+        <div class="feed-list" id="globalFeed" tabindex="-1" aria-label="Global community posts"></div>
       </section>
 
-      <section class="community-panel" id="journey" aria-labelledby="journey-tab">
+      <section class="community-panel" id="journey" role="tabpanel" aria-labelledby="journey-tab" hidden>
         <div class="community-summary card">
           <span class="app-icon icon-book" aria-hidden="true"></span>
           <div>
