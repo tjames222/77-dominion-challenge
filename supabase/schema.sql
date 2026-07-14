@@ -50,6 +50,20 @@ alter table public.check_ins
   add column if not exists workout_difficulty jsonb not null default '{}'::jsonb,
   add column if not exists points_awarded integer not null default 0;
 
+create table if not exists public.workout_difficulty_point_values (
+  difficulty text primary key check (difficulty in ('easy', 'medium', 'hard', 'extreme')),
+  points integer not null check (points >= 0),
+  updated_at timestamptz not null default now()
+);
+
+insert into public.workout_difficulty_point_values (difficulty, points)
+values
+  ('easy', 2),
+  ('medium', 5),
+  ('hard', 10),
+  ('extreme', 15)
+on conflict (difficulty) do nothing;
+
 create table if not exists public.billing_customers (
   user_id uuid primary key references auth.users(id) on delete cascade,
   stripe_customer_id text not null unique,
@@ -366,6 +380,11 @@ create trigger set_challenge_entries_updated_at
   before update on public.challenge_entries
   for each row execute function public.set_updated_at();
 
+drop trigger if exists set_workout_difficulty_point_values_updated_at on public.workout_difficulty_point_values;
+create trigger set_workout_difficulty_point_values_updated_at
+  before update on public.workout_difficulty_point_values
+  for each row execute function public.set_updated_at();
+
 drop trigger if exists set_billing_customers_updated_at on public.billing_customers;
 create trigger set_billing_customers_updated_at
   before update on public.billing_customers
@@ -514,16 +533,22 @@ $$;
 create or replace function public.workout_difficulty_points(target_difficulty text)
 returns integer
 language sql
-immutable
+stable
 set search_path = public
 as $$
-  select case target_difficulty
-    when 'easy' then 2
-    when 'medium' then 5
-    when 'hard' then 10
-    when 'extreme' then 15
-    else 0
-  end;
+  select coalesce(
+    (
+      select config.points
+      from public.workout_difficulty_point_values config
+      where config.difficulty = lower(btrim(coalesce(target_difficulty, 'medium')))
+    ),
+    (
+      select config.points
+      from public.workout_difficulty_point_values config
+      where config.difficulty = 'medium'
+    ),
+    0
+  );
 $$;
 
 create or replace function public.full_streak_bonus_points(target_streak integer)
@@ -1201,6 +1226,9 @@ grant execute on function public.has_active_entitlement(text) to authenticated;
 revoke execute on function public.can_read_community_post(uuid) from public;
 revoke execute on function public.can_read_community_post(uuid) from anon;
 grant execute on function public.can_read_community_post(uuid) to authenticated;
+revoke execute on function public.workout_difficulty_points(text) from public;
+revoke execute on function public.workout_difficulty_points(text) from anon;
+revoke execute on function public.workout_difficulty_points(text) from authenticated;
 revoke execute on function public.ensure_user_game_stats(uuid) from public;
 revoke execute on function public.ensure_user_game_stats(uuid) from anon;
 revoke execute on function public.ensure_user_game_stats(uuid) from authenticated;
@@ -1275,6 +1303,7 @@ alter table public.badge_definitions enable row level security;
 alter table public.user_badges enable row level security;
 alter table public.user_game_stats enable row level security;
 alter table public.game_point_events enable row level security;
+alter table public.workout_difficulty_point_values enable row level security;
 
 drop policy if exists "Users can read own profile" on public.profiles;
 create policy "Users can read own profile"
@@ -1365,6 +1394,23 @@ create policy "Users can read own entitlements"
   for select
   to authenticated
   using ((select auth.uid()) = user_id);
+
+drop policy if exists "Authenticated users can read workout difficulty point values"
+  on public.workout_difficulty_point_values;
+create policy "Authenticated users can read workout difficulty point values"
+  on public.workout_difficulty_point_values
+  for select
+  to authenticated
+  using (true);
+
+drop policy if exists "Service role can update workout difficulty point values"
+  on public.workout_difficulty_point_values;
+create policy "Service role can update workout difficulty point values"
+  on public.workout_difficulty_point_values
+  for update
+  to service_role
+  using (true)
+  with check (true);
 
 drop policy if exists "Authenticated users can read badge definitions" on public.badge_definitions;
 create policy "Authenticated users can read badge definitions"
@@ -1729,6 +1775,10 @@ revoke all on public.user_game_stats from anon;
 revoke all on public.user_game_stats from authenticated;
 revoke all on public.game_point_events from anon;
 revoke all on public.game_point_events from authenticated;
+revoke all on public.workout_difficulty_point_values from public;
+revoke all on public.workout_difficulty_point_values from anon;
+revoke all on public.workout_difficulty_point_values from authenticated;
+revoke all on public.workout_difficulty_point_values from service_role;
 
 grant select, insert, update on public.profiles to authenticated;
 grant select, insert, update on public.challenge_entries to authenticated;
@@ -1752,6 +1802,9 @@ grant select on public.badge_definitions to authenticated;
 grant select on public.user_badges to authenticated;
 grant select on public.user_game_stats to authenticated;
 grant select on public.game_point_events to authenticated;
+grant select on public.workout_difficulty_point_values to authenticated;
+grant select on public.workout_difficulty_point_values to service_role;
+grant update (points) on public.workout_difficulty_point_values to service_role;
 
 insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
 values (
