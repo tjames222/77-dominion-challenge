@@ -18,7 +18,7 @@
       <section class="dashboard-hero actions-hero compact-hero reveal">
         <p class="eyebrow">Today's Actions</p>
         <h1>The 7 for Today</h1>
-        <p class="lead">Open the details, take the next step, then mark it complete back on the dashboard.</p>
+        <p class="lead">Open the details, take the next step, and mark each action complete right here.</p>
       </section>
 
       <section class="daily-actions dashboard-section reveal">
@@ -38,6 +38,10 @@
               <span>Open in YouVersion</span>
               <span aria-hidden="true">↗</span>
             </a>
+            <button class="action-completion-button" type="button" data-action-completion="bible" aria-label="Mark Bible Reading complete" aria-pressed="false">
+              <span class="action-completion-box"><span class="app-icon icon-sm icon-check" aria-hidden="true"></span></span>
+              <span data-completion-label>Mark Bible Reading complete</span>
+            </button>
           </div>
         </section>
         <div class="action-grid">
@@ -51,6 +55,10 @@
               <span class="app-icon icon-bible action-button-icon" aria-hidden="true"></span>
               <span>Open guided prayer</span>
             </a>
+            <button class="action-completion-button" type="button" data-action-completion="morningPrayer" aria-label="Mark Morning Prayer complete" aria-pressed="false">
+              <span class="action-completion-box"><span class="app-icon icon-sm icon-check" aria-hidden="true"></span></span>
+              <span data-completion-label>Mark Morning Prayer complete</span>
+            </button>
           </article>
 
           <article class="action-card worship-card">
@@ -64,6 +72,10 @@
               <span>Open today’s playlist</span>
             </a>
             <small id="worshipPrompt">A fresh worship direction loads each day.</small>
+            <button class="action-completion-button" type="button" data-action-completion="worshipOnly" aria-label="Mark Worship complete" aria-pressed="false">
+              <span class="action-completion-box"><span class="app-icon icon-sm icon-check" aria-hidden="true"></span></span>
+              <span data-completion-label>Mark Worship complete</span>
+            </button>
           </article>
 
           <article class="action-card workout-card workout-card-primary">
@@ -88,6 +100,10 @@
               <span class="app-icon icon-apple action-button-icon" aria-hidden="true"></span>
               <span>Connect Apple Health</span>
             </button>
+            <button class="action-completion-button" type="button" data-action-completion="workoutOne" aria-label="Mark Workout #1 complete" aria-pressed="false">
+              <span class="action-completion-box"><span class="app-icon icon-sm icon-check" aria-hidden="true"></span></span>
+              <span data-completion-label>Mark Workout #1 complete</span>
+            </button>
           </article>
 
           <article class="action-card walk-card">
@@ -105,6 +121,10 @@
               <span>Connect steps</span>
             </button>
             <small id="walkReminderStatus">Apple Health and Clock handoff require native app permissions.</small>
+            <button class="action-completion-button" type="button" data-action-completion="walk" aria-label="Mark Intentional Walk complete" aria-pressed="false">
+              <span class="action-completion-box"><span class="app-icon icon-sm icon-check" aria-hidden="true"></span></span>
+              <span data-completion-label>Mark Intentional Walk complete</span>
+            </button>
           </article>
 
           <article class="action-card workout-card workout-card-secondary">
@@ -129,6 +149,10 @@
               <span class="app-icon icon-apple action-button-icon" aria-hidden="true"></span>
               <span>Connect Apple Health</span>
             </button>
+            <button class="action-completion-button" type="button" data-action-completion="workoutTwo" aria-label="Mark Workout #2 complete" aria-pressed="false">
+              <span class="action-completion-box"><span class="app-icon icon-sm icon-check" aria-hidden="true"></span></span>
+              <span data-completion-label>Mark Workout #2 complete</span>
+            </button>
           </article>
 
           <article class="action-card prayer-card evening-prayer-card">
@@ -141,10 +165,19 @@
               <span class="app-icon icon-bible action-button-icon" aria-hidden="true"></span>
               <span>Open guided prayer</span>
             </a>
+            <button class="action-completion-button" type="button" data-action-completion="eveningPrayer" aria-label="Mark Evening Prayer complete" aria-pressed="false">
+              <span class="action-completion-box"><span class="app-icon icon-sm icon-check" aria-hidden="true"></span></span>
+              <span data-completion-label>Mark Evening Prayer complete</span>
+            </button>
           </article>
         </div>
       </section>
     </main>
+    <a class="floating-check-in-cta" id="floatingCheckInCta" href="./dashboard.html#check-in" aria-hidden="true" tabindex="-1">
+      <span class="app-icon icon-check" aria-hidden="true"></span>
+      <span>Go to Check-In</span>
+      <span aria-hidden="true">→</span>
+    </a>
     <script type="module" src="./src/static/menu.js"></script>
     <script type="module" src="./src/static/dashboard.js"></script>
   </body>
