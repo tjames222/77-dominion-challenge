@@ -108,6 +108,7 @@ const workoutPlans = {
 const difficultyPointMap = { easy: 2, medium: 5, hard: 10, extreme: 15 };
 const difficultyOptions = Object.keys(difficultyPointMap);
 const defaultWorkoutDifficulty = { one: 'medium', two: 'medium' };
+const POINTS_PER_LEVEL = 500;
 const CONFETTI_DURATION_MS = 10800;
 const REDUCED_CONFETTI_DURATION_MS = 2200;
 const REWARD_TOAST_DURATION_MS = 5200;
@@ -251,6 +252,51 @@ const calculateLocalPoints = (entry, status) => {
   return points;
 };
 const badgeEarnedDate = (badge) => badge.entryDate || badge.earnedDate || badge.metadata?.entryDate || String(badge.earnedAt || '').slice(0, 10);
+const badgeDateFormatter = new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric' });
+const safeBadgeTier = (badge) => {
+  const tier = String(badge?.tier || '').toLowerCase();
+  return ['bronze', 'silver', 'gold'].includes(tier) ? tier : 'bronze';
+};
+const badgeEarnedDisplay = (badge) => {
+  const earnedDate = badgeEarnedDate(badge);
+  if (!earnedDate) return { dateTime: '', label: 'Recently earned' };
+  const dateTime = String(earnedDate).slice(0, 10);
+  const date = new Date(`${dateTime}T00:00:00`);
+  if (Number.isNaN(date.getTime())) return { dateTime: '', label: 'Recently earned' };
+  return { dateTime, label: `Earned ${badgeDateFormatter.format(date)}` };
+};
+const progressionBadgeCard = (badge) => {
+  const tier = safeBadgeTier(badge);
+  const tierLabel = `${tier.charAt(0).toUpperCase()}${tier.slice(1)} badge`;
+  const name = badge?.name || 'Badge';
+  const description = badge?.description || 'Earned through faithful progress.';
+  const earned = badgeEarnedDisplay(badge);
+  const earnedMarkup = earned.dateTime
+    ? `<time datetime="${escapeHtml(earned.dateTime)}">${escapeHtml(earned.label)}</time>`
+    : `<span>${escapeHtml(earned.label)}</span>`;
+
+  return `<article class="progression-badge-card ${tier}"><span class="progression-badge-icon app-icon ${badgeIconClass(badge)}" aria-hidden="true"></span><div class="progression-badge-copy"><div class="progression-badge-meta"><span>${escapeHtml(tierLabel)}</span>${earnedMarkup}</div><strong>${escapeHtml(name)}</strong><p>${escapeHtml(description)}</p></div></article>`;
+};
+const dayCountLabel = (value) => `${value} ${value === 1 ? 'day' : 'days'}`;
+const getLevelProgress = (rawTotalPoints) => {
+  const numericPoints = Number(rawTotalPoints);
+  const totalPoints = Number.isFinite(numericPoints) ? Math.max(0, Math.floor(numericPoints)) : 0;
+  const level = Math.floor(totalPoints / POINTS_PER_LEVEL) + 1;
+  const pointsIntoLevel = totalPoints % POINTS_PER_LEVEL;
+  const pointsToNext = POINTS_PER_LEVEL - pointsIntoLevel;
+  const progressPercent = (pointsIntoLevel / POINTS_PER_LEVEL) * 100;
+  return { totalPoints, level, nextLevel: level + 1, pointsIntoLevel, pointsToNext, progressPercent };
+};
+const momentumMessageFor = ({ totalPoints, nextLevel, pointsToNext, appStreak, fullDayStreak, recentBadges }) => {
+  if (totalPoints === 0) return 'Your first honest check-in starts the climb.';
+  if (pointsToNext <= 100) return `Level ${nextLevel} is within reach—${pointsToNext} more points will get you there.`;
+  if (fullDayStreak >= 7) return `${dayCountLabel(fullDayStreak)} at the full standard. Protect the streak today.`;
+  if (fullDayStreak >= 3) return 'Momentum is taking shape. One more full-standard day keeps the chain alive.';
+  if (appStreak >= 7) return 'You keep showing up. Turn today’s visit into a full-standard day.';
+  if (appStreak >= 3) return 'The habit is forming. Carry today’s app streak into all seven actions.';
+  if (recentBadges.length) return `${recentBadges[0].name || 'Your latest badge'} is on your shelf. Keep stacking the standard.`;
+  return `${pointsToNext} points stand between you and Level ${nextLevel}.`;
+};
 const badgeExistsForDate = (date) => badges.some((badge) => badgeEarnedDate(badge) === date);
 const workoutBadgeCandidates = (entry) => {
   const candidates = [];
@@ -309,24 +355,58 @@ function awardLocalBadges(entry, status, nextFullStreak = 0) {
 }
 function renderGameSummary() {
   const gamePointsTotal = $('gamePointsTotal');
-  const gameStreakSummary = $('gameStreakSummary');
+  const gameLevelNumber = $('gameLevelNumber');
+  const gameLevelLabel = $('gameLevelLabel');
+  const gameLevelProgressLabel = $('gameLevelProgressLabel');
+  const gamePointsToNext = $('gamePointsToNext');
+  const gameLevelProgress = $('gameLevelProgress');
+  const gameLevelProgressFill = $('gameLevelProgressFill');
+  const gameMomentumMessage = $('gameMomentumMessage');
   const appStreakCount = $('appStreakCount');
+  const appStreakUnit = $('appStreakUnit');
+  const appStreakBest = $('appStreakBest');
   const fullDayStreakCount = $('fullDayStreakCount');
+  const fullDayStreakUnit = $('fullDayStreakUnit');
+  const fullDayStreakBest = $('fullDayStreakBest');
+  const recentBadgeSummary = $('recentBadgeSummary');
   const badgeShelf = $('badgeShelf');
-  const totalPoints = gameStats.totalPoints || gameStats.challengePoints || 0;
-  const appStreak = gameStats.currentAppStreak || 0;
-  const fullDayStreak = gameStats.currentFullDayStreak || 0;
+  const levelProgress = getLevelProgress(gameStats.totalPoints ?? gameStats.challengePoints ?? 0);
+  const appStreak = Math.max(0, Math.floor(Number(gameStats.currentAppStreak) || 0));
+  const bestAppStreak = Math.max(appStreak, Math.floor(Number(gameStats.bestAppStreak) || 0));
+  const fullDayStreak = Math.max(0, Math.floor(Number(gameStats.currentFullDayStreak) || 0));
+  const bestFullDayStreak = Math.max(fullDayStreak, Math.floor(Number(gameStats.bestFullDayStreak) || 0));
+  const recentBadges = badges.filter(Boolean).slice(0, 4);
 
-  if (gamePointsTotal) gamePointsTotal.textContent = `${totalPoints.toLocaleString()} points`;
-  if (gameStreakSummary) {
-    gameStreakSummary.textContent = `${appStreak} day app streak · ${fullDayStreak} full-standard day streak`;
+  if (gamePointsTotal) gamePointsTotal.textContent = levelProgress.totalPoints.toLocaleString();
+  if (gameLevelNumber) gameLevelNumber.textContent = String(levelProgress.level);
+  if (gameLevelLabel) gameLevelLabel.textContent = `Level ${levelProgress.level}`;
+  if (gameLevelProgressLabel) gameLevelProgressLabel.textContent = `Level ${levelProgress.level} progress`;
+  if (gamePointsToNext) gamePointsToNext.textContent = `${levelProgress.pointsToNext.toLocaleString()} points to Level ${levelProgress.nextLevel}`;
+  if (gameLevelProgress) {
+    gameLevelProgress.setAttribute('aria-valuenow', String(levelProgress.pointsIntoLevel));
+    gameLevelProgress.setAttribute('aria-valuetext', `${levelProgress.pointsIntoLevel} of ${POINTS_PER_LEVEL} points earned toward Level ${levelProgress.nextLevel}`);
+  }
+  if (gameLevelProgressFill) gameLevelProgressFill.style.setProperty('--level-progress', `${levelProgress.progressPercent}%`);
+  if (gameMomentumMessage) {
+    const momentumMessage = momentumMessageFor({
+      ...levelProgress,
+      appStreak,
+      fullDayStreak,
+      recentBadges,
+    });
+    if (gameMomentumMessage.textContent !== momentumMessage) gameMomentumMessage.textContent = momentumMessage;
   }
   if (appStreakCount) appStreakCount.textContent = String(appStreak);
+  if (appStreakUnit) appStreakUnit.textContent = appStreak === 1 ? 'day' : 'days';
+  if (appStreakBest) appStreakBest.textContent = `Best ${dayCountLabel(bestAppStreak)}`;
   if (fullDayStreakCount) fullDayStreakCount.textContent = String(fullDayStreak);
+  if (fullDayStreakUnit) fullDayStreakUnit.textContent = fullDayStreak === 1 ? 'day' : 'days';
+  if (fullDayStreakBest) fullDayStreakBest.textContent = `Best ${dayCountLabel(bestFullDayStreak)}`;
+  if (recentBadgeSummary) recentBadgeSummary.textContent = recentBadges.length ? `${recentBadges.length} recent` : 'No badges yet';
   if (badgeShelf) {
-    badgeShelf.innerHTML = badges.length
-      ? badges.slice(0, 6).map(badgeChip).join('')
-      : '<span class="badge-empty">Badges unlock as you check in.</span>';
+    badgeShelf.innerHTML = recentBadges.length
+      ? recentBadges.map(progressionBadgeCard).join('')
+      : '<article class="progression-badge-empty"><span class="app-icon icon-shield" aria-hidden="true"></span><div><strong>Your first badge is waiting.</strong><p>Complete an honest check-in to put proof of the work on your shelf.</p></div></article>';
   }
 }
 function launchConfetti({ endless = false } = {}) {
