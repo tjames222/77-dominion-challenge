@@ -50,17 +50,75 @@
         <button class="action-button countdown-action" type="button" id="countdownCheckInButton">Go to check-in</button>
       </section>
 
-      <section class="game-summary-card reveal" id="gameSummaryCard">
-        <div>
-          <p class="eyebrow">Your Level</p>
-          <h2 id="gamePointsTotal">0 points</h2>
-          <p class="section-copy" id="gameStreakSummary">Open the app daily and stack faithful days to build your streak.</p>
+      <section class="game-summary-card reveal" id="gameSummaryCard" aria-labelledby="gameSummaryEyebrow gameSummaryTitle">
+        <div class="game-summary-hero">
+          <div class="game-level-emblem" aria-hidden="true">
+            <span class="app-icon icon-crown"></span>
+            <strong id="gameLevelNumber">1</strong>
+            <small>Level</small>
+          </div>
+          <div class="game-points-block">
+            <p class="eyebrow" id="gameSummaryEyebrow">Your Progress</p>
+            <h2 class="game-points-total" id="gameSummaryTitle">
+              <span id="gamePointsTotal">0</span>
+              <small>points</small>
+            </h2>
+            <p class="game-level-label" id="gameLevelLabel">Level 1</p>
+          </div>
         </div>
-        <div class="game-stat-strip">
-          <span><strong id="appStreakCount">0</strong><small>App streak</small></span>
-          <span><strong id="fullDayStreakCount">0</strong><small>Full-day streak</small></span>
+
+        <div class="game-level-progress-panel">
+          <div class="game-level-progress-heading">
+            <span id="gameLevelProgressLabel">Level 1 progress</span>
+            <strong id="gamePointsToNext">500 points to Level 2</strong>
+          </div>
+          <div
+            class="game-level-progress-track"
+            id="gameLevelProgress"
+            role="progressbar"
+            aria-labelledby="gameLevelProgressLabel"
+            aria-valuemin="0"
+            aria-valuemax="500"
+            aria-valuenow="0"
+            aria-valuetext="0 of 500 points earned toward Level 2"
+          >
+            <span id="gameLevelProgressFill"></span>
+          </div>
+          <p class="game-momentum-message" role="status" aria-live="polite">
+            <span class="app-icon icon-spark" aria-hidden="true"></span>
+            <span id="gameMomentumMessage">Your first honest check-in starts the climb.</span>
+          </p>
         </div>
-        <div class="badge-shelf" id="badgeShelf" aria-label="Recent badges"></div>
+
+        <div class="game-streak-grid" aria-label="Current and best streaks">
+          <article class="game-streak-card app-streak-card">
+            <span class="app-icon icon-eye" aria-hidden="true"></span>
+            <div>
+              <p>App streak</p>
+              <div class="game-streak-value"><strong id="appStreakCount">0</strong><span id="appStreakUnit">days</span></div>
+              <small id="appStreakBest">Best 0 days</small>
+            </div>
+          </article>
+          <article class="game-streak-card full-streak-card">
+            <span class="app-icon icon-flame" aria-hidden="true"></span>
+            <div>
+              <p>Full-standard streak</p>
+              <div class="game-streak-value"><strong id="fullDayStreakCount">0</strong><span id="fullDayStreakUnit">days</span></div>
+              <small id="fullDayStreakBest">Best 0 days</small>
+            </div>
+          </article>
+        </div>
+
+        <div class="progression-badges">
+          <div class="progression-badges-heading">
+            <div>
+              <p class="eyebrow">Recent Badges</p>
+              <h3>Proof of the work</h3>
+            </div>
+            <span id="recentBadgeSummary">No badges yet</span>
+          </div>
+          <div class="progression-badge-grid" id="badgeShelf" aria-label="Recent badges"></div>
+        </div>
       </section>
 
       <section class="dashboard-brand-panel reveal" aria-label="77 Dominion Challenge mark">

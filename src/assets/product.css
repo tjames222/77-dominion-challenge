@@ -339,57 +339,505 @@ body.challenge-finished .confetti-layer {
 }
 .game-summary-card {
   position: relative;
+  isolation: isolate;
   display: grid;
-  gap: 18px;
+  gap: clamp(18px, 3vw, 24px);
   overflow: hidden;
-  padding: clamp(20px, 4vw, 28px);
-  border: 1px solid color-mix(in srgb, var(--accent) 38%, var(--border));
-  border-radius: 8px;
+  padding: clamp(20px, 4vw, 32px);
+  border: 1px solid color-mix(in srgb, var(--accent) 48%, var(--border));
+  border-radius: 24px;
   background:
-    linear-gradient(135deg, color-mix(in srgb, var(--accent) 16%, transparent), transparent 44%),
-    linear-gradient(315deg, color-mix(in srgb, var(--success) 11%, transparent), transparent 50%),
-    color-mix(in srgb, var(--surface) 90%, var(--background));
+    radial-gradient(circle at 8% 0%, color-mix(in srgb, var(--accent-strong) 24%, transparent), transparent 31%),
+    radial-gradient(circle at 100% 100%, color-mix(in srgb, var(--success) 16%, transparent), transparent 35%),
+    linear-gradient(145deg, color-mix(in srgb, var(--surface) 96%, var(--accent) 4%), color-mix(in srgb, var(--background) 38%, var(--surface)));
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, #ffffff 13%, transparent),
+    0 26px 70px color-mix(in srgb, #000000 45%, transparent),
+    0 0 0 7px color-mix(in srgb, var(--accent) 5%, transparent);
 }
 .game-summary-card::before {
   content: "";
   position: absolute;
+  z-index: 2;
   inset: 0 0 auto;
-  height: 3px;
-  background: linear-gradient(90deg, var(--accent), var(--success), var(--accent-strong));
+  height: 4px;
+  background: linear-gradient(90deg, transparent, var(--accent), var(--accent-strong), var(--success), transparent);
+  box-shadow: 0 2px 18px color-mix(in srgb, var(--accent) 32%, transparent);
+}
+.game-summary-card::after {
+  content: "";
+  position: absolute;
+  z-index: 0;
+  right: clamp(-90px, -7vw, -36px);
+  bottom: clamp(-112px, -9vw, -58px);
+  width: clamp(190px, 30vw, 330px);
+  aspect-ratio: 1;
+  border: 1px solid color-mix(in srgb, var(--accent) 16%, transparent);
+  border-radius: 50%;
+  box-shadow:
+    0 0 0 26px color-mix(in srgb, var(--accent) 3%, transparent),
+    0 0 0 58px color-mix(in srgb, var(--success) 2%, transparent);
+  pointer-events: none;
 }
 .game-summary-card > * {
   position: relative;
+  z-index: 1;
+  min-width: 0;
 }
-.game-summary-card h2 {
-  font-size: 2rem;
-  line-height: 1;
-  letter-spacing: 0;
-}
-.game-stat-strip {
+.game-summary-hero {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: clamp(14px, 3vw, 22px);
+}
+.game-level-emblem {
+  position: relative;
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  width: clamp(84px, 22vw, 112px);
+  aspect-ratio: 1;
+  border: 1px solid color-mix(in srgb, var(--accent-strong) 68%, var(--border));
+  border-radius: 50%;
+  background:
+    radial-gradient(circle at 34% 24%, color-mix(in srgb, #ffffff 28%, transparent), transparent 22%),
+    linear-gradient(145deg, color-mix(in srgb, var(--accent-strong) 92%, #fff1b5), color-mix(in srgb, var(--accent) 84%, #5b3505));
+  color: #211301;
+  box-shadow:
+    inset 0 1px 1px color-mix(in srgb, #ffffff 52%, transparent),
+    inset 0 -9px 22px color-mix(in srgb, #5b3505 26%, transparent),
+    0 0 0 6px color-mix(in srgb, var(--accent) 10%, transparent),
+    0 18px 34px color-mix(in srgb, #000000 30%, transparent);
+  transition: transform 280ms cubic-bezier(.16, 1, .3, 1), box-shadow 280ms ease;
+}
+.game-level-emblem::before {
+  content: "";
+  position: absolute;
+  inset: 6px;
+  border: 1px solid color-mix(in srgb, #ffffff 34%, transparent);
+  border-radius: inherit;
+  pointer-events: none;
+}
+.game-summary-card:hover .game-level-emblem {
+  transform: translateY(-2px) rotate(-1deg);
+  box-shadow:
+    inset 0 1px 1px color-mix(in srgb, #ffffff 52%, transparent),
+    inset 0 -9px 22px color-mix(in srgb, #5b3505 26%, transparent),
+    0 0 0 8px color-mix(in srgb, var(--accent) 13%, transparent),
+    0 22px 42px color-mix(in srgb, #000000 35%, transparent);
+}
+.game-level-emblem .app-icon {
+  position: absolute;
+  top: 11px;
+  right: 11px;
+  width: 27px;
+  height: 27px;
+  color: #2b1902;
+  background: color-mix(in srgb, #ffffff 30%, transparent);
+}
+.game-level-emblem .app-icon::before {
+  width: 16px;
+  height: 16px;
+}
+.game-level-emblem strong {
+  font-size: clamp(2.1rem, 9vw, 3.15rem);
+  font-variant-numeric: tabular-nums;
+  line-height: .84;
+  letter-spacing: -.06em;
+}
+.game-level-emblem small {
+  margin-top: 8px;
+  font-size: .62rem;
+  font-weight: 950;
+  line-height: 1;
+  letter-spacing: .18em;
+  text-transform: uppercase;
+}
+.game-points-block {
+  min-width: 0;
+}
+.game-points-block .eyebrow {
+  margin-bottom: 10px;
+}
+.game-points-total {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 8px 10px;
+  margin: 0;
+}
+.game-points-total > span {
+  color: var(--text);
+  font-size: clamp(2.5rem, 8vw, 5.6rem);
+  font-weight: 1000;
+  font-variant-numeric: tabular-nums;
+  line-height: .84;
+  letter-spacing: -.065em;
+  text-shadow: 0 8px 28px color-mix(in srgb, var(--accent) 18%, transparent);
+}
+.game-points-total > small {
+  margin-bottom: .32em;
+  color: var(--accent-strong);
+  font-size: .72rem;
+  font-weight: 950;
+  line-height: 1;
+  letter-spacing: .14em;
+  text-transform: uppercase;
+}
+.game-level-label {
+  display: inline-flex;
+  align-items: center;
+  min-height: 29px;
+  margin: 13px 0 0;
+  padding: 0 11px;
+  border: 1px solid color-mix(in srgb, var(--accent) 36%, var(--border));
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent) 11%, transparent);
+  color: var(--accent-strong);
+  font-size: .72rem;
+  font-weight: 950;
+  letter-spacing: .1em;
+  text-transform: uppercase;
+}
+.game-level-progress-panel {
+  display: grid;
+  align-content: center;
+  gap: 13px;
+  padding: clamp(16px, 3vw, 21px);
+  border: 1px solid color-mix(in srgb, var(--accent) 24%, var(--border));
+  border-radius: 20px;
+  background:
+    linear-gradient(135deg, color-mix(in srgb, var(--accent) 9%, transparent), transparent 58%),
+    color-mix(in srgb, var(--surface-elevated) 76%, transparent);
+  box-shadow: inset 0 1px 0 color-mix(in srgb, #ffffff 7%, transparent);
+}
+.game-level-progress-heading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 6px 14px;
+}
+.game-level-progress-heading span {
+  color: var(--text-muted);
+  font-size: .68rem;
+  font-weight: 950;
+  letter-spacing: .1em;
+  text-transform: uppercase;
+}
+.game-level-progress-heading strong {
+  color: var(--text);
+  font-size: .84rem;
+  line-height: 1.3;
+}
+.game-level-progress-track {
+  position: relative;
+  height: 13px;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--accent) 20%, var(--border));
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--background) 48%, var(--surface-elevated));
+  box-shadow: inset 0 2px 5px color-mix(in srgb, #000000 36%, transparent);
+}
+.game-level-progress-track > span {
+  position: relative;
+  display: block;
+  width: var(--level-progress, 0%);
+  min-width: 0;
+  height: 100%;
+  overflow: hidden;
+  border-radius: inherit;
+  background: linear-gradient(90deg, var(--accent), var(--accent-strong) 58%, var(--success));
+  box-shadow: 0 0 18px color-mix(in srgb, var(--accent-strong) 42%, transparent);
+  transition: width 900ms cubic-bezier(.16, 1, .3, 1);
+}
+.game-level-progress-track > span::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(100deg, transparent 18%, color-mix(in srgb, #ffffff 54%, transparent) 50%, transparent 82%);
+  transform: translateX(-120%);
+  animation: level-progress-sheen 1400ms ease-out 240ms both;
+}
+.game-momentum-message {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+  margin: 0;
+  color: var(--text-muted);
+  font-size: .9rem;
+  font-weight: 750;
+  line-height: 1.45;
+}
+.game-momentum-message .app-icon {
+  width: 30px;
+  height: 30px;
+  color: var(--accent-strong);
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+}
+.game-momentum-message .app-icon::before {
+  width: 16px;
+  height: 16px;
+}
+.game-streak-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: 10px;
 }
-.game-stat-strip span {
+.game-streak-card {
+  position: relative;
   display: grid;
-  gap: 4px;
-  min-height: 82px;
-  align-content: center;
-  padding: 14px;
-  border: 1px solid color-mix(in srgb, var(--accent) 20%, var(--border));
-  border-radius: 8px;
-  background: color-mix(in srgb, var(--surface-elevated) 74%, transparent);
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 13px;
+  min-width: 0;
+  min-height: 118px;
+  padding: 16px;
+  border: 1px solid color-mix(in srgb, var(--streak-accent, var(--accent)) 30%, var(--border));
+  border-radius: 18px;
+  background:
+    linear-gradient(145deg, color-mix(in srgb, var(--streak-accent, var(--accent)) 11%, transparent), transparent 62%),
+    color-mix(in srgb, var(--surface-elevated) 78%, transparent);
+  box-shadow: inset 0 1px 0 color-mix(in srgb, #ffffff 7%, transparent);
+  transition: transform 220ms cubic-bezier(.16, 1, .3, 1), border-color 220ms ease, box-shadow 220ms ease;
 }
-.game-stat-strip strong {
-  color: var(--accent-strong);
-  font-size: 1.65rem;
+.game-streak-card:hover {
+  transform: translateY(-2px);
+  border-color: color-mix(in srgb, var(--streak-accent, var(--accent)) 56%, var(--border));
+  box-shadow: inset 0 1px 0 color-mix(in srgb, #ffffff 9%, transparent), 0 15px 30px color-mix(in srgb, var(--streak-accent, var(--accent)) 10%, transparent);
+}
+.game-streak-card:active {
+  transform: translateY(0) scale(.99);
+}
+.game-streak-card > .app-icon {
+  width: 44px;
+  height: 44px;
+  color: color-mix(in srgb, var(--streak-accent, var(--accent)) 80%, var(--text));
+  background: color-mix(in srgb, var(--streak-accent, var(--accent)) 14%, var(--surface));
+  box-shadow: 0 0 0 5px color-mix(in srgb, var(--streak-accent, var(--accent)) 7%, transparent);
+}
+.game-streak-card p {
+  margin: 0 0 6px;
+  color: var(--text-muted);
+  font-size: .7rem;
+  font-weight: 950;
+  line-height: 1.25;
+  letter-spacing: .09em;
+  text-transform: uppercase;
+}
+.game-streak-value {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+}
+.game-streak-value strong {
+  color: var(--text);
+  font-size: 2rem;
+  font-variant-numeric: tabular-nums;
   line-height: 1;
 }
-.game-stat-strip small {
+.game-streak-value span {
   color: var(--text-muted);
   font-size: .78rem;
   font-weight: 850;
+}
+.game-streak-card small {
+  display: block;
+  margin-top: 7px;
+  color: color-mix(in srgb, var(--streak-accent, var(--accent)) 72%, var(--text-muted));
+  font-size: .72rem;
+  font-weight: 900;
   line-height: 1.25;
+}
+.app-streak-card {
+  --streak-accent: var(--accent);
+}
+.full-streak-card {
+  --streak-accent: #d98e42;
+}
+.progression-badges {
+  display: grid;
+  gap: 13px;
+  padding-top: 3px;
+}
+.progression-badges-heading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  justify-content: space-between;
+  gap: 10px 16px;
+}
+.progression-badges-heading .eyebrow {
+  margin-bottom: 5px;
+}
+.progression-badges-heading h3 {
+  margin: 0;
+  color: var(--text);
+  font-size: 1.15rem;
+  line-height: 1.15;
+}
+.progression-badges-heading > span {
+  min-height: 28px;
+  padding: 7px 10px;
+  border: 1px solid color-mix(in srgb, var(--accent) 26%, var(--border));
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--surface-elevated) 74%, transparent);
+  color: var(--text-muted);
+  font-size: .68rem;
+  font-weight: 900;
+  line-height: 1;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+.progression-badge-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 10px;
+}
+.progression-badge-card {
+  --badge-color: #c08b55;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: start;
+  gap: 13px;
+  min-width: 0;
+  padding: 15px;
+  border: 1px solid color-mix(in srgb, var(--badge-color) 38%, var(--border));
+  border-radius: 18px;
+  background:
+    linear-gradient(145deg, color-mix(in srgb, var(--badge-color) 11%, transparent), transparent 58%),
+    color-mix(in srgb, var(--surface-elevated) 78%, transparent);
+  box-shadow: inset 0 1px 0 color-mix(in srgb, #ffffff 7%, transparent);
+  transition: transform 220ms cubic-bezier(.16, 1, .3, 1), border-color 220ms ease, box-shadow 220ms ease;
+}
+.progression-badge-card:hover {
+  transform: translateY(-3px);
+  border-color: color-mix(in srgb, var(--badge-color) 66%, var(--border));
+  box-shadow: inset 0 1px 0 color-mix(in srgb, #ffffff 10%, transparent), 0 16px 34px color-mix(in srgb, var(--badge-color) 12%, transparent);
+}
+.progression-badge-card:active {
+  transform: translateY(0) scale(.99);
+}
+.progression-badge-card.silver {
+  --badge-color: #bfc5cc;
+}
+.progression-badge-card.gold {
+  --badge-color: var(--accent-strong);
+}
+.progression-badge-icon {
+  width: 50px;
+  height: 50px;
+  border: 1px solid color-mix(in srgb, var(--badge-color) 45%, transparent);
+  border-radius: 50%;
+  color: var(--badge-color);
+  background: color-mix(in srgb, var(--badge-color) 14%, var(--surface));
+  box-shadow: 0 0 0 5px color-mix(in srgb, var(--badge-color) 6%, transparent);
+}
+.progression-badge-card.gold .progression-badge-icon {
+  color: #271600;
+  background: linear-gradient(145deg, #fff3a8, #d6ad54 46%, #8a5b15);
+  box-shadow: 0 0 0 5px color-mix(in srgb, var(--accent) 9%, transparent), 0 8px 20px color-mix(in srgb, var(--accent) 18%, transparent);
+}
+.progression-badge-copy {
+  min-width: 0;
+}
+.progression-badge-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 4px 10px;
+  margin-bottom: 6px;
+}
+.progression-badge-meta > span:first-child {
+  color: var(--badge-color);
+  font-size: .62rem;
+  font-weight: 950;
+  letter-spacing: .1em;
+  text-transform: uppercase;
+}
+.progression-badge-meta time,
+.progression-badge-meta > span:last-child:not(:first-child) {
+  color: var(--text-muted);
+  font-size: .65rem;
+  font-weight: 800;
+}
+.progression-badge-copy > strong {
+  display: block;
+  color: var(--text);
+  font-size: .95rem;
+  line-height: 1.2;
+  overflow-wrap: anywhere;
+}
+.progression-badge-copy > p {
+  display: -webkit-box;
+  margin: 6px 0 0;
+  overflow: hidden;
+  color: var(--text-muted);
+  font-size: .76rem;
+  line-height: 1.42;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+.progression-badge-empty {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 14px;
+  padding: 17px;
+  border: 1px dashed color-mix(in srgb, var(--accent) 32%, var(--border));
+  border-radius: 18px;
+  background: color-mix(in srgb, var(--surface-elevated) 58%, transparent);
+}
+.progression-badge-empty .app-icon {
+  color: var(--accent-strong);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+.progression-badge-empty strong {
+  color: var(--text);
+  line-height: 1.25;
+}
+.progression-badge-empty p {
+  margin: 4px 0 0;
+  color: var(--text-muted);
+  font-size: .82rem;
+  line-height: 1.45;
+}
+:root[data-theme="light"] .game-summary-card {
+  background:
+    radial-gradient(circle at 8% 0%, color-mix(in srgb, var(--accent) 18%, transparent), transparent 31%),
+    radial-gradient(circle at 100% 100%, color-mix(in srgb, var(--success) 12%, transparent), transparent 35%),
+    linear-gradient(145deg, #ffffff, color-mix(in srgb, var(--background-soft) 74%, #ffffff));
+  box-shadow:
+    inset 0 1px 0 #ffffff,
+    0 24px 58px color-mix(in srgb, #302617 14%, transparent),
+    0 0 0 7px color-mix(in srgb, var(--accent) 5%, transparent);
+}
+:root[data-theme="light"] .game-level-progress-panel,
+:root[data-theme="light"] .game-streak-card,
+:root[data-theme="light"] .progression-badge-card {
+  box-shadow: inset 0 1px 0 #ffffff;
+}
+:root[data-theme="light"] .game-streak-card small {
+  color: color-mix(in srgb, var(--streak-accent, var(--accent)) 36%, var(--text));
+}
+:root[data-theme="light"] .progression-badge-meta > span:first-child {
+  color: color-mix(in srgb, var(--badge-color) 42%, var(--text));
+}
+@keyframes level-progress-sheen {
+  from { transform: translateX(-120%); }
+  to { transform: translateX(120%); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .game-summary-card:hover .game-level-emblem,
+  .game-streak-card:hover,
+  .progression-badge-card:hover {
+    transform: none;
+  }
+  .game-level-progress-track > span::after {
+    display: none;
+  }
 }
 .badge-shelf {
   display: flex;
@@ -1888,12 +2336,9 @@ body.challenge-finished .confetti-layer {
   .countdown-display strong {
     font-size: 2.8rem;
   }
-  .game-summary-card {
-    grid-template-columns: minmax(0, 1fr) minmax(220px, .55fr);
-    align-items: center;
-  }
-  .game-summary-card .badge-shelf {
-    grid-column: 1 / -1;
+  .game-streak-grid,
+  .progression-badge-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
   .action-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .daily-actions .verse-card {
@@ -1925,11 +2370,18 @@ body.challenge-finished .confetti-layer {
     font-size: 3.35rem;
   }
   .game-summary-card {
-    grid-template-columns: minmax(0, 1fr) minmax(220px, .45fr) minmax(260px, .7fr);
+    grid-template-columns: minmax(0, 1fr) minmax(340px, 1fr);
+    align-items: stretch;
   }
-  .game-summary-card .badge-shelf {
-    grid-column: auto;
-    justify-content: flex-end;
+  .game-summary-hero {
+    align-self: center;
+  }
+  .game-streak-grid,
+  .progression-badges {
+    grid-column: 1 / -1;
+  }
+  .progression-badge-grid {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
   }
   .daily-actions {
     gap: 22px;
@@ -1953,6 +2405,25 @@ body.challenge-finished .confetti-layer {
   }
 }
 @media (max-width: 380px) {
+  .game-summary-hero {
+    grid-template-columns: 74px minmax(0, 1fr);
+    gap: 12px;
+  }
+  .game-level-emblem {
+    width: 74px;
+  }
+  .game-level-emblem .app-icon {
+    top: 7px;
+    right: 7px;
+    width: 23px;
+    height: 23px;
+  }
+  .game-level-emblem strong {
+    font-size: 2rem;
+  }
+  .game-points-total > span {
+    font-size: 2.35rem;
+  }
   .countdown-display strong {
     font-size: 1.95rem;
   }
