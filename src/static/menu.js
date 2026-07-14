@@ -1,4 +1,5 @@
 import { clearAuthSession, getLocalOrSessionUser } from './api';
+import { initThemeState } from './theme-state';
 import { initThemeAssets } from './theme-assets';
 
 const topbar = document.querySelector('.topbar');
@@ -136,6 +137,7 @@ async function buildMenu() {
   });
 }
 
+initThemeState();
 initThemeAssets();
 initDirectionalTopbar();
 buildMenu();
