@@ -5,8 +5,10 @@ const load = (key, fallback) => JSON.parse(localStorage.getItem(key) || JSON.str
 const save = (key, value) => localStorage.setItem(key, JSON.stringify(value));
 let theme = load('dominion:theme', 'dark');
 const themeToggle = document.getElementById('themeToggle');
+const heroPoster = document.querySelector('.hero-poster img');
 function applyTheme() {
   document.documentElement.dataset.theme = theme;
+  if (heroPoster) heroPoster.src = theme === 'light' ? heroPoster.dataset.lightSrc : heroPoster.dataset.darkSrc;
   if (themeToggle) themeToggle.textContent = `${theme === 'dark' ? 'Dark' : 'Light'} Theme`;
 }
 if (themeToggle) {
