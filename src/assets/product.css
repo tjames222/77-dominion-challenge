@@ -1481,7 +1481,6 @@ body.challenge-finished .confetti-layer {
   gap: clamp(26px, 5vw, 44px);
 }
 .billing-status-card,
-.billing-roadmap,
 .profile-billing {
   display: grid;
   gap: 16px;
@@ -1557,23 +1556,6 @@ body.challenge-finished .confetti-layer {
 }
 .billing-purchase-button {
   width: 100%;
-}
-.billing-roadmap-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr));
-  gap: 14px;
-}
-.billing-roadmap-grid article {
-  display: grid;
-  gap: 6px;
-  padding: 18px;
-  border: 1px solid color-mix(in srgb, var(--border) 84%, transparent);
-  border-radius: 16px;
-  background: color-mix(in srgb, var(--surface-elevated) 82%, transparent);
-}
-.billing-roadmap-grid span {
-  color: var(--text-muted);
-  line-height: 1.45;
 }
 .membership-shell {
   width: min(100%, 1040px);
