@@ -336,6 +336,15 @@ const mapGameStats = (stats) => stats ? ({
   lastFullDayDate: null,
 };
 
+const queryWorkoutDifficultyPointValues = async (client) => {
+  const { data, error } = await client
+    .from('workout_difficulty_point_values')
+    .select('difficulty, points')
+    .order('points', { ascending: true });
+  if (error) throw error;
+  return Object.fromEntries((data || []).map((item) => [item.difficulty, item.points]));
+};
+
 const mapLeaderboardRow = (row) => ({
   rank: row.rank_position || row.rank || 0,
   userId: row.user_id || row.userId,
@@ -613,7 +622,7 @@ export async function cancelMembership() {
 export async function getDashboard() {
   const client = requireSupabase();
   const user = await requireUser();
-  const [profile, entriesResult, feedResult, statsResult, badgesResult] = await Promise.all([
+  const [profile, entriesResult, feedResult, statsResult, badgesResult, workoutDifficultyPointValues] = await Promise.all([
     getProfile(),
     client
       .from('challenge_entries')
@@ -637,6 +646,10 @@ export async function getDashboard() {
       .eq('user_id', user.id)
       .order('earned_at', { ascending: false })
       .limit(12),
+    queryWorkoutDifficultyPointValues(client).catch((error) => {
+      console.warn('Using default workout difficulty points', error);
+      return null;
+    }),
   ]);
 
   if (entriesResult.error) throw entriesResult.error;
@@ -650,7 +663,14 @@ export async function getDashboard() {
     feed: feedResult.data.map(mapFeedItem),
     gameStats: mapGameStats(statsResult.data),
     badges: (badgesResult.data || []).map(mapBadge).filter(Boolean),
+    workoutDifficultyPointValues,
   };
+}
+
+export async function getWorkoutDifficultyPointValues() {
+  const client = requireSupabase();
+  await requireUser();
+  return queryWorkoutDifficultyPointValues(client);
 }
 
 export async function saveChallengeEntry(entry) {

@@ -36,6 +36,12 @@ npm run dev
 
 The frontend uses Supabase Auth for login/register and writes directly to Supabase Postgres with Row Level Security policies.
 
+### Workout difficulty scoring
+
+Workout completions receive the standard 10 action points plus a configurable difficulty bonus. The default bonuses are Easy `2`, Medium `5`, Hard `10`, and Extreme `15` points.
+
+Production values live in `public.workout_difficulty_point_values`. A trusted operator can rebalance future check-ins from the Supabase Table Editor or with the service role; no frontend deployment is required. Existing point events are historical records and are not recalculated when configuration changes.
+
 ## Deployment workflow
 
 - `main` is production and must use real Supabase Auth, Postgres, and Stripe billing.

@@ -167,6 +167,7 @@
                   <option value="hard">Hard</option>
                   <option value="extreme">Extreme</option>
                 </select>
+                <small class="difficulty-point-value" id="workoutOnePointValue">+5 difficulty bonus when completed</small>
               </label>
               <label class="scorecard-select-label" for="workoutTwoDifficulty">Workout 2 difficulty
                 <select id="workoutTwoDifficulty" data-workout="two">
@@ -175,9 +176,23 @@
                   <option value="hard">Hard</option>
                   <option value="extreme">Extreme</option>
                 </select>
+                <small class="difficulty-point-value" id="workoutTwoPointValue">+5 difficulty bonus when completed</small>
               </label>
             </div>
             <button class="scorecard-select-all" id="selectAllActionsButton" type="button" aria-pressed="false">Select all</button>
+          </div>
+          <div class="point-preview">
+            <article class="point-preview-item">
+              <span>Projected award</span>
+              <strong><span id="projectedAwardPoints">0</span> pts</strong>
+              <small>Based on the actions completed now</small>
+            </article>
+            <article class="point-preview-item">
+              <span>Full-day potential</span>
+              <strong><span id="fullDayPotentialPoints">110</span> pts</strong>
+              <small>All 7 actions at the selected difficulties</small>
+            </article>
+            <span class="sr-only" id="pointPreviewAnnouncement" aria-live="polite" aria-atomic="true">Projected award 0 points. Full-day potential 110 points.</span>
           </div>
           <div id="checklist"></div>
           <div class="scorecard-actions">

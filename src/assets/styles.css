@@ -39,6 +39,17 @@
 :root[data-theme="dark"] { color-scheme: dark; }
 
 * { box-sizing: border-box; }
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
 html { background: var(--background); scroll-behavior: smooth; }
 body {
   margin: 0;
@@ -300,6 +311,46 @@ blockquote strong { display: block; margin-top: 10px; color: var(--accent-strong
 .scorecard-difficulty-controls {
   display: grid;
   gap: 12px;
+}
+.difficulty-point-value {
+  color: var(--text-muted);
+  font-size: .72rem;
+  font-weight: 800;
+  letter-spacing: 0;
+  line-height: 1.35;
+  text-transform: none;
+}
+.point-preview {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+.point-preview-item {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  padding: 14px;
+  border: 1px solid color-mix(in srgb, var(--accent) 30%, var(--border));
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--accent) 8%, var(--surface));
+}
+.point-preview-item > span {
+  color: var(--accent-strong);
+  font-size: .68rem;
+  font-weight: 950;
+  letter-spacing: .1em;
+  text-transform: uppercase;
+}
+.point-preview-item strong {
+  color: var(--text);
+  font-size: 1.35rem;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.1;
+}
+.point-preview-item small {
+  color: var(--text-muted);
+  font-size: .72rem;
+  line-height: 1.35;
 }
 .scorecard-select-label {
   display: grid;
@@ -823,6 +874,7 @@ select {
   .ring strong { font-size: 1.18rem; }
   .ring span { font-size: .78rem; }
   .ring small { font-size: .68rem; }
+  .point-preview { grid-template-columns: 1fr; }
   .timeline article,
   .standard-stack article {
     grid-template-columns: 1fr;
