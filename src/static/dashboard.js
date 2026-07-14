@@ -210,6 +210,7 @@ const badgePriority = [
 ];
 const badgePriorityRank = new Map(badgePriority.map((key, index) => [key, index]));
 const todayKey = () => new Date().toISOString().slice(0, 10);
+const ENTRY_STORAGE_KEY = 'dominion:entries';
 const load = (key, fallback) => JSON.parse(localStorage.getItem(key) || JSON.stringify(fallback));
 const save = (key, value) => localStorage.setItem(key, JSON.stringify(value));
 const normalizeWorkoutDifficulty = (difficulty = {}) => ({
@@ -560,7 +561,7 @@ function queueBadgeCelebrations(earnedBadges = [], delay = 0) {
 }
 let theme = load('dominion:theme', 'dark');
 let startDate = localDemoMode ? load('dominion:startDate', todayKey()) : todayKey();
-let entries = localDemoMode ? load('dominion:entries', []) : [];
+let entries = load(ENTRY_STORAGE_KEY, []);
 let feed = localDemoMode ? load('dominion:feed', starterFeed) : starterFeed;
 let workoutDifficulty = normalizeWorkoutDifficulty(load('dominion:workoutDifficulty', defaultWorkoutDifficulty));
 let gameStats = localDemoMode ? load('dominion:gameStats', {
@@ -575,6 +576,7 @@ let countdownTimer = null;
 let activeCountdownCallout = '';
 let confettiTimer = null;
 let confettiRunId = 0;
+let entrySaveQueue = Promise.resolve();
 const $ = (id) => document.getElementById(id);
 const verseText = $('verseText');
 const verseReference = $('verseReference');
@@ -593,9 +595,11 @@ const saveEntry = (entry) => {
   const index = entries.findIndex(item => item.date === entry.date);
   if (index >= 0) entries[index] = entry;
   else entries.push(entry);
-  if (localDemoMode) save('dominion:entries', entries);
+  save(ENTRY_STORAGE_KEY, entries);
   if (hasSupabaseAuth()) {
-    saveChallengeEntry(entry).catch((error) => console.warn('Unable to sync challenge entry', error));
+    entrySaveQueue = entrySaveQueue
+      .then(() => saveChallengeEntry(entry))
+      .catch((error) => console.warn('Unable to sync challenge entry', error));
   }
 };
 const rawChallengeDay = () => Math.floor((new Date(todayKey() + 'T00:00:00') - new Date(startDate + 'T00:00:00')) / 86400000) + 1;
@@ -625,6 +629,43 @@ function renderChecklist(entry) {
     row.disabled = locked;
     row.setAttribute('aria-pressed', String(isChecked));
   });
+}
+function renderTodayActionCompletion(entry) {
+  const completed = new Set(entry.completed);
+  const locked = Boolean(entry.scheduledMiss) || isChallengeFinished();
+
+  document.querySelectorAll('[data-action-completion]').forEach((button) => {
+    const isChecked = completed.has(button.dataset.actionCompletion);
+    const label = button.dataset.actionName
+      || button.getAttribute('aria-label')?.replace(/^Mark | complete$/g, '')
+      || 'Action';
+    const labelElement = button.querySelector('[data-completion-label]');
+    button.dataset.actionName = label;
+    button.classList.toggle('completed', isChecked);
+    button.disabled = locked;
+    button.setAttribute('aria-pressed', String(isChecked));
+    button.setAttribute('aria-label', `Mark ${label} ${isChecked ? 'incomplete' : 'complete'}`);
+    if (labelElement) labelElement.textContent = isChecked ? 'Completed' : `Mark ${label} complete`;
+    button.closest('.action-card, .verse-card')?.classList.toggle('action-completed', isChecked);
+  });
+
+  const floatingCheckInCta = $('floatingCheckInCta');
+  if (floatingCheckInCta) {
+    const allActionsCompleted = standards.every(([id]) => completed.has(id)) && !locked;
+    floatingCheckInCta.classList.toggle('visible', allActionsCompleted);
+    floatingCheckInCta.setAttribute('aria-hidden', String(!allActionsCompleted));
+    floatingCheckInCta.tabIndex = allActionsCompleted ? 0 : -1;
+    document.body.classList.toggle('check-in-cta-visible', allActionsCompleted);
+  }
+}
+function toggleStandard(id) {
+  if (isChallengeFinished() || todayEntry().scheduledMiss) return;
+  const currentEntry = todayEntry();
+  const completed = new Set(currentEntry.completed);
+  if (completed.has(id)) completed.delete(id);
+  else completed.add(id);
+  saveEntry({ ...currentEntry, completed: [...completed], scheduledMiss: false });
+  render();
 }
 const padClock = (value) => String(value).padStart(2, '0');
 function getDayTiming(now = new Date()) {
@@ -801,6 +842,7 @@ function render() {
     selectAllActionsButton.setAttribute('aria-pressed', String(allActionsCompleted));
   }
   if (checklist) renderChecklist(entry);
+  renderTodayActionCompletion(entry);
   if (feedEl) {
     feedEl.innerHTML = feed.slice(0, 6).map((item) => {
       const points = item.pointsAwarded ? ` · +${item.pointsAwarded} pts` : '';
@@ -835,7 +877,7 @@ async function hydrateDashboardFromApi() {
         completed: Array.isArray(entry.completed) ? entry.completed : [],
         scheduledMiss: Boolean(entry.scheduledMiss),
       }));
-      save('dominion:entries', entries);
+      save(ENTRY_STORAGE_KEY, entries);
     }
     if (Array.isArray(dashboard?.feed) && dashboard.feed.length) {
       feed = dashboard.feed;
@@ -928,13 +970,15 @@ if (walkReminderButton) walkReminderButton.addEventListener('click', () => {
 if (checklist) checklist.addEventListener('click', event => {
   const row = event.target.closest('[data-standard]');
   if (!row) return;
-  if (isChallengeFinished()) return;
-  if (todayEntry().scheduledMiss) return;
-  const entry = { ...todayEntry(), completed: [...todayEntry().completed], scheduledMiss: false };
-  const id = row.dataset.standard;
-  const willBeChecked = !entry.completed.includes(id);
-  entry.completed = willBeChecked ? [...entry.completed, id] : entry.completed.filter(item => item !== id);
-  saveEntry(entry);
+  toggleStandard(row.dataset.standard);
+});
+document.addEventListener('click', (event) => {
+  const button = event.target.closest('[data-action-completion]');
+  if (button) toggleStandard(button.dataset.actionCompletion);
+});
+window.addEventListener('storage', (event) => {
+  if (event.key !== ENTRY_STORAGE_KEY) return;
+  entries = load(ENTRY_STORAGE_KEY, []);
   render();
 });
 if (scheduledButton) scheduledButton.addEventListener('click', () => {
