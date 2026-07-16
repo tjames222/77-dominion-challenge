@@ -1,4 +1,11 @@
 import { createClient } from '@supabase/supabase-js';
+import {
+  DEFAULT_CHALLENGE_DEFINITIONS,
+  acknowledgeChallengeRecord,
+  buildChallengeProgression,
+  normalizeChallengeProgression,
+  transitionChallengeRecord,
+} from './challenge-progression.mjs';
 
 const SUPABASE_URL = (import.meta.env.VITE_SUPABASE_URL || '').replace(/\/$/, '');
 const SUPABASE_KEY =
@@ -32,6 +39,7 @@ const MOCK_CREW_MEMBERS_KEY = 'dominion:mockCrewMembers';
 const MOCK_INVITES_KEY = 'dominion:mockCrewInvites';
 const MOCK_POSTS_KEY = 'dominion:mockCommunityPosts';
 const MOCK_JOURNAL_KEY = 'dominion:mockJournalEntries';
+const MOCK_CHALLENGE_STATES_KEY = 'dominion:mockChallengeStates';
 const MOCK_MEDIA_DB_NAME = 'dominion-preview-media';
 const MOCK_MEDIA_STORE_NAME = 'community-post-images';
 const mockCommunityImageUrls = new Map();
@@ -709,6 +717,83 @@ export async function cancelMembership() {
     return { canceled: true, accessRemoved: true, preview: true };
   }
   return invokeSupabaseAction('cancel-membership');
+}
+
+function getMockChallengeProgression() {
+  const gameStats = readJson('dominion:gameStats', {});
+  const records = readJson(MOCK_CHALLENGE_STATES_KEY, []);
+  const progression = buildChallengeProgression({
+    definitions: DEFAULT_CHALLENGE_DEFINITIONS,
+    records: Array.isArray(records) ? records : [],
+    totalPoints: gameStats.totalPoints ?? gameStats.challengePoints ?? 0,
+  });
+  writeJson(MOCK_CHALLENGE_STATES_KEY, progression.records);
+  return progression;
+}
+
+export async function getChallengeProgression() {
+  if (isLocalDemoMode()) return getMockChallengeProgression();
+
+  const client = requireSupabase();
+  await requireUser();
+  const { data, error } = await client.rpc('get_challenge_progression');
+  if (error) throw error;
+  return normalizeChallengeProgression(data || {});
+}
+
+export async function claimChallengeUnlocks() {
+  if (isLocalDemoMode()) {
+    const progression = getMockChallengeProgression();
+    const claimedKeys = progression.unseenUnlocks.map((challenge) => challenge.key);
+    const claimedKeySet = new Set(claimedKeys);
+    const records = progression.records.map((item) => (
+      claimedKeySet.has(item.key) ? acknowledgeChallengeRecord(item) : item
+    ));
+    writeJson(MOCK_CHALLENGE_STATES_KEY, records);
+    const nextProgression = buildChallengeProgression({
+      definitions: DEFAULT_CHALLENGE_DEFINITIONS,
+      records,
+      totalPoints: progression.totalPoints,
+    });
+    return {
+      claimedUnlocks: progression.challenges.filter((challenge) => claimedKeySet.has(challenge.key)),
+      progression: nextProgression,
+    };
+  }
+
+  const client = requireSupabase();
+  await requireUser();
+  const { data, error } = await client.rpc('claim_challenge_unlocks');
+  if (error) throw error;
+  const progression = normalizeChallengeProgression(data?.progression || {});
+  const claimedKeySet = new Set(data?.claimedKeys || data?.claimed_keys || []);
+  return {
+    claimedUnlocks: progression.challenges.filter((challenge) => claimedKeySet.has(challenge.key)),
+    progression,
+  };
+}
+
+export async function startChallenge(challengeKey) {
+  if (isLocalDemoMode()) {
+    const progression = getMockChallengeProgression();
+    const record = progression.records.find((item) => item.key === challengeKey);
+    const nextRecord = transitionChallengeRecord(record, 'active');
+    const records = progression.records.map((item) => item.key === challengeKey ? nextRecord : item);
+    writeJson(MOCK_CHALLENGE_STATES_KEY, records);
+    return buildChallengeProgression({
+      definitions: DEFAULT_CHALLENGE_DEFINITIONS,
+      records,
+      totalPoints: progression.totalPoints,
+    });
+  }
+
+  const client = requireSupabase();
+  await requireUser();
+  const { data, error } = await client.rpc('start_challenge', {
+    target_challenge_key: challengeKey,
+  });
+  if (error) throw error;
+  return normalizeChallengeProgression(data || {});
 }
 
 export async function getDashboard() {

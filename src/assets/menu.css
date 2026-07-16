@@ -3,6 +3,7 @@
 }
 html {
   scroll-padding-top: calc(88px + env(safe-area-inset-top));
+  overflow-x: clip;
 }
 .topbar {
   position: sticky;
