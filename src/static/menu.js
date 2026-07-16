@@ -79,6 +79,29 @@ function initDirectionalTopbar() {
   update();
 }
 
+function initTopbarStickyOffset() {
+  if (!topbar) return;
+
+  const root = document.documentElement;
+  let previousHeight = 0;
+
+  const syncTopbarHeight = () => {
+    const height = topbar.getBoundingClientRect().height;
+    if (!Number.isFinite(height) || height <= 0 || Math.abs(height - previousHeight) < 0.1) return;
+
+    previousHeight = height;
+    root.style.setProperty('--topbar-sticky-height', `${height.toFixed(2)}px`);
+  };
+
+  syncTopbarHeight();
+  window.addEventListener('resize', syncTopbarHeight, { passive: true });
+
+  if ('ResizeObserver' in window) {
+    const observer = new ResizeObserver(syncTopbarHeight);
+    observer.observe(topbar, { box: 'border-box' });
+  }
+}
+
 async function buildMenu() {
   if (!topbar || document.querySelector('.global-menu')) return;
 
@@ -140,4 +163,5 @@ async function buildMenu() {
 initThemeState();
 initThemeAssets();
 initDirectionalTopbar();
+initTopbarStickyOffset();
 buildMenu();

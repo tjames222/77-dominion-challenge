@@ -1,3 +1,6 @@
+:root {
+  --topbar-sticky-height: calc(72px + env(safe-area-inset-top));
+}
 html {
   scroll-padding-top: calc(88px + env(safe-area-inset-top));
 }
