@@ -24,6 +24,7 @@ export function isLocalDemoMode() {
 const MEMBERSHIP_ACCESS_KEY = 'membership_active';
 const MEMBERSHIP_PRODUCT_KEY = 'dominion_membership';
 const PROFILE_PHOTO_BUCKET = 'profile-photos';
+const COMMUNITY_POST_IMAGE_BUCKET = 'community-post-images';
 const MOCK_USER_ID_KEY = 'dominion:mockUserId';
 const MOCK_SUBSCRIPTION_KEY = 'dominion:mockSubscription';
 const MOCK_CREWS_KEY = 'dominion:mockCrews';
@@ -31,6 +32,10 @@ const MOCK_CREW_MEMBERS_KEY = 'dominion:mockCrewMembers';
 const MOCK_INVITES_KEY = 'dominion:mockCrewInvites';
 const MOCK_POSTS_KEY = 'dominion:mockCommunityPosts';
 const MOCK_JOURNAL_KEY = 'dominion:mockJournalEntries';
+const MOCK_MEDIA_DB_NAME = 'dominion-preview-media';
+const MOCK_MEDIA_STORE_NAME = 'community-post-images';
+const mockCommunityImageUrls = new Map();
+let mockMediaDatabasePromise;
 
 const readJson = (key, fallback) => {
   try {
@@ -41,6 +46,86 @@ const readJson = (key, fallback) => {
 };
 
 const writeJson = (key, value) => localStorage.setItem(key, JSON.stringify(value));
+
+function getMockMediaDatabase() {
+  if (!globalThis.indexedDB) return Promise.resolve(null);
+  if (mockMediaDatabasePromise) return mockMediaDatabasePromise;
+
+  mockMediaDatabasePromise = new Promise((resolve, reject) => {
+    const request = globalThis.indexedDB.open(MOCK_MEDIA_DB_NAME, 1);
+    request.onupgradeneeded = () => {
+      if (!request.result.objectStoreNames.contains(MOCK_MEDIA_STORE_NAME)) {
+        request.result.createObjectStore(MOCK_MEDIA_STORE_NAME);
+      }
+    };
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error || new Error('Unable to open preview image storage.'));
+  });
+  return mockMediaDatabasePromise;
+}
+
+async function writeMockCommunityImage(imagePath, file) {
+  const database = await getMockMediaDatabase();
+  if (database) {
+    await new Promise((resolve, reject) => {
+      const transaction = database.transaction(MOCK_MEDIA_STORE_NAME, 'readwrite');
+      transaction.objectStore(MOCK_MEDIA_STORE_NAME).put(file, imagePath);
+      transaction.oncomplete = () => resolve();
+      transaction.onerror = () => reject(transaction.error || new Error('Unable to save the preview image.'));
+      transaction.onabort = () => reject(transaction.error || new Error('Unable to save the preview image.'));
+    });
+  }
+
+  const previousUrl = mockCommunityImageUrls.get(imagePath);
+  if (previousUrl) URL.revokeObjectURL(previousUrl);
+  const imageUrl = URL.createObjectURL(file);
+  mockCommunityImageUrls.set(imagePath, imageUrl);
+  return imageUrl;
+}
+
+async function readMockCommunityImageUrl(imagePath) {
+  if (!imagePath) return '';
+  const cachedUrl = mockCommunityImageUrls.get(imagePath);
+  if (cachedUrl) return cachedUrl;
+
+  const database = await getMockMediaDatabase();
+  if (!database) return '';
+  const image = await new Promise((resolve, reject) => {
+    const transaction = database.transaction(MOCK_MEDIA_STORE_NAME, 'readonly');
+    const request = transaction.objectStore(MOCK_MEDIA_STORE_NAME).get(imagePath);
+    request.onsuccess = () => resolve(request.result || null);
+    request.onerror = () => reject(request.error || new Error('Unable to load the preview image.'));
+  });
+  if (!image) return '';
+
+  const imageUrl = URL.createObjectURL(image);
+  mockCommunityImageUrls.set(imagePath, imageUrl);
+  return imageUrl;
+}
+
+async function deleteMockCommunityImage(imagePath) {
+  if (!imagePath) return;
+  const database = await getMockMediaDatabase();
+  if (database) {
+    await new Promise((resolve, reject) => {
+      const transaction = database.transaction(MOCK_MEDIA_STORE_NAME, 'readwrite');
+      transaction.objectStore(MOCK_MEDIA_STORE_NAME).delete(imagePath);
+      transaction.oncomplete = () => resolve();
+      transaction.onerror = () => reject(transaction.error || new Error('Unable to remove the preview image.'));
+      transaction.onabort = () => reject(transaction.error || new Error('Unable to remove the preview image.'));
+    });
+  }
+  const imageUrl = mockCommunityImageUrls.get(imagePath);
+  if (imageUrl) URL.revokeObjectURL(imageUrl);
+  mockCommunityImageUrls.delete(imagePath);
+}
+
+async function withMockCommunityImageUrls(posts) {
+  return Promise.all(posts.map(async (post) => ({
+    ...post,
+    imageUrl: post.imagePath ? await readMockCommunityImageUrl(post.imagePath) : '',
+  })));
+}
 
 const randomId = (prefix) => `${prefix}_${globalThis.crypto?.randomUUID?.() || Math.random().toString(16).slice(2)}`;
 
@@ -279,15 +364,20 @@ const mapPost = (post, likes = [], comments = [], currentUserId = '') => ({
   id: post.id,
   authorId: post.author_id,
   name: post.display_name || 'Member',
+  avatarUrl: post.avatar_url || '',
   crewId: post.crew_id,
   scope: post.scope,
   body: post.body,
+  imagePath: post.image_path || null,
+  imageUrl: post.image_url || '',
+  imageAlt: post.image_alt || '',
   postType: post.post_type || 'message',
   day: post.challenge_day,
   status: post.status,
   completedCount: post.completed_count || 0,
   createdAt: post.created_at,
   timestamp: post.created_at ? todayLabel(post.created_at) : 'Today',
+  isOwn: post.author_id === currentUserId,
   likeCount: likes.length,
   likedByMe: likes.some((item) => item.user_id === currentUserId),
   comments: comments.map((comment) => ({
@@ -295,9 +385,11 @@ const mapPost = (post, likes = [], comments = [], currentUserId = '') => ({
     postId: comment.post_id,
     userId: comment.user_id,
     name: comment.display_name || 'Member',
+    avatarUrl: comment.avatar_url || '',
     body: comment.body,
     createdAt: comment.created_at,
     timestamp: comment.created_at ? todayLabel(comment.created_at) : 'Today',
+    isOwn: comment.user_id === currentUserId,
   })),
 });
 
@@ -787,6 +879,18 @@ export async function getLeaderboard({ scope = 'global', crewId = null, window =
   return (data || []).map(mapLeaderboardRow);
 }
 
+function createMockAvatar(name, background = '#66513a') {
+  const initials = String(name || 'Member')
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((part) => part[0]?.toUpperCase() || '')
+    .join('')
+    .replace(/[^A-Z0-9]/g, '') || 'M';
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 96 96"><rect width="96" height="96" rx="48" fill="${background}"/><text x="48" y="58" text-anchor="middle" font-family="Arial,sans-serif" font-size="34" font-weight="700" fill="#fffaf0">${initials}</text></svg>`;
+  return `data:image/svg+xml,${encodeURIComponent(svg)}`;
+}
+
 function ensureMockCrews() {
   const user = getMockUser();
   const userId = getMockUserId();
@@ -815,11 +919,15 @@ function ensureMockCrews() {
   crews.forEach((crew) => {
     if (!members[crew.id]) {
       members[crew.id] = [
-        { crewId: crew.id, userId, name: user.name || 'Preview Member', role: 'owner', joinedAt: crew.createdAt || new Date().toISOString() },
-        { crewId: crew.id, userId: 'preview_member_josh', name: 'Josh', role: 'member', joinedAt: crew.createdAt || new Date().toISOString() },
-        { crewId: crew.id, userId: 'preview_member_sarah', name: 'Sarah', role: 'member', joinedAt: crew.createdAt || new Date().toISOString() },
+        { crewId: crew.id, userId, name: user.name || 'Preview Member', avatarUrl: user.avatarUrl || createMockAvatar(user.name || 'Preview Member'), role: 'owner', joinedAt: crew.createdAt || new Date().toISOString() },
+        { crewId: crew.id, userId: 'preview_member_josh', name: 'Josh', avatarUrl: createMockAvatar('Josh', '#45634d'), role: 'member', joinedAt: crew.createdAt || new Date().toISOString() },
+        { crewId: crew.id, userId: 'preview_member_sarah', name: 'Sarah', avatarUrl: createMockAvatar('Sarah', '#7a4652'), role: 'member', joinedAt: crew.createdAt || new Date().toISOString() },
       ];
     }
+    members[crew.id] = members[crew.id].map((member) => ({
+      ...member,
+      avatarUrl: member.avatarUrl || createMockAvatar(member.name),
+    }));
   });
 
   writeJson(MOCK_CREW_MEMBERS_KEY, members);
@@ -829,7 +937,24 @@ function ensureMockCrews() {
 function ensureMockPosts() {
   ensureMockCrews();
   let posts = readJson(MOCK_POSTS_KEY, null);
-  if (Array.isArray(posts)) return posts;
+  if (Array.isArray(posts)) {
+    const userId = getMockUserId();
+    posts = posts.map((post) => ({
+      ...post,
+      avatarUrl: post.avatarUrl || createMockAvatar(post.name),
+      imagePath: post.imagePath || null,
+      imageUrl: post.imageUrl || '',
+      imageAlt: post.imageAlt || '',
+      isOwn: post.authorId === userId,
+      comments: (post.comments || []).map((comment) => ({
+        ...comment,
+        avatarUrl: comment.avatarUrl || createMockAvatar(comment.name),
+        isOwn: comment.userId === userId,
+      })),
+    }));
+    saveMockPosts(posts);
+    return posts;
+  }
 
   const now = new Date().toISOString();
   posts = [
@@ -837,34 +962,44 @@ function ensureMockPosts() {
       id: 'preview_global_post_1',
       authorId: 'preview_member_josh',
       name: 'Josh',
+      avatarUrl: createMockAvatar('Josh', '#45634d'),
       crewId: null,
       scope: 'global',
       body: 'Day 12 done. The walk was the action I wanted to skip, so I did it first.',
+      imagePath: null,
+      imageUrl: '',
+      imageAlt: '',
       postType: 'message',
       day: 12,
       status: 'complete',
       completedCount: 7,
       createdAt: now,
       timestamp: 'Today',
+      isOwn: false,
       likeCount: 4,
       likedByMe: false,
       comments: [
-        { id: 'preview_comment_1', postId: 'preview_global_post_1', userId: 'preview_member_sarah', name: 'Sarah', body: 'That is the kind of move that builds a streak.', createdAt: now, timestamp: 'Today' },
+        { id: 'preview_comment_1', postId: 'preview_global_post_1', userId: 'preview_member_sarah', name: 'Sarah', avatarUrl: createMockAvatar('Sarah', '#7a4652'), body: 'That is the kind of move that builds a streak.', createdAt: now, timestamp: 'Today', isOwn: false },
       ],
     },
     {
       id: 'preview_crew_post_1',
       authorId: 'preview_member_sarah',
       name: 'Sarah',
+      avatarUrl: createMockAvatar('Sarah', '#7a4652'),
       crewId: 'preview_crew_alpha',
       scope: 'crew',
       body: 'Crew check: I am doing Bible reading before lunch today. Hold me to it.',
+      imagePath: null,
+      imageUrl: '',
+      imageAlt: '',
       postType: 'message',
       day: 8,
       status: 'partial',
       completedCount: 4,
       createdAt: now,
       timestamp: 'Today',
+      isOwn: false,
       likeCount: 2,
       likedByMe: true,
       comments: [],
@@ -875,7 +1010,11 @@ function ensureMockPosts() {
 }
 
 function saveMockPosts(posts) {
-  writeJson(MOCK_POSTS_KEY, posts);
+  writeJson(MOCK_POSTS_KEY, posts.map((post) => ({
+    ...post,
+    // Binary preview media lives in IndexedDB so ordinary photos do not exhaust localStorage.
+    imageUrl: post.imagePath ? '' : post.imageUrl || '',
+  })));
 }
 
 function getMockLeaderboard({ scope = 'global', crewId = null } = {}) {
@@ -915,19 +1054,29 @@ function getMockLeaderboard({ scope = 'global', crewId = null } = {}) {
     .map((row, index) => ({ ...row, rank: index + 1 }));
 }
 
-async function getCurrentDisplayName() {
-  if (isLocalDemoMode()) return getMockUser().name || 'Preview Member';
+async function getCurrentCommunityIdentity() {
+  if (isLocalDemoMode()) {
+    const user = getMockUser();
+    return {
+      name: user.name || 'Preview Member',
+      avatarUrl: user.avatarUrl || createMockAvatar(user.name || 'Preview Member'),
+    };
+  }
   const profile = await getProfile();
-  return profile?.name || 'Member';
+  return {
+    name: profile?.name || 'Member',
+    avatarUrl: profile?.avatarUrl || '',
+  };
 }
 
 export async function getCrews() {
   if (isLocalDemoMode()) return ensureMockCrews().crews;
   const client = requireSupabase();
-  await requireUser();
+  const user = await requireUser();
   const { data, error } = await client
     .from('crew_members')
     .select('crew_id, role, display_name, joined_at, crews(id, name, description, challenge_start_date, created_by, created_at)')
+    .eq('user_id', user.id)
     .order('joined_at', { ascending: false });
 
   if (error) throw error;
@@ -953,6 +1102,7 @@ export async function createCrew({ name, description = '', challengeStartDate = 
       crewId: crew.id,
       userId: getMockUserId(),
       name: getMockUser().name || 'Preview Member',
+      avatarUrl: getMockUser().avatarUrl || createMockAvatar(getMockUser().name || 'Preview Member'),
       role: 'owner',
       joinedAt: now,
     }];
@@ -963,7 +1113,7 @@ export async function createCrew({ name, description = '', challengeStartDate = 
 
   const client = requireSupabase();
   const user = await requireUser();
-  const displayName = await getCurrentDisplayName();
+  const identity = await getCurrentCommunityIdentity();
   const { data: crew, error: crewError } = await client
     .from('crews')
     .insert({
@@ -982,7 +1132,8 @@ export async function createCrew({ name, description = '', challengeStartDate = 
     .insert({
       crew_id: crew.id,
       user_id: user.id,
-      display_name: displayName,
+      display_name: identity.name,
+      avatar_url: identity.avatarUrl,
       role: 'owner',
     });
 
@@ -1000,7 +1151,7 @@ export async function getCrewMembers(crewId) {
   await requireUser();
   const { data, error } = await client
     .from('crew_members')
-    .select('crew_id, user_id, display_name, role, joined_at')
+    .select('crew_id, user_id, display_name, avatar_url, role, joined_at')
     .eq('crew_id', crewId)
     .order('joined_at', { ascending: true });
 
@@ -1009,6 +1160,7 @@ export async function getCrewMembers(crewId) {
     crewId: member.crew_id,
     userId: member.user_id,
     name: member.display_name || 'Member',
+    avatarUrl: member.avatar_url || '',
     role: member.role,
     joinedAt: member.joined_at,
   }));
@@ -1071,6 +1223,7 @@ export async function joinCrewByInvite(token) {
         crewId: crew.id,
         userId,
         name: getMockUser().name || 'Preview Member',
+        avatarUrl: getMockUser().avatarUrl || createMockAvatar(getMockUser().name || 'Preview Member'),
         role: 'member',
         joinedAt: new Date().toISOString(),
       });
@@ -1093,69 +1246,211 @@ export async function joinCrewByInvite(token) {
   }) : null;
 }
 
-export async function getCommunityPosts({ scope = 'global', crewId = null, limit = 25 } = {}) {
+const COMMUNITY_POST_SELECT = 'id, author_id, display_name, avatar_url, crew_id, scope, body, image_path, image_alt, post_type, challenge_day, status, completed_count, created_at';
+const COMMUNITY_CURSOR_TIMESTAMP_PATTERN = /^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?(?:Z|[+-]\d{2}:\d{2})$/;
+const COMMUNITY_CURSOR_UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+function normalizeCommunityCursor(before) {
+  if (!before) return null;
+  const value = typeof before === 'string' ? { createdAt: before } : before;
+  const rawCreatedAt = String(value?.createdAt || value?.created_at || '').trim();
+  if (!COMMUNITY_CURSOR_TIMESTAMP_PATTERN.test(rawCreatedAt) || Number.isNaN(Date.parse(rawCreatedAt))) return null;
+  return {
+    // Keep PostgreSQL's full fractional-second precision for stable keyset paging.
+    createdAt: rawCreatedAt,
+    id: value?.id ? String(value.id) : null,
+  };
+}
+
+function isBeforeCommunityCursor(post, cursor) {
+  if (!cursor) return true;
+  const createdAt = post.createdAt || post.created_at;
+  if (createdAt < cursor.createdAt) return true;
+  if (createdAt > cursor.createdAt) return false;
+  return !cursor.id || String(post.id) < cursor.id;
+}
+
+function communityCursorFor(post) {
+  if (!post) return null;
+  return {
+    createdAt: post.created_at || post.createdAt,
+    id: post.id,
+  };
+}
+
+async function withSignedCommunityImageUrls(posts) {
+  const paths = [...new Set(posts.map((post) => post.image_path).filter(Boolean))];
+  if (!paths.length) return posts;
+
+  const client = requireSupabase();
+  const { data, error } = await client.storage
+    .from(COMMUNITY_POST_IMAGE_BUCKET)
+    .createSignedUrls(paths, 3600);
+  if (error) {
+    return posts.map((post) => ({ ...post, image_url: '' }));
+  }
+
+  const signedUrls = new Map();
+  (data || []).forEach((item, index) => {
+    const path = item.path || paths[index];
+    if (path && item.signedUrl) signedUrls.set(path, item.signedUrl);
+  });
+  return posts.map((post) => ({
+    ...post,
+    image_url: post.image_path ? signedUrls.get(post.image_path) || '' : '',
+  }));
+}
+
+export async function getCommunityPostPage({ scope = 'global', crewId = null, limit = 8, before = null } = {}) {
+  const pageSize = Math.min(Math.max(Number.parseInt(limit, 10) || 8, 1), 25);
+  const cursor = normalizeCommunityCursor(before);
+  if (scope === 'crew' && !crewId) throw new Error('Choose a private group before loading its posts.');
+
   if (isLocalDemoMode()) {
-    return ensureMockPosts()
+    const matches = ensureMockPosts()
       .filter((post) => post.scope === scope && (scope !== 'crew' || post.crewId === crewId))
-      .sort((left, right) => new Date(right.createdAt) - new Date(left.createdAt))
-      .slice(0, limit);
+      .filter((post) => isBeforeCommunityCursor(post, cursor))
+      .sort((left, right) => {
+        const dateOrder = String(right.createdAt).localeCompare(String(left.createdAt));
+        return dateOrder || String(right.id).localeCompare(String(left.id));
+      });
+    const hasMore = matches.length > pageSize;
+    const posts = await withMockCommunityImageUrls(matches.slice(0, pageSize));
+    return {
+      posts,
+      hasMore,
+      nextCursor: hasMore ? communityCursorFor(posts.at(-1)) : null,
+    };
   }
 
   const client = requireSupabase();
   const user = await requireUser();
   let query = client
     .from('community_posts')
-    .select('id, author_id, display_name, crew_id, scope, body, post_type, challenge_day, status, completed_count, created_at')
+    .select(COMMUNITY_POST_SELECT)
     .eq('scope', scope)
     .order('created_at', { ascending: false })
-    .limit(limit);
+    .order('id', { ascending: false })
+    .limit(pageSize + 1);
 
   if (scope === 'crew') query = query.eq('crew_id', crewId);
-  const { data: posts, error } = await query;
-  if (error) throw error;
-  if (!posts?.length) return [];
+  if (cursor?.id && COMMUNITY_CURSOR_UUID_PATTERN.test(cursor.id)) {
+    query = query.or(`created_at.lt.${cursor.createdAt},and(created_at.eq.${cursor.createdAt},id.lt.${cursor.id})`);
+  } else if (cursor) {
+    query = query.lt('created_at', cursor.createdAt);
+  }
 
-  const postIds = posts.map((post) => post.id);
-  const [likesResult, commentsResult] = await Promise.all([
+  const { data, error } = await query;
+  if (error) throw error;
+  const hasMore = (data || []).length > pageSize;
+  const pageRows = (data || []).slice(0, pageSize);
+  if (!pageRows.length) return { posts: [], hasMore: false, nextCursor: null };
+
+  const postIds = pageRows.map((post) => post.id);
+  const [likesResult, commentsResult, signedPosts] = await Promise.all([
     client
       .from('post_likes')
       .select('post_id, user_id')
       .in('post_id', postIds),
     client
       .from('post_comments')
-      .select('id, post_id, user_id, display_name, body, created_at')
+      .select('id, post_id, user_id, display_name, avatar_url, body, created_at')
       .in('post_id', postIds)
       .order('created_at', { ascending: true }),
+    withSignedCommunityImageUrls(pageRows),
   ]);
 
   if (likesResult.error) throw likesResult.error;
   if (commentsResult.error) throw commentsResult.error;
 
-  return posts.map((post) => mapPost(
-    post,
-    (likesResult.data || []).filter((like) => like.post_id === post.id),
-    (commentsResult.data || []).filter((comment) => comment.post_id === post.id),
-    user.id,
-  ));
+  return {
+    posts: signedPosts.map((post) => mapPost(
+      post,
+      (likesResult.data || []).filter((like) => like.post_id === post.id),
+      (commentsResult.data || []).filter((comment) => comment.post_id === post.id),
+      user.id,
+    )),
+    hasMore,
+    nextCursor: hasMore ? communityCursorFor(pageRows.at(-1)) : null,
+  };
 }
 
-export async function createCommunityPost({ scope, crewId = null, body, postType = 'message' }) {
+export async function getCommunityPosts({ scope = 'global', crewId = null, limit = 25 } = {}) {
+  const page = await getCommunityPostPage({ scope, crewId, limit });
+  return page.posts;
+}
+
+export async function uploadCommunityPostImage({ crewId, file }) {
+  if (!crewId) throw new Error('Community images must belong to a private group.');
+  if (!file) throw new Error('Choose an image to upload.');
+  if (file.type && !file.type.startsWith('image/')) throw new Error('Choose a supported image file.');
+
+  if (isLocalDemoMode()) {
+    const imagePath = `preview/${crewId}/${randomId('community_image')}/${file.name || 'community-image'}`;
+    return {
+      imagePath,
+      imageUrl: await writeMockCommunityImage(imagePath, file),
+    };
+  }
+
+  const client = requireSupabase();
+  const user = await requireUser();
+  const rawExtension = file.name?.split('.').pop()?.toLowerCase() || 'jpg';
+  const extension = /^[a-z0-9]{1,8}$/.test(rawExtension) ? rawExtension : 'jpg';
+  const safeName = `${Date.now()}-${globalThis.crypto?.randomUUID?.() || Math.random().toString(16).slice(2)}.${extension}`;
+  const imagePath = `${crewId}/${user.id}/${safeName}`;
+  const { error: uploadError } = await client.storage
+    .from(COMMUNITY_POST_IMAGE_BUCKET)
+    .upload(imagePath, file, { cacheControl: '3600', upsert: false });
+  if (uploadError) throw uploadError;
+
+  const { data, error } = await client.storage
+    .from(COMMUNITY_POST_IMAGE_BUCKET)
+    .createSignedUrl(imagePath, 3600);
+  if (error) {
+    await client.storage.from(COMMUNITY_POST_IMAGE_BUCKET).remove([imagePath]);
+    throw error;
+  }
+  return { imagePath, imageUrl: data?.signedUrl || '' };
+}
+
+export async function createCommunityPost({
+  scope,
+  crewId = null,
+  body = '',
+  postType = 'message',
+  imageFile = null,
+  imageAlt = '',
+}) {
+  const normalizedBody = String(body || '').trim();
+  if (!normalizedBody && !imageFile) throw new Error('Write a message or choose an image.');
+  if (imageFile && (scope !== 'crew' || !crewId)) {
+    throw new Error('Community images can only be shared inside a private group.');
+  }
+
   if (isLocalDemoMode()) {
     const posts = ensureMockPosts();
+    const user = getMockUser();
     const now = new Date().toISOString();
+    const uploadedImage = imageFile ? await uploadCommunityPostImage({ crewId, file: imageFile }) : null;
     const post = {
       id: randomId('preview_post'),
       authorId: getMockUserId(),
-      name: getMockUser().name || 'Preview Member',
+      name: user.name || 'Preview Member',
+      avatarUrl: user.avatarUrl || createMockAvatar(user.name || 'Preview Member'),
       crewId: scope === 'crew' ? crewId : null,
       scope,
-      body,
+      body: normalizedBody,
+      imagePath: uploadedImage?.imagePath || null,
+      imageUrl: uploadedImage?.imageUrl || '',
+      imageAlt: uploadedImage ? String(imageAlt || '').trim() : '',
       postType,
       day: null,
       status: null,
       completedCount: 0,
       createdAt: now,
       timestamp: 'Today',
+      isOwn: true,
       likeCount: 0,
       likedByMe: false,
       comments: [],
@@ -1167,22 +1462,114 @@ export async function createCommunityPost({ scope, crewId = null, body, postType
 
   const client = requireSupabase();
   const user = await requireUser();
-  const displayName = await getCurrentDisplayName();
+  const identity = await getCurrentCommunityIdentity();
+  let uploadedImage = null;
+  try {
+    uploadedImage = imageFile ? await uploadCommunityPostImage({ crewId, file: imageFile }) : null;
+    const { data, error } = await client
+      .from('community_posts')
+      .insert({
+        author_id: user.id,
+        display_name: identity.name,
+        avatar_url: identity.avatarUrl,
+        crew_id: scope === 'crew' ? crewId : null,
+        scope,
+        body: normalizedBody,
+        image_path: uploadedImage?.imagePath || null,
+        image_alt: uploadedImage ? String(imageAlt || '').trim() : '',
+        post_type: postType,
+      })
+      .select(COMMUNITY_POST_SELECT)
+      .single();
+
+    if (error) throw error;
+    return mapPost({ ...data, image_url: uploadedImage?.imageUrl || '' }, [], [], user.id);
+  } catch (error) {
+    if (uploadedImage?.imagePath) {
+      await client.storage.from(COMMUNITY_POST_IMAGE_BUCKET).remove([uploadedImage.imagePath]);
+    }
+    throw error;
+  }
+}
+
+function canManageMockPost(post) {
+  if (!post?.crewId) return false;
+  const { members } = ensureMockCrews();
+  const membership = (members[post.crewId] || []).find((member) => member.userId === getMockUserId());
+  return ['owner', 'admin'].includes(membership?.role);
+}
+
+export async function updateCommunityPost(postId, body) {
+  const normalizedBody = String(body || '').trim();
+  if (isLocalDemoMode()) {
+    const posts = ensureMockPosts();
+    const post = posts.find((item) => item.id === postId);
+    if (!post || post.authorId !== getMockUserId()) throw new Error('Only the author can edit this post.');
+    if (!normalizedBody && !post.imagePath) throw new Error('Write a message or keep an image on the post.');
+    post.body = normalizedBody;
+    post.updatedAt = new Date().toISOString();
+    saveMockPosts(posts);
+    return post;
+  }
+
+  const client = requireSupabase();
+  const user = await requireUser();
   const { data, error } = await client
     .from('community_posts')
-    .insert({
-      author_id: user.id,
-      display_name: displayName,
-      crew_id: scope === 'crew' ? crewId : null,
-      scope,
-      body,
-      post_type: postType,
-    })
-    .select('id, author_id, display_name, crew_id, scope, body, post_type, challenge_day, status, completed_count, created_at')
-    .single();
-
+    .update({ body: normalizedBody })
+    .eq('id', postId)
+    .eq('author_id', user.id)
+    .select(COMMUNITY_POST_SELECT)
+    .maybeSingle();
   if (error) throw error;
-  return mapPost(data, [], [], user.id);
+  if (!data) throw new Error('Only the author can edit this post.');
+  const [signedPost] = await withSignedCommunityImageUrls([data]);
+  return mapPost(signedPost, [], [], user.id);
+}
+
+export async function deleteCommunityPost(postId, imagePath = null) {
+  if (isLocalDemoMode()) {
+    const posts = ensureMockPosts();
+    const index = posts.findIndex((item) => item.id === postId);
+    const post = posts[index];
+    if (!post || (post.authorId !== getMockUserId() && !canManageMockPost(post))) {
+      throw new Error('You do not have permission to delete this post.');
+    }
+    await deleteMockCommunityImage(post.imagePath);
+    posts.splice(index, 1);
+    saveMockPosts(posts);
+    return true;
+  }
+
+  const client = requireSupabase();
+  await requireUser();
+  const { data: targetPost, error: targetError } = await client
+    .from('community_posts')
+    .select('id, image_path')
+    .eq('id', postId)
+    .maybeSingle();
+  if (targetError) throw targetError;
+  if (!targetPost) throw new Error('You do not have permission to delete this post.');
+
+  const pathToDelete = targetPost.image_path || imagePath;
+  if (pathToDelete) {
+    const { error: storageError } = await client.storage
+      .from(COMMUNITY_POST_IMAGE_BUCKET)
+      .remove([pathToDelete]);
+    if (storageError) {
+      throw new Error('The post image could not be removed, so the post was kept. Try again.');
+    }
+  }
+
+  const { data, error } = await client
+    .from('community_posts')
+    .delete()
+    .eq('id', postId)
+    .select('id')
+    .maybeSingle();
+  if (error) throw error;
+  if (!data) throw new Error('You do not have permission to delete this post.');
+  return true;
 }
 
 export async function setPostLiked(postId, shouldLike) {
@@ -1226,9 +1613,11 @@ export async function addPostComment(postId, body) {
       postId,
       userId: getMockUserId(),
       name: getMockUser().name || 'Preview Member',
+      avatarUrl: getMockUser().avatarUrl || createMockAvatar(getMockUser().name || 'Preview Member'),
       body,
       createdAt: now,
       timestamp: 'Today',
+      isOwn: true,
     };
     post.comments = [...(post.comments || []), comment];
     saveMockPosts(posts);
@@ -1237,16 +1626,17 @@ export async function addPostComment(postId, body) {
 
   const client = requireSupabase();
   const user = await requireUser();
-  const displayName = await getCurrentDisplayName();
+  const identity = await getCurrentCommunityIdentity();
   const { data, error } = await client
     .from('post_comments')
     .insert({
       post_id: postId,
       user_id: user.id,
-      display_name: displayName,
+      display_name: identity.name,
+      avatar_url: identity.avatarUrl,
       body,
     })
-    .select('id, post_id, user_id, display_name, body, created_at')
+    .select('id, post_id, user_id, display_name, avatar_url, body, created_at')
     .single();
 
   if (error) throw error;
@@ -1255,10 +1645,38 @@ export async function addPostComment(postId, body) {
     postId: data.post_id,
     userId: data.user_id,
     name: data.display_name || 'Member',
+    avatarUrl: data.avatar_url || '',
     body: data.body,
     createdAt: data.created_at,
     timestamp: data.created_at ? todayLabel(data.created_at) : 'Today',
+    isOwn: data.user_id === user.id,
   };
+}
+
+export async function deletePostComment(commentId) {
+  if (isLocalDemoMode()) {
+    const posts = ensureMockPosts();
+    const post = posts.find((item) => (item.comments || []).some((comment) => comment.id === commentId));
+    const comment = post?.comments?.find((item) => item.id === commentId);
+    if (!post || !comment || (comment.userId !== getMockUserId() && !canManageMockPost(post))) {
+      throw new Error('You do not have permission to delete this comment.');
+    }
+    post.comments = post.comments.filter((item) => item.id !== commentId);
+    saveMockPosts(posts);
+    return true;
+  }
+
+  const client = requireSupabase();
+  await requireUser();
+  const { data, error } = await client
+    .from('post_comments')
+    .delete()
+    .eq('id', commentId)
+    .select('id')
+    .maybeSingle();
+  if (error) throw error;
+  if (!data) throw new Error('You do not have permission to delete this comment.');
+  return true;
 }
 
 async function createSignedPhoto(photo) {
