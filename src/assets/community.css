@@ -68,7 +68,7 @@
 .icon-globe { --icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='12' cy='12' r='10'/%3E%3Cpath d='M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20'/%3E%3Cpath d='M2 12h20'/%3E%3C/svg%3E"); }
 .community-tabs {
   position: sticky;
-  top: 66px;
+  top: calc(var(--topbar-sticky-height) + 8px);
   z-index: 10;
   display: grid;
   grid-template-columns: repeat(3, 1fr);
@@ -842,7 +842,7 @@
   line-height: 1.35;
 }
 @media (max-width: 520px) {
-  .community-tabs { top: 58px; border-radius: 22px; }
+  .community-tabs { border-radius: 22px; }
   .community-tab { border-radius: 16px; padding-inline: 5px; font-size: .7rem; }
   .community-stats { grid-template-columns: 1fr; }
   .leaderboard-row {
