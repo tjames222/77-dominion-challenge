@@ -1,8 +1,10 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import {
+  DEFAULT_CHALLENGE_DEFINITIONS,
   acknowledgeChallengeRecord,
   buildChallengeProgression,
+  migrateChallengeUnlockRecords,
   normalizeChallengeProgression,
   transitionChallengeRecord,
 } from './challenge-progression.mjs';
@@ -14,6 +16,45 @@ const definitions = [
 const timestamp = '2026-07-16T00:00:00.000Z';
 
 describe('challenge point progression', () => {
+  it('uses the doubled configurable unlock thresholds', () => {
+    assert.deepEqual(
+      DEFAULT_CHALLENGE_DEFINITIONS.map(({ key, pointsRequired }) => [key, pointsRequired]),
+      [
+        ['seven_day_reset', 1000],
+        ['twenty_one_day_prayer', 3000],
+        ['thirty_day_strength', 4500],
+        ['forty_day_fast', 6000],
+        ['bible_in_a_year', 10000],
+      ],
+    );
+
+    const below = buildChallengeProgression({ totalPoints: 999, now: timestamp });
+    const exact = buildChallengeProgression({ totalPoints: 1000, now: timestamp });
+
+    assert.equal(below.nextUnlock.key, 'seven_day_reset');
+    assert.equal(below.nextUnlock.pointsRemaining, 1);
+    assert.equal(below.nextUnlock.progressPercent, 99.9);
+    assert.equal(below.newlyUnlocked.length, 0);
+    assert.deepEqual(exact.newlyUnlocked.map((challenge) => challenge.key), ['seven_day_reset']);
+
+    DEFAULT_CHALLENGE_DEFINITIONS.forEach((definition) => {
+      const justBelow = buildChallengeProgression({
+        definitions: [definition],
+        totalPoints: definition.pointsRequired - 1,
+        now: timestamp,
+      });
+      const atThreshold = buildChallengeProgression({
+        definitions: [definition],
+        totalPoints: definition.pointsRequired,
+        now: timestamp,
+      });
+
+      assert.equal(justBelow.challenges[0].status, 'locked');
+      assert.equal(justBelow.challenges[0].pointsRemaining, 1);
+      assert.deepEqual(atThreshold.newlyUnlocked.map((challenge) => challenge.key), [definition.key]);
+    });
+  });
+
   it('shows locked challenges and the next configurable threshold', () => {
     const result = buildChallengeProgression({ definitions, totalPoints: 250, now: timestamp });
 
@@ -61,16 +102,43 @@ describe('challenge point progression', () => {
 
   it('preserves an unlock when points or thresholds are later adjusted', () => {
     const unlocked = buildChallengeProgression({ definitions, totalPoints: 500, now: timestamp });
-    const adjustedDefinitions = [{ ...definitions[0], pointsRequired: 900 }, definitions[1]];
+    const acknowledged = acknowledgeChallengeRecord(unlocked.records[0], '2026-07-16T01:00:00.000Z');
+    const adjustedDefinitions = [{ ...definitions[0], pointsRequired: 1000 }, definitions[1]];
     const result = buildChallengeProgression({
       definitions: adjustedDefinitions,
-      records: unlocked.records,
+      records: [acknowledged],
       totalPoints: 100,
     });
 
     assert.equal(result.challenges[0].status, 'available');
     assert.equal(result.challenges[0].pointsRemaining, 0);
+    assert.equal(result.challenges[0].progressPercent, 100);
     assert.equal(result.challenges[0].unlockPoints, 500);
+    assert.equal(result.challenges[0].celebrationSeenAt, '2026-07-16T01:00:00.000Z');
+    assert.equal(result.newlyUnlocked.length, 0);
+    assert.equal(result.unseenUnlocks.length, 0);
+  });
+
+  it('backfills missing legacy unlocks once without creating a celebration', () => {
+    const seenAt = '2026-07-16T02:00:00.000Z';
+    const records = migrateChallengeUnlockRecords({
+      previousDefinitions: definitions,
+      records: [],
+      totalPoints: 500,
+      now: seenAt,
+    });
+    const repeated = migrateChallengeUnlockRecords({
+      previousDefinitions: definitions,
+      records,
+      totalPoints: 500,
+      now: '2026-07-17T00:00:00.000Z',
+    });
+
+    assert.equal(records.length, 1);
+    assert.equal(records[0].key, 'reset');
+    assert.equal(records[0].unlockPoints, 500);
+    assert.equal(records[0].celebrationSeenAt, seenAt);
+    assert.deepEqual(repeated, records);
   });
 
   it('responds to configuration changes without changing progression code', () => {

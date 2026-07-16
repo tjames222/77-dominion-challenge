@@ -6,7 +6,7 @@ export const DEFAULT_CHALLENGE_DEFINITIONS = Object.freeze([
     title: '7-Day Reset',
     teaser: 'A focused week to rebuild rhythm and recover momentum.',
     type: 'reset',
-    pointsRequired: 500,
+    pointsRequired: 1000,
     durationDays: 7,
     icon: 'repeat',
     sortOrder: 10,
@@ -16,7 +16,7 @@ export const DEFAULT_CHALLENGE_DEFINITIONS = Object.freeze([
     title: '21-Day Prayer Track',
     teaser: 'Deepen the daily prayer habit with a guided three-week track.',
     type: 'spiritual',
-    pointsRequired: 1500,
+    pointsRequired: 3000,
     durationDays: 21,
     icon: 'spark',
     sortOrder: 20,
@@ -26,7 +26,7 @@ export const DEFAULT_CHALLENGE_DEFINITIONS = Object.freeze([
     title: '30-Day Strength Intensive',
     teaser: 'Turn consistency into a focused month of physical training.',
     type: 'physical',
-    pointsRequired: 2250,
+    pointsRequired: 4500,
     durationDays: 30,
     icon: 'dumbbell',
     sortOrder: 30,
@@ -36,7 +36,7 @@ export const DEFAULT_CHALLENGE_DEFINITIONS = Object.freeze([
     title: '40-Day Fasting & Prayer Track',
     teaser: 'Build a guided rhythm of fasting, prayer, and disciplined reflection.',
     type: 'fasting',
-    pointsRequired: 3000,
+    pointsRequired: 6000,
     durationDays: 40,
     icon: 'flame',
     sortOrder: 40,
@@ -46,7 +46,7 @@ export const DEFAULT_CHALLENGE_DEFINITIONS = Object.freeze([
     title: 'Bible in a Year',
     teaser: 'Carry the reading discipline into a complete yearlong plan.',
     type: 'bible',
-    pointsRequired: 5000,
+    pointsRequired: 10000,
     durationDays: 365,
     icon: 'book',
     sortOrder: 50,
@@ -131,9 +131,9 @@ export function buildChallengeProgression({
     const record = recordsByKey.get(definition.key) || null;
     const status = record?.status || 'locked';
     const pointsRemaining = status === 'locked' ? Math.max(definition.pointsRequired - points, 0) : 0;
-    const progressPercent = definition.pointsRequired > 0
-      ? Math.min((points / definition.pointsRequired) * 100, 100)
-      : 100;
+    const progressPercent = status !== 'locked' || definition.pointsRequired === 0
+      ? 100
+      : Math.min((points / definition.pointsRequired) * 100, 100);
     return {
       ...definition,
       status,
@@ -158,6 +158,27 @@ export function buildChallengeProgression({
     newlyUnlocked,
     records: [...recordsByKey.values()],
   };
+}
+
+export function migrateChallengeUnlockRecords({
+  previousDefinitions = [],
+  records = [],
+  totalPoints = 0,
+  now = new Date().toISOString(),
+} = {}) {
+  const persistedKeys = new Set(records.map((record) => (
+    String(record?.key || record?.challengeKey || record?.challenge_key || '').trim()
+  )).filter(Boolean));
+  const previousProgression = buildChallengeProgression({
+    definitions: previousDefinitions,
+    records,
+    totalPoints,
+    now,
+  });
+
+  return previousProgression.records.map((record) => (
+    persistedKeys.has(record.key) ? record : acknowledgeChallengeRecord(record, now)
+  ));
 }
 
 export function normalizeChallengeProgression(payload = {}) {

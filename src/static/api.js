@@ -3,6 +3,7 @@ import {
   DEFAULT_CHALLENGE_DEFINITIONS,
   acknowledgeChallengeRecord,
   buildChallengeProgression,
+  migrateChallengeUnlockRecords,
   normalizeChallengeProgression,
   transitionChallengeRecord,
 } from './challenge-progression.mjs';
@@ -40,6 +41,8 @@ const MOCK_INVITES_KEY = 'dominion:mockCrewInvites';
 const MOCK_POSTS_KEY = 'dominion:mockCommunityPosts';
 const MOCK_JOURNAL_KEY = 'dominion:mockJournalEntries';
 const MOCK_CHALLENGE_STATES_KEY = 'dominion:mockChallengeStates';
+const MOCK_CHALLENGE_THRESHOLDS_VERSION_KEY = 'dominion:mockChallengeThresholdsVersion';
+const MOCK_CHALLENGE_THRESHOLDS_VERSION = 2;
 const MOCK_MEDIA_DB_NAME = 'dominion-preview-media';
 const MOCK_MEDIA_STORE_NAME = 'community-post-images';
 const mockCommunityImageUrls = new Map();
@@ -721,7 +724,21 @@ export async function cancelMembership() {
 
 function getMockChallengeProgression() {
   const gameStats = readJson('dominion:gameStats', {});
-  const records = readJson(MOCK_CHALLENGE_STATES_KEY, []);
+  let records = readJson(MOCK_CHALLENGE_STATES_KEY, []);
+  const thresholdVersion = Number(localStorage.getItem(MOCK_CHALLENGE_THRESHOLDS_VERSION_KEY) || 0);
+  if (!Number.isFinite(thresholdVersion) || thresholdVersion < MOCK_CHALLENGE_THRESHOLDS_VERSION) {
+    const previousDefinitions = DEFAULT_CHALLENGE_DEFINITIONS.map((definition) => ({
+      ...definition,
+      pointsRequired: definition.pointsRequired / 2,
+    }));
+    records = migrateChallengeUnlockRecords({
+      previousDefinitions,
+      records: Array.isArray(records) ? records : [],
+      totalPoints: gameStats.totalPoints ?? gameStats.challengePoints ?? 0,
+    });
+    writeJson(MOCK_CHALLENGE_STATES_KEY, records);
+    localStorage.setItem(MOCK_CHALLENGE_THRESHOLDS_VERSION_KEY, String(MOCK_CHALLENGE_THRESHOLDS_VERSION));
+  }
   const progression = buildChallengeProgression({
     definitions: DEFAULT_CHALLENGE_DEFINITIONS,
     records: Array.isArray(records) ? records : [],
