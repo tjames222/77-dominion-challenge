@@ -371,11 +371,11 @@ const mapCrew = (item) => {
   } : null;
 };
 
-const mapPost = (post, likes = [], comments = [], currentUserId = '') => ({
+const mapPost = (post, engagement = {}, currentUserId = '') => ({
   id: post.id,
   authorId: post.author_id,
-  name: post.display_name || 'Member',
-  avatarUrl: post.avatar_url || '',
+  name: engagement.display_name || post.display_name || 'Member',
+  avatarUrl: engagement.avatar_url ?? post.avatar_url ?? '',
   crewId: post.crew_id,
   scope: post.scope,
   body: post.body,
@@ -389,9 +389,16 @@ const mapPost = (post, likes = [], comments = [], currentUserId = '') => ({
   createdAt: post.created_at,
   timestamp: post.created_at ? todayLabel(post.created_at) : 'Today',
   isOwn: post.author_id === currentUserId,
-  likeCount: likes.length,
-  likedByMe: likes.some((item) => item.user_id === currentUserId),
-  comments: comments.map((comment) => ({
+  likeCount: Number(engagement.like_count ?? 0),
+  likedByMe: Boolean(engagement.liked_by_me),
+  reactions: (engagement.reactions || []).map((reaction) => ({
+    userId: reaction.user_id,
+    name: reaction.display_name || 'Member',
+    avatarUrl: reaction.avatar_url || '',
+    createdAt: reaction.created_at,
+    isOwn: reaction.user_id === currentUserId,
+  })),
+  comments: (engagement.comments || []).map((comment) => ({
     id: comment.id,
     postId: comment.post_id,
     userId: comment.user_id,
@@ -452,6 +459,7 @@ const mapLeaderboardRow = (row) => ({
   rank: row.rank_position || row.rank || 0,
   userId: row.user_id || row.userId,
   name: row.display_name || row.name || 'Member',
+  avatarUrl: row.avatar_url || row.avatarUrl || '',
   points: row.points || 0,
   currentAppStreak: row.current_app_streak || row.currentAppStreak || 0,
   latestChallengeDay: row.latest_challenge_day || row.latestChallengeDay || 0,
@@ -993,6 +1001,36 @@ function createMockAvatar(name, background = '#66513a') {
   return `data:image/svg+xml,${encodeURIComponent(svg)}`;
 }
 
+function mockCommunityIdentity(userId) {
+  if (userId === getMockUserId()) {
+    const user = getMockUser();
+    return { name: user.name || 'Preview Member', avatarUrl: user.avatarUrl || '' };
+  }
+  if (userId === 'preview_member_josh') {
+    return { name: 'Josh', avatarUrl: createMockAvatar('Josh', '#45634d') };
+  }
+  if (userId === 'preview_member_sarah') {
+    return { name: 'Sarah', avatarUrl: createMockAvatar('Sarah', '#7a4652') };
+  }
+  if (userId === 'preview_member_micah') {
+    return { name: 'Micah', avatarUrl: createMockAvatar('Micah', '#6b4f82') };
+  }
+  return { name: 'Member', avatarUrl: '' };
+}
+
+function seedMockReactions(post) {
+  if (Array.isArray(post.reactions)) return post.reactions;
+  const seedIds = post.likedByMe
+    ? [getMockUserId(), 'preview_member_josh', 'preview_member_sarah']
+    : ['preview_member_sarah', 'preview_member_josh', 'preview_member_micah'];
+  return seedIds.slice(0, Math.min(Number(post.likeCount || 0), 3)).map((userId) => ({
+    userId,
+    ...mockCommunityIdentity(userId),
+    createdAt: post.createdAt,
+    isOwn: userId === getMockUserId(),
+  }));
+}
+
 function ensureMockCrews() {
   const user = getMockUser();
   const userId = getMockUserId();
@@ -1021,14 +1059,16 @@ function ensureMockCrews() {
   crews.forEach((crew) => {
     if (!members[crew.id]) {
       members[crew.id] = [
-        { crewId: crew.id, userId, name: user.name || 'Preview Member', avatarUrl: user.avatarUrl || createMockAvatar(user.name || 'Preview Member'), role: 'owner', joinedAt: crew.createdAt || new Date().toISOString() },
+        { crewId: crew.id, userId, name: user.name || 'Preview Member', avatarUrl: user.avatarUrl || '', role: 'owner', joinedAt: crew.createdAt || new Date().toISOString() },
         { crewId: crew.id, userId: 'preview_member_josh', name: 'Josh', avatarUrl: createMockAvatar('Josh', '#45634d'), role: 'member', joinedAt: crew.createdAt || new Date().toISOString() },
         { crewId: crew.id, userId: 'preview_member_sarah', name: 'Sarah', avatarUrl: createMockAvatar('Sarah', '#7a4652'), role: 'member', joinedAt: crew.createdAt || new Date().toISOString() },
       ];
     }
     members[crew.id] = members[crew.id].map((member) => ({
       ...member,
-      avatarUrl: member.avatarUrl || createMockAvatar(member.name),
+      ...(member.userId === userId
+        ? { name: user.name || 'Preview Member', avatarUrl: user.avatarUrl || '' }
+        : { avatarUrl: member.avatarUrl || createMockAvatar(member.name) }),
     }));
   });
 
@@ -1041,19 +1081,31 @@ function ensureMockPosts() {
   let posts = readJson(MOCK_POSTS_KEY, null);
   if (Array.isArray(posts)) {
     const userId = getMockUserId();
-    posts = posts.map((post) => ({
-      ...post,
-      avatarUrl: post.avatarUrl || createMockAvatar(post.name),
-      imagePath: post.imagePath || null,
-      imageUrl: post.imageUrl || '',
-      imageAlt: post.imageAlt || '',
-      isOwn: post.authorId === userId,
-      comments: (post.comments || []).map((comment) => ({
-        ...comment,
-        avatarUrl: comment.avatarUrl || createMockAvatar(comment.name),
-        isOwn: comment.userId === userId,
-      })),
-    }));
+    posts = posts.map((post) => {
+      const postIdentity = post.authorId === userId
+        ? mockCommunityIdentity(userId)
+        : { name: post.name, avatarUrl: post.avatarUrl || createMockAvatar(post.name) };
+      return {
+        ...post,
+        ...postIdentity,
+        imagePath: post.imagePath || null,
+        imageUrl: post.imageUrl || '',
+        imageAlt: post.imageAlt || '',
+        isOwn: post.authorId === userId,
+        reactions: seedMockReactions(post).map((reaction) => ({
+          ...reaction,
+          ...(reaction.userId === userId ? mockCommunityIdentity(userId) : {}),
+          isOwn: reaction.userId === userId,
+        })),
+        comments: (post.comments || []).map((comment) => ({
+          ...comment,
+          ...(comment.userId === userId
+            ? mockCommunityIdentity(userId)
+            : { avatarUrl: comment.avatarUrl || createMockAvatar(comment.name) }),
+          isOwn: comment.userId === userId,
+        })),
+      };
+    });
     saveMockPosts(posts);
     return posts;
   }
@@ -1080,6 +1132,10 @@ function ensureMockPosts() {
       isOwn: false,
       likeCount: 4,
       likedByMe: false,
+      reactions: [
+        { userId: 'preview_member_sarah', ...mockCommunityIdentity('preview_member_sarah'), createdAt: now, isOwn: false },
+        { userId: 'preview_member_josh', ...mockCommunityIdentity('preview_member_josh'), createdAt: now, isOwn: false },
+      ],
       comments: [
         { id: 'preview_comment_1', postId: 'preview_global_post_1', userId: 'preview_member_sarah', name: 'Sarah', avatarUrl: createMockAvatar('Sarah', '#7a4652'), body: 'That is the kind of move that builds a streak.', createdAt: now, timestamp: 'Today', isOwn: false },
       ],
@@ -1104,6 +1160,10 @@ function ensureMockPosts() {
       isOwn: false,
       likeCount: 2,
       likedByMe: true,
+      reactions: [
+        { userId: getMockUserId(), ...mockCommunityIdentity(getMockUserId()), createdAt: now, isOwn: true },
+        { userId: 'preview_member_josh', ...mockCommunityIdentity('preview_member_josh'), createdAt: now, isOwn: false },
+      ],
       comments: [],
     },
   ];
@@ -1127,6 +1187,7 @@ function getMockLeaderboard({ scope = 'global', crewId = null } = {}) {
     {
       userId: getMockUserId(),
       name: user.name || 'You',
+      avatarUrl: user.avatarUrl || '',
       points: stats.totalPoints || stats.challengePoints || 777,
       currentAppStreak: stats.currentAppStreak || 3,
       latestChallengeDay: 12,
@@ -1135,6 +1196,7 @@ function getMockLeaderboard({ scope = 'global', crewId = null } = {}) {
     {
       userId: 'preview_member_josh',
       name: 'Josh',
+      avatarUrl: createMockAvatar('Josh', '#45634d'),
       points: 690,
       currentAppStreak: 5,
       latestChallengeDay: 12,
@@ -1143,6 +1205,7 @@ function getMockLeaderboard({ scope = 'global', crewId = null } = {}) {
     {
       userId: 'preview_member_sarah',
       name: 'Sarah',
+      avatarUrl: createMockAvatar('Sarah', '#7a4652'),
       points: 620,
       currentAppStreak: 4,
       latestChallengeDay: 12,
@@ -1161,7 +1224,7 @@ async function getCurrentCommunityIdentity() {
     const user = getMockUser();
     return {
       name: user.name || 'Preview Member',
-      avatarUrl: user.avatarUrl || createMockAvatar(user.name || 'Preview Member'),
+      avatarUrl: user.avatarUrl || '',
     };
   }
   const profile = await getProfile();
@@ -1204,7 +1267,7 @@ export async function createCrew({ name, description = '', challengeStartDate = 
       crewId: crew.id,
       userId: getMockUserId(),
       name: getMockUser().name || 'Preview Member',
-      avatarUrl: getMockUser().avatarUrl || createMockAvatar(getMockUser().name || 'Preview Member'),
+      avatarUrl: getMockUser().avatarUrl || '',
       role: 'owner',
       joinedAt: now,
     }];
@@ -1251,11 +1314,9 @@ export async function getCrewMembers(crewId) {
 
   const client = requireSupabase();
   await requireUser();
-  const { data, error } = await client
-    .from('crew_members')
-    .select('crew_id, user_id, display_name, avatar_url, role, joined_at')
-    .eq('crew_id', crewId)
-    .order('joined_at', { ascending: true });
+  const { data, error } = await client.rpc('get_crew_members_with_profiles', {
+    target_crew_id: crewId,
+  });
 
   if (error) throw error;
   return (data || []).map((member) => ({
@@ -1325,7 +1386,7 @@ export async function joinCrewByInvite(token) {
         crewId: crew.id,
         userId,
         name: getMockUser().name || 'Preview Member',
-        avatarUrl: getMockUser().avatarUrl || createMockAvatar(getMockUser().name || 'Preview Member'),
+        avatarUrl: getMockUser().avatarUrl || '',
         role: 'member',
         joinedAt: new Date().toISOString(),
       });
@@ -1449,27 +1510,20 @@ export async function getCommunityPostPage({ scope = 'global', crewId = null, li
   if (!pageRows.length) return { posts: [], hasMore: false, nextCursor: null };
 
   const postIds = pageRows.map((post) => post.id);
-  const [likesResult, commentsResult, signedPosts] = await Promise.all([
-    client
-      .from('post_likes')
-      .select('post_id, user_id')
-      .in('post_id', postIds),
-    client
-      .from('post_comments')
-      .select('id, post_id, user_id, display_name, avatar_url, body, created_at')
-      .in('post_id', postIds)
-      .order('created_at', { ascending: true }),
+  const [engagementResult, signedPosts] = await Promise.all([
+    client.rpc('get_community_post_engagement', { target_post_ids: postIds }),
     withSignedCommunityImageUrls(pageRows),
   ]);
 
-  if (likesResult.error) throw likesResult.error;
-  if (commentsResult.error) throw commentsResult.error;
+  if (engagementResult.error) throw engagementResult.error;
+  const engagementByPostId = new Map(
+    (engagementResult.data || []).map((engagement) => [engagement.post_id, engagement]),
+  );
 
   return {
     posts: signedPosts.map((post) => mapPost(
       post,
-      (likesResult.data || []).filter((like) => like.post_id === post.id),
-      (commentsResult.data || []).filter((comment) => comment.post_id === post.id),
+      engagementByPostId.get(post.id),
       user.id,
     )),
     hasMore,
@@ -1539,7 +1593,7 @@ export async function createCommunityPost({
       id: randomId('preview_post'),
       authorId: getMockUserId(),
       name: user.name || 'Preview Member',
-      avatarUrl: user.avatarUrl || createMockAvatar(user.name || 'Preview Member'),
+      avatarUrl: user.avatarUrl || '',
       crewId: scope === 'crew' ? crewId : null,
       scope,
       body: normalizedBody,
@@ -1555,6 +1609,7 @@ export async function createCommunityPost({
       isOwn: true,
       likeCount: 0,
       likedByMe: false,
+      reactions: [],
       comments: [],
     };
     posts.unshift(post);
@@ -1585,7 +1640,7 @@ export async function createCommunityPost({
       .single();
 
     if (error) throw error;
-    return mapPost({ ...data, image_url: uploadedImage?.imageUrl || '' }, [], [], user.id);
+    return mapPost({ ...data, image_url: uploadedImage?.imageUrl || '' }, {}, user.id);
   } catch (error) {
     if (uploadedImage?.imagePath) {
       await client.storage.from(COMMUNITY_POST_IMAGE_BUCKET).remove([uploadedImage.imagePath]);
@@ -1626,7 +1681,7 @@ export async function updateCommunityPost(postId, body) {
   if (error) throw error;
   if (!data) throw new Error('Only the author can edit this post.');
   const [signedPost] = await withSignedCommunityImageUrls([data]);
-  return mapPost(signedPost, [], [], user.id);
+  return mapPost(signedPost, {}, user.id);
 }
 
 export async function deleteCommunityPost(postId, imagePath = null) {
@@ -1678,22 +1733,42 @@ export async function setPostLiked(postId, shouldLike) {
   if (isLocalDemoMode()) {
     const posts = ensureMockPosts();
     const post = posts.find((item) => item.id === postId);
-    if (!post) return;
-    if (shouldLike && !post.likedByMe) post.likeCount = (post.likeCount || 0) + 1;
-    if (!shouldLike && post.likedByMe) post.likeCount = Math.max((post.likeCount || 0) - 1, 0);
+    if (!post) return null;
+    const userId = getMockUserId();
+    const reaction = {
+      userId,
+      ...mockCommunityIdentity(userId),
+      createdAt: new Date().toISOString(),
+      isOwn: true,
+    };
+    if (shouldLike && !post.likedByMe) {
+      post.likeCount = (post.likeCount || 0) + 1;
+      post.reactions = [reaction, ...(post.reactions || []).filter((item) => item.userId !== userId)].slice(0, 3);
+    }
+    if (!shouldLike && post.likedByMe) {
+      post.likeCount = Math.max((post.likeCount || 0) - 1, 0);
+      post.reactions = (post.reactions || []).filter((item) => item.userId !== userId);
+    }
     post.likedByMe = Boolean(shouldLike);
     saveMockPosts(posts);
-    return;
+    return shouldLike ? reaction : null;
   }
 
   const client = requireSupabase();
   const user = await requireUser();
   if (shouldLike) {
+    const identity = await getCurrentCommunityIdentity();
     const { error } = await client
       .from('post_likes')
       .insert({ post_id: postId, user_id: user.id });
     if (error && error.code !== '23505') throw error;
-    return;
+    return {
+      userId: user.id,
+      name: identity.name,
+      avatarUrl: identity.avatarUrl,
+      createdAt: new Date().toISOString(),
+      isOwn: true,
+    };
   }
 
   const { error } = await client
@@ -1702,6 +1777,7 @@ export async function setPostLiked(postId, shouldLike) {
     .eq('post_id', postId)
     .eq('user_id', user.id);
   if (error) throw error;
+  return null;
 }
 
 export async function addPostComment(postId, body) {
@@ -1715,7 +1791,7 @@ export async function addPostComment(postId, body) {
       postId,
       userId: getMockUserId(),
       name: getMockUser().name || 'Preview Member',
-      avatarUrl: getMockUser().avatarUrl || createMockAvatar(getMockUser().name || 'Preview Member'),
+      avatarUrl: getMockUser().avatarUrl || '',
       body,
       createdAt: now,
       timestamp: 'Today',
