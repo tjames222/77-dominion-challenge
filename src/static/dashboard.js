@@ -458,6 +458,20 @@ const challengeCard = (challenge) => {
 
   return `<article class="challenge-card is-${escapeHtml(challenge.status)}${challenge.accessGranted ? '' : ' is-inaccessible'}"><div class="challenge-card-topline"><span class="challenge-card-icon app-icon ${challengeIconClass(challenge)}" aria-hidden="true"></span><span class="challenge-card-status">${escapeHtml(challengeStatusLabel(challenge))}</span></div><div class="challenge-card-copy"><p>${escapeHtml(challenge.type || 'Challenge')} · ${escapeHtml(duration)}</p><h3>${escapeHtml(challenge.title)}</h3><p>${escapeHtml(challenge.teaser || '')}</p></div><div class="challenge-card-footer"><small>${detail}</small>${action}</div>${unlocked ? '<span class="challenge-card-unlocked" aria-hidden="true"><span class="app-icon icon-check"></span></span>' : ''}</article>`;
 };
+function setChallengeVaultExpanded(expanded) {
+  const vault = $('challengeVault');
+  const toggle = $('challengeVaultToggle');
+  const label = $('challengeVaultToggleLabel');
+  const details = $('challengeVaultDetails');
+  if (!vault || !toggle || !details) return;
+
+  const nextExpanded = Boolean(expanded);
+  vault.classList.toggle('is-expanded', nextExpanded);
+  toggle.setAttribute('aria-expanded', String(nextExpanded));
+  details.setAttribute('aria-hidden', String(!nextExpanded));
+  details.toggleAttribute('inert', !nextExpanded);
+  if (label) label.textContent = nextExpanded ? 'Hide challenge paths' : 'View challenge paths';
+}
 function renderChallengeProgression() {
   const catalog = $('challengeCatalog');
   const summary = $('challengeVaultSummary');
@@ -1259,6 +1273,13 @@ const walkReminderButton = $('walkReminderButton');
 const rewardBackdrop = $('rewardBackdrop');
 const rewardToast = $('rewardToast');
 const challengeCatalog = $('challengeCatalog');
+const challengeVaultToggle = $('challengeVaultToggle');
+if (challengeVaultToggle) {
+  setChallengeVaultExpanded(false);
+  challengeVaultToggle.addEventListener('click', () => {
+    setChallengeVaultExpanded(challengeVaultToggle.getAttribute('aria-expanded') !== 'true');
+  });
+}
 if (themeToggle) themeToggle.addEventListener('click', () => { theme = theme === 'dark' ? 'light' : 'dark'; save('dominion:theme', theme); render(); });
 if (rewardBackdrop && rewardToast) {
   rewardBackdrop.addEventListener('click', () => dismissRewardToast(rewardToast, rewardBackdrop));
