@@ -25,19 +25,6 @@
   max-width: 48ch;
   margin: 0;
 }
-.community-membership {
-  display: grid;
-  gap: 16px;
-  align-items: center;
-  background:
-    radial-gradient(circle at top right, color-mix(in srgb, var(--accent) 14%, transparent), transparent 42%),
-    var(--surface);
-}
-.community-membership p:not(.eyebrow) {
-  margin: 8px 0 0;
-  color: var(--text-muted);
-  line-height: 1.55;
-}
 .community-feedback {
   display: none;
   border: 1px solid color-mix(in srgb, var(--accent) 42%, var(--border));
@@ -862,9 +849,6 @@
   .private-feed-scroll { max-height: 76vh; padding-right: 1px; }
 }
 @media (min-width: 720px) {
-  .community-membership {
-    grid-template-columns: 1fr auto;
-  }
   .community-form,
   .journal-form,
   .crew-toolbar {
