@@ -23,8 +23,8 @@
 
       <section class="challenge-complete-panel reveal" id="challengeCompletePanel" hidden>
         <p class="eyebrow">77 Days Complete</p>
-        <h2>More challenges coming soon.</h2>
-        <p>You finished the Dominion Challenge. Hold the ground you gained while the next challenge is being prepared.</p>
+        <h2>Your next challenge is ready below.</h2>
+        <p>You finished the Dominion Challenge. Hold the ground you gained and choose the next path your points opened.</p>
       </section>
 
       <section class="countdown-card spotlight-panel reveal" id="countdownCard">
@@ -118,6 +118,41 @@
             <span id="recentBadgeSummary">No badges yet</span>
           </div>
           <div class="progression-badge-grid" id="badgeShelf" aria-label="Recent badges"></div>
+        </div>
+      </section>
+
+      <section class="challenge-vault-card reveal" id="challengeVault" aria-labelledby="challengeVaultTitle">
+        <div class="challenge-vault-heading">
+          <div>
+            <p class="eyebrow">Challenge Vault</p>
+            <h2 id="challengeVaultTitle">Points open the next path.</h2>
+            <p>Keep stacking the standard. Every point moves a new challenge closer.</p>
+          </div>
+          <span id="challengeVaultSummary">Loading challenges</span>
+        </div>
+
+        <div class="challenge-next-unlock" id="challengeNextUnlock">
+          <div class="challenge-next-copy">
+            <span>Next unlock</span>
+            <strong id="challengeNextTitle">A new challenge is taking shape.</strong>
+            <small id="challengeNextPoints">Your point progress will load here.</small>
+          </div>
+          <div
+            class="challenge-unlock-progress"
+            id="challengeUnlockProgress"
+            role="progressbar"
+            aria-label="Progress toward the next challenge"
+            aria-valuemin="0"
+            aria-valuemax="1"
+            aria-valuenow="0"
+          >
+            <span id="challengeUnlockProgressFill"></span>
+          </div>
+        </div>
+
+        <p class="sr-only" id="challengeCatalogFeedback" role="status" aria-live="polite" aria-atomic="true"></p>
+        <div class="challenge-catalog" id="challengeCatalog" aria-label="Point-unlock challenges" aria-busy="true">
+          <article class="challenge-catalog-empty">Challenge progression is loading.</article>
         </div>
       </section>
 
@@ -228,6 +263,15 @@
         <p class="eyebrow">Badge Earned</p>
         <h2 id="badgeCelebrationTitle">Faithful Start</h2>
         <p id="badgeCelebrationCopy">A new badge has been added to your shelf.</p>
+      </article>
+    </div>
+    <div class="badge-celebration challenge-unlock-celebration" id="challengeUnlockCelebration" role="status" aria-live="polite" aria-atomic="true" hidden>
+      <div class="badge-rays" aria-hidden="true"></div>
+      <article class="badge-medal">
+        <span class="badge-medal-icon app-icon icon-spark" id="challengeUnlockIcon" aria-hidden="true"></span>
+        <p class="eyebrow">Challenge Unlocked</p>
+        <h2 id="challengeUnlockTitle">A new path is open.</h2>
+        <p id="challengeUnlockCopy">Your points opened another Dominion challenge.</p>
       </article>
     </div>
     <script type="module" src="./src/static/menu.js"></script>
