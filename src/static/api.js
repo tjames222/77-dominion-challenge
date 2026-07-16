@@ -7,6 +7,10 @@ import {
   normalizeChallengeProgression,
   transitionChallengeRecord,
 } from './challenge-progression.mjs';
+import {
+  createCheckInAlreadyCompleteError,
+  isDuplicateCheckInError,
+} from './check-in.mjs';
 
 const SUPABASE_URL = (import.meta.env.VITE_SUPABASE_URL || '').replace(/\/$/, '');
 const SUPABASE_KEY =
@@ -297,7 +301,7 @@ export async function upsertProfile({ name, email, avatarUrl, challengeStartDate
   const { data, error } = await client
     .from('profiles')
     .upsert(payload, { onConflict: 'user_id' })
-    .select('user_id, name, email, avatar_url, challenge_start_date, created_at, updated_at')
+    .select('user_id, name, email, avatar_url, challenge_start_date, time_zone, created_at, updated_at')
     .single();
 
   if (error) throw error;
@@ -335,6 +339,7 @@ const mapProfile = (profile) => profile ? ({
   email: profile.email,
   avatarUrl: profile.avatar_url || '',
   challengeStartDate: profile.challenge_start_date,
+  timeZone: profile.time_zone || '',
   createdAt: profile.created_at,
   updatedAt: profile.updated_at,
 }) : null;
@@ -348,6 +353,7 @@ const mapEntry = (entry) => ({
 
 const mapFeedItem = (item) => ({
   id: item.id,
+  date: item.entry_date || item.date,
   name: item.display_name || item.name || 'Member',
   day: item.day || item.challenge_day,
   status: item.status,
@@ -525,7 +531,7 @@ export async function getProfile() {
   const user = await requireUser();
   const { data, error } = await client
     .from('profiles')
-    .select('user_id, name, email, avatar_url, challenge_start_date, created_at, updated_at')
+    .select('user_id, name, email, avatar_url, challenge_start_date, time_zone, created_at, updated_at')
     .eq('user_id', user.id)
     .maybeSingle();
 
@@ -816,11 +822,17 @@ export async function startChallenge(challengeKey) {
 export async function getDashboard() {
   const client = requireSupabase();
   const user = await requireUser();
-  const [profile, entriesResult, feedResult, statsResult, badgesResult, workoutDifficultyPointValues] = await Promise.all([
+  const [profile, entriesResult, checkInsResult, feedResult, statsResult, badgesResult, workoutDifficultyPointValues] = await Promise.all([
     getProfile(),
     client
       .from('challenge_entries')
       .select('entry_date, completed, scheduled_miss, updated_at')
+      .eq('user_id', user.id)
+      .order('entry_date', { ascending: false })
+      .limit(90),
+    client
+      .from('check_ins')
+      .select('entry_date, challenge_day')
       .eq('user_id', user.id)
       .order('entry_date', { ascending: false })
       .limit(90),
@@ -847,6 +859,7 @@ export async function getDashboard() {
   ]);
 
   if (entriesResult.error) throw entriesResult.error;
+  if (checkInsResult.error) throw checkInsResult.error;
   if (feedResult.error) throw feedResult.error;
   if (statsResult.error) throw statsResult.error;
   if (badgesResult.error) throw badgesResult.error;
@@ -854,6 +867,10 @@ export async function getDashboard() {
   return {
     profile,
     entries: entriesResult.data.map(mapEntry),
+    checkIns: (checkInsResult.data || []).map((checkIn) => ({
+      date: checkIn.entry_date,
+      challengeDay: checkIn.challenge_day,
+    })),
     feed: feedResult.data.map(mapFeedItem),
     gameStats: mapGameStats(statsResult.data),
     badges: (badgesResult.data || []).map(mapBadge).filter(Boolean),
@@ -887,25 +904,24 @@ export async function saveChallengeEntry(entry) {
 
 export async function postCheckIn(checkIn) {
   const client = requireSupabase();
-  const user = await requireUser();
+  await requireUser();
   const { data, error } = await client
-    .from('check_ins')
-    .insert({
-      user_id: user.id,
-      entry_date: checkIn.date,
-      challenge_day: checkIn.day,
-      status: checkIn.status,
-      completed_count: checkIn.completedCount,
-      completed: checkIn.completed || [],
-      workout_difficulty: checkIn.workoutDifficulty || {},
-    })
-    .select('id, challenge_day, status, completed_count, points_awarded, created_at')
-    .single();
+    .rpc('submit_daily_check_in', {
+      target_status: checkIn.status,
+      target_completed: checkIn.completed || [],
+      target_workout_difficulty: checkIn.workoutDifficulty || {},
+      target_time_zone: checkIn.timeZone || 'UTC',
+      target_expected_date: checkIn.date,
+    });
 
-  if (error) throw error;
+  if (error) {
+    if (isDuplicateCheckInError(error)) throw createCheckInAlreadyCompleteError(error);
+    throw error;
+  }
   const profile = readJson('dominion:user', { name: 'You' });
   return mapFeedItem({
     id: data?.id || globalThis.crypto?.randomUUID?.() || `${checkIn.date}-${Date.now()}`,
+    entry_date: data?.entry_date || checkIn.date,
     display_name: profile?.name || 'You',
     challenge_day: data?.challenge_day || checkIn.day,
     status: data?.status || checkIn.status,
