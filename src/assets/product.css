@@ -1465,6 +1465,9 @@ body.challenge-finished .reward-backdrop {
     inset 0 1px 0 color-mix(in srgb, #ffffff 8%, transparent),
     0 18px 48px color-mix(in srgb, #000000 42%, transparent);
 }
+:root[data-theme="light"] .dashboard-brand-panel {
+  box-shadow: none;
+}
 .dashboard-brand-panel::after {
   content: "";
   position: absolute;

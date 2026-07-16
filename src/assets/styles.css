@@ -634,6 +634,9 @@ select {
   background: transparent;
   box-shadow: 0 18px 42px color-mix(in srgb, #000000 26%, transparent);
 }
+:root[data-theme="light"] .science-photo-panel {
+  box-shadow: none;
+}
 .science-photo-panel img {
   display: block;
   width: 100%;
