@@ -150,9 +150,32 @@
           </div>
         </div>
 
-        <p class="sr-only" id="challengeCatalogFeedback" role="status" aria-live="polite" aria-atomic="true"></p>
-        <div class="challenge-catalog" id="challengeCatalog" aria-label="Point-unlock challenges" aria-busy="true">
-          <article class="challenge-catalog-empty">Challenge progression is loading.</article>
+        <div class="challenge-vault-disclosure">
+          <button
+            class="challenge-vault-toggle"
+            id="challengeVaultToggle"
+            type="button"
+            aria-expanded="false"
+            aria-controls="challengeVaultDetails"
+          >
+            <span id="challengeVaultToggleLabel">View challenge paths</span>
+            <span class="challenge-vault-toggle-icon" aria-hidden="true"></span>
+          </button>
+          <div
+            class="challenge-vault-details"
+            id="challengeVaultDetails"
+            role="region"
+            aria-label="Challenge paths"
+            aria-hidden="true"
+            inert
+          >
+            <div class="challenge-vault-details-inner">
+              <p class="sr-only" id="challengeCatalogFeedback" role="status" aria-live="polite" aria-atomic="true"></p>
+              <div class="challenge-catalog" id="challengeCatalog" aria-label="Point-unlock challenges" aria-busy="true">
+                <article class="challenge-catalog-empty">Challenge progression is loading.</article>
+              </div>
+            </div>
+          </div>
         </div>
       </section>
 
