@@ -1,6 +1,5 @@
 import { initReveal } from './reveal';
 import {
-  createCustomerPortalSession,
   getBillingState,
   getLocalOrSessionUser,
   getProfile,
@@ -48,7 +47,6 @@ const profilePhotoInput = document.getElementById('profilePhotoInput');
 const profileNameInput = document.getElementById('profileNameInput');
 const profileEmailInput = document.getElementById('profileEmailInput');
 const profileFeedback = document.getElementById('profileFeedback');
-const manageBillingButton = document.getElementById('profileManageBillingButton');
 const MAX_PROFILE_PHOTO_SIZE = 5 * 1024 * 1024;
 let currentProfile = { name: 'Member', email: 'Logged in', avatarUrl: '' };
 let selectedPhotoFile = null;
@@ -129,7 +127,6 @@ function updateBillingSummary(state) {
     ? 'Your $7/month subscription is active, so the dashboard, daily actions, community, journal, and future member content stay open.'
     : 'Subscribe for $7/month to unlock the dashboard, daily action page, community, journal, and full tracking flow.';
   document.getElementById('profileSubscriptionPill').textContent = state.subscriptionActive ? 'Subscription active' : 'Subscription needed';
-  manageBillingButton.hidden = !state.subscription;
 }
 
 async function hydrateProfile() {
@@ -242,21 +239,6 @@ profileForm?.addEventListener('submit', async (event) => {
     setProfileFeedback(error?.message || 'Unable to save your profile right now.', 'error');
   } finally {
     setProfileFormBusy(false, originalButtonLabel);
-  }
-});
-
-manageBillingButton?.addEventListener('click', async () => {
-  if (!hasSupabaseAuth() && !isLocalDemoMode()) return;
-  const original = manageBillingButton.textContent;
-  manageBillingButton.disabled = true;
-  manageBillingButton.textContent = 'Opening...';
-  try {
-    const { url } = await createCustomerPortalSession();
-    window.location.href = url;
-  } catch (error) {
-    window.alert(error?.message || 'Unable to open the billing portal right now.');
-    manageBillingButton.disabled = false;
-    manageBillingButton.textContent = original;
   }
 });
 
