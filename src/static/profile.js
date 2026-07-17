@@ -43,7 +43,9 @@ const profileEmailEl = document.getElementById('profileEmail');
 const profileAvatarImageEl = document.getElementById('profileAvatarImage');
 const profileAvatarFallbackEl = document.getElementById('profileAvatarFallback');
 const profileForm = document.getElementById('profileForm');
+const profilePhotoField = document.getElementById('profilePhotoField');
 const profilePhotoInput = document.getElementById('profilePhotoInput');
+const profilePhotoFilename = document.getElementById('profilePhotoFilename');
 const profileNameInput = document.getElementById('profileNameInput');
 const profileEmailInput = document.getElementById('profileEmailInput');
 const profileFeedback = document.getElementById('profileFeedback');
@@ -51,6 +53,7 @@ const MAX_PROFILE_PHOTO_SIZE = 5 * 1024 * 1024;
 let currentProfile = { name: 'Member', email: 'Logged in', avatarUrl: '' };
 let selectedPhotoFile = null;
 let selectedPreviewUrl = '';
+const EMPTY_PHOTO_FILENAME = 'No new photo selected';
 
 function initialsFor(name, email) {
   const source = String(name || email || 'Member').trim();
@@ -63,6 +66,15 @@ function revokeSelectedPreview() {
   if (!selectedPreviewUrl) return;
   URL.revokeObjectURL(selectedPreviewUrl);
   selectedPreviewUrl = '';
+}
+
+function renderPhotoSelection(file = null) {
+  if (profilePhotoFilename) {
+    const filename = String(file?.name || '').trim();
+    profilePhotoFilename.textContent = filename || EMPTY_PHOTO_FILENAME;
+    profilePhotoFilename.title = filename;
+  }
+  profilePhotoField?.classList.toggle('has-selection', Boolean(file));
 }
 
 function renderAvatar(profile) {
@@ -113,9 +125,12 @@ function setProfileFeedback(message, tone = '') {
 
 function setProfileFormBusy(isBusy, label = 'Save profile') {
   const submitButton = profileForm?.querySelector('button[type="submit"]');
-  if (!submitButton) return;
-  submitButton.disabled = isBusy;
-  submitButton.textContent = isBusy ? 'Saving...' : label;
+  if (profilePhotoInput) profilePhotoInput.disabled = isBusy;
+  if (profilePhotoField) profilePhotoField.setAttribute('aria-busy', String(isBusy));
+  if (submitButton) {
+    submitButton.disabled = isBusy;
+    submitButton.textContent = isBusy ? 'Saving...' : label;
+  }
 }
 
 function updateBillingSummary(state) {
@@ -174,6 +189,7 @@ async function hydrateProfile() {
 profilePhotoInput?.addEventListener('change', () => {
   revokeSelectedPreview();
   selectedPhotoFile = null;
+  renderPhotoSelection();
 
   const file = profilePhotoInput.files?.[0];
   if (!file) {
@@ -197,8 +213,9 @@ profilePhotoInput?.addEventListener('change', () => {
 
   selectedPhotoFile = file;
   selectedPreviewUrl = URL.createObjectURL(file);
+  renderPhotoSelection(file);
   renderAvatar({ ...currentProfile, avatarUrl: selectedPreviewUrl });
-  setProfileFeedback('Photo selected. Save profile when ready.');
+  setProfileFeedback(`“${file.name}” selected. Save profile when ready.`);
 });
 
 profileForm?.addEventListener('submit', async (event) => {
@@ -229,13 +246,16 @@ profileForm?.addEventListener('submit', async (event) => {
     selectedPhotoFile = null;
     if (profilePhotoInput) profilePhotoInput.value = '';
     revokeSelectedPreview();
+    renderPhotoSelection();
     syncStoredUser(nextProfile);
     renderProfile(nextProfile);
     setProfileFeedback(savedProfile?.emailChangeRequested
       ? 'Profile saved. Confirm the email change from your inbox.'
       : 'Profile saved.');
   } catch (error) {
-    renderAvatar(currentProfile);
+    renderAvatar(selectedPreviewUrl
+      ? { ...currentProfile, avatarUrl: selectedPreviewUrl }
+      : currentProfile);
     setProfileFeedback(error?.message || 'Unable to save your profile right now.', 'error');
   } finally {
     setProfileFormBusy(false, originalButtonLabel);
