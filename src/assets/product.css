@@ -1867,7 +1867,11 @@ body.challenge-finished .reward-backdrop {
 .billing-shell {
   gap: clamp(26px, 5vw, 44px);
 }
-.billing-status-card,
+.billing-status-card {
+  display: grid;
+  gap: 18px;
+  padding: clamp(22px, 4vw, 30px);
+}
 .profile-billing {
   display: grid;
   gap: 16px;
@@ -1921,19 +1925,71 @@ body.challenge-finished .reward-backdrop {
   font-size: .8rem;
   font-weight: 900;
 }
-.billing-inline-actions,
 .profile-billing-actions {
   display: flex;
   flex-wrap: wrap;
   gap: 10px;
   align-items: center;
 }
+.billing-inline-actions {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 360px), 1fr));
+  gap: 14px;
+  align-items: stretch;
+  margin-top: 2px;
+}
+.billing-inline-actions > .primary,
+.billing-inline-actions > .secondary-button,
+.billing-inline-actions > .danger-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  min-height: 56px;
+  padding: 14px 18px;
+  border-radius: 16px;
+  box-sizing: border-box;
+  font-size: .78rem;
+  font-weight: 950;
+  line-height: 1.2;
+  letter-spacing: .035em;
+  text-align: center;
+  text-decoration: none;
+  transition: border-color 180ms ease, background 180ms ease, box-shadow 180ms ease, transform 180ms ease;
+}
+.billing-inline-actions > .primary {
+  border: 1px solid color-mix(in srgb, var(--accent-strong) 64%, var(--border));
+  background: linear-gradient(135deg, color-mix(in srgb, var(--accent) 88%, #ffffff), var(--accent));
+  color: #211301;
+  box-shadow: 0 10px 24px color-mix(in srgb, var(--accent) 15%, transparent);
+}
+.billing-inline-actions > .secondary-button {
+  border-color: color-mix(in srgb, var(--accent) 28%, var(--border));
+  background: color-mix(in srgb, var(--accent) 7%, var(--surface-elevated));
+}
+.billing-inline-actions > .danger-button {
+  border-color: color-mix(in srgb, var(--danger) 64%, var(--border));
+  background: color-mix(in srgb, var(--danger) 12%, var(--surface-elevated));
+}
+.billing-inline-actions > a:hover,
+.billing-inline-actions > button:not(:disabled):hover {
+  transform: translateY(-1px);
+}
+.billing-inline-actions > .secondary-button:not(:disabled):hover {
+  border-color: color-mix(in srgb, var(--accent) 58%, var(--border));
+  background: color-mix(in srgb, var(--accent) 12%, var(--surface-elevated));
+}
+.billing-inline-actions > .danger-button:not(:disabled):hover {
+  border-color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 18%, var(--surface-elevated));
+}
+.billing-inline-actions > :focus-visible {
+  outline: 3px solid color-mix(in srgb, var(--accent) 28%, transparent);
+  outline-offset: 3px;
+}
 .billing-inline-actions [hidden],
 .profile-billing-actions [hidden] {
   display: none;
-}
-.billing-dashboard-link {
-  margin-left: auto;
 }
 .billing-feedback {
   min-height: 1.2rem;
@@ -2808,9 +2864,6 @@ body.challenge-finished .reward-backdrop {
   }
   .countdown-meta span {
     width: 100%;
-  }
-  .billing-dashboard-link {
-    margin-left: 0;
   }
 }
 @media (min-width: 840px) {
