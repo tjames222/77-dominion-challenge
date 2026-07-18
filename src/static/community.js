@@ -702,75 +702,27 @@ function clearCrewPostImage() {
   const preview = $('crewPostImagePreview');
   const previewImage = $('crewPostImagePreviewImage');
   const altLabel = $('crewPostImageAltLabel');
+  const altInput = $('crewPostImageAlt');
+  if (document.activeElement === altInput) altInput.blur();
   if (input) input.value = '';
   if (previewImage) previewImage.removeAttribute('src');
   if (preview) preview.hidden = true;
   if (altLabel) altLabel.hidden = true;
-  if ($('crewPostImageAlt')) {
-    $('crewPostImageAlt').value = '';
-    $('crewPostImageAlt').required = false;
+  if (altInput) {
+    altInput.value = '';
+    altInput.required = false;
   }
 }
 
 function setupCrewInfiniteScroll() {
-  const root = $('crewFeedScroll');
   const sentinel = $('crewFeedSentinel');
-  if (!root || !sentinel || !('IntersectionObserver' in window)) return;
+  if (!sentinel || !('IntersectionObserver' in window)) return;
   const observer = new IntersectionObserver((entries) => {
     if (entries.some((entry) => entry.isIntersecting) && state.crewFeed.hasMore) {
       loadCrewFeed();
     }
-  }, { root, rootMargin: '180px 0px', threshold: 0.01 });
+  }, { root: null, rootMargin: '180px 0px', threshold: 0.01 });
   observer.observe(sentinel);
-}
-
-function setupPullToRefresh() {
-  const scroll = $('crewFeedScroll');
-  const indicator = $('crewPullRefreshIndicator');
-  if (!scroll || !indicator) return;
-  let startY = null;
-  let pullDistance = 0;
-
-  const resetPull = () => {
-    startY = null;
-    pullDistance = 0;
-    scroll.style.removeProperty('--pull-distance');
-    indicator.classList.remove('visible', 'ready', 'refreshing');
-    indicator.textContent = 'Pull down to refresh';
-  };
-
-  scroll.addEventListener('touchstart', (event) => {
-    if (scroll.scrollTop > 0 || state.crewFeed.loading) return;
-    startY = event.touches[0]?.clientY ?? null;
-    pullDistance = 0;
-  }, { passive: true });
-
-  scroll.addEventListener('touchmove', (event) => {
-    if (startY === null) return;
-    if (scroll.scrollTop > 0) {
-      resetPull();
-      return;
-    }
-    pullDistance = Math.max(0, Math.min(96, ((event.touches[0]?.clientY ?? startY) - startY) * 0.55));
-    indicator.classList.toggle('visible', pullDistance > 8);
-    indicator.classList.toggle('ready', pullDistance >= 64);
-    indicator.textContent = pullDistance >= 64 ? 'Release to refresh' : 'Pull down to refresh';
-    scroll.style.setProperty('--pull-distance', `${pullDistance}px`);
-  }, { passive: true });
-
-  scroll.addEventListener('touchend', async () => {
-    if (startY === null) return;
-    const shouldRefresh = pullDistance >= 64;
-    resetPull();
-    if (shouldRefresh) {
-      indicator.classList.add('visible', 'refreshing');
-      indicator.textContent = 'Refreshing private feed…';
-      await loadCrewFeed({ reset: true });
-    }
-    resetPull();
-  }, { passive: true });
-
-  scroll.addEventListener('touchcancel', resetPull, { passive: true });
 }
 
 async function bootCommunity() {
@@ -798,7 +750,6 @@ async function bootCommunity() {
 }
 
 setupCrewInfiniteScroll();
-setupPullToRefresh();
 
 $('crewSelect')?.addEventListener('change', async (event) => {
   state.activeCrewId = event.target.value;

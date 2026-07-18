@@ -463,37 +463,12 @@
   padding: 2px 2px 0;
 }
 .private-feed-scroll {
-  --pull-distance: 0px;
-  max-height: min(860px, 72vh);
-  overflow-y: auto;
-  overscroll-behavior-y: contain;
-  scroll-behavior: smooth;
   border-radius: 8px;
-  padding: var(--pull-distance) 4px 2px 2px;
-  transition: padding-top 160ms ease;
-  scrollbar-gutter: stable;
+  padding: 0 4px 2px 2px;
 }
 .private-feed-scroll:focus-visible {
   outline: 3px solid color-mix(in srgb, var(--accent) 38%, transparent);
   outline-offset: 3px;
-}
-.pull-refresh-indicator {
-  display: grid;
-  place-items: center;
-  height: 0;
-  overflow: hidden;
-  color: var(--text-muted);
-  font-size: .78rem;
-  font-weight: 900;
-  opacity: 0;
-  transition: height 160ms ease, opacity 160ms ease;
-}
-.pull-refresh-indicator.visible {
-  height: 28px;
-  opacity: 1;
-}
-.pull-refresh-indicator.ready {
-  color: var(--accent-strong);
 }
 .feed-card {
   display: grid;
@@ -909,7 +884,7 @@
   .comment-form { grid-template-columns: 1fr; }
   .composer-actions { align-items: stretch; flex-direction: column; }
   .composer-actions .primary { width: 100%; }
-  .private-feed-scroll { max-height: 76vh; padding-right: 1px; }
+  .private-feed-scroll { padding-right: 1px; }
 }
 @media (min-width: 720px) {
   .community-form,
@@ -928,11 +903,6 @@
   }
 }
 @media (prefers-reduced-motion: reduce) {
-  .private-feed-scroll,
-  .pull-refresh-indicator {
-    scroll-behavior: auto;
-    transition: none;
-  }
   .skeleton {
     animation: none;
   }
