@@ -7,6 +7,10 @@ import {
   normalizeChallengeProgression,
   transitionChallengeRecord,
 } from './challenge-progression.mjs';
+import {
+  prepareMockCommunityPostsForStorage,
+  prepareMockCrewMembersForStorage,
+} from './mock-community-storage.mjs';
 
 const SUPABASE_URL = (import.meta.env.VITE_SUPABASE_URL || '').replace(/\/$/, '');
 const SUPABASE_KEY =
@@ -1072,7 +1076,7 @@ function ensureMockCrews() {
     }));
   });
 
-  writeJson(MOCK_CREW_MEMBERS_KEY, members);
+  saveMockCrewMembers(members);
   return { crews, members };
 }
 
@@ -1167,16 +1171,22 @@ function ensureMockPosts() {
       comments: [],
     },
   ];
-  writeJson(MOCK_POSTS_KEY, posts);
+  saveMockPosts(posts);
   return posts;
 }
 
+function saveMockCrewMembers(members) {
+  writeJson(
+    MOCK_CREW_MEMBERS_KEY,
+    prepareMockCrewMembersForStorage(members, getMockUserId()),
+  );
+}
+
 function saveMockPosts(posts) {
-  writeJson(MOCK_POSTS_KEY, posts.map((post) => ({
-    ...post,
-    // Binary preview media lives in IndexedDB so ordinary photos do not exhaust localStorage.
-    imageUrl: post.imagePath ? '' : post.imageUrl || '',
-  })));
+  writeJson(
+    MOCK_POSTS_KEY,
+    prepareMockCommunityPostsForStorage(posts, getMockUserId()),
+  );
 }
 
 function getMockLeaderboard({ scope = 'global', crewId = null } = {}) {
@@ -1272,7 +1282,7 @@ export async function createCrew({ name, description = '', challengeStartDate = 
       joinedAt: now,
     }];
     writeJson(MOCK_CREWS_KEY, crews);
-    writeJson(MOCK_CREW_MEMBERS_KEY, members);
+    saveMockCrewMembers(members);
     return crew;
   }
 
@@ -1391,7 +1401,7 @@ export async function joinCrewByInvite(token) {
         joinedAt: new Date().toISOString(),
       });
       members[crew.id] = crewMembers;
-      writeJson(MOCK_CREW_MEMBERS_KEY, members);
+      saveMockCrewMembers(members);
     }
     return { ...crew, role: 'member' };
   }
