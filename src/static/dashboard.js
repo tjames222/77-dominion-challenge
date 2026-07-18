@@ -23,9 +23,16 @@ import {
   normalizeDifficultyPointValues,
   normalizeWorkoutDifficulty,
 } from './scoring.mjs';
+import { syncWorkoutDifficultyControls } from './workout-difficulty-controls.mjs';
 import { resolveLeaderboardPrestige } from './leaderboard-prestige.mjs';
 
 const TOTAL_DAYS = 77;
+const DIFFICULTY_LABELS = {
+  easy: 'Easy',
+  medium: 'Medium',
+  hard: 'Hard',
+  extreme: 'Extreme',
+};
 const YOUVERSION_VERSE_URL = import.meta.env.VITE_YOUVERSION_VERSE_URL || '';
 const YOUVERSION_APP_URL = import.meta.env.VITE_YOUVERSION_APP_URL || 'https://www.bible.com/';
 const YOUVERSION_PRAYER_URL = import.meta.env.VITE_YOUVERSION_PRAYER_URL || 'https://www.bible.com/prayer';
@@ -925,12 +932,17 @@ function renderPointPreview(entry = todayEntry()) {
   if (fullDayPotentialPoints && fullDayPotentialPoints.textContent !== fullDayPotentialText) {
     fullDayPotentialPoints.textContent = fullDayPotentialText;
   }
+  document.querySelectorAll('[data-difficulty-point]').forEach((pointLabel) => {
+    const difficulty = pointLabel.dataset.difficultyPoint;
+    const label = `+${difficultyPointValues[difficulty]} pts`;
+    if (pointLabel.textContent !== label) pointLabel.textContent = label;
+  });
   if (workoutOnePointValue) {
-    const label = `+${difficultyPointValues[workoutDifficulty.one]} difficulty bonus when completed`;
+    const label = `${DIFFICULTY_LABELS[workoutDifficulty.one]} selected · +${difficultyPointValues[workoutDifficulty.one]} point bonus`;
     if (workoutOnePointValue.textContent !== label) workoutOnePointValue.textContent = label;
   }
   if (workoutTwoPointValue) {
-    const label = `+${difficultyPointValues[workoutDifficulty.two]} difficulty bonus when completed`;
+    const label = `${DIFFICULTY_LABELS[workoutDifficulty.two]} selected · +${difficultyPointValues[workoutDifficulty.two]} point bonus`;
     if (workoutTwoPointValue.textContent !== label) workoutTwoPointValue.textContent = label;
   }
   if (pointPreviewAnnouncement) {
@@ -1085,8 +1097,6 @@ function applyDailyActions() {
   const eveningPrayerLink = $('eveningPrayerLink');
   const worshipLink = $('worshipLink');
   const worshipPrompt = $('worshipPrompt');
-  const workoutOneDifficulty = $('workoutOneDifficulty');
-  const workoutTwoDifficulty = $('workoutTwoDifficulty');
   const workoutOneRecommendation = $('workoutOneRecommendation');
   const workoutTwoRecommendation = $('workoutTwoRecommendation');
   const workoutOneLink = $('workoutOneLink');
@@ -1105,8 +1115,10 @@ function applyDailyActions() {
   if (worshipPrompt) worshipPrompt.textContent = worship.label;
 
   workoutDifficulty = normalizeWorkoutDifficulty(workoutDifficulty);
-  if (workoutOneDifficulty) workoutOneDifficulty.value = workoutDifficulty.one;
-  if (workoutTwoDifficulty) workoutTwoDifficulty.value = workoutDifficulty.two;
+  syncWorkoutDifficultyControls(
+    document.querySelectorAll('[data-workout]'),
+    workoutDifficulty,
+  );
 
   const onePlan = pickDaily(workoutPlans[workoutDifficulty.one], 0);
   const twoPlan = pickDaily(workoutPlans[workoutDifficulty.two], 1);
@@ -1164,6 +1176,10 @@ function render() {
   const checkInButton = $('checkInButton');
   const scheduledButton = $('scheduledButton');
   const selectAllActionsButton = $('selectAllActionsButton');
+  const selectAllActionsLabel = $('selectAllActionsLabel');
+  const scorecardSelectionStatus = $('scorecardSelectionStatus');
+  const workoutOneDifficulty = $('workoutOneDifficulty');
+  const workoutTwoDifficulty = $('workoutTwoDifficulty');
   const checklist = $('checklist');
   const feedEl = $('feed');
   const completedToday = $('completedToday');
@@ -1185,6 +1201,8 @@ function render() {
   if (todayPercentEl) todayPercentEl.textContent = `${todayPercent}%`;
   if (todayCountEl) todayCountEl.textContent = entry.scheduledMiss ? 'Scheduled miss day' : `${entry.completed.length} of ${standards.length} done`;
   if (todayRing) todayRing.style.setProperty('--value', `${todayPercent}%`);
+  if (workoutOneDifficulty) workoutOneDifficulty.disabled = finished || !!entry.scheduledMiss;
+  if (workoutTwoDifficulty) workoutTwoDifficulty.disabled = finished || !!entry.scheduledMiss;
   if (checkInButton) checkInButton.disabled = !hasPostableCheckIn;
   if (scheduledButton) {
     scheduledButton.classList.toggle('active', !!entry.scheduledMiss);
@@ -1195,8 +1213,21 @@ function render() {
   if (selectAllActionsButton) {
     selectAllActionsButton.classList.toggle('active', allActionsCompleted);
     selectAllActionsButton.disabled = finished || !!entry.scheduledMiss;
-    selectAllActionsButton.textContent = allActionsCompleted ? 'Unselect all' : 'Select all';
-    selectAllActionsButton.setAttribute('aria-pressed', String(allActionsCompleted));
+    selectAllActionsButton.setAttribute('aria-label', allActionsCompleted
+      ? 'Clear all daily actions'
+      : 'Mark all seven daily actions complete');
+  }
+  const selectAllLabel = allActionsCompleted ? 'Clear all' : 'Mark all complete';
+  if (selectAllActionsLabel && selectAllActionsLabel.textContent !== selectAllLabel) {
+    selectAllActionsLabel.textContent = selectAllLabel;
+  }
+  if (scorecardSelectionStatus) {
+    const selectionStatus = entry.scheduledMiss
+      ? 'Scheduled miss selected'
+      : `${entry.completed.length} of ${standards.length} complete`;
+    if (scorecardSelectionStatus.textContent !== selectionStatus) {
+      scorecardSelectionStatus.textContent = selectionStatus;
+    }
   }
   if (checklist) renderChecklist(entry);
   renderTodayActionCompletion(entry);
@@ -1361,9 +1392,10 @@ if (startDateInput) startDateInput.addEventListener('input', event => {
   }
   render();
 });
-document.querySelectorAll('[data-workout]').forEach((select) => {
-  select.addEventListener('change', (event) => {
+document.querySelectorAll('[data-workout]').forEach((input) => {
+  input.addEventListener('change', (event) => {
     const target = event.target;
+    if (target.type === 'radio' && !target.checked) return;
     workoutDifficulty = normalizeWorkoutDifficulty({ ...workoutDifficulty, [target.dataset.workout]: target.value });
     save(WORKOUT_DIFFICULTY_STORAGE_KEY, workoutDifficulty);
     applyDailyActions();

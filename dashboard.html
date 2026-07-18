@@ -224,29 +224,61 @@
         </div>
         <div class="progress-standard">
           <div class="section-heading"><p class="eyebrow">Today's Scorecard</p><h3>Mind, Spirit, Body</h3></div>
-          <div class="scorecard-toolbar">
-            <div class="scorecard-difficulty-controls" aria-label="Workout difficulty">
-              <label class="scorecard-select-label" for="workoutOneDifficulty">Workout 1 difficulty
-                <select id="workoutOneDifficulty" data-workout="one">
-                  <option value="easy">Easy</option>
-                  <option value="medium">Medium</option>
-                  <option value="hard">Hard</option>
-                  <option value="extreme">Extreme</option>
-                </select>
-                <small class="difficulty-point-value" id="workoutOnePointValue">+5 difficulty bonus when completed</small>
-              </label>
-              <label class="scorecard-select-label" for="workoutTwoDifficulty">Workout 2 difficulty
-                <select id="workoutTwoDifficulty" data-workout="two">
-                  <option value="easy">Easy</option>
-                  <option value="medium">Medium</option>
-                  <option value="hard">Hard</option>
-                  <option value="extreme">Extreme</option>
-                </select>
-                <small class="difficulty-point-value" id="workoutTwoPointValue">+5 difficulty bonus when completed</small>
-              </label>
+          <section class="scorecard-training-panel" aria-labelledby="scorecardTrainingTitle">
+            <div class="scorecard-training-heading">
+              <span class="scorecard-training-icon app-icon icon-dumbbell" aria-hidden="true"></span>
+              <div>
+                <p id="scorecardTrainingTitle">Workout intensity</p>
+                <span>Set the effort for each workout. The bonus applies when that action is complete.</span>
+              </div>
             </div>
-            <button class="scorecard-select-all" id="selectAllActionsButton" type="button" aria-pressed="false">Select all</button>
-          </div>
+            <div class="scorecard-difficulty-controls">
+              <fieldset class="scorecard-difficulty-control" id="workoutOneDifficulty" aria-describedby="workoutOnePointValue">
+                <legend>Workout 1</legend>
+                <p class="difficulty-point-value" id="workoutOnePointValue">Medium selected · +5 bonus</p>
+                <div class="difficulty-options">
+                  <label class="difficulty-option">
+                    <input type="radio" name="workoutOneDifficulty" value="easy" data-workout="one" />
+                    <span class="difficulty-option-content"><strong>Easy</strong><small data-difficulty-point="easy">+2 pts</small></span>
+                  </label>
+                  <label class="difficulty-option">
+                    <input type="radio" name="workoutOneDifficulty" value="medium" data-workout="one" checked />
+                    <span class="difficulty-option-content"><strong>Medium</strong><small data-difficulty-point="medium">+5 pts</small></span>
+                  </label>
+                  <label class="difficulty-option">
+                    <input type="radio" name="workoutOneDifficulty" value="hard" data-workout="one" />
+                    <span class="difficulty-option-content"><strong>Hard</strong><small data-difficulty-point="hard">+10 pts</small></span>
+                  </label>
+                  <label class="difficulty-option">
+                    <input type="radio" name="workoutOneDifficulty" value="extreme" data-workout="one" />
+                    <span class="difficulty-option-content"><strong>Extreme</strong><small data-difficulty-point="extreme">+15 pts</small></span>
+                  </label>
+                </div>
+              </fieldset>
+              <fieldset class="scorecard-difficulty-control" id="workoutTwoDifficulty" aria-describedby="workoutTwoPointValue">
+                <legend>Workout 2</legend>
+                <p class="difficulty-point-value" id="workoutTwoPointValue">Medium selected · +5 bonus</p>
+                <div class="difficulty-options">
+                  <label class="difficulty-option">
+                    <input type="radio" name="workoutTwoDifficulty" value="easy" data-workout="two" />
+                    <span class="difficulty-option-content"><strong>Easy</strong><small data-difficulty-point="easy">+2 pts</small></span>
+                  </label>
+                  <label class="difficulty-option">
+                    <input type="radio" name="workoutTwoDifficulty" value="medium" data-workout="two" checked />
+                    <span class="difficulty-option-content"><strong>Medium</strong><small data-difficulty-point="medium">+5 pts</small></span>
+                  </label>
+                  <label class="difficulty-option">
+                    <input type="radio" name="workoutTwoDifficulty" value="hard" data-workout="two" />
+                    <span class="difficulty-option-content"><strong>Hard</strong><small data-difficulty-point="hard">+10 pts</small></span>
+                  </label>
+                  <label class="difficulty-option">
+                    <input type="radio" name="workoutTwoDifficulty" value="extreme" data-workout="two" />
+                    <span class="difficulty-option-content"><strong>Extreme</strong><small data-difficulty-point="extreme">+15 pts</small></span>
+                  </label>
+                </div>
+              </fieldset>
+            </div>
+          </section>
           <div class="point-preview">
             <article class="point-preview-item">
               <span>Projected award</span>
@@ -259,6 +291,16 @@
               <small>All 7 actions at the selected difficulties</small>
             </article>
             <span class="sr-only" id="pointPreviewAnnouncement" aria-live="polite" aria-atomic="true">Projected award 0 points. Full-day potential 110 points.</span>
+          </div>
+          <div class="scorecard-checklist-heading">
+            <div>
+              <p>Daily standards</p>
+              <span id="scorecardSelectionStatus" role="status" aria-live="polite" aria-atomic="true">0 of 7 complete</span>
+            </div>
+            <button class="scorecard-select-all" id="selectAllActionsButton" type="button" aria-controls="checklist">
+              <span class="app-icon icon-check" aria-hidden="true"></span>
+              <span id="selectAllActionsLabel">Mark all complete</span>
+            </button>
           </div>
           <div id="checklist"></div>
           <div class="scorecard-actions">
