@@ -391,61 +391,192 @@ body.challenge-finished .confetti-layer {
   gap: clamp(14px, 3vw, 22px);
 }
 .game-level-emblem {
+  --coin-border: color-mix(in srgb, #aaa49b 52%, var(--border));
+  --coin-highlight: color-mix(in srgb, #ffffff 14%, transparent);
+  --coin-mid: color-mix(in srgb, #57534d 76%, var(--surface-elevated));
+  --coin-depth: color-mix(in srgb, #242321 88%, var(--surface));
+  --coin-text: #fffdf8;
+  --coin-ring: color-mix(in srgb, #ffffff 18%, transparent);
+  --coin-aura: color-mix(in srgb, #b7b0a6 10%, transparent);
+  --coin-inset-shadow: color-mix(in srgb, #000000 24%, transparent);
+  --coin-drop-shadow: color-mix(in srgb, #000000 34%, transparent);
+  --orbit-color: #d9d4cc;
   position: relative;
+  isolation: isolate;
   display: grid;
   place-content: center;
   justify-items: center;
   width: clamp(84px, 22vw, 112px);
   aspect-ratio: 1;
-  border: 1px solid color-mix(in srgb, var(--accent-strong) 68%, var(--border));
+  border: 1px solid var(--coin-border);
   border-radius: 50%;
   background:
-    radial-gradient(circle at 34% 24%, color-mix(in srgb, #ffffff 28%, transparent), transparent 22%),
-    linear-gradient(145deg, color-mix(in srgb, var(--accent-strong) 92%, #fff1b5), color-mix(in srgb, var(--accent) 84%, #5b3505));
-  color: #211301;
+    radial-gradient(circle at 34% 24%, var(--coin-highlight), transparent 24%),
+    linear-gradient(145deg, var(--coin-mid), var(--coin-depth));
+  color: var(--coin-text);
   box-shadow:
-    inset 0 1px 1px color-mix(in srgb, #ffffff 52%, transparent),
-    inset 0 -9px 22px color-mix(in srgb, #5b3505 26%, transparent),
-    0 0 0 6px color-mix(in srgb, var(--accent) 10%, transparent),
-    0 18px 34px color-mix(in srgb, #000000 30%, transparent);
-  transition: transform 280ms cubic-bezier(.16, 1, .3, 1), box-shadow 280ms ease;
+    inset 0 1px 1px color-mix(in srgb, #ffffff 38%, transparent),
+    inset 0 -10px 24px var(--coin-inset-shadow),
+    0 0 0 6px var(--coin-aura),
+    0 18px 34px var(--coin-drop-shadow);
+  transition: border-color 280ms ease, box-shadow 280ms ease, transform 280ms cubic-bezier(.16, 1, .3, 1);
 }
 .game-level-emblem::before {
   content: "";
   position: absolute;
   inset: 6px;
-  border: 1px solid color-mix(in srgb, #ffffff 34%, transparent);
+  z-index: 1;
+  border: 1px solid var(--coin-ring);
   border-radius: inherit;
+  box-shadow: inset 0 0 18px color-mix(in srgb, var(--coin-ring) 35%, transparent);
   pointer-events: none;
 }
 .game-summary-card:hover .game-level-emblem {
   transform: translateY(-2px) rotate(-1deg);
+}
+.game-level-emblem[data-prestige="private-1"] {
+  --coin-border: #f2cf78;
+  --coin-highlight: color-mix(in srgb, #ffffff 38%, transparent);
+  --coin-mid: #e0b64e;
+  --coin-depth: #80500b;
+  --coin-text: #251400;
+  --coin-ring: color-mix(in srgb, #fff5c9 52%, transparent);
+  --coin-aura: color-mix(in srgb, #d6ad54 18%, transparent);
+  --coin-inset-shadow: color-mix(in srgb, #5b3505 32%, transparent);
+  --coin-drop-shadow: color-mix(in srgb, #000000 36%, transparent);
+}
+.game-level-emblem[data-prestige="private-2"] {
+  --coin-border: #e2e6e8;
+  --coin-highlight: color-mix(in srgb, #ffffff 58%, transparent);
+  --coin-mid: #c5c9cb;
+  --coin-depth: #666b70;
+  --coin-text: #15191c;
+  --coin-ring: color-mix(in srgb, #ffffff 56%, transparent);
+  --coin-aura: color-mix(in srgb, #cbd0d3 14%, transparent);
+  --coin-inset-shadow: color-mix(in srgb, #30363b 30%, transparent);
+}
+.game-level-emblem[data-prestige="private-3"] {
+  --coin-border: #d89362;
+  --coin-highlight: color-mix(in srgb, #ffe0c2 45%, transparent);
+  --coin-mid: #b96d3f;
+  --coin-depth: #5f2f1b;
+  --coin-text: #fff7ef;
+  --coin-ring: color-mix(in srgb, #ffd0a7 42%, transparent);
+  --coin-aura: color-mix(in srgb, #c47749 15%, transparent);
+  --coin-inset-shadow: color-mix(in srgb, #3d190b 31%, transparent);
+}
+.game-level-emblem[data-prestige="global-1"] {
+  --coin-border: #fff0a6;
+  --coin-highlight: color-mix(in srgb, #ffffff 64%, transparent);
+  --coin-mid: #f0cc64;
+  --coin-depth: #8a5608;
+  --coin-text: #211200;
+  --coin-ring: color-mix(in srgb, #fff9d9 72%, transparent);
+  --coin-aura: color-mix(in srgb, #ffd76d 30%, transparent);
+  --coin-inset-shadow: color-mix(in srgb, #5b3505 34%, transparent);
+  --coin-drop-shadow: color-mix(in srgb, #d79b22 34%, transparent);
+  --orbit-color: #ffe69a;
+}
+.game-level-emblem[data-prestige="global-2"] {
+  --coin-border: #f7fcff;
+  --coin-highlight: color-mix(in srgb, #ffffff 70%, transparent);
+  --coin-mid: #dceaf0;
+  --coin-depth: #778d9a;
+  --coin-text: #10191f;
+  --coin-ring: color-mix(in srgb, #ffffff 78%, transparent);
+  --coin-aura: color-mix(in srgb, #a9e6ff 24%, transparent);
+  --coin-inset-shadow: color-mix(in srgb, #315164 28%, transparent);
+  --coin-drop-shadow: color-mix(in srgb, #8bdcff 26%, transparent);
+  --orbit-color: #bfeeff;
+}
+.game-level-emblem[data-prestige="global-3"] {
+  --coin-border: #ffd0bc;
+  --coin-highlight: color-mix(in srgb, #fff3ed 58%, transparent);
+  --coin-mid: #d9967a;
+  --coin-depth: #71402f;
+  --coin-text: #fff9f5;
+  --coin-ring: color-mix(in srgb, #ffe5da 64%, transparent);
+  --coin-aura: color-mix(in srgb, #f3aa8c 24%, transparent);
+  --coin-inset-shadow: color-mix(in srgb, #4f2114 28%, transparent);
+  --coin-drop-shadow: color-mix(in srgb, #d87956 24%, transparent);
+  --orbit-color: #ffc4aa;
+}
+.game-level-emblem[data-prestige^="global-"] {
+  border-width: 2px;
   box-shadow:
     inset 0 1px 1px color-mix(in srgb, #ffffff 52%, transparent),
-    inset 0 -9px 22px color-mix(in srgb, #5b3505 26%, transparent),
-    0 0 0 8px color-mix(in srgb, var(--accent) 13%, transparent),
-    0 22px 42px color-mix(in srgb, #000000 35%, transparent);
+    inset 0 -10px 24px var(--coin-inset-shadow),
+    0 0 0 3px color-mix(in srgb, var(--orbit-color) 35%, transparent),
+    0 0 0 9px var(--coin-aura),
+    0 20px 42px var(--coin-drop-shadow);
 }
-.game-level-emblem .app-icon {
+.game-prestige-orbit {
   position: absolute;
+  z-index: 0;
+  inset: -12px;
+  border-radius: 50%;
+  background: conic-gradient(from 20deg, transparent 0 9%, var(--orbit-color) 11%, transparent 17% 39%, var(--orbit-color) 43%, transparent 49% 72%, var(--orbit-color) 76%, transparent 82% 100%);
+  opacity: 0;
+  pointer-events: none;
+  mask: radial-gradient(circle, transparent 0 63%, #000 65% 70%, transparent 72%);
+  -webkit-mask: radial-gradient(circle, transparent 0 63%, #000 65% 70%, transparent 72%);
+}
+.game-level-emblem[data-prestige^="global-"] .game-prestige-orbit {
+  opacity: .82;
+  animation: prestige-orbit 9s linear infinite;
+}
+.game-level-crown {
+  position: absolute;
+  z-index: 4;
   top: 11px;
   right: 11px;
   width: 27px;
   height: 27px;
   color: #2b1902;
   background: color-mix(in srgb, #ffffff 30%, transparent);
+  border: 1px solid color-mix(in srgb, #ffffff 32%, transparent);
+  box-shadow: 0 5px 12px color-mix(in srgb, #5b3505 22%, transparent);
 }
-.game-level-emblem .app-icon::before {
+.game-level-crown[hidden] {
+  display: none;
+}
+.game-level-crown::before {
   width: 16px;
   height: 16px;
 }
+.game-level-emblem[data-prestige="global-1"] .game-level-crown {
+  top: -4px;
+  right: -5px;
+  width: 40px;
+  height: 40px;
+  border: 2px solid color-mix(in srgb, #fff7c4 76%, transparent);
+  border-radius: 15px;
+  color: #332000;
+  background:
+    radial-gradient(circle at 32% 22%, color-mix(in srgb, #ffffff 68%, transparent), transparent 30%),
+    linear-gradient(145deg, #fff1a3, #d59a21);
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, #ffffff 72%, transparent),
+    0 0 0 4px color-mix(in srgb, #f3bd3a 20%, transparent),
+    0 9px 24px color-mix(in srgb, #d99b1d 46%, transparent);
+  animation: prestige-crown-float 3.2s ease-in-out infinite;
+}
+.game-level-emblem[data-prestige="global-1"] .game-level-crown::before {
+  width: 25px;
+  height: 25px;
+}
 .game-level-emblem strong {
+  position: relative;
+  z-index: 2;
   font-size: clamp(2.1rem, 9vw, 3.15rem);
   font-variant-numeric: tabular-nums;
   line-height: .84;
   letter-spacing: -.06em;
+  text-shadow: 0 1px 1px color-mix(in srgb, #ffffff 18%, transparent);
 }
 .game-level-emblem small {
+  position: relative;
+  z-index: 2;
   margin-top: 8px;
   font-size: .62rem;
   font-weight: 950;
@@ -814,6 +945,17 @@ body.challenge-finished .confetti-layer {
     0 24px 58px color-mix(in srgb, #302617 14%, transparent),
     0 0 0 7px color-mix(in srgb, var(--accent) 5%, transparent);
 }
+:root[data-theme="light"] .game-level-emblem[data-prestige="default"] {
+  --coin-border: color-mix(in srgb, #5f5a53 38%, var(--border));
+  --coin-highlight: color-mix(in srgb, #ffffff 66%, transparent);
+  --coin-mid: #e2ded7;
+  --coin-depth: #9d978f;
+  --coin-text: #26231f;
+  --coin-ring: color-mix(in srgb, #ffffff 62%, transparent);
+  --coin-aura: color-mix(in srgb, #5f5a53 9%, transparent);
+  --coin-inset-shadow: color-mix(in srgb, #514c45 19%, transparent);
+  --coin-drop-shadow: color-mix(in srgb, #302617 18%, transparent);
+}
 :root[data-theme="light"] .game-level-progress-panel,
 :root[data-theme="light"] .game-streak-card,
 :root[data-theme="light"] .progression-badge-card {
@@ -829,6 +971,13 @@ body.challenge-finished .confetti-layer {
   from { transform: translateX(-120%); }
   to { transform: translateX(120%); }
 }
+@keyframes prestige-orbit {
+  to { transform: rotate(1turn); }
+}
+@keyframes prestige-crown-float {
+  0%, 100% { transform: translateY(0) rotate(0deg); }
+  50% { transform: translateY(-3px) rotate(2deg); }
+}
 @media (prefers-reduced-motion: reduce) {
   .game-summary-card:hover .game-level-emblem,
   .game-streak-card:hover,
@@ -837,6 +986,10 @@ body.challenge-finished .confetti-layer {
   }
   .game-level-progress-track > span::after {
     display: none;
+  }
+  .game-level-emblem[data-prestige^="global-"] .game-prestige-orbit,
+  .game-level-emblem[data-prestige="global-1"] .game-level-crown {
+    animation: none;
   }
 }
 .challenge-vault-card {
@@ -1867,7 +2020,11 @@ body.challenge-finished .reward-backdrop {
 .billing-shell {
   gap: clamp(26px, 5vw, 44px);
 }
-.billing-status-card,
+.billing-status-card {
+  display: grid;
+  gap: 18px;
+  padding: clamp(22px, 4vw, 30px);
+}
 .profile-billing {
   display: grid;
   gap: 16px;
@@ -1921,19 +2078,71 @@ body.challenge-finished .reward-backdrop {
   font-size: .8rem;
   font-weight: 900;
 }
-.billing-inline-actions,
 .profile-billing-actions {
   display: flex;
   flex-wrap: wrap;
   gap: 10px;
   align-items: center;
 }
+.billing-inline-actions {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 360px), 1fr));
+  gap: 14px;
+  align-items: stretch;
+  margin-top: 2px;
+}
+.billing-inline-actions > .primary,
+.billing-inline-actions > .secondary-button,
+.billing-inline-actions > .danger-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  min-height: 56px;
+  padding: 14px 18px;
+  border-radius: 16px;
+  box-sizing: border-box;
+  font-size: .78rem;
+  font-weight: 950;
+  line-height: 1.2;
+  letter-spacing: .035em;
+  text-align: center;
+  text-decoration: none;
+  transition: border-color 180ms ease, background 180ms ease, box-shadow 180ms ease, transform 180ms ease;
+}
+.billing-inline-actions > .primary {
+  border: 1px solid color-mix(in srgb, var(--accent-strong) 64%, var(--border));
+  background: linear-gradient(135deg, color-mix(in srgb, var(--accent) 88%, #ffffff), var(--accent));
+  color: #211301;
+  box-shadow: 0 10px 24px color-mix(in srgb, var(--accent) 15%, transparent);
+}
+.billing-inline-actions > .secondary-button {
+  border-color: color-mix(in srgb, var(--accent) 28%, var(--border));
+  background: color-mix(in srgb, var(--accent) 7%, var(--surface-elevated));
+}
+.billing-inline-actions > .danger-button {
+  border-color: color-mix(in srgb, var(--danger) 64%, var(--border));
+  background: color-mix(in srgb, var(--danger) 12%, var(--surface-elevated));
+}
+.billing-inline-actions > a:hover,
+.billing-inline-actions > button:not(:disabled):hover {
+  transform: translateY(-1px);
+}
+.billing-inline-actions > .secondary-button:not(:disabled):hover {
+  border-color: color-mix(in srgb, var(--accent) 58%, var(--border));
+  background: color-mix(in srgb, var(--accent) 12%, var(--surface-elevated));
+}
+.billing-inline-actions > .danger-button:not(:disabled):hover {
+  border-color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 18%, var(--surface-elevated));
+}
+.billing-inline-actions > :focus-visible {
+  outline: 3px solid color-mix(in srgb, var(--accent) 28%, transparent);
+  outline-offset: 3px;
+}
 .billing-inline-actions [hidden],
 .profile-billing-actions [hidden] {
   display: none;
-}
-.billing-dashboard-link {
-  margin-left: auto;
 }
 .billing-feedback {
   min-height: 1.2rem;
@@ -2084,9 +2293,115 @@ body.challenge-finished .reward-backdrop {
   letter-spacing: .08em;
   text-transform: uppercase;
 }
+.profile-photo-field {
+  display: grid;
+  gap: 8px;
+}
+.profile-photo-label {
+  color: var(--text-muted);
+  font-size: .78rem;
+  font-weight: 950;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+.profile-photo-control {
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(156px, auto) minmax(0, 1fr);
+  gap: 12px;
+  align-items: center;
+}
+.profile-photo-input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  opacity: 0;
+  white-space: nowrap;
+}
+.profile-photo-trigger {
+  display: flex !important;
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px !important;
+  min-height: 52px;
+  padding: 8px 10px 8px 15px;
+  border: 1px solid color-mix(in srgb, var(--accent) 52%, var(--border));
+  border-radius: 16px;
+  background:
+    radial-gradient(circle at 100% 0%, color-mix(in srgb, var(--accent-strong) 19%, transparent), transparent 48%),
+    color-mix(in srgb, var(--accent) 11%, var(--surface-elevated));
+  color: var(--text) !important;
+  cursor: pointer;
+  font-size: .76rem !important;
+  line-height: 1.2;
+  letter-spacing: .09em !important;
+  text-transform: uppercase;
+  transition: border-color 180ms ease, background 180ms ease, box-shadow 180ms ease, transform 180ms ease;
+}
+.profile-photo-trigger-mark {
+  display: grid;
+  flex: 0 0 auto;
+  place-items: center;
+  width: 31px;
+  height: 31px;
+  border: 1px solid color-mix(in srgb, var(--accent-strong) 50%, transparent);
+  border-radius: 10px;
+  background: linear-gradient(145deg, var(--accent-strong), var(--accent));
+  color: #211301;
+  font-size: 1.18rem;
+  font-weight: 900;
+  line-height: 1;
+  box-shadow: inset 0 1px 0 color-mix(in srgb, #ffffff 35%, transparent);
+}
+.profile-photo-trigger:hover {
+  border-color: var(--accent-strong);
+  background:
+    radial-gradient(circle at 100% 0%, color-mix(in srgb, var(--accent-strong) 25%, transparent), transparent 48%),
+    color-mix(in srgb, var(--accent) 17%, var(--surface-elevated));
+  transform: translateY(-1px);
+}
+.profile-photo-input:focus + .profile-photo-trigger {
+  border-color: var(--accent);
+  outline: none;
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 22%, transparent);
+}
+.profile-photo-input:disabled + .profile-photo-trigger {
+  cursor: wait;
+  opacity: .58;
+  transform: none;
+}
+.profile-photo-selection {
+  display: grid;
+  min-width: 0;
+  gap: 4px;
+  padding: 3px 0;
+  text-transform: none;
+}
+.profile-photo-selection strong {
+  overflow-wrap: anywhere;
+  color: var(--text);
+  font-size: .9rem;
+  line-height: 1.35;
+  letter-spacing: 0;
+}
+.profile-photo-selection small {
+  color: var(--text-muted);
+  font-size: .72rem;
+  font-weight: 750;
+  line-height: 1.4;
+  letter-spacing: 0;
+}
+.profile-photo-field.has-selection .profile-photo-selection strong {
+  color: var(--accent-strong);
+}
 .profile-form input[type="text"],
-.profile-form input[type="email"],
-.profile-form input[type="file"] {
+.profile-form input[type="email"] {
   width: 100%;
   min-height: 52px;
   border: 1px solid var(--border);
@@ -2096,9 +2411,6 @@ body.challenge-finished .reward-backdrop {
   color: var(--text);
   font: inherit;
   line-height: 1.45;
-}
-.profile-form input[type="file"] {
-  color: var(--text-muted);
 }
 .profile-form input:focus {
   outline: none;
@@ -2115,6 +2427,14 @@ body.challenge-finished .reward-backdrop {
 }
 .profile-feedback.error {
   color: var(--danger);
+}
+@media (max-width: 480px) {
+  .profile-photo-control {
+    grid-template-columns: 1fr;
+  }
+  .profile-photo-trigger {
+    width: 100%;
+  }
 }
 .profile-appearance {
   gap: 14px;
@@ -2791,11 +3111,24 @@ body.challenge-finished .reward-backdrop {
   .game-level-emblem {
     width: 74px;
   }
-  .game-level-emblem .app-icon {
+  .game-level-crown {
     top: 7px;
     right: 7px;
     width: 23px;
     height: 23px;
+  }
+  .game-level-emblem[data-prestige="global-1"] .game-level-crown {
+    top: -3px;
+    right: -4px;
+    width: 34px;
+    height: 34px;
+  }
+  .game-level-emblem[data-prestige="global-1"] .game-level-crown::before {
+    width: 21px;
+    height: 21px;
+  }
+  .game-prestige-orbit {
+    inset: -9px;
   }
   .game-level-emblem strong {
     font-size: 2rem;
@@ -2808,9 +3141,6 @@ body.challenge-finished .reward-backdrop {
   }
   .countdown-meta span {
     width: 100%;
-  }
-  .billing-dashboard-link {
-    margin-left: 0;
   }
 }
 @media (min-width: 840px) {

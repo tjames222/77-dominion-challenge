@@ -181,26 +181,6 @@ function activeCrew() {
   return state.crews.find((crew) => crew.id === state.activeCrewId) || null;
 }
 
-function renderAccess() {
-  const title = $('communityMembershipTitle');
-  const copy = $('communityMembershipCopy');
-  const link = $('communityMembershipLink');
-  if (!title || !copy || !link || !state.billing) return;
-
-  if (state.billing.subscriptionActive) {
-    title.textContent = 'Your Dominion subscription is active.';
-    copy.textContent = 'Private crews, global encouragement, comments, likes, and your journal are open.';
-    link.textContent = 'Manage subscription';
-    link.href = './profile.html#billing';
-    return;
-  }
-
-  title.textContent = 'Subscription needed.';
-  copy.textContent = 'Subscribe for $7/month to unlock private crews, community posts, comments, likes, and your journal.';
-  link.textContent = 'Subscribe';
-  link.href = './billing.html?intent=subscription';
-}
-
 function emptyCard(message) {
   return `<article class="empty-state card"><p>${escapeHtml(message)}</p></article>`;
 }
@@ -812,7 +792,6 @@ async function bootCommunity() {
     return;
   }
 
-  renderAccess();
   if (isLocalDemoMode()) setFeedback('Preview mode: crews, posts, comments, leaderboards, and journal entries are using mock local data.');
   await redeemInviteIfPresent();
   await Promise.all([refreshCrews(), refreshGlobal(), refreshJournal()]);
