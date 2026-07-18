@@ -22,6 +22,7 @@ import {
   normalizeDifficultyPointValues,
   normalizeWorkoutDifficulty,
 } from './scoring.mjs';
+import { syncWorkoutDifficultyControls } from './workout-difficulty-controls.mjs';
 
 const TOTAL_DAYS = 77;
 const DIFFICULTY_LABELS = {
@@ -1080,9 +1081,10 @@ function applyDailyActions() {
   if (worshipPrompt) worshipPrompt.textContent = worship.label;
 
   workoutDifficulty = normalizeWorkoutDifficulty(workoutDifficulty);
-  document.querySelectorAll('[data-workout]').forEach((input) => {
-    input.checked = input.value === workoutDifficulty[input.dataset.workout];
-  });
+  syncWorkoutDifficultyControls(
+    document.querySelectorAll('[data-workout]'),
+    workoutDifficulty,
+  );
 
   const onePlan = pickDaily(workoutPlans[workoutDifficulty.one], 0);
   const twoPlan = pickDaily(workoutPlans[workoutDifficulty.two], 1);
