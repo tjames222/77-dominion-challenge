@@ -122,13 +122,33 @@ function initials(name = 'Member') {
     .toUpperCase() || 'M';
 }
 
-function avatarMarkup({ name = 'Member', avatarUrl = '', size = 'medium' } = {}) {
+function avatarMarkup({ name = 'Member', avatarUrl = '', size = 'medium', decorative = false } = {}) {
   const label = `${name}'s profile photo`;
-  if (avatarUrl) {
-    return `<img class="member-avatar ${size}" src="${escapeHtml(avatarUrl)}" alt="${escapeHtml(label)}" loading="lazy" />`;
-  }
-  return `<span class="member-avatar avatar-fallback ${size}" aria-hidden="true">${escapeHtml(initials(name))}</span>`;
+  const dimensions = { medium: 42, leaderboard: 40, small: 30, tiny: 26 };
+  const dimension = dimensions[size] || dimensions.medium;
+  const accessibility = decorative
+    ? 'aria-hidden="true"'
+    : avatarUrl
+      ? ''
+      : `role="img" aria-label="${escapeHtml(label)}"`;
+  return `
+    <span class="member-avatar ${size}" data-profile-avatar ${accessibility}>
+      <span class="avatar-fallback" aria-hidden="true">${escapeHtml(initials(name))}</span>
+      ${avatarUrl ? `<img data-profile-avatar-image src="${escapeHtml(avatarUrl)}" alt="${decorative ? '' : escapeHtml(label)}" width="${dimension}" height="${dimension}" loading="lazy" decoding="async" />` : ''}
+    </span>
+  `;
 }
+
+document.addEventListener('error', (event) => {
+  const image = event.target.closest?.('[data-profile-avatar-image]');
+  if (!image) return;
+  const avatar = image.closest('[data-profile-avatar]');
+  image.hidden = true;
+  if (avatar && avatar.getAttribute('aria-hidden') !== 'true') {
+    avatar.setAttribute('role', 'img');
+    avatar.setAttribute('aria-label', image.alt || 'Profile photo unavailable; showing initials');
+  }
+}, true);
 
 function timestampMarkup(item = {}) {
   const createdAt = item.createdAt || '';
@@ -197,10 +217,13 @@ function renderLeaderboard(scope) {
     return `
       <article class="leaderboard-row">
         <span class="leaderboard-rank">${row.rank || '-'}</span>
-        <div class="leaderboard-player">
-          <strong>${escapeHtml(row.name)}</strong>
-          <small>${dayLabelText} · ${row.currentAppStreak || 0} day app streak</small>
-          ${badges}
+        <div class="leaderboard-identity">
+          ${avatarMarkup({ ...row, size: 'leaderboard' })}
+          <div class="leaderboard-player">
+            <strong>${escapeHtml(row.name)}</strong>
+            <small>${dayLabelText} · ${row.currentAppStreak || 0} day app streak</small>
+            ${badges}
+          </div>
         </div>
         <div class="leaderboard-points">
           <strong>${Number(row.points || 0).toLocaleString()}</strong>
@@ -362,6 +385,33 @@ function commentMarkup(comment, post) {
   `;
 }
 
+function reactionSummaryMarkup(post) {
+  const count = Number(post.likeCount || 0);
+  if (!count) return '';
+  const reactions = (post.reactions || []).slice(0, 3);
+  const names = reactions.map((reaction) => reaction.name || 'Member');
+  let summary = `${count.toLocaleString()} ${count === 1 ? 'person likes' : 'people like'} this`;
+  if (names.length === 1 && count === 1) summary = `${names[0]} likes this`;
+  else if (names.length >= 2 && count === 2) summary = `${names[0]} and ${names[1]} like this`;
+  else if (names.length) {
+    const shownNames = names.slice(0, 2);
+    const remaining = Math.max(count - shownNames.length, 0);
+    summary = remaining
+      ? `${shownNames.join(', ')} and ${remaining.toLocaleString()} ${remaining === 1 ? 'other' : 'others'} like this`
+      : `${shownNames.join(' and ')} like this`;
+  }
+  return `
+    <div class="reaction-summary" aria-label="${escapeHtml(`Liked by ${summary.replace(/ like(?:s)? this$/, '')}`)}">
+      ${reactions.length ? `
+        <span class="reaction-avatar-stack" aria-hidden="true">
+          ${reactions.map((reaction) => avatarMarkup({ ...reaction, size: 'tiny', decorative: true })).join('')}
+        </span>
+      ` : ''}
+      <span>${escapeHtml(summary)}</span>
+    </div>
+  `;
+}
+
 function postMarkup(post) {
   return `
     <article class="feed-card card" data-post-id="${post.id}" data-scope="${post.scope}">
@@ -387,6 +437,7 @@ function postMarkup(post) {
         </button>
         <button type="button" data-focus-comment="${post.id}">Comment · ${post.comments.length}</button>
       </div>
+      ${reactionSummaryMarkup(post)}
       <div class="comment-list">
         ${post.comments.map((comment) => commentMarkup(comment, post)).join('')}
       </div>
@@ -651,75 +702,27 @@ function clearCrewPostImage() {
   const preview = $('crewPostImagePreview');
   const previewImage = $('crewPostImagePreviewImage');
   const altLabel = $('crewPostImageAltLabel');
+  const altInput = $('crewPostImageAlt');
+  if (document.activeElement === altInput) altInput.blur();
   if (input) input.value = '';
   if (previewImage) previewImage.removeAttribute('src');
   if (preview) preview.hidden = true;
   if (altLabel) altLabel.hidden = true;
-  if ($('crewPostImageAlt')) {
-    $('crewPostImageAlt').value = '';
-    $('crewPostImageAlt').required = false;
+  if (altInput) {
+    altInput.value = '';
+    altInput.required = false;
   }
 }
 
 function setupCrewInfiniteScroll() {
-  const root = $('crewFeedScroll');
   const sentinel = $('crewFeedSentinel');
-  if (!root || !sentinel || !('IntersectionObserver' in window)) return;
+  if (!sentinel || !('IntersectionObserver' in window)) return;
   const observer = new IntersectionObserver((entries) => {
     if (entries.some((entry) => entry.isIntersecting) && state.crewFeed.hasMore) {
       loadCrewFeed();
     }
-  }, { root, rootMargin: '180px 0px', threshold: 0.01 });
+  }, { root: null, rootMargin: '180px 0px', threshold: 0.01 });
   observer.observe(sentinel);
-}
-
-function setupPullToRefresh() {
-  const scroll = $('crewFeedScroll');
-  const indicator = $('crewPullRefreshIndicator');
-  if (!scroll || !indicator) return;
-  let startY = null;
-  let pullDistance = 0;
-
-  const resetPull = () => {
-    startY = null;
-    pullDistance = 0;
-    scroll.style.removeProperty('--pull-distance');
-    indicator.classList.remove('visible', 'ready', 'refreshing');
-    indicator.textContent = 'Pull down to refresh';
-  };
-
-  scroll.addEventListener('touchstart', (event) => {
-    if (scroll.scrollTop > 0 || state.crewFeed.loading) return;
-    startY = event.touches[0]?.clientY ?? null;
-    pullDistance = 0;
-  }, { passive: true });
-
-  scroll.addEventListener('touchmove', (event) => {
-    if (startY === null) return;
-    if (scroll.scrollTop > 0) {
-      resetPull();
-      return;
-    }
-    pullDistance = Math.max(0, Math.min(96, ((event.touches[0]?.clientY ?? startY) - startY) * 0.55));
-    indicator.classList.toggle('visible', pullDistance > 8);
-    indicator.classList.toggle('ready', pullDistance >= 64);
-    indicator.textContent = pullDistance >= 64 ? 'Release to refresh' : 'Pull down to refresh';
-    scroll.style.setProperty('--pull-distance', `${pullDistance}px`);
-  }, { passive: true });
-
-  scroll.addEventListener('touchend', async () => {
-    if (startY === null) return;
-    const shouldRefresh = pullDistance >= 64;
-    resetPull();
-    if (shouldRefresh) {
-      indicator.classList.add('visible', 'refreshing');
-      indicator.textContent = 'Refreshing private feed…';
-      await loadCrewFeed({ reset: true });
-    }
-    resetPull();
-  }, { passive: true });
-
-  scroll.addEventListener('touchcancel', resetPull, { passive: true });
 }
 
 async function bootCommunity() {
@@ -747,7 +750,6 @@ async function bootCommunity() {
 }
 
 setupCrewInfiniteScroll();
-setupPullToRefresh();
 
 $('crewSelect')?.addEventListener('change', async (event) => {
   state.activeCrewId = event.target.value;
@@ -994,9 +996,13 @@ document.addEventListener('click', async (event) => {
     if (!post) return;
     likeButton.disabled = true;
     try {
-      await setPostLiked(postId, !post.likedByMe);
-      post.likeCount = Math.max(0, post.likeCount + (post.likedByMe ? -1 : 1));
-      post.likedByMe = !post.likedByMe;
+      const shouldLike = !post.likedByMe;
+      const ownReaction = await setPostLiked(postId, shouldLike);
+      post.likeCount = Math.max(0, post.likeCount + (shouldLike ? 1 : -1));
+      post.likedByMe = shouldLike;
+      post.reactions = shouldLike && ownReaction
+        ? [ownReaction, ...(post.reactions || []).filter((reaction) => !reaction.isOwn)].slice(0, 3)
+        : (post.reactions || []).filter((reaction) => !reaction.isOwn);
       renderPostScope(post.scope);
       document.querySelector(`[data-like-post="${post.id}"]`)?.focus();
     } catch (error) {
