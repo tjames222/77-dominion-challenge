@@ -7,6 +7,7 @@ import {
   normalizeChallengeProgression,
   transitionChallengeRecord,
 } from './challenge-progression.mjs';
+import { normalizeLeaderboardRank } from './leaderboard-prestige.mjs';
 
 const SUPABASE_URL = (import.meta.env.VITE_SUPABASE_URL || '').replace(/\/$/, '');
 const SUPABASE_KEY =
@@ -968,10 +969,7 @@ export async function getGameSummary() {
   };
 }
 
-export async function getLeaderboard({ scope = 'global', crewId = null, window = 'week' } = {}) {
-  if (isLocalDemoMode()) return getMockLeaderboard({ scope, crewId, window });
-  const client = requireSupabase();
-  await requireUser();
+async function queryLeaderboard(client, { scope = 'global', crewId = null, window = 'week' } = {}) {
   const rpcName = scope === 'crew' ? 'get_crew_leaderboard' : 'get_global_leaderboard';
   const payload = scope === 'crew'
     ? { target_crew_id: crewId, target_window: window }
@@ -979,6 +977,58 @@ export async function getLeaderboard({ scope = 'global', crewId = null, window =
   const { data, error } = await client.rpc(rpcName, payload);
   if (error) throw error;
   return (data || []).map(mapLeaderboardRow);
+}
+
+export async function getLeaderboard({ scope = 'global', crewId = null, window = 'week' } = {}) {
+  if (isLocalDemoMode()) return getMockLeaderboard({ scope, crewId, window });
+  const client = requireSupabase();
+  await requireUser();
+  return queryLeaderboard(client, { scope, crewId, window });
+}
+
+export async function getLeaderboardPrestige({ crewId = null, window = 'week' } = {}) {
+  const rankingWindow = window === 'challenge' ? 'challenge' : 'week';
+  let currentUserId;
+  let crews;
+  let globalRows;
+
+  if (isLocalDemoMode()) {
+    currentUserId = getMockUserId();
+    [crews, globalRows] = await Promise.all([
+      getCrews(),
+      getMockLeaderboard({ scope: 'global', window: rankingWindow }),
+    ]);
+  } else {
+    const client = requireSupabase();
+    const user = await requireUser();
+    currentUserId = user.id;
+    [crews, globalRows] = await Promise.all([
+      queryCrewsForUser(client, user.id),
+      queryLeaderboard(client, { scope: 'global', window: rankingWindow }),
+    ]);
+  }
+
+  const selectedCrew = crews.find((crew) => crew.id === crewId) || crews[0] || null;
+  let privateRows = [];
+  if (selectedCrew) {
+    privateRows = isLocalDemoMode()
+      ? getMockLeaderboard({ scope: 'crew', crewId: selectedCrew.id, window: rankingWindow })
+      : await queryLeaderboard(requireSupabase(), {
+          scope: 'crew',
+          crewId: selectedCrew.id,
+          window: rankingWindow,
+        });
+  }
+  const rankForCurrentUser = (rows) => normalizeLeaderboardRank(
+    rows.find((row) => row.userId === currentUserId)?.rank,
+  );
+
+  return {
+    globalRank: rankForCurrentUser(globalRows),
+    privateRank: rankForCurrentUser(privateRows),
+    crewId: selectedCrew?.id || null,
+    window: rankingWindow,
+  };
 }
 
 function createMockAvatar(name, background = '#66513a') {
@@ -1171,18 +1221,22 @@ async function getCurrentCommunityIdentity() {
   };
 }
 
-export async function getCrews() {
-  if (isLocalDemoMode()) return ensureMockCrews().crews;
-  const client = requireSupabase();
-  const user = await requireUser();
+async function queryCrewsForUser(client, userId) {
   const { data, error } = await client
     .from('crew_members')
     .select('crew_id, role, display_name, joined_at, crews(id, name, description, challenge_start_date, created_by, created_at)')
-    .eq('user_id', user.id)
+    .eq('user_id', userId)
     .order('joined_at', { ascending: false });
 
   if (error) throw error;
   return (data || []).map(mapCrew).filter(Boolean);
+}
+
+export async function getCrews() {
+  if (isLocalDemoMode()) return ensureMockCrews().crews;
+  const client = requireSupabase();
+  const user = await requireUser();
+  return queryCrewsForUser(client, user.id);
 }
 
 export async function createCrew({ name, description = '', challengeStartDate = null }) {

@@ -5,6 +5,7 @@ import {
   getChallengeProgression,
   getDashboard,
   getGameSummary,
+  getLeaderboardPrestige,
   getWorkoutDifficultyPointValues,
   hasSupabaseAuth,
   isLocalDemoMode,
@@ -23,6 +24,7 @@ import {
   normalizeWorkoutDifficulty,
 } from './scoring.mjs';
 import { syncWorkoutDifficultyControls } from './workout-difficulty-controls.mjs';
+import { resolveLeaderboardPrestige } from './leaderboard-prestige.mjs';
 
 const TOTAL_DAYS = 77;
 const DIFFICULTY_LABELS = {
@@ -228,6 +230,9 @@ const badgePriorityRank = new Map(badgePriority.map((key, index) => [key, index]
 const todayKey = () => new Date().toISOString().slice(0, 10);
 const ENTRY_STORAGE_KEY = 'dominion:entries';
 const WORKOUT_DIFFICULTY_STORAGE_KEY = 'dominion:workoutDifficulty';
+const ACTIVE_CREW_STORAGE_KEY = 'dominion:activeCrewId';
+const LEADERBOARD_PRESTIGE_WINDOW = 'week';
+const LEADERBOARD_PRESTIGE_REFRESH_MS = 60_000;
 const load = (key, fallback) => JSON.parse(localStorage.getItem(key) || JSON.stringify(fallback));
 const save = (key, value) => localStorage.setItem(key, JSON.stringify(value));
 const localDemoMode = isLocalDemoMode();
@@ -366,8 +371,11 @@ function awardLocalBadges(entry, status, nextFullStreak = 0) {
 }
 function renderGameSummary() {
   const gamePointsTotal = $('gamePointsTotal');
+  const gameLevelEmblem = $('gameLevelEmblem');
+  const gameLevelCrown = $('gameLevelCrown');
   const gameLevelNumber = $('gameLevelNumber');
   const gameLevelLabel = $('gameLevelLabel');
+  const gamePrestigeStatus = $('gamePrestigeStatus');
   const gameLevelProgressLabel = $('gameLevelProgressLabel');
   const gamePointsToNext = $('gamePointsToNext');
   const gameLevelProgress = $('gameLevelProgress');
@@ -387,10 +395,28 @@ function renderGameSummary() {
   const fullDayStreak = Math.max(0, Math.floor(Number(gameStats.currentFullDayStreak) || 0));
   const bestFullDayStreak = Math.max(fullDayStreak, Math.floor(Number(gameStats.bestFullDayStreak) || 0));
   const recentBadges = badges.filter(Boolean).slice(0, 4);
+  const prestige = resolveLeaderboardPrestige(leaderboardPositions);
+  const levelLabel = prestige.shortLabel
+    ? `Level ${levelProgress.level} · ${prestige.shortLabel}`
+    : `Level ${levelProgress.level}`;
+  const emblemLabel = `Level ${levelProgress.level} — ${prestige.accessibleLabel}`;
 
   if (gamePointsTotal) gamePointsTotal.textContent = levelProgress.totalPoints.toLocaleString();
+  if (gameLevelEmblem) {
+    gameLevelEmblem.dataset.prestige = prestige.key;
+    gameLevelEmblem.setAttribute('aria-label', emblemLabel);
+    gameLevelEmblem.title = emblemLabel;
+  }
+  if (gameLevelCrown) {
+    gameLevelCrown.hidden = !prestige.crown;
+    if (prestige.crown) gameLevelCrown.dataset.crown = prestige.crown;
+    else delete gameLevelCrown.dataset.crown;
+  }
   if (gameLevelNumber) gameLevelNumber.textContent = String(levelProgress.level);
-  if (gameLevelLabel) gameLevelLabel.textContent = `Level ${levelProgress.level}`;
+  if (gameLevelLabel) gameLevelLabel.textContent = levelLabel;
+  if (gamePrestigeStatus && gamePrestigeStatus.textContent !== prestige.accessibleLabel) {
+    gamePrestigeStatus.textContent = prestige.accessibleLabel;
+  }
   if (gameLevelProgressLabel) gameLevelProgressLabel.textContent = `Level ${levelProgress.level} progress`;
   if (gamePointsToNext) gamePointsToNext.textContent = `${levelProgress.pointsToNext.toLocaleString()} points to Level ${levelProgress.nextLevel}`;
   if (gameLevelProgress) {
@@ -813,6 +839,14 @@ let gameStats = localDemoMode ? load('dominion:gameStats', {
   bestFullDayStreak: 0,
 }) : {};
 let badges = localDemoMode ? load('dominion:badges', []) : [];
+let leaderboardPositions = {
+  globalRank: null,
+  privateRank: null,
+  crewId: null,
+  window: LEADERBOARD_PRESTIGE_WINDOW,
+};
+let leaderboardPrestigeRequestId = 0;
+let leaderboardPrestigeTimer = null;
 let challengeProgression = { totalPoints: 0, challenges: [], nextUnlock: null, unseenUnlocks: [] };
 let challengeProgressionStatus = 'loading';
 let challengeProgressionError = '';
@@ -1260,9 +1294,44 @@ async function hydrateDashboardFromApi() {
   }
 }
 
+async function refreshLeaderboardPrestige({ renderAfter = true } = {}) {
+  const requestId = ++leaderboardPrestigeRequestId;
+  try {
+    const positions = await getLeaderboardPrestige({
+      crewId: localStorage.getItem(ACTIVE_CREW_STORAGE_KEY),
+      window: LEADERBOARD_PRESTIGE_WINDOW,
+    });
+    if (requestId !== leaderboardPrestigeRequestId) return null;
+
+    leaderboardPositions = positions;
+    if (positions.crewId && localStorage.getItem(ACTIVE_CREW_STORAGE_KEY) !== positions.crewId) {
+      localStorage.setItem(ACTIVE_CREW_STORAGE_KEY, positions.crewId);
+    }
+    if (renderAfter) renderGameSummary();
+    return positions;
+  } catch (error) {
+    if (requestId !== leaderboardPrestigeRequestId) return null;
+    console.warn('Unable to refresh leaderboard prestige', error);
+    return null;
+  }
+}
+
+function startLeaderboardPrestigeRefresh() {
+  if (leaderboardPrestigeTimer) return;
+  const refreshIfVisible = () => {
+    if (!document.hidden) refreshLeaderboardPrestige();
+  };
+  leaderboardPrestigeTimer = window.setInterval(refreshIfVisible, LEADERBOARD_PRESTIGE_REFRESH_MS);
+  window.addEventListener('focus', refreshIfVisible);
+  document.addEventListener('visibilitychange', refreshIfVisible);
+}
+
 async function refreshGameSummary(previousBadgeKeys = new Set()) {
   if (!hasSupabaseAuth()) return [];
-  const summary = await getGameSummary();
+  const [summary] = await Promise.all([
+    getGameSummary(),
+    refreshLeaderboardPrestige({ renderAfter: false }),
+  ]);
   gameStats = summary.gameStats;
   badges = summary.badges || [];
   save('dominion:gameStats', gameStats);
@@ -1364,6 +1433,10 @@ window.addEventListener('storage', (event) => {
   } else if (event.key === 'dominion:gameStats') {
     gameStats = load('dominion:gameStats', gameStats);
     refreshChallengeProgression({ claimCelebrations: true, celebrationDelay: 350 });
+    refreshLeaderboardPrestige();
+  } else if (event.key === ACTIVE_CREW_STORAGE_KEY) {
+    refreshLeaderboardPrestige();
+    return;
   } else return;
   render();
 });
@@ -1471,6 +1544,7 @@ if (checkInButton) checkInButton.addEventListener('click', async () => {
       earnedBadges = awardLocalBadges(entry, status, nextStreak);
       save('dominion:gameStats', gameStats);
       save('dominion:badges', badges);
+      await refreshLeaderboardPrestige({ renderAfter: false });
     }
 
     feed = [feedItem, ...feed].slice(0, 30);
@@ -1513,12 +1587,17 @@ async function bootDashboard() {
   }
 
   render();
-  await hydrateDashboardFromApi();
+  await Promise.all([
+    hydrateDashboardFromApi(),
+    refreshLeaderboardPrestige({ renderAfter: false }),
+  ]);
+  render();
   if (hasSupabaseAuth()) await recordDailyAppVisit();
   else await refreshChallengeProgression({ claimCelebrations: true, celebrationDelay: 450 });
   loadVerseOfDay();
   applyDailyActions();
   startCountdownCard();
+  startLeaderboardPrestigeRefresh();
   requestAnimationFrame(() => initReveal());
 }
 

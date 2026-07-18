@@ -52,8 +52,15 @@
 
       <section class="game-summary-card reveal" id="gameSummaryCard" aria-labelledby="gameSummaryEyebrow gameSummaryTitle">
         <div class="game-summary-hero">
-          <div class="game-level-emblem" aria-hidden="true">
-            <span class="app-icon icon-crown"></span>
+          <div
+            class="game-level-emblem"
+            id="gameLevelEmblem"
+            data-prestige="default"
+            role="img"
+            aria-label="Level 1 — No top-three leaderboard placement"
+          >
+            <span class="game-prestige-orbit" aria-hidden="true"></span>
+            <span class="game-level-crown app-icon icon-crown" id="gameLevelCrown" aria-hidden="true" hidden></span>
             <strong id="gameLevelNumber">1</strong>
             <small>Level</small>
           </div>
@@ -64,6 +71,7 @@
               <small>points</small>
             </h2>
             <p class="game-level-label" id="gameLevelLabel">Level 1</p>
+            <p class="sr-only" id="gamePrestigeStatus" role="status" aria-live="polite">No top-three leaderboard placement</p>
           </div>
         </div>
 

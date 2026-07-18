@@ -886,8 +886,11 @@ select {
   background: color-mix(in srgb, var(--accent) 16%, var(--surface-elevated));
 }
 .sources-card ul { margin: 14px 0 0; padding-left: 20px; }
-.science-cta-row {
-  margin-top: 8px;
+.science-page .science-cta-row {
+  margin: 8px 0 0;
+}
+.science-page .science-action-band .science-cta-row {
+  margin: 0;
 }
 .science-action-band {
   display: grid;

@@ -34,10 +34,27 @@
           </div>
         </div>
         <form class="profile-form" id="profileForm">
-          <label class="profile-photo-field">
-            <span>Profile picture</span>
-            <input id="profilePhotoInput" type="file" accept="image/jpeg,image/png,image/webp,image/heic,image/heif" />
-          </label>
+          <div class="profile-photo-field" id="profilePhotoField" role="group" aria-labelledby="profilePhotoLabel">
+            <span class="profile-photo-label" id="profilePhotoLabel">Profile picture</span>
+            <div class="profile-photo-control">
+              <input
+                class="profile-photo-input"
+                id="profilePhotoInput"
+                type="file"
+                accept="image/jpeg,image/png,image/webp,image/heic,image/heif"
+                aria-labelledby="profilePhotoLabel profilePhotoTriggerText"
+                aria-describedby="profilePhotoFilename profilePhotoHint"
+              />
+              <label class="profile-photo-trigger" for="profilePhotoInput">
+                <span id="profilePhotoTriggerText">Choose photo</span>
+                <span class="profile-photo-trigger-mark" aria-hidden="true">+</span>
+              </label>
+              <span class="profile-photo-selection">
+                <strong id="profilePhotoFilename">No new photo selected</strong>
+                <small id="profilePhotoHint">JPG, PNG, WebP or HEIC · 5 MB max</small>
+              </span>
+            </div>
+          </div>
           <label>
             Name
             <input id="profileNameInput" type="text" autocomplete="name" required />
@@ -67,7 +84,6 @@
         </div>
         <div class="profile-billing-actions">
           <a class="primary" href="./billing.html">Open billing</a>
-          <button class="secondary-button" id="profileManageBillingButton" type="button" hidden>Manage subscription</button>
         </div>
       </section>
 
