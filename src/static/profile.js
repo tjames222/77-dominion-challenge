@@ -1,6 +1,5 @@
 import { initReveal } from './reveal';
 import {
-  createCustomerPortalSession,
   getBillingState,
   getLocalOrSessionUser,
   getProfile,
@@ -10,6 +9,14 @@ import {
   updateProfile,
   uploadProfilePhoto,
 } from './api';
+import {
+  PREVIEW_CHALLENGE_RESET_KEYS,
+  PREVIEW_CHALLENGE_STORAGE_KEY,
+  isPreviewChallengeComplete,
+  normalizePreviewChallengeState,
+  previewChallengeDay,
+  setPreviewChallengeEnabled,
+} from './preview-challenge.mjs';
 
 const load = (key, fallback) => {
   try {
@@ -19,6 +26,13 @@ const load = (key, fallback) => {
   }
 };
 const save = (key, value) => localStorage.setItem(key, JSON.stringify(value));
+const localDateKey = () => {
+  const parts = new Intl.DateTimeFormat('en', { year: 'numeric', month: '2-digit', day: '2-digit' })
+    .formatToParts(new Date());
+  const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  return `${values.year}-${values.month}-${values.day}`;
+};
+const localPreviewMode = isLocalDemoMode();
 let theme = load('dominion:theme', 'dark');
 const themeOptions = [...document.querySelectorAll('[data-theme-mode]')];
 function applyTheme() {
@@ -44,15 +58,44 @@ const profileEmailEl = document.getElementById('profileEmail');
 const profileAvatarImageEl = document.getElementById('profileAvatarImage');
 const profileAvatarFallbackEl = document.getElementById('profileAvatarFallback');
 const profileForm = document.getElementById('profileForm');
+const profilePhotoField = document.getElementById('profilePhotoField');
 const profilePhotoInput = document.getElementById('profilePhotoInput');
+const profilePhotoFilename = document.getElementById('profilePhotoFilename');
 const profileNameInput = document.getElementById('profileNameInput');
 const profileEmailInput = document.getElementById('profileEmailInput');
 const profileFeedback = document.getElementById('profileFeedback');
-const manageBillingButton = document.getElementById('profileManageBillingButton');
+const profilePreviewTools = document.getElementById('profilePreviewTools');
+const profilePreviewChallengeSwitch = document.getElementById('profilePreviewChallengeSwitch');
+const profilePreviewStatus = document.getElementById('profilePreviewStatus');
+const resetPreviewChallengeButton = document.getElementById('resetPreviewChallengeButton');
 const MAX_PROFILE_PHOTO_SIZE = 5 * 1024 * 1024;
 let currentProfile = { name: 'Member', email: 'Logged in', avatarUrl: '' };
 let selectedPhotoFile = null;
 let selectedPreviewUrl = '';
+const EMPTY_PHOTO_FILENAME = 'No new photo selected';
+let previewChallengeState = normalizePreviewChallengeState(
+  localPreviewMode ? load(PREVIEW_CHALLENGE_STORAGE_KEY, {}) : {},
+  localDateKey(),
+);
+
+function renderPreviewChallengeTools() {
+  if (!profilePreviewTools) return;
+  profilePreviewTools.hidden = !localPreviewMode;
+  if (!localPreviewMode) return;
+
+  const day = previewChallengeDay(previewChallengeState);
+  const complete = isPreviewChallengeComplete(previewChallengeState);
+  if (profilePreviewChallengeSwitch) profilePreviewChallengeSwitch.checked = previewChallengeState.enabled;
+  if (profilePreviewStatus) {
+    profilePreviewStatus.textContent = complete
+      ? 'Preview run complete: all 77 challenge days are posted. Reset to test another full run.'
+      : previewChallengeState.enabled
+        ? `Next preview check-in: Day ${day} of 77.`
+        : day > 1
+          ? `77-day test mode is paused before Day ${day} of 77.`
+          : 'Turn on the switch to begin with Day 1 of 77.';
+  }
+}
 
 function initialsFor(name, email) {
   const source = String(name || email || 'Member').trim();
@@ -65,6 +108,15 @@ function revokeSelectedPreview() {
   if (!selectedPreviewUrl) return;
   URL.revokeObjectURL(selectedPreviewUrl);
   selectedPreviewUrl = '';
+}
+
+function renderPhotoSelection(file = null) {
+  if (profilePhotoFilename) {
+    const filename = String(file?.name || '').trim();
+    profilePhotoFilename.textContent = filename || EMPTY_PHOTO_FILENAME;
+    profilePhotoFilename.title = filename;
+  }
+  profilePhotoField?.classList.toggle('has-selection', Boolean(file));
 }
 
 function renderAvatar(profile) {
@@ -115,9 +167,12 @@ function setProfileFeedback(message, tone = '') {
 
 function setProfileFormBusy(isBusy, label = 'Save profile') {
   const submitButton = profileForm?.querySelector('button[type="submit"]');
-  if (!submitButton) return;
-  submitButton.disabled = isBusy;
-  submitButton.textContent = isBusy ? 'Saving...' : label;
+  if (profilePhotoInput) profilePhotoInput.disabled = isBusy;
+  if (profilePhotoField) profilePhotoField.setAttribute('aria-busy', String(isBusy));
+  if (submitButton) {
+    submitButton.disabled = isBusy;
+    submitButton.textContent = isBusy ? 'Saving...' : label;
+  }
 }
 
 function updateBillingSummary(state) {
@@ -129,7 +184,6 @@ function updateBillingSummary(state) {
     ? 'Your $7/month subscription is active, so the dashboard, daily actions, community, journal, and future member content stay open.'
     : 'Subscribe for $7/month to unlock the dashboard, daily action page, community, journal, and full tracking flow.';
   document.getElementById('profileSubscriptionPill').textContent = state.subscriptionActive ? 'Subscription active' : 'Subscription needed';
-  manageBillingButton.hidden = !state.subscription;
 }
 
 async function hydrateProfile() {
@@ -177,6 +231,7 @@ async function hydrateProfile() {
 profilePhotoInput?.addEventListener('change', () => {
   revokeSelectedPreview();
   selectedPhotoFile = null;
+  renderPhotoSelection();
 
   const file = profilePhotoInput.files?.[0];
   if (!file) {
@@ -200,8 +255,9 @@ profilePhotoInput?.addEventListener('change', () => {
 
   selectedPhotoFile = file;
   selectedPreviewUrl = URL.createObjectURL(file);
+  renderPhotoSelection(file);
   renderAvatar({ ...currentProfile, avatarUrl: selectedPreviewUrl });
-  setProfileFeedback('Photo selected. Save profile when ready.');
+  setProfileFeedback(`“${file.name}” selected. Save profile when ready.`);
 });
 
 profileForm?.addEventListener('submit', async (event) => {
@@ -232,33 +288,54 @@ profileForm?.addEventListener('submit', async (event) => {
     selectedPhotoFile = null;
     if (profilePhotoInput) profilePhotoInput.value = '';
     revokeSelectedPreview();
+    renderPhotoSelection();
     syncStoredUser(nextProfile);
     renderProfile(nextProfile);
     setProfileFeedback(savedProfile?.emailChangeRequested
       ? 'Profile saved. Confirm the email change from your inbox.'
       : 'Profile saved.');
   } catch (error) {
-    renderAvatar(currentProfile);
+    renderAvatar(selectedPreviewUrl
+      ? { ...currentProfile, avatarUrl: selectedPreviewUrl }
+      : currentProfile);
     setProfileFeedback(error?.message || 'Unable to save your profile right now.', 'error');
   } finally {
     setProfileFormBusy(false, originalButtonLabel);
   }
 });
 
-manageBillingButton?.addEventListener('click', async () => {
-  if (!hasSupabaseAuth() && !isLocalDemoMode()) return;
-  const original = manageBillingButton.textContent;
-  manageBillingButton.disabled = true;
-  manageBillingButton.textContent = 'Opening...';
-  try {
-    const { url } = await createCustomerPortalSession();
-    window.location.href = url;
-  } catch (error) {
-    window.alert(error?.message || 'Unable to open the billing portal right now.');
-    manageBillingButton.disabled = false;
-    manageBillingButton.textContent = original;
-  }
+profilePreviewChallengeSwitch?.addEventListener('change', () => {
+  if (!localPreviewMode) return;
+  previewChallengeState = setPreviewChallengeEnabled(
+    previewChallengeState,
+    profilePreviewChallengeSwitch.checked,
+    localDateKey(),
+  );
+  save(PREVIEW_CHALLENGE_STORAGE_KEY, previewChallengeState);
+  renderPreviewChallengeTools();
 });
 
+resetPreviewChallengeButton?.addEventListener('click', () => {
+  if (!localPreviewMode) return;
+  const confirmed = window.confirm('Reset all preview challenge days, check-ins, points, streaks, badges, and dashboard feed? Your profile, Community content, journal, and workout difficulty will stay intact.');
+  if (!confirmed) return;
+
+  const remainsEnabled = previewChallengeState.enabled;
+  PREVIEW_CHALLENGE_RESET_KEYS.forEach((key) => localStorage.removeItem(key));
+  previewChallengeState = setPreviewChallengeEnabled({}, remainsEnabled, localDateKey());
+  save(PREVIEW_CHALLENGE_STORAGE_KEY, previewChallengeState);
+  renderPreviewChallengeTools();
+});
+
+window.addEventListener('storage', (event) => {
+  if (!localPreviewMode || event.key !== PREVIEW_CHALLENGE_STORAGE_KEY) return;
+  previewChallengeState = normalizePreviewChallengeState(
+    load(PREVIEW_CHALLENGE_STORAGE_KEY, {}),
+    localDateKey(),
+  );
+  renderPreviewChallengeTools();
+});
+
+renderPreviewChallengeTools();
 hydrateProfile();
 initReveal();

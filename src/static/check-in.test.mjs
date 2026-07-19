@@ -3,8 +3,10 @@ import { describe, it } from 'node:test';
 import {
   CHECK_IN_ALREADY_COMPLETE_CODE,
   CHECK_IN_ALREADY_COMPLETE_MESSAGE,
+  CHECK_IN_SUBMISSION_COOLDOWN_MS,
   addCheckInDate,
   calendarDayDifference,
+  canStartCheckInSubmission,
   checkInCacheForOwner,
   createCheckInCache,
   createCheckInAlreadyCompleteError,
@@ -74,5 +76,11 @@ describe('daily check-in safeguards', () => {
     assert.equal(error.code, CHECK_IN_ALREADY_COMPLETE_CODE);
     assert.equal(error.message, CHECK_IN_ALREADY_COMPLETE_MESSAGE);
     assert.equal(error.cause.message, 'duplicate');
+  });
+
+  it('rejects rapid repeat submissions without blocking the next intentional post', () => {
+    assert.equal(canStartCheckInSubmission(1_000, 1_100), false);
+    assert.equal(canStartCheckInSubmission(1_000, 1_000 + CHECK_IN_SUBMISSION_COOLDOWN_MS), true);
+    assert.equal(canStartCheckInSubmission(0, 1), true);
   });
 });

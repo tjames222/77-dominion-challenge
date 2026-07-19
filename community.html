@@ -41,22 +41,13 @@
         <p class="lead">Encourage your crew, connect with people on your same challenge day, and keep your own journey honest.</p>
       </section>
 
-      <section class="community-membership card reveal is-visible">
-        <div>
-          <p class="eyebrow">Dominion Membership</p>
-          <h2 id="communityMembershipTitle">Community is loading.</h2>
-          <p id="communityMembershipCopy">We are checking your challenge access and preparing your crew tools.</p>
-        </div>
-        <a class="primary" id="communityMembershipLink" href="./billing.html?intent=membership">View access</a>
-      </section>
-
-      <div class="community-feedback" id="communityFeedback" role="status" aria-live="polite"></div>
-
       <nav class="community-tabs" role="tablist" aria-label="Community layers">
         <button class="community-tab active" id="crew-tab" type="button" role="tab" aria-selected="true" aria-controls="crew" data-tab="crew">Private Group</button>
         <button class="community-tab" id="global-tab" type="button" role="tab" aria-selected="false" aria-controls="global" data-tab="global">Global</button>
         <button class="community-tab" id="journey-tab" type="button" role="tab" aria-selected="false" aria-controls="journey" data-tab="journey">My Journey</button>
       </nav>
+
+      <div class="community-feedback" id="communityFeedback" role="status" aria-live="polite"></div>
 
       <section class="community-panel active" id="crew" role="tabpanel" aria-labelledby="crew-tab">
         <div class="community-summary card">
@@ -167,8 +158,7 @@
             </div>
             <button class="secondary compact" id="refreshCrewFeedButton" type="button">Refresh</button>
           </div>
-          <div class="pull-refresh-indicator" id="crewPullRefreshIndicator" role="status" aria-live="polite">Pull down to refresh</div>
-          <div class="private-feed-scroll" id="crewFeedScroll" tabindex="0" aria-label="Private group posts">
+          <div class="private-feed-scroll" id="crewFeedScroll" tabindex="-1" aria-label="Private group posts">
             <div class="feed-list" id="crewFeed" aria-busy="true"></div>
             <div class="feed-sentinel" id="crewFeedSentinel"></div>
           </div>

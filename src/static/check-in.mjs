@@ -2,6 +2,7 @@ export const CHECK_IN_ALREADY_COMPLETE_CODE = 'CHECK_IN_ALREADY_COMPLETE';
 export const CHECK_IN_ALREADY_COMPLETE_MESSAGE = 'Today\u2019s check-in is already posted. Your original entry and points are unchanged.';
 export const CHECK_IN_DATE_UNIQUE_INDEX = 'check_ins_user_entry_date_unique_idx';
 export const CHECK_IN_DAY_UNIQUE_INDEX = 'check_ins_user_challenge_day_unique_idx';
+export const CHECK_IN_SUBMISSION_COOLDOWN_MS = 750;
 
 const DATE_KEY_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -75,4 +76,11 @@ export function createCheckInAlreadyCompleteError(cause) {
   error.code = CHECK_IN_ALREADY_COMPLETE_CODE;
   if (cause) error.cause = cause;
   return error;
+}
+
+export function canStartCheckInSubmission(lastStartedAt, nextStartedAt, cooldownMs = CHECK_IN_SUBMISSION_COOLDOWN_MS) {
+  const previous = Number(lastStartedAt) || 0;
+  const next = Number(nextStartedAt) || 0;
+  const cooldown = Math.max(0, Number(cooldownMs) || 0);
+  return previous <= 0 || next - previous >= cooldown;
 }
