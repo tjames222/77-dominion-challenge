@@ -101,4 +101,4 @@ npm run build
 - Intentional walk
 - Workout #2
 
-Scheduled miss days are supported when planned ahead.
+Days without a submitted Check-In count as missed days.

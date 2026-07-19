@@ -3,7 +3,6 @@ export const ACTION_POINTS_PER_COMPLETION = 10;
 export const STATUS_BONUS_POINTS = Object.freeze({
   complete: 30,
   partial: 10,
-  scheduled: 15,
 });
 
 export const DEFAULT_DIFFICULTY_POINT_VALUES = Object.freeze({

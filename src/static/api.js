@@ -352,7 +352,6 @@ const mapProfile = (profile) => profile ? ({
 const mapEntry = (entry) => ({
   date: entry.entry_date,
   completed: Array.isArray(entry.completed) ? entry.completed : [],
-  scheduledMiss: Boolean(entry.scheduled_miss),
   updatedAt: entry.updated_at,
 });
 
@@ -839,7 +838,7 @@ export async function getDashboard() {
     getProfile(),
     client
       .from('challenge_entries')
-      .select('entry_date, completed, scheduled_miss, updated_at')
+      .select('entry_date, completed, updated_at')
       .eq('user_id', user.id)
       .order('entry_date', { ascending: false })
       .limit(90),
@@ -852,6 +851,7 @@ export async function getDashboard() {
     client
       .from('community_feed_items')
       .select('id, display_name, challenge_day, status, completed_count, points_awarded, created_at')
+      .neq('status', 'scheduled')
       .order('created_at', { ascending: false })
       .limit(30),
     client
@@ -906,9 +906,8 @@ export async function saveChallengeEntry(entry) {
       user_id: user.id,
       entry_date: entry.date,
       completed: entry.completed || [],
-      scheduled_miss: Boolean(entry.scheduledMiss),
     }, { onConflict: 'user_id,entry_date' })
-    .select('entry_date, completed, scheduled_miss, updated_at')
+    .select('entry_date, completed, updated_at')
     .single();
 
   if (error) throw error;
@@ -950,6 +949,7 @@ export async function getCommunityFeed() {
   const { data, error } = await client
     .from('community_feed_items')
     .select('id, display_name, challenge_day, status, completed_count, points_awarded, created_at')
+    .neq('status', 'scheduled')
     .order('created_at', { ascending: false })
     .limit(30);
 

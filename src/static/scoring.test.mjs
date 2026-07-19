@@ -121,19 +121,6 @@ describe('calculateCheckInScore', () => {
     }
   });
 
-  test('preserves scheduled-miss scoring across difficulty selections', () => {
-    assert.deepEqual(calculateCheckInScore({
-      completed: [],
-      status: 'scheduled',
-      workoutDifficulty: { one: 'extreme', two: 'extreme' },
-    }), {
-      totalPoints: 15,
-      workoutPoints: 0,
-      actionPoints: 0,
-      bonusPoints: 15,
-    });
-  });
-
   test('does not award difficulty points for an uncompleted workout', () => {
     assert.deepEqual(calculateCheckInScore({
       completed: ['bible'],

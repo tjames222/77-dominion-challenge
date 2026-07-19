@@ -54,6 +54,55 @@ alter table public.check_ins
   add column if not exists workout_difficulty jsonb not null default '{}'::jsonb,
   add column if not exists points_awarded integer not null default 0;
 
+update public.challenge_entries draft
+set
+  scheduled_miss = false,
+  updated_at = now()
+where draft.scheduled_miss
+  and not exists (
+    select 1
+    from public.check_ins finalized
+    where finalized.user_id = draft.user_id
+      and finalized.entry_date = draft.entry_date
+      and finalized.status = 'scheduled'
+  );
+
+create or replace function public.reject_scheduled_miss_draft()
+returns trigger
+language plpgsql
+set search_path = public
+as $$
+begin
+  if new.scheduled_miss then
+    raise exception 'Scheduled miss days are no longer supported.' using errcode = '22023';
+  end if;
+  return new;
+end;
+$$;
+
+drop trigger if exists reject_scheduled_miss_draft_write on public.challenge_entries;
+create trigger reject_scheduled_miss_draft_write
+  before insert or update of scheduled_miss on public.challenge_entries
+  for each row execute function public.reject_scheduled_miss_draft();
+
+create or replace function public.reject_scheduled_check_in()
+returns trigger
+language plpgsql
+set search_path = public
+as $$
+begin
+  if new.status = 'scheduled' then
+    raise exception 'Scheduled miss Check-Ins are no longer supported.' using errcode = '22023';
+  end if;
+  return new;
+end;
+$$;
+
+drop trigger if exists block_scheduled_check_in_write on public.check_ins;
+create trigger block_scheduled_check_in_write
+  before insert or update of status on public.check_ins
+  for each row execute function public.reject_scheduled_check_in();
+
 create table if not exists public.workout_difficulty_point_values (
   difficulty text primary key check (difficulty in ('easy', 'medium', 'hard', 'extreme')),
   points integer not null check (points >= 0),
@@ -1330,6 +1379,10 @@ begin
     raise exception 'The 77-day challenge is complete.';
   end if;
 
+  if new.status = 'scheduled' then
+    raise exception 'Scheduled miss Check-Ins are no longer supported.' using errcode = '22023';
+  end if;
+
   if cardinality(new.completed) > 0 then
     new.completed_count := cardinality(new.completed);
   end if;
@@ -1339,8 +1392,6 @@ begin
     bonus_points := 30;
   elsif new.status = 'partial' then
     bonus_points := 10;
-  elsif new.status = 'scheduled' then
-    bonus_points := 15;
   end if;
 
   if 'workoutOne' = any(new.completed) then
@@ -1723,7 +1774,7 @@ begin
     raise exception 'An active membership is required to post a check-in.';
   end if;
 
-  if target_status is null or target_status not in ('complete', 'partial', 'scheduled') then
+  if target_status is null or target_status not in ('complete', 'partial') then
     raise exception 'Choose a valid check-in status.' using errcode = '22023';
   end if;
 
@@ -1768,15 +1819,12 @@ begin
     'workoutTwo'
   ]::text[]);
 
-  if target_status = 'scheduled' then
-    normalized_completed := '{}'::text[];
-    effective_status := 'scheduled';
-  elsif cardinality(normalized_completed) = 7 then
+  if cardinality(normalized_completed) = 7 then
     effective_status := 'complete';
   elsif cardinality(normalized_completed) > 0 then
     effective_status := 'partial';
   else
-    raise exception 'Complete an action or choose a scheduled miss before posting.' using errcode = '22023';
+    raise exception 'Complete at least one action before posting.' using errcode = '22023';
   end if;
 
   if challenge_start is null then
@@ -2908,7 +2956,10 @@ revoke all on public.user_challenge_states from service_role;
 revoke update on public.profiles from authenticated;
 grant select, insert on public.profiles to authenticated;
 grant update (user_id, name, email, avatar_url, challenge_start_date) on public.profiles to authenticated;
-grant select, insert, update on public.challenge_entries to authenticated;
+revoke insert, update on public.challenge_entries from authenticated;
+grant select on public.challenge_entries to authenticated;
+grant insert (user_id, entry_date, completed) on public.challenge_entries to authenticated;
+grant update (user_id, entry_date, completed) on public.challenge_entries to authenticated;
 revoke insert on public.check_ins from authenticated;
 grant select (id, user_id, entry_date, challenge_day, status, completed_count, points_awarded, created_at)
   on public.check_ins to authenticated;

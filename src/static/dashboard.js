@@ -33,6 +33,7 @@ import {
   checkInCacheForOwner,
   createCheckInCache,
   createCheckInAlreadyCompleteError,
+  currentFullDayStreakForDate,
   dateKeyForTimeZone,
   normalizeChallengeDays,
 } from './check-in.mjs';
@@ -93,7 +94,6 @@ const standards = scorecardGroups.flatMap(group => group.items);
 const starterFeed = [
   { name: 'Josh', day: 12, status: 'complete', timestamp: 'Today' },
   { name: 'Sarah', day: 12, status: 'complete', timestamp: 'Today' },
-  { name: 'Matt', day: 11, status: 'scheduled', timestamp: 'Yesterday' },
   { name: 'Tim', day: 12, status: 'complete', timestamp: 'Today' },
 ];
 const DEFAULT_DEMO_GAME_STATS = {
@@ -282,7 +282,6 @@ const checkInDatesStorageKey = () => previewChallengeMode()
   ? PREVIEW_CHECK_IN_DATES_STORAGE_KEY
   : CHECK_IN_DATES_STORAGE_KEY;
 const statusLabel = (item) => {
-  if (item.status === 'scheduled') return 'scheduled miss';
   if (item.status === 'partial') return `partial check-in${item.completedCount ? ` (${item.completedCount}/7)` : ''}`;
   return 'complete';
 };
@@ -435,7 +434,7 @@ function renderGameSummary() {
   const levelProgress = getLevelProgress(gameStats.totalPoints ?? gameStats.challengePoints ?? 0);
   const appStreak = Math.max(0, Math.floor(Number(gameStats.currentAppStreak) || 0));
   const bestAppStreak = Math.max(appStreak, Math.floor(Number(gameStats.bestAppStreak) || 0));
-  const fullDayStreak = Math.max(0, Math.floor(Number(gameStats.currentFullDayStreak) || 0));
+  const fullDayStreak = currentFullDayStreakForDate(gameStats, todayKey());
   const bestFullDayStreak = Math.max(fullDayStreak, Math.floor(Number(gameStats.bestFullDayStreak) || 0));
   const recentBadges = badges.filter(Boolean).slice(0, 4);
   const prestige = resolveLeaderboardPrestige(leaderboardPositions);
@@ -944,7 +943,6 @@ const todayEntry = () => {
   const entry = entries.find(item => item.date === todayKey()) || {};
   return {
     date: todayKey(),
-    ...entry,
     completed: Array.isArray(entry.completed) ? entry.completed : [],
   };
 };
@@ -980,7 +978,6 @@ function markCheckInSubmitted(dateKey, challengeDay) {
   return !alreadySubmitted;
 }
 const checkInStatusForEntry = (entry) => {
-  if (entry.scheduledMiss) return 'scheduled';
   if (!entry.completed.length) return null;
   return entry.completed.length === standards.length ? 'complete' : 'partial';
 };
@@ -1090,8 +1087,7 @@ function renderChecklist(entry) {
   }
 
   const completed = new Set(entry.completed);
-  const locked = Boolean(entry.scheduledMiss)
-    || isChallengeFinished()
+  const locked = isChallengeFinished()
     || !isCheckInStatusReady(entry.date)
     || hasSubmittedCheckIn(entry.date)
     || isCheckInPending(entry.date);
@@ -1104,8 +1100,7 @@ function renderChecklist(entry) {
 }
 function renderTodayActionCompletion(entry) {
   const completed = new Set(entry.completed);
-  const locked = Boolean(entry.scheduledMiss)
-    || isChallengeFinished()
+  const locked = isChallengeFinished()
     || !isCheckInStatusReady(entry.date)
     || hasSubmittedCheckIn(entry.date)
     || isCheckInPending(entry.date);
@@ -1135,12 +1130,12 @@ function renderTodayActionCompletion(entry) {
   }
 }
 function toggleStandard(id) {
-  if (isChallengeFinished() || !isCheckInStatusReady() || todayEntry().scheduledMiss || hasSubmittedCheckIn() || isCheckInPending()) return;
+  if (isChallengeFinished() || !isCheckInStatusReady() || hasSubmittedCheckIn() || isCheckInPending()) return;
   const currentEntry = todayEntry();
   const completed = new Set(currentEntry.completed);
   if (completed.has(id)) completed.delete(id);
   else completed.add(id);
-  saveEntry({ ...currentEntry, completed: [...completed], scheduledMiss: false });
+  saveEntry({ ...currentEntry, completed: [...completed] });
   render();
 }
 const padClock = (value) => String(value).padStart(2, '0');
@@ -1223,8 +1218,7 @@ function applyDailyActions() {
   const scorecardLocked = !isCheckInStatusReady()
     || hasSubmittedCheckIn()
     || isChallengeFinished()
-    || isCheckInPending()
-    || Boolean(todayEntry().scheduledMiss);
+    || isCheckInPending();
 
   if (morningPrayerLink) morningPrayerLink.href = YOUVERSION_PRAYER_URL;
   if (eveningPrayerLink) eveningPrayerLink.href = YOUVERSION_PRAYER_URL;
@@ -1302,7 +1296,6 @@ function render() {
   const checkInButton = $('checkInButton');
   const checkInStatus = $('checkInStatus');
   const countdownCheckInButton = $('countdownCheckInButton');
-  const scheduledButton = $('scheduledButton');
   const selectAllActionsButton = $('selectAllActionsButton');
   const selectAllActionsLabel = $('selectAllActionsLabel');
   const scorecardSelectionStatus = $('scorecardSelectionStatus');
@@ -1336,13 +1329,13 @@ function render() {
   const submissionPendingToday = isCheckInPending(entry.date);
   const checkInStatusReady = isCheckInStatusReady(entry.date);
   const scorecardLocked = !checkInStatusReady || submittedToday || submissionPendingToday;
-  const hasPostableCheckIn = !finished && !scorecardLocked && (hasCompletedActions || entry.scheduledMiss);
+  const hasPostableCheckIn = !finished && !scorecardLocked && hasCompletedActions;
   const allActionsCompleted = standards.every(([id]) => completedStandards.has(id));
   if (challengePercentEl) challengePercentEl.textContent = `${challengePercent}%`;
   if (challengeDayEl) challengeDayEl.textContent = `Day ${currentDay()} of 77`;
   if (challengeRing) challengeRing.style.setProperty('--value', `${challengePercent}%`);
   if (todayPercentEl) todayPercentEl.textContent = `${todayPercent}%`;
-  if (todayCountEl) todayCountEl.textContent = entry.scheduledMiss ? 'Scheduled miss day' : `${entry.completed.length} of ${standards.length} done`;
+  if (todayCountEl) todayCountEl.textContent = `${entry.completed.length} of ${standards.length} done`;
   if (todayRing) todayRing.style.setProperty('--value', `${todayPercent}%`);
   document.body.classList.toggle('check-in-complete', submittedToday);
   if (checkInButton) {
@@ -1369,17 +1362,11 @@ function render() {
     countdownCheckInButton.disabled = finished || !checkInStatusReady || submittedToday || submissionPendingToday;
     countdownCheckInButton.textContent = submittedToday ? 'Today’s check-in complete' : 'Go to check-in';
   }
-  if (workoutOneDifficulty) workoutOneDifficulty.disabled = finished || scorecardLocked || !!entry.scheduledMiss;
-  if (workoutTwoDifficulty) workoutTwoDifficulty.disabled = finished || scorecardLocked || !!entry.scheduledMiss;
-  if (scheduledButton) {
-    scheduledButton.classList.toggle('active', !!entry.scheduledMiss);
-    scheduledButton.disabled = finished || scorecardLocked || (hasCompletedActions && !entry.scheduledMiss);
-    scheduledButton.textContent = entry.scheduledMiss ? 'Scheduled miss selected' : 'Scheduled miss day planned ahead';
-    scheduledButton.setAttribute('aria-pressed', String(!!entry.scheduledMiss));
-  }
+  if (workoutOneDifficulty) workoutOneDifficulty.disabled = finished || scorecardLocked;
+  if (workoutTwoDifficulty) workoutTwoDifficulty.disabled = finished || scorecardLocked;
   if (selectAllActionsButton) {
     selectAllActionsButton.classList.toggle('active', allActionsCompleted);
-    selectAllActionsButton.disabled = finished || scorecardLocked || !!entry.scheduledMiss;
+    selectAllActionsButton.disabled = finished || scorecardLocked;
     selectAllActionsButton.setAttribute('aria-pressed', String(allActionsCompleted));
     selectAllActionsButton.setAttribute('aria-label', allActionsCompleted
       ? 'Clear all daily actions'
@@ -1390,9 +1377,7 @@ function render() {
     selectAllActionsLabel.textContent = selectAllLabel;
   }
   if (scorecardSelectionStatus) {
-    const selectionStatus = entry.scheduledMiss
-      ? 'Scheduled miss selected'
-      : `${entry.completed.length} of ${standards.length} complete`;
+    const selectionStatus = `${entry.completed.length} of ${standards.length} complete`;
     if (scorecardSelectionStatus.textContent !== selectionStatus) {
       scorecardSelectionStatus.textContent = selectionStatus;
     }
@@ -1451,7 +1436,6 @@ async function hydrateDashboardFromApi() {
       entries = dashboard.entries.map((entry) => ({
         date: entry.date,
         completed: Array.isArray(entry.completed) ? entry.completed : [],
-        scheduledMiss: Boolean(entry.scheduledMiss),
       }));
       save(ENTRY_STORAGE_KEY, entries);
     }
@@ -1564,7 +1548,6 @@ async function recordDailyAppVisit() {
 const themeToggle = $('themeToggle');
 const startDateInput = $('startDate');
 const checklist = $('checklist');
-const scheduledButton = $('scheduledButton');
 const selectAllActionsButton = $('selectAllActionsButton');
 const checkInButton = $('checkInButton');
 const countdownCheckInButton = $('countdownCheckInButton');
@@ -1696,24 +1679,14 @@ if (challengeCatalog) challengeCatalog.addEventListener('click', async (event) =
     renderChallengeProgression();
   }
 });
-if (scheduledButton) scheduledButton.addEventListener('click', () => {
-  if (isChallengeFinished() || !isCheckInStatusReady() || hasSubmittedCheckIn() || isCheckInPending()) return;
-  const currentEntry = todayEntry();
-  if (currentEntry.completed.length > 0 && !currentEntry.scheduledMiss) return;
-  const entry = { ...currentEntry, completed: [], scheduledMiss: !currentEntry.scheduledMiss };
-  saveEntry(entry);
-  render();
-});
 if (selectAllActionsButton) selectAllActionsButton.addEventListener('click', () => {
   if (isChallengeFinished() || !isCheckInStatusReady() || hasSubmittedCheckIn() || isCheckInPending()) return;
   const currentEntry = todayEntry();
-  if (currentEntry.scheduledMiss) return;
   const completedStandards = new Set(currentEntry.completed);
   const allActionsCompleted = standards.every(([id]) => completedStandards.has(id));
   const entry = {
     ...currentEntry,
     completed: allActionsCompleted ? [] : standards.map(([id]) => id),
-    scheduledMiss: false,
   };
   saveEntry(entry);
   render();
@@ -1734,11 +1707,11 @@ if (checkInButton) checkInButton.addEventListener('click', async () => {
     render();
     return;
   }
-  if (!entry.scheduledMiss && entry.completed.length === 0) return;
+  if (entry.completed.length === 0) return;
   const submissionStartedAt = Date.now();
   if (!canStartCheckInSubmission(lastCheckInSubmissionAt, submissionStartedAt, CHECK_IN_SUBMISSION_COOLDOWN_MS)) return;
   lastCheckInSubmissionAt = submissionStartedAt;
-  const status = entry.scheduledMiss ? 'scheduled' : entry.completed.length === standards.length ? 'complete' : 'partial';
+  const status = entry.completed.length === standards.length ? 'complete' : 'partial';
   const previousBadgeKeys = new Set(badges.map((badge) => badge.key));
   let feedItem = {
     date: entry.date,
