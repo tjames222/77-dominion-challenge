@@ -52,11 +52,6 @@ import {
 } from './preview-challenge.mjs';
 
 const TOTAL_DAYS = 77;
-const YOUVERSION_VERSE_URL = import.meta.env.VITE_YOUVERSION_VERSE_URL || '';
-const YOUVERSION_APP_URL = import.meta.env.VITE_YOUVERSION_APP_URL || 'https://www.bible.com/';
-const YOUVERSION_PRAYER_URL = import.meta.env.VITE_YOUVERSION_PRAYER_URL || 'https://www.bible.com/prayer';
-const APPLE_FITNESS_URL = import.meta.env.VITE_APPLE_FITNESS_URL || 'https://fitness.apple.com/';
-const WALK_ALARM_URL = import.meta.env.VITE_WALK_ALARM_URL || '';
 const scorecardGroups = [
   {
     key: 'mind',
@@ -97,10 +92,6 @@ const DEFAULT_DEMO_GAME_STATS = {
   currentFullDayStreak: 0,
   bestFullDayStreak: 0,
 };
-const fallbackVerse = {
-  text: 'His mercies never come to an end; they are new every morning.',
-  reference: 'Lamentations 3:22-23',
-};
 const countdownCallouts = [
   'Do the next right action before the day gets louder.',
   'Discipline gets lighter once you start. Pick one standard and move.',
@@ -115,41 +106,6 @@ const countdownCallouts = [
   'Do not negotiate with drift. Choose the standard and begin.',
   'You are training your future self right now.',
 ];
-const worshipPlaylists = [
-  { label: 'Morning worship focus', url: 'https://open.spotify.com/search/morning%20worship%20playlist' },
-  { label: 'Acoustic worship reset', url: 'https://open.spotify.com/search/acoustic%20worship%20playlist' },
-  { label: 'Praise and worship lift', url: 'https://open.spotify.com/search/praise%20and%20worship%20playlist' },
-  { label: 'Instrumental worship flow', url: 'https://open.spotify.com/search/instrumental%20worship%20playlist' },
-  { label: 'Gospel worship strength', url: 'https://open.spotify.com/search/gospel%20worship%20playlist' },
-  { label: 'Evening worship surrender', url: 'https://open.spotify.com/search/evening%20worship%20playlist' },
-  { label: 'Christian worship today', url: 'https://open.spotify.com/search/christian%20worship%20playlist' },
-];
-const workoutPlans = {
-  easy: [
-    '3 rounds: 10 pushups, 20 squats, 20-second plank, 10 glute bridges.',
-    '3 rounds: 8 incline pushups, 12 reverse lunges per leg, 20 mountain climbers, 30-second wall sit.',
-    '3 rounds: 10 chair dips, 15 air squats, 10 dead bugs per side, 45-second easy walk.',
-    '3 rounds: 12 knee pushups, 20 step-ups, 20 jumping jacks, 20-second hollow hold.',
-  ],
-  medium: [
-    '4 rounds: 12 pushups, 20 squats, 12 alternating lunges per leg, 30-second plank.',
-    '4 rounds: 15 pushups, 15 jump squats, 20 bicycle crunches, 40-second side plank each side.',
-    '4 rounds: 10 burpees, 20 walking lunges, 15 pike pushups, 30-second squat hold.',
-    '4 rounds: 12 dips, 20 air squats, 12 mountain climbers per side, 1-minute brisk walk.',
-  ],
-  hard: [
-    '5 rounds: 15 pushups, 25 squats, 20 walking lunges, 45-second plank.',
-    '5 rounds: 12 burpees, 20 jump squats, 15 decline pushups, 30 bicycle crunches.',
-    '5 rounds: 20 alternating lunges per leg, 15 diamond pushups, 20 mountain climbers per side, 1-minute wall sit.',
-    '5 rounds: 15 pushups, 20 squat jumps, 20 sit-ups, 400-meter fast walk or jog.',
-  ],
-  extreme: [
-    '6 rounds: 20 pushups, 30 squats, 20 burpees, 60-second plank.',
-    '6 rounds: 15 hand-release pushups, 25 jump squats, 20 lunges per leg, 40 mountain climbers per side.',
-    '6 rounds: 20 dips, 20 pistol-squat progressions per side, 15 burpees, 90-second plank.',
-    '6 rounds: 25 pushups, 30 squats, 20 tuck jumps, 1-minute sprint or fast stair climb.',
-  ],
-};
 const POINTS_PER_LEVEL = 500;
 const CONFETTI_DURATION_MS = 10800;
 const REDUCED_CONFETTI_DURATION_MS = 2200;
@@ -903,9 +859,6 @@ let renderedDateKey = todayKey();
 let checkInStatusHydratedDate = hasSupabaseAuth() ? '' : renderedDateKey;
 let dashboardHydrationRequestId = 0;
 const $ = (id) => document.getElementById(id);
-const verseText = $('verseText');
-const verseReference = $('verseReference');
-const verseAppLink = $('verseAppLink');
 async function refreshChallengeProgression({ claimCelebrations = false, celebrationDelay = 0 } = {}) {
   if (!$('challengeCatalog')) return [];
   challengeProgressionStatus = challengeProgression.challenges.length ? 'ready' : 'loading';
@@ -933,7 +886,6 @@ async function refreshChallengeProgression({ claimCelebrations = false, celebrat
   }
 }
 const dayIndex = () => Math.floor(new Date(`${todayKey()}T00:00:00`).getTime() / 86400000);
-const pickDaily = (items, offset = 0) => items[(dayIndex() + offset) % items.length];
 const todayEntry = () => {
   const entry = entries.find(item => item.date === todayKey()) || {};
   return {
@@ -1079,6 +1031,9 @@ function renderChecklist(entry) {
   checklist.querySelectorAll('.check-row-details').forEach((link) => {
     link.setAttribute('aria-disabled', String(draftBusy));
   });
+  const difficultyControls = checklist.querySelectorAll('[data-workout]');
+  syncWorkoutDifficultyControls(difficultyControls, workoutDifficulty);
+  difficultyControls.forEach((control) => { control.disabled = locked; });
 
   const requestedFocus = new URLSearchParams(window.location.search).get('focus');
   const focusTarget = requestedFocus && dailyStandardRoute(requestedFocus)
@@ -1091,44 +1046,6 @@ function renderChecklist(entry) {
       focusTarget.closest('[data-standard-card]')?.scrollIntoView({ block: 'center' });
       window.history.replaceState(null, '', `${window.location.pathname}${window.location.hash}`);
     });
-  }
-}
-function renderTodayActionCompletion(entry) {
-  const completed = new Set(entry.completed);
-  const locked = isChallengeFinished()
-    || !isCheckInStatusReady(entry.date)
-    || hasSubmittedCheckIn(entry.date)
-    || isCheckInPending(entry.date);
-
-  document.querySelectorAll('[data-action-completion]').forEach((button) => {
-    if (!button.querySelector('.action-point-value')) {
-      const pointValue = document.createElement('span');
-      pointValue.className = 'action-point-value';
-      pointValue.textContent = '+1';
-      pointValue.setAttribute('aria-label', '1 point');
-      button.append(pointValue);
-    }
-    const isChecked = completed.has(button.dataset.actionCompletion);
-    const label = button.dataset.actionName
-      || button.getAttribute('aria-label')?.replace(/^Mark | complete$/g, '')
-      || 'Action';
-    const labelElement = button.querySelector('[data-completion-label]');
-    button.dataset.actionName = label;
-    button.classList.toggle('completed', isChecked);
-    button.disabled = locked;
-    button.setAttribute('aria-pressed', String(isChecked));
-    button.setAttribute('aria-label', `Mark ${label} ${isChecked ? 'incomplete' : 'complete'}`);
-    if (labelElement) labelElement.textContent = isChecked ? 'Completed' : `Mark ${label} complete`;
-    button.closest('.action-card, .verse-card')?.classList.toggle('action-completed', isChecked);
-  });
-
-  const floatingCheckInCta = $('floatingCheckInCta');
-  if (floatingCheckInCta) {
-    const allActionsCompleted = standards.every(([id]) => completed.has(id)) && !locked;
-    floatingCheckInCta.classList.toggle('visible', allActionsCompleted);
-    floatingCheckInCta.setAttribute('aria-hidden', String(!allActionsCompleted));
-    floatingCheckInCta.tabIndex = allActionsCompleted ? 0 : -1;
-    document.body.classList.toggle('check-in-cta-visible', allActionsCompleted);
   }
 }
 function toggleStandard(id) {
@@ -1232,86 +1149,6 @@ function updateCountdownCard() {
   if (countdownProgressLabel) countdownProgressLabel.textContent = `${elapsedPercent}% of the day used`;
   if (countdownActionsLabel) countdownActionsLabel.textContent = `${entry.completed.length} of 7 actions complete`;
 }
-function applyVerse(verse) {
-  if (!verseText || !verseReference) return;
-  verseText.textContent = verse.text;
-  verseReference.textContent = verse.reference;
-}
-function applyDailyActions() {
-  const morningPrayerLink = $('morningPrayerLink');
-  const eveningPrayerLink = $('eveningPrayerLink');
-  const worshipLink = $('worshipLink');
-  const worshipPrompt = $('worshipPrompt');
-  const workoutOneRecommendation = $('workoutOneRecommendation');
-  const workoutTwoRecommendation = $('workoutTwoRecommendation');
-  const workoutOneLink = $('workoutOneLink');
-  const workoutTwoLink = $('workoutTwoLink');
-  const workoutOneDifficulty = $('workoutOneDifficulty');
-  const workoutTwoDifficulty = $('workoutTwoDifficulty');
-  const scorecardLocked = !isCheckInStatusReady()
-    || hasSubmittedCheckIn()
-    || isChallengeFinished()
-    || isCheckInPending()
-    || pendingActionMutations.size > 0
-    || pendingWorkoutMutations.size > 0;
-
-  if (morningPrayerLink) morningPrayerLink.href = YOUVERSION_PRAYER_URL;
-  if (eveningPrayerLink) eveningPrayerLink.href = YOUVERSION_PRAYER_URL;
-
-  const worship = pickDaily(worshipPlaylists);
-  if (worshipLink) {
-    worshipLink.href = worship.url;
-    const worshipLinkLabel = worshipLink.querySelector('span:nth-child(2)');
-    if (worshipLinkLabel) worshipLinkLabel.textContent = 'Open today’s worship';
-    else worshipLink.textContent = 'Open today’s worship';
-  }
-  if (worshipPrompt) worshipPrompt.textContent = worship.label;
-
-  workoutDifficulty = normalizeWorkoutDifficulty(workoutDifficulty);
-  syncWorkoutDifficultyControls(
-    document.querySelectorAll('[data-workout]'),
-    workoutDifficulty,
-  );
-  if (workoutOneDifficulty) workoutOneDifficulty.disabled = scorecardLocked;
-  if (workoutTwoDifficulty) workoutTwoDifficulty.disabled = scorecardLocked;
-
-  const onePlan = pickDaily(workoutPlans[workoutDifficulty.one], 0);
-  const twoPlan = pickDaily(workoutPlans[workoutDifficulty.two], 1);
-  if (workoutOneRecommendation) workoutOneRecommendation.textContent = onePlan;
-  if (workoutTwoRecommendation) workoutTwoRecommendation.textContent = twoPlan;
-  if (workoutOneLink) workoutOneLink.href = APPLE_FITNESS_URL;
-  if (workoutTwoLink) workoutTwoLink.href = APPLE_FITNESS_URL;
-}
-async function loadVerseOfDay() {
-  if (!YOUVERSION_VERSE_URL) {
-    applyVerse(fallbackVerse);
-    return;
-  }
-
-  try {
-    const response = await fetch(YOUVERSION_VERSE_URL, { headers: { Accept: 'application/json' } });
-    if (!response.ok) throw new Error(`Verse request failed (${response.status})`);
-    const data = await response.json();
-    const verse = {
-      text:
-        data?.verse?.text ||
-        data?.data?.verse?.text ||
-        data?.data?.attributes?.text ||
-        data?.text ||
-        fallbackVerse.text,
-      reference:
-        data?.verse?.reference ||
-        data?.data?.verse?.reference ||
-        data?.data?.attributes?.reference ||
-        data?.reference ||
-        fallbackVerse.reference,
-    };
-    applyVerse(verse);
-  } catch (error) {
-    console.warn('Using fallback verse of the day', error);
-    applyVerse(fallbackVerse);
-  }
-}
 function render() {
   document.documentElement.dataset.theme = theme;
   const finished = isChallengeFinished();
@@ -1333,8 +1170,6 @@ function render() {
   const selectAllActionsButton = $('selectAllActionsButton');
   const selectAllActionsLabel = $('selectAllActionsLabel');
   const scorecardSelectionStatus = $('scorecardSelectionStatus');
-  const workoutOneDifficulty = $('workoutOneDifficulty');
-  const workoutTwoDifficulty = $('workoutTwoDifficulty');
   const checklist = $('checklist');
   const feedEl = $('feed');
   const completedToday = $('completedToday');
@@ -1397,8 +1232,6 @@ function render() {
     countdownCheckInButton.disabled = finished || !checkInStatusReady || submittedToday || submissionPendingToday;
     countdownCheckInButton.textContent = submittedToday ? 'Today’s check-in complete' : 'Go to check-in';
   }
-  if (workoutOneDifficulty) workoutOneDifficulty.disabled = finished || scorecardLocked;
-  if (workoutTwoDifficulty) workoutTwoDifficulty.disabled = finished || scorecardLocked;
   if (selectAllActionsButton) {
     selectAllActionsButton.classList.toggle('active', allActionsCompleted);
     selectAllActionsButton.disabled = finished || scorecardLocked || dailyDraftBusy;
@@ -1418,7 +1251,6 @@ function render() {
     }
   }
   if (checklist) renderChecklist(entry);
-  renderTodayActionCompletion(entry);
   if (feedEl) {
     feedEl.innerHTML = feed.slice(0, 6).map((item) => {
       const points = item.pointsAwarded ? ` · +${item.pointsAwarded} pts` : '';
@@ -1426,8 +1258,6 @@ function render() {
     }).join('');
   }
   if (completedToday) completedToday.textContent = `${feed.filter(item => item.status === 'complete' && item.timestamp === 'Today').length} people completed today`;
-  if (verseAppLink) verseAppLink.href = YOUVERSION_APP_URL;
-  applyDailyActions();
   renderGameSummary();
   renderChallengeProgression();
   updateCountdownCard();
@@ -1589,7 +1419,6 @@ const checklist = $('checklist');
 const selectAllActionsButton = $('selectAllActionsButton');
 const checkInButton = $('checkInButton');
 const countdownCheckInButton = $('countdownCheckInButton');
-const walkReminderButton = $('walkReminderButton');
 const rewardBackdrop = $('rewardBackdrop');
 const rewardToast = $('rewardToast');
 const challengeCatalog = $('challengeCatalog');
@@ -1620,16 +1449,15 @@ document.addEventListener('change', (event) => {
   const target = event.target.closest?.('[data-workout]');
   if (!target) return;
   if (!isCheckInStatusReady() || hasSubmittedCheckIn() || isCheckInPending()) {
-    applyDailyActions();
+    render();
     return;
   }
-  if (target.type === 'radio' && !target.checked) return;
   const currentEntry = todayEntry();
   workoutDifficulty = normalizeWorkoutDifficulty({ ...workoutDifficulty, [target.dataset.workout]: target.value });
   pendingWorkoutMutations.set(target.dataset.workout, target.value);
   save(WORKOUT_DIFFICULTY_STORAGE_KEY, workoutDifficulty);
   replaceEntry({ ...currentEntry, workoutDifficulty, version: currentEntry.version + 1 });
-  applyDailyActions();
+  render();
 
   if (!hasSupabaseAuth()) {
     pendingWorkoutMutations.delete(target.dataset.workout);
@@ -1657,20 +1485,6 @@ document.addEventListener('change', (event) => {
       return reconcileDailyStandardDraft(currentEntry.date, error?.message || 'That difficulty could not be saved.');
     });
 });
-document.querySelectorAll('[data-native-health]').forEach((button) => {
-  button.addEventListener('click', () => {
-    window.alert('Apple Health activity rings and step data require a native iOS/watchOS app with HealthKit permission. For now, keep using the daily checkboxes here; this is ready for the native bridge later.');
-  });
-});
-if (walkReminderButton) walkReminderButton.addEventListener('click', () => {
-  if (WALK_ALARM_URL) {
-    window.location.href = WALK_ALARM_URL;
-    return;
-  }
-  const time = window.prompt('What time should your walk alarm be?', '12:30 PM');
-  const status = $('walkReminderStatus');
-  if (time && status) status.textContent = `Set an alarm in Clock for ${time} and label it Dominion Walk.`;
-});
 if (checklist) checklist.addEventListener('click', event => {
   const row = event.target.closest('[data-standard]');
   if (!row) return;
@@ -1686,10 +1500,6 @@ if (checklist) checklist.addEventListener('click', (event) => {
   entrySaveQueue.finally(() => {
     window.location.href = pendingDetailsNavigation;
   });
-});
-document.addEventListener('click', (event) => {
-  const button = event.target.closest('[data-action-completion]');
-  if (button) toggleStandard(button.dataset.actionCompletion);
 });
 window.addEventListener('storage', (event) => {
   if (event.key === PREVIEW_CHALLENGE_STORAGE_KEY) {
@@ -1919,8 +1729,6 @@ async function bootDashboard() {
   render();
   if (hasSupabaseAuth()) await recordDailyAppVisit();
   else await refreshChallengeProgression({ claimCelebrations: true, celebrationDelay: 450 });
-  loadVerseOfDay();
-  applyDailyActions();
   startCountdownCard();
   startLeaderboardPrestigeRefresh();
   requestAnimationFrame(() => initReveal());

@@ -1,23 +1,24 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { describe, it } from 'node:test';
+import { DAILY_STANDARD_ROUTE_LIST } from './daily-standard-routes.mjs';
 
 const read = (path) => readFile(new URL(path, import.meta.url), 'utf8');
 
 describe('seven-point scoring integration', () => {
   it('shows an accessible +1 on every actionable surface without aggregate preview cards', async () => {
-    const [dashboardHtml, actionsHtml, dashboardSource, styles] = await Promise.all([
+    const [dashboardHtml, dashboardSource, styles, ...actionPages] = await Promise.all([
       read('../../dashboard.html'),
-      read('../../today-actions.html'),
       read('./dashboard.js'),
       read('../assets/styles.css'),
+      ...DAILY_STANDARD_ROUTE_LIST.map((action) => read(`../..${action.route.slice(1)}`)),
     ]);
 
-    for (const source of [dashboardHtml, actionsHtml]) {
+    for (const source of [dashboardHtml, ...actionPages]) {
       assert.doesNotMatch(source, /Projected award|Full-day potential|difficulty bonus|data-difficulty-point/i);
     }
     assert.match(dashboardSource, /class=\"action-point-value\" aria-label=\"1 point\">\+1/);
-    assert.match(dashboardSource, /pointValue\.setAttribute\('aria-label', '1 point'\)/);
+    actionPages.forEach((page) => assert.match(page, /aria-label="1 point">\+1/));
     assert.match(styles, /\.action-point-value\s*\{/);
   });
 

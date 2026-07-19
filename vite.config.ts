@@ -13,7 +13,6 @@ export default defineConfig({
         register: 'register.html',
         billing: 'billing.html',
         dashboard: 'dashboard.html',
-        todayActions: 'today-actions.html',
         bibleReading: 'bible-reading.html',
         morningPrayer: 'morning-prayer.html',
         worship: 'worship.html',
