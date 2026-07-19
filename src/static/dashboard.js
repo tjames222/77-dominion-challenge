@@ -1047,7 +1047,10 @@ function renderChecklist(entry) {
     checklist.innerHTML = scorecardGroups.map((group) => {
       const rows = group.items.map(([id, label, detail]) => {
         const route = dailyStandardRoute(id);
-        return `<article class="check-row" data-standard-card="${id}"><button class="check-row-toggle" data-standard="${id}" aria-label="Mark ${escapeHtml(label)} complete" aria-pressed="false" type="button"><span class="box"><span class="app-icon icon-sm icon-check" aria-hidden="true"></span></span><span class="check-row-copy"><strong>${escapeHtml(label)}</strong><small>${escapeHtml(detail)}</small></span><span class="action-point-value" aria-label="1 point">+1</span></button><a class="check-row-details" href="${route?.route || './dashboard.html#daily-standards'}" aria-label="Open ${escapeHtml(label)} details">Details<span aria-hidden="true">→</span></a></article>`;
+        const difficultyControl = route?.workoutId
+          ? `<label class="check-row-difficulty" for="${id}Difficulty"><span>Difficulty <small>Context only · still +1</small></span><select id="${id}Difficulty" name="${id}Difficulty" data-workout="${route.workoutId}" aria-label="${escapeHtml(label)} difficulty"><option value="easy">Easy</option><option value="medium">Medium</option><option value="hard">Hard</option><option value="extreme">Extreme</option></select></label>`
+          : '';
+        return `<article class="check-row" data-standard-card="${id}"><button class="check-row-toggle" data-standard="${id}" aria-label="Mark ${escapeHtml(label)} complete" aria-pressed="false" type="button"><span class="box"><span class="app-icon icon-sm icon-check" aria-hidden="true"></span></span><span class="check-row-copy"><strong>${escapeHtml(label)}</strong><small>${escapeHtml(detail)}</small></span><span class="action-point-value" aria-label="1 point">+1</span></button><a class="check-row-details" href="${route?.route || './dashboard.html#daily-standards'}" aria-label="Open ${escapeHtml(label)} details">Details<span aria-hidden="true">→</span></a>${difficultyControl}</article>`;
       }).join('');
       const itemLabel = group.items.length === 1 ? 'action' : 'actions';
       return `<section class="checklist-group"><div class="checklist-group-header"><p class="checklist-group-title">${escapeHtml(group.label)}</p><span>${group.items.length} ${itemLabel}</span></div><div class="checklist-group-items">${rows}</div></section>`;
@@ -1587,54 +1590,45 @@ if (startDateInput) startDateInput.addEventListener('input', event => {
   }
   render();
 });
-document.querySelectorAll('[data-workout]').forEach((input) => {
-  input.addEventListener('change', (event) => {
-    if (!isCheckInStatusReady() || hasSubmittedCheckIn() || isCheckInPending()) {
-      applyDailyActions();
-      return;
-    }
-    const target = event.target;
-    if (target.type === 'radio' && !target.checked) return;
-    const currentEntry = todayEntry();
-    workoutDifficulty = normalizeWorkoutDifficulty({ ...workoutDifficulty, [target.dataset.workout]: target.value });
-    pendingWorkoutMutations.set(target.dataset.workout, target.value);
-    save(WORKOUT_DIFFICULTY_STORAGE_KEY, workoutDifficulty);
-    replaceEntry({
-      ...currentEntry,
-      workoutDifficulty,
-      version: currentEntry.version + 1,
-    });
+document.addEventListener('change', (event) => {
+  const target = event.target.closest?.('[data-workout]');
+  if (!target) return;
+  if (!isCheckInStatusReady() || hasSubmittedCheckIn() || isCheckInPending()) {
     applyDailyActions();
+    return;
+  }
+  if (target.type === 'radio' && !target.checked) return;
+  const currentEntry = todayEntry();
+  workoutDifficulty = normalizeWorkoutDifficulty({ ...workoutDifficulty, [target.dataset.workout]: target.value });
+  pendingWorkoutMutations.set(target.dataset.workout, target.value);
+  save(WORKOUT_DIFFICULTY_STORAGE_KEY, workoutDifficulty);
+  replaceEntry({ ...currentEntry, workoutDifficulty, version: currentEntry.version + 1 });
+  applyDailyActions();
 
-    if (!hasSupabaseAuth()) {
-      pendingWorkoutMutations.delete(target.dataset.workout);
-      return;
-    }
-    entrySaveQueue = entrySaveQueue
-      .then(() => setDailyStandardWorkoutDifficulty({
-        date: currentEntry.date,
-        workoutId: target.dataset.workout,
-        difficulty: target.value,
-        expectedVersion: currentEntry.version,
-      }))
-      .then((authoritative) => {
-        if (pendingWorkoutMutations.get(target.dataset.workout) === target.value) {
-          pendingWorkoutMutations.delete(target.dataset.workout);
-        }
-        const reconciled = withPendingDraftMutations(authoritative);
-        replaceEntry(reconciled);
-        workoutDifficulty = normalizeWorkoutDifficulty(reconciled.workoutDifficulty);
-        save(WORKOUT_DIFFICULTY_STORAGE_KEY, workoutDifficulty);
-        render();
-      })
-      .catch((error) => {
-        if (pendingWorkoutMutations.get(target.dataset.workout) === target.value) {
-          pendingWorkoutMutations.delete(target.dataset.workout);
-        }
-        console.warn('Unable to sync workout difficulty', error);
-        return reconcileDailyStandardDraft(currentEntry.date, error?.message || 'That difficulty could not be saved.');
-      });
-  });
+  if (!hasSupabaseAuth()) {
+    pendingWorkoutMutations.delete(target.dataset.workout);
+    return;
+  }
+  entrySaveQueue = entrySaveQueue
+    .then(() => setDailyStandardWorkoutDifficulty({
+      date: currentEntry.date,
+      workoutId: target.dataset.workout,
+      difficulty: target.value,
+      expectedVersion: currentEntry.version,
+    }))
+    .then((authoritative) => {
+      if (pendingWorkoutMutations.get(target.dataset.workout) === target.value) pendingWorkoutMutations.delete(target.dataset.workout);
+      const reconciled = withPendingDraftMutations(authoritative);
+      replaceEntry(reconciled);
+      workoutDifficulty = normalizeWorkoutDifficulty(reconciled.workoutDifficulty);
+      save(WORKOUT_DIFFICULTY_STORAGE_KEY, workoutDifficulty);
+      render();
+    })
+    .catch((error) => {
+      if (pendingWorkoutMutations.get(target.dataset.workout) === target.value) pendingWorkoutMutations.delete(target.dataset.workout);
+      console.warn('Unable to sync workout difficulty', error);
+      return reconcileDailyStandardDraft(currentEntry.date, error?.message || 'That difficulty could not be saved.');
+    });
 });
 document.querySelectorAll('[data-native-health]').forEach((button) => {
   button.addEventListener('click', () => {
