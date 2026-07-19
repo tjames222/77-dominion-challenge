@@ -42,6 +42,47 @@ alter table public.challenge_entries
   add column if not exists workout_difficulty jsonb not null default '{}'::jsonb,
   add column if not exists version bigint not null default 0;
 
+create or replace function public.normalize_daily_standard_completed(target_completed text[])
+returns text[]
+language sql
+immutable
+set search_path = pg_catalog, pg_temp
+as $$
+  select coalesce(array_agg(item.action_id order by item.first_position), '{}'::text[])
+  from (
+    select completed_item as action_id, min(item_position) as first_position
+    from unnest(coalesce(target_completed, '{}'::text[]))
+      with ordinality as supplied(completed_item, item_position)
+    where completed_item = any(array[
+      'bible', 'morningPrayer', 'worshipOnly', 'eveningPrayer',
+      'workoutOne', 'walk', 'workoutTwo'
+    ]::text[])
+    group by completed_item
+  ) item;
+$$;
+
+update public.challenge_entries draft
+set
+  completed = public.normalize_daily_standard_completed(draft.completed),
+  version = draft.version + 1
+where draft.completed is distinct from public.normalize_daily_standard_completed(draft.completed);
+
+create or replace function public.normalize_daily_standard_draft()
+returns trigger
+language plpgsql
+set search_path = pg_catalog, pg_temp
+as $$
+begin
+  new.completed := public.normalize_daily_standard_completed(new.completed);
+  return new;
+end;
+$$;
+
+drop trigger if exists normalize_daily_standard_draft_write on public.challenge_entries;
+create trigger normalize_daily_standard_draft_write
+  before insert or update of completed on public.challenge_entries
+  for each row execute function public.normalize_daily_standard_draft();
+
 create table if not exists public.check_ins (
   id uuid primary key default gen_random_uuid(),
   user_id uuid not null references auth.users(id) on delete cascade,
@@ -1726,7 +1767,7 @@ returns date
 language plpgsql
 stable
 security definer
-set search_path = public
+set search_path = pg_catalog, pg_temp
 as $$
 declare
   target_time_zone text;
@@ -1734,11 +1775,58 @@ begin
   select nullif(profile.time_zone, '') into target_time_zone
   from public.profiles profile where profile.user_id = target_user_id;
   if target_time_zone is null or not exists (
-    select 1 from pg_timezone_names where name = target_time_zone
+    select 1 from pg_catalog.pg_timezone_names where name = target_time_zone
   ) then
     target_time_zone := 'UTC';
   end if;
   return (clock_timestamp() at time zone target_time_zone)::date;
+end;
+$$;
+
+create or replace function public.bootstrap_daily_standard_time_zone(target_time_zone text)
+returns text
+language plpgsql
+security definer
+set search_path = pg_catalog, pg_temp
+as $$
+declare
+  requested_time_zone text := nullif(btrim(target_time_zone), '');
+  effective_time_zone text;
+begin
+  if auth.uid() is null then
+    raise exception 'You need to log in to set your Daily Standards time zone.';
+  end if;
+  if requested_time_zone is null or not exists (
+    select 1 from pg_catalog.pg_timezone_names where name = requested_time_zone
+  ) then
+    raise exception 'Choose a valid time zone.' using errcode = '22023';
+  end if;
+
+  insert into public.profiles (user_id, name, email, time_zone)
+  values (
+    auth.uid(),
+    coalesce(nullif(auth.jwt() -> 'user_metadata' ->> 'name', ''), 'Member'),
+    coalesce(auth.jwt() ->> 'email', ''),
+    requested_time_zone
+  )
+  on conflict (user_id) do nothing;
+
+  select nullif(profile.time_zone, '')
+    into effective_time_zone
+    from public.profiles profile
+    where profile.user_id = auth.uid()
+    for update;
+
+  if effective_time_zone is null or not exists (
+    select 1 from pg_catalog.pg_timezone_names where name = effective_time_zone
+  ) then
+    update public.profiles
+    set time_zone = requested_time_zone
+    where user_id = auth.uid();
+    effective_time_zone := requested_time_zone;
+  end if;
+
+  return effective_time_zone;
 end;
 $$;
 
@@ -1751,7 +1839,7 @@ returns jsonb
 language plpgsql
 stable
 security definer
-set search_path = public
+set search_path = pg_catalog, pg_temp
 as $$
 declare
   draft public.challenge_entries%rowtype;
@@ -1787,7 +1875,7 @@ create or replace function public.get_daily_standard_draft(target_entry_date dat
 returns jsonb
 language plpgsql
 security definer
-set search_path = public
+set search_path = pg_catalog, pg_temp
 as $$
 begin
   if auth.uid() is null then raise exception 'You need to log in to view Daily Standards.'; end if;
@@ -1808,7 +1896,7 @@ create or replace function public.mutate_daily_standard_draft(
 returns jsonb
 language plpgsql
 security definer
-set search_path = public
+set search_path = pg_catalog, pg_temp
 as $$
 declare
   draft public.challenge_entries%rowtype;
@@ -1882,7 +1970,7 @@ create or replace function public.set_daily_standard_workout_difficulty(
 returns jsonb
 language plpgsql
 security definer
-set search_path = public
+set search_path = pg_catalog, pg_temp
 as $$
 declare
   draft public.challenge_entries%rowtype;
@@ -1955,7 +2043,7 @@ create or replace function public.submit_daily_check_in(
 returns jsonb
 language plpgsql
 security definer
-set search_path = public, pg_temp
+set search_path = pg_catalog, pg_temp
 as $$
 declare
   requested_time_zone text := coalesce(nullif(btrim(target_time_zone), ''), 'UTC');
@@ -1980,7 +2068,7 @@ begin
     raise exception 'Choose a valid check-in status.' using errcode = '22023';
   end if;
 
-  if not exists (select 1 from pg_timezone_names where name = requested_time_zone) then
+  if not exists (select 1 from pg_catalog.pg_timezone_names where name = requested_time_zone) then
     raise exception 'Choose a valid time zone.' using errcode = '22023';
   end if;
 
@@ -2000,7 +2088,7 @@ begin
   for update;
 
   effective_time_zone := coalesce(nullif(effective_time_zone, ''), requested_time_zone);
-  if not exists (select 1 from pg_timezone_names where name = effective_time_zone) then
+  if not exists (select 1 from pg_catalog.pg_timezone_names where name = effective_time_zone) then
     effective_time_zone := requested_time_zone;
   end if;
   target_entry_date := (clock_timestamp() at time zone effective_time_zone)::date;
@@ -2013,31 +2101,28 @@ begin
   where entry.user_id = auth.uid()
     and entry.entry_date = target_entry_date
   for update;
-  if found then
-    target_completed := draft.completed;
-    target_workout_difficulty := draft.workout_difficulty;
-  end if;
-
-  select coalesce(array_agg(distinct completed_item), '{}'::text[])
-    into normalized_completed
-  from unnest(coalesce(target_completed, '{}'::text[])) completed_item
-  where completed_item = any(array[
-    'bible',
-    'morningPrayer',
-    'worshipOnly',
-    'eveningPrayer',
-    'workoutOne',
-    'walk',
-    'workoutTwo'
-  ]::text[]);
-
-  if cardinality(normalized_completed) = 7 then
-    effective_status := 'complete';
-  elsif cardinality(normalized_completed) > 0 then
-    effective_status := 'partial';
-  else
+  if not found then
     raise exception 'Complete at least one action before posting.' using errcode = '22023';
   end if;
+
+  normalized_completed := public.normalize_daily_standard_completed(draft.completed);
+
+  if cardinality(normalized_completed) = 0 then
+    raise exception 'Complete at least one action before posting.' using errcode = '22023';
+  end if;
+  if draft.completed is distinct from normalized_completed then
+    update public.challenge_entries
+    set
+      completed = normalized_completed,
+      version = version + 1
+    where user_id = auth.uid()
+      and entry_date = target_entry_date;
+  end if;
+
+  effective_status := case
+    when cardinality(normalized_completed) = 7 then 'complete'
+    else 'partial'
+  end;
 
   if challenge_start is null then
     challenge_start := target_entry_date;
@@ -2069,7 +2154,7 @@ begin
     effective_status,
     cardinality(normalized_completed),
     normalized_completed,
-    coalesce(target_workout_difficulty, '{}'::jsonb)
+    coalesce(draft.workout_difficulty, '{}'::jsonb)
   )
   returning * into inserted_check_in;
 
@@ -2089,19 +2174,27 @@ create or replace function public.apply_authoritative_daily_standard_draft()
 returns trigger
 language plpgsql
 security definer
-set search_path = public
+set search_path = pg_catalog, pg_temp
 as $$
 declare
   draft public.challenge_entries%rowtype;
+  normalized_completed text[];
 begin
   select * into draft from public.challenge_entries entry
   where entry.user_id = new.user_id and entry.entry_date = new.entry_date for update;
-  if found then
-    new.completed := draft.completed;
-    new.completed_count := cardinality(draft.completed);
-    new.status := case when cardinality(draft.completed) = 7 then 'complete' else 'partial' end;
-    new.workout_difficulty := draft.workout_difficulty;
+  if not found then
+    raise exception 'Complete at least one action before posting.' using errcode = '22023';
   end if;
+
+  normalized_completed := public.normalize_daily_standard_completed(draft.completed);
+  if cardinality(normalized_completed) = 0 then
+    raise exception 'Complete at least one action before posting.' using errcode = '22023';
+  end if;
+
+  new.completed := normalized_completed;
+  new.completed_count := cardinality(normalized_completed);
+  new.status := case when cardinality(normalized_completed) = 7 then 'complete' else 'partial' end;
+  new.workout_difficulty := draft.workout_difficulty;
   return new;
 end;
 $$;
@@ -2516,12 +2609,21 @@ grant execute on function public.can_manage_crew(uuid) to authenticated;
 revoke execute on function public.has_active_entitlement(text) from public;
 revoke execute on function public.has_active_entitlement(text) from anon;
 grant execute on function public.has_active_entitlement(text) to authenticated;
+revoke execute on function public.normalize_daily_standard_completed(text[]) from public;
+revoke execute on function public.normalize_daily_standard_completed(text[]) from anon;
+revoke execute on function public.normalize_daily_standard_completed(text[]) from authenticated;
+revoke execute on function public.normalize_daily_standard_draft() from public;
+revoke execute on function public.normalize_daily_standard_draft() from anon;
+revoke execute on function public.normalize_daily_standard_draft() from authenticated;
 revoke execute on function public.daily_standard_user_date(uuid) from public;
 revoke execute on function public.daily_standard_user_date(uuid) from anon;
 revoke execute on function public.daily_standard_user_date(uuid) from authenticated;
 revoke execute on function public.daily_standard_draft_payload(uuid, date, boolean) from public;
 revoke execute on function public.daily_standard_draft_payload(uuid, date, boolean) from anon;
 revoke execute on function public.daily_standard_draft_payload(uuid, date, boolean) from authenticated;
+revoke execute on function public.bootstrap_daily_standard_time_zone(text) from public;
+revoke execute on function public.bootstrap_daily_standard_time_zone(text) from anon;
+grant execute on function public.bootstrap_daily_standard_time_zone(text) to authenticated;
 revoke execute on function public.get_daily_standard_draft(date) from public;
 revoke execute on function public.get_daily_standard_draft(date) from anon;
 grant execute on function public.get_daily_standard_draft(date) to authenticated;
@@ -3165,6 +3267,8 @@ revoke update on public.profiles from authenticated;
 grant select, insert on public.profiles to authenticated;
 grant update (user_id, name, email, avatar_url, challenge_start_date) on public.profiles to authenticated;
 revoke insert, update, delete on public.challenge_entries from authenticated;
+revoke insert (user_id, entry_date, completed) on public.challenge_entries from authenticated;
+revoke update (user_id, entry_date, completed) on public.challenge_entries from authenticated;
 grant select on public.challenge_entries to authenticated;
 revoke insert on public.check_ins from authenticated;
 grant select (id, user_id, entry_date, challenge_day, status, completed_count, points_awarded, created_at)

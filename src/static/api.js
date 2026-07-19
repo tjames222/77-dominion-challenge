@@ -56,6 +56,7 @@ const MOCK_CHALLENGE_THRESHOLDS_VERSION = 2;
 const MOCK_MEDIA_DB_NAME = 'dominion-preview-media';
 const MOCK_MEDIA_STORE_NAME = 'community-post-images';
 const mockCommunityImageUrls = new Map();
+const dailyStandardTimeZoneBootstraps = new Map();
 let mockMediaDatabasePromise;
 
 const readJson = (key, fallback) => {
@@ -874,9 +875,37 @@ export async function getDashboard() {
   };
 }
 
+const browserTimeZone = () => {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+  } catch {
+    return 'UTC';
+  }
+};
+
+const bootstrapDailyStandardTimeZone = async (client, userId) => {
+  if (!dailyStandardTimeZoneBootstraps.has(userId)) {
+    const bootstrap = (async () => {
+      const { error } = await client.rpc('bootstrap_daily_standard_time_zone', {
+        target_time_zone: browserTimeZone(),
+      });
+      if (error) throw error;
+    })();
+    dailyStandardTimeZoneBootstraps.set(userId, bootstrap);
+  }
+
+  try {
+    await dailyStandardTimeZoneBootstraps.get(userId);
+  } catch (error) {
+    dailyStandardTimeZoneBootstraps.delete(userId);
+    throw error;
+  }
+};
+
 const rpcDraft = async (name, parameters) => {
   const client = requireSupabase();
-  await requireUser();
+  const user = await requireUser();
+  await bootstrapDailyStandardTimeZone(client, user.id);
   const { data, error } = await client.rpc(name, parameters);
   if (error) throw error;
   return normalizeDailyStandardDraft(data, parameters.target_entry_date);
@@ -887,10 +916,13 @@ export async function getDailyStandardDraft(entryDate) {
 }
 
 export async function mutateDailyStandardDraft({ date, actionId, completed, expectedVersion = null }) {
+  if (typeof completed !== 'boolean') {
+    throw new TypeError('Daily Standard completion must be true or false.');
+  }
   return rpcDraft('mutate_daily_standard_draft', {
     target_entry_date: date,
     target_action_id: actionId,
-    target_completed: Boolean(completed),
+    target_completed: completed,
     target_expected_version: expectedVersion,
   });
 }

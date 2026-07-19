@@ -13,6 +13,11 @@ describe('Daily Standard draft integration', () => {
 
     assert.match(api, /rpcDraft\('mutate_daily_standard_draft'/);
     assert.match(api, /rpcDraft\('set_daily_standard_workout_difficulty'/);
+    assert.match(api, /typeof completed !== 'boolean'/);
+    assert.match(api, /target_completed: completed/);
+    assert.doesNotMatch(api, /target_completed: Boolean\(completed\)/);
+    assert.match(api, /bootstrap_daily_standard_time_zone/);
+    assert.match(api, /resolvedOptions\(\)\.timeZone \|\| 'UTC'/);
     assert.doesNotMatch(api, /\.from\('challenge_entries'\)[\s\S]{0,180}\.upsert\(/);
     assert.match(dashboard, /mutateDailyStandardDraft/);
     assert.match(dashboard, /await entrySaveQueue;[\s\S]+getDailyStandardDraft/);
@@ -34,7 +39,20 @@ describe('Daily Standard draft integration', () => {
       assert.match(sql, /create or replace function public\.set_daily_standard_workout_difficulty/);
       assert.match(sql, /This Check-In is already submitted/);
       assert.match(sql, /revoke insert, update, delete on public\.challenge_entries from authenticated/);
+      assert.match(sql, /revoke insert \(user_id, entry_date, completed\) on public\.challenge_entries from authenticated/);
+      assert.match(sql, /revoke update \(user_id, entry_date, completed\) on public\.challenge_entries from authenticated/);
       assert.match(sql, /a_apply_authoritative_daily_standard_draft/);
+      assert.match(sql, /create or replace function public\.normalize_daily_standard_completed/);
+      assert.match(sql, /update public\.challenge_entries draft[\s\S]+normalize_daily_standard_completed/);
+      assert.match(sql, /normalize_daily_standard_draft_write/);
+      assert.match(sql, /create or replace function public\.submit_daily_check_in/);
+      assert.match(sql, /normalized_completed := public\.normalize_daily_standard_completed\(draft\.completed\)/);
+      assert.match(sql, /if not found then\s+raise exception 'Complete at least one action before posting\.'/);
+      assert.match(sql, /if cardinality\(normalized_completed\) = 0 then\s+raise exception 'Complete at least one action before posting\.'/);
+      assert.match(sql, /coalesce\(draft\.workout_difficulty, '\{\}'::jsonb\)/);
+      assert.match(sql, /create or replace function public\.bootstrap_daily_standard_time_zone/);
+      assert.match(sql, /pg_catalog\.pg_timezone_names/);
+      assert.match(sql, /set search_path = pg_catalog, pg_temp/);
     }
   });
 });
