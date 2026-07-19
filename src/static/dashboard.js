@@ -883,7 +883,6 @@ let difficultyPointValues = normalizeDifficultyPointValues(DEFAULT_DIFFICULTY_PO
 let gameStats = localDemoMode ? load('dominion:gameStats', DEFAULT_DEMO_GAME_STATS) : {};
 let badges = localDemoMode ? load('dominion:badges', []) : [];
 let leaderboardPositions = {
-  globalRank: null,
   privateRank: null,
   crewId: null,
   window: LEADERBOARD_PRESTIGE_WINDOW,

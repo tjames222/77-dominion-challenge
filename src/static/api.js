@@ -1018,22 +1018,15 @@ export async function getLeaderboardPrestige({ crewId = null, window = 'week' } 
   const rankingWindow = window === 'challenge' ? 'challenge' : 'week';
   let currentUserId;
   let crews;
-  let globalRows;
 
   if (isLocalDemoMode()) {
     currentUserId = getMockUserId();
-    [crews, globalRows] = await Promise.all([
-      getCrews(),
-      getMockLeaderboard({ scope: 'global', window: rankingWindow }),
-    ]);
+    crews = await getCrews();
   } else {
     const client = requireSupabase();
     const user = await requireUser();
     currentUserId = user.id;
-    [crews, globalRows] = await Promise.all([
-      queryCrewsForUser(client, user.id),
-      queryLeaderboard(client, { scope: 'global', window: rankingWindow }),
-    ]);
+    crews = await queryCrewsForUser(client, user.id);
   }
 
   const selectedCrew = crews.find((crew) => crew.id === crewId) || crews[0] || null;
@@ -1052,7 +1045,6 @@ export async function getLeaderboardPrestige({ crewId = null, window = 'week' } 
   );
 
   return {
-    globalRank: rankForCurrentUser(globalRows),
     privateRank: rankForCurrentUser(privateRows),
     crewId: selectedCrew?.id || null,
     window: rankingWindow,
