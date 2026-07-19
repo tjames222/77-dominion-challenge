@@ -103,19 +103,16 @@ create trigger block_scheduled_check_in_write
   before insert or update of status on public.check_ins
   for each row execute function public.reject_scheduled_check_in();
 
-create table if not exists public.workout_difficulty_point_values (
-  difficulty text primary key check (difficulty in ('easy', 'medium', 'hard', 'extreme')),
-  points integer not null check (points >= 0),
-  updated_at timestamptz not null default now()
-);
+create or replace function public.workout_difficulty_points(target_difficulty text)
+returns integer
+language sql
+immutable
+set search_path = public
+as $$
+  select 0;
+$$;
 
-insert into public.workout_difficulty_point_values (difficulty, points)
-values
-  ('easy', 2),
-  ('medium', 5),
-  ('hard', 10),
-  ('extreme', 15)
-on conflict (difficulty) do nothing;
+drop table if exists public.workout_difficulty_point_values;
 
 create table if not exists public.billing_customers (
   user_id uuid primary key references auth.users(id) on delete cascade,
@@ -736,11 +733,6 @@ create trigger set_challenge_entries_updated_at
   before update on public.challenge_entries
   for each row execute function public.set_updated_at();
 
-drop trigger if exists set_workout_difficulty_point_values_updated_at on public.workout_difficulty_point_values;
-create trigger set_workout_difficulty_point_values_updated_at
-  before update on public.workout_difficulty_point_values
-  for each row execute function public.set_updated_at();
-
 drop trigger if exists set_billing_customers_updated_at on public.billing_customers;
 create trigger set_billing_customers_updated_at
   before update on public.billing_customers
@@ -851,8 +843,24 @@ set search_path = public
 as $$
 declare
   inserted_id uuid;
+  effective_points integer := target_points;
 begin
-  if target_points <= 0 then
+  if target_event_type in ('app_visit', 'app_streak_bonus', 'full_day_streak_bonus', 'workout_difficulty') then
+    return false;
+  end if;
+
+  if target_event_type = 'check_in' then
+    effective_points := least(greatest(
+      case
+        when coalesce(target_metadata ->> 'completedCount', '') ~ '^\d+$'
+          then (target_metadata ->> 'completedCount')::integer
+        else 0
+      end,
+      0
+    ), 7);
+  end if;
+
+  if effective_points <= 0 then
     return false;
   end if;
 
@@ -871,7 +879,7 @@ begin
   values (
     target_user_id,
     target_event_type,
-    target_points,
+    effective_points,
     target_entry_date,
     target_challenge_day,
     target_crew_id,
@@ -887,8 +895,8 @@ begin
 
   update public.user_game_stats
   set
-    total_points = total_points + target_points,
-    challenge_points = challenge_points + target_points,
+    total_points = total_points + effective_points,
+    challenge_points = challenge_points + effective_points,
     updated_at = now()
   where user_id = target_user_id;
 
@@ -1321,22 +1329,10 @@ $$;
 create or replace function public.workout_difficulty_points(target_difficulty text)
 returns integer
 language sql
-stable
+immutable
 set search_path = public
 as $$
-  select coalesce(
-    (
-      select config.points
-      from public.workout_difficulty_point_values config
-      where config.difficulty = lower(btrim(coalesce(target_difficulty, 'medium')))
-    ),
-    (
-      select config.points
-      from public.workout_difficulty_point_values config
-      where config.difficulty = 'medium'
-    ),
-    0
-  );
+  select 0;
 $$;
 
 create or replace function public.full_streak_bonus_points(target_streak integer)
@@ -1345,14 +1341,7 @@ language sql
 immutable
 set search_path = public
 as $$
-  select case target_streak
-    when 3 then 25
-    when 7 then 75
-    when 14 then 150
-    when 30 then 300
-    when 77 then 777
-    else 0
-  end;
+  select 0;
 $$;
 
 create or replace function public.process_check_in_game_rewards()
@@ -1363,15 +1352,11 @@ set search_path = public
 as $$
 declare
   action_points integer := 0;
-  bonus_points integer := 0;
-  workout_points integer := 0;
-  total_points integer := 0;
   difficulty_one text := coalesce(new.workout_difficulty ->> 'one', 'medium');
   difficulty_two text := coalesce(new.workout_difficulty ->> 'two', 'medium');
   points_inserted boolean := false;
   stats_row public.user_game_stats%rowtype;
   next_full_streak integer := 0;
-  streak_bonus integer := 0;
   selected_badge_key text := null;
   selected_badge_metadata jsonb := '{}'::jsonb;
 begin
@@ -1387,26 +1372,11 @@ begin
     new.completed_count := cardinality(new.completed);
   end if;
 
-  action_points := greatest(new.completed_count, 0) * 10;
-  if new.status = 'complete' then
-    bonus_points := 30;
-  elsif new.status = 'partial' then
-    bonus_points := 10;
-  end if;
-
-  if 'workoutOne' = any(new.completed) then
-    workout_points := workout_points + public.workout_difficulty_points(difficulty_one);
-  end if;
-
-  if 'workoutTwo' = any(new.completed) then
-    workout_points := workout_points + public.workout_difficulty_points(difficulty_two);
-  end if;
-
-  total_points := action_points + bonus_points + workout_points;
+  action_points := least(greatest(new.completed_count, 0), 7);
   points_inserted := public.add_game_points(
     new.user_id,
     'check_in',
-    total_points,
+    action_points,
     new.entry_date,
     new.challenge_day,
     null,
@@ -1415,14 +1385,12 @@ begin
       'completedCount', new.completed_count,
       'completed', new.completed,
       'workoutDifficulty', new.workout_difficulty,
-      'actionPoints', action_points,
-      'bonusPoints', bonus_points,
-      'workoutPoints', workout_points
+      'actionPoints', action_points
     ),
     'checkin:' || new.user_id::text || ':' || new.entry_date::text
   );
 
-  new.points_awarded := case when points_inserted then total_points else 0 end;
+  new.points_awarded := case when points_inserted then action_points else 0 end;
 
   if not points_inserted then
     return new;
@@ -1450,19 +1418,6 @@ begin
       updated_at = now()
     where user_id = new.user_id;
 
-    streak_bonus := public.full_streak_bonus_points(next_full_streak);
-    if streak_bonus > 0 then
-      perform public.add_game_points(
-        new.user_id,
-        'full_day_streak_bonus',
-        streak_bonus,
-        new.entry_date,
-        new.challenge_day,
-        null,
-        jsonb_build_object('streak', next_full_streak),
-        'fullstreak:' || new.user_id::text || ':' || next_full_streak::text
-      );
-    end if;
   end if;
 
   select * into stats_row
@@ -1594,6 +1549,22 @@ drop trigger if exists process_check_in_game_rewards_before_insert on public.che
 create trigger process_check_in_game_rewards_before_insert
   before insert on public.check_ins
   for each row execute function public.process_check_in_game_rewards();
+
+create or replace function public.enforce_daily_standard_award()
+returns trigger
+language plpgsql
+set search_path = public
+as $$
+begin
+  new.points_awarded := least(greatest(cardinality(coalesce(new.completed, '{}'::text[])), 0), 7);
+  return new;
+end;
+$$;
+
+drop trigger if exists zz_enforce_daily_standard_award on public.check_ins;
+create trigger zz_enforce_daily_standard_award
+  before insert on public.check_ins
+  for each row execute function public.enforce_daily_standard_award();
 
 create or replace function public.create_community_feed_item()
 returns trigger
@@ -2055,7 +2026,6 @@ declare
   today date := current_date;
   stats_row public.user_game_stats%rowtype;
   next_app_streak integer := 1;
-  bonus_points integer := 0;
   awarded_badges jsonb := '[]'::jsonb;
 begin
   if current_user_id is null then
@@ -2096,31 +2066,6 @@ begin
     last_seen_date = today,
     updated_at = now()
   where user_id = current_user_id;
-
-  perform public.add_game_points(
-    current_user_id,
-    'app_visit',
-    5,
-    today,
-    null,
-    null,
-    jsonb_build_object('appStreak', next_app_streak),
-    'appvisit:' || current_user_id::text || ':' || today::text
-  );
-
-  bonus_points := public.full_streak_bonus_points(next_app_streak);
-  if bonus_points > 0 then
-    perform public.add_game_points(
-      current_user_id,
-      'app_streak_bonus',
-      bonus_points,
-      today,
-      null,
-      null,
-      jsonb_build_object('appStreak', next_app_streak),
-      'appstreak:' || current_user_id::text || ':' || next_app_streak::text
-    );
-  end if;
 
   select * into stats_row
   from public.user_game_stats
@@ -2417,7 +2362,6 @@ alter table public.badge_definitions enable row level security;
 alter table public.user_badges enable row level security;
 alter table public.user_game_stats enable row level security;
 alter table public.game_point_events enable row level security;
-alter table public.workout_difficulty_point_values enable row level security;
 alter table public.challenge_definitions enable row level security;
 alter table public.user_challenge_states enable row level security;
 
@@ -2510,23 +2454,6 @@ create policy "Users can read own entitlements"
   for select
   to authenticated
   using ((select auth.uid()) = user_id);
-
-drop policy if exists "Authenticated users can read workout difficulty point values"
-  on public.workout_difficulty_point_values;
-create policy "Authenticated users can read workout difficulty point values"
-  on public.workout_difficulty_point_values
-  for select
-  to authenticated
-  using (true);
-
-drop policy if exists "Service role can update workout difficulty point values"
-  on public.workout_difficulty_point_values;
-create policy "Service role can update workout difficulty point values"
-  on public.workout_difficulty_point_values
-  for update
-  to service_role
-  using (true)
-  with check (true);
 
 drop policy if exists "Authenticated users can read challenge definitions" on public.challenge_definitions;
 create policy "Authenticated users can read challenge definitions"
@@ -2940,10 +2867,6 @@ revoke all on public.user_game_stats from anon;
 revoke all on public.user_game_stats from authenticated;
 revoke all on public.game_point_events from anon;
 revoke all on public.game_point_events from authenticated;
-revoke all on public.workout_difficulty_point_values from public;
-revoke all on public.workout_difficulty_point_values from anon;
-revoke all on public.workout_difficulty_point_values from authenticated;
-revoke all on public.workout_difficulty_point_values from service_role;
 revoke all on public.challenge_definitions from public;
 revoke all on public.challenge_definitions from anon;
 revoke all on public.challenge_definitions from authenticated;
@@ -2982,9 +2905,6 @@ grant select on public.badge_definitions to authenticated;
 grant select on public.user_badges to authenticated;
 grant select on public.user_game_stats to authenticated;
 grant select on public.game_point_events to authenticated;
-grant select on public.workout_difficulty_point_values to authenticated;
-grant select on public.workout_difficulty_point_values to service_role;
-grant update (points) on public.workout_difficulty_point_values to service_role;
 grant select on public.challenge_definitions to authenticated;
 grant select on public.user_challenge_states to authenticated;
 grant select, insert, update, delete on public.challenge_definitions to service_role;

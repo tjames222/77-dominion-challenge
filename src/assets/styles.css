@@ -366,15 +366,6 @@ blockquote strong { display: block; margin-top: 10px; color: var(--accent-strong
   letter-spacing: .1em;
   text-transform: uppercase;
 }
-.difficulty-point-value {
-  margin: 4px 0 11px;
-  color: var(--text-muted);
-  font-size: .72rem;
-  font-weight: 800;
-  letter-spacing: 0;
-  line-height: 1.35;
-  text-transform: none;
-}
 .difficulty-options {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -452,38 +443,6 @@ blockquote strong { display: block; margin-top: 10px; color: var(--accent-strong
   opacity: .44;
   cursor: not-allowed;
   transform: none;
-}
-.point-preview {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 10px;
-}
-.point-preview-item {
-  display: grid;
-  gap: 4px;
-  min-width: 0;
-  padding: 14px;
-  border: 1px solid color-mix(in srgb, var(--accent) 30%, var(--border));
-  border-radius: 12px;
-  background: color-mix(in srgb, var(--accent) 8%, var(--surface));
-}
-.point-preview-item > span {
-  color: var(--accent-strong);
-  font-size: .68rem;
-  font-weight: 950;
-  letter-spacing: .1em;
-  text-transform: uppercase;
-}
-.point-preview-item strong {
-  color: var(--text);
-  font-size: 1.35rem;
-  font-variant-numeric: tabular-nums;
-  line-height: 1.1;
-}
-.point-preview-item small {
-  color: var(--text-muted);
-  font-size: .72rem;
-  line-height: 1.35;
 }
 .scorecard-checklist-heading {
   display: flex;
@@ -742,10 +701,23 @@ select {
 .check-row:hover .box .app-icon {
   transform: scale(.42) rotate(-14deg);
 }
-.check-row > span:last-child { min-width: 0; }
+.check-row-copy { min-width: 0; }
 .check-row strong,
 .check-row small { overflow-wrap: anywhere; }
 .check-row small { display: block; color: var(--text-muted); margin-top: 2px; }
+.action-point-value {
+  flex: 0 0 auto;
+  margin-left: auto;
+  padding: 5px 8px;
+  border: 1px solid color-mix(in srgb, var(--accent) 38%, var(--border));
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  color: var(--accent-strong);
+  font-size: .72rem;
+  font-weight: 950;
+  letter-spacing: .04em;
+  line-height: 1;
+}
 .check-row.checked {
   background: color-mix(in srgb, var(--accent) 8%, transparent);
   border-color: color-mix(in srgb, var(--accent) 24%, transparent);
@@ -1069,7 +1041,6 @@ select {
   .ring strong { font-size: 1.18rem; }
   .ring span { font-size: .78rem; }
   .ring small { font-size: .68rem; }
-  .point-preview { grid-template-columns: 1fr; }
   .timeline article,
   .standard-stack article {
     grid-template-columns: 1fr;

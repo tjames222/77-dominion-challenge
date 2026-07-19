@@ -6,7 +6,6 @@ import {
   getDashboard,
   getGameSummary,
   getLeaderboardPrestige,
-  getWorkoutDifficultyPointValues,
   hasSupabaseAuth,
   isLocalDemoMode,
   postCheckIn,
@@ -17,10 +16,8 @@ import {
   updateProfile,
 } from './api';
 import {
-  DEFAULT_DIFFICULTY_POINT_VALUES,
   DEFAULT_WORKOUT_DIFFICULTY,
   calculateCheckInScore,
-  normalizeDifficultyPointValues,
   normalizeWorkoutDifficulty,
 } from './scoring.mjs';
 import {
@@ -52,12 +49,6 @@ import {
 } from './preview-challenge.mjs';
 
 const TOTAL_DAYS = 77;
-const DIFFICULTY_LABELS = {
-  easy: 'Easy',
-  medium: 'Medium',
-  hard: 'Hard',
-  extreme: 'Extreme',
-};
 const YOUVERSION_VERSE_URL = import.meta.env.VITE_YOUVERSION_VERSE_URL || '';
 const YOUVERSION_APP_URL = import.meta.env.VITE_YOUVERSION_APP_URL || 'https://www.bible.com/';
 const YOUVERSION_PRAYER_URL = import.meta.env.VITE_YOUVERSION_PRAYER_URL || 'https://www.bible.com/prayer';
@@ -307,7 +298,6 @@ const calculateLocalPoints = (entry, status) => {
     completed: entry.completed,
     status,
     workoutDifficulty,
-    difficultyPointValues,
   }).totalPoints;
 };
 const badgeEarnedDate = (badge) => badge.entryDate || badge.earnedDate || badge.metadata?.entryDate || String(badge.earnedAt || '').slice(0, 10);
@@ -878,7 +868,6 @@ let submittedCheckInDates = new Set(initialCheckInCache.dates);
 let submittedChallengeDays = new Set(initialCheckInCache.challengeDays);
 let feed = localDemoMode ? load('dominion:feed', starterFeed) : starterFeed;
 let workoutDifficulty = normalizeWorkoutDifficulty(load(WORKOUT_DIFFICULTY_STORAGE_KEY, DEFAULT_WORKOUT_DIFFICULTY));
-let difficultyPointValues = normalizeDifficultyPointValues(DEFAULT_DIFFICULTY_POINT_VALUES);
 let gameStats = localDemoMode ? load('dominion:gameStats', DEFAULT_DEMO_GAME_STATS) : {};
 let badges = localDemoMode ? load('dominion:badges', []) : [];
 let leaderboardPositions = {
@@ -981,63 +970,6 @@ const checkInStatusForEntry = (entry) => {
   if (!entry.completed.length) return null;
   return entry.completed.length === standards.length ? 'complete' : 'partial';
 };
-function renderPointPreview(entry = todayEntry()) {
-  const status = checkInStatusForEntry(entry);
-  const projectedAward = status
-    ? calculateCheckInScore({
-        completed: entry.completed,
-        status,
-        workoutDifficulty,
-        difficultyPointValues,
-      }).totalPoints
-    : 0;
-  const fullDayPotential = calculateCheckInScore({
-    completed: standards.map(([id]) => id),
-    status: 'complete',
-    workoutDifficulty,
-    difficultyPointValues,
-  }).totalPoints;
-  const projectedAwardPoints = $('projectedAwardPoints');
-  const fullDayPotentialPoints = $('fullDayPotentialPoints');
-  const workoutOnePointValue = $('workoutOnePointValue');
-  const workoutTwoPointValue = $('workoutTwoPointValue');
-  const pointPreviewAnnouncement = $('pointPreviewAnnouncement');
-
-  const projectedAwardText = projectedAward.toLocaleString();
-  const fullDayPotentialText = fullDayPotential.toLocaleString();
-  if (projectedAwardPoints && projectedAwardPoints.textContent !== projectedAwardText) {
-    projectedAwardPoints.textContent = projectedAwardText;
-  }
-  if (fullDayPotentialPoints && fullDayPotentialPoints.textContent !== fullDayPotentialText) {
-    fullDayPotentialPoints.textContent = fullDayPotentialText;
-  }
-  document.querySelectorAll('[data-difficulty-point]').forEach((pointLabel) => {
-    const difficulty = pointLabel.dataset.difficultyPoint;
-    const label = `+${difficultyPointValues[difficulty]} pts`;
-    if (pointLabel.textContent !== label) pointLabel.textContent = label;
-  });
-  if (workoutOnePointValue) {
-    const label = `${DIFFICULTY_LABELS[workoutDifficulty.one]} selected · +${difficultyPointValues[workoutDifficulty.one]} point bonus`;
-    if (workoutOnePointValue.textContent !== label) workoutOnePointValue.textContent = label;
-  }
-  if (workoutTwoPointValue) {
-    const label = `${DIFFICULTY_LABELS[workoutDifficulty.two]} selected · +${difficultyPointValues[workoutDifficulty.two]} point bonus`;
-    if (workoutTwoPointValue.textContent !== label) workoutTwoPointValue.textContent = label;
-  }
-  if (pointPreviewAnnouncement) {
-    const announcement = `Projected award ${projectedAwardText} points. Full-day potential ${fullDayPotentialText} points.`;
-    if (pointPreviewAnnouncement.textContent !== announcement) pointPreviewAnnouncement.textContent = announcement;
-  }
-}
-async function refreshWorkoutDifficultyPointValues() {
-  if (!hasSupabaseAuth()) return;
-  const latestValues = normalizeDifficultyPointValues(await getWorkoutDifficultyPointValues());
-  const changed = Object.keys(latestValues)
-    .some((difficulty) => latestValues[difficulty] !== difficultyPointValues[difficulty]);
-  if (!changed) return;
-  difficultyPointValues = latestValues;
-  renderPointPreview();
-}
 const saveEntry = (entry) => {
   const index = entries.findIndex(item => item.date === entry.date);
   if (index >= 0) entries[index] = entry;
@@ -1078,7 +1010,7 @@ function renderChecklist(entry) {
   if (!checklist.dataset.mounted) {
     checklist.innerHTML = scorecardGroups.map((group) => {
       const rows = group.items.map(([id, label, detail]) => (
-        `<button class="check-row" data-standard="${id}" aria-pressed="false" type="button"><span class="box"><span class="app-icon icon-sm icon-check" aria-hidden="true"></span></span><span><strong>${escapeHtml(label)}</strong><small>${escapeHtml(detail)}</small></span></button>`
+        `<button class="check-row" data-standard="${id}" aria-pressed="false" type="button"><span class="box"><span class="app-icon icon-sm icon-check" aria-hidden="true"></span></span><span class="check-row-copy"><strong>${escapeHtml(label)}</strong><small>${escapeHtml(detail)}</small></span><span class="action-point-value" aria-label="1 point">+1</span></button>`
       )).join('');
       const itemLabel = group.items.length === 1 ? 'action' : 'actions';
       return `<section class="checklist-group"><div class="checklist-group-header"><p class="checklist-group-title">${escapeHtml(group.label)}</p><span>${group.items.length} ${itemLabel}</span></div><div class="checklist-group-items">${rows}</div></section>`;
@@ -1106,6 +1038,13 @@ function renderTodayActionCompletion(entry) {
     || isCheckInPending(entry.date);
 
   document.querySelectorAll('[data-action-completion]').forEach((button) => {
+    if (!button.querySelector('.action-point-value')) {
+      const pointValue = document.createElement('span');
+      pointValue.className = 'action-point-value';
+      pointValue.textContent = '+1';
+      pointValue.setAttribute('aria-label', '1 point');
+      button.append(pointValue);
+    }
     const isChecked = completed.has(button.dataset.actionCompletion);
     const label = button.dataset.actionName
       || button.getAttribute('aria-label')?.replace(/^Mark | complete$/g, '')
@@ -1246,7 +1185,6 @@ function applyDailyActions() {
   if (workoutTwoRecommendation) workoutTwoRecommendation.textContent = twoPlan;
   if (workoutOneLink) workoutOneLink.href = APPLE_FITNESS_URL;
   if (workoutTwoLink) workoutTwoLink.href = APPLE_FITNESS_URL;
-  renderPointPreview();
 }
 async function loadVerseOfDay() {
   if (!YOUVERSION_VERSE_URL) {
@@ -1462,9 +1400,6 @@ async function hydrateDashboardFromApi() {
       badges = dashboard.badges;
       save('dominion:badges', badges);
     }
-    if (dashboard?.workoutDifficultyPointValues) {
-      difficultyPointValues = normalizeDifficultyPointValues(dashboard.workoutDifficultyPointValues);
-    }
     render();
     if (!isCheckInStatusReady()) hydrateDashboardFromApi();
   } catch (error) {
@@ -1589,8 +1524,6 @@ document.querySelectorAll('[data-workout]').forEach((input) => {
     workoutDifficulty = normalizeWorkoutDifficulty({ ...workoutDifficulty, [target.dataset.workout]: target.value });
     save(WORKOUT_DIFFICULTY_STORAGE_KEY, workoutDifficulty);
     applyDailyActions();
-    refreshWorkoutDifficultyPointValues()
-      .catch((error) => console.warn('Unable to refresh workout difficulty points', error));
   });
 });
 document.querySelectorAll('[data-native-health]').forEach((button) => {
@@ -1732,8 +1665,6 @@ if (checkInButton) checkInButton.addEventListener('click', async () => {
 
   try {
     if (hasSupabaseAuth()) {
-      await refreshWorkoutDifficultyPointValues()
-        .catch((error) => console.warn('Unable to refresh workout difficulty points', error));
       const postedCheckIn = await postCheckIn({
         date: entry.date,
         day: submissionDay,
@@ -1762,13 +1693,8 @@ if (checkInButton) checkInButton.addEventListener('click', async () => {
       if (simulatedPreviewPost) {
         gameStats = advancePreviewStreaks(gameStats, status, entry.date);
         nextStreak = gameStats.currentFullDayStreak;
-        if (status === 'complete') {
-          points += { 3: 25, 7: 75, 14: 150, 30: 300, 77: 777 }[nextStreak] || 0;
-        }
       } else if (status === 'complete') {
         nextStreak += 1;
-        const streakBonus = { 3: 25, 7: 75, 14: 150, 30: 300, 77: 777 }[nextStreak] || 0;
-        points += streakBonus;
         gameStats.currentFullDayStreak = nextStreak;
         gameStats.bestFullDayStreak = Math.max(gameStats.bestFullDayStreak || 0, nextStreak);
       }
