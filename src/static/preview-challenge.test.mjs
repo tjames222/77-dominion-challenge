@@ -61,21 +61,40 @@ describe('preview 77-day challenge simulator', () => {
     assert.equal(setPreviewChallengeEnabled(paused, true, '2026-07-18').day, 2);
   });
 
-  it('advances the app streak on every post and the full streak only for complete days', () => {
-    const partial = advancePreviewStreaks({ currentAppStreak: 2, bestAppStreak: 2, currentFullDayStreak: 1, bestFullDayStreak: 1 }, 'partial');
+  it('advances the app streak on every post and keeps production full-streak continuity', () => {
+    const partial = advancePreviewStreaks({
+      currentAppStreak: 2,
+      bestAppStreak: 2,
+      currentFullDayStreak: 1,
+      bestFullDayStreak: 1,
+      lastFullDayDate: '2026-07-17',
+    }, 'partial', '2026-07-18');
     assert.deepEqual(partial, {
       currentAppStreak: 3,
       bestAppStreak: 3,
       currentFullDayStreak: 1,
       bestFullDayStreak: 1,
+      lastFullDayDate: '2026-07-17',
     });
-    const complete = advancePreviewStreaks(partial, 'complete');
-    assert.equal(complete.currentAppStreak, 4);
-    assert.equal(complete.currentFullDayStreak, 2);
-    assert.equal(complete.bestFullDayStreak, 2);
+    const scheduled = advancePreviewStreaks(partial, 'scheduled', '2026-07-19');
+    assert.equal(scheduled.currentAppStreak, 4);
+    assert.equal(scheduled.currentFullDayStreak, 1);
+    assert.equal(scheduled.lastFullDayDate, '2026-07-17');
+
+    const complete = advancePreviewStreaks(scheduled, 'complete', '2026-07-20');
+    assert.equal(complete.currentAppStreak, 5);
+    assert.equal(complete.currentFullDayStreak, 1);
+    assert.equal(complete.bestFullDayStreak, 1);
+    assert.equal(complete.lastFullDayDate, '2026-07-20');
+
+    const consecutive = advancePreviewStreaks(complete, 'complete', '2026-07-21');
+    assert.equal(consecutive.currentFullDayStreak, 2);
+    assert.equal(consecutive.bestFullDayStreak, 2);
 
     let fullRun = {};
-    for (let day = 1; day <= 77; day += 1) fullRun = advancePreviewStreaks(fullRun, 'complete');
+    for (let day = 1; day <= 77; day += 1) {
+      fullRun = advancePreviewStreaks(fullRun, 'complete', addPreviewCalendarDays('2026-07-18', day - 1));
+    }
     assert.equal(fullRun.currentAppStreak, 77);
     assert.equal(fullRun.currentFullDayStreak, 77);
   });

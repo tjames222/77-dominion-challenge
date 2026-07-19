@@ -79,16 +79,30 @@ export function advancePreviewChallenge(state) {
   };
 }
 
-export function advancePreviewStreaks(stats = {}, status = 'partial') {
+export function advancePreviewStreaks(stats = {}, status = 'partial', entryDate = '') {
   const currentAppStreak = Math.max(0, Math.floor(Number(stats.currentAppStreak) || 0)) + 1;
-  const currentFullDayStreak = status === 'complete'
-    ? Math.max(0, Math.floor(Number(stats.currentFullDayStreak) || 0)) + 1
-    : Math.max(0, Math.floor(Number(stats.currentFullDayStreak) || 0));
+  const previousFullDayStreak = Math.max(0, Math.floor(Number(stats.currentFullDayStreak) || 0));
+  const normalizedEntryDate = validDateKey(entryDate) ? entryDate : '';
+  let currentFullDayStreak = previousFullDayStreak;
+  let lastFullDayDate = stats.lastFullDayDate || null;
+
+  if (status === 'complete') {
+    if (normalizedEntryDate && lastFullDayDate === normalizedEntryDate) {
+      currentFullDayStreak = previousFullDayStreak;
+    } else if (normalizedEntryDate && lastFullDayDate === addPreviewCalendarDays(normalizedEntryDate, -1)) {
+      currentFullDayStreak = previousFullDayStreak + 1;
+    } else {
+      currentFullDayStreak = 1;
+    }
+    if (normalizedEntryDate) lastFullDayDate = normalizedEntryDate;
+  }
+
   return {
     ...stats,
     currentAppStreak,
     bestAppStreak: Math.max(Math.floor(Number(stats.bestAppStreak) || 0), currentAppStreak),
     currentFullDayStreak,
     bestFullDayStreak: Math.max(Math.floor(Number(stats.bestFullDayStreak) || 0), currentFullDayStreak),
+    lastFullDayDate,
   };
 }

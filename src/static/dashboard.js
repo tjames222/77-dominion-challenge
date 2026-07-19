@@ -912,7 +912,7 @@ const $ = (id) => document.getElementById(id);
 const verseText = $('verseText');
 const verseReference = $('verseReference');
 const verseAppLink = $('verseAppLink');
-async function refreshChallengeProgression({ claimCelebrations = false, celebrationDelay = 0, suppressCelebration = false } = {}) {
+async function refreshChallengeProgression({ claimCelebrations = false, celebrationDelay = 0 } = {}) {
   if (!$('challengeCatalog')) return [];
   challengeProgressionStatus = challengeProgression.challenges.length ? 'ready' : 'loading';
   challengeProgressionError = '';
@@ -923,7 +923,7 @@ async function refreshChallengeProgression({ claimCelebrations = false, celebrat
       challengeProgression = result.progression;
       challengeProgressionStatus = 'ready';
       renderChallengeProgression();
-      if (!suppressCelebration) queueChallengeUnlockCelebration(result.claimedUnlocks, celebrationDelay);
+      queueChallengeUnlockCelebration(result.claimedUnlocks, celebrationDelay);
       return result.claimedUnlocks;
     }
     challengeProgression = await getChallengeProgression();
@@ -1070,15 +1070,6 @@ function advanceCommittedPreviewPost(entry, submissionDay) {
   } else {
     const nextDate = previewChallengeDate(previewChallengeState);
     setCheckInNotice(nextDate, `Day ${submissionDay} is posted. Day ${previewChallengeDay(previewChallengeState)} is ready.`);
-    try {
-      saveEntry({
-        date: nextDate,
-        completed: [...entry.completed],
-        scheduledMiss: Boolean(entry.scheduledMiss),
-      });
-    } catch (error) {
-      console.warn('Unable to carry the preview scorecard forward', error);
-    }
   }
 
   renderedDateKey = todayKey();
@@ -1796,7 +1787,7 @@ if (checkInButton) checkInButton.addEventListener('click', async () => {
       let points = calculateLocalPoints(entry, status);
       let nextStreak = gameStats.currentFullDayStreak || 0;
       if (simulatedPreviewPost) {
-        gameStats = advancePreviewStreaks(gameStats, status);
+        gameStats = advancePreviewStreaks(gameStats, status, entry.date);
         nextStreak = gameStats.currentFullDayStreak;
         if (status === 'complete') {
           points += { 3: 25, 7: 75, 14: 150, 30: 300, 77: 777 }[nextStreak] || 0;
@@ -1821,19 +1812,14 @@ if (checkInButton) checkInButton.addEventListener('click', async () => {
     feedItem.timestamp = entry.date === todayKey() ? 'Today' : entry.date;
     feed = [feedItem, ...feed].slice(0, 30);
     if (localDemoMode) save('dominion:feed', feed);
-    const confettiDuration = status === 'complete' && !simulatedPreviewPost ? launchConfetti() || 0 : 0;
-    const toastDuration = simulatedPreviewPost
-      ? 0
-      : showRewardToast({ points: feedItem.pointsAwarded, earnedBadges, status }) || 0;
+    const confettiDuration = status === 'complete' ? launchConfetti() || 0 : 0;
+    const toastDuration = showRewardToast({ points: feedItem.pointsAwarded, earnedBadges, status }) || 0;
     const rewardDelay = Math.max(confettiDuration, toastDuration) + 350;
-    if (!simulatedPreviewPost) queueBadgeCelebrations(earnedBadges, rewardDelay);
-    const unlockDelay = simulatedPreviewPost
-      ? 0
-      : rewardDelay + (earnedBadges.length ? BADGE_REVEAL_DURATION_MS + 900 : 0);
+    queueBadgeCelebrations(earnedBadges, rewardDelay);
+    const unlockDelay = rewardDelay + (earnedBadges.length ? BADGE_REVEAL_DURATION_MS + 900 : 0);
     await refreshChallengeProgression({
       claimCelebrations: true,
       celebrationDelay: unlockDelay,
-      suppressCelebration: simulatedPreviewPost,
     });
   } catch (error) {
     console.warn('Unable to sync check-in', error);

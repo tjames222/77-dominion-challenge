@@ -21,4 +21,27 @@ describe('preview challenge controls', () => {
     });
     assert.match(dashboardJs, /isPreviewChallengeActive\(localDemoMode, previewChallengeState\)/);
   });
+
+  it('starts each simulated challenge day with a fresh production-style scorecard', () => {
+    const advanceStart = dashboardJs.indexOf('function advanceCommittedPreviewPost');
+    const advanceEnd = dashboardJs.indexOf('function renderChecklist', advanceStart);
+    const advanceBlock = dashboardJs.slice(advanceStart, advanceEnd);
+
+    assert.ok(advanceStart >= 0 && advanceEnd > advanceStart);
+    assert.doesNotMatch(advanceBlock, /saveEntry|completed:\s*\[\.\.\.entry\.completed\]/);
+  });
+
+  it('uses the full production celebration pipeline after preview check-ins', () => {
+    const celebrationStart = dashboardJs.indexOf('const confettiDuration =');
+    const celebrationEnd = dashboardJs.indexOf('  } catch (error) {', celebrationStart);
+    const celebrationBlock = dashboardJs.slice(celebrationStart, celebrationEnd);
+
+    assert.ok(celebrationStart >= 0 && celebrationEnd > celebrationStart);
+    assert.doesNotMatch(celebrationBlock, /simulatedPreviewPost|suppressCelebration/);
+    assert.match(celebrationBlock, /status === 'complete' \? launchConfetti\(\)/);
+    assert.match(celebrationBlock, /showRewardToast\(/);
+    assert.match(celebrationBlock, /queueBadgeCelebrations\(/);
+    assert.match(celebrationBlock, /refreshChallengeProgression\(/);
+    assert.match(dashboardJs, /queueChallengeUnlockCelebration\(result\.claimedUnlocks, celebrationDelay\)/);
+  });
 });
