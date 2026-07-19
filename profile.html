@@ -75,6 +75,21 @@
         <p class="section-copy" id="profileChallengeStatus">Status: Checking access</p>
       </section>
 
+      <section class="card reveal profile-preview-tools" id="profilePreviewTools" aria-labelledby="profilePreviewTitle" hidden>
+        <p class="eyebrow">Preview Tools</p>
+        <h2 id="profilePreviewTitle">77-day test mode</h2>
+        <p class="section-copy" id="profilePreviewDescription">Each posted preview check-in moves to the next simulated challenge day. App streak advances every day; complete 7/7 posts also advance the full-standard streak.</p>
+        <label class="profile-preview-switch" for="profilePreviewChallengeSwitch">
+          <span>
+            <strong>Advance after every preview check-in</strong>
+            <small>Pause or resume the simulated challenge without changing production behavior.</small>
+          </span>
+          <input id="profilePreviewChallengeSwitch" type="checkbox" role="switch" aria-describedby="profilePreviewDescription profilePreviewStatus" />
+        </label>
+        <p class="profile-preview-status" id="profilePreviewStatus" role="status" aria-live="polite"></p>
+        <button class="secondary" id="resetPreviewChallengeButton" type="button">Reset preview challenge</button>
+      </section>
+
       <section class="card reveal profile-billing" id="billing">
         <p class="eyebrow">Billing</p>
         <h2 id="profileBillingTitle">Billing access</h2>

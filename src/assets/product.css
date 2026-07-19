@@ -2439,6 +2439,64 @@ body.challenge-finished .reward-backdrop {
 .profile-appearance {
   gap: 14px;
 }
+.profile-preview-tools {
+  gap: 14px;
+  border-color: color-mix(in srgb, var(--accent) 44%, var(--border));
+  background:
+    radial-gradient(circle at top right, color-mix(in srgb, var(--accent) 15%, transparent), transparent 46%),
+    var(--surface);
+}
+.profile-preview-switch {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  min-height: 72px;
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  background: var(--surface-elevated);
+  cursor: pointer;
+}
+.profile-preview-switch > span {
+  display: grid;
+  gap: 4px;
+}
+.profile-preview-switch strong {
+  color: var(--text);
+  line-height: 1.3;
+}
+.profile-preview-switch small {
+  color: var(--text-muted);
+  line-height: 1.45;
+}
+.profile-preview-switch input {
+  flex: 0 0 auto;
+  width: 46px;
+  height: 26px;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+.profile-preview-switch:focus-within {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent);
+}
+.profile-preview-status {
+  min-height: 1.35rem;
+  margin: 0;
+  color: var(--accent-strong);
+  font-size: .88rem;
+  font-weight: 850;
+  line-height: 1.45;
+}
+.profile-preview-tools > .secondary {
+  justify-self: start;
+}
+@media (max-width: 480px) {
+  .profile-preview-switch {
+    align-items: flex-start;
+  }
+}
 .appearance-toggle {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));

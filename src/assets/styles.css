@@ -624,11 +624,45 @@ select {
   background: var(--accent);
 }
 .primary:disabled { opacity: .45; cursor: not-allowed; }
+.primary.is-complete:disabled {
+  opacity: 1;
+  color: #070604;
+  background:
+    linear-gradient(135deg, color-mix(in srgb, #ffffff 22%, transparent), transparent 58%),
+    var(--accent);
+  box-shadow: inset 0 1px 0 color-mix(in srgb, #ffffff 38%, transparent);
+}
 .scorecard-actions {
   display: grid;
   grid-template-columns: 1fr;
   gap: 12px;
   align-items: stretch;
+}
+.check-in-status {
+  grid-column: 1 / -1;
+  margin: 0;
+  padding: 12px 14px;
+  border: 1px solid color-mix(in srgb, var(--accent) 34%, var(--border));
+  border-radius: 12px;
+  color: var(--text-muted);
+  background: color-mix(in srgb, var(--accent) 8%, var(--surface));
+  font-size: .82rem;
+  font-weight: 800;
+  line-height: 1.45;
+}
+.check-in-status:empty {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+.check-in-status.is-complete {
+  color: var(--accent-strong);
 }
 
 .section-heading { margin-bottom: 14px; }

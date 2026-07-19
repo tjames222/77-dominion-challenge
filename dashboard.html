@@ -304,8 +304,9 @@
           </div>
           <div id="checklist"></div>
           <div class="scorecard-actions">
-            <button class="scheduled" id="scheduledButton">Scheduled miss day planned ahead</button>
-            <button class="primary" id="checkInButton" disabled>Post Check-In</button>
+            <button class="scheduled" id="scheduledButton" type="button">Scheduled miss day planned ahead</button>
+            <button class="primary" id="checkInButton" type="button" aria-describedby="checkInStatus" disabled>Post Check-In</button>
+            <p class="check-in-status" id="checkInStatus" role="status" aria-live="polite" aria-atomic="true"></p>
           </div>
         </div>
       </section>
