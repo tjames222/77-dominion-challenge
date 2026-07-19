@@ -52,7 +52,7 @@ describe('private-only prestige integration', () => {
 
     assert.doesNotMatch(prestigeFunction, /scope:\s*['"]global['"]/);
     assert.doesNotMatch(prestigeFunction, /globalRank|globalRows/);
-    assert.match(prestigeFunction, /scope:\s*['"]crew['"]/);
+    assert.match(prestigeFunction, /queryLeaderboard\(requireSupabase\(\), \{\s*crewId:/);
   });
 
   it('assigns the premium orbit and epic crown to private podium states only', async () => {

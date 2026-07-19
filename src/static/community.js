@@ -6,7 +6,6 @@ import {
   deletePostComment,
   getBillingState,
   getCommunityPostPage,
-  getCommunityPosts,
   getCrews,
   getCrewMembers,
   getJournalEntries,
@@ -43,7 +42,6 @@ const state = {
   activeCrewId: localStorage.getItem('dominion:activeCrewId') || '',
   crewMembers: [],
   crewPosts: [],
-  globalPosts: [],
   editingPostId: '',
   confirmingDeletePostId: '',
   crewFeed: {
@@ -55,10 +53,7 @@ const state = {
     nextCursor: null,
     requestId: 0,
   },
-  leaderboards: {
-    crew: { window: 'week', rows: [], requestId: 0 },
-    global: { window: 'week', rows: [], requestId: 0 },
-  },
+  leaderboard: { window: 'week', rows: [], requestId: 0 },
   journalEntries: [],
 };
 
@@ -161,12 +156,11 @@ function isCrewLeader() {
 }
 
 function findPost(postId) {
-  return [...state.crewPosts, ...state.globalPosts].find((item) => item.id === postId) || null;
+  return state.crewPosts.find((item) => item.id === postId) || null;
 }
 
-function renderPostScope(scope) {
-  if (scope === 'crew') renderCrewFeed();
-  else renderPosts(state.globalPosts, 'globalFeed');
+function renderPostScope() {
+  renderCrewFeed();
 }
 
 function dayLabel(startDate) {
@@ -189,23 +183,23 @@ function badgeChip(badge) {
   return `<span class="badge-chip ${badge.tier || 'bronze'}"><span>${escapeHtml(badge.name || 'Badge')}</span></span>`;
 }
 
-function renderLeaderboard(scope) {
-  const board = state.leaderboards[scope];
-  const container = $(`${scope}Leaderboard`);
+function renderLeaderboard() {
+  const board = state.leaderboard;
+  const container = $('crewLeaderboard');
   if (!board || !container) return;
 
-  document.querySelectorAll(`[data-leaderboard-scope="${scope}"]`).forEach((button) => {
+  document.querySelectorAll('[data-leaderboard-window]').forEach((button) => {
     button.classList.toggle('active', button.dataset.leaderboardWindow === board.window);
   });
 
   const crew = activeCrew();
-  if (scope === 'crew' && !crew) {
+  if (!crew) {
     container.innerHTML = '<article class="leaderboard-empty">Create or join a crew to unlock a private leaderboard.</article>';
     return;
   }
 
   if (!board.rows.length) {
-    container.innerHTML = `<article class="leaderboard-empty">${scope === 'crew' ? 'Crew points will show here after check-ins.' : 'Global points will show here after members post check-ins.'}</article>`;
+    container.innerHTML = '<article class="leaderboard-empty">Crew points will show here after check-ins.</article>';
     return;
   }
 
@@ -234,35 +228,34 @@ function renderLeaderboard(scope) {
   }).join('');
 }
 
-async function refreshLeaderboard(scope) {
+async function refreshLeaderboard() {
   const crew = activeCrew();
-  const board = state.leaderboards[scope];
-  const requestedCrewId = scope === 'crew' ? crew?.id || '' : '';
+  const board = state.leaderboard;
+  const requestedCrewId = crew?.id || '';
   const requestedWindow = board.window;
   const requestId = board.requestId + 1;
   board.requestId = requestId;
-  if (scope === 'crew' && !crew) {
-    state.leaderboards.crew.rows = [];
-    renderLeaderboard('crew');
+  if (!crew) {
+    state.leaderboard.rows = [];
+    renderLeaderboard();
     return;
   }
 
   try {
     const rows = await getLeaderboard({
-      scope,
-      crewId: scope === 'crew' ? crew.id : null,
+      crewId: crew.id,
       window: requestedWindow,
     });
-    const crewChanged = scope === 'crew' && activeCrew()?.id !== requestedCrewId;
+    const crewChanged = activeCrew()?.id !== requestedCrewId;
     if (board.requestId !== requestId || board.window !== requestedWindow || crewChanged) return;
     board.rows = rows;
   } catch (error) {
-    const crewChanged = scope === 'crew' && activeCrew()?.id !== requestedCrewId;
+    const crewChanged = activeCrew()?.id !== requestedCrewId;
     if (board.requestId !== requestId || board.window !== requestedWindow || crewChanged) return;
-    console.warn(`Unable to load ${scope} leaderboard`, error);
+    console.warn('Unable to load the private-group leaderboard', error);
     board.rows = [];
   }
-  renderLeaderboard(scope);
+  renderLeaderboard();
 }
 
 function renderCrewShell() {
@@ -294,8 +287,8 @@ function renderCrewShell() {
     $('crewPostCount').textContent = '0';
     $('crewFeed').innerHTML = emptyCard('Create a crew or open an invite link to start a private channel.');
     $('crewMemberList').innerHTML = '';
-    state.leaderboards.crew.rows = [];
-    renderLeaderboard('crew');
+    state.leaderboard.rows = [];
+    renderLeaderboard();
     return;
   }
 
@@ -454,9 +447,7 @@ function renderPosts(posts, containerId) {
   const container = $(containerId);
   if (!container) return;
   if (!posts.length) {
-    container.innerHTML = emptyCard(containerId === 'crewFeed'
-      ? 'No crew posts yet. Be the first to put a little courage in the room.'
-      : 'No global posts yet. Share a win or prayer request to start the conversation.');
+    container.innerHTML = emptyCard('No crew posts yet. Be the first to put a little courage in the room.');
     return;
   }
 
@@ -591,7 +582,6 @@ async function loadCrewFeed({ reset = false } = {}) {
 
   try {
     const page = await getCommunityPostPage({
-      scope: 'crew',
       crewId: requestedCrewId,
       limit: CREW_POST_PAGE_SIZE,
       before: reset ? null : state.crewFeed.nextCursor,
@@ -649,17 +639,8 @@ async function refreshCrew() {
   await Promise.all([
     membersPromise,
     loadCrewFeed({ reset: true }),
-    refreshLeaderboard('crew'),
+    refreshLeaderboard(),
   ]);
-}
-
-async function refreshGlobal() {
-  const [posts] = await Promise.all([
-    getCommunityPosts({ scope: 'global' }),
-    refreshLeaderboard('global'),
-  ]);
-  state.globalPosts = posts;
-  renderPosts(state.globalPosts, 'globalFeed');
 }
 
 async function refreshJournal() {
@@ -746,7 +727,7 @@ async function bootCommunity() {
 
   if (isLocalDemoMode()) setFeedback('Preview mode: crews, posts, comments, leaderboards, and journal entries are using mock local data.');
   await redeemInviteIfPresent();
-  await Promise.all([refreshCrews(), refreshGlobal(), refreshJournal()]);
+  await Promise.all([refreshCrews(), refreshJournal()]);
 }
 
 setupCrewInfiniteScroll();
@@ -795,10 +776,10 @@ document.querySelectorAll('[data-leaderboard-window]').forEach((button) => {
   button.addEventListener('click', async () => {
     const scope = button.dataset.leaderboardScope;
     const nextWindow = button.dataset.leaderboardWindow;
-    if (!state.leaderboards[scope] || state.leaderboards[scope].window === nextWindow) return;
-    state.leaderboards[scope].window = nextWindow;
-    renderLeaderboard(scope);
-    await refreshLeaderboard(scope);
+    if (scope !== 'crew' || state.leaderboard.window === nextWindow) return;
+    state.leaderboard.window = nextWindow;
+    renderLeaderboard();
+    await refreshLeaderboard();
   });
 });
 
@@ -860,7 +841,7 @@ $('crewPostForm')?.addEventListener('submit', async (event) => {
   }
   const release = setButtonBusy(event.submitter, 'Posting...');
   try {
-    await createCommunityPost({ scope: 'crew', crewId: crew.id, body, imageFile, imageAlt });
+    await createCommunityPost({ crewId: crew.id, body, imageFile, imageAlt });
     $('crewPostBody').value = '';
     $('crewPostCharacterCount').textContent = '0 / 2,000';
     clearCrewPostImage();
@@ -868,22 +849,6 @@ $('crewPostForm')?.addEventListener('submit', async (event) => {
     setFeedback('Your post is live in this private group.');
   } catch (error) {
     window.alert(error?.message || 'Unable to post to your crew right now.');
-  } finally {
-    release();
-  }
-});
-
-$('globalPostForm')?.addEventListener('submit', async (event) => {
-  event.preventDefault();
-  const body = $('globalPostBody').value.trim();
-  if (!body) return;
-  const release = setButtonBusy(event.submitter, 'Posting...');
-  try {
-    await createCommunityPost({ scope: 'global', body });
-    $('globalPostBody').value = '';
-    await refreshGlobal();
-  } catch (error) {
-    window.alert(error?.message || 'Unable to post globally right now.');
   } finally {
     release();
   }
@@ -953,16 +918,12 @@ document.addEventListener('click', async (event) => {
     confirmDeleteButton.disabled = true;
     try {
       await deleteCommunityPost(post.id, post.imagePath || null);
-      if (post.scope === 'crew') {
-        state.crewPosts = state.crewPosts.filter((item) => item.id !== post.id);
-        $('crewPostCount').textContent = String(state.crewPosts.length);
-      } else {
-        state.globalPosts = state.globalPosts.filter((item) => item.id !== post.id);
-      }
+      state.crewPosts = state.crewPosts.filter((item) => item.id !== post.id);
+      $('crewPostCount').textContent = String(state.crewPosts.length);
       state.confirmingDeletePostId = '';
       renderPostScope(post.scope);
       setFeedback(post.isOwn ? 'Post deleted.' : 'Post removed from the private group.');
-      (post.scope === 'crew' ? $('crewFeedScroll') : $('globalFeed'))?.focus();
+      $('crewFeedScroll')?.focus();
     } catch (error) {
       window.alert(error?.message || 'Unable to remove that post right now.');
       confirmDeleteButton.disabled = false;

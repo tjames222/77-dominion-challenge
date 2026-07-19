@@ -5,6 +5,34 @@ import { describe, test } from 'node:test';
 const communityHtml = readFileSync(new URL('../../community.html', import.meta.url), 'utf8');
 const communityCss = readFileSync(new URL('../assets/community.css', import.meta.url), 'utf8');
 const communityJs = readFileSync(new URL('./community.js', import.meta.url), 'utf8');
+const apiJs = readFileSync(new URL('./api.js', import.meta.url), 'utf8');
+const retirementMigration = readFileSync(
+  new URL('../../supabase/migrations/20260719100000_remove_global_community.sql', import.meta.url),
+  'utf8',
+);
+
+describe('private-only Community', () => {
+  test('offers only the private group and private journal destinations', () => {
+    const tabNames = [...communityHtml.matchAll(/class="community-tab[^>]*>([^<]+)<\/button>/g)]
+      .map((match) => match[1].trim());
+
+    assert.deepEqual(tabNames, ['Private Group', 'Private Journal']);
+    assert.doesNotMatch(communityHtml, /id="global(?:-tab|Feed|Leaderboard|PostForm|PostBody)?"/);
+    assert.doesNotMatch(communityHtml, /Global Community|Global Leaderboard|Post Globally/);
+  });
+
+  test('removes global feed and leaderboard calls from the production client', () => {
+    assert.doesNotMatch(communityJs, /refreshGlobal|getCommunityPosts|scope:\s*['"]global['"]/);
+    assert.doesNotMatch(apiJs, /get_global_leaderboard|scope\s*=\s*['"]global['"]|scope:\s*['"]global['"]/);
+    assert.match(apiJs, /client\.rpc\(['"]get_crew_leaderboard['"]/);
+  });
+
+  test('revokes global backend access without deleting retained history', () => {
+    assert.match(retirementMigration, /drop function if exists public\.get_global_leaderboard\(text\)/);
+    assert.match(retirementMigration, /cp\.scope = 'crew'/);
+    assert.doesNotMatch(retirementMigration, /delete\s+from\s+public\.community_posts/i);
+  });
+});
 
 describe('private Community feed layout', () => {
   test('keeps photo posts in the document scroll flow', () => {
