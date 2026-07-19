@@ -63,7 +63,14 @@ begin
     'version', coalesce(draft.version, 0),
     'updated_at', draft.updated_at,
     'submitted', was_submitted,
-    'locked', was_submitted or target_entry_date <> public.daily_standard_user_date(target_user_id),
+    'locked', was_submitted
+      or target_entry_date <> public.daily_standard_user_date(target_user_id)
+      or exists (
+        select 1 from public.profiles profile
+        where profile.user_id = target_user_id
+          and profile.challenge_start_date is not null
+          and target_entry_date - profile.challenge_start_date + 1 not between 1 and 77
+      ),
     'stale_write_reconciled', stale_write_reconciled
   );
 end;
@@ -118,6 +125,14 @@ begin
   end if;
   if target_entry_date is null or target_entry_date <> public.daily_standard_user_date(auth.uid()) then
     raise exception 'That Daily Standards date is locked.' using errcode = '22023';
+  end if;
+  if exists (
+    select 1 from public.profiles profile
+    where profile.user_id = auth.uid()
+      and profile.challenge_start_date is not null
+      and target_entry_date - profile.challenge_start_date + 1 not between 1 and 77
+  ) then
+    raise exception 'The 77-day challenge is complete.' using errcode = '22023';
   end if;
   if target_action_id is null or not (target_action_id = any(valid_action_ids)) then
     raise exception 'Choose a valid Daily Standard.' using errcode = '22023';
@@ -195,6 +210,14 @@ begin
   end if;
   if target_entry_date is null or target_entry_date <> public.daily_standard_user_date(auth.uid()) then
     raise exception 'That Daily Standards date is locked.' using errcode = '22023';
+  end if;
+  if exists (
+    select 1 from public.profiles profile
+    where profile.user_id = auth.uid()
+      and profile.challenge_start_date is not null
+      and target_entry_date - profile.challenge_start_date + 1 not between 1 and 77
+  ) then
+    raise exception 'The 77-day challenge is complete.' using errcode = '22023';
   end if;
   if target_workout_id is null or target_workout_id not in ('one', 'two') then
     raise exception 'Choose a valid workout.' using errcode = '22023';
