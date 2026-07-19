@@ -893,6 +893,7 @@ let finishCelebrated = false;
 let entrySaveQueue = Promise.resolve();
 const pendingActionMutations = new Map();
 const pendingWorkoutMutations = new Map();
+let pendingDetailsNavigation = '';
 let checkInSubmissionPending = false;
 let checkInSubmissionDate = '';
 let lastCheckInSubmissionAt = 0;
@@ -1047,29 +1048,50 @@ function renderChecklist(entry) {
     checklist.innerHTML = scorecardGroups.map((group) => {
       const rows = group.items.map(([id, label, detail]) => {
         const route = dailyStandardRoute(id);
+        const difficultyDescriptionId = `${id}DifficultyDescription`;
         const difficultyControl = route?.workoutId
-          ? `<label class="check-row-difficulty" for="${id}Difficulty"><span>Difficulty <small>Context only · still +1</small></span><select id="${id}Difficulty" name="${id}Difficulty" data-workout="${route.workoutId}" aria-label="${escapeHtml(label)} difficulty"><option value="easy">Easy</option><option value="medium">Medium</option><option value="hard">Hard</option><option value="extreme">Extreme</option></select></label>`
+          ? `<label class="check-row-difficulty" for="${id}Difficulty"><span>Difficulty <small id="${difficultyDescriptionId}">Context only · still +1</small></span><select id="${id}Difficulty" name="${id}Difficulty" data-workout="${route.workoutId}" aria-label="${escapeHtml(label)} difficulty" aria-describedby="${difficultyDescriptionId}"><option value="easy">Easy</option><option value="medium">Medium</option><option value="hard">Hard</option><option value="extreme">Extreme</option></select></label>`
           : '';
-        return `<article class="check-row" data-standard-card="${id}"><button class="check-row-toggle" data-standard="${id}" aria-label="Mark ${escapeHtml(label)} complete" aria-pressed="false" type="button"><span class="box"><span class="app-icon icon-sm icon-check" aria-hidden="true"></span></span><span class="check-row-copy"><strong>${escapeHtml(label)}</strong><small>${escapeHtml(detail)}</small></span><span class="action-point-value" aria-label="1 point">+1</span></button><a class="check-row-details" href="${route?.route || './dashboard.html#daily-standards'}" aria-label="Open ${escapeHtml(label)} details">Details<span aria-hidden="true">→</span></a>${difficultyControl}</article>`;
+        return `<article class="check-row" id="standard-${id}" data-standard-card="${id}"><button class="check-row-toggle" data-standard="${id}" aria-label="Mark ${escapeHtml(label)} complete, worth 1 point" aria-pressed="false" type="button"><span class="box"><span class="app-icon icon-sm icon-check" aria-hidden="true"></span></span><span class="check-row-copy"><strong>${escapeHtml(label)}</strong><small>${escapeHtml(detail)}</small></span><span class="action-point-value" aria-label="1 point">+1</span></button><a class="check-row-details" href="${route?.route || './dashboard.html#daily-standards'}" aria-label="Open ${escapeHtml(label)} details">Details<span aria-hidden="true">→</span></a>${difficultyControl}</article>`;
       }).join('');
       const itemLabel = group.items.length === 1 ? 'action' : 'actions';
-      return `<section class="checklist-group"><div class="checklist-group-header"><p class="checklist-group-title">${escapeHtml(group.label)}</p><span>${group.items.length} ${itemLabel}</span></div><div class="checklist-group-items">${rows}</div></section>`;
+      return `<section class="checklist-group" aria-labelledby="checklistGroup-${group.key}"><div class="checklist-group-header"><h3 class="checklist-group-title" id="checklistGroup-${group.key}">${escapeHtml(group.label)}</h3><span>${group.items.length} ${itemLabel}</span></div><div class="checklist-group-items">${rows}</div></section>`;
     }).join('');
     checklist.dataset.mounted = 'true';
   }
 
   const completed = new Set(entry.completed);
+  const draftBusy = pendingActionMutations.size > 0 || pendingWorkoutMutations.size > 0;
   const locked = isChallengeFinished()
     || !isCheckInStatusReady(entry.date)
     || hasSubmittedCheckIn(entry.date)
-    || isCheckInPending(entry.date);
+    || isCheckInPending(entry.date)
+    || draftBusy;
   checklist.querySelectorAll('[data-standard]').forEach((row) => {
     const isChecked = completed.has(row.dataset.standard);
-    row.closest('[data-standard-card]')?.classList.toggle('checked', isChecked);
+    const card = row.closest('[data-standard-card]');
+    card?.classList.toggle('checked', isChecked);
+    card?.classList.toggle('is-locked', locked);
     row.disabled = locked;
     row.setAttribute('aria-pressed', String(isChecked));
-    row.setAttribute('aria-label', `Mark ${dailyStandardRoute(row.dataset.standard)?.title || 'action'} ${isChecked ? 'incomplete' : 'complete'}`);
+    row.setAttribute('aria-label', `Mark ${dailyStandardRoute(row.dataset.standard)?.title || 'action'} ${isChecked ? 'incomplete' : 'complete'}, worth 1 point`);
   });
+  checklist.querySelectorAll('.check-row-details').forEach((link) => {
+    link.setAttribute('aria-disabled', String(draftBusy));
+  });
+
+  const requestedFocus = new URLSearchParams(window.location.search).get('focus');
+  const focusTarget = requestedFocus && dailyStandardRoute(requestedFocus)
+    ? checklist.querySelector(`[data-standard="${requestedFocus}"]`)
+    : null;
+  if (focusTarget && !checklist.dataset.focusRestored) {
+    checklist.dataset.focusRestored = 'true';
+    requestAnimationFrame(() => {
+      focusTarget.focus({ preventScroll: true });
+      focusTarget.closest('[data-standard-card]')?.scrollIntoView({ block: 'center' });
+      window.history.replaceState(null, '', `${window.location.pathname}${window.location.hash}`);
+    });
+  }
 }
 function renderTodayActionCompletion(entry) {
   const completed = new Set(entry.completed);
@@ -1122,6 +1144,7 @@ function toggleStandard(id) {
 
   if (!hasSupabaseAuth()) {
     pendingActionMutations.delete(id);
+    render();
     return;
   }
   entrySaveQueue = entrySaveQueue
@@ -1228,7 +1251,9 @@ function applyDailyActions() {
   const scorecardLocked = !isCheckInStatusReady()
     || hasSubmittedCheckIn()
     || isChallengeFinished()
-    || isCheckInPending();
+    || isCheckInPending()
+    || pendingActionMutations.size > 0
+    || pendingWorkoutMutations.size > 0;
 
   if (morningPrayerLink) morningPrayerLink.href = YOUVERSION_PRAYER_URL;
   if (eveningPrayerLink) eveningPrayerLink.href = YOUVERSION_PRAYER_URL;
@@ -1338,6 +1363,7 @@ function render() {
   const submissionPendingToday = isCheckInPending(entry.date);
   const checkInStatusReady = isCheckInStatusReady(entry.date);
   const scorecardLocked = !checkInStatusReady || submittedToday || submissionPendingToday;
+  const dailyDraftBusy = pendingActionMutations.size > 0 || pendingWorkoutMutations.size > 0;
   const hasPostableCheckIn = !finished && !scorecardLocked && hasCompletedActions;
   const allActionsCompleted = standards.every(([id]) => completedStandards.has(id));
   if (challengePercentEl) challengePercentEl.textContent = `${challengePercent}%`;
@@ -1348,7 +1374,7 @@ function render() {
   if (todayRing) todayRing.style.setProperty('--value', `${todayPercent}%`);
   document.body.classList.toggle('check-in-complete', submittedToday);
   if (checkInButton) {
-    checkInButton.disabled = !hasPostableCheckIn;
+    checkInButton.disabled = !hasPostableCheckIn || dailyDraftBusy;
     checkInButton.classList.toggle('is-complete', submittedToday);
     checkInButton.textContent = submissionPendingToday
       ? 'Posting...'
@@ -1375,7 +1401,7 @@ function render() {
   if (workoutTwoDifficulty) workoutTwoDifficulty.disabled = finished || scorecardLocked;
   if (selectAllActionsButton) {
     selectAllActionsButton.classList.toggle('active', allActionsCompleted);
-    selectAllActionsButton.disabled = finished || scorecardLocked;
+    selectAllActionsButton.disabled = finished || scorecardLocked || dailyDraftBusy;
     selectAllActionsButton.setAttribute('aria-pressed', String(allActionsCompleted));
     selectAllActionsButton.setAttribute('aria-label', allActionsCompleted
       ? 'Clear all daily actions'
@@ -1607,6 +1633,7 @@ document.addEventListener('change', (event) => {
 
   if (!hasSupabaseAuth()) {
     pendingWorkoutMutations.delete(target.dataset.workout);
+    render();
     return;
   }
   entrySaveQueue = entrySaveQueue
@@ -1648,6 +1675,17 @@ if (checklist) checklist.addEventListener('click', event => {
   const row = event.target.closest('[data-standard]');
   if (!row) return;
   toggleStandard(row.dataset.standard);
+});
+if (checklist) checklist.addEventListener('click', (event) => {
+  const link = event.target.closest('.check-row-details');
+  if (!link || (pendingActionMutations.size === 0 && pendingWorkoutMutations.size === 0)) return;
+  event.preventDefault();
+  if (pendingDetailsNavigation) return;
+  pendingDetailsNavigation = link.href;
+  link.setAttribute('aria-busy', 'true');
+  entrySaveQueue.finally(() => {
+    window.location.href = pendingDetailsNavigation;
+  });
 });
 document.addEventListener('click', (event) => {
   const button = event.target.closest('[data-action-completion]');

@@ -26,7 +26,7 @@ describe('dedicated Daily Standard page framework', () => {
 
   it('keeps completion and details as independent Dashboard controls', async () => {
     const dashboard = await read('./dashboard.js');
-    assert.match(dashboard, /<article class="check-row" data-standard-card/);
+    assert.match(dashboard, /<article class="check-row"[^>]*data-standard-card/);
     assert.match(dashboard, /<button class="check-row-toggle" data-standard/);
     assert.match(dashboard, /<a class="check-row-details" href=/);
     assert.doesNotMatch(dashboard, /<button class="check-row"/);

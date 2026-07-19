@@ -587,12 +587,12 @@ select {
   opacity: 0;
   transition: opacity 260ms ease;
 }
-.check-row:hover:not(:disabled) {
+.check-row:not(.is-locked):hover {
   background: color-mix(in srgb, var(--surface-elevated) 72%, transparent);
   border-color: color-mix(in srgb, var(--accent) 18%, transparent);
   transform: translateY(-1px);
 }
-.check-row:active:not(:disabled) {
+.check-row:not(.is-locked):active {
   transform: translateY(0) scale(.992);
 }
 .check-row .box {

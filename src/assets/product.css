@@ -2720,6 +2720,60 @@ body.challenge-finished .reward-backdrop {
   text-decoration: none;
 }
 .action-resource-link:hover { color: var(--accent); }
+.action-resource-link:is(button) {
+  width: 100%;
+  border-top: 0;
+  border-right: 0;
+  border-left: 0;
+  background: transparent;
+  font: inherit;
+  cursor: pointer;
+}
+.action-difficulty-field {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 3px 14px;
+  align-items: center;
+  padding: 14px 0;
+  border-block: 1px solid var(--border);
+  font-weight: 900;
+}
+.action-difficulty-field small { color: var(--text-muted); font-size: .72rem; font-weight: 750; }
+.action-difficulty-field select {
+  grid-column: 2;
+  grid-row: 1 / span 2;
+  min-width: 126px;
+  min-height: 44px;
+  padding: 8px 34px 8px 11px;
+  border: 1px solid color-mix(in srgb, var(--accent) 38%, var(--border));
+  border-radius: 8px;
+  background: var(--surface-elevated);
+  color: var(--text);
+  font: inherit;
+  font-weight: 850;
+}
+.action-workout-recommendation {
+  margin: 0;
+  padding-left: 16px;
+  border-left: 3px solid var(--accent);
+  color: var(--text);
+  font-size: clamp(1.05rem, 3vw, 1.3rem);
+  font-weight: 820;
+  line-height: 1.55;
+}
+.action-native-control { display: grid; gap: 8px; }
+.action-secondary-button {
+  min-height: 48px;
+  padding: 10px 14px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-weight: 850;
+  cursor: pointer;
+}
+.action-native-status { margin: 0; color: var(--text-muted); font-size: .78rem; line-height: 1.5; }
 .action-check-in-handoff {
   display: flex;
   justify-content: center;
