@@ -22,6 +22,7 @@ import {
   calculateCheckInScore,
   normalizeWorkoutDifficulty,
 } from './scoring.mjs';
+import { dailyStandardRoute } from './daily-standard-routes.mjs';
 import {
   CHECK_IN_ALREADY_COMPLETE_CODE,
   CHECK_IN_ALREADY_COMPLETE_MESSAGE,
@@ -1044,9 +1045,10 @@ function renderChecklist(entry) {
 
   if (!checklist.dataset.mounted) {
     checklist.innerHTML = scorecardGroups.map((group) => {
-      const rows = group.items.map(([id, label, detail]) => (
-        `<button class="check-row" data-standard="${id}" aria-pressed="false" type="button"><span class="box"><span class="app-icon icon-sm icon-check" aria-hidden="true"></span></span><span class="check-row-copy"><strong>${escapeHtml(label)}</strong><small>${escapeHtml(detail)}</small></span><span class="action-point-value" aria-label="1 point">+1</span></button>`
-      )).join('');
+      const rows = group.items.map(([id, label, detail]) => {
+        const route = dailyStandardRoute(id);
+        return `<article class="check-row" data-standard-card="${id}"><button class="check-row-toggle" data-standard="${id}" aria-label="Mark ${escapeHtml(label)} complete" aria-pressed="false" type="button"><span class="box"><span class="app-icon icon-sm icon-check" aria-hidden="true"></span></span><span class="check-row-copy"><strong>${escapeHtml(label)}</strong><small>${escapeHtml(detail)}</small></span><span class="action-point-value" aria-label="1 point">+1</span></button><a class="check-row-details" href="${route?.route || './dashboard.html#daily-standards'}" aria-label="Open ${escapeHtml(label)} details">Details<span aria-hidden="true">→</span></a></article>`;
+      }).join('');
       const itemLabel = group.items.length === 1 ? 'action' : 'actions';
       return `<section class="checklist-group"><div class="checklist-group-header"><p class="checklist-group-title">${escapeHtml(group.label)}</p><span>${group.items.length} ${itemLabel}</span></div><div class="checklist-group-items">${rows}</div></section>`;
     }).join('');
@@ -1060,9 +1062,10 @@ function renderChecklist(entry) {
     || isCheckInPending(entry.date);
   checklist.querySelectorAll('[data-standard]').forEach((row) => {
     const isChecked = completed.has(row.dataset.standard);
-    row.classList.toggle('checked', isChecked);
+    row.closest('[data-standard-card]')?.classList.toggle('checked', isChecked);
     row.disabled = locked;
     row.setAttribute('aria-pressed', String(isChecked));
+    row.setAttribute('aria-label', `Mark ${dailyStandardRoute(row.dataset.standard)?.title || 'action'} ${isChecked ? 'incomplete' : 'complete'}`);
   });
 }
 function renderTodayActionCompletion(entry) {
