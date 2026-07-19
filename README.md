@@ -36,6 +36,10 @@ npm run dev
 
 The frontend uses Supabase Auth for login/register and writes directly to Supabase Postgres with Row Level Security policies.
 
+### Target point economy
+
+The approved next-round point-source, reward-reachability, and migration contract is documented in [`docs/point-economy.md`](docs/point-economy.md). The current production scoring remains in place until its dependent database and UI cutover tickets are merged.
+
 ### Workout difficulty scoring
 
 Workout completions receive the standard 10 action points plus a configurable difficulty bonus. The default bonuses are Easy `2`, Medium `5`, Hard `10`, and Extreme `15` points.
