@@ -76,12 +76,12 @@ describe('preview 77-day challenge simulator', () => {
       bestFullDayStreak: 1,
       lastFullDayDate: '2026-07-17',
     });
-    const scheduled = advancePreviewStreaks(partial, 'scheduled', '2026-07-19');
-    assert.equal(scheduled.currentAppStreak, 4);
-    assert.equal(scheduled.currentFullDayStreak, 1);
-    assert.equal(scheduled.lastFullDayDate, '2026-07-17');
+    const secondPartial = advancePreviewStreaks(partial, 'partial', '2026-07-19');
+    assert.equal(secondPartial.currentAppStreak, 4);
+    assert.equal(secondPartial.currentFullDayStreak, 1);
+    assert.equal(secondPartial.lastFullDayDate, '2026-07-17');
 
-    const complete = advancePreviewStreaks(scheduled, 'complete', '2026-07-20');
+    const complete = advancePreviewStreaks(secondPartial, 'complete', '2026-07-20');
     assert.equal(complete.currentAppStreak, 5);
     assert.equal(complete.currentFullDayStreak, 1);
     assert.equal(complete.bestFullDayStreak, 1);

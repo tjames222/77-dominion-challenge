@@ -1,44 +1,28 @@
-export const ACTION_POINTS_PER_COMPLETION = 10;
+import { POINTS_PER_DAILY_STANDARD, calculateDailyStandardsPoints } from './point-economy.mjs';
 
-export const STATUS_BONUS_POINTS = Object.freeze({
-  complete: 30,
-  partial: 10,
-  scheduled: 15,
-});
+export const ACTION_POINTS_PER_COMPLETION = POINTS_PER_DAILY_STANDARD;
 
-export const DEFAULT_DIFFICULTY_POINT_VALUES = Object.freeze({
-  easy: 2,
-  medium: 5,
-  hard: 10,
-  extreme: 15,
-});
+export const DAILY_STANDARD_IDS = Object.freeze([
+  'bible',
+  'morningPrayer',
+  'worshipOnly',
+  'eveningPrayer',
+  'workoutOne',
+  'walk',
+  'workoutTwo',
+]);
 
-export const DIFFICULTY_OPTIONS = Object.freeze(
-  Object.keys(DEFAULT_DIFFICULTY_POINT_VALUES),
-);
+export const DIFFICULTY_OPTIONS = Object.freeze([
+  'easy',
+  'medium',
+  'hard',
+  'extreme',
+]);
 
 export const DEFAULT_WORKOUT_DIFFICULTY = Object.freeze({
   one: 'medium',
   two: 'medium',
 });
-
-const workoutStandards = Object.freeze({
-  one: 'workoutOne',
-  two: 'workoutTwo',
-});
-
-const validPointValue = (value) => Number.isInteger(value) && value >= 0;
-
-export function normalizeDifficultyPointValues(difficultyPointValues = {}) {
-  return Object.freeze(Object.fromEntries(
-    Object.entries(DEFAULT_DIFFICULTY_POINT_VALUES).map(([difficulty, defaultPoints]) => [
-      difficulty,
-      validPointValue(difficultyPointValues?.[difficulty])
-        ? difficultyPointValues[difficulty]
-        : defaultPoints,
-    ]),
-  ));
-}
 
 export function normalizeWorkoutDifficulty(workoutDifficulty = {}) {
   const normalizeSelection = (selection, fallback) => (
@@ -51,41 +35,16 @@ export function normalizeWorkoutDifficulty(workoutDifficulty = {}) {
   };
 }
 
-function calculateWorkoutPoints({
-  completed = [],
-  workoutDifficulty = DEFAULT_WORKOUT_DIFFICULTY,
-  difficultyPointValues = DEFAULT_DIFFICULTY_POINT_VALUES,
-} = {}) {
-  const completedStandards = Array.isArray(completed) ? completed : [];
-  const pointValues = normalizeDifficultyPointValues(difficultyPointValues);
-  const normalizedDifficulty = normalizeWorkoutDifficulty(workoutDifficulty);
-
-  return Object.entries(workoutStandards).reduce((total, [workout, standard]) => (
-    completedStandards.includes(standard)
-      ? total + pointValues[normalizedDifficulty[workout]]
-      : total
-  ), 0);
-}
-
-export function calculateCheckInScore({
-  completed = [],
-  status,
-  workoutDifficulty = DEFAULT_WORKOUT_DIFFICULTY,
-  difficultyPointValues = DEFAULT_DIFFICULTY_POINT_VALUES,
-} = {}) {
-  const completedStandards = Array.isArray(completed) ? completed : [];
-  const actionPoints = completedStandards.length * ACTION_POINTS_PER_COMPLETION;
-  const bonusPoints = STATUS_BONUS_POINTS[status] || 0;
-  const workoutPoints = calculateWorkoutPoints({
-    completed: completedStandards,
-    workoutDifficulty,
-    difficultyPointValues,
-  });
+export function calculateCheckInScore({ completed = [] } = {}) {
+  const validStandards = new Set(DAILY_STANDARD_IDS);
+  const completedStandards = [...new Set(Array.isArray(completed) ? completed : [])]
+    .filter((actionId) => validStandards.has(actionId));
+  const actionPoints = calculateDailyStandardsPoints(completedStandards.length);
 
   return {
-    totalPoints: actionPoints + bonusPoints + workoutPoints,
-    workoutPoints,
+    totalPoints: actionPoints,
+    workoutPoints: 0,
     actionPoints,
-    bonusPoints,
+    bonusPoints: 0,
   };
 }

@@ -5,8 +5,8 @@ import { describe, it } from 'node:test';
 const profileHtml = readFileSync(new URL('../../profile.html', import.meta.url), 'utf8');
 const profileJs = readFileSync(new URL('./profile.js', import.meta.url), 'utf8');
 const dashboardHtml = readFileSync(new URL('../../dashboard.html', import.meta.url), 'utf8');
-const todayActionsHtml = readFileSync(new URL('../../today-actions.html', import.meta.url), 'utf8');
 const dashboardJs = readFileSync(new URL('./dashboard.js', import.meta.url), 'utf8');
+const dailyStandardPageJs = readFileSync(new URL('./daily-standard-page.js', import.meta.url), 'utf8');
 
 describe('preview challenge controls', () => {
   it('keeps the Profile switch hidden by default and gates it on local preview mode', () => {
@@ -15,11 +15,12 @@ describe('preview challenge controls', () => {
     assert.match(profileJs, /profilePreviewTools\.hidden = !localPreviewMode/);
   });
 
-  it('shares simulated action state across Dashboard and Today’s Actions', () => {
-    [dashboardHtml, todayActionsHtml].forEach((html) => {
-      assert.match(html, /src=["']\.\/src\/static\/dashboard\.js["']/);
-    });
+  it('shares simulated action state across the Dashboard and dedicated Daily Standard pages', () => {
+    assert.match(dashboardHtml, /src=["']\.\/src\/static\/dashboard\.js["']/);
     assert.match(dashboardJs, /isPreviewChallengeActive\(localDemoMode, previewChallengeState\)/);
+    assert.match(dailyStandardPageJs, /isPreviewChallengeActive\(localDemoMode, preview\)/);
+    assert.match(dailyStandardPageJs, /previewChallengeDate\(preview\)/);
+    assert.match(dailyStandardPageJs, /dominion:entries/);
   });
 
   it('starts each simulated challenge day with a fresh production-style scorecard', () => {

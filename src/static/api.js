@@ -11,6 +11,7 @@ import {
   createCheckInAlreadyCompleteError,
   isDuplicateCheckInError,
 } from './check-in.mjs';
+import { normalizeDailyStandardDraft } from './daily-standard-draft.mjs';
 import {
   prepareMockCommunityPostsForStorage,
   prepareMockCrewMembersForStorage,
@@ -55,6 +56,7 @@ const MOCK_CHALLENGE_THRESHOLDS_VERSION = 2;
 const MOCK_MEDIA_DB_NAME = 'dominion-preview-media';
 const MOCK_MEDIA_STORE_NAME = 'community-post-images';
 const mockCommunityImageUrls = new Map();
+const dailyStandardTimeZoneBootstraps = new Map();
 let mockMediaDatabasePromise;
 
 const readJson = (key, fallback) => {
@@ -349,12 +351,7 @@ const mapProfile = (profile) => profile ? ({
   updatedAt: profile.updated_at,
 }) : null;
 
-const mapEntry = (entry) => ({
-  date: entry.entry_date,
-  completed: Array.isArray(entry.completed) ? entry.completed : [],
-  scheduledMiss: Boolean(entry.scheduled_miss),
-  updatedAt: entry.updated_at,
-});
+const mapEntry = (entry) => normalizeDailyStandardDraft(entry);
 
 const mapFeedItem = (item) => ({
   id: item.id,
@@ -455,15 +452,6 @@ const mapGameStats = (stats) => stats ? ({
   bestFullDayStreak: 0,
   lastSeenDate: null,
   lastFullDayDate: null,
-};
-
-const queryWorkoutDifficultyPointValues = async (client) => {
-  const { data, error } = await client
-    .from('workout_difficulty_point_values')
-    .select('difficulty, points')
-    .order('points', { ascending: true });
-  if (error) throw error;
-  return Object.fromEntries((data || []).map((item) => [item.difficulty, item.points]));
 };
 
 const mapLeaderboardRow = (row) => ({
@@ -835,11 +823,11 @@ export async function startChallenge(challengeKey) {
 export async function getDashboard() {
   const client = requireSupabase();
   const user = await requireUser();
-  const [profile, entriesResult, checkInsResult, feedResult, statsResult, badgesResult, workoutDifficultyPointValues] = await Promise.all([
+  const [profile, entriesResult, checkInsResult, feedResult, statsResult, badgesResult] = await Promise.all([
     getProfile(),
     client
       .from('challenge_entries')
-      .select('entry_date, completed, scheduled_miss, updated_at')
+      .select('entry_date, completed, workout_difficulty, version, updated_at')
       .eq('user_id', user.id)
       .order('entry_date', { ascending: false })
       .limit(90),
@@ -852,6 +840,7 @@ export async function getDashboard() {
     client
       .from('community_feed_items')
       .select('id, display_name, challenge_day, status, completed_count, points_awarded, created_at')
+      .neq('status', 'scheduled')
       .order('created_at', { ascending: false })
       .limit(30),
     client
@@ -865,10 +854,6 @@ export async function getDashboard() {
       .eq('user_id', user.id)
       .order('earned_at', { ascending: false })
       .limit(12),
-    queryWorkoutDifficultyPointValues(client).catch((error) => {
-      console.warn('Using default workout difficulty points', error);
-      return null;
-    }),
   ]);
 
   if (entriesResult.error) throw entriesResult.error;
@@ -887,32 +872,85 @@ export async function getDashboard() {
     feed: feedResult.data.map(mapFeedItem),
     gameStats: mapGameStats(statsResult.data),
     badges: (badgesResult.data || []).map(mapBadge).filter(Boolean),
-    workoutDifficultyPointValues,
   };
 }
 
-export async function getWorkoutDifficultyPointValues() {
-  const client = requireSupabase();
-  await requireUser();
-  return queryWorkoutDifficultyPointValues(client);
-}
+const browserTimeZone = () => {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+  } catch {
+    return 'UTC';
+  }
+};
 
-export async function saveChallengeEntry(entry) {
+const bootstrapDailyStandardTimeZone = async (client, userId) => {
+  if (!dailyStandardTimeZoneBootstraps.has(userId)) {
+    const bootstrap = (async () => {
+      const { error } = await client.rpc('bootstrap_daily_standard_time_zone', {
+        target_time_zone: browserTimeZone(),
+      });
+      if (error) throw error;
+    })();
+    dailyStandardTimeZoneBootstraps.set(userId, bootstrap);
+  }
+
+  try {
+    await dailyStandardTimeZoneBootstraps.get(userId);
+  } catch (error) {
+    dailyStandardTimeZoneBootstraps.delete(userId);
+    throw error;
+  }
+};
+
+const rpcDraft = async (name, parameters) => {
   const client = requireSupabase();
   const user = await requireUser();
-  const { data, error } = await client
-    .from('challenge_entries')
-    .upsert({
-      user_id: user.id,
-      entry_date: entry.date,
-      completed: entry.completed || [],
-      scheduled_miss: Boolean(entry.scheduledMiss),
-    }, { onConflict: 'user_id,entry_date' })
-    .select('entry_date, completed, scheduled_miss, updated_at')
-    .single();
-
+  await bootstrapDailyStandardTimeZone(client, user.id);
+  const { data, error } = await client.rpc(name, parameters);
   if (error) throw error;
-  return mapEntry(data);
+  return normalizeDailyStandardDraft(data, parameters.target_entry_date);
+};
+
+export async function getDailyStandardDraft(entryDate) {
+  return rpcDraft('get_daily_standard_draft', { target_entry_date: entryDate });
+}
+
+export async function mutateDailyStandardDraft({ date, actionId, completed, expectedVersion = null }) {
+  if (typeof completed !== 'boolean') {
+    throw new TypeError('Daily Standard completion must be true or false.');
+  }
+  return rpcDraft('mutate_daily_standard_draft', {
+    target_entry_date: date,
+    target_action_id: actionId,
+    target_completed: completed,
+    target_expected_version: expectedVersion,
+  });
+}
+
+export async function setDailyStandardWorkoutDifficulty({ date, workoutId, difficulty, expectedVersion = null }) {
+  return rpcDraft('set_daily_standard_workout_difficulty', {
+    target_entry_date: date,
+    target_workout_id: workoutId,
+    target_difficulty: difficulty,
+    target_expected_version: expectedVersion,
+  });
+}
+
+// Compatibility bridge for older completion-only callers. Legacy snapshots may
+// add actions, but cannot remove an action they may simply be too stale to see.
+export async function saveChallengeEntry(entry) {
+  const desired = new Set(normalizeDailyStandardDraft(entry).completed);
+  let current = await getDailyStandardDraft(entry.date);
+  for (const actionId of desired) {
+    if (current.completed.includes(actionId)) continue;
+    current = await mutateDailyStandardDraft({
+      date: entry.date,
+      actionId,
+      completed: true,
+      expectedVersion: current.version,
+    });
+  }
+  return current;
 }
 
 export async function postCheckIn(checkIn) {
@@ -950,6 +988,7 @@ export async function getCommunityFeed() {
   const { data, error } = await client
     .from('community_feed_items')
     .select('id, display_name, challenge_day, status, completed_count, points_awarded, created_at')
+    .neq('status', 'scheduled')
     .order('created_at', { ascending: false })
     .limit(30);
 

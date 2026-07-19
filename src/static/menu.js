@@ -9,7 +9,6 @@ const loggedInLinks = [
   ['Challenges', './dashboard.html#challengeVault'],
   ['Billing', './billing.html'],
   ['Community', './community.html'],
-  ["Today’s Actions", './today-actions.html'],
   ['Check-In', './dashboard.html#check-in'],
   ['Profile', './profile.html'],
 ];

@@ -2,176 +2,71 @@ import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
 
 import {
-  DEFAULT_DIFFICULTY_POINT_VALUES,
+  ACTION_POINTS_PER_COMPLETION,
   DIFFICULTY_OPTIONS,
   calculateCheckInScore,
-  normalizeDifficultyPointValues,
   normalizeWorkoutDifficulty,
 } from './scoring.mjs';
 
-const nonWorkoutActions = [
+const allActions = [
   'bible',
   'morningPrayer',
   'worshipOnly',
   'eveningPrayer',
-  'walk',
-];
-
-const allActions = [
-  ...nonWorkoutActions.slice(0, 4),
   'workoutOne',
   'walk',
   'workoutTwo',
 ];
 
-describe('workout scoring configuration', () => {
-  test('preserves the default difficulty values', () => {
-    assert.deepEqual(DEFAULT_DIFFICULTY_POINT_VALUES, {
-      easy: 2,
-      medium: 5,
-      hard: 10,
-      extreme: 15,
-    });
+describe('workout difficulty context', () => {
+  test('normalizes difficulty without assigning point values', () => {
+    assert.equal(ACTION_POINTS_PER_COMPLETION, 1);
     assert.deepEqual(DIFFICULTY_OPTIONS, ['easy', 'medium', 'hard', 'extreme']);
-  });
-
-  test('normalizes missing and invalid selections to medium', () => {
     assert.deepEqual(normalizeWorkoutDifficulty(), { one: 'medium', two: 'medium' });
     assert.deepEqual(
       normalizeWorkoutDifficulty({ one: 'unknown', two: 'hard' }),
       { one: 'medium', two: 'hard' },
     );
   });
-
-  test('accepts valid point overrides and rejects invalid values', () => {
-    assert.deepEqual(
-      normalizeDifficultyPointValues({ easy: 7, medium: -1, hard: 12.5, extreme: 20 }),
-      { easy: 7, medium: 5, hard: 10, extreme: 20 },
-    );
-  });
 });
 
 describe('calculateCheckInScore', () => {
-  test('scales a completed workout with each difficulty', () => {
-    const expectedTotals = {
-      easy: 22,
-      medium: 25,
-      hard: 30,
-      extreme: 35,
+  test('awards exactly one point for every distinct completed action', () => {
+    allActions.forEach((_, index) => {
+      assert.equal(calculateCheckInScore({ completed: allActions.slice(0, index + 1) }).totalPoints, index + 1);
+    });
+  });
+
+  test('caps a full Daily Standards day at seven points', () => {
+    assert.deepEqual(calculateCheckInScore({ completed: allActions }), {
+      totalPoints: 7,
+      workoutPoints: 0,
+      actionPoints: 7,
+      bonusPoints: 0,
+    });
+    assert.equal(calculateCheckInScore({ completed: [...allActions, 'extra'] }).totalPoints, 7);
+  });
+
+  test('ignores status, workout difficulty, and former point modifiers', () => {
+    const expected = {
+      totalPoints: 2,
+      workoutPoints: 0,
+      actionPoints: 2,
+      bonusPoints: 0,
     };
-
-    Object.entries(expectedTotals).forEach(([difficulty, expected]) => {
-      assert.deepEqual(calculateCheckInScore({
-        completed: ['workoutOne'],
-        status: 'partial',
-        workoutDifficulty: { one: difficulty, two: 'medium' },
-      }), {
-        totalPoints: expected,
-        workoutPoints: DEFAULT_DIFFICULTY_POINT_VALUES[difficulty],
-        actionPoints: 10,
-        bonusPoints: 10,
-      });
-    });
-  });
-
-  test('adds the two workout difficulty values independently', () => {
-    assert.deepEqual(calculateCheckInScore({
-      completed: ['workoutOne', 'workoutTwo'],
-      status: 'partial',
-      workoutDifficulty: { one: 'easy', two: 'hard' },
-    }), {
-      totalPoints: 42,
-      workoutPoints: 12,
-      actionPoints: 20,
-      bonusPoints: 10,
-    });
-  });
-
-  test('calculates complete-day totals for matching and mixed difficulties', () => {
-    assert.equal(calculateCheckInScore({
-      completed: allActions,
-      status: 'complete',
-      workoutDifficulty: { one: 'medium', two: 'medium' },
-    }).totalPoints, 110);
-
-    assert.deepEqual(calculateCheckInScore({
-      completed: allActions,
-      status: 'complete',
-      workoutDifficulty: { one: 'easy', two: 'extreme' },
-    }), {
-      totalPoints: 117,
-      workoutPoints: 17,
-      actionPoints: 70,
-      bonusPoints: 30,
-    });
-  });
-
-  test('preserves non-workout action scoring across difficulty selections', () => {
     for (const difficulty of DIFFICULTY_OPTIONS) {
       assert.deepEqual(calculateCheckInScore({
-        completed: nonWorkoutActions,
-        status: 'partial',
+        completed: ['workoutOne', 'bible'],
+        status: 'complete',
         workoutDifficulty: { one: difficulty, two: difficulty },
-      }), {
-        totalPoints: 60,
-        workoutPoints: 0,
-        actionPoints: 50,
-        bonusPoints: 10,
-      });
+        difficultyPointValues: { easy: 100, medium: 100, hard: 100, extreme: 100 },
+      }), expected);
     }
   });
 
-  test('preserves scheduled-miss scoring across difficulty selections', () => {
-    assert.deepEqual(calculateCheckInScore({
-      completed: [],
-      status: 'scheduled',
-      workoutDifficulty: { one: 'extreme', two: 'extreme' },
-    }), {
-      totalPoints: 15,
-      workoutPoints: 0,
-      actionPoints: 0,
-      bonusPoints: 15,
-    });
-  });
-
-  test('does not award difficulty points for an uncompleted workout', () => {
-    assert.deepEqual(calculateCheckInScore({
-      completed: ['bible'],
-      status: 'partial',
-      workoutDifficulty: { one: 'extreme', two: 'extreme' },
-    }), {
-      totalPoints: 20,
-      workoutPoints: 0,
-      actionPoints: 10,
-      bonusPoints: 10,
-    });
-  });
-
-  test('uses injected difficulty values without changing calculation logic', () => {
-    const rebalancedPoints = { easy: 4, medium: 8, hard: 12, extreme: 20 };
-
-    assert.deepEqual(calculateCheckInScore({
-      completed: ['workoutOne'],
-      status: 'partial',
-      workoutDifficulty: { one: 'easy', two: 'medium' },
-      difficultyPointValues: rebalancedPoints,
-    }), {
-      totalPoints: 24,
-      workoutPoints: 4,
-      actionPoints: 10,
-      bonusPoints: 10,
-    });
-
-    assert.deepEqual(calculateCheckInScore({
-      completed: allActions,
-      status: 'complete',
-      workoutDifficulty: { one: 'hard', two: 'extreme' },
-      difficultyPointValues: rebalancedPoints,
-    }), {
-      totalPoints: 132,
-      workoutPoints: 32,
-      actionPoints: 70,
-      bonusPoints: 30,
-    });
+  test('deduplicates stale action IDs and awards zero for invalid input', () => {
+    assert.equal(calculateCheckInScore({ completed: ['bible', 'bible'] }).totalPoints, 1);
+    assert.equal(calculateCheckInScore({ completed: ['not-a-standard'] }).totalPoints, 0);
+    assert.equal(calculateCheckInScore({ completed: null }).totalPoints, 0);
   });
 });
