@@ -1,23 +1,42 @@
 # 77-Day Dominion Challenge
 
-Responsive Vue 3 website for tracking the 77-Day Dominion Challenge with Supabase Auth and Postgres persistence.
+Static multi-page application for tracking the 77-Day Dominion Challenge with Supabase Auth and Postgres persistence.
 
 ## Stack
 
-- Vue 3
-- Composition API / composables
-- Vite
-- TypeScript
+- HTML, CSS, and browser-native JavaScript
+- Vite multi-page build
 - Supabase Auth
 - Supabase Postgres
 - localStorage for local UI preferences and preview-only mock workflow state
 
+## Application architecture
+
+The deployed frontend is a Vite multi-page application (MPA). It has no client-side framework mount or catch-all application route. Each customer-facing page is a root HTML entry declared once in `app-entrypoints.mjs`, which is consumed by both the Vite build and the entry-point test.
+
+| Entry | Purpose | Page module |
+| --- | --- | --- |
+| `index.html` | Marketing landing page | `src/static/landing.js` |
+| `membership.html` | Membership offer | `src/static/membership.js` |
+| `login.html` | Sign in | `src/static/auth.js` |
+| `register.html` | Registration | `src/static/auth.js` |
+| `billing.html` | Subscription management | `src/static/billing.js` |
+| `dashboard.html` | Daily challenge dashboard | `src/static/dashboard.js` |
+| `today-actions.html` | Current action detail experience | `src/static/dashboard.js` |
+| `community.html` | Community, groups, and journal | `src/static/community.js` |
+| `profile.html` | Account and appearance settings | `src/static/profile.js` |
+| `science.html` | Challenge background and sources | `src/static/science.js` |
+
+Shared browser modules live in `src/static/`. Shared visual tokens and page styles live in `src/assets/`. `src/static/api.js` owns the browser-facing Supabase and preview-mock boundary. Supabase migrations, the cumulative schema, and Edge Functions live under `supabase/` and are deployed separately from the Vite bundle.
+
 ## Run locally
 
 ```bash
-npm install
-npm run dev
+pnpm install
+pnpm dev
 ```
+
+Local Vite development automatically uses the preview mock workflow. To exercise the explicit preview behavior in another environment, set `VITE_ENABLE_MOCKS=true`.
 
 ## Supabase setup
 
@@ -81,11 +100,14 @@ Stripe powers checkout, payment method updates, and membership cancellation. Sup
    - `customer.subscription.deleted`
 6. Run the updated `supabase/schema.sql` before testing billing flows.
 
-## Build
+## Validation and build
 
 ```bash
-npm run build
+pnpm test
+pnpm build
 ```
+
+The test suite verifies that every root HTML file is declared as a production entry and loads an active module. The build emits each declared HTML entry and its shared assets; no dormant prototype code is compiled.
 
 ## Challenge standards
 
