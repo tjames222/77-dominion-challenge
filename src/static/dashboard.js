@@ -3,15 +3,17 @@ import {
   claimChallengeUnlocks,
   getBillingState,
   getChallengeProgression,
+  getDailyStandardDraft,
   getDashboard,
   getGameSummary,
   getLeaderboardPrestige,
   hasSupabaseAuth,
   isLocalDemoMode,
+  mutateDailyStandardDraft,
   postCheckIn,
   recordAppVisit,
   redirectToLogin,
-  saveChallengeEntry,
+  setDailyStandardWorkoutDifficulty,
   startChallenge,
   updateProfile,
 } from './api';
@@ -888,6 +890,8 @@ let confettiTimer = null;
 let confettiRunId = 0;
 let finishCelebrated = false;
 let entrySaveQueue = Promise.resolve();
+const pendingActionMutations = new Map();
+const pendingWorkoutMutations = new Map();
 let checkInSubmissionPending = false;
 let checkInSubmissionDate = '';
 let lastCheckInSubmissionAt = 0;
@@ -931,8 +935,11 @@ const pickDaily = (items, offset = 0) => items[(dayIndex() + offset) % items.len
 const todayEntry = () => {
   const entry = entries.find(item => item.date === todayKey()) || {};
   return {
+    ...entry,
     date: todayKey(),
     completed: Array.isArray(entry.completed) ? entry.completed : [],
+    workoutDifficulty: normalizeWorkoutDifficulty(entry.workoutDifficulty || workoutDifficulty),
+    version: Math.max(Number.parseInt(entry.version, 10) || 0, 0),
   };
 };
 const hasSubmittedCheckIn = (dateKey = todayKey(), challengeDay = currentDay()) => (
@@ -970,17 +977,45 @@ const checkInStatusForEntry = (entry) => {
   if (!entry.completed.length) return null;
   return entry.completed.length === standards.length ? 'complete' : 'partial';
 };
-const saveEntry = (entry) => {
+const replaceEntry = (entry) => {
   const index = entries.findIndex(item => item.date === entry.date);
   if (index >= 0) entries[index] = entry;
   else entries.push(entry);
   save(ENTRY_STORAGE_KEY, entries);
-  if (hasSupabaseAuth()) {
-    entrySaveQueue = entrySaveQueue
-      .then(() => saveChallengeEntry(entry))
-      .catch((error) => console.warn('Unable to sync challenge entry', error));
-  }
 };
+
+const withPendingDraftMutations = (draft) => {
+  const completed = new Set(draft.completed);
+  pendingActionMutations.forEach((isCompleted, actionId) => {
+    if (isCompleted) completed.add(actionId);
+    else completed.delete(actionId);
+  });
+  const nextDifficulty = { ...draft.workoutDifficulty };
+  pendingWorkoutMutations.forEach((difficulty, workoutId) => {
+    nextDifficulty[workoutId] = difficulty;
+  });
+  return {
+    ...draft,
+    completed: [...completed],
+    workoutDifficulty: normalizeWorkoutDifficulty(nextDifficulty),
+  };
+};
+
+async function reconcileDailyStandardDraft(date, fallbackMessage) {
+  try {
+    const authoritative = await getDailyStandardDraft(date);
+    const reconciled = withPendingDraftMutations(authoritative);
+    replaceEntry(reconciled);
+    workoutDifficulty = normalizeWorkoutDifficulty(reconciled.workoutDifficulty);
+    save(WORKOUT_DIFFICULTY_STORAGE_KEY, workoutDifficulty);
+    setCheckInNotice(date, fallbackMessage);
+    render();
+  } catch (error) {
+    console.warn('Unable to reconcile Daily Standards draft', error);
+    setCheckInNotice(date, 'Unable to sync that change. Refresh and try again.');
+    render();
+  }
+}
 const rawChallengeDay = () => previewChallengeMode()
   ? previewChallengeState.day
   : calendarDayDifference(todayKey(), startDate) + 1;
@@ -1072,10 +1107,40 @@ function toggleStandard(id) {
   if (isChallengeFinished() || !isCheckInStatusReady() || hasSubmittedCheckIn() || isCheckInPending()) return;
   const currentEntry = todayEntry();
   const completed = new Set(currentEntry.completed);
-  if (completed.has(id)) completed.delete(id);
-  else completed.add(id);
-  saveEntry({ ...currentEntry, completed: [...completed] });
+  const nextCompleted = !completed.has(id);
+  if (nextCompleted) completed.add(id);
+  else completed.delete(id);
+  pendingActionMutations.set(id, nextCompleted);
+  replaceEntry({ ...currentEntry, completed: [...completed], version: currentEntry.version + 1 });
   render();
+
+  if (!hasSupabaseAuth()) {
+    pendingActionMutations.delete(id);
+    return;
+  }
+  entrySaveQueue = entrySaveQueue
+    .then(() => mutateDailyStandardDraft({
+      date: currentEntry.date,
+      actionId: id,
+      completed: nextCompleted,
+      expectedVersion: currentEntry.version,
+    }))
+    .then((authoritative) => {
+      if (pendingActionMutations.get(id) === nextCompleted) pendingActionMutations.delete(id);
+      const reconciled = withPendingDraftMutations(authoritative);
+      replaceEntry(reconciled);
+      workoutDifficulty = normalizeWorkoutDifficulty(reconciled.workoutDifficulty);
+      save(WORKOUT_DIFFICULTY_STORAGE_KEY, workoutDifficulty);
+      if (authoritative.staleWriteReconciled) {
+        setCheckInNotice(currentEntry.date, 'Your change was merged with newer activity from another tab.');
+      }
+      render();
+    })
+    .catch((error) => {
+      if (pendingActionMutations.get(id) === nextCompleted) pendingActionMutations.delete(id);
+      console.warn('Unable to sync Daily Standard', error);
+      return reconcileDailyStandardDraft(currentEntry.date, error?.message || 'That change could not be saved.');
+    });
 }
 const padClock = (value) => String(value).padStart(2, '0');
 function getDayTiming(now = new Date()) {
@@ -1371,11 +1436,15 @@ async function hydrateDashboardFromApi() {
       save('dominion:startDate', startDate);
     }
     if (Array.isArray(dashboard?.entries)) {
-      entries = dashboard.entries.map((entry) => ({
-        date: entry.date,
-        completed: Array.isArray(entry.completed) ? entry.completed : [],
-      }));
+      entries = dashboard.entries.map((entry) => (
+        entry.date === todayKey() ? withPendingDraftMutations(entry) : entry
+      ));
       save(ENTRY_STORAGE_KEY, entries);
+      const currentDraft = entries.find((entry) => entry.date === todayKey());
+      if (currentDraft?.workoutDifficulty) {
+        workoutDifficulty = normalizeWorkoutDifficulty(currentDraft.workoutDifficulty);
+        save(WORKOUT_DIFFICULTY_STORAGE_KEY, workoutDifficulty);
+      }
     }
     if (Array.isArray(dashboard?.checkIns)) {
       replaceSubmittedCheckIns({
@@ -1437,7 +1506,9 @@ async function refreshLeaderboardPrestige({ renderAfter = true } = {}) {
 function startLeaderboardPrestigeRefresh() {
   if (leaderboardPrestigeTimer) return;
   const refreshIfVisible = () => {
-    if (!document.hidden) refreshLeaderboardPrestige();
+    if (document.hidden) return;
+    refreshLeaderboardPrestige();
+    if (hasSupabaseAuth()) hydrateDashboardFromApi();
   };
   leaderboardPrestigeTimer = window.setInterval(refreshIfVisible, LEADERBOARD_PRESTIGE_REFRESH_MS);
   window.addEventListener('focus', refreshIfVisible);
@@ -1521,9 +1592,45 @@ document.querySelectorAll('[data-workout]').forEach((input) => {
     }
     const target = event.target;
     if (target.type === 'radio' && !target.checked) return;
+    const currentEntry = todayEntry();
     workoutDifficulty = normalizeWorkoutDifficulty({ ...workoutDifficulty, [target.dataset.workout]: target.value });
+    pendingWorkoutMutations.set(target.dataset.workout, target.value);
     save(WORKOUT_DIFFICULTY_STORAGE_KEY, workoutDifficulty);
+    replaceEntry({
+      ...currentEntry,
+      workoutDifficulty,
+      version: currentEntry.version + 1,
+    });
     applyDailyActions();
+
+    if (!hasSupabaseAuth()) {
+      pendingWorkoutMutations.delete(target.dataset.workout);
+      return;
+    }
+    entrySaveQueue = entrySaveQueue
+      .then(() => setDailyStandardWorkoutDifficulty({
+        date: currentEntry.date,
+        workoutId: target.dataset.workout,
+        difficulty: target.value,
+        expectedVersion: currentEntry.version,
+      }))
+      .then((authoritative) => {
+        if (pendingWorkoutMutations.get(target.dataset.workout) === target.value) {
+          pendingWorkoutMutations.delete(target.dataset.workout);
+        }
+        const reconciled = withPendingDraftMutations(authoritative);
+        replaceEntry(reconciled);
+        workoutDifficulty = normalizeWorkoutDifficulty(reconciled.workoutDifficulty);
+        save(WORKOUT_DIFFICULTY_STORAGE_KEY, workoutDifficulty);
+        render();
+      })
+      .catch((error) => {
+        if (pendingWorkoutMutations.get(target.dataset.workout) === target.value) {
+          pendingWorkoutMutations.delete(target.dataset.workout);
+        }
+        console.warn('Unable to sync workout difficulty', error);
+        return reconcileDailyStandardDraft(currentEntry.date, error?.message || 'That difficulty could not be saved.');
+      });
   });
 });
 document.querySelectorAll('[data-native-health]').forEach((button) => {
@@ -1563,7 +1670,10 @@ window.addEventListener('storage', (event) => {
     checkInNotice = '';
     checkInNoticeDate = '';
   } else if (event.key === 'dominion:startDate') startDate = load('dominion:startDate', calendarTodayKey());
-  else if (event.key === ENTRY_STORAGE_KEY) entries = load(ENTRY_STORAGE_KEY, []);
+  else if (event.key === ENTRY_STORAGE_KEY) {
+    entries = load(ENTRY_STORAGE_KEY, []);
+    workoutDifficulty = normalizeWorkoutDifficulty(todayEntry().workoutDifficulty);
+  }
   else if (event.key === checkInDatesStorageKey()) {
     const cache = checkInCacheForOwner(load(checkInDatesStorageKey(), {}), checkInCacheOwner);
     submittedCheckInDates = new Set(cache.dates);
@@ -1617,15 +1727,12 @@ if (selectAllActionsButton) selectAllActionsButton.addEventListener('click', () 
   const currentEntry = todayEntry();
   const completedStandards = new Set(currentEntry.completed);
   const allActionsCompleted = standards.every(([id]) => completedStandards.has(id));
-  const entry = {
-    ...currentEntry,
-    completed: allActionsCompleted ? [] : standards.map(([id]) => id),
-  };
-  saveEntry(entry);
-  render();
+  standards.forEach(([id]) => {
+    if (completedStandards.has(id) === allActionsCompleted) toggleStandard(id);
+  });
 });
 if (checkInButton) checkInButton.addEventListener('click', async () => {
-  const entry = todayEntry();
+  let entry = todayEntry();
   const submissionDay = currentDay();
   const simulatedPreviewPost = previewChallengeMode();
   if (!isCheckInStatusReady(entry.date)) return;
@@ -1644,7 +1751,7 @@ if (checkInButton) checkInButton.addEventListener('click', async () => {
   const submissionStartedAt = Date.now();
   if (!canStartCheckInSubmission(lastCheckInSubmissionAt, submissionStartedAt, CHECK_IN_SUBMISSION_COOLDOWN_MS)) return;
   lastCheckInSubmissionAt = submissionStartedAt;
-  const status = entry.completed.length === standards.length ? 'complete' : 'partial';
+  let status = entry.completed.length === standards.length ? 'complete' : 'partial';
   const previousBadgeKeys = new Set(badges.map((badge) => badge.key));
   let feedItem = {
     date: entry.date,
@@ -1665,6 +1772,12 @@ if (checkInButton) checkInButton.addEventListener('click', async () => {
 
   try {
     if (hasSupabaseAuth()) {
+      await entrySaveQueue;
+      entry = await getDailyStandardDraft(entry.date);
+      replaceEntry(entry);
+      workoutDifficulty = normalizeWorkoutDifficulty(entry.workoutDifficulty);
+      status = entry.completed.length === standards.length ? 'complete' : 'partial';
+      if (!entry.completed.length) throw new Error('Complete at least one action before posting.');
       const postedCheckIn = await postCheckIn({
         date: entry.date,
         day: submissionDay,

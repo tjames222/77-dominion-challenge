@@ -11,6 +11,7 @@ import {
   createCheckInAlreadyCompleteError,
   isDuplicateCheckInError,
 } from './check-in.mjs';
+import { normalizeDailyStandardDraft } from './daily-standard-draft.mjs';
 import {
   prepareMockCommunityPostsForStorage,
   prepareMockCrewMembersForStorage,
@@ -349,11 +350,7 @@ const mapProfile = (profile) => profile ? ({
   updatedAt: profile.updated_at,
 }) : null;
 
-const mapEntry = (entry) => ({
-  date: entry.entry_date,
-  completed: Array.isArray(entry.completed) ? entry.completed : [],
-  updatedAt: entry.updated_at,
-});
+const mapEntry = (entry) => normalizeDailyStandardDraft(entry);
 
 const mapFeedItem = (item) => ({
   id: item.id,
@@ -829,7 +826,7 @@ export async function getDashboard() {
     getProfile(),
     client
       .from('challenge_entries')
-      .select('entry_date, completed, updated_at')
+      .select('entry_date, completed, workout_difficulty, version, updated_at')
       .eq('user_id', user.id)
       .order('entry_date', { ascending: false })
       .limit(90),
@@ -877,21 +874,51 @@ export async function getDashboard() {
   };
 }
 
-export async function saveChallengeEntry(entry) {
+const rpcDraft = async (name, parameters) => {
   const client = requireSupabase();
-  const user = await requireUser();
-  const { data, error } = await client
-    .from('challenge_entries')
-    .upsert({
-      user_id: user.id,
-      entry_date: entry.date,
-      completed: entry.completed || [],
-    }, { onConflict: 'user_id,entry_date' })
-    .select('entry_date, completed, updated_at')
-    .single();
-
+  await requireUser();
+  const { data, error } = await client.rpc(name, parameters);
   if (error) throw error;
-  return mapEntry(data);
+  return normalizeDailyStandardDraft(data, parameters.target_entry_date);
+};
+
+export async function getDailyStandardDraft(entryDate) {
+  return rpcDraft('get_daily_standard_draft', { target_entry_date: entryDate });
+}
+
+export async function mutateDailyStandardDraft({ date, actionId, completed, expectedVersion = null }) {
+  return rpcDraft('mutate_daily_standard_draft', {
+    target_entry_date: date,
+    target_action_id: actionId,
+    target_completed: Boolean(completed),
+    target_expected_version: expectedVersion,
+  });
+}
+
+export async function setDailyStandardWorkoutDifficulty({ date, workoutId, difficulty, expectedVersion = null }) {
+  return rpcDraft('set_daily_standard_workout_difficulty', {
+    target_entry_date: date,
+    target_workout_id: workoutId,
+    target_difficulty: difficulty,
+    target_expected_version: expectedVersion,
+  });
+}
+
+// Compatibility bridge for older completion-only callers. Legacy snapshots may
+// add actions, but cannot remove an action they may simply be too stale to see.
+export async function saveChallengeEntry(entry) {
+  const desired = new Set(normalizeDailyStandardDraft(entry).completed);
+  let current = await getDailyStandardDraft(entry.date);
+  for (const actionId of desired) {
+    if (current.completed.includes(actionId)) continue;
+    current = await mutateDailyStandardDraft({
+      date: entry.date,
+      actionId,
+      completed: true,
+      expectedVersion: current.version,
+    });
+  }
+  return current;
 }
 
 export async function postCheckIn(checkIn) {
