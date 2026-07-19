@@ -1,1 +1,39 @@
-{"scripts":{"dev":"vite --host 0.0.0.0","build":"vue-tsc -b && vite build","preview":"vite preview --host 0.0.0.0","test":"node --test src/static/*.test.mjs"},"dependencies":{"@supabase/supabase-js":"^2.110.0","@vitejs/plugin-vue":"latest","@youversion/platform-core":"^2.2.0","lucide-vue-next":"latest","typescript":"latest","vite":"latest","vue":"latest","vue-tsc":"latest"},"devDependencies":{"npm":"^11.18.0","supabase":"^2.109.0","wrangler":"^4.107.0"}}
+{
+  "packageManager": "pnpm@10.17.1",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "dev": "vite --host 0.0.0.0",
+    "build": "vue-tsc -b && vite build",
+    "preview": "vite preview --host 0.0.0.0",
+    "test": "node --test src/static/*.test.mjs",
+    "test:frontend": "pnpm run test",
+    "check:frontend": "pnpm run test:frontend && pnpm run build",
+    "supabase:start": "supabase start",
+    "supabase:stop": "supabase stop --no-backup",
+    "supabase:reset": "supabase db reset --local",
+    "test:database": "supabase test db supabase/tests/database",
+    "test:rpc": "bash supabase/tests/integration/rpc-concurrency.sh",
+    "check:schema": "bash scripts/check-schema-drift.sh",
+    "check:functions": "cd supabase && deno task fmt:check && deno task check",
+    "test:functions": "cd supabase && deno task test",
+    "check:database": "pnpm run supabase:reset && pnpm run test:database && pnpm run test:rpc && pnpm run check:schema",
+    "check:backend": "pnpm run check:database && pnpm run check:functions && pnpm run test:functions"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.110.0",
+    "@vitejs/plugin-vue": "latest",
+    "@youversion/platform-core": "^2.2.0",
+    "lucide-vue-next": "latest",
+    "typescript": "latest",
+    "vite": "latest",
+    "vue": "latest",
+    "vue-tsc": "latest"
+  },
+  "devDependencies": {
+    "npm": "^11.18.0",
+    "supabase": "2.109.0",
+    "wrangler": "^4.107.0"
+  }
+}

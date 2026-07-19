@@ -1,10 +1,19 @@
-name: Deploy to GitHub Pages
+name: Release production
 
 on:
   push:
     branches:
       - main
   workflow_dispatch:
+    inputs:
+      release_scope:
+        description: Choose a full release or rebuild only the frontend from a backend-compatible commit.
+        required: true
+        default: full
+        type: choice
+        options:
+          - full
+          - frontend-only
 
 permissions:
   contents: read
@@ -12,36 +21,203 @@ permissions:
   id-token: write
 
 concurrency:
-  group: pages
+  group: production-release
   cancel-in-progress: false
 
 jobs:
-  build:
+  validation:
+    name: Validate release candidate
+    uses: ./.github/workflows/ci.yml
+
+  backend:
+    name: Migrate, deploy, and verify backend
+    needs: validation
+    if: github.event_name != 'workflow_dispatch' || inputs.release_scope == 'full'
     runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: production
+    env:
+      SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+      SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+      SUPABASE_PROJECT_REF: ${{ vars.SUPABASE_PROJECT_REF }}
+      STRIPE_SECRET_KEY: ${{ secrets.STRIPE_SECRET_KEY }}
+      STRIPE_WEBHOOK_SECRET: ${{ secrets.STRIPE_WEBHOOK_SECRET }}
+      STRIPE_MEMBERSHIP_PRICE_ID: ${{ secrets.STRIPE_MEMBERSHIP_PRICE_ID }}
+      PUBLIC_SITE_URL: ${{ vars.PUBLIC_SITE_URL }}
+      PUBLIC_ALLOWED_SITE_URLS: ${{ vars.PUBLIC_ALLOWED_SITE_URLS }}
+      CLOUDFLARE_PAGES_PROJECT_HOST: ${{ vars.CLOUDFLARE_PAGES_PROJECT_HOST }}
+      VITE_SUPABASE_URL: ${{ vars.VITE_SUPABASE_URL }}
+      VITE_SUPABASE_PUBLISHABLE_KEY: ${{ vars.VITE_SUPABASE_PUBLISHABLE_KEY }}
+      SUPABASE_TELEMETRY_DISABLED: "1"
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+      - name: Setup Supabase CLI
+        uses: supabase/setup-cli@v2
+        with:
+          version: 2.109.0
+      - name: Validate the production release gate
+        shell: bash
+        run: |
+          required=(
+            SUPABASE_ACCESS_TOKEN
+            SUPABASE_DB_PASSWORD
+            SUPABASE_PROJECT_REF
+            STRIPE_SECRET_KEY
+            STRIPE_WEBHOOK_SECRET
+            STRIPE_MEMBERSHIP_PRICE_ID
+            PUBLIC_SITE_URL
+            VITE_SUPABASE_URL
+            VITE_SUPABASE_PUBLISHABLE_KEY
+          )
+          for name in "${required[@]}"; do
+            if [[ -z "${!name:-}" ]]; then
+              echo "::error::Missing production environment value: ${name}"
+              exit 1
+            fi
+          done
+      - name: Link production Supabase project
+        run: supabase link --project-ref "$SUPABASE_PROJECT_REF" --password "$SUPABASE_DB_PASSWORD"
+      - name: Require reconciled historical migration records
+        shell: bash
+        run: |
+          history="$(supabase migration list --linked --password "$SUPABASE_DB_PASSWORD")"
+          printf '%s\n' "$history"
+
+          required_history=(
+            20260707170000
+            20260708154000
+            20260708155500
+            20260708160000
+            20260709163000
+            20260710120000
+            20260710123000
+            20260713120000
+            20260714120000
+            20260715190000
+            20260716061500
+            20260716153000
+            20260716163000
+          )
+          for version in "${required_history[@]}"; do
+            if ! awk -F'|' -v expected="$version" \
+              '$1 ~ expected && $2 ~ expected { found=1 } END { exit found ? 0 : 1 }' \
+              <<< "$history"; then
+              echo "::error::Historical migration ${version} is not reconciled on production. Follow docs/backend-release-runbook.md; the workflow will not replay historical SQL."
+              exit 1
+            fi
+          done
+      - name: Verify migration history and preview the migration plan
+        run: supabase db push --linked --dry-run --password "$SUPABASE_DB_PASSWORD"
+      - name: Apply database migrations
+        run: supabase db push --linked --password "$SUPABASE_DB_PASSWORD"
+      - name: Synchronize Edge Function secrets
+        shell: bash
+        run: |
+          function_secrets=(
+            "STRIPE_SECRET_KEY=${STRIPE_SECRET_KEY}"
+            "STRIPE_WEBHOOK_SECRET=${STRIPE_WEBHOOK_SECRET}"
+            "STRIPE_MEMBERSHIP_PRICE_ID=${STRIPE_MEMBERSHIP_PRICE_ID}"
+            "PUBLIC_SITE_URL=${PUBLIC_SITE_URL}"
+          )
+          if [[ -n "${PUBLIC_ALLOWED_SITE_URLS:-}" ]]; then
+            function_secrets+=("PUBLIC_ALLOWED_SITE_URLS=${PUBLIC_ALLOWED_SITE_URLS}")
+          fi
+          if [[ -n "${CLOUDFLARE_PAGES_PROJECT_HOST:-}" ]]; then
+            function_secrets+=("CLOUDFLARE_PAGES_PROJECT_HOST=${CLOUDFLARE_PAGES_PROJECT_HOST}")
+          fi
+          supabase secrets set --project-ref "$SUPABASE_PROJECT_REF" "${function_secrets[@]}"
+      - name: Deploy authenticated Edge Functions
+        run: |
+          supabase functions deploy cancel-membership --project-ref "$SUPABASE_PROJECT_REF"
+          supabase functions deploy create-checkout-session --project-ref "$SUPABASE_PROJECT_REF"
+          supabase functions deploy create-customer-portal-session --project-ref "$SUPABASE_PROJECT_REF"
+      - name: Deploy Stripe webhook
+        run: supabase functions deploy stripe-webhook --project-ref "$SUPABASE_PROJECT_REF" --no-verify-jwt
+      - name: Verify migrations and deployed functions
+        shell: bash
+        run: |
+          supabase migration list --linked --password "$SUPABASE_DB_PASSWORD"
+          supabase functions list --project-ref "$SUPABASE_PROJECT_REF"
+
+          response_file="${RUNNER_TEMP}/cancel-membership-response.json"
+          status="$(curl --silent --show-error --output "$response_file" --write-out '%{http_code}' \
+            --request POST \
+            --header "apikey: ${VITE_SUPABASE_PUBLISHABLE_KEY}" \
+            --header "Origin: ${PUBLIC_SITE_URL}" \
+            "${VITE_SUPABASE_URL}/functions/v1/cancel-membership")"
+          if [[ "$status" != "401" ]]; then
+            echo "::error::Expected the unauthenticated function smoke test to return 401; received ${status}."
+            exit 1
+          fi
+      - name: Release backend feature gates
+        run: |
+          echo "Backend verification passed. Frontend build-time feature gates may now be released." >> "$GITHUB_STEP_SUMMARY"
+
+  frontend:
+    name: Build production frontend
+    needs:
+      - validation
+      - backend
+    if: >-
+      always() &&
+      needs.validation.result == 'success' &&
+      (needs.backend.result == 'success' ||
+        (github.event_name == 'workflow_dispatch' && inputs.release_scope == 'frontend-only' && needs.backend.result == 'skipped'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: production
+    env:
+      VITE_SUPABASE_URL: ${{ vars.VITE_SUPABASE_URL }}
+      VITE_SUPABASE_PUBLISHABLE_KEY: ${{ vars.VITE_SUPABASE_PUBLISHABLE_KEY }}
+      VITE_ENABLE_MOCKS: "false"
+      VITE_YOUVERSION_VERSE_URL: ${{ vars.VITE_YOUVERSION_VERSE_URL }}
+      VITE_YOUVERSION_APP_URL: ${{ vars.VITE_YOUVERSION_APP_URL }}
+      VITE_YOUVERSION_PRAYER_URL: ${{ vars.VITE_YOUVERSION_PRAYER_URL }}
+      VITE_APPLE_FITNESS_URL: ${{ vars.VITE_APPLE_FITNESS_URL }}
+      VITE_WALK_ALARM_URL: ${{ vars.VITE_WALK_ALARM_URL }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.17.1
+          run_install: false
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
           node-version: 22
+          cache: pnpm
       - name: Install dependencies
-        run: npm install
-      - name: Build
-        run: npm run build
+        run: pnpm install --frozen-lockfile
+      - name: Validate frontend production configuration
+        shell: bash
+        run: |
+          if [[ -z "${VITE_SUPABASE_URL:-}" || -z "${VITE_SUPABASE_PUBLISHABLE_KEY:-}" ]]; then
+            echo "::error::Production Supabase public configuration is missing."
+            exit 1
+          fi
+          if [[ "${VITE_ENABLE_MOCKS}" != "false" ]]; then
+            echo "::error::Production builds must disable mock data."
+            exit 1
+          fi
+      - name: Build production frontend
+        run: pnpm run build
       - name: Setup Pages
         uses: actions/configure-pages@v5
-      - name: Upload artifact
+      - name: Upload frontend artifact
         uses: actions/upload-pages-artifact@v3
         with:
           path: ./dist
 
   deploy:
+    name: Deploy frontend
+    needs: frontend
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     runs-on: ubuntu-latest
-    needs: build
     steps:
       - name: Deploy to GitHub Pages
         id: deployment

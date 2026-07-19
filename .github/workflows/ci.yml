@@ -1,0 +1,109 @@
+name: Pull request validation
+
+on:
+  pull_request:
+    branches:
+      - develop
+      - main
+  workflow_dispatch:
+  workflow_call:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  frontend:
+    name: Frontend
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.17.1
+          run_install: false
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Run frontend tests and build
+        run: pnpm run check:frontend
+
+  database:
+    name: Database
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      SUPABASE_TELEMETRY_DISABLED: "1"
+      SUPABASE_DB_URL: postgresql://postgres:postgres@127.0.0.1:54322/postgres
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.17.1
+          run_install: false
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - name: Setup Supabase CLI
+        uses: supabase/setup-cli@v2
+        with:
+          version: 2.109.0
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Start local Supabase
+        run: pnpm run supabase:start
+      - name: Rebuild from the migration chain
+        run: pnpm run supabase:reset
+      - name: Test migrations and RLS
+        run: pnpm run test:database
+      - name: Test RPC retries and concurrency
+        run: pnpm run test:rpc
+      - name: Detect canonical schema drift
+        run: pnpm run check:schema
+      - name: Stop local Supabase
+        if: always()
+        run: pnpm run supabase:stop || true
+
+  functions:
+    name: Edge Functions
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      DENO_DIR: /tmp/deno
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup Deno
+        uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.8.1
+      - name: Restore Deno dependency cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.DENO_DIR }}
+          key: ${{ runner.os }}-deno-${{ hashFiles('supabase/deno.json', 'supabase/deno.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-deno-
+      - name: Check Edge Function formatting
+        working-directory: supabase
+        run: deno task fmt:check
+      - name: Type-check Edge Functions
+        working-directory: supabase
+        run: deno task check
+      - name: Run Edge Function contract tests
+        working-directory: supabase
+        run: deno task test
