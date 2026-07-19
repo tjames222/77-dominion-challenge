@@ -2663,6 +2663,63 @@ body.challenge-finished .reward-backdrop {
 .action-page-status { min-height: 1.5em; margin: 16px 0; color: var(--text-muted); font-size: .84rem; font-weight: 750; }
 .action-page-status.is-error { color: var(--danger, #ef8c8c); }
 .action-page-content { display: grid; gap: 18px; padding: 10px 0 28px; }
+.action-guidance-intro {
+  display: grid;
+  gap: 8px;
+  padding: 20px 0 2px;
+}
+.action-guidance-intro h2,
+.action-guidance-intro p { margin: 0; }
+.action-guidance-intro p { max-width: 62ch; color: var(--text-muted); line-height: 1.7; }
+.action-guidance-steps {
+  display: grid;
+  gap: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  counter-reset: action-guidance;
+  border-block: 1px solid var(--border);
+}
+.action-guidance-steps li {
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr);
+  gap: 12px;
+  align-items: start;
+  padding: 15px 0;
+  color: var(--text-muted);
+  line-height: 1.55;
+  counter-increment: action-guidance;
+}
+.action-guidance-steps li + li { border-top: 1px solid var(--border); }
+.action-guidance-steps li::before {
+  content: counter(action-guidance, decimal-leading-zero);
+  color: var(--accent);
+  font-size: .72rem;
+  font-weight: 950;
+  letter-spacing: .06em;
+}
+.action-verse {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+  padding: clamp(20px, 5vw, 30px);
+  border-left: 3px solid var(--accent);
+  background: color-mix(in srgb, var(--accent) 7%, transparent);
+}
+.action-verse p { margin: 0; font-family: var(--font-display, inherit); font-size: clamp(1.35rem, 4vw, 2rem); line-height: 1.25; }
+.action-verse cite { color: var(--text-muted); font-size: .8rem; font-style: normal; font-weight: 850; }
+.action-resource-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 52px;
+  padding: 12px 0;
+  border-bottom: 1px solid color-mix(in srgb, var(--accent) 56%, var(--border));
+  color: var(--text);
+  font-weight: 900;
+  text-decoration: none;
+}
+.action-resource-link:hover { color: var(--accent); }
 .action-check-in-handoff {
   display: flex;
   justify-content: center;

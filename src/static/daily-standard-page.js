@@ -9,6 +9,12 @@ import {
 } from './api';
 import { calendarDayDifference, dateKeyForTimeZone } from './check-in.mjs';
 import { normalizeDailyStandardDraft } from './daily-standard-draft.mjs';
+import {
+  FALLBACK_DAILY_VERSE,
+  WORSHIP_PLAYLISTS,
+  loadDailyVerse,
+  pickDailyForDate,
+} from './daily-standard-content.mjs';
 import { dailyStandardRoute } from './daily-standard-routes.mjs';
 import {
   PREVIEW_CHALLENGE_STORAGE_KEY,
@@ -24,12 +30,16 @@ const browserTimeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC
 const localDemoMode = isLocalDemoMode();
 const root = document.querySelector('[data-daily-standard-page]');
 const action = dailyStandardRoute(root?.dataset.actionId);
+const YOUVERSION_VERSE_URL = import.meta.env.VITE_YOUVERSION_VERSE_URL || '';
+const YOUVERSION_APP_URL = import.meta.env.VITE_YOUVERSION_APP_URL || 'https://www.bible.com/';
+const YOUVERSION_PRAYER_URL = import.meta.env.VITE_YOUVERSION_PRAYER_URL || 'https://www.bible.com/prayer';
 
 let entryDate = dateKeyForTimeZone(new Date(), browserTimeZone);
 let draft = normalizeDailyStandardDraft({ entry_date: entryDate });
 let loading = true;
 let saving = false;
 let errorMessage = '';
+let renderedContentKey = '';
 
 const readJson = (key, fallback) => {
   try {
@@ -97,6 +107,124 @@ function setText(id, value) {
   if (element) element.textContent = value;
 }
 
+function setExternalLink(link, href) {
+  link.href = href;
+  link.target = '_blank';
+  link.rel = 'noopener noreferrer';
+}
+
+function contentTemplate({ eyebrow, title, lead, steps = [], linkLabel, linkHref }) {
+  const content = document.getElementById('actionPageContent');
+  if (!content) return null;
+  content.replaceChildren();
+
+  const introduction = document.createElement('div');
+  introduction.className = 'action-guidance-intro';
+  const label = document.createElement('span');
+  label.className = 'eyebrow';
+  label.textContent = eyebrow;
+  const heading = document.createElement('h2');
+  heading.textContent = title;
+  const copy = document.createElement('p');
+  copy.textContent = lead;
+  introduction.append(label, heading, copy);
+  content.append(introduction);
+
+  if (steps.length) {
+    const list = document.createElement('ol');
+    list.className = 'action-guidance-steps';
+    steps.forEach((step) => {
+      const item = document.createElement('li');
+      item.textContent = step;
+      list.append(item);
+    });
+    content.append(list);
+  }
+
+  if (linkLabel && linkHref) {
+    const link = document.createElement('a');
+    link.className = 'action-resource-link';
+    link.textContent = `${linkLabel} ↗`;
+    setExternalLink(link, linkHref);
+    content.append(link);
+  }
+  return content;
+}
+
+async function renderActionContent() {
+  if (!action) return;
+  const contentKey = `${action.id}:${entryDate}`;
+  if (renderedContentKey === contentKey) return;
+  renderedContentKey = contentKey;
+
+  if (action.id === 'bible') {
+    const content = contentTemplate({
+      eyebrow: 'Today’s reading',
+      title: 'Read 5–8 chapters',
+      lead: 'Read attentively, note what stands out, and carry one truth into the rest of your day.',
+      linkLabel: 'Open in YouVersion',
+      linkHref: YOUVERSION_APP_URL,
+    });
+    const verse = document.createElement('blockquote');
+    verse.className = 'action-verse';
+    const verseText = document.createElement('p');
+    verseText.textContent = FALLBACK_DAILY_VERSE.text;
+    const citation = document.createElement('cite');
+    citation.textContent = FALLBACK_DAILY_VERSE.reference;
+    verse.append(verseText, citation);
+    content?.querySelector('.action-resource-link')?.before(verse);
+    const resolvedVerse = await loadDailyVerse(YOUVERSION_VERSE_URL);
+    if (renderedContentKey !== contentKey) return;
+    verseText.textContent = resolvedVerse.text;
+    citation.textContent = resolvedVerse.reference;
+    return;
+  }
+
+  if (action.id === 'morningPrayer') {
+    contentTemplate({
+      eyebrow: 'Morning practice',
+      title: 'Begin before the noise',
+      lead: 'Meet God before the demands of the day set your direction.',
+      steps: [
+        'Be still and become aware of God’s presence.',
+        'Offer the day, your plans, and the people you will encounter.',
+        'Ask for wisdom, courage, and a willing spirit.',
+      ],
+      linkLabel: 'Open guided prayer',
+      linkHref: YOUVERSION_PRAYER_URL,
+    });
+    return;
+  }
+
+  if (action.id === 'worshipOnly') {
+    const worship = pickDailyForDate(WORSHIP_PLAYLISTS, entryDate);
+    contentTemplate({
+      eyebrow: 'Today’s worship prompt',
+      title: worship?.label || 'Worship with your full attention',
+      lead: 'Choose music centered on worship. Listen without multitasking and let the words shape your attention.',
+      linkLabel: 'Open today’s worship on Spotify',
+      linkHref: worship?.url || 'https://open.spotify.com/search/worship',
+    });
+    return;
+  }
+
+  if (action.id === 'eveningPrayer') {
+    contentTemplate({
+      eyebrow: 'Evening practice',
+      title: 'Close the day with honesty',
+      lead: 'Review the day in God’s presence, receive grace, and release what you cannot carry into tomorrow.',
+      steps: [
+        'Give thanks for specific gifts and moments from today.',
+        'Confess where you drifted and receive forgiveness.',
+        'Reflect on what God may be teaching you.',
+        'Entrust tomorrow, your concerns, and your rest to God.',
+      ],
+      linkLabel: 'Open guided prayer',
+      linkHref: YOUVERSION_PRAYER_URL,
+    });
+  }
+}
+
 function render() {
   if (!root || !action) return;
   const isComplete = draft.completed.includes(action.id);
@@ -148,6 +276,7 @@ async function hydrate() {
   } finally {
     loading = false;
     render();
+    await renderActionContent();
   }
 }
 
