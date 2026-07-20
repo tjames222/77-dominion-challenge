@@ -35,7 +35,7 @@ test('logout clears the browser preference while mock server preferences stay us
 
 test('the database accepts public themes but validates Dominion Night ownership', async () => {
   const [migration, schema] = await Promise.all([
-    read('supabase/migrations/20260720230000_user_theme_preferences.sql'),
+    read('supabase/migrations/20260720240000_user_theme_preferences.sql'),
     read('supabase/schema.sql'),
   ]);
 
@@ -44,5 +44,5 @@ test('the database accepts public themes but validates Dominion Night ownership'
   assert.match(migration, /reward_key = 'dominion_night_theme'/);
   assert.match(migration, /revoke all on public\.user_theme_preferences from public, anon, authenticated/);
   assert.match(migration, /grant execute on function public\.set_theme_preference\(text\) to authenticated/);
-  assert.match(schema, /20260720230000_user_theme_preferences\.sql/);
+  assert.match(schema, /20260720240000_user_theme_preferences\.sql/);
 });
