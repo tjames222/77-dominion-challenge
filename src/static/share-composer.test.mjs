@@ -71,6 +71,19 @@ describe('sharing composer contract', () => {
     assert.equal(completions, 0);
   });
 
+  test('preserves an already-earned lifetime reward after a repeated share', async () => {
+    const result = await executeSnapshotShare({
+      kind: 'streak',
+      method: 'native_share',
+      createSnapshot: async () => ({ url: 'https://share.example/s/opaque' }),
+      createRewardIntent: async () => ({ eligible: false, alreadyGranted: true }),
+      nativeShare: async () => undefined,
+      completeReward: async () => assert.fail('an earned reward must not be completed again'),
+    });
+
+    assert.deepEqual(result.reward, { granted: false, alreadyGranted: true });
+  });
+
   test('keeps invite rewards pending until another account redeems the invite', async () => {
     let copied = '';
     const result = await executeInviteShare({
