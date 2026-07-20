@@ -1836,9 +1836,11 @@ as $$
     select 1
     from public.community_posts cp
     where cp.id = target_post_id
-      and cp.scope = 'crew'
       and public.has_active_entitlement('membership_active')
-      and public.is_crew_member(cp.crew_id)
+      and (
+        cp.scope = 'global'
+        or public.is_crew_member(cp.crew_id)
+      )
   );
 $$;
 
@@ -2085,6 +2087,80 @@ begin
 end;
 $$;
 
+drop function if exists public.get_global_leaderboard(text);
+
+create function public.get_global_leaderboard(target_window text default 'week')
+returns table (
+  rank_position bigint,
+  user_id uuid,
+  display_name text,
+  avatar_url text,
+  points integer,
+  current_app_streak integer,
+  badges jsonb,
+  latest_challenge_day integer
+)
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  current_user_id uuid := auth.uid();
+  starts_at timestamptz := case when target_window = 'challenge' then '-infinity'::timestamptz else date_trunc('week', now()) end;
+begin
+  if current_user_id is null then
+    raise exception 'You need to log in to view the leaderboard.';
+  end if;
+
+  if not public.has_active_entitlement('membership_active') then
+    raise exception 'An active subscription is required to view the leaderboard.';
+  end if;
+
+	  return query
+	    with point_totals as (
+	      select
+	        g.user_id as leader_user_id,
+	        sum(g.points)::integer as points
+	      from public.game_point_events g
+	      where g.created_at >= starts_at
+	      group by g.user_id
+	    )
+	    select
+	      row_number() over (order by pt.points desc, coalesce(nullif(p.name, ''), 'Member') asc) as rank_position,
+	      pt.leader_user_id as user_id,
+	      coalesce(nullif(p.name, ''), 'Member') as display_name,
+	      coalesce(p.avatar_url, '') as avatar_url,
+	      pt.points,
+	      coalesce(s.current_app_streak, 0) as current_app_streak,
+	      coalesce((
+        select jsonb_agg(jsonb_build_object(
+          'key', recent.badge_key,
+          'name', bd.name,
+          'tier', bd.tier,
+          'icon', bd.icon
+        ) order by recent.earned_at desc)
+	        from (
+	          select ub.badge_key, ub.earned_at
+	          from public.user_badges ub
+	          where ub.user_id = pt.leader_user_id
+	          order by ub.earned_at desc
+	          limit 3
+	        ) recent
+	        join public.badge_definitions bd on bd.badge_key = recent.badge_key
+	      ), '[]'::jsonb) as badges,
+	      coalesce((
+	        select max(c.challenge_day)
+	        from public.check_ins c
+	        where c.user_id = pt.leader_user_id
+	      ), 0) as latest_challenge_day
+	    from point_totals pt
+	    left join public.profiles p on p.user_id = pt.leader_user_id
+	    left join public.user_game_stats s on s.user_id = pt.leader_user_id
+	    order by pt.points desc, coalesce(nullif(p.name, ''), 'Member') asc
+	    limit 25;
+end;
+$$;
+
 drop function if exists public.get_crew_leaderboard(uuid, text);
 
 create function public.get_crew_leaderboard(target_crew_id uuid, target_window text default 'week')
@@ -2234,6 +2310,9 @@ grant execute on function public.get_community_post_engagement(uuid[]) to authen
 revoke execute on function public.get_crew_members_with_profiles(uuid) from public;
 revoke execute on function public.get_crew_members_with_profiles(uuid) from anon;
 grant execute on function public.get_crew_members_with_profiles(uuid) to authenticated;
+revoke execute on function public.get_global_leaderboard(text) from public;
+revoke execute on function public.get_global_leaderboard(text) from anon;
+grant execute on function public.get_global_leaderboard(text) to authenticated;
 revoke execute on function public.get_crew_leaderboard(uuid, text) from public;
 revoke execute on function public.get_crew_leaderboard(uuid, text) from anon;
 grant execute on function public.get_crew_leaderboard(uuid, text) to authenticated;
@@ -2563,8 +2642,7 @@ create policy "Authenticated users can read visible posts"
   to authenticated
   using (
     public.has_active_entitlement('membership_active')
-    and scope = 'crew'
-    and public.is_crew_member(crew_id)
+    and (scope = 'global' or public.is_crew_member(crew_id))
   );
 
 drop policy if exists "Users can create visible posts" on public.community_posts;
@@ -2575,8 +2653,13 @@ create policy "Users can create visible posts"
   with check (
     author_id = (select auth.uid())
     and public.has_active_entitlement('membership_active')
-    and scope = 'crew'
-    and public.is_crew_member(crew_id)
+    and (
+      (
+        scope = 'global'
+        and crew_id is null
+      )
+      or (scope = 'crew' and public.is_crew_member(crew_id))
+    )
   );
 
 drop policy if exists "Authors can update own posts" on public.community_posts;
@@ -2587,14 +2670,10 @@ create policy "Authors can update own posts"
   using (
     author_id = (select auth.uid())
     and public.has_active_entitlement('membership_active')
-    and scope = 'crew'
-    and public.is_crew_member(crew_id)
   )
   with check (
     author_id = (select auth.uid())
     and public.has_active_entitlement('membership_active')
-    and scope = 'crew'
-    and public.is_crew_member(crew_id)
   );
 
 drop policy if exists "Authors and crew leaders can delete posts" on public.community_posts;
@@ -2604,10 +2683,12 @@ create policy "Authors and crew leaders can delete posts"
   to authenticated
   using (
     public.has_active_entitlement('membership_active')
-    and scope = 'crew'
     and (
       author_id = (select auth.uid())
-      or public.can_manage_crew(crew_id)
+      or (
+        scope = 'crew'
+        and public.can_manage_crew(crew_id)
+      )
     )
   );
 
@@ -2636,7 +2717,6 @@ create policy "Users can remove own likes"
   using (
     user_id = (select auth.uid())
     and public.has_active_entitlement('membership_active')
-    and public.can_read_community_post(post_id)
   );
 
 drop policy if exists "Users can read comments on visible posts" on public.post_comments;
@@ -2664,12 +2744,10 @@ create policy "Users can update own comments"
   using (
     user_id = (select auth.uid())
     and public.has_active_entitlement('membership_active')
-    and public.can_read_community_post(post_id)
   )
   with check (
     user_id = (select auth.uid())
     and public.has_active_entitlement('membership_active')
-    and public.can_read_community_post(post_id)
   );
 
 drop policy if exists "Authors and crew leaders can delete comments" on public.post_comments;
@@ -3041,6 +3119,110 @@ create policy "Users can delete own journal photo objects"
     bucket_id = 'journal-progress'
     and (storage.foldername(name))[1] = (select auth.uid())::text
     and public.has_active_entitlement('membership_active')
+  );
+
+-- Canonical copy of migration 20260719100000_remove_global_community.sql.
+-- Retire global Community access without deleting historical social data.
+
+drop function if exists public.get_global_leaderboard(text);
+
+create or replace function public.can_read_community_post(target_post_id uuid)
+returns boolean
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select exists (
+    select 1
+    from public.community_posts cp
+    where cp.id = target_post_id
+      and cp.scope = 'crew'
+      and public.has_active_entitlement('membership_active')
+      and public.is_crew_member(cp.crew_id)
+  );
+$$;
+
+drop policy if exists "Authenticated users can read visible posts" on public.community_posts;
+create policy "Authenticated users can read visible posts"
+  on public.community_posts
+  for select
+  to authenticated
+  using (
+    public.has_active_entitlement('membership_active')
+    and scope = 'crew'
+    and public.is_crew_member(crew_id)
+  );
+
+drop policy if exists "Users can create visible posts" on public.community_posts;
+create policy "Users can create visible posts"
+  on public.community_posts
+  for insert
+  to authenticated
+  with check (
+    author_id = (select auth.uid())
+    and public.has_active_entitlement('membership_active')
+    and scope = 'crew'
+    and public.is_crew_member(crew_id)
+  );
+
+drop policy if exists "Authors can update own posts" on public.community_posts;
+create policy "Authors can update own posts"
+  on public.community_posts
+  for update
+  to authenticated
+  using (
+    author_id = (select auth.uid())
+    and public.has_active_entitlement('membership_active')
+    and scope = 'crew'
+    and public.is_crew_member(crew_id)
+  )
+  with check (
+    author_id = (select auth.uid())
+    and public.has_active_entitlement('membership_active')
+    and scope = 'crew'
+    and public.is_crew_member(crew_id)
+  );
+
+drop policy if exists "Authors and crew leaders can delete posts" on public.community_posts;
+create policy "Authors and crew leaders can delete posts"
+  on public.community_posts
+  for delete
+  to authenticated
+  using (
+    public.has_active_entitlement('membership_active')
+    and scope = 'crew'
+    and (
+      author_id = (select auth.uid())
+      or public.can_manage_crew(crew_id)
+    )
+  );
+
+drop policy if exists "Users can remove own likes" on public.post_likes;
+create policy "Users can remove own likes"
+  on public.post_likes
+  for delete
+  to authenticated
+  using (
+    user_id = (select auth.uid())
+    and public.has_active_entitlement('membership_active')
+    and public.can_read_community_post(post_id)
+  );
+
+drop policy if exists "Users can update own comments" on public.post_comments;
+create policy "Users can update own comments"
+  on public.post_comments
+  for update
+  to authenticated
+  using (
+    user_id = (select auth.uid())
+    and public.has_active_entitlement('membership_active')
+    and public.can_read_community_post(post_id)
+  )
+  with check (
+    user_id = (select auth.uid())
+    and public.has_active_entitlement('membership_active')
+    and public.can_read_community_post(post_id)
   );
 
 -- Canonical copy of migration 20260719170000_integration_delivery_runtime.sql.
@@ -5956,6 +6138,7 @@ grant execute on function public.update_integration_destination_settings(uuid, u
   to service_role;
 grant execute on function public.list_crew_integration_destinations(uuid) to authenticated;
 
+-- Canonical copy of migration 20260720120000_retire_private_group_social.sql.
 -- Retire private-group conversation features without deleting historical rows
 -- or objects. Service-role retention/export jobs remain possible, while every
 -- supported browser/API path fails closed at the database and storage layers.
