@@ -66,6 +66,10 @@ describe('member outbound update privacy surface', () => {
     [migrationSql, deliveryMigrationSql, canonicalSchema].forEach((sql) => {
       assert.doesNotMatch(sql, /\bcrew_members\s+member\b|\bmember\./);
     });
+    [deliveryMigrationSql, canonicalSchema].forEach((sql) => {
+      assert.match(sql, /extensions\.digest\(target_event_type/);
+      assert.doesNotMatch(sql, /encode\(digest\(target_event_type/);
+    });
   });
 
   test('keeps the immutable audit record free of event and message payload columns', () => {
