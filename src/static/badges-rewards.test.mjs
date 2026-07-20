@@ -4,6 +4,7 @@ import { describe, it } from 'node:test';
 
 import {
   buildBadgesRewardsPageModel,
+  iconClass,
   normalizeEarnedBadges,
   rewardViewModel,
 } from './badges-rewards.mjs';
@@ -17,6 +18,10 @@ const menuSource = readFileSync(new URL('./menu.js', import.meta.url), 'utf8');
 const viteSource = readFileSync(new URL('../../vite.config.ts', import.meta.url), 'utf8');
 
 describe('Badges & Rewards page model', () => {
+  it('preserves the Sharing badge icon instead of falling back', () => {
+    assert.equal(iconClass('share'), 'icon-share');
+  });
+
   it('deduplicates an unbounded badge collection with stable newest-first ordering', () => {
     const badges = normalizeEarnedBadges([
       { key: 'faithful_start', name: 'Old copy', earnedAt: '2026-07-01T00:00:00Z' },
