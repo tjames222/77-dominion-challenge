@@ -38,13 +38,12 @@
       <section class="community-hero reveal is-visible">
         <p class="eyebrow">77-Day Dominion Challenge</p>
         <h1>Walk together.</h1>
-        <p class="lead">Encourage your crew, connect with people on your same challenge day, and keep your own journey honest.</p>
+        <p class="lead">Stay accountable with the people you invited, compare private-group progress, and keep your own journey honest.</p>
       </section>
 
-      <nav class="community-tabs" role="tablist" aria-label="Community layers">
+      <nav class="community-tabs" role="tablist" aria-label="Private group and journal">
         <button class="community-tab active" id="crew-tab" type="button" role="tab" aria-selected="true" aria-controls="crew" data-tab="crew">Private Group</button>
-        <button class="community-tab" id="global-tab" type="button" role="tab" aria-selected="false" aria-controls="global" data-tab="global">Global</button>
-        <button class="community-tab" id="journey-tab" type="button" role="tab" aria-selected="false" aria-controls="journey" data-tab="journey">My Journey</button>
+        <button class="community-tab" id="journey-tab" type="button" role="tab" aria-selected="false" aria-controls="journey" data-tab="journey">Private Journal</button>
       </nav>
 
       <div class="community-feedback" id="communityFeedback" role="status" aria-live="polite"></div>
@@ -196,41 +195,6 @@
             <div class="feed-sentinel" id="crewFeedSentinel"></div>
           </div>
         </section>
-      </section>
-
-      <section class="community-panel" id="global" role="tabpanel" aria-labelledby="global-tab" hidden>
-        <div class="community-summary card">
-          <span class="app-icon icon-globe" aria-hidden="true"></span>
-          <div>
-            <p class="eyebrow">Global Community</p>
-            <h2>Challenge-wide encouragement.</h2>
-            <p>Post a win, a prayer request, or a word of encouragement for everyone currently walking the 77.</p>
-          </div>
-        </div>
-
-        <section class="leaderboard-card card">
-          <div class="leaderboard-header">
-            <div>
-              <p class="eyebrow">Global Leaderboard</p>
-              <h2>Points, streaks, and badges.</h2>
-            </div>
-            <div class="leaderboard-toggle" role="group" aria-label="Global leaderboard range">
-              <button class="active" type="button" data-leaderboard-scope="global" data-leaderboard-window="week">Week</button>
-              <button type="button" data-leaderboard-scope="global" data-leaderboard-window="challenge">Challenge</button>
-            </div>
-          </div>
-          <div class="leaderboard-list" id="globalLeaderboard"></div>
-        </section>
-
-        <section class="composer-card card">
-          <p class="eyebrow">Post to Global</p>
-          <form id="globalPostForm">
-            <textarea id="globalPostBody" placeholder="Encourage the broader Dominion community..." required></textarea>
-            <button class="primary" type="submit">Post Globally</button>
-          </form>
-        </section>
-
-        <div class="feed-list" id="globalFeed" tabindex="-1" aria-label="Global community posts"></div>
       </section>
 
       <section class="community-panel" id="journey" role="tabpanel" aria-labelledby="journey-tab" hidden>

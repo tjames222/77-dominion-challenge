@@ -1012,52 +1012,44 @@ export async function getGameSummary() {
   };
 }
 
-async function queryLeaderboard(client, { scope = 'global', crewId = null, window = 'week' } = {}) {
-  const rpcName = scope === 'crew' ? 'get_crew_leaderboard' : 'get_global_leaderboard';
-  const payload = scope === 'crew'
-    ? { target_crew_id: crewId, target_window: window }
-    : { target_window: window };
-  const { data, error } = await client.rpc(rpcName, payload);
+async function queryLeaderboard(client, { crewId, window = 'week' } = {}) {
+  if (!crewId) return [];
+  const { data, error } = await client.rpc('get_crew_leaderboard', {
+    target_crew_id: crewId,
+    target_window: window,
+  });
   if (error) throw error;
   return (data || []).map(mapLeaderboardRow);
 }
 
-export async function getLeaderboard({ scope = 'global', crewId = null, window = 'week' } = {}) {
-  if (isLocalDemoMode()) return getMockLeaderboard({ scope, crewId, window });
+export async function getLeaderboard({ crewId = null, window = 'week' } = {}) {
+  if (isLocalDemoMode()) return getMockLeaderboard({ crewId, window });
   const client = requireSupabase();
   await requireUser();
-  return queryLeaderboard(client, { scope, crewId, window });
+  return queryLeaderboard(client, { crewId, window });
 }
 
 export async function getLeaderboardPrestige({ crewId = null, window = 'week' } = {}) {
   const rankingWindow = window === 'challenge' ? 'challenge' : 'week';
   let currentUserId;
   let crews;
-  let globalRows;
 
   if (isLocalDemoMode()) {
     currentUserId = getMockUserId();
-    [crews, globalRows] = await Promise.all([
-      getCrews(),
-      getMockLeaderboard({ scope: 'global', window: rankingWindow }),
-    ]);
+    crews = await getCrews();
   } else {
     const client = requireSupabase();
     const user = await requireUser();
     currentUserId = user.id;
-    [crews, globalRows] = await Promise.all([
-      queryCrewsForUser(client, user.id),
-      queryLeaderboard(client, { scope: 'global', window: rankingWindow }),
-    ]);
+    crews = await queryCrewsForUser(client, user.id);
   }
 
   const selectedCrew = crews.find((crew) => crew.id === crewId) || crews[0] || null;
   let privateRows = [];
   if (selectedCrew) {
     privateRows = isLocalDemoMode()
-      ? getMockLeaderboard({ scope: 'crew', crewId: selectedCrew.id, window: rankingWindow })
+      ? getMockLeaderboard({ crewId: selectedCrew.id, window: rankingWindow })
       : await queryLeaderboard(requireSupabase(), {
-          scope: 'crew',
           crewId: selectedCrew.id,
           window: rankingWindow,
         });
@@ -1067,7 +1059,6 @@ export async function getLeaderboardPrestige({ crewId = null, window = 'week' } 
   );
 
   return {
-    globalRank: rankForCurrentUser(globalRows),
     privateRank: rankForCurrentUser(privateRows),
     crewId: selectedCrew?.id || null,
     window: rankingWindow,
@@ -1198,34 +1189,6 @@ function ensureMockPosts() {
   const now = new Date().toISOString();
   posts = [
     {
-      id: 'preview_global_post_1',
-      authorId: 'preview_member_josh',
-      name: 'Josh',
-      avatarUrl: createMockAvatar('Josh', '#45634d'),
-      crewId: null,
-      scope: 'global',
-      body: 'Day 12 done. The walk was the action I wanted to skip, so I did it first.',
-      imagePath: null,
-      imageUrl: '',
-      imageAlt: '',
-      postType: 'message',
-      day: 12,
-      status: 'complete',
-      completedCount: 7,
-      createdAt: now,
-      timestamp: 'Today',
-      isOwn: false,
-      likeCount: 4,
-      likedByMe: false,
-      reactions: [
-        { userId: 'preview_member_sarah', ...mockCommunityIdentity('preview_member_sarah'), createdAt: now, isOwn: false },
-        { userId: 'preview_member_josh', ...mockCommunityIdentity('preview_member_josh'), createdAt: now, isOwn: false },
-      ],
-      comments: [
-        { id: 'preview_comment_1', postId: 'preview_global_post_1', userId: 'preview_member_sarah', name: 'Sarah', avatarUrl: createMockAvatar('Sarah', '#7a4652'), body: 'That is the kind of move that builds a streak.', createdAt: now, timestamp: 'Today', isOwn: false },
-      ],
-    },
-    {
       id: 'preview_crew_post_1',
       authorId: 'preview_member_sarah',
       name: 'Sarah',
@@ -1270,7 +1233,7 @@ function saveMockPosts(posts) {
   );
 }
 
-function getMockLeaderboard({ scope = 'global', crewId = null } = {}) {
+function getMockLeaderboard({ crewId = null } = {}) {
   const user = getMockUser();
   const stats = readJson('dominion:gameStats', {});
   const badges = readJson('dominion:badges', []);
@@ -1304,7 +1267,7 @@ function getMockLeaderboard({ scope = 'global', crewId = null } = {}) {
     },
   ];
 
-  if (scope === 'crew' && !crewId) return [];
+  if (!crewId) return [];
   return rows
     .sort((left, right) => right.points - left.points)
     .map((row, index) => ({ ...row, rank: index + 1 }));
@@ -1647,14 +1610,14 @@ async function withSignedCommunityImageUrls(posts) {
   }));
 }
 
-export async function getCommunityPostPage({ scope = 'global', crewId = null, limit = 8, before = null } = {}) {
+export async function getCommunityPostPage({ crewId = null, limit = 8, before = null } = {}) {
   const pageSize = Math.min(Math.max(Number.parseInt(limit, 10) || 8, 1), 25);
   const cursor = normalizeCommunityCursor(before);
-  if (scope === 'crew' && !crewId) throw new Error('Choose a private group before loading its posts.');
+  if (!crewId) throw new Error('Choose a private group before loading its posts.');
 
   if (isLocalDemoMode()) {
     const matches = ensureMockPosts()
-      .filter((post) => post.scope === scope && (scope !== 'crew' || post.crewId === crewId))
+      .filter((post) => post.scope === 'crew' && post.crewId === crewId)
       .filter((post) => isBeforeCommunityCursor(post, cursor))
       .sort((left, right) => {
         const dateOrder = String(right.createdAt).localeCompare(String(left.createdAt));
@@ -1674,12 +1637,12 @@ export async function getCommunityPostPage({ scope = 'global', crewId = null, li
   let query = client
     .from('community_posts')
     .select(COMMUNITY_POST_SELECT)
-    .eq('scope', scope)
+    .eq('scope', 'crew')
+    .eq('crew_id', crewId)
     .order('created_at', { ascending: false })
     .order('id', { ascending: false })
     .limit(pageSize + 1);
 
-  if (scope === 'crew') query = query.eq('crew_id', crewId);
   if (cursor?.id && COMMUNITY_CURSOR_UUID_PATTERN.test(cursor.id)) {
     query = query.or(`created_at.lt.${cursor.createdAt},and(created_at.eq.${cursor.createdAt},id.lt.${cursor.id})`);
   } else if (cursor) {
@@ -1712,11 +1675,6 @@ export async function getCommunityPostPage({ scope = 'global', crewId = null, li
     hasMore,
     nextCursor: hasMore ? communityCursorFor(pageRows.at(-1)) : null,
   };
-}
-
-export async function getCommunityPosts({ scope = 'global', crewId = null, limit = 25 } = {}) {
-  const page = await getCommunityPostPage({ scope, crewId, limit });
-  return page.posts;
 }
 
 export async function uploadCommunityPostImage({ crewId, file }) {
@@ -1754,7 +1712,6 @@ export async function uploadCommunityPostImage({ crewId, file }) {
 }
 
 export async function createCommunityPost({
-  scope,
   crewId = null,
   body = '',
   postType = 'message',
@@ -1763,9 +1720,7 @@ export async function createCommunityPost({
 }) {
   const normalizedBody = String(body || '').trim();
   if (!normalizedBody && !imageFile) throw new Error('Write a message or choose an image.');
-  if (imageFile && (scope !== 'crew' || !crewId)) {
-    throw new Error('Community images can only be shared inside a private group.');
-  }
+  if (!crewId) throw new Error('Choose a private group before posting.');
 
   if (isLocalDemoMode()) {
     const posts = ensureMockPosts();
@@ -1777,8 +1732,8 @@ export async function createCommunityPost({
       authorId: getMockUserId(),
       name: user.name || 'Preview Member',
       avatarUrl: user.avatarUrl || '',
-      crewId: scope === 'crew' ? crewId : null,
-      scope,
+      crewId,
+      scope: 'crew',
       body: normalizedBody,
       imagePath: uploadedImage?.imagePath || null,
       imageUrl: uploadedImage?.imageUrl || '',
@@ -1812,8 +1767,8 @@ export async function createCommunityPost({
         author_id: user.id,
         display_name: identity.name,
         avatar_url: identity.avatarUrl,
-        crew_id: scope === 'crew' ? crewId : null,
-        scope,
+        crew_id: crewId,
+        scope: 'crew',
         body: normalizedBody,
         image_path: uploadedImage?.imagePath || null,
         image_alt: uploadedImage ? String(imageAlt || '').trim() : '',

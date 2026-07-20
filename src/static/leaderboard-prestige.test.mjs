@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
 import { describe, it } from 'node:test';
 import {
   normalizeLeaderboardRank,
@@ -16,7 +17,7 @@ describe('leaderboard prestige', () => {
 
   it('maps private podium ranks to gold, silver, and bronze states', () => {
     assert.deepEqual(resolveLeaderboardPrestige({ privateRank: 1 }), {
-      key: 'private-1', scope: 'private', rank: 1, crown: 'private', shortLabel: 'Crew #1', accessibleLabel: 'Private leaderboard, 1st place',
+      key: 'private-1', scope: 'private', rank: 1, crown: 'private', shortLabel: 'Crew #1', accessibleLabel: 'Private group leaderboard, 1st place',
     });
     assert.equal(resolveLeaderboardPrestige({ privateRank: 2 }).key, 'private-2');
     assert.equal(resolveLeaderboardPrestige({ privateRank: 2 }).crown, null);
@@ -28,28 +29,37 @@ describe('leaderboard prestige', () => {
     assert.equal(resolveLeaderboardPrestige({ privateRank: 400 }).crown, null);
   });
 
-  it('maps the global podium to elevated global states', () => {
-    assert.deepEqual(resolveLeaderboardPrestige({ globalRank: 1 }), {
-      key: 'global-1', scope: 'global', rank: 1, crown: 'global', shortLabel: 'Global #1', accessibleLabel: 'Global leaderboard, 1st place',
-    });
-    assert.equal(resolveLeaderboardPrestige({ globalRank: 2 }).key, 'global-2');
-    assert.equal(resolveLeaderboardPrestige({ globalRank: 2 }).crown, null);
-    assert.equal(resolveLeaderboardPrestige({ globalRank: 3 }).key, 'global-3');
-  });
-
-  it('always gives a qualifying global rank precedence over private first place', () => {
-    assert.equal(resolveLeaderboardPrestige({ globalRank: 3, privateRank: 1 }).key, 'global-3');
-    assert.equal(resolveLeaderboardPrestige({ globalRank: 2, privateRank: 1 }).crown, null);
-  });
-
-  it('falls through from a non-prestige global rank to a private podium rank', () => {
-    assert.equal(resolveLeaderboardPrestige({ globalRank: 4, privateRank: 1 }).key, 'private-1');
+  it('ignores global rank even when stale callers still supply it', () => {
+    assert.equal(resolveLeaderboardPrestige({ globalRank: 1, privateRank: 3 }).key, 'private-3');
+    assert.equal(resolveLeaderboardPrestige({ globalRank: 1 }).key, 'default');
   });
 
   it('fully downgrades invalid or missing ranks', () => {
-    const prestige = resolveLeaderboardPrestige({ globalRank: 'none', privateRank: -2 });
+    const prestige = resolveLeaderboardPrestige({ privateRank: -2 });
     assert.equal(prestige.key, 'default');
     assert.equal(prestige.crown, null);
     assert.equal(prestige.shortLabel, '');
+  });
+});
+
+describe('private-only prestige integration', () => {
+  it('does not query the global leaderboard when resolving dashboard prestige', async () => {
+    const apiSource = await readFile(new URL('./api.js', import.meta.url), 'utf8');
+    const prestigeFunction = apiSource.slice(
+      apiSource.indexOf('export async function getLeaderboardPrestige'),
+      apiSource.indexOf('function createMockAvatar'),
+    );
+
+    assert.doesNotMatch(prestigeFunction, /scope:\s*['"]global['"]/);
+    assert.doesNotMatch(prestigeFunction, /globalRank|globalRows/);
+    assert.match(prestigeFunction, /queryLeaderboard\(requireSupabase\(\), \{\s*crewId:/);
+  });
+
+  it('assigns the premium orbit and epic crown to private podium states only', async () => {
+    const css = await readFile(new URL('../assets/product.css', import.meta.url), 'utf8');
+
+    assert.doesNotMatch(css, /data-prestige(?:\^)?=['"]global-/);
+    assert.match(css, /data-prestige="private-1"\] \.game-level-crown/);
+    assert.match(css, /data-prestige\^="private-"\] \.game-prestige-orbit/);
   });
 });

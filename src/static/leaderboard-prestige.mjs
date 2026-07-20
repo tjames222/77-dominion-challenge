@@ -11,20 +11,8 @@ export function normalizeLeaderboardRank(value) {
   return Number.isInteger(rank) && rank > 0 ? rank : null;
 }
 
-export function resolveLeaderboardPrestige({ globalRank, privateRank } = {}) {
-  const normalizedGlobalRank = normalizeLeaderboardRank(globalRank);
+export function resolveLeaderboardPrestige({ privateRank } = {}) {
   const normalizedPrivateRank = normalizeLeaderboardRank(privateRank);
-
-  if (normalizedGlobalRank && normalizedGlobalRank <= 3) {
-    return {
-      key: `global-${normalizedGlobalRank}`,
-      scope: 'global',
-      rank: normalizedGlobalRank,
-      crown: normalizedGlobalRank === 1 ? 'global' : null,
-      shortLabel: `Global #${normalizedGlobalRank}`,
-      accessibleLabel: `Global leaderboard, ${ordinal(normalizedGlobalRank)} place`,
-    };
-  }
 
   if (normalizedPrivateRank && normalizedPrivateRank <= 3) {
     return {
@@ -33,7 +21,7 @@ export function resolveLeaderboardPrestige({ globalRank, privateRank } = {}) {
       rank: normalizedPrivateRank,
       crown: normalizedPrivateRank === 1 ? 'private' : null,
       shortLabel: `Crew #${normalizedPrivateRank}`,
-      accessibleLabel: `Private leaderboard, ${ordinal(normalizedPrivateRank)} place`,
+      accessibleLabel: `Private group leaderboard, ${ordinal(normalizedPrivateRank)} place`,
     };
   }
 

@@ -435,37 +435,6 @@ body.challenge-finished .confetti-layer {
   transform: translateY(-2px) rotate(-1deg);
 }
 .game-level-emblem[data-prestige="private-1"] {
-  --coin-border: #f2cf78;
-  --coin-highlight: color-mix(in srgb, #ffffff 38%, transparent);
-  --coin-mid: #e0b64e;
-  --coin-depth: #80500b;
-  --coin-text: #251400;
-  --coin-ring: color-mix(in srgb, #fff5c9 52%, transparent);
-  --coin-aura: color-mix(in srgb, #d6ad54 18%, transparent);
-  --coin-inset-shadow: color-mix(in srgb, #5b3505 32%, transparent);
-  --coin-drop-shadow: color-mix(in srgb, #000000 36%, transparent);
-}
-.game-level-emblem[data-prestige="private-2"] {
-  --coin-border: #e2e6e8;
-  --coin-highlight: color-mix(in srgb, #ffffff 58%, transparent);
-  --coin-mid: #c5c9cb;
-  --coin-depth: #666b70;
-  --coin-text: #15191c;
-  --coin-ring: color-mix(in srgb, #ffffff 56%, transparent);
-  --coin-aura: color-mix(in srgb, #cbd0d3 14%, transparent);
-  --coin-inset-shadow: color-mix(in srgb, #30363b 30%, transparent);
-}
-.game-level-emblem[data-prestige="private-3"] {
-  --coin-border: #d89362;
-  --coin-highlight: color-mix(in srgb, #ffe0c2 45%, transparent);
-  --coin-mid: #b96d3f;
-  --coin-depth: #5f2f1b;
-  --coin-text: #fff7ef;
-  --coin-ring: color-mix(in srgb, #ffd0a7 42%, transparent);
-  --coin-aura: color-mix(in srgb, #c47749 15%, transparent);
-  --coin-inset-shadow: color-mix(in srgb, #3d190b 31%, transparent);
-}
-.game-level-emblem[data-prestige="global-1"] {
   --coin-border: #fff0a6;
   --coin-highlight: color-mix(in srgb, #ffffff 64%, transparent);
   --coin-mid: #f0cc64;
@@ -477,7 +446,7 @@ body.challenge-finished .confetti-layer {
   --coin-drop-shadow: color-mix(in srgb, #d79b22 34%, transparent);
   --orbit-color: #ffe69a;
 }
-.game-level-emblem[data-prestige="global-2"] {
+.game-level-emblem[data-prestige="private-2"] {
   --coin-border: #f7fcff;
   --coin-highlight: color-mix(in srgb, #ffffff 70%, transparent);
   --coin-mid: #dceaf0;
@@ -489,7 +458,7 @@ body.challenge-finished .confetti-layer {
   --coin-drop-shadow: color-mix(in srgb, #8bdcff 26%, transparent);
   --orbit-color: #bfeeff;
 }
-.game-level-emblem[data-prestige="global-3"] {
+.game-level-emblem[data-prestige="private-3"] {
   --coin-border: #ffd0bc;
   --coin-highlight: color-mix(in srgb, #fff3ed 58%, transparent);
   --coin-mid: #d9967a;
@@ -501,7 +470,7 @@ body.challenge-finished .confetti-layer {
   --coin-drop-shadow: color-mix(in srgb, #d87956 24%, transparent);
   --orbit-color: #ffc4aa;
 }
-.game-level-emblem[data-prestige^="global-"] {
+.game-level-emblem[data-prestige^="private-"] {
   border-width: 2px;
   box-shadow:
     inset 0 1px 1px color-mix(in srgb, #ffffff 52%, transparent),
@@ -521,7 +490,7 @@ body.challenge-finished .confetti-layer {
   mask: radial-gradient(circle, transparent 0 63%, #000 65% 70%, transparent 72%);
   -webkit-mask: radial-gradient(circle, transparent 0 63%, #000 65% 70%, transparent 72%);
 }
-.game-level-emblem[data-prestige^="global-"] .game-prestige-orbit {
+.game-level-emblem[data-prestige^="private-"] .game-prestige-orbit {
   opacity: .82;
   animation: prestige-orbit 9s linear infinite;
 }
@@ -544,7 +513,7 @@ body.challenge-finished .confetti-layer {
   width: 16px;
   height: 16px;
 }
-.game-level-emblem[data-prestige="global-1"] .game-level-crown {
+.game-level-emblem[data-prestige="private-1"] .game-level-crown {
   top: -4px;
   right: -5px;
   width: 40px;
@@ -561,7 +530,7 @@ body.challenge-finished .confetti-layer {
     0 9px 24px color-mix(in srgb, #d99b1d 46%, transparent);
   animation: prestige-crown-float 3.2s ease-in-out infinite;
 }
-.game-level-emblem[data-prestige="global-1"] .game-level-crown::before {
+.game-level-emblem[data-prestige="private-1"] .game-level-crown::before {
   width: 25px;
   height: 25px;
 }
@@ -987,8 +956,8 @@ body.challenge-finished .confetti-layer {
   .game-level-progress-track > span::after {
     display: none;
   }
-  .game-level-emblem[data-prestige^="global-"] .game-prestige-orbit,
-  .game-level-emblem[data-prestige="global-1"] .game-level-crown {
+  .game-level-emblem[data-prestige^="private-"] .game-prestige-orbit,
+  .game-level-emblem[data-prestige="private-1"] .game-level-crown {
     animation: none;
   }
 }
@@ -3378,13 +3347,13 @@ body.challenge-finished .reward-backdrop {
     width: 23px;
     height: 23px;
   }
-  .game-level-emblem[data-prestige="global-1"] .game-level-crown {
+  .game-level-emblem[data-prestige="private-1"] .game-level-crown {
     top: -3px;
     right: -4px;
     width: 34px;
     height: 34px;
   }
-  .game-level-emblem[data-prestige="global-1"] .game-level-crown::before {
+  .game-level-emblem[data-prestige="private-1"] .game-level-crown::before {
     width: 21px;
     height: 21px;
   }
