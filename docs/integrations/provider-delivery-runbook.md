@@ -3,7 +3,7 @@
 This runbook provisions the provider applications and operates the durable
 delivery runtime added by FOU-553. The runtime is dormant until its two server
 secrets are present and a provider destination has been created by the secure
-connection flow in FOU-541. No provider credential belongs in the repository,
+connection flow. No provider credential belongs in the repository,
 browser bundle, logs, seed data, or CI fixtures.
 
 ## Environment isolation and ownership
@@ -30,14 +30,15 @@ token into production.
    `ENVIRONMENT` and `PROJECT_REF` first.
 2. Retain only `chat:write`, `channels:read`, and `groups:read`. The application
    does not read message history, users, files, reactions, or direct messages.
-3. Confirm the HTTPS OAuth redirect exactly matches the callback deployed by
-   FOU-541. Enable token rotation and keep Socket Mode, incoming webhooks, event
+3. Confirm the HTTPS OAuth redirect exactly matches
+   `https://PROJECT_REF.supabase.co/functions/v1/slack-oauth-callback`. Enable
+   token rotation and keep Socket Mode, incoming webhooks, event
    subscriptions, and interactivity disabled.
 4. Install the staging app into an isolated test workspace. Add the bot only to
    the public and private channels used for verification.
 5. Record the client ID, client secret, and signing secret in the environment's
    managed secret store. Never copy the bot access or refresh token out of the
-   OAuth callback; FOU-541 encrypts those values before persistence.
+   OAuth callback; the callback encrypts those values before persistence.
 6. Complete Slack's distribution/review checklist before allowing installations
    outside the owned test workspace. Recheck the manifest export against the
    reviewed file after every provider-side change.
@@ -49,15 +50,17 @@ token into production.
 2. Request only the `bot` and `identify` install scopes and permission integer
    `3072` (`VIEW_CHANNEL` plus `SEND_MESSAGES`). Do not enable privileged Gateway
    intents; this integration makes REST sends and does not consume messages.
-3. Require the OAuth2 code grant and register the exact HTTPS callback deployed
-   by FOU-541. Use the returned guild ID only after validating the signed Dominion
+3. Require the OAuth2 code grant and register
+   `https://PROJECT_REF.supabase.co/functions/v1/discord-oauth-callback`. Use the
+   returned guild ID only after validating the signed Dominion
    state and the installing user's current group-admin authority.
 4. Install the staging bot into an isolated test server and grant it access only
    to the verification channels. Channel-level overrides must preserve both
    required permissions.
 5. Store the client ID, client secret, public key, and bot token in the managed
-   environment secret store. FOU-541 encrypts the bot token for a destination;
-   the shared application token must never be returned to the browser.
+   environment secret store. The callback encrypts the bot token for a
+   destination; the shared application token must never be returned to the
+   browser.
 6. Complete the provider verification/review process before broad production
    installation, and keep the production bot unavailable until that approval is
    recorded.
@@ -71,6 +74,7 @@ environment secrets. Use independent values per environment.
 | --- | --- | --- |
 | `INTEGRATION_WORKER_SECRET` | At least 32 random characters | Rotate immediately on suspected disclosure; update Cron and the Function Secret together |
 | `INTEGRATION_CREDENTIAL_KEYS` | JSON map of positive key version to a base64-encoded 32-byte AES key, for example `{"1":"…"}` | Add a new version before re-encrypting; retain old versions until no row references them |
+| `INTEGRATION_OAUTH_STATE_SECRET` | At least 32 random characters and distinct from the worker secret | Rotate between authorization attempts; an in-flight attempt must be restarted after rotation |
 | `SLACK_CLIENT_ID` | Provider value | Rotate/reissue with the Slack app |
 | `SLACK_CLIENT_SECRET` | Provider secret | Rotate at provider and update Function Secret atomically |
 | `SLACK_SIGNING_SECRET` | Provider secret | Rotate at provider and update Function Secret atomically |
@@ -85,9 +89,9 @@ logs or shell history. The worker accepts a versioned key ring so a rotation can
 be rolled forward without making already-queued deliveries unreadable.
 
 The production workflow treats the runtime as disabled when both runtime secrets
-are absent, and fails closed when only one is present. FOU-541 must add its
-provider secrets to the same protected environment before connection UI is
-enabled.
+are absent, and fails closed when only one is present. It deploys the connection
+functions only when the OAuth state secret and complete Slack/Discord credential
+set are present in the same protected environment.
 
 ## Deploy and schedule
 
@@ -113,10 +117,10 @@ UTC time in the release record.
 
 ## Contract for connection and event tickets
 
-FOU-541 writes one `private.integration_destinations` row per approved channel
-through a reviewed security-definer RPC. It must generate the destination UUID
-before encryption, encode the provider credential as JSON with one
-`accessToken` field, and encrypt with AES-256-GCM using:
+The connection flow writes at most one `private.integration_destinations` row
+per group and provider through reviewed security-definer RPCs. It generates the
+destination UUID before encryption, encodes the provider credential as JSON with
+one `accessToken` field, and encrypts with AES-256-GCM using:
 
 - a fresh 12-byte nonce;
 - the selected version from `INTEGRATION_CREDENTIAL_KEYS`;
@@ -124,7 +128,8 @@ before encryption, encode the provider credential as JSON with one
   `77-dominion:<provider>:<destination UUID>`;
 - a SHA-256 credential fingerprint for rotation and duplicate detection.
 
-Only a server callback may persist or replace ciphertext. Browser-facing reads
+Only a server callback or authenticated server connection action may persist or
+replace ciphertext. Browser-facing reads
 must use a sanitized projection that excludes ciphertext, nonce, key version,
 fingerprint, and provider error diagnostics.
 
@@ -141,7 +146,7 @@ and retention RPCs with the service role.
 Complete this exercise once for Slack and once for Discord before production
 promotion:
 
-1. Use FOU-541's connection flow to authorize the staging provider app and select
+1. Use the group connection flow to authorize the staging provider app and select
    the isolated test channel. Confirm the stored destination is server-only and
    its credential column is ciphertext with a 12-byte nonce and a current key
    version.
@@ -184,8 +189,9 @@ failures dead-letter without an unbounded retry loop.
 - Successful payload content is replaced with a redacted marker after seven
   days. Attempt metadata and error summaries are redacted after 30 days.
 - Delivered, dead-lettered, and cancelled rows are removed after 90 days.
-- Credentials persist only while the destination remains connected and must be
-  revoked and deleted by the disconnect/deletion work in FOU-541 and FOU-564.
+- Credentials persist only while the destination remains connected. Disconnect
+  immediately wipes local credentials and cancels queued work; group deletion
+  cleanup is completed by FOU-564.
 - On suspected credential disclosure, disable the destination, stop its Cron job,
   rotate or revoke the provider token, rotate affected encryption/worker secrets,
   preserve redacted audit records, and then resume with a synthetic test.

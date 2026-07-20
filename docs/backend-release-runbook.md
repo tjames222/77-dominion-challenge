@@ -75,6 +75,14 @@ YAML, pull-request logs, seeds, or test fixtures.
 | `STRIPE_MEMBERSHIP_PRICE_ID` | Selects the approved recurring membership price | Billing owner |
 | `INTEGRATION_WORKER_SECRET` | Authorizes the private Cron-to-worker request when integrations are enabled | Integration administrator |
 | `INTEGRATION_CREDENTIAL_KEYS` | Versioned AES-256-GCM key ring for provider credentials when integrations are enabled | Security administrator |
+| `INTEGRATION_OAUTH_STATE_SECRET` | Signs short-lived, one-use provider authorization state | Security administrator |
+| `SLACK_CLIENT_ID` | Identifies the environment-specific Slack app | Integration administrator |
+| `SLACK_CLIENT_SECRET` | Exchanges Slack authorization codes server-side | Integration administrator |
+| `SLACK_SIGNING_SECRET` | Retained with the reviewed Slack app configuration | Integration administrator |
+| `DISCORD_CLIENT_ID` | Identifies the environment-specific Discord app | Integration administrator |
+| `DISCORD_CLIENT_SECRET` | Exchanges Discord authorization codes server-side | Integration administrator |
+| `DISCORD_PUBLIC_KEY` | Retained with the reviewed Discord app configuration | Integration administrator |
+| `DISCORD_BOT_TOKEN` | Sends only to channels selected through the connection flow | Integration administrator |
 
 ### GitHub production variables
 
@@ -104,11 +112,13 @@ to Supabase Function Secrets before function deployment. `ALLOWED_SITE_ORIGINS`
 is supported only as a compatibility alias; new configuration should use
 `PUBLIC_ALLOWED_SITE_URLS`.
 
-The integration secrets are optional only while Slack/Discord functionality is
-dormant. Configure both together before deploying the worker; the workflow fails
-closed when exactly one is present. Provider app credentials, Cron provisioning,
-rotation, staging acceptance, alerts, and retention are documented in
-`docs/integrations/provider-delivery-runbook.md`.
+The two runtime secrets are optional only while Slack/Discord functionality is
+dormant. Configure them together before deploying the worker; the workflow fails
+closed when exactly one is present. Provider connections are deployed only when
+all provider credentials and the OAuth state secret are present, and they require
+the runtime to be enabled first. Provider app registration, callback URLs, Cron
+provisioning, rotation, staging acceptance, alerts, and retention are documented
+in `docs/integrations/provider-delivery-runbook.md`.
 
 For local function serving only, copy `supabase/.env.example` to
 `supabase/.env.local`, fill it with local/test values, and pass it explicitly:
@@ -210,7 +220,11 @@ next stage when one fails:
    JWT verification disabled because Stripe authenticates it by signature. When
    both integration runtime secrets are present, also deploy
    `process-integration-outbox` without JWT verification; it authenticates the
-   Vault-backed Cron request with its independent worker secret.
+   Vault-backed Cron request with its independent worker secret. When the full
+   provider secret set is also present, deploy the authenticated
+   `group-integrations` function and the public Slack and Discord OAuth callback
+   functions. The callbacks authenticate signed, expiring, one-use state rather
+   than a user JWT.
 4. **Verify backend and release feature gates:** list remote migrations and
    functions, then confirm an unauthenticated billing-function request is rejected
    before releasing the frontend build. Keep mock mode off and leave new
@@ -244,10 +258,14 @@ the release or incident record.
 6. When the integration runtime is enabled, invoke health with the worker secret,
    confirm Cron history is healthy, and deliver one non-sensitive synthetic event
    to each staging-approved provider before enabling connection UI.
-7. Load the production frontend in a fresh browser profile. Confirm it targets
+7. When provider connections are enabled, use a current group owner/admin to
+   connect and confirm one staging channel per provider. Confirm a group member
+   sees status but no management actions; then test, disconnect, and verify queued
+   sends are canceled before reconnecting.
+8. Load the production frontend in a fresh browser profile. Confirm it targets
    the production Supabase project, mock identities are unavailable, and core
    Dashboard, Check-In, billing, and sign-out flows work.
-8. Review Supabase Function logs, Postgres logs, Stripe delivery logs, integration
+9. Review Supabase Function logs, Postgres logs, Stripe delivery logs, integration
    health, and Cron history for new
    authorization errors, repeated retries, or unexpected elevated-role access.
 

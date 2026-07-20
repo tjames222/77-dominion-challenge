@@ -15,6 +15,7 @@ import {
   hasSupabaseAuth,
   isLocalDemoMode,
   joinCrewByInvite,
+  manageGroupIntegration,
   redirectToLogin,
   saveJournalEntry,
   setPostLiked,
@@ -60,6 +61,9 @@ const state = {
     global: { window: 'week', rows: [], requestId: 0 },
   },
   journalEntries: [],
+  integrations: [],
+  integrationSetupToken: '',
+  integrationSetup: null,
 };
 
 function activateTab(tab, { focus = false } = {}) {
@@ -272,6 +276,7 @@ function renderCrewShell() {
   const composerCard = $('crewComposerCard');
   const membersCard = $('crewMembersCard');
   const feedSection = $('crewFeedSection');
+  const integrationsCard = $('crewIntegrationsCard');
   const title = $('crewTitle');
   const description = $('crewDescription');
 
@@ -285,6 +290,7 @@ function renderCrewShell() {
   if (composerCard) composerCard.hidden = !crew;
   if (membersCard) membersCard.hidden = !crew;
   if (feedSection) feedSection.hidden = !crew;
+  if (integrationsCard) integrationsCard.hidden = !crew;
 
   if (!crew) {
     if (title) title.textContent = 'Create or join a crew.';
@@ -295,6 +301,8 @@ function renderCrewShell() {
     $('crewFeed').innerHTML = emptyCard('Create a crew or open an invite link to start a private channel.');
     $('crewMemberList').innerHTML = '';
     state.leaderboards.crew.rows = [];
+    state.integrations = [];
+    renderIntegrations();
     renderLeaderboard('crew');
     return;
   }
@@ -302,6 +310,175 @@ function renderCrewShell() {
   if (title) title.textContent = crew.name;
   if (description) description.textContent = crew.description || 'A private crew channel for this 77-day challenge.';
   $('crewDayCount').textContent = dayLabel(crew.challengeStartDate);
+}
+
+function integrationStatusLabel(status = '') {
+  if (status === 'active') return 'Connected';
+  if (status === 'reconnect_required') return 'Needs attention';
+  if (status === 'disconnected' || status === 'revoked') return 'Disconnected';
+  return 'Unavailable';
+}
+
+function integrationActivityLabel(destination = {}) {
+  const value = destination.lastDeliveredAt || destination.lastTestedAt || destination.lastVerifiedAt;
+  if (!value) return 'No successful test or delivery yet.';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return 'Connection activity recorded.';
+  return `Last verified ${date.toLocaleString()}`;
+}
+
+function renderIntegrations({ loading = false, error = '' } = {}) {
+  const container = $('integrationDestinationList');
+  const actions = $('integrationConnectActions');
+  const crew = activeCrew();
+  if (!container || !actions) return;
+
+  if (!crew) {
+    container.innerHTML = '';
+    actions.hidden = true;
+    return;
+  }
+  if (loading) {
+    container.innerHTML = '<p class="integration-disclosure">Loading connected destinations…</p>';
+    actions.hidden = true;
+    return;
+  }
+  if (error) {
+    container.innerHTML = `<p class="inline-error">${escapeHtml(error)}</p>`;
+    actions.hidden = !isCrewLeader();
+    return;
+  }
+
+  const canManage = isCrewLeader();
+  if (!state.integrations.length) {
+    container.innerHTML = '<p class="integration-disclosure">No external channels are connected. Group progress stays inside Dominion.</p>';
+  } else {
+    container.innerHTML = state.integrations.map((destination) => {
+      const status = destination.status || 'disconnected';
+      const actionMarkup = canManage && destination.canManage ? `
+        <div class="integration-destination-actions">
+          ${status === 'active' ? `<button class="secondary compact" type="button" data-test-integration="${escapeHtml(destination.id)}">Test</button>` : ''}
+          <button class="secondary compact" type="button" data-reconnect-provider="${escapeHtml(destination.provider)}">Reconnect</button>
+          ${status !== 'disconnected' ? `<button class="secondary compact" type="button" data-disconnect-integration="${escapeHtml(destination.id)}">Disconnect</button>` : ''}
+        </div>
+      ` : '';
+      return `
+        <article class="integration-destination">
+          <div class="integration-destination-copy">
+            <div class="integration-destination-title">
+              <strong>${escapeHtml(destination.provider)}</strong>
+              <span class="integration-status ${escapeHtml(status)}">${escapeHtml(integrationStatusLabel(status))}</span>
+            </div>
+            <span>${escapeHtml(destination.workspaceName || destination.workspaceId || 'Workspace')} · #${escapeHtml(destination.channelName || destination.channelId || 'channel')}</span>
+            <small>${escapeHtml(integrationActivityLabel(destination))}</small>
+          </div>
+          ${actionMarkup}
+        </article>
+      `;
+    }).join('');
+  }
+
+  const configured = new Set(state.integrations.map((item) => item.provider));
+  actions.querySelectorAll('[data-connect-provider]').forEach((button) => {
+    button.hidden = configured.has(button.dataset.connectProvider);
+  });
+  actions.hidden = !canManage || configured.size >= 2;
+}
+
+async function loadCrewIntegrations() {
+  const crew = activeCrew();
+  if (!crew) {
+    state.integrations = [];
+    renderIntegrations();
+    return;
+  }
+  const requestedCrewId = crew.id;
+  renderIntegrations({ loading: true });
+  try {
+    const result = await manageGroupIntegration('list', { crewId: requestedCrewId });
+    if (state.activeCrewId !== requestedCrewId) return;
+    state.integrations = Array.isArray(result.destinations) ? result.destinations : [];
+    renderIntegrations();
+  } catch (error) {
+    if (state.activeCrewId !== requestedCrewId) return;
+    state.integrations = [];
+    renderIntegrations({ error: error?.message || 'Connected destinations are unavailable right now.' });
+  }
+}
+
+function renderIntegrationSetup() {
+  const form = $('integrationConfirmForm');
+  const select = $('integrationChannelSelect');
+  const setup = state.integrationSetup;
+  if (!form || !select) return;
+  form.hidden = !setup;
+  if (!setup) return;
+  $('integrationConfirmTitle').textContent = `Choose a ${setup.provider === 'slack' ? 'Slack' : 'Discord'} channel`;
+  $('integrationConfirmWorkspace').textContent = setup.workspace?.name || 'Authorized workspace';
+  select.innerHTML = (setup.channels || []).map((item) => (
+    `<option value="${escapeHtml(item.id)}">#${escapeHtml(item.name)}${item.kind === 'private' ? ' · private' : ''}</option>`
+  )).join('');
+  select.disabled = !(setup.channels || []).length;
+  form.querySelector('button[type="submit"]').disabled = !(setup.channels || []).length;
+  if (!(setup.channels || []).length) {
+    setFeedback(`Add the Dominion app to a ${setup.provider} channel, then reconnect and try again.`);
+  }
+}
+
+function takeIntegrationCallbackFragment() {
+  if (!window.location.hash) return;
+  const params = new URLSearchParams(window.location.hash.slice(1));
+  const setupToken = params.get('integration-setup');
+  const integrationError = params.get('integration-error');
+  if (!setupToken && !integrationError) return;
+  window.history.replaceState({}, '', `${window.location.pathname}${window.location.search}`);
+  if (setupToken) state.integrationSetupToken = setupToken;
+  if (integrationError) {
+    setFeedback(integrationError === 'authorization_denied'
+      ? 'Provider authorization was canceled. Nothing was connected.'
+      : 'Provider authorization could not be completed. Try connecting again.');
+  }
+}
+
+async function loadIntegrationSetup() {
+  if (!state.integrationSetupToken) return;
+  try {
+    const setup = await manageGroupIntegration('channels', {
+      setupToken: state.integrationSetupToken,
+    });
+    if (setup.crewId && state.crews.some((crew) => crew.id === setup.crewId)) {
+      state.activeCrewId = setup.crewId;
+      localStorage.setItem('dominion:activeCrewId', setup.crewId);
+      renderCrewShell();
+    }
+    state.integrationSetup = setup;
+    renderIntegrationSetup();
+  } catch (error) {
+    state.integrationSetupToken = '';
+    state.integrationSetup = null;
+    renderIntegrationSetup();
+    setFeedback(error?.message || 'That integration setup expired. Start the connection again.');
+  }
+}
+
+async function beginIntegrationAuthorization(selectedProvider, button) {
+  const crew = activeCrew();
+  if (!crew || !isCrewLeader()) return;
+  const release = setButtonBusy(button, 'Opening…');
+  try {
+    const result = await manageGroupIntegration('begin', {
+      crewId: crew.id,
+      provider: selectedProvider,
+    });
+    const authorization = new URL(result.authorizationUrl);
+    if (!['slack.com', 'discord.com'].includes(authorization.hostname)) {
+      throw new Error('The provider returned an invalid authorization destination.');
+    }
+    window.location.assign(authorization.toString());
+  } catch (error) {
+    release();
+    setFeedback(error?.message || `Unable to connect ${selectedProvider} right now.`);
+  }
 }
 
 function renderMembers({ loading = false, error = '' } = {}) {
@@ -650,6 +827,7 @@ async function refreshCrew() {
     membersPromise,
     loadCrewFeed({ reset: true }),
     refreshLeaderboard('crew'),
+    loadCrewIntegrations(),
   ]);
 }
 
@@ -744,9 +922,11 @@ async function bootCommunity() {
     return;
   }
 
+  takeIntegrationCallbackFragment();
   if (isLocalDemoMode()) setFeedback('Preview mode: crews, posts, comments, leaderboards, and journal entries are using mock local data.');
   await redeemInviteIfPresent();
   await Promise.all([refreshCrews(), refreshGlobal(), refreshJournal()]);
+  await loadIntegrationSetup();
 }
 
 setupCrewInfiniteScroll();
@@ -756,6 +936,86 @@ $('crewSelect')?.addEventListener('change', async (event) => {
   localStorage.setItem('dominion:activeCrewId', state.activeCrewId);
   setFeedback('');
   await refreshCrew();
+});
+
+$('crewIntegrationsCard')?.addEventListener('click', async (event) => {
+  const connectButton = event.target.closest('[data-connect-provider]');
+  const reconnectButton = event.target.closest('[data-reconnect-provider]');
+  if (connectButton || reconnectButton) {
+    const button = connectButton || reconnectButton;
+    const selectedProvider = button.dataset.connectProvider || button.dataset.reconnectProvider;
+    await beginIntegrationAuthorization(selectedProvider, button);
+    return;
+  }
+
+  const testButton = event.target.closest('[data-test-integration]');
+  if (testButton) {
+    const release = setButtonBusy(testButton, 'Testing…');
+    try {
+      await manageGroupIntegration('test', { destinationId: testButton.dataset.testIntegration });
+      setFeedback('Test update delivered. The external channel is ready.');
+      await loadCrewIntegrations();
+    } catch (error) {
+      setFeedback(error?.message || 'The integration test could not be delivered.');
+      await loadCrewIntegrations();
+    } finally {
+      release();
+    }
+    return;
+  }
+
+  const disconnectButton = event.target.closest('[data-disconnect-integration]');
+  if (!disconnectButton) return;
+  const confirmed = window.confirm('Disconnect this external channel? Queued updates will be canceled immediately.');
+  if (!confirmed) return;
+  const release = setButtonBusy(disconnectButton, 'Disconnecting…');
+  try {
+    const result = await manageGroupIntegration('disconnect', {
+      destinationId: disconnectButton.dataset.disconnectIntegration,
+    });
+    setFeedback(result.providerRevoked
+      ? 'External channel disconnected and provider access revoked.'
+      : 'External channel disconnected. Dominion credentials and queued updates were removed.');
+    await loadCrewIntegrations();
+  } catch (error) {
+    setFeedback(error?.message || 'Unable to disconnect that channel right now.');
+  } finally {
+    release();
+  }
+});
+
+$('integrationConfirmForm')?.addEventListener('submit', async (event) => {
+  event.preventDefault();
+  if (!state.integrationSetupToken || !state.integrationSetup) return;
+  const submitButton = event.currentTarget.querySelector('button[type="submit"]');
+  const release = setButtonBusy(submitButton, 'Confirming…');
+  try {
+    const result = await manageGroupIntegration('confirm', {
+      setupToken: state.integrationSetupToken,
+      channelId: $('integrationChannelSelect').value,
+    });
+    state.integrationSetupToken = '';
+    state.integrationSetup = null;
+    renderIntegrationSetup();
+    if (result.destination?.crewId && result.destination.crewId !== state.activeCrewId) {
+      state.activeCrewId = result.destination.crewId;
+      localStorage.setItem('dominion:activeCrewId', state.activeCrewId);
+      renderCrewShell();
+    }
+    setFeedback(`${result.destination?.provider === 'discord' ? 'Discord' : 'Slack'} channel connected.`);
+    await loadCrewIntegrations();
+  } catch (error) {
+    setFeedback(error?.message || 'Unable to confirm that external channel.');
+  } finally {
+    release();
+  }
+});
+
+$('cancelIntegrationSetup')?.addEventListener('click', () => {
+  state.integrationSetupToken = '';
+  state.integrationSetup = null;
+  renderIntegrationSetup();
+  setFeedback('Integration setup canceled. No channel was connected.');
 });
 
 $('refreshCrewFeedButton')?.addEventListener('click', async (event) => {

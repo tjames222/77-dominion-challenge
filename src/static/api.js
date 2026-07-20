@@ -741,6 +741,14 @@ export async function cancelMembership() {
   return invokeSupabaseAction('cancel-membership');
 }
 
+export async function manageGroupIntegration(action, values = {}) {
+  if (isLocalDemoMode()) {
+    if (action === 'list') return { destinations: [], preview: true };
+    throw new Error('Connect Slack or Discord from a signed-in staging or production account.');
+  }
+  return invokeSupabaseAction('group-integrations', { action, ...values });
+}
+
 function getMockChallengeProgression() {
   const gameStats = readJson('dominion:gameStats', {});
   let records = readJson(MOCK_CHALLENGE_STATES_KEY, []);

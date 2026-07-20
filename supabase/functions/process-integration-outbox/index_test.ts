@@ -120,6 +120,7 @@ Deno.test("worker releases stale locks, delivers a claimed batch, and settles it
   const response = await workerHandler({
     release_stale_outbound_deliveries: 1,
     claim_outbound_deliveries: [claimedDelivery()],
+    validate_claimed_outbound_delivery: true,
     settle_outbound_delivery: "delivered",
     integration_delivery_health: { queued: 0, processing: 0 },
   }, {
@@ -139,6 +140,7 @@ Deno.test("worker releases stale locks, delivers a claimed batch, and settles it
   assertEquals(calls.map((call) => call.name), [
     "release_stale_outbound_deliveries",
     "claim_outbound_deliveries",
+    "validate_claimed_outbound_delivery",
     "settle_outbound_delivery",
     "integration_delivery_health",
   ]);
@@ -160,6 +162,7 @@ Deno.test("database-enforced final outcome is reflected in dead-letter counts", 
   const response = await workerHandler({
     release_stale_outbound_deliveries: 0,
     claim_outbound_deliveries: [claimedDelivery()],
+    validate_claimed_outbound_delivery: true,
     settle_outbound_delivery: "dead_letter",
     integration_delivery_health: {},
   }, { sendProviderMessage: async () => retry })(request());
@@ -176,6 +179,7 @@ Deno.test("credential failures dead-letter without invoking a provider", async (
   const response = await workerHandler({
     release_stale_outbound_deliveries: 0,
     claim_outbound_deliveries: [claimedDelivery()],
+    validate_claimed_outbound_delivery: true,
     settle_outbound_delivery: "dead_letter",
     integration_delivery_health: {},
   }, {
@@ -195,6 +199,34 @@ Deno.test("credential failures dead-letter without invoking a provider", async (
   assert(!JSON.stringify(settle).includes("ciphertext detail"));
 });
 
+Deno.test("a destination disconnected after claim is never sent", async () => {
+  let decrypted = false;
+  let sent = false;
+  const calls: Array<{ name: string; args: Record<string, unknown> }> = [];
+  const response = await workerHandler({
+    release_stale_outbound_deliveries: 0,
+    claim_outbound_deliveries: [claimedDelivery()],
+    validate_claimed_outbound_delivery: false,
+    settle_outbound_delivery: "dead_letter",
+    integration_delivery_health: {},
+  }, {
+    decryptProviderCredential: async () => {
+      decrypted = true;
+      return { accessToken: "must-not-decrypt" };
+    },
+    sendProviderMessage: async () => {
+      sent = true;
+      throw new Error("must not send");
+    },
+  }, calls)(request());
+
+  assertEquals(response.status, 200);
+  assertEquals(decrypted, false);
+  assertEquals(sent, false);
+  const settle = calls.find((call) => call.name === "settle_outbound_delivery");
+  assertEquals(settle?.args.target_error_code, "destination_disconnected");
+});
+
 Deno.test("maintenance releases stale work and applies retention", async () => {
   const calls: Array<{ name: string; args: Record<string, unknown> }> = [];
   const response = await workerHandler(
@@ -204,6 +236,10 @@ Deno.test("maintenance releases stale work and applies retention", async () => {
         redactedPayloads: 3,
         redactedAttempts: 4,
         deletedDeliveries: 5,
+      },
+      purge_integration_connection_setup: {
+        deletedOAuthStates: 1,
+        deletedPendingConnections: 2,
       },
       integration_delivery_health: { queued: 0 },
     },
@@ -215,6 +251,7 @@ Deno.test("maintenance releases stale work and applies retention", async () => {
   assertEquals(calls.map((call) => call.name), [
     "release_stale_outbound_deliveries",
     "purge_integration_delivery_history",
+    "purge_integration_connection_setup",
     "integration_delivery_health",
   ]);
   assertEquals((await responseJson(response)).releasedStale, 2);

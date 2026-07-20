@@ -118,19 +118,36 @@ async function processBatch(
   for (const delivery of deliveries) {
     const startedAt = dependencies.now();
     let result: DeliveryResult;
-    try {
-      const credential = await dependencies.decryptProviderCredential(
-        delivery,
-        keys,
-      );
-      result = await dependencies.sendProviderMessage(delivery, credential);
-    } catch {
+    const destinationActive = await rpc<boolean>(
+      admin,
+      "validate_claimed_outbound_delivery",
+      {
+        target_delivery_id: delivery.delivery_id,
+        worker_token: workerToken,
+      },
+    );
+    if (!destinationActive) {
       result = {
         outcome: "dead_letter",
-        errorCode: "credential_decryption_failed",
-        errorSummary: "The provider credential could not be decrypted.",
+        errorCode: "destination_disconnected",
+        errorSummary: "The provider destination is no longer active.",
         responseMetadata: { provider: delivery.provider },
       };
+    } else {
+      try {
+        const credential = await dependencies.decryptProviderCredential(
+          delivery,
+          keys,
+        );
+        result = await dependencies.sendProviderMessage(delivery, credential);
+      } catch {
+        result = {
+          outcome: "dead_letter",
+          errorCode: "credential_decryption_failed",
+          errorSummary: "The provider credential could not be decrypted.",
+          responseMetadata: { provider: delivery.provider },
+        };
+      }
     }
 
     const finalOutcome = await rpc<string>(
@@ -255,11 +272,15 @@ export function createHandler(overrides: Partial<Dependencies> = {}) {
           admin,
           "purge_integration_delivery_history",
         );
+        const connectionSetup = await rpc<Record<string, number>>(
+          admin,
+          "purge_integration_connection_setup",
+        );
         const health = await rpc<Record<string, unknown>>(
           admin,
           "integration_delivery_health",
         );
-        return response({ releasedStale, retention, health });
+        return response({ releasedStale, retention, connectionSetup, health });
       }
 
       const syntheticDeliveryId = mode === "synthetic"

@@ -92,6 +92,39 @@
           <p class="invite-link" id="inviteLinkText"></p>
         </section>
 
+        <section class="group-integrations card" id="crewIntegrationsCard" aria-labelledby="groupIntegrationsTitle" hidden>
+          <div class="section-heading-row">
+            <div>
+              <p class="eyebrow">External Updates</p>
+              <h2 id="groupIntegrationsTitle">Slack &amp; Discord</h2>
+            </div>
+            <span class="privacy-badge">Group scoped</span>
+          </div>
+          <p class="integration-disclosure">
+            Approved group progress can be posted to connected channels. Conversations and replies stay in Slack or Discord and are not synchronized back into Dominion.
+          </p>
+          <div class="integration-destination-list" id="integrationDestinationList" aria-live="polite"></div>
+          <div class="integration-connect-actions" id="integrationConnectActions" hidden>
+            <button class="secondary" type="button" data-connect-provider="slack">Connect Slack</button>
+            <button class="secondary" type="button" data-connect-provider="discord">Connect Discord</button>
+          </div>
+          <form class="integration-confirm" id="integrationConfirmForm" hidden>
+            <div>
+              <p class="eyebrow">Confirm Destination</p>
+              <h3 id="integrationConfirmTitle">Choose a channel</h3>
+              <p id="integrationConfirmWorkspace"></p>
+            </div>
+            <label for="integrationChannelSelect">
+              <span>Channel</span>
+              <select id="integrationChannelSelect" required></select>
+            </label>
+            <div class="integration-confirm-actions">
+              <button class="primary" type="submit">Confirm channel</button>
+              <button class="secondary" id="cancelIntegrationSetup" type="button">Cancel</button>
+            </div>
+          </form>
+        </section>
+
         <div class="community-stats" id="crewStats">
           <article class="card"><strong id="crewMemberCount">0</strong><span>Members</span></article>
           <article class="card"><strong id="crewDayCount">Day 1</strong><span>Group pace</span></article>

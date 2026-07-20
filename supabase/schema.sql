@@ -2927,6 +2927,7 @@ grant update (body, image_alt) on public.community_posts to authenticated;
 -- This canonical file is executed through psql, so \ir resolves relative to
 -- this file's directory.
 \ir migrations/20260719170000_integration_delivery_runtime.sql
+\ir migrations/20260719180000_integration_connection_management.sql
 grant select, insert, delete on public.post_likes to authenticated;
 grant select, insert, delete on public.post_comments to authenticated;
 grant update (body) on public.post_comments to authenticated;
