@@ -810,7 +810,7 @@ insert into public.challenge_entries (
 ) values (
   '10000000-0000-4000-8000-000000000001',
   date_trunc('week', now() at time zone 'UTC')::date - 6,
-  array['bible', 'water'],
+  array['bible', 'intentionalWalk'],
   '{}'::jsonb
 ) on conflict (user_id, entry_date) do update set
   completed = excluded.completed,
@@ -832,7 +832,7 @@ insert into public.check_ins (
   70,
   'partial',
   2,
-  array['bible', 'water'],
+  array['bible', 'intentionalWalk'],
   '{}'::jsonb
 );
 

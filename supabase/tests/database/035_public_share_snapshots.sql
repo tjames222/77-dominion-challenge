@@ -39,7 +39,7 @@ insert into public.challenge_entries (
 ) values (
   '10000000-0000-4000-8000-000000000001',
   '2026-07-10',
-  array['bible', 'workout', 'water'],
+  array['bible', 'workoutOne', 'intentionalWalk'],
   '{}'::jsonb
 ) on conflict (user_id, entry_date) do update set
   completed = excluded.completed,
