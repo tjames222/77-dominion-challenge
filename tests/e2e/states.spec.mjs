@@ -5,7 +5,7 @@ import {
 } from './support/app-test.mjs';
 import { ROUTE_BY_ID } from './support/routes.mjs';
 import {
-  deferApiModule,
+  deferApiFunction,
   injectApiFunctionFailure,
 } from './support/network-states.mjs';
 import {
@@ -15,8 +15,8 @@ import {
 
 test('billing loading state is stable and reviewable', async ({ page, app }) => {
   await app.seed('memberLocked');
-  const deferred = deferApiModule(page);
-  await page.goto(ROUTE_BY_ID.billing.path, { waitUntil: 'commit' });
+  const deferred = deferApiFunction(page, 'getBillingState');
+  await page.goto(ROUTE_BY_ID.billing.path, { waitUntil: 'domcontentloaded' });
   await deferred.intercepted;
 
   try {
@@ -26,7 +26,7 @@ test('billing loading state is stable and reviewable', async ({ page, app }) => 
       stylePath: app.screenshotStyle,
     });
   } finally {
-    deferred.release();
+    await deferred.release();
   }
 
   await page.waitForLoadState('networkidle');
