@@ -1,3 +1,4 @@
+-- Persist each authenticated user's selected app theme across devices.
 create table if not exists public.user_theme_preferences (
   user_id uuid primary key references auth.users(id) on delete cascade,
   theme_key text not null check (theme_key in ('dark', 'light', 'dominion-night')),
