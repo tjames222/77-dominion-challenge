@@ -3,7 +3,7 @@ begin;
 create extension if not exists pgtap with schema extensions;
 set local search_path = public, extensions;
 
-select plan(17);
+select plan(18);
 
 delete from public.game_point_events
 where user_id = '30000000-0000-4000-8000-000000000003';
@@ -88,6 +88,35 @@ select lives_ok(
   $$ select public.mutate_daily_standard_draft(current_date, 'bible', true) $$,
   'the trusted draft mutation records the completed Daily Standard before submission'
 );
+
+reset role;
+
+select throws_ok(
+  $$
+    insert into public.check_ins (
+      user_id,
+      entry_date,
+      challenge_day,
+      status,
+      completed_count,
+      completed,
+      workout_difficulty
+    ) values (
+      '10000000-0000-4000-8000-000000000001',
+      current_date,
+      1,
+      'scheduled',
+      0,
+      '{}',
+      '{}'::jsonb
+    )
+  $$,
+  '22023',
+  'Scheduled miss Check-Ins are no longer supported.',
+  'a direct scheduled Check-In cannot be normalized past the retirement guard'
+);
+
+set local role authenticated;
 
 select is(
   public.submit_daily_check_in(
