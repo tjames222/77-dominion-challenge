@@ -22,9 +22,9 @@ test('billing loading state is stable and reviewable', async ({ page, app }) => 
 
   try {
     await expect(page.locator('#billingStatusTitle')).toHaveText('Checking your access...');
+    await app.stable();
     await expect(page).toHaveScreenshot('state-billing-loading.png', {
       fullPage: true,
-      stylePath: app.screenshotStyle,
     });
   } finally {
     await deferred.release();

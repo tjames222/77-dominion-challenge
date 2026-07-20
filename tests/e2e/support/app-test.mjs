@@ -3,6 +3,7 @@ import { fileURLToPath } from 'node:url';
 import { fixtureFor, FIXED_NOW } from './fixtures.mjs';
 
 const SCREENSHOT_STYLE = fileURLToPath(new URL('./screenshot.css', import.meta.url));
+const SCREENSHOT_STYLE_MARKER = 'data-dominion-e2e-screenshot-style';
 const EXTERNAL_IMAGE = [
   '<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="800" viewBox="0 0 1200 800">',
   '<rect width="1200" height="800" fill="#172019"/>',
@@ -44,6 +45,26 @@ function installExternalRequestIsolation(context) {
     }
 
     await route.abort('blockedbyclient');
+  });
+}
+
+async function installScreenshotStyle(page) {
+  const selector = `style[${SCREENSHOT_STYLE_MARKER}]`;
+  if (await page.locator(selector).count() === 0) {
+    const style = await page.addStyleTag({ path: SCREENSHOT_STYLE });
+    await style.evaluate(
+      (element, marker) => element.setAttribute(marker, 'true'),
+      SCREENSHOT_STYLE_MARKER,
+    );
+  }
+
+  await page.evaluate(async () => {
+    if (!document.fonts) return;
+    await Promise.all([
+      document.fonts.load('400 16px "Dominion E2E Inter"'),
+      document.fonts.load('900 16px "Dominion E2E Inter"'),
+    ]);
+    await document.fonts.ready;
   });
 }
 
@@ -181,7 +202,6 @@ export const test = base.extend({
 
     const app = {
       runtimeErrors,
-      screenshotStyle: SCREENSHOT_STYLE,
       async seed(stateName = 'member', theme = testInfo.project.metadata.theme || 'dark') {
         await seedPage(page, stateName, theme);
       },
@@ -193,13 +213,14 @@ export const test = base.extend({
           : requestedState;
         await seedPage(page, state, theme);
         await page.goto(route.path, { waitUntil: options.waitUntil || 'networkidle' });
-        await page.addStyleTag({ path: SCREENSHOT_STYLE });
+        await installScreenshotStyle(page);
         await expect(page.locator(route.ready).first()).toBeVisible();
         await expect(page).toHaveTitle(route.title);
         await waitForStablePage(page);
         await expect(page.locator('html')).toHaveAttribute('data-theme', theme);
       },
       async stable() {
+        await installScreenshotStyle(page);
         await waitForStablePage(page);
       },
       assertNoRuntimeErrors(allowedPatterns = []) {
@@ -220,7 +241,6 @@ export async function expectStableScreenshot(page, app, name, options = {}) {
   await app.stable();
   await expect(page).toHaveScreenshot(name, {
     fullPage: options.fullPage ?? true,
-    stylePath: app.screenshotStyle,
     ...options,
   });
 }
