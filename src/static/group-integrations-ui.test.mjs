@@ -69,6 +69,7 @@ describe('private-group provider connections', () => {
 
   it('keeps the integration migrations replayable and represented in the canonical schema', () => {
     assert.doesNotMatch(connectionMigration, /\bcrew_members\s+member\b|\bmember\./);
+    assert.doesNotMatch(connectionMigration, /\bauthorization\s+private\.|\bauthorization\./);
     assert.match(canonicalSchema, /create table if not exists private\.integration_destinations/);
     assert.match(canonicalSchema, /create table if not exists private\.integration_oauth_states/);
     assert.match(canonicalSchema, /create or replace function public\.consume_integration_oauth_state/);
