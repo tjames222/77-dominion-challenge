@@ -3923,7 +3923,7 @@ security definer
 set search_path = public, private, pg_temp
 as $$
 declare
-  authorization private.integration_oauth_states%rowtype;
+  oauth_state private.integration_oauth_states%rowtype;
 begin
   update private.integration_oauth_states
   set consumed_at = now()
@@ -3931,7 +3931,7 @@ begin
     and provider = target_provider
     and consumed_at is null
     and expires_at > now()
-  returning * into authorization;
+  returning * into oauth_state;
 
   if not found then
     raise exception 'Integration authorization state is invalid, expired, or already used.' using errcode = '22023';
@@ -3940,17 +3940,17 @@ begin
   if not exists (
     select 1
     from public.crew_members crew_member
-    where crew_member.crew_id = authorization.crew_id
-      and crew_member.user_id = authorization.initiated_by
+    where crew_member.crew_id = oauth_state.crew_id
+      and crew_member.user_id = oauth_state.initiated_by
       and crew_member.role in ('owner', 'admin')
   ) then
     raise exception 'Integration administrator access is no longer active.' using errcode = '42501';
   end if;
 
   return query select
-    authorization.initiated_by,
-    authorization.crew_id,
-    authorization.return_path;
+    oauth_state.initiated_by,
+    oauth_state.crew_id,
+    oauth_state.return_path;
 end;
 $$;
 
