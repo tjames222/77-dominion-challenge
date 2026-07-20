@@ -55,22 +55,36 @@ jobs:
       - name: Production build
         run: pnpm build
 
+      - name: Check committed visual baselines
+        id: visual-baselines
+        shell: bash
+        run: |
+          if find tests/e2e/__snapshots__ -type f -name '*.png' -print -quit 2>/dev/null | grep -q .; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Browser quality gate
-        if: github.event_name != 'workflow_dispatch' || !inputs.generate_visual_baselines
+        if: (github.event_name != 'workflow_dispatch' || !inputs.generate_visual_baselines) && steps.visual-baselines.outputs.present == 'true'
         run: pnpm test:e2e
 
-      - name: Generate Linux visual baselines
-        if: github.event_name == 'workflow_dispatch' && inputs.generate_visual_baselines
+      - name: Generate reviewable Linux visual baselines
+        if: (github.event_name == 'workflow_dispatch' && inputs.generate_visual_baselines) || steps.visual-baselines.outputs.present != 'true'
         run: pnpm test:e2e:update
 
       - name: Upload generated visual baselines
-        if: github.event_name == 'workflow_dispatch' && inputs.generate_visual_baselines
+        if: (github.event_name == 'workflow_dispatch' && inputs.generate_visual_baselines) || steps.visual-baselines.outputs.present != 'true'
         uses: actions/upload-artifact@v4
         with:
           name: browser-visual-baselines-${{ github.sha }}
           path: tests/e2e/__snapshots__/
           if-no-files-found: error
           retention-days: 14
+
+      - name: Require committed baselines after bootstrap
+        if: github.event_name == 'pull_request' && steps.visual-baselines.outputs.present != 'true'
+        run: echo "Linux baselines were generated as an artifact. Review and commit them so the next run performs visual comparisons."
 
       - name: Upload browser diagnostics
         if: always()

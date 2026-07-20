@@ -22,10 +22,13 @@ Useful focused commands:
     pnpm exec playwright show-report
 
 Normal pull-request runs compare screenshots and never rewrite their expected
-images. Generate intentionally changed baselines on the same Ubuntu image as
-CI by manually running **Browser quality gate** with **Generate visual
-baselines** enabled. Download the `browser-visual-baselines-<sha>` artifact,
-review its PNGs, and commit the approved `tests/e2e/__snapshots__` directory.
+images once Linux baselines are committed. The first branch run, when no
+baseline PNG exists yet, generates the Ubuntu set and uploads it without
+pretending a comparison occurred. Download the
+`browser-visual-baselines-<sha>` artifact, review its PNGs, and commit the
+approved `tests/e2e/__snapshots__` directory; the next run is the strict gate.
+Generate intentionally changed baselines later by manually running **Browser
+quality gate** with **Generate visual baselines** enabled.
 
 For local iteration only, update baselines with:
 
