@@ -509,6 +509,10 @@ declare
   draft public.challenge_entries%rowtype;
   normalized_completed text[];
 begin
+  if new.status = 'scheduled' then
+    raise exception 'Scheduled miss Check-Ins are no longer supported.' using errcode = '22023';
+  end if;
+
   select * into draft
     from public.challenge_entries entry
     where entry.user_id = new.user_id
