@@ -47,8 +47,8 @@ select throws_ok(
     values ('20000000-0000-4000-8000-000000000002', '2026-07-03', array['bible'])
   $$,
   '42501',
-  'new row violates row-level security policy for table "challenge_entries"',
-  'Alice cannot create a draft entry for Bob'
+  'permission denied for table challenge_entries',
+  'authenticated clients cannot bypass trusted Daily Standard draft mutations'
 );
 
 update public.profiles
