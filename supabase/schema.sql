@@ -756,7 +756,7 @@ $$;
 create or replace function public.award_badge(
   target_user_id uuid,
   target_badge_key text,
-  target_entry_date date default null,
+  target_earned_date date default null,
   target_metadata jsonb default '{}'::jsonb
 )
 returns boolean
@@ -767,17 +767,17 @@ as $$
 declare
   inserted_key text;
 begin
-  if target_entry_date is not null and exists (
+  if target_earned_date is not null and exists (
     select 1
     from public.user_badges
     where user_id = target_user_id
-      and entry_date = target_entry_date
+      and entry_date = target_earned_date
   ) then
     return false;
   end if;
 
   insert into public.user_badges (user_id, badge_key, entry_date, metadata)
-  values (target_user_id, target_badge_key, target_entry_date, target_metadata)
+  values (target_user_id, target_badge_key, target_earned_date, target_metadata)
   on conflict do nothing
   returning badge_key into inserted_key;
 
