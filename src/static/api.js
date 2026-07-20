@@ -16,6 +16,12 @@ import {
   prepareMockCrewMembersForStorage,
 } from './mock-community-storage.mjs';
 import { normalizeLeaderboardRank } from './leaderboard-prestige.mjs';
+import {
+  normalizeConnectedDestinations,
+  normalizeOutboundConsent,
+  outboundConsentSettingsEqual,
+  outboundConsentWritePayload,
+} from './integration-consent.mjs';
 
 const SUPABASE_URL = (import.meta.env.VITE_SUPABASE_URL || '').replace(/\/$/, '');
 const SUPABASE_KEY =
@@ -51,6 +57,7 @@ const MOCK_POSTS_KEY = 'dominion:mockCommunityPosts';
 const MOCK_JOURNAL_KEY = 'dominion:mockJournalEntries';
 const MOCK_CHALLENGE_STATES_KEY = 'dominion:mockChallengeStates';
 const MOCK_CHALLENGE_THRESHOLDS_VERSION_KEY = 'dominion:mockChallengeThresholdsVersion';
+const MOCK_OUTBOUND_CONSENT_KEY = 'dominion:mockOutboundConsent';
 const MOCK_CHALLENGE_THRESHOLDS_VERSION = 2;
 const MOCK_MEDIA_DB_NAME = 'dominion-preview-media';
 const MOCK_MEDIA_STORE_NAME = 'community-post-images';
@@ -1326,6 +1333,94 @@ export async function getCrews() {
   const client = requireSupabase();
   const user = await requireUser();
   return queryCrewsForUser(client, user.id);
+}
+
+export async function getOutboundUpdateConsent(crewId) {
+  if (!crewId) throw new Error('Choose a group to review update privacy.');
+
+  if (isLocalDemoMode()) {
+    const userId = getMockUserId();
+    const user = getMockUser();
+    const { members } = ensureMockCrews();
+    const membershipActive = Boolean(members[crewId]?.some((member) => member.userId === userId));
+    const storedByCrew = readJson(MOCK_OUTBOUND_CONSENT_KEY, {});
+    const stored = storedByCrew[crewId]?.userId === userId ? storedByCrew[crewId] : {};
+    return normalizeOutboundConsent(stored, {
+      userId,
+      crewId,
+      accountActive: Boolean(user.authenticated),
+      membershipActive,
+    });
+  }
+
+  const client = requireSupabase();
+  const user = await requireUser();
+  const { data, error } = await client.rpc('get_current_outbound_consent', {
+    target_user_id: user.id,
+    target_crew_id: crewId,
+    target_event_type: null,
+  });
+  if (error) throw error;
+  return normalizeOutboundConsent(data, { userId: user.id, crewId });
+}
+
+export async function updateOutboundUpdateConsent(crewId, preferences) {
+  if (!crewId) throw new Error('Choose a group before saving update privacy.');
+  const settings = outboundConsentWritePayload(preferences);
+
+  if (isLocalDemoMode()) {
+    const userId = getMockUserId();
+    const user = getMockUser();
+    const { members } = ensureMockCrews();
+    const membershipActive = Boolean(members[crewId]?.some((member) => member.userId === userId));
+    if (!membershipActive) throw new Error('You can only change consent for a group you belong to.');
+
+    const storedByCrew = readJson(MOCK_OUTBOUND_CONSENT_KEY, {});
+    const prior = normalizeOutboundConsent(
+      storedByCrew[crewId]?.userId === userId ? storedByCrew[crewId] : {},
+      { userId, crewId, accountActive: Boolean(user.authenticated), membershipActive },
+    );
+    if (prior.consentRecorded && outboundConsentSettingsEqual(prior, settings)) return prior;
+
+    const next = normalizeOutboundConsent({
+      ...prior,
+      ...settings,
+      userId,
+      crewId,
+      accountActive: Boolean(user.authenticated),
+      membershipActive,
+      consentId: prior.consentId || randomId('preview_consent'),
+      consentRecorded: true,
+      revision: prior.revision + 1,
+      changedAt: new Date().toISOString(),
+      evaluatedAt: new Date().toISOString(),
+    });
+    storedByCrew[crewId] = next;
+    writeJson(MOCK_OUTBOUND_CONSENT_KEY, storedByCrew);
+    return next;
+  }
+
+  const client = requireSupabase();
+  const user = await requireUser();
+  const { data, error } = await client.rpc('set_outbound_update_consent', {
+    target_crew_id: crewId,
+    target_outbound_updates_enabled: settings.outboundUpdatesEnabled,
+    target_presentation_mode: settings.presentationMode,
+    target_share_check_ins: settings.events.checkIns,
+    target_share_streak_milestones: settings.events.streakMilestones,
+    target_share_badges_rewards: settings.events.badgesRewards,
+    target_share_membership_events: settings.events.membership,
+  });
+  if (error) throw error;
+  return normalizeOutboundConsent(data, { userId: user.id, crewId });
+}
+
+export async function getOutboundIntegrationDestinations(crewId) {
+  // FOU-541 owns destination connection storage; FOU-553 owns the provider
+  // apps and delivery runtime. Keeping this adapter table-free lets those
+  // branches plug in without coupling consent to an unavailable schema.
+  if (!crewId) return [];
+  return normalizeConnectedDestinations([]);
 }
 
 export async function createCrew({ name, description = '', challengeStartDate = null }) {

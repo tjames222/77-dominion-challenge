@@ -1,12 +1,16 @@
 import { initReveal } from './reveal';
 import {
   getBillingState,
+  getCrews,
   getLocalOrSessionUser,
+  getOutboundIntegrationDestinations,
+  getOutboundUpdateConsent,
   getProfile,
   hasSupabaseAuth,
   isLocalDemoMode,
   redirectToLogin,
   updateProfile,
+  updateOutboundUpdateConsent,
   uploadProfilePhoto,
 } from './api';
 import {
@@ -68,10 +72,24 @@ const profilePreviewTools = document.getElementById('profilePreviewTools');
 const profilePreviewChallengeSwitch = document.getElementById('profilePreviewChallengeSwitch');
 const profilePreviewStatus = document.getElementById('profilePreviewStatus');
 const resetPreviewChallengeButton = document.getElementById('resetPreviewChallengeButton');
+const integrationConsentCrew = document.getElementById('integrationConsentCrew');
+const integrationConsentNoGroups = document.getElementById('integrationConsentNoGroups');
+const integrationConsentContent = document.getElementById('integrationConsentContent');
+const integrationDestinationList = document.getElementById('integrationDestinationList');
+const integrationDestinationEmpty = document.getElementById('integrationDestinationEmpty');
+const integrationConsentForm = document.getElementById('integrationConsentForm');
+const integrationUpdatesEnabled = document.getElementById('integrationUpdatesEnabled');
+const integrationShareCheckIns = document.getElementById('integrationShareCheckIns');
+const integrationShareStreaks = document.getElementById('integrationShareStreaks');
+const integrationShareBadges = document.getElementById('integrationShareBadges');
+const integrationShareMembership = document.getElementById('integrationShareMembership');
+const integrationConsentFeedback = document.getElementById('integrationConsentFeedback');
+const saveIntegrationConsent = document.getElementById('saveIntegrationConsent');
 const MAX_PROFILE_PHOTO_SIZE = 5 * 1024 * 1024;
 let currentProfile = { name: 'Member', email: 'Logged in', avatarUrl: '' };
 let selectedPhotoFile = null;
 let selectedPreviewUrl = '';
+let integrationCrews = [];
 const EMPTY_PHOTO_FILENAME = 'No new photo selected';
 let previewChallengeState = normalizePreviewChallengeState(
   localPreviewMode ? load(PREVIEW_CHALLENGE_STORAGE_KEY, {}) : {},
@@ -186,29 +204,167 @@ function updateBillingSummary(state) {
   document.getElementById('profileSubscriptionPill').textContent = state.subscriptionActive ? 'Subscription active' : 'Subscription needed';
 }
 
+function setIntegrationConsentFeedback(message, tone = '') {
+  if (!integrationConsentFeedback) return;
+  integrationConsentFeedback.textContent = message;
+  integrationConsentFeedback.classList.toggle('error', tone === 'error');
+}
+
+function setIntegrationConsentBusy(isBusy, busyLabel = 'Saving...') {
+  if (integrationConsentContent) {
+    integrationConsentContent.setAttribute('aria-busy', String(isBusy));
+  }
+  if (integrationConsentCrew) integrationConsentCrew.disabled = isBusy || integrationCrews.length === 0;
+  integrationConsentForm?.querySelectorAll('input, button').forEach((control) => {
+    control.disabled = isBusy;
+  });
+  if (saveIntegrationConsent) saveIntegrationConsent.textContent = isBusy ? busyLabel : 'Save update privacy';
+}
+
+function renderIntegrationDestinations(destinations = []) {
+  if (!integrationDestinationList || !integrationDestinationEmpty) return;
+  integrationDestinationList.replaceChildren();
+  integrationDestinationEmpty.hidden = destinations.length > 0;
+
+  destinations.forEach((destination) => {
+    const item = document.createElement('li');
+    item.className = 'integration-destination-item';
+    const identity = document.createElement('span');
+    const name = document.createElement('strong');
+    const context = document.createElement('small');
+    const status = document.createElement('em');
+    const platformName = destination.platform === 'slack' ? 'Slack' : 'Discord';
+
+    name.textContent = `${platformName} · ${destination.name}`;
+    context.textContent = destination.context || `${platformName} destination`;
+    status.textContent = 'Connected';
+    identity.append(name, context);
+    item.append(identity, status);
+    integrationDestinationList.append(item);
+  });
+}
+
+function renderIntegrationConsent(consent) {
+  if (integrationUpdatesEnabled) integrationUpdatesEnabled.checked = consent.outboundUpdatesEnabled;
+  integrationConsentForm?.querySelectorAll('[name="integrationPresentation"]').forEach((option) => {
+    option.checked = option.value === consent.presentationMode;
+  });
+  if (integrationShareCheckIns) integrationShareCheckIns.checked = consent.events.checkIns;
+  if (integrationShareStreaks) integrationShareStreaks.checked = consent.events.streakMilestones;
+  if (integrationShareBadges) integrationShareBadges.checked = consent.events.badgesRewards;
+  if (integrationShareMembership) integrationShareMembership.checked = consent.events.membership;
+
+  if (!consent.consentRecorded) {
+    setIntegrationConsentFeedback('Nothing is shared until you choose categories, turn on updates, and save.');
+  } else if (!consent.outboundUpdatesEnabled) {
+    setIntegrationConsentFeedback('Outbound updates are off for this group. Pending attempts will be blocked.');
+  } else {
+    setIntegrationConsentFeedback('Your saved choices are checked again before every delivery attempt.');
+  }
+}
+
+function failClosedIntegrationConsent() {
+  return {
+    consentRecorded: false,
+    outboundUpdatesEnabled: false,
+    presentationMode: 'anonymous',
+    events: {
+      checkIns: false,
+      streakMilestones: false,
+      badgesRewards: false,
+      membership: false,
+    },
+  };
+}
+
+async function loadSelectedIntegrationConsent() {
+  const crewId = integrationConsentCrew?.value || '';
+  if (!crewId || !integrationConsentContent) return;
+
+  let loaded = false;
+  renderIntegrationConsent(failClosedIntegrationConsent());
+  renderIntegrationDestinations([]);
+  setIntegrationConsentBusy(true, 'Loading...');
+  setIntegrationConsentFeedback('Loading update privacy...');
+  try {
+    const [consent, destinations] = await Promise.all([
+      getOutboundUpdateConsent(crewId),
+      getOutboundIntegrationDestinations(crewId),
+    ]);
+    renderIntegrationConsent(consent);
+    renderIntegrationDestinations(destinations);
+    loaded = true;
+  } catch (error) {
+    console.warn('Unable to load outbound update consent', error);
+    renderIntegrationDestinations([]);
+    setIntegrationConsentFeedback(error?.message || 'Unable to load update privacy right now.', 'error');
+  } finally {
+    setIntegrationConsentBusy(false);
+    if (!loaded) {
+      integrationConsentForm?.querySelectorAll('input, button').forEach((control) => {
+        control.disabled = true;
+      });
+    }
+  }
+}
+
+async function hydrateIntegrationConsent() {
+  if (!integrationConsentCrew || !integrationConsentContent || !integrationConsentNoGroups) return;
+  integrationConsentCrew.disabled = true;
+  setIntegrationConsentFeedback('Loading your groups...');
+
+  try {
+    integrationCrews = await getCrews();
+    integrationConsentCrew.replaceChildren();
+
+    if (!integrationCrews.length) {
+      integrationConsentNoGroups.hidden = false;
+      integrationConsentContent.hidden = true;
+      integrationConsentCrew.append(new Option('No private groups', ''));
+      integrationConsentCrew.disabled = true;
+      return;
+    }
+
+    integrationCrews.forEach((crew) => {
+      integrationConsentCrew.append(new Option(crew.name || 'Private group', crew.id));
+    });
+    integrationConsentNoGroups.hidden = true;
+    integrationConsentContent.hidden = false;
+    await loadSelectedIntegrationConsent();
+  } catch (error) {
+    console.warn('Unable to load integration privacy groups', error);
+    integrationCrews = [];
+    integrationConsentCrew.replaceChildren(new Option('Groups unavailable', ''));
+    integrationConsentCrew.disabled = true;
+    integrationConsentNoGroups.hidden = false;
+    integrationConsentNoGroups.textContent = 'Unable to load your private groups right now.';
+    integrationConsentContent.hidden = true;
+  }
+}
+
 async function hydrateProfile() {
   if (!hasSupabaseAuth() && isLocalDemoMode()) {
     const user = load('dominion:user', { name: 'Member', email: 'Logged in', avatarUrl: '' });
     const billing = await getBillingState();
     if (!billing.authenticated) {
       redirectToLogin('./profile.html');
-      return;
+      return false;
     }
     renderProfile(user);
     updateBillingSummary(billing);
-    return;
+    return true;
   }
 
   if (!hasSupabaseAuth()) {
     redirectToLogin('./profile.html');
-    return;
+    return false;
   }
 
   try {
     const billing = await getBillingState();
     if (!billing.authenticated) {
       redirectToLogin('./profile.html');
-      return;
+      return false;
     }
 
     const sessionUser = await getLocalOrSessionUser();
@@ -222,9 +378,11 @@ async function hydrateProfile() {
     syncStoredUser(syncedUser);
     renderProfile(syncedUser);
     updateBillingSummary(billing);
+    return true;
   } catch (error) {
     console.warn('Unable to load profile from Supabase', error);
     setProfileFeedback('Unable to load your profile right now.', 'error');
+    return false;
   }
 }
 
@@ -327,6 +485,42 @@ resetPreviewChallengeButton?.addEventListener('click', () => {
   renderPreviewChallengeTools();
 });
 
+integrationConsentCrew?.addEventListener('change', () => {
+  loadSelectedIntegrationConsent();
+});
+
+integrationConsentForm?.addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const crewId = integrationConsentCrew?.value || '';
+  if (!crewId) return;
+
+  const presentationMode = integrationConsentForm
+    .querySelector('[name="integrationPresentation"]:checked')?.value || 'anonymous';
+  setIntegrationConsentBusy(true);
+  setIntegrationConsentFeedback('Saving your update privacy...');
+  try {
+    const consent = await updateOutboundUpdateConsent(crewId, {
+      outboundUpdatesEnabled: Boolean(integrationUpdatesEnabled?.checked),
+      presentationMode,
+      events: {
+        checkIns: Boolean(integrationShareCheckIns?.checked),
+        streakMilestones: Boolean(integrationShareStreaks?.checked),
+        badgesRewards: Boolean(integrationShareBadges?.checked),
+        membership: Boolean(integrationShareMembership?.checked),
+      },
+    });
+    renderIntegrationConsent(consent);
+    setIntegrationConsentFeedback(consent.outboundUpdatesEnabled
+      ? 'Update privacy saved. These choices will be checked before every send and retry.'
+      : 'Update privacy saved. Outbound updates and pending attempts are blocked.');
+  } catch (error) {
+    console.warn('Unable to save outbound update consent', error);
+    setIntegrationConsentFeedback(error?.message || 'Unable to save update privacy right now.', 'error');
+  } finally {
+    setIntegrationConsentBusy(false);
+  }
+});
+
 window.addEventListener('storage', (event) => {
   if (!localPreviewMode || event.key !== PREVIEW_CHALLENGE_STORAGE_KEY) return;
   previewChallengeState = normalizePreviewChallengeState(
@@ -337,5 +531,9 @@ window.addEventListener('storage', (event) => {
 });
 
 renderPreviewChallengeTools();
-hydrateProfile();
+async function hydratePage() {
+  const authenticated = await hydrateProfile();
+  if (authenticated) await hydrateIntegrationConsent();
+}
+hydratePage();
 initReveal();
