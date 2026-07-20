@@ -9,6 +9,10 @@ const migrationSql = readFileSync(
   new URL('../../supabase/migrations/20260720100000_outbound_update_consent.sql', import.meta.url),
   'utf8',
 );
+const deliveryMigrationSql = readFileSync(
+  new URL('../../supabase/migrations/20260720110000_outbound_event_delivery.sql', import.meta.url),
+  'utf8',
+);
 const canonicalSchema = readFileSync(new URL('../../supabase/schema.sql', import.meta.url), 'utf8');
 const integrationNotes = readFileSync(new URL('../../docs/outbound-update-consent.md', import.meta.url), 'utf8');
 
@@ -58,6 +62,9 @@ describe('member outbound update privacy surface', () => {
       assert.match(sql, /destinationCheckRequired', true/);
       assert.match(sql, /Members can read own outbound update preferences/);
       assert.match(sql, /Members can read own outbound consent audit/);
+    });
+    [migrationSql, deliveryMigrationSql, canonicalSchema].forEach((sql) => {
+      assert.doesNotMatch(sql, /\bcrew_members\s+member\b|\bmember\./);
     });
   });
 

@@ -234,9 +234,9 @@ begin
 
   select exists (
     select 1
-    from public.crew_members member
-    where member.crew_id = target_crew_id
-      and member.user_id = effective_user_id
+    from public.crew_members crew_member
+    where crew_member.crew_id = target_crew_id
+      and crew_member.user_id = effective_user_id
   ) into membership_active;
 
   select current_preference.*
@@ -337,9 +337,9 @@ begin
 
   if not exists (
     select 1
-    from public.crew_members member
-    where member.crew_id = target_crew_id
-      and member.user_id = caller_user_id
+    from public.crew_members crew_member
+    where crew_member.crew_id = target_crew_id
+      and crew_member.user_id = caller_user_id
   ) then
     raise exception 'You can only change consent for a group you belong to.';
   end if;
