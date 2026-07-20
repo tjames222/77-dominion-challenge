@@ -10,6 +10,6 @@ FOU-543 removes Dominion's private-group conversation surface. Group creation, i
 - All member policies for the private `community-post-images` bucket are removed.
 - Slack and Discord remain outbound-only. Dominion does not import conversations, threads, replies, reactions, or provider members.
 
-The migration deliberately does not delete rows, objects, or the private bucket. Historical data remains service-only. FOU-564 adds a disabled-by-default, bounded, export-first operator mechanism; deployment does not authorize a production purge. See [Retired Community retention runbook](./retired-community-retention-runbook.md).
+The migration deliberately does not delete rows, objects, or the private bucket. Historical data remains service-only. FOU-564 first captures an immutable retirement census and offers each authenticated member a time-limited export of only content they authored; deployment does not authorize a production purge.
 
 The Private Journal uses its own tables and `journal-progress` bucket and is unaffected by this cutover.
