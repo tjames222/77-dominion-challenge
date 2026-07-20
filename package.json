@@ -9,7 +9,7 @@
     "test": "node --test src/static/*.test.mjs",
     "test:e2e": "playwright test",
     "test:e2e:headed": "playwright test --headed --project=chromium-functional",
-    "test:e2e:update": "playwright test --update-snapshots",
+    "test:e2e:update": "playwright test --update-snapshots=all",
     "test:quality": "pnpm test && pnpm build && pnpm test:e2e"
   },
   "dependencies": {
