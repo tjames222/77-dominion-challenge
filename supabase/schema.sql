@@ -9190,14 +9190,14 @@ begin
        where redaction.batch_id = old.id
      )
      and new.requested_by = 'redacted-after-retention'
-     and new.subject_user_id is not distinct from case
+     and new.subject_user_id is not distinct from (case
        when old.reason = 'account_erasure'
          then '00000000-0000-0000-0000-000000000000'::uuid
-       else null::uuid end
-     and new.crew_id is not distinct from case
+       else null::uuid end)
+     and new.crew_id is not distinct from (case
        when old.reason = 'group_deletion'
          then '00000000-0000-0000-0000-000000000000'::uuid
-       else null::uuid end
+       else null::uuid end)
      and (to_jsonb(new) - 'requested_by' - 'subject_user_id' - 'crew_id')
        = (to_jsonb(old) - 'requested_by' - 'subject_user_id' - 'crew_id') then
     return new;
