@@ -23,12 +23,20 @@ export function readStoredTheme() {
   return runtime().readStoredTheme();
 }
 
+export function readPreferredTheme() {
+  return runtime().readPreferredTheme();
+}
+
 export function applyStoredTheme(theme = readStoredTheme()) {
   return runtime().applyTheme(theme);
 }
 
 export function setTheme(themeId) {
   return runtime().setTheme(themeId);
+}
+
+export function setThemeEntitlements(themeIds) {
+  return runtime().setThemeEntitlements(themeIds);
 }
 
 export function toggleTheme() {

@@ -97,10 +97,10 @@ test('registry exposes stable theme metadata and dark asset fallback', () => {
   assert.equal(night.assets.fallback, 'dark');
   assert.equal(night.availability.featureFlag, 'VITE_ENABLE_DOMINION_NIGHT_THEME');
   assert.equal(night.availability.requiresEntitlement, true);
-  assert.deepEqual(Array.from(runtime.getAssetVariants(night.id)), ['dominion-night', 'dark']);
+  assert.deepEqual(Array.from(runtime.getAssetVariants(night.id)), ['dark']);
 });
 
-test('Dominion Night is locked by default and can be activated only by the bootstrap flag', () => {
+test('Dominion Night requires both its release flag and an in-memory entitlement', () => {
   const locked = runBootstrap({ storedTheme: JSON.stringify('dominion-night') });
   assert.equal(locked.runtime.isThemeAvailable('dominion-night'), false);
   assert.equal(locked.activeTheme(), 'dark');
@@ -115,9 +115,20 @@ test('Dominion Night is locked by default and can be activated only by the boots
     storedTheme: JSON.stringify('dominion-night'),
     dominionNightEnabled: true,
   });
+  assert.equal(enabled.runtime.isThemeAvailable('dominion-night'), false);
+  assert.equal(enabled.activeTheme(), 'dark');
+  assert.equal(enabled.runtime.readPreferredTheme(), 'dominion-night');
+
+  enabled.runtime.setThemeEntitlements(['dominion-night']);
   assert.equal(enabled.runtime.isThemeAvailable('dominion-night'), true);
   assert.equal(enabled.activeTheme(), 'dominion-night');
   assert.equal(enabled.root.style.colorScheme, 'dark');
+  assert.deepEqual(Array.from(enabled.runtime.getAssetVariants('dominion-night')), ['dominion-night', 'dark']);
+
+  enabled.runtime.setThemeEntitlements([]);
+  assert.equal(enabled.runtime.isThemeAvailable('dominion-night'), false);
+  assert.equal(enabled.activeTheme(), 'dark');
+  assert.equal(enabled.runtime.readPreferredTheme(), 'dominion-night');
 });
 
 test('unknown, removed, malformed, and unavailable stored themes fall back safely', () => {
@@ -137,6 +148,8 @@ test('unknown, removed, malformed, and unavailable stored themes fall back safel
 
 test('shared setter normalizes selections, persists JSON, and emits one change event', () => {
   const enabled = runBootstrap({ dominionNightEnabled: true });
+  enabled.runtime.setThemeEntitlements(['dominion-night']);
+  enabled.events.length = 0;
   assert.equal(enabled.runtime.setTheme('dominion-night'), 'dominion-night');
   assert.deepEqual(enabled.writes, [['dominion:theme', JSON.stringify('dominion-night')]]);
   assert.equal(enabled.events.length, 1);

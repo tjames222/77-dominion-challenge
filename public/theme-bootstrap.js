@@ -12,6 +12,7 @@
   var CHANGE_EVENT = 'dominion:themechange';
   var NIGHT_FEATURE_FLAG = 'VITE_ENABLE_DOMINION_NIGHT_THEME';
   var featureScript = global.document && global.document.currentScript;
+  var entitledThemeIds = Object.create(null);
   var dominionNightEnabled = Boolean(
     featureScript &&
       featureScript.dataset &&
@@ -78,7 +79,11 @@
 
   function isThemeAvailable(themeId) {
     var theme = getTheme(themeId);
-    return Boolean(theme && theme.availability.enabled);
+    return Boolean(
+      theme &&
+      theme.availability.enabled &&
+      (!theme.availability.requiresEntitlement || entitledThemeIds[themeId] === true),
+    );
   }
 
   function resolveTheme(themeId) {
@@ -95,12 +100,17 @@
     }
   }
 
-  function readStoredTheme() {
+  function readPreferredTheme() {
     try {
-      return resolveTheme(parseStoredTheme(global.localStorage.getItem(STORAGE_KEY)));
+      var preferredTheme = parseStoredTheme(global.localStorage.getItem(STORAGE_KEY));
+      return getTheme(preferredTheme) ? preferredTheme : DEFAULT_THEME_ID;
     } catch (_error) {
       return DEFAULT_THEME_ID;
     }
+  }
+
+  function readStoredTheme() {
+    return resolveTheme(readPreferredTheme());
   }
 
   function syncBrowserChrome(theme) {
@@ -142,6 +152,15 @@
     return applyTheme(resolvedId, { notify: true });
   }
 
+  function setThemeEntitlements(themeIds) {
+    entitledThemeIds = Object.create(null);
+    (Array.isArray(themeIds) ? themeIds : []).forEach(function allowTheme(themeId) {
+      var theme = getTheme(themeId);
+      if (theme && theme.availability.requiresEntitlement) entitledThemeIds[themeId] = true;
+    });
+    return applyTheme(readPreferredTheme(), { notify: true });
+  }
+
   function getActiveTheme() {
     if (!global.document) return DEFAULT_THEME_ID;
     return resolveTheme(global.document.documentElement.getAttribute(ROOT_ATTRIBUTE));
@@ -160,7 +179,7 @@
   }
 
   var runtime = Object.freeze({
-    version: 1,
+    version: 2,
     storageKey: STORAGE_KEY,
     rootAttribute: ROOT_ATTRIBUTE,
     changeEvent: CHANGE_EVENT,
@@ -169,10 +188,12 @@
     getTheme: getTheme,
     isThemeAvailable: isThemeAvailable,
     resolveTheme: resolveTheme,
+    readPreferredTheme: readPreferredTheme,
     readStoredTheme: readStoredTheme,
     applyTheme: applyTheme,
     applyStoredTheme: applyStoredTheme,
     setTheme: setTheme,
+    setThemeEntitlements: setThemeEntitlements,
     getActiveTheme: getActiveTheme,
     getAssetVariants: getAssetVariants,
     toggleTheme: toggleTheme,

@@ -27,10 +27,12 @@ interface DominionThemeRuntime {
   getTheme(themeId: string): DominionThemeDefinition | null;
   isThemeAvailable(themeId: string): boolean;
   resolveTheme(themeId: string): string;
+  readPreferredTheme(): string;
   readStoredTheme(): string;
   applyTheme(themeId: string, options?: { notify?: boolean }): string;
   applyStoredTheme(options?: { notify?: boolean }): string;
   setTheme(themeId: string): string;
+  setThemeEntitlements(themeIds: readonly string[]): string;
   getActiveTheme(): string;
   getAssetVariants(themeId: string): string[];
   toggleTheme(): string;
