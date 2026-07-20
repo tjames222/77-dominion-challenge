@@ -3,7 +3,7 @@ begin;
 create extension if not exists pgtap with schema extensions;
 set local search_path = public, extensions;
 
-select plan(21);
+select plan(24);
 
 select ok(
   not has_table_privilege('authenticated', 'public.crew_invite_sessions', 'select'),
@@ -12,6 +12,18 @@ select ok(
 select ok(
   not has_table_privilege('authenticated', 'public.crew_invite_attributions', 'select'),
   'authenticated clients cannot read invite attribution identities directly'
+);
+
+insert into public.outbound_update_preferences (
+  crew_id,
+  user_id,
+  outbound_updates_enabled,
+  presentation_mode
+) values (
+  'a0000000-0000-4000-8000-000000000001',
+  '30000000-0000-4000-8000-000000000003',
+  false,
+  'anonymous'
 );
 
 set local role authenticated;
