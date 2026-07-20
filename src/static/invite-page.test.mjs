@@ -6,6 +6,7 @@ const inviteHtml = readFileSync(new URL('../../invite.html', import.meta.url), '
 const inviteCss = readFileSync(new URL('../assets/invite.css', import.meta.url), 'utf8');
 const inviteJs = readFileSync(new URL('./invite.js', import.meta.url), 'utf8');
 const communityJs = readFileSync(new URL('./community.js', import.meta.url), 'utf8');
+const shareComposer = readFileSync(new URL('./share-composer.mjs', import.meta.url), 'utf8');
 const apiJs = readFileSync(new URL('./api.js', import.meta.url), 'utf8');
 const viteConfig = readFileSync(new URL('../../vite.config.ts', import.meta.url), 'utf8');
 
@@ -26,10 +27,10 @@ describe('private-group invitation browser page', () => {
   });
 
   test('creates new invitation links with a fragment instead of a query secret', () => {
-    const copyHandler = communityJs.match(/\$\('copyInviteButton'\)\?\.addEventListener\('click',[\s\S]*?\n\}\);/)?.[0] || '';
-    assert.match(copyHandler, /new URL\('\.\/invite\.html'/);
-    assert.match(copyHandler, /url\.hash = `invite=/);
-    assert.doesNotMatch(copyHandler, /searchParams\.set\(['"]invite/);
+    assert.doesNotMatch(communityJs, /searchParams\.set\(['"]invite/);
+    assert.match(shareComposer, /new URL\('\.\/invite\.html'/);
+    assert.match(shareComposer, /url\.hash = `invite=/);
+    assert.doesNotMatch(shareComposer, /searchParams\.set\(['"]invite/);
   });
 
   test('refuses secret-bearing authentication return paths', () => {

@@ -3479,6 +3479,4215 @@ create policy "Users can delete own journal photo objects"
     and public.has_active_entitlement('membership_active')
   );
 
+-- Retire global Community access without deleting historical social data.
+
+drop function if exists public.get_global_leaderboard(text);
+
+create or replace function public.can_read_community_post(target_post_id uuid)
+returns boolean
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select exists (
+    select 1
+    from public.community_posts cp
+    where cp.id = target_post_id
+      and cp.scope = 'crew'
+      and public.has_active_entitlement('membership_active')
+      and public.is_crew_member(cp.crew_id)
+  );
+$$;
+
+drop policy if exists "Authenticated users can read visible posts" on public.community_posts;
+create policy "Authenticated users can read visible posts"
+  on public.community_posts
+  for select
+  to authenticated
+  using (
+    public.has_active_entitlement('membership_active')
+    and scope = 'crew'
+    and public.is_crew_member(crew_id)
+  );
+
+drop policy if exists "Users can create visible posts" on public.community_posts;
+create policy "Users can create visible posts"
+  on public.community_posts
+  for insert
+  to authenticated
+  with check (
+    author_id = (select auth.uid())
+    and public.has_active_entitlement('membership_active')
+    and scope = 'crew'
+    and public.is_crew_member(crew_id)
+  );
+
+drop policy if exists "Authors can update own posts" on public.community_posts;
+create policy "Authors can update own posts"
+  on public.community_posts
+  for update
+  to authenticated
+  using (
+    author_id = (select auth.uid())
+    and public.has_active_entitlement('membership_active')
+    and scope = 'crew'
+    and public.is_crew_member(crew_id)
+  )
+  with check (
+    author_id = (select auth.uid())
+    and public.has_active_entitlement('membership_active')
+    and scope = 'crew'
+    and public.is_crew_member(crew_id)
+  );
+
+drop policy if exists "Authors and crew leaders can delete posts" on public.community_posts;
+create policy "Authors and crew leaders can delete posts"
+  on public.community_posts
+  for delete
+  to authenticated
+  using (
+    public.has_active_entitlement('membership_active')
+    and scope = 'crew'
+    and (
+      author_id = (select auth.uid())
+      or public.can_manage_crew(crew_id)
+    )
+  );
+
+drop policy if exists "Users can remove own likes" on public.post_likes;
+create policy "Users can remove own likes"
+  on public.post_likes
+  for delete
+  to authenticated
+  using (
+    user_id = (select auth.uid())
+    and public.has_active_entitlement('membership_active')
+    and public.can_read_community_post(post_id)
+  );
+
+drop policy if exists "Users can update own comments" on public.post_comments;
+create policy "Users can update own comments"
+  on public.post_comments
+  for update
+  to authenticated
+  using (
+    user_id = (select auth.uid())
+    and public.has_active_entitlement('membership_active')
+    and public.can_read_community_post(post_id)
+  )
+  with check (
+    user_id = (select auth.uid())
+    and public.has_active_entitlement('membership_active')
+    and public.can_read_community_post(post_id)
+  );
+
+create schema if not exists private;
+
+revoke all on schema private from public;
+revoke all on schema private from anon;
+revoke all on schema private from authenticated;
+
+create table if not exists private.integration_destinations (
+  id uuid primary key default gen_random_uuid(),
+  crew_id uuid not null references public.crews(id) on delete cascade,
+  provider text not null check (provider in ('slack', 'discord')),
+  provider_workspace_id text not null check (char_length(provider_workspace_id) between 1 and 200),
+  provider_destination_id text not null check (char_length(provider_destination_id) between 1 and 200),
+  display_name text not null default '' check (char_length(display_name) <= 200),
+  credential_ciphertext bytea not null check (octet_length(credential_ciphertext) between 17 and 16384),
+  credential_nonce bytea not null check (octet_length(credential_nonce) = 12),
+  credential_key_version smallint not null check (credential_key_version > 0),
+  credential_fingerprint text not null check (credential_fingerprint ~ '^[a-f0-9]{64}$'),
+  scopes text[] not null default '{}',
+  status text not null default 'active'
+    check (status in ('active', 'reconnect_required', 'disconnected', 'revoked')),
+  installed_by uuid not null references auth.users(id) on delete restrict,
+  installed_at timestamptz not null default now(),
+  last_verified_at timestamptz,
+  disconnected_at timestamptz,
+  last_error_code text check (last_error_code is null or char_length(last_error_code) <= 100),
+  last_error_summary text check (last_error_summary is null or char_length(last_error_summary) <= 500),
+  metadata jsonb not null default '{}'::jsonb check (jsonb_typeof(metadata) = 'object'),
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  unique (crew_id, provider, provider_workspace_id, provider_destination_id)
+);
+
+comment on table private.integration_destinations is
+  'Server-only provider destinations. OAuth credentials are AES-256-GCM ciphertext; key material lives only in Edge Function secrets.';
+
+create table if not exists private.outbound_deliveries (
+  id uuid primary key default gen_random_uuid(),
+  crew_id uuid not null references public.crews(id) on delete cascade,
+  destination_id uuid not null references private.integration_destinations(id) on delete cascade,
+  event_type text not null check (event_type ~ '^[a-z][a-z0-9_.-]{1,79}$'),
+  idempotency_key text not null check (char_length(idempotency_key) between 8 and 240),
+  payload jsonb not null check (
+    jsonb_typeof(payload) = 'object'
+    and octet_length(payload::text) <= 65536
+  ),
+  status text not null default 'queued'
+    check (status in ('queued', 'processing', 'retry', 'delivered', 'dead_letter', 'cancelled')),
+  priority smallint not null default 100 check (priority between 0 and 1000),
+  available_at timestamptz not null default now(),
+  attempt_count smallint not null default 0 check (attempt_count >= 0),
+  max_attempts smallint not null default 5 check (max_attempts between 1 and 8),
+  lock_token uuid,
+  locked_at timestamptz,
+  delivered_at timestamptz,
+  dead_lettered_at timestamptz,
+  cancelled_at timestamptz,
+  last_error_code text check (last_error_code is null or char_length(last_error_code) <= 100),
+  last_error_summary text check (last_error_summary is null or char_length(last_error_summary) <= 500),
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  unique (destination_id, idempotency_key),
+  check (
+    (status = 'processing' and lock_token is not null and locked_at is not null)
+    or (status <> 'processing' and lock_token is null and locked_at is null)
+  )
+);
+
+comment on table private.outbound_deliveries is
+  'Durable, private-group-scoped provider outbox. Publishing commits independently from provider delivery.';
+
+create table if not exists private.integration_delivery_attempts (
+  id bigint generated always as identity primary key,
+  delivery_id uuid not null references private.outbound_deliveries(id) on delete cascade,
+  attempt_number smallint not null check (attempt_number > 0),
+  outcome text not null check (outcome in ('delivered', 'retry', 'dead_letter', 'worker_timeout')),
+  http_status integer check (http_status is null or http_status between 100 and 599),
+  provider_request_id text check (provider_request_id is null or char_length(provider_request_id) <= 200),
+  retry_after_seconds integer check (retry_after_seconds is null or retry_after_seconds between 0 and 86400),
+  error_code text check (error_code is null or char_length(error_code) <= 100),
+  error_summary text check (error_summary is null or char_length(error_summary) <= 500),
+  response_metadata jsonb not null default '{}'::jsonb check (
+    jsonb_typeof(response_metadata) = 'object'
+    and octet_length(response_metadata::text) <= 8192
+  ),
+  started_at timestamptz not null,
+  completed_at timestamptz not null default now(),
+  unique (delivery_id, attempt_number)
+);
+
+create index if not exists integration_destinations_crew_status_idx
+  on private.integration_destinations (crew_id, status, provider);
+
+create index if not exists outbound_deliveries_ready_idx
+  on private.outbound_deliveries (priority, available_at, created_at)
+  where status in ('queued', 'retry');
+
+create index if not exists outbound_deliveries_crew_created_idx
+  on private.outbound_deliveries (crew_id, created_at desc);
+
+create index if not exists outbound_deliveries_dead_letter_idx
+  on private.outbound_deliveries (dead_lettered_at desc)
+  where status = 'dead_letter';
+
+create index if not exists integration_delivery_attempts_delivery_idx
+  on private.integration_delivery_attempts (delivery_id, attempt_number desc);
+
+alter table private.integration_destinations enable row level security;
+alter table private.outbound_deliveries enable row level security;
+alter table private.integration_delivery_attempts enable row level security;
+
+revoke all on all tables in schema private from public;
+revoke all on all tables in schema private from anon;
+revoke all on all tables in schema private from authenticated;
+revoke all on all sequences in schema private from public;
+revoke all on all sequences in schema private from anon;
+revoke all on all sequences in schema private from authenticated;
+
+drop trigger if exists set_integration_destinations_updated_at on private.integration_destinations;
+create trigger set_integration_destinations_updated_at
+  before update on private.integration_destinations
+  for each row execute function public.set_updated_at();
+
+drop trigger if exists set_outbound_deliveries_updated_at on private.outbound_deliveries;
+create trigger set_outbound_deliveries_updated_at
+  before update on private.outbound_deliveries
+  for each row execute function public.set_updated_at();
+
+create or replace function public.redact_integration_metadata(input jsonb)
+returns jsonb
+language plpgsql
+immutable
+security invoker
+set search_path = public, pg_temp
+as $$
+declare
+  output jsonb;
+begin
+  if input is null then
+    return '{}'::jsonb;
+  end if;
+
+  if jsonb_typeof(input) = 'object' then
+    select coalesce(
+      jsonb_object_agg(
+        item.key,
+        case
+          when lower(item.key) ~ '(authorization|credential|secret|token|webhook|content|payload|body)'
+            then '"[redacted]"'::jsonb
+          else public.redact_integration_metadata(item.value)
+        end
+      ),
+      '{}'::jsonb
+    )
+    into output
+    from jsonb_each(input) item;
+    return output;
+  end if;
+
+  if jsonb_typeof(input) = 'array' then
+    select coalesce(jsonb_agg(public.redact_integration_metadata(item.value)), '[]'::jsonb)
+    into output
+    from jsonb_array_elements(input) item;
+    return output;
+  end if;
+
+  return input;
+end;
+$$;
+
+create or replace function private.redact_integration_destination_metadata()
+returns trigger
+language plpgsql
+security definer
+set search_path = public, private, pg_temp
+as $$
+begin
+  new.metadata := public.redact_integration_metadata(new.metadata);
+  return new;
+end;
+$$;
+
+drop trigger if exists redact_integration_destination_metadata
+  on private.integration_destinations;
+create trigger redact_integration_destination_metadata
+  before insert or update of metadata on private.integration_destinations
+  for each row execute function private.redact_integration_destination_metadata();
+
+create or replace function public.enqueue_outbound_delivery(
+  target_crew_id uuid,
+  target_destination_id uuid,
+  target_event_type text,
+  target_idempotency_key text,
+  target_payload jsonb,
+  target_max_attempts integer default 5,
+  target_available_at timestamptz default now()
+)
+returns uuid
+language plpgsql
+security definer
+set search_path = public, private, pg_temp
+as $$
+declare
+  destination private.integration_destinations%rowtype;
+  existing private.outbound_deliveries%rowtype;
+  delivery_id uuid;
+begin
+  if target_crew_id is null or target_destination_id is null then
+    raise exception 'A crew and destination are required.' using errcode = '22023';
+  end if;
+  if target_event_type is null or target_event_type !~ '^[a-z][a-z0-9_.-]{1,79}$' then
+    raise exception 'Invalid integration event type.' using errcode = '22023';
+  end if;
+  if target_idempotency_key is null or char_length(target_idempotency_key) not between 8 and 240 then
+    raise exception 'Invalid integration idempotency key.' using errcode = '22023';
+  end if;
+  if target_payload is null or jsonb_typeof(target_payload) <> 'object'
+    or octet_length(target_payload::text) > 65536 then
+    raise exception 'Invalid integration payload.' using errcode = '22023';
+  end if;
+  if target_max_attempts not between 1 and 8 then
+    raise exception 'Invalid maximum attempt count.' using errcode = '22023';
+  end if;
+
+  select * into destination
+  from private.integration_destinations
+  where id = target_destination_id;
+
+  if not found or destination.crew_id <> target_crew_id then
+    raise exception 'The integration destination does not belong to this group.' using errcode = '42501';
+  end if;
+  if destination.status <> 'active' then
+    raise exception 'The integration destination is not active.' using errcode = '55000';
+  end if;
+
+  select * into existing
+  from private.outbound_deliveries
+  where destination_id = target_destination_id
+    and idempotency_key = target_idempotency_key;
+
+  if found then
+    if existing.crew_id <> target_crew_id
+      or existing.event_type <> target_event_type
+      or existing.payload <> target_payload then
+      raise exception 'The idempotency key was reused with different delivery data.' using errcode = '23505';
+    end if;
+    return existing.id;
+  end if;
+
+  insert into private.outbound_deliveries (
+    crew_id,
+    destination_id,
+    event_type,
+    idempotency_key,
+    payload,
+    max_attempts,
+    available_at
+  ) values (
+    target_crew_id,
+    target_destination_id,
+    target_event_type,
+    target_idempotency_key,
+    target_payload,
+    target_max_attempts,
+    coalesce(target_available_at, now())
+  )
+  on conflict (destination_id, idempotency_key) do nothing
+  returning id into delivery_id;
+
+  if delivery_id is not null then
+    return delivery_id;
+  end if;
+
+  select * into existing
+  from private.outbound_deliveries
+  where destination_id = target_destination_id
+    and idempotency_key = target_idempotency_key;
+
+  if existing.crew_id <> target_crew_id
+    or existing.event_type <> target_event_type
+    or existing.payload <> target_payload then
+    raise exception 'The idempotency key was reused with different delivery data.' using errcode = '23505';
+  end if;
+  return existing.id;
+end;
+$$;
+
+create or replace function public.claim_outbound_deliveries(
+  worker_token uuid,
+  batch_size integer default 20
+)
+returns table (
+  delivery_id uuid,
+  crew_id uuid,
+  destination_id uuid,
+  provider text,
+  provider_workspace_id text,
+  provider_destination_id text,
+  event_type text,
+  payload jsonb,
+  attempt_number integer,
+  max_attempts integer,
+  credential_ciphertext bytea,
+  credential_nonce bytea,
+  credential_key_version integer
+)
+language sql
+security definer
+set search_path = public, private, pg_temp
+as $$
+  with candidates as (
+    select queued.id
+    from private.outbound_deliveries queued
+    join private.integration_destinations destination
+      on destination.id = queued.destination_id
+    where queued.status in ('queued', 'retry')
+      and queued.available_at <= now()
+      and destination.status = 'active'
+    order by queued.priority asc, queued.available_at asc, queued.created_at asc
+    for update of queued skip locked
+    limit least(greatest(coalesce(batch_size, 20), 1), 100)
+  ), claimed as (
+    update private.outbound_deliveries queued
+    set status = 'processing',
+        attempt_count = queued.attempt_count + 1,
+        lock_token = worker_token,
+        locked_at = now(),
+        last_error_code = null,
+        last_error_summary = null
+    from candidates
+    where queued.id = candidates.id
+      and worker_token is not null
+    returning queued.*
+  )
+  select
+    claimed.id,
+    claimed.crew_id,
+    destination.id,
+    destination.provider,
+    destination.provider_workspace_id,
+    destination.provider_destination_id,
+    claimed.event_type,
+    claimed.payload,
+    claimed.attempt_count::integer,
+    claimed.max_attempts::integer,
+    destination.credential_ciphertext,
+    destination.credential_nonce,
+    destination.credential_key_version::integer
+  from claimed
+  join private.integration_destinations destination
+    on destination.id = claimed.destination_id
+  order by claimed.priority asc, claimed.available_at asc, claimed.created_at asc;
+$$;
+
+create or replace function public.settle_outbound_delivery(
+  target_delivery_id uuid,
+  worker_token uuid,
+  target_outcome text,
+  target_started_at timestamptz,
+  target_http_status integer default null,
+  target_provider_request_id text default null,
+  target_retry_after_seconds integer default null,
+  target_error_code text default null,
+  target_error_summary text default null,
+  target_response_metadata jsonb default '{}'::jsonb
+)
+returns text
+language plpgsql
+security definer
+set search_path = public, private, pg_temp
+as $$
+declare
+  delivery private.outbound_deliveries%rowtype;
+  final_outcome text;
+  retry_seconds integer;
+begin
+  if target_outcome not in ('delivered', 'retry', 'dead_letter') then
+    raise exception 'Invalid delivery outcome.' using errcode = '22023';
+  end if;
+  if target_http_status is not null and target_http_status not between 100 and 599 then
+    raise exception 'Invalid provider status.' using errcode = '22023';
+  end if;
+
+  select * into delivery
+  from private.outbound_deliveries
+  where id = target_delivery_id
+  for update;
+
+  if not found or delivery.status <> 'processing' or delivery.lock_token <> worker_token then
+    raise exception 'The delivery is not owned by this worker.' using errcode = '55000';
+  end if;
+
+  final_outcome := target_outcome;
+  if target_outcome = 'retry' and delivery.attempt_count >= delivery.max_attempts then
+    final_outcome := 'dead_letter';
+  end if;
+
+  retry_seconds := case
+    when final_outcome = 'retry' then least(
+      greatest(
+        coalesce(target_retry_after_seconds, (30 * power(2, delivery.attempt_count - 1))::integer),
+        1
+      ),
+      86400
+    )
+    else null
+  end;
+
+  insert into private.integration_delivery_attempts (
+    delivery_id,
+    attempt_number,
+    outcome,
+    http_status,
+    provider_request_id,
+    retry_after_seconds,
+    error_code,
+    error_summary,
+    response_metadata,
+    started_at
+  ) values (
+    delivery.id,
+    delivery.attempt_count,
+    final_outcome,
+    target_http_status,
+    left(target_provider_request_id, 200),
+    retry_seconds,
+    left(target_error_code, 100),
+    left(target_error_summary, 500),
+    public.redact_integration_metadata(coalesce(target_response_metadata, '{}'::jsonb)),
+    coalesce(target_started_at, delivery.locked_at, now())
+  )
+  on conflict (delivery_id, attempt_number) do nothing;
+
+  update private.outbound_deliveries
+  set status = case final_outcome
+        when 'delivered' then 'delivered'
+        when 'retry' then 'retry'
+        else 'dead_letter'
+      end,
+      available_at = case when final_outcome = 'retry' then now() + make_interval(secs => retry_seconds) else available_at end,
+      delivered_at = case when final_outcome = 'delivered' then now() else null end,
+      dead_lettered_at = case when final_outcome = 'dead_letter' then now() else null end,
+      last_error_code = case when final_outcome = 'delivered' then null else left(target_error_code, 100) end,
+      last_error_summary = case when final_outcome = 'delivered' then null else left(target_error_summary, 500) end,
+      lock_token = null,
+      locked_at = null
+  where id = delivery.id;
+
+  return final_outcome;
+end;
+$$;
+
+create or replace function public.release_stale_outbound_deliveries(
+  stale_after interval default interval '5 minutes'
+)
+returns integer
+language plpgsql
+security definer
+set search_path = public, private, pg_temp
+as $$
+declare
+  delivery private.outbound_deliveries%rowtype;
+  released integer := 0;
+  release_outcome text;
+begin
+  if stale_after < interval '1 minute' or stale_after > interval '1 day' then
+    raise exception 'Invalid stale-delivery window.' using errcode = '22023';
+  end if;
+
+  for delivery in
+    select *
+    from private.outbound_deliveries
+    where status = 'processing'
+      and locked_at < now() - stale_after
+    order by locked_at asc
+    for update skip locked
+  loop
+    release_outcome := case
+      when delivery.attempt_count >= delivery.max_attempts then 'dead_letter'
+      else 'worker_timeout'
+    end;
+
+    insert into private.integration_delivery_attempts (
+      delivery_id,
+      attempt_number,
+      outcome,
+      retry_after_seconds,
+      error_code,
+      error_summary,
+      started_at
+    ) values (
+      delivery.id,
+      delivery.attempt_count,
+      release_outcome,
+      case when release_outcome = 'worker_timeout' then 60 else null end,
+      'worker_timeout',
+      'The delivery worker did not settle its lock before the timeout.',
+      delivery.locked_at
+    )
+    on conflict (delivery_id, attempt_number) do nothing;
+
+    update private.outbound_deliveries
+    set status = case when release_outcome = 'dead_letter' then 'dead_letter' else 'retry' end,
+        available_at = case when release_outcome = 'dead_letter' then available_at else now() + interval '1 minute' end,
+        dead_lettered_at = case when release_outcome = 'dead_letter' then now() else null end,
+        last_error_code = 'worker_timeout',
+        last_error_summary = 'The delivery worker did not settle its lock before the timeout.',
+        lock_token = null,
+        locked_at = null
+    where id = delivery.id;
+
+    released := released + 1;
+  end loop;
+
+  return released;
+end;
+$$;
+
+create or replace function public.integration_delivery_health()
+returns jsonb
+language sql
+stable
+security definer
+set search_path = public, private, pg_temp
+as $$
+  select jsonb_build_object(
+    'queued', count(*) filter (where status in ('queued', 'retry')),
+    'processing', count(*) filter (where status = 'processing'),
+    'deadLettersLast24Hours', count(*) filter (
+      where status = 'dead_letter' and dead_lettered_at >= now() - interval '24 hours'
+    ),
+    'oldestReadyAt', min(available_at) filter (
+      where status in ('queued', 'retry') and available_at <= now()
+    ),
+    'generatedAt', now()
+  )
+  from private.outbound_deliveries;
+$$;
+
+create or replace function public.purge_integration_delivery_history()
+returns jsonb
+language plpgsql
+security definer
+set search_path = public, private, pg_temp
+as $$
+declare
+  redacted_payloads integer;
+  redacted_attempts integer;
+  deleted_deliveries integer;
+begin
+  update private.outbound_deliveries
+  set payload = jsonb_build_object('redacted', true, 'eventType', event_type)
+  where status = 'delivered'
+    and delivered_at < now() - interval '7 days'
+    and payload <> jsonb_build_object('redacted', true, 'eventType', event_type);
+  get diagnostics redacted_payloads = row_count;
+
+  update private.integration_delivery_attempts
+  set response_metadata = '{"redacted":true}'::jsonb,
+      error_summary = null
+  where completed_at < now() - interval '30 days'
+    and (response_metadata <> '{"redacted":true}'::jsonb or error_summary is not null);
+  get diagnostics redacted_attempts = row_count;
+
+  delete from private.outbound_deliveries
+  where status in ('delivered', 'dead_letter', 'cancelled')
+    and coalesce(delivered_at, dead_lettered_at, cancelled_at, updated_at) < now() - interval '90 days';
+  get diagnostics deleted_deliveries = row_count;
+
+  return jsonb_build_object(
+    'redactedPayloads', redacted_payloads,
+    'redactedAttempts', redacted_attempts,
+    'deletedDeliveries', deleted_deliveries
+  );
+end;
+$$;
+
+revoke all on function public.redact_integration_metadata(jsonb) from public, anon, authenticated;
+revoke all on function private.redact_integration_destination_metadata() from public, anon, authenticated;
+revoke all on function public.enqueue_outbound_delivery(uuid, uuid, text, text, jsonb, integer, timestamptz) from public, anon, authenticated;
+revoke all on function public.claim_outbound_deliveries(uuid, integer) from public, anon, authenticated;
+revoke all on function public.settle_outbound_delivery(uuid, uuid, text, timestamptz, integer, text, integer, text, text, jsonb) from public, anon, authenticated;
+revoke all on function public.release_stale_outbound_deliveries(interval) from public, anon, authenticated;
+revoke all on function public.integration_delivery_health() from public, anon, authenticated;
+revoke all on function public.purge_integration_delivery_history() from public, anon, authenticated;
+
+grant execute on function public.enqueue_outbound_delivery(uuid, uuid, text, text, jsonb, integer, timestamptz) to service_role;
+grant execute on function public.claim_outbound_deliveries(uuid, integer) to service_role;
+grant execute on function public.settle_outbound_delivery(uuid, uuid, text, timestamptz, integer, text, integer, text, text, jsonb) to service_role;
+grant execute on function public.release_stale_outbound_deliveries(interval) to service_role;
+grant execute on function public.integration_delivery_health() to service_role;
+grant execute on function public.purge_integration_delivery_history() to service_role;
+
+alter table private.integration_destinations
+  alter column credential_ciphertext drop not null,
+  alter column credential_nonce drop not null,
+  alter column credential_key_version drop not null,
+  alter column credential_fingerprint drop not null;
+
+alter table private.integration_destinations
+  add column if not exists provider_workspace_name text not null default ''
+    check (char_length(provider_workspace_name) <= 200),
+  add column if not exists last_tested_at timestamptz,
+  add column if not exists last_delivered_at timestamptz;
+
+alter table private.integration_destinations
+  drop constraint if exists integration_destinations_active_credentials_check;
+alter table private.integration_destinations
+  add constraint integration_destinations_active_credentials_check check (
+    status <> 'active'
+    or (
+      credential_ciphertext is not null
+      and credential_nonce is not null
+      and credential_key_version is not null
+      and credential_fingerprint is not null
+    )
+  );
+
+create unique index if not exists integration_destinations_crew_provider_unique
+  on private.integration_destinations (crew_id, provider);
+
+create table if not exists private.integration_oauth_states (
+  nonce_hash text primary key check (nonce_hash ~ '^[a-f0-9]{64}$'),
+  provider text not null check (provider in ('slack', 'discord')),
+  crew_id uuid not null references public.crews(id) on delete cascade,
+  initiated_by uuid not null references auth.users(id) on delete cascade,
+  return_path text not null default '/community.html'
+    check (return_path = '/community.html'),
+  expires_at timestamptz not null,
+  consumed_at timestamptz,
+  created_at timestamptz not null default now()
+);
+
+create table if not exists private.pending_integration_connections (
+  id uuid primary key,
+  setup_token_hash text not null unique check (setup_token_hash ~ '^[a-f0-9]{64}$'),
+  provider text not null check (provider in ('slack', 'discord')),
+  crew_id uuid not null references public.crews(id) on delete cascade,
+  initiated_by uuid not null references auth.users(id) on delete cascade,
+  provider_workspace_id text not null check (char_length(provider_workspace_id) between 1 and 200),
+  provider_workspace_name text not null default '' check (char_length(provider_workspace_name) <= 200),
+  credential_ciphertext bytea not null check (octet_length(credential_ciphertext) between 17 and 16384),
+  credential_nonce bytea not null check (octet_length(credential_nonce) = 12),
+  credential_key_version smallint not null check (credential_key_version > 0),
+  credential_fingerprint text not null check (credential_fingerprint ~ '^[a-f0-9]{64}$'),
+  scopes text[] not null default '{}',
+  expires_at timestamptz not null,
+  consumed_at timestamptz,
+  created_at timestamptz not null default now()
+);
+
+create table if not exists private.integration_connection_audit (
+  id bigint generated always as identity primary key,
+  crew_id uuid not null references public.crews(id) on delete cascade,
+  destination_id uuid references private.integration_destinations(id) on delete set null,
+  actor_id uuid references auth.users(id) on delete set null,
+  provider text not null check (provider in ('slack', 'discord')),
+  action text not null check (
+    action in (
+      'authorization_started',
+      'authorization_completed',
+      'connected',
+      'reconnected',
+      'test_succeeded',
+      'needs_attention',
+      'disconnected'
+    )
+  ),
+  outcome text not null default 'succeeded' check (outcome in ('succeeded', 'failed')),
+  metadata jsonb not null default '{}'::jsonb check (
+    jsonb_typeof(metadata) = 'object'
+    and octet_length(metadata::text) <= 8192
+  ),
+  created_at timestamptz not null default now()
+);
+
+create index if not exists integration_oauth_states_expires_idx
+  on private.integration_oauth_states (expires_at);
+create index if not exists pending_integration_connections_expires_idx
+  on private.pending_integration_connections (expires_at);
+create index if not exists integration_connection_audit_crew_created_idx
+  on private.integration_connection_audit (crew_id, created_at desc);
+
+alter table private.integration_oauth_states enable row level security;
+alter table private.pending_integration_connections enable row level security;
+alter table private.integration_connection_audit enable row level security;
+
+revoke all on private.integration_oauth_states from public, anon, authenticated;
+revoke all on private.pending_integration_connections from public, anon, authenticated;
+revoke all on private.integration_connection_audit from public, anon, authenticated;
+revoke all on sequence private.integration_connection_audit_id_seq from public, anon, authenticated;
+
+create or replace function private.record_integration_connection_audit(
+  target_crew_id uuid,
+  target_destination_id uuid,
+  target_actor_id uuid,
+  target_provider text,
+  target_action text,
+  target_outcome text default 'succeeded',
+  target_metadata jsonb default '{}'::jsonb
+)
+returns void
+language sql
+security definer
+set search_path = public, private, pg_temp
+as $$
+  insert into private.integration_connection_audit (
+    crew_id,
+    destination_id,
+    actor_id,
+    provider,
+    action,
+    outcome,
+    metadata
+  ) values (
+    target_crew_id,
+    target_destination_id,
+    target_actor_id,
+    target_provider,
+    target_action,
+    target_outcome,
+    public.redact_integration_metadata(coalesce(target_metadata, '{}'::jsonb))
+  );
+$$;
+
+create or replace function public.create_integration_oauth_state(
+  target_user_id uuid,
+  target_crew_id uuid,
+  target_provider text,
+  target_nonce_hash text,
+  target_return_path text,
+  target_expires_at timestamptz
+)
+returns boolean
+language plpgsql
+security definer
+set search_path = public, private, pg_temp
+as $$
+begin
+  if target_provider not in ('slack', 'discord')
+    or target_nonce_hash !~ '^[a-f0-9]{64}$'
+    or target_return_path <> '/community.html'
+    or target_expires_at < now() + interval '1 minute'
+    or target_expires_at > now() + interval '15 minutes' then
+    raise exception 'Invalid integration authorization state.' using errcode = '22023';
+  end if;
+
+  if not exists (
+    select 1
+    from public.crew_members crew_member
+    where crew_member.crew_id = target_crew_id
+      and crew_member.user_id = target_user_id
+      and crew_member.role in ('owner', 'admin')
+  ) then
+    raise exception 'Only a group owner or admin can manage integrations.' using errcode = '42501';
+  end if;
+
+  delete from private.integration_oauth_states
+  where expires_at < now() - interval '1 day';
+
+  insert into private.integration_oauth_states (
+    nonce_hash,
+    provider,
+    crew_id,
+    initiated_by,
+    return_path,
+    expires_at
+  ) values (
+    target_nonce_hash,
+    target_provider,
+    target_crew_id,
+    target_user_id,
+    target_return_path,
+    target_expires_at
+  );
+
+  perform private.record_integration_connection_audit(
+    target_crew_id,
+    null,
+    target_user_id,
+    target_provider,
+    'authorization_started'
+  );
+  return true;
+end;
+$$;
+
+create or replace function public.consume_integration_oauth_state(
+  target_provider text,
+  target_nonce_hash text
+)
+returns table (
+  user_id uuid,
+  crew_id uuid,
+  return_path text
+)
+language plpgsql
+security definer
+set search_path = public, private, pg_temp
+as $$
+declare
+  oauth_state private.integration_oauth_states%rowtype;
+begin
+  update private.integration_oauth_states
+  set consumed_at = now()
+  where nonce_hash = target_nonce_hash
+    and provider = target_provider
+    and consumed_at is null
+    and expires_at > now()
+  returning * into oauth_state;
+
+  if not found then
+    raise exception 'Integration authorization state is invalid, expired, or already used.' using errcode = '22023';
+  end if;
+
+  if not exists (
+    select 1
+    from public.crew_members crew_member
+    where crew_member.crew_id = oauth_state.crew_id
+      and crew_member.user_id = oauth_state.initiated_by
+      and crew_member.role in ('owner', 'admin')
+  ) then
+    raise exception 'Integration administrator access is no longer active.' using errcode = '42501';
+  end if;
+
+  return query select
+    oauth_state.initiated_by,
+    oauth_state.crew_id,
+    oauth_state.return_path;
+end;
+$$;
+
+create or replace function public.create_pending_integration_connection(
+  target_pending_id uuid,
+  target_setup_token_hash text,
+  target_provider text,
+  target_crew_id uuid,
+  target_user_id uuid,
+  target_workspace_id text,
+  target_workspace_name text,
+  target_credential_ciphertext bytea,
+  target_credential_nonce bytea,
+  target_credential_key_version integer,
+  target_credential_fingerprint text,
+  target_scopes text[],
+  target_expires_at timestamptz
+)
+returns uuid
+language plpgsql
+security definer
+set search_path = public, private, pg_temp
+as $$
+begin
+  if target_provider not in ('slack', 'discord')
+    or target_setup_token_hash !~ '^[a-f0-9]{64}$'
+    or target_expires_at < now() + interval '1 minute'
+    or target_expires_at > now() + interval '20 minutes' then
+    raise exception 'Invalid pending integration connection.' using errcode = '22023';
+  end if;
+  if not exists (
+    select 1
+    from public.crew_members crew_member
+    where crew_member.crew_id = target_crew_id
+      and crew_member.user_id = target_user_id
+      and crew_member.role in ('owner', 'admin')
+  ) then
+    raise exception 'Integration administrator access is no longer active.' using errcode = '42501';
+  end if;
+
+  delete from private.pending_integration_connections
+  where expires_at < now() - interval '1 day';
+
+  insert into private.pending_integration_connections (
+    id,
+    setup_token_hash,
+    provider,
+    crew_id,
+    initiated_by,
+    provider_workspace_id,
+    provider_workspace_name,
+    credential_ciphertext,
+    credential_nonce,
+    credential_key_version,
+    credential_fingerprint,
+    scopes,
+    expires_at
+  ) values (
+    target_pending_id,
+    target_setup_token_hash,
+    target_provider,
+    target_crew_id,
+    target_user_id,
+    target_workspace_id,
+    coalesce(target_workspace_name, ''),
+    target_credential_ciphertext,
+    target_credential_nonce,
+    target_credential_key_version,
+    target_credential_fingerprint,
+    coalesce(target_scopes, '{}'),
+    target_expires_at
+  );
+
+  perform private.record_integration_connection_audit(
+    target_crew_id,
+    null,
+    target_user_id,
+    target_provider,
+    'authorization_completed'
+  );
+  return target_pending_id;
+end;
+$$;
+
+create or replace function public.get_pending_integration_connection(
+  target_setup_token_hash text,
+  target_user_id uuid
+)
+returns table (
+  pending_id uuid,
+  provider text,
+  crew_id uuid,
+  provider_workspace_id text,
+  provider_workspace_name text,
+  credential_ciphertext bytea,
+  credential_nonce bytea,
+  credential_key_version integer,
+  credential_fingerprint text,
+  scopes text[]
+)
+language plpgsql
+security definer
+set search_path = public, private, pg_temp
+as $$
+begin
+  if not exists (
+    select 1
+    from private.pending_integration_connections pending
+    join public.crew_members crew_member
+      on crew_member.crew_id = pending.crew_id
+     and crew_member.user_id = target_user_id
+     and crew_member.role in ('owner', 'admin')
+    where pending.setup_token_hash = target_setup_token_hash
+      and pending.initiated_by = target_user_id
+      and pending.consumed_at is null
+      and pending.expires_at > now()
+  ) then
+    raise exception 'Pending integration setup is invalid or expired.' using errcode = '42501';
+  end if;
+
+  return query
+    select
+      pending.id,
+      pending.provider,
+      pending.crew_id,
+      pending.provider_workspace_id,
+      pending.provider_workspace_name,
+      pending.credential_ciphertext,
+      pending.credential_nonce,
+      pending.credential_key_version::integer,
+      pending.credential_fingerprint,
+      pending.scopes
+    from private.pending_integration_connections pending
+    where pending.setup_token_hash = target_setup_token_hash
+      and pending.initiated_by = target_user_id
+      and pending.consumed_at is null
+      and pending.expires_at > now();
+end;
+$$;
+
+create or replace function public.prepare_integration_destination_id(
+  target_crew_id uuid,
+  target_provider text,
+  target_user_id uuid
+)
+returns uuid
+language plpgsql
+security definer
+set search_path = public, private, pg_temp
+as $$
+declare
+  destination_id uuid;
+begin
+  if not exists (
+    select 1 from public.crew_members crew_member
+    where crew_member.crew_id = target_crew_id
+      and crew_member.user_id = target_user_id
+      and crew_member.role in ('owner', 'admin')
+  ) then
+    raise exception 'Only a group owner or admin can manage integrations.' using errcode = '42501';
+  end if;
+
+  select destination.id into destination_id
+  from private.integration_destinations destination
+  where destination.crew_id = target_crew_id
+    and destination.provider = target_provider;
+
+  return coalesce(destination_id, gen_random_uuid());
+end;
+$$;
+
+create or replace function public.complete_pending_integration_connection(
+  target_setup_token_hash text,
+  target_user_id uuid,
+  target_destination_id uuid,
+  target_provider_destination_id text,
+  target_destination_name text,
+  target_credential_ciphertext bytea,
+  target_credential_nonce bytea,
+  target_credential_key_version integer,
+  target_credential_fingerprint text
+)
+returns uuid
+language plpgsql
+security definer
+set search_path = public, private, pg_temp
+as $$
+declare
+  pending private.pending_integration_connections%rowtype;
+  existing_id uuid;
+  connection_action text;
+begin
+  select * into pending
+  from private.pending_integration_connections
+  where setup_token_hash = target_setup_token_hash
+    and initiated_by = target_user_id
+    and consumed_at is null
+    and expires_at > now()
+  for update;
+
+  if not found then
+    raise exception 'Pending integration setup is invalid or expired.' using errcode = '42501';
+  end if;
+  if not exists (
+    select 1 from public.crew_members crew_member
+    where crew_member.crew_id = pending.crew_id
+      and crew_member.user_id = target_user_id
+      and crew_member.role in ('owner', 'admin')
+  ) then
+    raise exception 'Integration administrator access is no longer active.' using errcode = '42501';
+  end if;
+
+  select destination.id into existing_id
+  from private.integration_destinations destination
+  where destination.crew_id = pending.crew_id
+    and destination.provider = pending.provider;
+
+  if existing_id is not null and existing_id <> target_destination_id then
+    raise exception 'The integration destination changed during confirmation.' using errcode = '40001';
+  end if;
+  connection_action := case when existing_id is null then 'connected' else 'reconnected' end;
+
+  insert into private.integration_destinations (
+    id,
+    crew_id,
+    provider,
+    provider_workspace_id,
+    provider_workspace_name,
+    provider_destination_id,
+    display_name,
+    credential_ciphertext,
+    credential_nonce,
+    credential_key_version,
+    credential_fingerprint,
+    scopes,
+    status,
+    installed_by,
+    installed_at,
+    last_verified_at,
+    disconnected_at,
+    last_error_code,
+    last_error_summary
+  ) values (
+    target_destination_id,
+    pending.crew_id,
+    pending.provider,
+    pending.provider_workspace_id,
+    pending.provider_workspace_name,
+    target_provider_destination_id,
+    coalesce(target_destination_name, ''),
+    target_credential_ciphertext,
+    target_credential_nonce,
+    target_credential_key_version,
+    target_credential_fingerprint,
+    pending.scopes,
+    'active',
+    target_user_id,
+    now(),
+    now(),
+    null,
+    null,
+    null
+  )
+  on conflict (crew_id, provider) do update set
+    provider_workspace_id = excluded.provider_workspace_id,
+    provider_workspace_name = excluded.provider_workspace_name,
+    provider_destination_id = excluded.provider_destination_id,
+    display_name = excluded.display_name,
+    credential_ciphertext = excluded.credential_ciphertext,
+    credential_nonce = excluded.credential_nonce,
+    credential_key_version = excluded.credential_key_version,
+    credential_fingerprint = excluded.credential_fingerprint,
+    scopes = excluded.scopes,
+    status = 'active',
+    installed_by = excluded.installed_by,
+    installed_at = now(),
+    last_verified_at = now(),
+    disconnected_at = null,
+    last_error_code = null,
+    last_error_summary = null;
+
+  update private.pending_integration_connections
+  set consumed_at = now(),
+      credential_ciphertext = decode(repeat('00', 17), 'hex'),
+      credential_nonce = decode(repeat('00', 12), 'hex'),
+      credential_fingerprint = repeat('0', 64),
+      scopes = '{}'
+  where id = pending.id;
+
+  perform private.record_integration_connection_audit(
+    pending.crew_id,
+    target_destination_id,
+    target_user_id,
+    pending.provider,
+    connection_action,
+    'succeeded',
+    jsonb_build_object(
+      'workspaceId', pending.provider_workspace_id,
+      'destinationId', target_provider_destination_id
+    )
+  );
+  return target_destination_id;
+end;
+$$;
+
+create or replace function public.list_crew_integration_destinations(
+  target_crew_id uuid
+)
+returns table (
+  destination_id uuid,
+  provider text,
+  workspace_id text,
+  workspace_name text,
+  channel_id text,
+  channel_name text,
+  status text,
+  last_verified_at timestamptz,
+  last_tested_at timestamptz,
+  last_delivered_at timestamptz,
+  health_code text,
+  can_manage boolean
+)
+language plpgsql
+stable
+security definer
+set search_path = public, private, pg_temp
+as $$
+begin
+  if not public.is_crew_member(target_crew_id) then
+    raise exception 'This private group is not available.' using errcode = '42501';
+  end if;
+
+  return query
+    select
+      destination.id,
+      destination.provider,
+      destination.provider_workspace_id,
+      destination.provider_workspace_name,
+      destination.provider_destination_id,
+      destination.display_name,
+      destination.status,
+      destination.last_verified_at,
+      destination.last_tested_at,
+      destination.last_delivered_at,
+      destination.last_error_code,
+      public.can_manage_crew(target_crew_id)
+    from private.integration_destinations destination
+    where destination.crew_id = target_crew_id
+    order by destination.provider;
+end;
+$$;
+
+create or replace function public.get_integration_destination_secret(
+  target_destination_id uuid,
+  target_user_id uuid
+)
+returns table (
+  destination_id uuid,
+  crew_id uuid,
+  provider text,
+  provider_workspace_id text,
+  provider_destination_id text,
+  status text,
+  credential_ciphertext bytea,
+  credential_nonce bytea,
+  credential_key_version integer,
+  credential_fingerprint text,
+  revoke_safe boolean
+)
+language plpgsql
+security definer
+set search_path = public, private, pg_temp
+as $$
+begin
+  if not exists (
+    select 1
+    from private.integration_destinations destination
+    join public.crew_members crew_member on crew_member.crew_id = destination.crew_id
+    where destination.id = target_destination_id
+      and crew_member.user_id = target_user_id
+      and crew_member.role in ('owner', 'admin')
+  ) then
+    raise exception 'Only a group owner or admin can manage integrations.' using errcode = '42501';
+  end if;
+
+  return query
+    select
+      destination.id,
+      destination.crew_id,
+      destination.provider,
+      destination.provider_workspace_id,
+      destination.provider_destination_id,
+      destination.status,
+      destination.credential_ciphertext,
+      destination.credential_nonce,
+      destination.credential_key_version::integer,
+      destination.credential_fingerprint,
+      not exists (
+        select 1
+        from private.integration_destinations other
+        where other.id <> destination.id
+          and other.provider = destination.provider
+          and other.provider_workspace_id = destination.provider_workspace_id
+          and other.status = 'active'
+      )
+    from private.integration_destinations destination
+    where destination.id = target_destination_id;
+end;
+$$;
+
+create or replace function public.mark_integration_destination_health(
+  target_destination_id uuid,
+  target_user_id uuid,
+  target_healthy boolean,
+  target_error_code text default null
+)
+returns boolean
+language plpgsql
+security definer
+set search_path = public, private, pg_temp
+as $$
+declare
+  destination private.integration_destinations%rowtype;
+begin
+  select destination_row.* into destination
+  from private.integration_destinations destination_row
+  join public.crew_members crew_member on crew_member.crew_id = destination_row.crew_id
+  where destination_row.id = target_destination_id
+    and crew_member.user_id = target_user_id
+    and crew_member.role in ('owner', 'admin')
+  for update of destination_row;
+
+  if not found then
+    raise exception 'Only a group owner or admin can manage integrations.' using errcode = '42501';
+  end if;
+
+  update private.integration_destinations
+  set status = case when target_healthy then 'active' else 'reconnect_required' end,
+      last_tested_at = case when target_healthy then now() else last_tested_at end,
+      last_verified_at = case when target_healthy then now() else last_verified_at end,
+      last_error_code = case when target_healthy then null else left(coalesce(target_error_code, 'provider_unavailable'), 100) end,
+      last_error_summary = null
+  where id = target_destination_id;
+
+  perform private.record_integration_connection_audit(
+    destination.crew_id,
+    destination.id,
+    target_user_id,
+    destination.provider,
+    case when target_healthy then 'test_succeeded' else 'needs_attention' end,
+    case when target_healthy then 'succeeded' else 'failed' end,
+    jsonb_build_object('errorCode', target_error_code)
+  );
+  return true;
+end;
+$$;
+
+create or replace function public.disconnect_integration_destination(
+  target_destination_id uuid,
+  target_user_id uuid
+)
+returns boolean
+language plpgsql
+security definer
+set search_path = public, private, pg_temp
+as $$
+declare
+  destination private.integration_destinations%rowtype;
+begin
+  select destination_row.* into destination
+  from private.integration_destinations destination_row
+  join public.crew_members crew_member on crew_member.crew_id = destination_row.crew_id
+  where destination_row.id = target_destination_id
+    and crew_member.user_id = target_user_id
+    and crew_member.role in ('owner', 'admin')
+  for update of destination_row;
+
+  if not found then
+    raise exception 'Only a group owner or admin can manage integrations.' using errcode = '42501';
+  end if;
+
+  update private.integration_destinations
+  set status = 'disconnected',
+      credential_ciphertext = null,
+      credential_nonce = null,
+      credential_key_version = null,
+      credential_fingerprint = null,
+      scopes = '{}',
+      disconnected_at = now(),
+      last_error_code = null,
+      last_error_summary = null
+  where id = target_destination_id;
+
+  update private.outbound_deliveries
+  set status = 'cancelled',
+      cancelled_at = now(),
+      last_error_code = 'destination_disconnected',
+      last_error_summary = 'The integration destination was disconnected.'
+  where destination_id = target_destination_id
+    and status in ('queued', 'retry');
+
+  perform private.record_integration_connection_audit(
+    destination.crew_id,
+    destination.id,
+    target_user_id,
+    destination.provider,
+    'disconnected'
+  );
+  return true;
+end;
+$$;
+
+create or replace function public.validate_claimed_outbound_delivery(
+  target_delivery_id uuid,
+  worker_token uuid
+)
+returns boolean
+language sql
+stable
+security definer
+set search_path = public, private, pg_temp
+as $$
+  select exists (
+    select 1
+    from private.outbound_deliveries delivery
+    join private.integration_destinations destination
+      on destination.id = delivery.destination_id
+    where delivery.id = target_delivery_id
+      and delivery.status = 'processing'
+      and delivery.lock_token = worker_token
+      and destination.status = 'active'
+      and destination.credential_ciphertext is not null
+  );
+$$;
+
+create or replace function private.record_integration_delivery_health()
+returns trigger
+language plpgsql
+security definer
+set search_path = public, private, pg_temp
+as $$
+begin
+  if new.status = 'delivered' and old.status is distinct from new.status then
+    update private.integration_destinations
+    set last_delivered_at = coalesce(new.delivered_at, now()),
+        last_verified_at = coalesce(new.delivered_at, now()),
+        last_error_code = null,
+        last_error_summary = null
+    where id = new.destination_id
+      and status = 'active';
+  elsif new.status = 'dead_letter'
+    and old.status is distinct from new.status
+    and new.last_error_code in (
+      'provider_authorization_failed',
+      'provider_destination_missing',
+      'provider_rejected'
+    ) then
+    update private.integration_destinations
+    set status = 'reconnect_required',
+        last_error_code = new.last_error_code,
+        last_error_summary = null
+    where id = new.destination_id
+      and status = 'active';
+
+    if found then
+      perform private.record_integration_connection_audit(
+        new.crew_id,
+        new.destination_id,
+        null,
+        (select provider from private.integration_destinations where id = new.destination_id),
+        'needs_attention',
+        'failed',
+        jsonb_build_object('errorCode', new.last_error_code)
+      );
+    end if;
+  end if;
+  return new;
+end;
+$$;
+
+drop trigger if exists record_integration_delivery_health
+  on private.outbound_deliveries;
+create trigger record_integration_delivery_health
+  after update of status on private.outbound_deliveries
+  for each row execute function private.record_integration_delivery_health();
+
+create or replace function public.purge_integration_connection_setup()
+returns jsonb
+language plpgsql
+security definer
+set search_path = public, private, pg_temp
+as $$
+declare
+  deleted_states integer;
+  deleted_pending integer;
+begin
+  delete from private.integration_oauth_states
+  where expires_at < now() - interval '1 day';
+  get diagnostics deleted_states = row_count;
+
+  delete from private.pending_integration_connections
+  where expires_at < now() - interval '1 day';
+  get diagnostics deleted_pending = row_count;
+
+  return jsonb_build_object(
+    'deletedOAuthStates', deleted_states,
+    'deletedPendingConnections', deleted_pending
+  );
+end;
+$$;
+
+revoke all on function private.record_integration_connection_audit(uuid, uuid, uuid, text, text, text, jsonb) from public, anon, authenticated;
+revoke all on function public.create_integration_oauth_state(uuid, uuid, text, text, text, timestamptz) from public, anon, authenticated;
+revoke all on function public.consume_integration_oauth_state(text, text) from public, anon, authenticated;
+revoke all on function public.create_pending_integration_connection(uuid, text, text, uuid, uuid, text, text, bytea, bytea, integer, text, text[], timestamptz) from public, anon, authenticated;
+revoke all on function public.get_pending_integration_connection(text, uuid) from public, anon, authenticated;
+revoke all on function public.prepare_integration_destination_id(uuid, text, uuid) from public, anon, authenticated;
+revoke all on function public.complete_pending_integration_connection(text, uuid, uuid, text, text, bytea, bytea, integer, text) from public, anon, authenticated;
+revoke all on function public.list_crew_integration_destinations(uuid) from public, anon;
+revoke all on function public.get_integration_destination_secret(uuid, uuid) from public, anon, authenticated;
+revoke all on function public.mark_integration_destination_health(uuid, uuid, boolean, text) from public, anon, authenticated;
+revoke all on function public.disconnect_integration_destination(uuid, uuid) from public, anon, authenticated;
+revoke all on function public.validate_claimed_outbound_delivery(uuid, uuid) from public, anon, authenticated;
+revoke all on function private.record_integration_delivery_health() from public, anon, authenticated;
+revoke all on function public.purge_integration_connection_setup() from public, anon, authenticated;
+
+grant execute on function public.create_integration_oauth_state(uuid, uuid, text, text, text, timestamptz) to service_role;
+grant execute on function public.consume_integration_oauth_state(text, text) to service_role;
+grant execute on function public.create_pending_integration_connection(uuid, text, text, uuid, uuid, text, text, bytea, bytea, integer, text, text[], timestamptz) to service_role;
+grant execute on function public.get_pending_integration_connection(text, uuid) to service_role;
+grant execute on function public.prepare_integration_destination_id(uuid, text, uuid) to service_role;
+grant execute on function public.complete_pending_integration_connection(text, uuid, uuid, text, text, bytea, bytea, integer, text) to service_role;
+grant execute on function public.list_crew_integration_destinations(uuid) to authenticated;
+grant execute on function public.get_integration_destination_secret(uuid, uuid) to service_role;
+grant execute on function public.mark_integration_destination_health(uuid, uuid, boolean, text) to service_role;
+grant execute on function public.disconnect_integration_destination(uuid, uuid) to service_role;
+grant execute on function public.validate_claimed_outbound_delivery(uuid, uuid) to service_role;
+grant execute on function public.purge_integration_connection_setup() to service_role;
+
+-- Member-controlled privacy preferences for updates sent from Dominion to a
+-- crew's external Slack or Discord destination. A missing preference row is
+-- deliberately treated as no consent so existing and future members fail
+-- closed until they make an explicit choice.
+
+create table public.outbound_update_preferences (
+  id uuid primary key default gen_random_uuid(),
+  crew_id uuid not null,
+  user_id uuid not null,
+  outbound_updates_enabled boolean not null default false,
+  presentation_mode text not null default 'anonymous'
+    check (presentation_mode in ('named', 'anonymous')),
+  share_check_ins boolean not null default false,
+  share_streak_milestones boolean not null default false,
+  share_badges_rewards boolean not null default false,
+  share_membership_events boolean not null default false,
+  revision bigint not null default 1 check (revision > 0),
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  unique (crew_id, user_id),
+  foreign key (crew_id, user_id)
+    references public.crew_members (crew_id, user_id)
+    on delete cascade
+);
+
+comment on table public.outbound_update_preferences is
+  'Current per-member approval for sending selected crew events to external destinations. Absence means no consent.';
+
+create table public.outbound_update_preference_audit (
+  id uuid primary key default gen_random_uuid(),
+  preference_id uuid not null,
+  crew_id uuid not null,
+  user_id uuid not null,
+  revision bigint not null check (revision > 0),
+  change_type text not null check (change_type in ('created', 'updated', 'revoked')),
+  change_source text not null check (change_source in ('member', 'membership_or_account_removed')),
+  outbound_updates_enabled boolean not null,
+  presentation_mode text not null check (presentation_mode in ('named', 'anonymous')),
+  share_check_ins boolean not null,
+  share_streak_milestones boolean not null,
+  share_badges_rewards boolean not null,
+  share_membership_events boolean not null,
+  changed_by uuid,
+  changed_at timestamptz not null default now(),
+  unique (preference_id, revision)
+);
+
+comment on table public.outbound_update_preference_audit is
+  'Immutable consent-setting history only. Event payloads and outbound message content must never be stored here.';
+
+create index outbound_update_preference_audit_user_changed_idx
+  on public.outbound_update_preference_audit (user_id, changed_at desc);
+
+create or replace function public.prepare_outbound_update_preference()
+returns trigger
+language plpgsql
+security invoker
+set search_path = public
+as $$
+begin
+  if tg_op = 'INSERT' then
+    new.id := gen_random_uuid();
+    new.revision := 1;
+    new.created_at := now();
+    new.updated_at := new.created_at;
+    return new;
+  end if;
+
+  if new.id is distinct from old.id
+    or new.crew_id is distinct from old.crew_id
+    or new.user_id is distinct from old.user_id then
+    raise exception 'Consent preference identity cannot be changed.';
+  end if;
+
+  if row(
+    new.outbound_updates_enabled,
+    new.presentation_mode,
+    new.share_check_ins,
+    new.share_streak_milestones,
+    new.share_badges_rewards,
+    new.share_membership_events
+  ) is not distinct from row(
+    old.outbound_updates_enabled,
+    old.presentation_mode,
+    old.share_check_ins,
+    old.share_streak_milestones,
+    old.share_badges_rewards,
+    old.share_membership_events
+  ) then
+    -- Treat an identical client or worker retry as a no-op. This avoids a
+    -- misleading new audit revision without weakening current-consent checks.
+    return null;
+  end if;
+
+  new.id := old.id;
+  new.crew_id := old.crew_id;
+  new.user_id := old.user_id;
+  new.revision := old.revision + 1;
+  new.created_at := old.created_at;
+  new.updated_at := now();
+  return new;
+end;
+$$;
+
+create or replace function public.audit_outbound_update_preference()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  if tg_op = 'DELETE' then
+    insert into public.outbound_update_preference_audit (
+      preference_id,
+      crew_id,
+      user_id,
+      revision,
+      change_type,
+      change_source,
+      outbound_updates_enabled,
+      presentation_mode,
+      share_check_ins,
+      share_streak_milestones,
+      share_badges_rewards,
+      share_membership_events,
+      changed_by
+    ) values (
+      old.id,
+      old.crew_id,
+      old.user_id,
+      old.revision + 1,
+      'revoked',
+      'membership_or_account_removed',
+      false,
+      'anonymous',
+      false,
+      false,
+      false,
+      false,
+      null
+    );
+    return old;
+  end if;
+
+  insert into public.outbound_update_preference_audit (
+    preference_id,
+    crew_id,
+    user_id,
+    revision,
+    change_type,
+    change_source,
+    outbound_updates_enabled,
+    presentation_mode,
+    share_check_ins,
+    share_streak_milestones,
+    share_badges_rewards,
+    share_membership_events,
+    changed_by
+  ) values (
+    new.id,
+    new.crew_id,
+    new.user_id,
+    new.revision,
+    case when tg_op = 'INSERT' then 'created' else 'updated' end,
+    'member',
+    new.outbound_updates_enabled,
+    new.presentation_mode,
+    new.share_check_ins,
+    new.share_streak_milestones,
+    new.share_badges_rewards,
+    new.share_membership_events,
+    auth.uid()
+  );
+  return new;
+end;
+$$;
+
+create or replace function public.reject_outbound_update_preference_audit_mutation()
+returns trigger
+language plpgsql
+security invoker
+set search_path = public
+as $$
+begin
+  raise exception 'Consent audit history is immutable.';
+end;
+$$;
+
+create trigger prepare_outbound_update_preference
+  before insert or update on public.outbound_update_preferences
+  for each row execute function public.prepare_outbound_update_preference();
+
+create trigger audit_outbound_update_preference
+  after insert or update or delete on public.outbound_update_preferences
+  for each row execute function public.audit_outbound_update_preference();
+
+create trigger reject_outbound_update_preference_audit_mutation
+  before update or delete on public.outbound_update_preference_audit
+  for each row execute function public.reject_outbound_update_preference_audit_mutation();
+
+create or replace function public.get_current_outbound_consent(
+  target_user_id uuid,
+  target_crew_id uuid,
+  target_event_type text default null
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  caller_user_id uuid := auth.uid();
+  effective_user_id uuid := coalesce(target_user_id, auth.uid());
+  caller_is_service_role boolean := coalesce(auth.jwt() ->> 'role', '') = 'service_role';
+  preference public.outbound_update_preferences%rowtype;
+  consent_recorded boolean := false;
+  account_active boolean := false;
+  membership_active boolean := false;
+  event_recognized boolean := false;
+  event_allowed boolean := false;
+  eligible boolean := false;
+  decision_reason text;
+begin
+  if not caller_is_service_role
+    and (caller_user_id is null or effective_user_id is distinct from caller_user_id) then
+    raise exception 'You can only read your own outbound update consent.';
+  end if;
+
+  select exists (
+    select 1
+    from auth.users account
+    where account.id = effective_user_id
+  ) into account_active;
+
+  select exists (
+    select 1
+    from public.crew_members crew_member
+    where crew_member.crew_id = target_crew_id
+      and crew_member.user_id = effective_user_id
+  ) into membership_active;
+
+  select current_preference.*
+    into preference
+    from public.outbound_update_preferences current_preference
+    where current_preference.crew_id = target_crew_id
+      and current_preference.user_id = effective_user_id;
+  consent_recorded := found;
+
+  event_recognized := coalesce(
+    target_event_type in ('check_in', 'streak_milestone', 'badge_reward', 'membership'),
+    false
+  );
+
+  event_allowed := case target_event_type
+    when 'check_in' then coalesce(preference.share_check_ins, false)
+    when 'streak_milestone' then coalesce(preference.share_streak_milestones, false)
+    when 'badge_reward' then coalesce(preference.share_badges_rewards, false)
+    when 'membership' then coalesce(preference.share_membership_events, false)
+    else false
+  end;
+
+  eligible := account_active
+    and membership_active
+    and consent_recorded
+    and coalesce(preference.outbound_updates_enabled, false)
+    and event_recognized
+    and event_allowed;
+
+  decision_reason := case
+    when not account_active then 'account_missing'
+    when not membership_active then 'membership_missing'
+    when not consent_recorded then 'consent_missing'
+    when not coalesce(preference.outbound_updates_enabled, false) then 'updates_disabled'
+    when target_event_type is null then 'event_required'
+    when not event_recognized then 'unsupported_event'
+    when not event_allowed then 'event_not_approved'
+    else 'approved'
+  end;
+
+  return jsonb_build_object(
+    'schemaVersion', 1,
+    'consentId', preference.id,
+    'userId', effective_user_id,
+    'crewId', target_crew_id,
+    'eventType', target_event_type,
+    'accountActive', account_active,
+    'membershipActive', membership_active,
+    'consentRecorded', consent_recorded,
+    'outboundUpdatesEnabled', coalesce(preference.outbound_updates_enabled, false),
+    'presentationMode', coalesce(preference.presentation_mode, 'anonymous'),
+    'events', jsonb_build_object(
+      'checkIns', coalesce(preference.share_check_ins, false),
+      'streakMilestones', coalesce(preference.share_streak_milestones, false),
+      'badgesRewards', coalesce(preference.share_badges_rewards, false),
+      'membership', coalesce(preference.share_membership_events, false)
+    ),
+    'eventRecognized', event_recognized,
+    'eventAllowed', event_allowed,
+    'eligible', eligible,
+    'reason', decision_reason,
+    'revision', coalesce(preference.revision, 0),
+    'changedAt', preference.updated_at,
+    'evaluatedAt', clock_timestamp(),
+    'destinationCheckRequired', true
+  );
+end;
+$$;
+
+comment on function public.get_current_outbound_consent(uuid, uuid, text) is
+  'FOU-542 send-time contract. Call with a concrete event immediately before every initial delivery and retry, then independently verify the FOU-541 connection and FOU-553 runtime destination are active.';
+
+create or replace function public.set_outbound_update_consent(
+  target_crew_id uuid,
+  target_outbound_updates_enabled boolean default false,
+  target_presentation_mode text default 'anonymous',
+  target_share_check_ins boolean default false,
+  target_share_streak_milestones boolean default false,
+  target_share_badges_rewards boolean default false,
+  target_share_membership_events boolean default false
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  caller_user_id uuid := auth.uid();
+  normalized_presentation_mode text := lower(trim(coalesce(target_presentation_mode, 'anonymous')));
+begin
+  if caller_user_id is null then
+    raise exception 'You need to log in to change outbound update consent.';
+  end if;
+
+  if normalized_presentation_mode not in ('named', 'anonymous') then
+    raise exception 'Presentation mode must be named or anonymous.';
+  end if;
+
+  if not exists (
+    select 1
+    from public.crew_members crew_member
+    where crew_member.crew_id = target_crew_id
+      and crew_member.user_id = caller_user_id
+  ) then
+    raise exception 'You can only change consent for a group you belong to.';
+  end if;
+
+  insert into public.outbound_update_preferences (
+    crew_id,
+    user_id,
+    outbound_updates_enabled,
+    presentation_mode,
+    share_check_ins,
+    share_streak_milestones,
+    share_badges_rewards,
+    share_membership_events
+  ) values (
+    target_crew_id,
+    caller_user_id,
+    coalesce(target_outbound_updates_enabled, false),
+    normalized_presentation_mode,
+    coalesce(target_share_check_ins, false),
+    coalesce(target_share_streak_milestones, false),
+    coalesce(target_share_badges_rewards, false),
+    coalesce(target_share_membership_events, false)
+  )
+  on conflict (crew_id, user_id) do update set
+    outbound_updates_enabled = excluded.outbound_updates_enabled,
+    presentation_mode = excluded.presentation_mode,
+    share_check_ins = excluded.share_check_ins,
+    share_streak_milestones = excluded.share_streak_milestones,
+    share_badges_rewards = excluded.share_badges_rewards,
+    share_membership_events = excluded.share_membership_events;
+
+  return public.get_current_outbound_consent(caller_user_id, target_crew_id, null);
+end;
+$$;
+
+alter table public.outbound_update_preferences enable row level security;
+alter table public.outbound_update_preference_audit enable row level security;
+
+create policy "Members can read own outbound update preferences"
+  on public.outbound_update_preferences
+  for select
+  to authenticated
+  using ((select auth.uid()) = user_id);
+
+create policy "Members can insert own outbound update preferences"
+  on public.outbound_update_preferences
+  for insert
+  to authenticated
+  with check (
+    (select auth.uid()) = user_id
+    and public.is_crew_member(crew_id)
+  );
+
+create policy "Members can update own outbound update preferences"
+  on public.outbound_update_preferences
+  for update
+  to authenticated
+  using (
+    (select auth.uid()) = user_id
+    and public.is_crew_member(crew_id)
+  )
+  with check (
+    (select auth.uid()) = user_id
+    and public.is_crew_member(crew_id)
+  );
+
+create policy "Members can read own outbound consent audit"
+  on public.outbound_update_preference_audit
+  for select
+  to authenticated
+  using ((select auth.uid()) = user_id);
+
+revoke all on public.outbound_update_preferences from public;
+revoke all on public.outbound_update_preferences from anon;
+revoke all on public.outbound_update_preferences from authenticated;
+revoke all on public.outbound_update_preferences from service_role;
+grant select, insert on public.outbound_update_preferences to authenticated;
+grant update (
+  outbound_updates_enabled,
+  presentation_mode,
+  share_check_ins,
+  share_streak_milestones,
+  share_badges_rewards,
+  share_membership_events
+) on public.outbound_update_preferences to authenticated;
+
+revoke all on public.outbound_update_preference_audit from public;
+revoke all on public.outbound_update_preference_audit from anon;
+revoke all on public.outbound_update_preference_audit from authenticated;
+revoke all on public.outbound_update_preference_audit from service_role;
+grant select on public.outbound_update_preference_audit to authenticated;
+
+revoke execute on function public.prepare_outbound_update_preference() from public;
+revoke execute on function public.prepare_outbound_update_preference() from anon;
+revoke execute on function public.prepare_outbound_update_preference() from authenticated;
+revoke execute on function public.prepare_outbound_update_preference() from service_role;
+revoke execute on function public.audit_outbound_update_preference() from public;
+revoke execute on function public.audit_outbound_update_preference() from anon;
+revoke execute on function public.audit_outbound_update_preference() from authenticated;
+revoke execute on function public.audit_outbound_update_preference() from service_role;
+revoke execute on function public.reject_outbound_update_preference_audit_mutation() from public;
+revoke execute on function public.reject_outbound_update_preference_audit_mutation() from anon;
+revoke execute on function public.reject_outbound_update_preference_audit_mutation() from authenticated;
+revoke execute on function public.reject_outbound_update_preference_audit_mutation() from service_role;
+
+revoke execute on function public.get_current_outbound_consent(uuid, uuid, text) from public;
+revoke execute on function public.get_current_outbound_consent(uuid, uuid, text) from anon;
+grant execute on function public.get_current_outbound_consent(uuid, uuid, text) to authenticated;
+grant execute on function public.get_current_outbound_consent(uuid, uuid, text) to service_role;
+
+revoke execute on function public.set_outbound_update_consent(uuid, boolean, text, boolean, boolean, boolean, boolean) from public;
+revoke execute on function public.set_outbound_update_consent(uuid, boolean, text, boolean, boolean, boolean, boolean) from anon;
+revoke execute on function public.set_outbound_update_consent(uuid, boolean, text, boolean, boolean, boolean, boolean) from service_role;
+grant execute on function public.set_outbound_update_consent(uuid, boolean, text, boolean, boolean, boolean, boolean) to authenticated;
+
+-- Canonical, consent-aware outbound events for private-group Slack and Discord
+-- destinations. Delivery rows carry only the minimum structured facts needed
+-- by the server-side renderer; journal, prayer, post, comment, and free-form
+-- content is never accepted by this event layer.
+
+alter table private.integration_destinations
+  add column if not exists check_ins_enabled boolean not null default false,
+  add column if not exists streak_milestones_enabled boolean not null default false,
+  add column if not exists badges_rewards_enabled boolean not null default false,
+  add column if not exists membership_enabled boolean not null default false,
+  add column if not exists recap_cadence text not null default 'off',
+  add column if not exists include_safe_link boolean not null default true;
+
+alter table private.integration_destinations
+  drop constraint if exists integration_destinations_recap_cadence_check;
+alter table private.integration_destinations
+  add constraint integration_destinations_recap_cadence_check
+  check (recap_cadence in ('off', 'weekly'));
+
+alter table private.outbound_deliveries
+  add column if not exists subject_user_id uuid,
+  add column if not exists source_reference text;
+
+alter table private.outbound_deliveries
+  drop constraint if exists outbound_deliveries_source_reference_check;
+alter table private.outbound_deliveries
+  add constraint outbound_deliveries_source_reference_check check (
+    source_reference is null
+    or char_length(source_reference) between 1 and 240
+  );
+
+comment on column private.outbound_deliveries.subject_user_id is
+  'Send-time consent subject. Deliberately has no account foreign key so queued rows can be cancelled after account deletion.';
+comment on column private.outbound_deliveries.source_reference is
+  'Private, non-message source identifier used for auditability and idempotency; never rendered to providers.';
+
+create index if not exists outbound_deliveries_subject_status_idx
+  on private.outbound_deliveries (subject_user_id, crew_id, status)
+  where subject_user_id is not null and status in ('queued', 'retry', 'processing');
+
+alter table private.integration_delivery_attempts
+  drop constraint if exists integration_delivery_attempts_outcome_check;
+alter table private.integration_delivery_attempts
+  add constraint integration_delivery_attempts_outcome_check check (
+    outcome in ('delivered', 'retry', 'dead_letter', 'worker_timeout', 'cancelled')
+  );
+
+create or replace function private.outbound_event_payload_is_safe(
+  target_event_type text,
+  target_payload jsonb
+)
+returns boolean
+language plpgsql
+immutable
+security invoker
+set search_path = public, private, pg_temp
+as $$
+declare
+  numeric_value numeric;
+begin
+  if target_payload is null
+    or jsonb_typeof(target_payload) <> 'object'
+    or octet_length(target_payload::text) > 8192 then
+    return false;
+  end if;
+
+  if target_event_type = 'check_in' then
+    if not (target_payload ?& array['challengeDay', 'status', 'completedCount'])
+      or target_payload - array['challengeDay', 'status', 'completedCount'] <> '{}'::jsonb
+      or jsonb_typeof(target_payload -> 'challengeDay') <> 'number'
+      or jsonb_typeof(target_payload -> 'status') <> 'string'
+      or jsonb_typeof(target_payload -> 'completedCount') <> 'number'
+      or (target_payload ->> 'status') not in ('complete', 'partial') then
+      return false;
+    end if;
+    numeric_value := (target_payload ->> 'challengeDay')::numeric;
+    if numeric_value <> trunc(numeric_value) or numeric_value not between 1 and 77 then
+      return false;
+    end if;
+    numeric_value := (target_payload ->> 'completedCount')::numeric;
+    return numeric_value = trunc(numeric_value) and numeric_value between 0 and 7;
+  end if;
+
+  if target_event_type = 'streak_milestone' then
+    if not (target_payload ?& array['streakType', 'milestone'])
+      or target_payload - array['streakType', 'milestone'] <> '{}'::jsonb
+      or jsonb_typeof(target_payload -> 'streakType') <> 'string'
+      or (target_payload ->> 'streakType') not in ('app', 'full_standard')
+      or jsonb_typeof(target_payload -> 'milestone') <> 'number' then
+      return false;
+    end if;
+    numeric_value := (target_payload ->> 'milestone')::numeric;
+    return numeric_value = trunc(numeric_value) and numeric_value between 1 and 10000;
+  end if;
+
+  if target_event_type = 'badge_reward' then
+    return target_payload ?& array['rewardKind', 'rewardName']
+      and target_payload - array['rewardKind', 'rewardName'] = '{}'::jsonb
+      and jsonb_typeof(target_payload -> 'rewardKind') = 'string'
+      and (target_payload ->> 'rewardKind') in ('badge', 'challenge')
+      and jsonb_typeof(target_payload -> 'rewardName') = 'string'
+      and char_length(btrim(target_payload ->> 'rewardName')) between 1 and 100;
+  end if;
+
+  if target_event_type = 'membership' then
+    return target_payload = '{}'::jsonb;
+  end if;
+
+  if target_event_type = 'leaderboard_recap' then
+    if not (target_payload ?& array['periodLabel', 'memberCount', 'checkInCount', 'completedStandards'])
+      or target_payload - array['periodLabel', 'memberCount', 'checkInCount', 'completedStandards'] <> '{}'::jsonb
+      or jsonb_typeof(target_payload -> 'periodLabel') <> 'string'
+      or char_length(btrim(target_payload ->> 'periodLabel')) not between 1 and 40
+      or jsonb_typeof(target_payload -> 'memberCount') <> 'number'
+      or jsonb_typeof(target_payload -> 'checkInCount') <> 'number'
+      or jsonb_typeof(target_payload -> 'completedStandards') <> 'number' then
+      return false;
+    end if;
+    numeric_value := (target_payload ->> 'memberCount')::numeric;
+    if numeric_value <> trunc(numeric_value) or numeric_value not between 0 and 100000 then
+      return false;
+    end if;
+    numeric_value := (target_payload ->> 'checkInCount')::numeric;
+    if numeric_value <> trunc(numeric_value) or numeric_value not between 0 and 1000000 then
+      return false;
+    end if;
+    numeric_value := (target_payload ->> 'completedStandards')::numeric;
+    return numeric_value = trunc(numeric_value) and numeric_value between 0 and 7000000;
+  end if;
+
+  if target_event_type = 'synthetic.delivery' then
+    return target_payload ? 'text'
+      and target_payload - 'text' = '{}'::jsonb
+      and jsonb_typeof(target_payload -> 'text') = 'string'
+      and char_length(btrim(target_payload ->> 'text')) between 1 and 2000;
+  end if;
+
+  return false;
+exception
+  when numeric_value_out_of_range or invalid_text_representation then
+    return false;
+end;
+$$;
+
+create or replace function private.enqueue_crew_outbound_event(
+  target_user_id uuid,
+  target_event_type text,
+  target_source_reference text,
+  target_payload jsonb,
+  target_only_crew_id uuid default null
+)
+returns integer
+language plpgsql
+security definer
+set search_path = public, private, pg_temp
+as $$
+declare
+  destination record;
+  delivery_id uuid;
+  queued_count integer := 0;
+  delivery_key text;
+begin
+  if target_user_id is null
+    or target_source_reference is null
+    or char_length(target_source_reference) not between 1 and 240
+    or target_event_type not in ('check_in', 'streak_milestone', 'badge_reward', 'membership')
+    or not private.outbound_event_payload_is_safe(target_event_type, target_payload) then
+    raise exception 'Invalid canonical outbound event.' using errcode = '22023';
+  end if;
+
+  delivery_key := 'canonical:' || target_event_type || ':'
+    || encode(extensions.digest(target_event_type || ':' || target_source_reference, 'sha256'), 'hex');
+
+  for destination in
+    select provider_destination.id, provider_destination.crew_id
+    from public.crew_members crew_member
+    join public.outbound_update_preferences preference
+      on preference.crew_id = crew_member.crew_id
+      and preference.user_id = crew_member.user_id
+    join private.integration_destinations provider_destination
+      on provider_destination.crew_id = crew_member.crew_id
+    where crew_member.user_id = target_user_id
+      and (target_only_crew_id is null or crew_member.crew_id = target_only_crew_id)
+      and preference.outbound_updates_enabled
+      and provider_destination.status = 'active'
+      and case target_event_type
+        when 'check_in' then preference.share_check_ins and provider_destination.check_ins_enabled
+        when 'streak_milestone' then preference.share_streak_milestones and provider_destination.streak_milestones_enabled
+        when 'badge_reward' then preference.share_badges_rewards and provider_destination.badges_rewards_enabled
+        when 'membership' then preference.share_membership_events and provider_destination.membership_enabled
+        else false
+      end
+    order by provider_destination.id
+    for key share of provider_destination
+  loop
+    delivery_id := null;
+    insert into private.outbound_deliveries (
+      crew_id,
+      destination_id,
+      subject_user_id,
+      source_reference,
+      event_type,
+      idempotency_key,
+      payload,
+      max_attempts,
+      available_at
+    ) values (
+      destination.crew_id,
+      destination.id,
+      target_user_id,
+      target_source_reference,
+      target_event_type,
+      delivery_key,
+      target_payload,
+      5,
+      now()
+    )
+    on conflict (destination_id, idempotency_key) do nothing
+    returning id into delivery_id;
+
+    if delivery_id is null then
+      perform 1
+      from private.outbound_deliveries existing
+      where existing.destination_id = destination.id
+        and existing.idempotency_key = delivery_key
+        and existing.crew_id = destination.crew_id
+        and existing.subject_user_id = target_user_id
+        and existing.source_reference = target_source_reference
+        and existing.event_type = target_event_type
+        and existing.payload = target_payload;
+    end if;
+
+    if delivery_id is null and not found then
+      raise exception 'Canonical event identity conflicted with an existing delivery.' using errcode = '23505';
+    end if;
+
+    queued_count := queued_count + 1;
+  end loop;
+
+  return queued_count;
+end;
+$$;
+
+revoke all on function private.outbound_event_payload_is_safe(text, jsonb) from public, anon, authenticated;
+revoke all on function private.enqueue_crew_outbound_event(uuid, text, text, jsonb, uuid) from public, anon, authenticated, service_role;
+
+create or replace function private.emit_check_in_outbound_event()
+returns trigger
+language plpgsql
+security definer
+set search_path = public, private, pg_temp
+as $$
+begin
+  if new.status in ('complete', 'partial')
+    and new.completed_count between 0 and 7 then
+    perform private.enqueue_crew_outbound_event(
+      new.user_id,
+      'check_in',
+      'check-in:' || new.id::text,
+      jsonb_build_object(
+        'challengeDay', new.challenge_day,
+        'status', new.status,
+        'completedCount', new.completed_count
+      )
+    );
+  end if;
+  return new;
+end;
+$$;
+
+drop trigger if exists emit_check_in_outbound_event on public.check_ins;
+create trigger emit_check_in_outbound_event
+  after insert on public.check_ins
+  for each row execute function private.emit_check_in_outbound_event();
+
+create or replace function private.emit_badge_outbound_event()
+returns trigger
+language plpgsql
+security definer
+set search_path = public, private, pg_temp
+as $$
+declare
+  reward_name text;
+begin
+  select definition.name into reward_name
+  from public.badge_definitions definition
+  where definition.badge_key = new.badge_key;
+
+  if reward_name is not null and char_length(btrim(reward_name)) between 1 and 100 then
+    perform private.enqueue_crew_outbound_event(
+      new.user_id,
+      'badge_reward',
+      'badge:' || new.user_id::text || ':' || new.badge_key,
+      jsonb_build_object('rewardKind', 'badge', 'rewardName', reward_name)
+    );
+  end if;
+  return new;
+end;
+$$;
+
+drop trigger if exists emit_badge_outbound_event on public.user_badges;
+create trigger emit_badge_outbound_event
+  after insert on public.user_badges
+  for each row execute function private.emit_badge_outbound_event();
+
+create or replace function private.emit_challenge_reward_outbound_event()
+returns trigger
+language plpgsql
+security definer
+set search_path = public, private, pg_temp
+as $$
+declare
+  reward_name text;
+begin
+  select definition.title into reward_name
+  from public.challenge_definitions definition
+  where definition.challenge_key = new.challenge_key;
+
+  if reward_name is not null and char_length(btrim(reward_name)) between 1 and 100 then
+    perform private.enqueue_crew_outbound_event(
+      new.user_id,
+      'badge_reward',
+      'challenge:' || new.user_id::text || ':' || new.challenge_key,
+      jsonb_build_object('rewardKind', 'challenge', 'rewardName', reward_name)
+    );
+  end if;
+  return new;
+end;
+$$;
+
+drop trigger if exists emit_challenge_reward_outbound_event on public.user_challenge_states;
+create trigger emit_challenge_reward_outbound_event
+  after insert on public.user_challenge_states
+  for each row execute function private.emit_challenge_reward_outbound_event();
+
+create or replace function private.emit_streak_milestone_outbound_event()
+returns trigger
+language plpgsql
+security definer
+set search_path = public, private, pg_temp
+as $$
+declare
+  milestone integer;
+  supported_milestones integer[] := array[3, 7, 14, 21, 28, 35, 42, 49, 56, 63, 70, 77];
+begin
+  foreach milestone in array supported_milestones
+  loop
+    if old.current_app_streak < milestone and new.current_app_streak >= milestone then
+      perform private.enqueue_crew_outbound_event(
+        new.user_id,
+        'streak_milestone',
+        'streak:' || new.user_id::text || ':app:' || milestone::text,
+        jsonb_build_object('streakType', 'app', 'milestone', milestone)
+      );
+    end if;
+
+    if old.current_full_day_streak < milestone and new.current_full_day_streak >= milestone then
+      perform private.enqueue_crew_outbound_event(
+        new.user_id,
+        'streak_milestone',
+        'streak:' || new.user_id::text || ':full-standard:' || milestone::text,
+        jsonb_build_object('streakType', 'full_standard', 'milestone', milestone)
+      );
+    end if;
+  end loop;
+  return new;
+end;
+$$;
+
+drop trigger if exists emit_streak_milestone_outbound_event on public.user_game_stats;
+create trigger emit_streak_milestone_outbound_event
+  after update of current_app_streak, current_full_day_streak on public.user_game_stats
+  for each row execute function private.emit_streak_milestone_outbound_event();
+
+create or replace function private.apply_outbound_preference_to_deliveries()
+returns trigger
+language plpgsql
+security definer
+set search_path = public, private, pg_temp
+as $$
+declare
+  preference_crew_id uuid := case when tg_op = 'DELETE' then old.crew_id else new.crew_id end;
+  preference_user_id uuid := case when tg_op = 'DELETE' then old.user_id else new.user_id end;
+  updates_enabled boolean := case when tg_op = 'DELETE' then false else new.outbound_updates_enabled end;
+  check_ins_allowed boolean := case when tg_op = 'DELETE' then false else new.share_check_ins end;
+  streaks_allowed boolean := case when tg_op = 'DELETE' then false else new.share_streak_milestones end;
+  rewards_allowed boolean := case when tg_op = 'DELETE' then false else new.share_badges_rewards end;
+  membership_allowed boolean := case when tg_op = 'DELETE' then false else new.share_membership_events end;
+  membership_was_allowed boolean := case
+    when tg_op = 'INSERT' then false
+    when tg_op = 'DELETE' then old.outbound_updates_enabled and old.share_membership_events
+    else old.outbound_updates_enabled and old.share_membership_events
+  end;
+  joined_at timestamptz;
+begin
+  update private.outbound_deliveries delivery
+  set status = 'cancelled',
+      cancelled_at = now(),
+      last_error_code = case when tg_op = 'DELETE' then 'membership_or_consent_changed' else 'consent_changed' end,
+      last_error_summary = 'The member no longer approves this outbound update.',
+      lock_token = null,
+      locked_at = null
+  where delivery.crew_id = preference_crew_id
+    and delivery.subject_user_id = preference_user_id
+    and delivery.status in ('queued', 'retry')
+    and (
+      not updates_enabled
+      or (delivery.event_type = 'check_in' and not check_ins_allowed)
+      or (delivery.event_type = 'streak_milestone' and not streaks_allowed)
+      or (delivery.event_type = 'badge_reward' and not rewards_allowed)
+      or (delivery.event_type = 'membership' and not membership_allowed)
+    );
+
+  if tg_op <> 'DELETE'
+    and updates_enabled
+    and membership_allowed
+    and not membership_was_allowed then
+    select crew_member.joined_at into joined_at
+    from public.crew_members crew_member
+    where crew_member.crew_id = preference_crew_id
+      and crew_member.user_id = preference_user_id;
+
+    if joined_at is not null then
+      if joined_at >= now() - interval '7 days' then
+        perform private.enqueue_crew_outbound_event(
+          preference_user_id,
+          'membership',
+          'membership:' || preference_crew_id::text || ':' || preference_user_id::text
+            || ':' || to_char(joined_at at time zone 'UTC', 'YYYYMMDDHH24MISSUS'),
+          '{}'::jsonb,
+          preference_crew_id
+        );
+      end if;
+    end if;
+  end if;
+
+  if tg_op = 'DELETE' then
+    return old;
+  end if;
+  return new;
+end;
+$$;
+
+drop trigger if exists apply_outbound_preference_to_deliveries
+  on public.outbound_update_preferences;
+create trigger apply_outbound_preference_to_deliveries
+  after insert or update or delete on public.outbound_update_preferences
+  for each row execute function private.apply_outbound_preference_to_deliveries();
+
+revoke all on function private.emit_check_in_outbound_event() from public, anon, authenticated, service_role;
+revoke all on function private.emit_badge_outbound_event() from public, anon, authenticated, service_role;
+revoke all on function private.emit_challenge_reward_outbound_event() from public, anon, authenticated, service_role;
+revoke all on function private.emit_streak_milestone_outbound_event() from public, anon, authenticated, service_role;
+revoke all on function private.apply_outbound_preference_to_deliveries() from public, anon, authenticated, service_role;
+
+create or replace function public.queue_due_leaderboard_recaps()
+returns integer
+language plpgsql
+security definer
+set search_path = public, private, pg_temp
+as $$
+declare
+  destination record;
+  period_start date := (date_trunc('week', now() at time zone 'UTC')::date - 7);
+  recap_payload jsonb;
+  queued_id uuid;
+  queued_count integer := 0;
+begin
+  for destination in
+    select provider_destination.id, provider_destination.crew_id
+    from private.integration_destinations provider_destination
+    where provider_destination.status = 'active'
+      and provider_destination.recap_cadence = 'weekly'
+    order by provider_destination.id
+  loop
+    select jsonb_build_object(
+      'periodLabel', 'Week of ' || to_char(period_start, 'YYYY-MM-DD'),
+      'memberCount', (
+        select count(*)::integer
+        from public.crew_members crew_member
+        where crew_member.crew_id = destination.crew_id
+      ),
+      'checkInCount', (
+        select count(*)::integer
+        from public.check_ins check_in
+        join public.crew_members crew_member
+          on crew_member.user_id = check_in.user_id
+          and crew_member.crew_id = destination.crew_id
+        where check_in.entry_date >= period_start
+          and check_in.entry_date < period_start + 7
+      ),
+      'completedStandards', (
+        select coalesce(sum(check_in.completed_count), 0)::integer
+        from public.check_ins check_in
+        join public.crew_members crew_member
+          on crew_member.user_id = check_in.user_id
+          and crew_member.crew_id = destination.crew_id
+        where check_in.entry_date >= period_start
+          and check_in.entry_date < period_start + 7
+      )
+    ) into recap_payload;
+
+    if not private.outbound_event_payload_is_safe('leaderboard_recap', recap_payload) then
+      raise exception 'Generated leaderboard recap was invalid.' using errcode = '22023';
+    end if;
+
+    insert into private.outbound_deliveries (
+      crew_id,
+      destination_id,
+      subject_user_id,
+      source_reference,
+      event_type,
+      idempotency_key,
+      payload,
+      max_attempts,
+      available_at
+    ) values (
+      destination.crew_id,
+      destination.id,
+      null,
+      'leaderboard:' || destination.crew_id::text || ':' || period_start::text,
+      'leaderboard_recap',
+      'leaderboard:' || period_start::text,
+      recap_payload,
+      5,
+      now()
+    )
+    on conflict (destination_id, idempotency_key) do nothing
+    returning id into queued_id;
+
+    if queued_id is not null then
+      queued_count := queued_count + 1;
+    end if;
+    queued_id := null;
+  end loop;
+
+  return queued_count;
+end;
+$$;
+
+drop function public.claim_outbound_deliveries(uuid, integer);
+create function public.claim_outbound_deliveries(
+  worker_token uuid,
+  batch_size integer default 20
+)
+returns table (
+  delivery_id uuid,
+  crew_id uuid,
+  destination_id uuid,
+  subject_user_id uuid,
+  source_reference text,
+  provider text,
+  provider_workspace_id text,
+  provider_destination_id text,
+  event_type text,
+  payload jsonb,
+  attempt_number integer,
+  max_attempts integer,
+  credential_ciphertext bytea,
+  credential_nonce bytea,
+  credential_key_version integer
+)
+language sql
+security definer
+set search_path = public, private, pg_temp
+as $$
+  with candidates as (
+    select queued.id
+    from private.outbound_deliveries queued
+    join private.integration_destinations destination
+      on destination.id = queued.destination_id
+    where queued.status in ('queued', 'retry')
+      and queued.available_at <= now()
+      and destination.status = 'active'
+    order by queued.priority asc, queued.available_at asc, queued.created_at asc
+    for update of queued skip locked
+    limit least(greatest(coalesce(batch_size, 20), 1), 100)
+  ), claimed as (
+    update private.outbound_deliveries queued
+    set status = 'processing',
+        attempt_count = queued.attempt_count + 1,
+        lock_token = worker_token,
+        locked_at = now(),
+        last_error_code = null,
+        last_error_summary = null
+    from candidates
+    where queued.id = candidates.id
+      and worker_token is not null
+    returning queued.*
+  )
+  select
+    claimed.id,
+    claimed.crew_id,
+    destination.id,
+    claimed.subject_user_id,
+    claimed.source_reference,
+    destination.provider,
+    destination.provider_workspace_id,
+    destination.provider_destination_id,
+    claimed.event_type,
+    claimed.payload,
+    claimed.attempt_count::integer,
+    claimed.max_attempts::integer,
+    destination.credential_ciphertext,
+    destination.credential_nonce,
+    destination.credential_key_version::integer
+  from claimed
+  join private.integration_destinations destination
+    on destination.id = claimed.destination_id
+  order by claimed.priority asc, claimed.available_at asc, claimed.created_at asc;
+$$;
+
+revoke all on function public.queue_due_leaderboard_recaps() from public, anon, authenticated;
+revoke all on function public.claim_outbound_deliveries(uuid, integer) from public, anon, authenticated;
+grant execute on function public.queue_due_leaderboard_recaps() to service_role;
+grant execute on function public.claim_outbound_deliveries(uuid, integer) to service_role;
+
+create or replace function public.resolve_claimed_outbound_delivery(
+  target_delivery_id uuid,
+  worker_token uuid
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public, private, pg_temp
+as $$
+declare
+  delivery private.outbound_deliveries%rowtype;
+  destination private.integration_destinations%rowtype;
+  consent jsonb;
+  delivery_eligible boolean := false;
+  decision_reason text := 'unsupported_event';
+  presentation_mode text := 'anonymous';
+  subject_name text := null;
+  crew_name text := null;
+  event_enabled boolean := false;
+begin
+  select delivery_row.* into delivery
+  from private.outbound_deliveries delivery_row
+  where delivery_row.id = target_delivery_id
+    and delivery_row.status = 'processing'
+    and delivery_row.lock_token = worker_token;
+
+  if not found then
+    raise exception 'The delivery is not owned by this worker.' using errcode = '55000';
+  end if;
+
+  select destination_row.* into destination
+  from private.integration_destinations destination_row
+  where destination_row.id = delivery.destination_id;
+
+  select left(nullif(btrim(group_row.name), ''), 120) into crew_name
+  from public.crews group_row
+  where group_row.id = delivery.crew_id;
+
+  if destination.id is null or destination.status <> 'active' then
+    decision_reason := 'destination_inactive';
+  elsif destination.credential_ciphertext is null
+    or destination.credential_nonce is null
+    or destination.credential_key_version is null then
+    decision_reason := 'destination_credentials_missing';
+  elsif not private.outbound_event_payload_is_safe(delivery.event_type, delivery.payload) then
+    decision_reason := case
+      when delivery.event_type in (
+        'check_in',
+        'streak_milestone',
+        'badge_reward',
+        'membership',
+        'leaderboard_recap',
+        'synthetic.delivery'
+      ) then 'invalid_payload'
+      else 'unsupported_event'
+    end;
+  elsif delivery.event_type = 'synthetic.delivery' then
+    delivery_eligible := true;
+    decision_reason := 'approved';
+  elsif delivery.event_type = 'leaderboard_recap' then
+    if destination.recap_cadence <> 'weekly' then
+      decision_reason := 'event_disabled';
+    elsif delivery.subject_user_id is not null then
+      decision_reason := 'subject_not_allowed';
+    else
+      delivery_eligible := true;
+      decision_reason := 'approved';
+    end if;
+  elsif delivery.event_type in ('check_in', 'streak_milestone', 'badge_reward', 'membership') then
+    event_enabled := case delivery.event_type
+      when 'check_in' then destination.check_ins_enabled
+      when 'streak_milestone' then destination.streak_milestones_enabled
+      when 'badge_reward' then destination.badges_rewards_enabled
+      when 'membership' then destination.membership_enabled
+      else false
+    end;
+
+    if not event_enabled then
+      decision_reason := 'event_disabled';
+    elsif delivery.subject_user_id is null then
+      decision_reason := 'subject_missing';
+    elsif delivery.source_reference is null then
+      decision_reason := 'source_reference_missing';
+    else
+      consent := public.get_current_outbound_consent(
+        delivery.subject_user_id,
+        delivery.crew_id,
+        delivery.event_type
+      );
+      delivery_eligible := coalesce((consent ->> 'eligible')::boolean, false);
+      decision_reason := coalesce(consent ->> 'reason', 'consent_unavailable');
+      presentation_mode := case
+        when consent ->> 'presentationMode' = 'named' then 'named'
+        else 'anonymous'
+      end;
+
+      if delivery_eligible and presentation_mode = 'named' then
+        select left(coalesce(
+          nullif(btrim(profile.name), ''),
+          nullif(btrim(crew_member.display_name), '')
+        ), 120) into subject_name
+        from public.crew_members crew_member
+        left join public.profiles profile on profile.user_id = crew_member.user_id
+        where crew_member.crew_id = delivery.crew_id
+          and crew_member.user_id = delivery.subject_user_id;
+      end if;
+    end if;
+  end if;
+
+  if not delivery_eligible then
+    presentation_mode := 'anonymous';
+    subject_name := null;
+  end if;
+
+  return jsonb_build_object(
+    'eligible', delivery_eligible,
+    'reason', decision_reason,
+    'presentationMode', presentation_mode,
+    'subjectName', subject_name,
+    'crewName', crew_name,
+    'includeSafeLink', case
+      when delivery.event_type = 'synthetic.delivery' then false
+      else coalesce(destination.include_safe_link, false)
+    end
+  );
+end;
+$$;
+
+create or replace function public.cancel_claimed_outbound_delivery(
+  target_delivery_id uuid,
+  worker_token uuid,
+  target_reason text
+)
+returns text
+language plpgsql
+security definer
+set search_path = public, private, pg_temp
+as $$
+declare
+  delivery private.outbound_deliveries%rowtype;
+begin
+  if target_reason is null or target_reason !~ '^[a-z][a-z0-9_]{0,63}$' then
+    raise exception 'Invalid delivery cancellation reason.' using errcode = '22023';
+  end if;
+
+  select * into delivery
+  from private.outbound_deliveries
+  where id = target_delivery_id
+  for update;
+
+  if not found or delivery.status <> 'processing' or delivery.lock_token <> worker_token then
+    raise exception 'The delivery is not owned by this worker.' using errcode = '55000';
+  end if;
+
+  insert into private.integration_delivery_attempts (
+    delivery_id,
+    attempt_number,
+    outcome,
+    error_code,
+    error_summary,
+    started_at
+  ) values (
+    delivery.id,
+    delivery.attempt_count,
+    'cancelled',
+    target_reason,
+    'Current outbound delivery approval was not available.',
+    coalesce(delivery.locked_at, now())
+  )
+  on conflict (delivery_id, attempt_number) do nothing;
+
+  update private.outbound_deliveries
+  set status = 'cancelled',
+      cancelled_at = now(),
+      last_error_code = target_reason,
+      last_error_summary = 'Current outbound delivery approval was not available.',
+      lock_token = null,
+      locked_at = null
+  where id = delivery.id;
+
+  return 'cancelled';
+end;
+$$;
+
+revoke all on function public.resolve_claimed_outbound_delivery(uuid, uuid) from public, anon, authenticated;
+revoke all on function public.cancel_claimed_outbound_delivery(uuid, uuid, text) from public, anon, authenticated;
+grant execute on function public.resolve_claimed_outbound_delivery(uuid, uuid) to service_role;
+grant execute on function public.cancel_claimed_outbound_delivery(uuid, uuid, text) to service_role;
+
+alter table private.integration_connection_audit
+  drop constraint if exists integration_connection_audit_action_check;
+alter table private.integration_connection_audit
+  add constraint integration_connection_audit_action_check check (
+    action in (
+      'authorization_started',
+      'authorization_completed',
+      'connected',
+      'reconnected',
+      'test_succeeded',
+      'needs_attention',
+      'settings_updated',
+      'disconnected'
+    )
+  );
+
+create or replace function public.update_integration_destination_settings(
+  target_destination_id uuid,
+  target_actor_id uuid,
+  target_check_ins_enabled boolean,
+  target_streak_milestones_enabled boolean,
+  target_badges_rewards_enabled boolean,
+  target_membership_enabled boolean,
+  target_recap_cadence text,
+  target_include_safe_link boolean
+)
+returns boolean
+language plpgsql
+security definer
+set search_path = public, private, pg_temp
+as $$
+declare
+  destination private.integration_destinations%rowtype;
+  normalized_recap_cadence text := lower(btrim(coalesce(target_recap_cadence, 'off')));
+begin
+  if normalized_recap_cadence not in ('off', 'weekly') then
+    raise exception 'Leaderboard recap cadence must be off or weekly.' using errcode = '22023';
+  end if;
+
+  select destination_row.* into destination
+  from private.integration_destinations destination_row
+  join public.crew_members crew_member on crew_member.crew_id = destination_row.crew_id
+  where destination_row.id = target_destination_id
+    and crew_member.user_id = target_actor_id
+    and crew_member.role in ('owner', 'admin')
+  for update of destination_row;
+
+  if not found then
+    raise exception 'Only a group owner or admin can manage integrations.' using errcode = '42501';
+  end if;
+
+  update private.integration_destinations
+  set check_ins_enabled = coalesce(target_check_ins_enabled, false),
+      streak_milestones_enabled = coalesce(target_streak_milestones_enabled, false),
+      badges_rewards_enabled = coalesce(target_badges_rewards_enabled, false),
+      membership_enabled = coalesce(target_membership_enabled, false),
+      recap_cadence = normalized_recap_cadence,
+      include_safe_link = coalesce(target_include_safe_link, false)
+  where id = destination.id;
+
+  update private.outbound_deliveries delivery
+  set status = 'cancelled',
+      cancelled_at = now(),
+      last_error_code = 'destination_settings_changed',
+      last_error_summary = 'This outbound event type is no longer enabled for the destination.',
+      lock_token = null,
+      locked_at = null
+  where delivery.destination_id = destination.id
+    and delivery.status in ('queued', 'retry')
+    and (
+      (delivery.event_type = 'check_in' and not coalesce(target_check_ins_enabled, false))
+      or (delivery.event_type = 'streak_milestone' and not coalesce(target_streak_milestones_enabled, false))
+      or (delivery.event_type = 'badge_reward' and not coalesce(target_badges_rewards_enabled, false))
+      or (delivery.event_type = 'membership' and not coalesce(target_membership_enabled, false))
+      or (delivery.event_type = 'leaderboard_recap' and normalized_recap_cadence = 'off')
+    );
+
+  perform private.record_integration_connection_audit(
+    destination.crew_id,
+    destination.id,
+    target_actor_id,
+    destination.provider,
+    'settings_updated',
+    'succeeded',
+    jsonb_build_object(
+      'checkInsEnabled', coalesce(target_check_ins_enabled, false),
+      'streakMilestonesEnabled', coalesce(target_streak_milestones_enabled, false),
+      'badgesRewardsEnabled', coalesce(target_badges_rewards_enabled, false),
+      'membershipEnabled', coalesce(target_membership_enabled, false),
+      'recapCadence', normalized_recap_cadence,
+      'includeSafeLink', coalesce(target_include_safe_link, false)
+    )
+  );
+
+  return true;
+end;
+$$;
+
+drop function public.list_crew_integration_destinations(uuid);
+create function public.list_crew_integration_destinations(
+  target_crew_id uuid
+)
+returns table (
+  destination_id uuid,
+  provider text,
+  workspace_id text,
+  workspace_name text,
+  channel_id text,
+  channel_name text,
+  status text,
+  last_verified_at timestamptz,
+  last_tested_at timestamptz,
+  last_delivered_at timestamptz,
+  health_code text,
+  last_error_code text,
+  corrective_action text,
+  check_ins_enabled boolean,
+  streak_milestones_enabled boolean,
+  badges_rewards_enabled boolean,
+  membership_enabled boolean,
+  recap_cadence text,
+  include_safe_link boolean,
+  can_manage boolean
+)
+language plpgsql
+stable
+security definer
+set search_path = public, private, pg_temp
+as $$
+begin
+  if not public.is_crew_member(target_crew_id) then
+    raise exception 'This private group is not available.' using errcode = '42501';
+  end if;
+
+  return query
+    select
+      destination.id,
+      destination.provider,
+      destination.provider_workspace_id,
+      destination.provider_workspace_name,
+      destination.provider_destination_id,
+      destination.display_name,
+      destination.status,
+      destination.last_verified_at,
+      destination.last_tested_at,
+      destination.last_delivered_at,
+      destination.last_error_code,
+      destination.last_error_code,
+      case
+        when destination.status = 'active' and destination.last_error_code is not null
+          then 'Wait for the provider and retry the test.'
+        when destination.status = 'reconnect_required'
+          then 'Reconnect and verify the selected channel.'
+        when destination.status = 'disconnected'
+          then 'Connect this provider again.'
+        when destination.status = 'revoked'
+          then 'Reconnect this provider before enabling updates.'
+        else null
+      end,
+      destination.check_ins_enabled,
+      destination.streak_milestones_enabled,
+      destination.badges_rewards_enabled,
+      destination.membership_enabled,
+      destination.recap_cadence,
+      destination.include_safe_link,
+      public.can_manage_crew(target_crew_id)
+    from private.integration_destinations destination
+    where destination.crew_id = target_crew_id
+    order by destination.provider;
+end;
+$$;
+
+revoke all on function public.update_integration_destination_settings(uuid, uuid, boolean, boolean, boolean, boolean, text, boolean)
+  from public, anon, authenticated;
+revoke all on function public.list_crew_integration_destinations(uuid) from public, anon;
+grant execute on function public.update_integration_destination_settings(uuid, uuid, boolean, boolean, boolean, boolean, text, boolean)
+  to service_role;
+grant execute on function public.list_crew_integration_destinations(uuid) to authenticated;
+
+-- Retire private-group conversation features without deleting historical rows
+-- or objects. Service-role retention/export jobs remain possible, while every
+-- supported browser/API path fails closed at the database and storage layers.
+
+drop policy if exists "Authenticated users can read visible posts" on public.community_posts;
+drop policy if exists "Users can create visible posts" on public.community_posts;
+drop policy if exists "Authors can update own posts" on public.community_posts;
+drop policy if exists "Authors and crew leaders can delete posts" on public.community_posts;
+
+drop policy if exists "Users can read likes on visible posts" on public.post_likes;
+drop policy if exists "Users can like visible posts" on public.post_likes;
+drop policy if exists "Users can remove own likes" on public.post_likes;
+
+drop policy if exists "Users can read comments on visible posts" on public.post_comments;
+drop policy if exists "Users can comment on visible posts" on public.post_comments;
+drop policy if exists "Users can update own comments" on public.post_comments;
+drop policy if exists "Authors and crew leaders can delete comments" on public.post_comments;
+
+revoke all on public.community_posts from public, anon, authenticated;
+revoke all on public.post_likes from public, anon, authenticated;
+revoke all on public.post_comments from public, anon, authenticated;
+
+revoke execute on function public.can_read_community_post(uuid)
+  from public, anon, authenticated;
+revoke execute on function public.get_community_post_engagement(uuid[])
+  from public, anon, authenticated;
+
+drop policy if exists "Crew members can read community post images" on storage.objects;
+drop policy if exists "Crew members can upload own community post images" on storage.objects;
+drop policy if exists "Authors and crew leaders can delete community post images" on storage.objects;
+
+comment on table public.community_posts is
+  'Retained retired Community post history. Product/API access ended at the private-group social cutover; service-only retention controls apply.';
+comment on table public.post_comments is
+  'Retained retired Community comment history. No client role has access after the private-group social cutover.';
+comment on table public.post_likes is
+  'Retained retired Community reaction history. No client role has access after the private-group social cutover.';
+
+begin;
+
+create table if not exists public.reward_catalog_meta (
+  catalog_key text primary key check (catalog_key = 'primary'),
+  catalog_version bigint not null default 1 check (catalog_version > 0),
+  updated_at timestamptz not null default now()
+);
+
+insert into public.reward_catalog_meta (catalog_key, catalog_version)
+values ('primary', 1)
+on conflict (catalog_key) do nothing;
+
+create table if not exists public.reward_definitions (
+  reward_key text primary key
+    check (reward_key ~ '^[a-z0-9][a-z0-9_.:-]*$'),
+  reward_type text not null
+    check (reward_type ~ '^[a-z][a-z0-9_]*$'),
+  state_model text not null
+    check (state_model in ('challenge_lifecycle', 'ownership')),
+  title text not null check (btrim(title) <> ''),
+  description text not null default '',
+  points_required integer not null check (points_required >= 0),
+  fulfillment_key text not null
+    check (fulfillment_key ~ '^[a-z0-9][a-z0-9_.:-]*$'),
+  challenge_key text unique references public.challenge_definitions(challenge_key),
+  required_entitlement_key text,
+  icon text not null default 'gift'
+    check (icon ~ '^[a-z][a-z0-9-]*$'),
+  sort_order integer not null default 0,
+  is_active boolean not null default true,
+  display_metadata jsonb not null default '{}'::jsonb
+    check (jsonb_typeof(display_metadata) = 'object'),
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  check (
+    (
+      state_model = 'challenge_lifecycle'
+      and reward_type = 'challenge'
+      and challenge_key is not null
+      and fulfillment_key = challenge_key
+    )
+    or (
+      state_model = 'ownership'
+      and reward_type <> 'challenge'
+      and challenge_key is null
+    )
+  )
+);
+
+create table if not exists public.user_reward_entitlements (
+  user_id uuid not null references auth.users(id) on delete cascade,
+  reward_key text not null references public.reward_definitions(reward_key) on delete restrict,
+  owned_at timestamptz not null default now(),
+  source_type text not null default 'point_threshold'
+    check (source_type ~ '^[a-z][a-z0-9_]*$'),
+  source_id text,
+  celebration_seen_at timestamptz,
+  metadata jsonb not null default '{}'::jsonb
+    check (jsonb_typeof(metadata) = 'object'),
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  primary key (user_id, reward_key)
+);
+
+create index if not exists reward_definitions_active_order_idx
+  on public.reward_definitions (points_required, sort_order, reward_key)
+  where is_active;
+
+create index if not exists user_reward_entitlements_user_owned_idx
+  on public.user_reward_entitlements (user_id, owned_at desc, reward_key);
+
+create index if not exists user_reward_entitlements_pending_celebration_idx
+  on public.user_reward_entitlements (user_id, owned_at, reward_key)
+  where celebration_seen_at is null;
+
+alter table public.reward_catalog_meta enable row level security;
+alter table public.reward_definitions enable row level security;
+alter table public.user_reward_entitlements enable row level security;
+
+drop policy if exists "Authenticated users can read active reward definitions"
+  on public.reward_definitions;
+create policy "Authenticated users can read active reward definitions"
+  on public.reward_definitions
+  for select
+  to authenticated
+  using (is_active);
+
+drop policy if exists "Users can read own reward entitlements"
+  on public.user_reward_entitlements;
+create policy "Users can read own reward entitlements"
+  on public.user_reward_entitlements
+  for select
+  to authenticated
+  using ((select auth.uid()) = user_id);
+
+create or replace function public.bump_reward_catalog_version()
+returns trigger
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+begin
+  insert into public.reward_catalog_meta (
+    catalog_key,
+    catalog_version,
+    updated_at
+  ) values (
+    'primary',
+    1,
+    now()
+  )
+  on conflict (catalog_key) do update set
+    catalog_version = reward_catalog_meta.catalog_version + 1,
+    updated_at = now();
+
+  return null;
+end;
+$$;
+
+drop trigger if exists bump_reward_catalog_version
+  on public.reward_definitions;
+create trigger bump_reward_catalog_version
+  after insert or update or delete on public.reward_definitions
+  for each statement execute function public.bump_reward_catalog_version();
+
+create or replace function public.enforce_reward_entitlement_definition()
+returns trigger
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+begin
+  if not exists (
+    select 1
+    from public.reward_definitions definition
+    where definition.reward_key = new.reward_key
+      and definition.state_model = 'ownership'
+  ) then
+    raise exception 'Only ownership rewards can create permanent entitlements.'
+      using errcode = '23514';
+  end if;
+
+  return new;
+end;
+$$;
+
+drop trigger if exists enforce_reward_entitlement_definition
+  on public.user_reward_entitlements;
+create trigger enforce_reward_entitlement_definition
+  before insert or update of reward_key on public.user_reward_entitlements
+  for each row execute function public.enforce_reward_entitlement_definition();
+
+create or replace function public.protect_reward_definition_identity()
+returns trigger
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+begin
+  if new.reward_key is distinct from old.reward_key
+    or new.reward_type is distinct from old.reward_type
+    or new.state_model is distinct from old.state_model
+    or new.fulfillment_key is distinct from old.fulfillment_key
+    or new.challenge_key is distinct from old.challenge_key then
+    raise exception 'Reward identity fields are immutable.'
+      using errcode = '55000';
+  end if;
+
+  return new;
+end;
+$$;
+
+drop trigger if exists protect_reward_definition_identity
+  on public.reward_definitions;
+create trigger protect_reward_definition_identity
+  before update of reward_key, reward_type, state_model, fulfillment_key, challenge_key
+  on public.reward_definitions
+  for each row execute function public.protect_reward_definition_identity();
+
+create or replace function public.sync_challenge_reward_definition()
+returns trigger
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+begin
+  insert into public.reward_definitions (
+    reward_key,
+    reward_type,
+    state_model,
+    title,
+    description,
+    points_required,
+    fulfillment_key,
+    challenge_key,
+    required_entitlement_key,
+    icon,
+    sort_order,
+    is_active,
+    display_metadata,
+    created_at,
+    updated_at
+  ) values (
+    new.challenge_key,
+    'challenge',
+    'challenge_lifecycle',
+    new.title,
+    new.teaser,
+    new.points_required,
+    new.challenge_key,
+    new.challenge_key,
+    new.entitlement_key,
+    new.icon,
+    new.sort_order,
+    new.is_active,
+    coalesce(new.metadata, '{}'::jsonb) || jsonb_build_object(
+      'challengeType', new.challenge_type,
+      'durationDays', new.duration_days
+    ),
+    new.created_at,
+    now()
+  )
+  on conflict (reward_key) do update set
+    reward_type = 'challenge',
+    state_model = 'challenge_lifecycle',
+    title = excluded.title,
+    description = excluded.description,
+    points_required = excluded.points_required,
+    fulfillment_key = excluded.fulfillment_key,
+    challenge_key = excluded.challenge_key,
+    required_entitlement_key = excluded.required_entitlement_key,
+    icon = excluded.icon,
+    sort_order = excluded.sort_order,
+    is_active = excluded.is_active,
+    display_metadata = excluded.display_metadata,
+    updated_at = now();
+
+  return new;
+end;
+$$;
+
+insert into public.reward_definitions (
+  reward_key,
+  reward_type,
+  state_model,
+  title,
+  description,
+  points_required,
+  fulfillment_key,
+  challenge_key,
+  required_entitlement_key,
+  icon,
+  sort_order,
+  is_active,
+  display_metadata,
+  created_at,
+  updated_at
+)
+select
+  definition.challenge_key,
+  'challenge',
+  'challenge_lifecycle',
+  definition.title,
+  definition.teaser,
+  definition.points_required,
+  definition.challenge_key,
+  definition.challenge_key,
+  definition.entitlement_key,
+  definition.icon,
+  definition.sort_order,
+  definition.is_active,
+  coalesce(definition.metadata, '{}'::jsonb) || jsonb_build_object(
+    'challengeType', definition.challenge_type,
+    'durationDays', definition.duration_days
+  ),
+  definition.created_at,
+  definition.updated_at
+from public.challenge_definitions definition
+on conflict (reward_key) do update set
+  reward_type = excluded.reward_type,
+  state_model = excluded.state_model,
+  title = excluded.title,
+  description = excluded.description,
+  points_required = excluded.points_required,
+  fulfillment_key = excluded.fulfillment_key,
+  challenge_key = excluded.challenge_key,
+  required_entitlement_key = excluded.required_entitlement_key,
+  icon = excluded.icon,
+  sort_order = excluded.sort_order,
+  is_active = excluded.is_active,
+  display_metadata = excluded.display_metadata,
+  updated_at = excluded.updated_at;
+
+drop trigger if exists sync_challenge_reward_definition
+  on public.challenge_definitions;
+create trigger sync_challenge_reward_definition
+  after insert or update of title, teaser, challenge_type, points_required,
+    duration_days, entitlement_key, icon, sort_order, is_active, metadata
+  on public.challenge_definitions
+  for each row execute function public.sync_challenge_reward_definition();
+
+create or replace function public.grant_reward_entitlement(
+  target_user_id uuid,
+  target_reward_key text,
+  target_source_type text default 'point_threshold',
+  target_source_id text default null,
+  target_celebration_seen boolean default false
+)
+returns boolean
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+declare
+  inserted_user_id uuid;
+begin
+  if target_user_id is null
+    or target_reward_key is null
+    or target_source_type is null
+    or target_source_type !~ '^[a-z][a-z0-9_]*$' then
+    return false;
+  end if;
+
+  insert into public.user_reward_entitlements (
+    user_id,
+    reward_key,
+    owned_at,
+    source_type,
+    source_id,
+    celebration_seen_at
+  )
+  select
+    stats.user_id,
+    definition.reward_key,
+    now(),
+    target_source_type,
+    coalesce(target_source_id, definition.reward_key),
+    case when target_celebration_seen then now() else null end
+  from public.user_game_stats stats
+  join public.reward_definitions definition
+    on definition.reward_key = target_reward_key
+   and definition.state_model = 'ownership'
+   and definition.is_active
+   and definition.points_required <= greatest(stats.total_points, 0)
+  where stats.user_id = target_user_id
+  on conflict (user_id, reward_key) do nothing
+  returning user_id into inserted_user_id;
+
+  return inserted_user_id is not null;
+end;
+$$;
+
+create or replace function public.reconcile_user_reward_entitlements(
+  target_user_id uuid,
+  target_celebration_seen boolean default false
+)
+returns integer
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+declare
+  inserted_count integer := 0;
+begin
+  if target_user_id is null then
+    return 0;
+  end if;
+
+  insert into public.user_reward_entitlements (
+    user_id,
+    reward_key,
+    owned_at,
+    source_type,
+    source_id,
+    celebration_seen_at
+  )
+  select
+    stats.user_id,
+    definition.reward_key,
+    now(),
+    'point_threshold',
+    definition.reward_key,
+    case when target_celebration_seen then now() else null end
+  from public.user_game_stats stats
+  join public.reward_definitions definition
+    on definition.state_model = 'ownership'
+   and definition.is_active
+   and definition.points_required <= greatest(stats.total_points, 0)
+  where stats.user_id = target_user_id
+  on conflict (user_id, reward_key) do nothing;
+
+  get diagnostics inserted_count = row_count;
+  return inserted_count;
+end;
+$$;
+
+create or replace function public.sync_user_reward_entitlements_from_stats()
+returns trigger
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+begin
+  if tg_op = 'UPDATE'
+    and new.total_points is not distinct from old.total_points then
+    return new;
+  end if;
+
+  perform public.reconcile_user_reward_entitlements(new.user_id);
+  return new;
+end;
+$$;
+
+drop trigger if exists sync_user_reward_entitlements_from_stats
+  on public.user_game_stats;
+create trigger sync_user_reward_entitlements_from_stats
+  after insert or update of total_points on public.user_game_stats
+  for each row execute function public.sync_user_reward_entitlements_from_stats();
+
+create or replace function public.sync_reward_definition_entitlements()
+returns trigger
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+begin
+  if not new.is_active or new.state_model <> 'ownership' then
+    return new;
+  end if;
+
+  insert into public.user_reward_entitlements (
+    user_id,
+    reward_key,
+    owned_at,
+    source_type,
+    source_id
+  )
+  select
+    stats.user_id,
+    new.reward_key,
+    now(),
+    'catalog_threshold',
+    new.reward_key
+  from public.user_game_stats stats
+  where greatest(stats.total_points, 0) >= new.points_required
+  on conflict (user_id, reward_key) do nothing;
+
+  return new;
+end;
+$$;
+
+drop trigger if exists sync_reward_definition_entitlements
+  on public.reward_definitions;
+create trigger sync_reward_definition_entitlements
+  after insert or update of points_required, is_active, state_model
+  on public.reward_definitions
+  for each row execute function public.sync_reward_definition_entitlements();
+
+create or replace function public.reward_catalog_item_for_user(
+  target_user_id uuid,
+  target_reward_key text,
+  target_current_points integer
+)
+returns jsonb
+language sql
+stable
+security definer
+set search_path = public, pg_temp
+as $$
+  with item as (
+    select
+      definition.*,
+      challenge_state.status as challenge_status,
+      challenge_state.unlock_points,
+      challenge_state.unlocked_at,
+      challenge_state.started_at,
+      challenge_state.completed_at,
+      challenge_state.celebration_seen_at as challenge_celebration_seen_at,
+      reward_entitlement.owned_at,
+      reward_entitlement.celebration_seen_at as ownership_celebration_seen_at,
+      (
+        definition.required_entitlement_key is null
+        or exists (
+          select 1
+          from public.entitlements access_entitlement
+          where access_entitlement.user_id = target_user_id
+            and access_entitlement.entitlement_key = definition.required_entitlement_key
+            and access_entitlement.status = 'active'
+            and (
+              access_entitlement.starts_at is null
+              or access_entitlement.starts_at <= now()
+            )
+            and (
+              access_entitlement.ends_at is null
+              or access_entitlement.ends_at > now()
+            )
+        )
+      ) as can_access,
+      case
+        when definition.state_model = 'challenge_lifecycle'
+          then coalesce(challenge_state.status, 'locked')
+        when reward_entitlement.reward_key is not null then 'owned'
+        else 'locked'
+      end as current_status
+    from public.reward_definitions definition
+    left join public.user_challenge_states challenge_state
+      on challenge_state.user_id = target_user_id
+     and challenge_state.challenge_key = definition.challenge_key
+    left join public.user_reward_entitlements reward_entitlement
+      on reward_entitlement.user_id = target_user_id
+     and reward_entitlement.reward_key = definition.reward_key
+    where definition.reward_key = target_reward_key
+  )
+  select jsonb_build_object(
+    'key', item.reward_key,
+    'rewardType', item.reward_type,
+    'stateModel', item.state_model,
+    'status', item.current_status,
+    'title', item.title,
+    'description', item.description,
+    'pointsRequired', item.points_required,
+    'currentPoints', greatest(coalesce(target_current_points, 0), 0),
+    'pointsRemaining', case
+      when item.current_status <> 'locked' then 0
+      else greatest(item.points_required - greatest(coalesce(target_current_points, 0), 0), 0)
+    end,
+    'progressPercent', case
+      when item.current_status <> 'locked' or item.points_required = 0 then 100
+      else least(
+        round(
+          greatest(coalesce(target_current_points, 0), 0)::numeric
+            / item.points_required::numeric * 100,
+          2
+        ),
+        100
+      )
+    end,
+    'fulfillmentKey', item.fulfillment_key,
+    'requiredEntitlementKey', item.required_entitlement_key,
+    'icon', item.icon,
+    'sortOrder', item.sort_order,
+    'active', item.is_active,
+    'metadata', item.display_metadata,
+    'canAccess', item.can_access,
+    'accessReason', case
+      when not item.can_access then 'entitlement_required'
+      when item.current_status = 'locked' then 'points_required'
+      else null
+    end,
+    'allowedActions', case
+      when item.state_model = 'challenge_lifecycle'
+        and item.current_status = 'available'
+        and item.can_access
+        then jsonb_build_array('start')
+      else '[]'::jsonb
+    end,
+    'unlockPoints', item.unlock_points,
+    'unlockedAt', item.unlocked_at,
+    'startedAt', item.started_at,
+    'completedAt', item.completed_at,
+    'ownedAt', item.owned_at,
+    'celebrationSeenAt', case
+      when item.state_model = 'challenge_lifecycle'
+        then item.challenge_celebration_seen_at
+      else item.ownership_celebration_seen_at
+    end
+  )
+  from item;
+$$;
+
+create or replace function public.reward_catalog_for_user(
+  target_user_id uuid,
+  target_page_size integer default 50,
+  target_after_sort_order integer default null,
+  target_after_reward_key text default null
+)
+returns jsonb
+language plpgsql
+stable
+security definer
+set search_path = public, pg_temp
+as $$
+declare
+  current_total_points integer := 0;
+  normalized_page_size integer;
+  catalog_version bigint := 1;
+  total_items integer := 0;
+  item_rows jsonb := '[]'::jsonb;
+  next_unlock jsonb := null;
+  next_cursor jsonb := null;
+  has_more boolean := false;
+  last_item jsonb;
+begin
+  if target_user_id is null then
+    raise exception 'A user is required for the reward catalog.'
+      using errcode = '22023';
+  end if;
+
+  normalized_page_size := least(greatest(coalesce(target_page_size, 50), 1), 100);
+  if (target_after_sort_order is null) <> (target_after_reward_key is null)
+    or (
+      target_after_reward_key is not null
+      and target_after_reward_key !~ '^[a-z0-9][a-z0-9_.:-]*$'
+    ) then
+    raise exception 'The reward catalog cursor is invalid.'
+      using errcode = '22023';
+  end if;
+
+  select greatest(coalesce(stats.total_points, 0), 0)
+    into current_total_points
+  from public.user_game_stats stats
+  where stats.user_id = target_user_id;
+  current_total_points := coalesce(current_total_points, 0);
+
+  select coalesce(meta.catalog_version, 1)
+    into catalog_version
+  from public.reward_catalog_meta meta
+  where meta.catalog_key = 'primary';
+  catalog_version := coalesce(catalog_version, 1);
+
+  select count(*)::integer
+    into total_items
+  from public.reward_definitions definition
+  left join public.user_reward_entitlements reward_entitlement
+    on reward_entitlement.user_id = target_user_id
+   and reward_entitlement.reward_key = definition.reward_key
+  where definition.is_active
+    or (
+      definition.state_model = 'ownership'
+      and reward_entitlement.reward_key is not null
+    );
+
+  with candidates as (
+    select
+      definition.sort_order,
+      definition.reward_key,
+      public.reward_catalog_item_for_user(
+        target_user_id,
+        definition.reward_key,
+        current_total_points
+      ) as reward
+    from public.reward_definitions definition
+    left join public.user_reward_entitlements reward_entitlement
+      on reward_entitlement.user_id = target_user_id
+     and reward_entitlement.reward_key = definition.reward_key
+    where (
+        definition.is_active
+        or (
+          definition.state_model = 'ownership'
+          and reward_entitlement.reward_key is not null
+        )
+      )
+      and (
+        target_after_sort_order is null
+        or (definition.sort_order, definition.reward_key)
+          > (target_after_sort_order, target_after_reward_key)
+      )
+    order by definition.sort_order, definition.reward_key
+    limit normalized_page_size + 1
+  ), numbered as (
+    select
+      candidates.*,
+      row_number() over (
+        order by candidates.sort_order, candidates.reward_key
+      ) as row_number
+    from candidates
+  )
+  select
+    coalesce(
+      jsonb_agg(numbered.reward order by numbered.sort_order, numbered.reward_key)
+        filter (where numbered.row_number <= normalized_page_size),
+      '[]'::jsonb
+    ),
+    coalesce(bool_or(numbered.row_number > normalized_page_size), false)
+  into item_rows, has_more
+  from numbered;
+
+  if has_more and jsonb_array_length(item_rows) > 0 then
+    last_item := item_rows -> (jsonb_array_length(item_rows) - 1);
+    next_cursor := jsonb_build_object(
+      'sortOrder', (last_item ->> 'sortOrder')::integer,
+      'key', last_item ->> 'key'
+    );
+  end if;
+
+  select state.reward
+    into next_unlock
+  from public.reward_definitions definition
+  cross join lateral (
+    select public.reward_catalog_item_for_user(
+      target_user_id,
+      definition.reward_key,
+      current_total_points
+    ) as reward
+  ) state
+  where definition.is_active
+    and state.reward ->> 'status' = 'locked'
+    and coalesce((state.reward ->> 'canAccess')::boolean, false)
+  order by definition.points_required, definition.sort_order, definition.reward_key
+  limit 1;
+
+  return jsonb_build_object(
+    'schemaVersion', 1,
+    'catalogVersion', catalog_version,
+    'totalPoints', current_total_points,
+    'items', item_rows,
+    'nextUnlock', next_unlock,
+    'page', jsonb_build_object(
+      'limit', normalized_page_size,
+      'totalItems', total_items,
+      'hasMore', has_more,
+      'nextCursor', next_cursor
+    )
+  );
+end;
+$$;
+
+create or replace function public.get_reward_catalog(
+  target_page_size integer default 50,
+  target_after_sort_order integer default null,
+  target_after_reward_key text default null
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+declare
+  current_user_id uuid := auth.uid();
+begin
+  if current_user_id is null then
+    raise exception 'You need to log in to view rewards.'
+      using errcode = '42501';
+  end if;
+
+  perform public.ensure_user_game_stats(current_user_id);
+  perform public.reconcile_user_challenge_unlocks(current_user_id);
+  perform public.reconcile_user_reward_entitlements(current_user_id);
+
+  return public.reward_catalog_for_user(
+    current_user_id,
+    target_page_size,
+    target_after_sort_order,
+    target_after_reward_key
+  );
+end;
+$$;
+
+create or replace function public.claim_reward_entitlement_unlocks()
+returns jsonb
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+declare
+  current_user_id uuid := auth.uid();
+  claimed_keys jsonb := '[]'::jsonb;
+begin
+  if current_user_id is null then
+    raise exception 'You need to log in to claim reward unlocks.'
+      using errcode = '42501';
+  end if;
+
+  perform public.ensure_user_game_stats(current_user_id);
+  perform public.reconcile_user_reward_entitlements(current_user_id);
+
+  with pending as materialized (
+    select reward_entitlement.user_id, reward_entitlement.reward_key
+    from public.user_reward_entitlements reward_entitlement
+    join public.reward_definitions definition
+      on definition.reward_key = reward_entitlement.reward_key
+     and definition.state_model = 'ownership'
+    where reward_entitlement.user_id = current_user_id
+      and reward_entitlement.celebration_seen_at is null
+    order by definition.points_required, definition.sort_order, definition.reward_key
+    for update of reward_entitlement skip locked
+  ), claimed as (
+    update public.user_reward_entitlements reward_entitlement
+    set celebration_seen_at = now(),
+        updated_at = now()
+    from pending
+    where reward_entitlement.user_id = pending.user_id
+      and reward_entitlement.reward_key = pending.reward_key
+      and reward_entitlement.celebration_seen_at is null
+    returning reward_entitlement.reward_key
+  )
+  select coalesce(
+      jsonb_agg(claimed.reward_key order by definition.points_required, definition.sort_order, claimed.reward_key),
+      '[]'::jsonb
+    )
+    into claimed_keys
+  from claimed
+  join public.reward_definitions definition
+    on definition.reward_key = claimed.reward_key;
+
+  return jsonb_build_object(
+    'claimedKeys', claimed_keys,
+    'catalog', public.reward_catalog_for_user(current_user_id, 100, null, null)
+  );
+end;
+$$;
+
+revoke all on public.reward_catalog_meta from public, anon, authenticated;
+revoke all on public.reward_definitions from public, anon, authenticated;
+revoke all on public.user_reward_entitlements from public, anon, authenticated;
+
+grant select, insert, update, delete on public.reward_catalog_meta to service_role;
+grant select, insert, update, delete on public.reward_definitions to service_role;
+grant select, insert, update, delete on public.user_reward_entitlements to service_role;
+grant select on public.user_reward_entitlements to authenticated;
+
+revoke execute on function public.bump_reward_catalog_version() from public, anon, authenticated;
+revoke execute on function public.enforce_reward_entitlement_definition() from public, anon, authenticated;
+revoke execute on function public.protect_reward_definition_identity() from public, anon, authenticated;
+revoke execute on function public.sync_challenge_reward_definition() from public, anon, authenticated;
+revoke execute on function public.grant_reward_entitlement(uuid, text, text, text, boolean) from public, anon, authenticated;
+revoke execute on function public.reconcile_user_reward_entitlements(uuid, boolean) from public, anon, authenticated;
+revoke execute on function public.sync_user_reward_entitlements_from_stats() from public, anon, authenticated;
+revoke execute on function public.sync_reward_definition_entitlements() from public, anon, authenticated;
+revoke execute on function public.reward_catalog_item_for_user(uuid, text, integer) from public, anon, authenticated;
+revoke execute on function public.reward_catalog_for_user(uuid, integer, integer, text) from public, anon, authenticated;
+revoke execute on function public.get_reward_catalog(integer, integer, text) from public, anon;
+revoke execute on function public.claim_reward_entitlement_unlocks() from public, anon;
+
+grant execute on function public.grant_reward_entitlement(uuid, text, text, text, boolean) to service_role;
+grant execute on function public.reconcile_user_reward_entitlements(uuid, boolean) to service_role;
+grant execute on function public.get_reward_catalog(integer, integer, text) to authenticated;
+grant execute on function public.claim_reward_entitlement_unlocks() to authenticated;
+
+commit;
+
+-- Privacy-safe, immutable public snapshots for streak, challenge-progress, and
+-- general Dominion shares. Public tokens are returned once and stored only as
+-- SHA-256 digests so a database read cannot recover usable share URLs.
+
+create table if not exists public.public_share_snapshots (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references auth.users(id) on delete cascade,
+  public_token_digest bytea not null unique,
+  snapshot_version integer not null default 1 check (snapshot_version = 1),
+  share_kind text not null check (share_kind in ('streak', 'progress', 'general')),
+  snapshot_payload jsonb not null check (jsonb_typeof(snapshot_payload) = 'object'),
+  expires_at timestamptz not null,
+  revoked_at timestamptz,
+  revoked_reason text check (revoked_reason is null or revoked_reason in ('user', 'challenge_reset', 'safety')),
+  aggregate_view_count bigint not null default 0 check (aggregate_view_count >= 0),
+  last_viewed_at timestamptz,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  check (octet_length(public_token_digest) = 32),
+  check (expires_at > created_at),
+  check ((revoked_at is null) = (revoked_reason is null))
+);
+
+create index if not exists public_share_snapshots_user_created_idx
+  on public.public_share_snapshots (user_id, created_at desc);
+
+create index if not exists public_share_snapshots_expiry_idx
+  on public.public_share_snapshots (expires_at)
+  where revoked_at is null;
+
+alter table public.public_share_snapshots enable row level security;
+
+revoke all on table public.public_share_snapshots from public, anon, authenticated;
+
+create or replace function public.build_share_snapshot_payload(
+  target_user_id uuid,
+  target_kind text
+)
+returns jsonb
+language plpgsql
+stable
+security definer
+set search_path = public, extensions
+as $$
+declare
+  stats_row public.user_game_stats%rowtype;
+  current_challenge_day integer := 0;
+begin
+  if target_user_id is null then
+    raise exception 'A user is required.';
+  end if;
+  if target_kind is null or target_kind not in ('streak', 'progress', 'general') then
+    raise exception 'Unsupported share type.';
+  end if;
+
+  if target_kind = 'streak' then
+    select *
+      into stats_row
+      from public.user_game_stats
+     where user_id = target_user_id;
+
+    return jsonb_build_object(
+      'schemaVersion', 1,
+      'kind', 'streak',
+      'appStreak', greatest(coalesce(stats_row.current_app_streak, 0), 0),
+      'fullStandardStreak', greatest(coalesce(stats_row.current_full_day_streak, 0), 0)
+    );
+  end if;
+
+  if target_kind = 'progress' then
+    select least(greatest(coalesce(max(challenge_day), 0), 0), 77)
+      into current_challenge_day
+      from public.check_ins
+     where user_id = target_user_id;
+
+    return jsonb_build_object(
+      'schemaVersion', 1,
+      'kind', 'progress',
+      'currentChallengeDay', current_challenge_day,
+      'challengeLength', 77,
+      'percentComplete', round((current_challenge_day::numeric / 77::numeric) * 100, 1)
+    );
+  end if;
+
+  return jsonb_build_object(
+    'schemaVersion', 1,
+    'kind', 'general',
+    'challengeLength', 77,
+    'dailyStandards', 7
+  );
+end;
+$$;
+
+create or replace function public.preview_share_snapshot(target_kind text)
+returns jsonb
+language plpgsql
+stable
+security definer
+set search_path = public, extensions
+as $$
+declare
+  current_user_id uuid := auth.uid();
+begin
+  if current_user_id is null then
+    raise exception 'Not authenticated.' using errcode = '42501';
+  end if;
+
+  return jsonb_build_object(
+    'schemaVersion', 1,
+    'kind', target_kind,
+    'payload', public.build_share_snapshot_payload(current_user_id, target_kind),
+    'defaultExpirationDays', 30,
+    'privacy', jsonb_build_object(
+      'includesIdentity', false,
+      'includesGroup', false,
+      'includesActivityHistory', false
+    )
+  );
+end;
+$$;
+
+create or replace function public.create_share_snapshot(
+  target_kind text,
+  target_expires_at timestamptz default null
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+declare
+  current_user_id uuid := auth.uid();
+  raw_token text;
+  new_snapshot_id uuid;
+  normalized_expires_at timestamptz := coalesce(target_expires_at, now() + interval '30 days');
+  payload jsonb;
+  recent_count integer;
+  active_count integer;
+begin
+  if current_user_id is null then
+    raise exception 'Not authenticated.' using errcode = '42501';
+  end if;
+  if target_kind is null or target_kind not in ('streak', 'progress', 'general') then
+    raise exception 'Unsupported share type.';
+  end if;
+  if normalized_expires_at < now() + interval '1 hour'
+     or normalized_expires_at > now() + interval '90 days' then
+    raise exception 'Share expiration must be between one hour and 90 days.';
+  end if;
+
+  perform pg_advisory_xact_lock(hashtextextended('share-snapshot:' || current_user_id::text, 0));
+
+  select count(*)::integer
+    into recent_count
+    from public.public_share_snapshots
+   where user_id = current_user_id
+     and created_at > now() - interval '1 hour';
+  if recent_count >= 10 then
+    raise exception 'Share link rate limit reached. Try again later.' using errcode = 'P0001';
+  end if;
+
+  select count(*)::integer
+    into active_count
+    from public.public_share_snapshots
+   where user_id = current_user_id
+     and revoked_at is null
+     and expires_at > now();
+  if active_count >= 25 then
+    raise exception 'Revoke an existing share link before creating another.' using errcode = 'P0001';
+  end if;
+
+  payload := public.build_share_snapshot_payload(current_user_id, target_kind);
+  raw_token := encode(gen_random_bytes(32), 'hex');
+
+  insert into public.public_share_snapshots (
+    user_id,
+    public_token_digest,
+    snapshot_version,
+    share_kind,
+    snapshot_payload,
+    expires_at
+  ) values (
+    current_user_id,
+    digest(raw_token, 'sha256'),
+    1,
+    target_kind,
+    payload,
+    normalized_expires_at
+  )
+  returning id into new_snapshot_id;
+
+  return jsonb_build_object(
+    'schemaVersion', 1,
+    'snapshotId', new_snapshot_id,
+    'token', raw_token,
+    'kind', target_kind,
+    'payload', payload,
+    'expiresAt', normalized_expires_at
+  );
+end;
+$$;
+
+create or replace function public.revoke_share_snapshot(target_snapshot_id uuid)
+returns boolean
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+declare
+  current_user_id uuid := auth.uid();
+  changed_count integer := 0;
+begin
+  if current_user_id is null then
+    raise exception 'Not authenticated.' using errcode = '42501';
+  end if;
+
+  update public.public_share_snapshots
+     set revoked_at = now(),
+         revoked_reason = 'user',
+         updated_at = now()
+   where id = target_snapshot_id
+     and user_id = current_user_id
+     and revoked_at is null;
+  get diagnostics changed_count = row_count;
+  return changed_count = 1;
+end;
+$$;
+
+create or replace function public.get_public_share_snapshot(target_token text)
+returns jsonb
+language plpgsql
+volatile
+security definer
+set search_path = public, extensions
+as $$
+declare
+  result jsonb;
+begin
+  -- Invalid, revoked, expired, and unknown links intentionally share one null
+  -- response so callers cannot distinguish or enumerate owner state.
+  if target_token is null or target_token !~ '^[0-9a-f]{64}$' then
+    return null;
+  end if;
+
+  update public.public_share_snapshots
+     set aggregate_view_count = case
+           when aggregate_view_count < 9223372036854775807 then aggregate_view_count + 1
+           else aggregate_view_count
+         end,
+         last_viewed_at = now(),
+         updated_at = now()
+   where public_token_digest = digest(target_token, 'sha256')
+     and revoked_at is null
+     and expires_at > now()
+  returning jsonb_build_object(
+    'schemaVersion', snapshot_version,
+    'kind', share_kind,
+    'payload', snapshot_payload,
+    'expiresAt', expires_at
+  ) into result;
+
+  return result;
+end;
+$$;
+
+create or replace function public.revoke_share_snapshots_after_challenge_reset()
+returns trigger
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+begin
+  if new.challenge_start_date is distinct from old.challenge_start_date then
+    update public.public_share_snapshots
+       set revoked_at = now(),
+           revoked_reason = 'challenge_reset',
+           updated_at = now()
+     where user_id = new.user_id
+       and share_kind in ('streak', 'progress')
+       and revoked_at is null;
+  end if;
+  return new;
+end;
+$$;
+
+drop trigger if exists revoke_share_snapshots_after_challenge_reset on public.profiles;
+create trigger revoke_share_snapshots_after_challenge_reset
+  after update of challenge_start_date on public.profiles
+  for each row
+  execute function public.revoke_share_snapshots_after_challenge_reset();
+
+create or replace function public.purge_retired_share_snapshots(
+  target_retention interval default interval '30 days'
+)
+returns bigint
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+declare
+  deleted_count bigint;
+begin
+  if target_retention < interval '1 day' or target_retention > interval '365 days' then
+    raise exception 'Share retention must be between one and 365 days.';
+  end if;
+
+  delete from public.public_share_snapshots
+   where (expires_at <= now() or revoked_at is not null)
+     and coalesce(revoked_at, expires_at) <= now() - target_retention;
+  get diagnostics deleted_count = row_count;
+  return deleted_count;
+end;
+$$;
+
+revoke all on function public.build_share_snapshot_payload(uuid, text) from public, anon, authenticated;
+revoke all on function public.preview_share_snapshot(text) from public, anon;
+revoke all on function public.create_share_snapshot(text, timestamptz) from public, anon;
+revoke all on function public.revoke_share_snapshot(uuid) from public, anon;
+revoke all on function public.get_public_share_snapshot(text) from public;
+revoke all on function public.revoke_share_snapshots_after_challenge_reset() from public, anon, authenticated;
+revoke all on function public.purge_retired_share_snapshots(interval) from public, anon, authenticated;
+
+grant execute on function public.preview_share_snapshot(text) to authenticated;
+grant execute on function public.create_share_snapshot(text, timestamptz) to authenticated;
+grant execute on function public.revoke_share_snapshot(uuid) to authenticated;
+grant execute on function public.get_public_share_snapshot(text) to anon, authenticated, service_role;
+grant execute on function public.purge_retired_share_snapshots(interval) to service_role;
+
 begin;
 
 create extension if not exists pgcrypto with schema extensions;

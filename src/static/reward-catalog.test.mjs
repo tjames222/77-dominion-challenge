@@ -101,9 +101,12 @@ describe('typed reward catalog', () => {
   });
 
   it('uses the current-user RPC and passes only the stable pagination cursor', () => {
-    assert.match(api, /client\.rpc\('get_reward_catalog'/);
-    assert.match(api, /target_after_sort_order: cursor\?\.sortOrder \?\? null/);
-    assert.match(api, /target_after_reward_key: cursor\?\.key \|\| null/);
-    assert.doesNotMatch(api, /get_reward_catalog[^]*target_user_id/);
+    const getRewardCatalog = api.match(
+      /export async function getRewardCatalog\([^]*?\n\}/,
+    )?.[0] || '';
+    assert.match(getRewardCatalog, /client\.rpc\('get_reward_catalog'/);
+    assert.match(getRewardCatalog, /target_after_sort_order: cursor\?\.sortOrder \?\? null/);
+    assert.match(getRewardCatalog, /target_after_reward_key: cursor\?\.key \|\| null/);
+    assert.doesNotMatch(getRewardCatalog, /target_user_id/);
   });
 });

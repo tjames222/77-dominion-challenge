@@ -26,6 +26,7 @@
     <link rel="stylesheet" href="./src/assets/styles.css" />
     <link rel="stylesheet" href="./src/assets/product.css" />
     <link rel="stylesheet" href="./src/assets/dialog.css" />
+    <link rel="stylesheet" href="./src/assets/share-composer.css" />
     <link rel="stylesheet" href="./src/assets/community.css" />
     <link rel="stylesheet" href="./src/assets/menu.css" />
   </head>
@@ -87,9 +88,16 @@
               <span>Active crew</span>
               <select id="crewSelect"></select>
             </label>
-            <button class="secondary" id="copyInviteButton" type="button">Copy Invite Link</button>
+            <button
+              class="secondary"
+              id="copyInviteButton"
+              type="button"
+              data-share-composer
+              data-share-kind="invite"
+            >
+              Invite people
+            </button>
           </div>
-          <p class="invite-link" id="inviteLinkText"></p>
         </section>
 
         <section class="group-integrations card" id="crewIntegrationsCard" aria-labelledby="groupIntegrationsTitle" hidden>
@@ -227,5 +235,6 @@
 
     <script type="module" src="./src/static/menu.js"></script>
     <script type="module" src="./src/static/community.js"></script>
+    <script type="module" src="./src/static/share-composer.js"></script>
   </body>
 </html>

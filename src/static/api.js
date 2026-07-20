@@ -58,6 +58,7 @@ const MOCK_JOURNAL_KEY = 'dominion:mockJournalEntries';
 const MOCK_CHALLENGE_STATES_KEY = 'dominion:mockChallengeStates';
 const MOCK_CHALLENGE_THRESHOLDS_VERSION_KEY = 'dominion:mockChallengeThresholdsVersion';
 const MOCK_OUTBOUND_CONSENT_KEY = 'dominion:mockOutboundConsent';
+const MOCK_SHARING_REWARD_KEY = 'dominion:mockSharingReward';
 const MOCK_CHALLENGE_THRESHOLDS_VERSION = 2;
 const MOCK_MEDIA_DB_NAME = 'dominion-preview-media';
 const MOCK_MEDIA_STORE_NAME = 'community-post-images';
@@ -640,6 +641,145 @@ export async function manageGroupIntegration(action, values = {}) {
   return invokeSupabaseAction('group-integrations', { action, ...values });
 }
 
+const mockSharePresentation = (kind) => {
+  const stats = mapGameStats(readJson('dominion:gameStats', {}));
+  const currentDay = Math.min(Math.max(Number(readJson('dominion:previewChallengeSimulation', {})?.day) || 1, 1), 77);
+  if (kind === 'streak') {
+    return {
+      schemaVersion: 1,
+      kind,
+      payload: {
+        schemaVersion: 1,
+        kind,
+        appStreak: stats.currentAppStreak,
+        fullStandardStreak: stats.currentFullDayStreak,
+      },
+      presentation: {
+        eyebrow: 'Consistency in motion',
+        title: `${stats.currentAppStreak}-day Dominion app streak`,
+        description: `A Dominion challenger has shown up ${stats.currentAppStreak} days in a row.`,
+        metric: String(stats.currentAppStreak),
+        metricLabel: 'day app streak',
+      },
+    };
+  }
+  if (kind === 'progress') {
+    return {
+      schemaVersion: 1,
+      kind,
+      payload: {
+        schemaVersion: 1,
+        kind,
+        currentChallengeDay: currentDay,
+        challengeLength: 77,
+        progressPercent: Math.round(currentDay / 77 * 100),
+      },
+      presentation: {
+        eyebrow: 'Challenge progress',
+        title: `Day ${currentDay} of the 77-Day Dominion Challenge`,
+        description: `A Dominion challenger is ${Math.round(currentDay / 77 * 100)}% through a disciplined rhythm of faith, fitness, and follow-through.`,
+        metric: `${currentDay}/77`,
+        metricLabel: 'challenge days',
+      },
+    };
+  }
+  return {
+    schemaVersion: 1,
+    kind: 'general',
+    payload: { schemaVersion: 1, kind: 'general', challengeLength: 77, dailyStandards: 7 },
+    presentation: {
+      eyebrow: 'Build the standard',
+      title: 'Take the 77-Day Dominion Challenge',
+      description: 'Commit to seven daily standards for 77 days and build a disciplined rhythm of faith, fitness, and follow-through.',
+      metric: '77',
+      metricLabel: 'days of dominion',
+    },
+  };
+};
+
+export async function previewShareSnapshot(kind) {
+  if (isLocalDemoMode()) return mockSharePresentation(kind);
+  return invokeSupabaseAction('share-snapshot', { action: 'preview', kind });
+}
+
+export async function createShareSnapshot(kind) {
+  if (isLocalDemoMode()) {
+    const preview = mockSharePresentation(kind);
+    const destination = new URL('./index.html', window.location.href);
+    destination.searchParams.set('shared', kind);
+    return {
+      ...preview,
+      snapshotId: randomId('preview_snapshot'),
+      url: destination.href,
+      expiresAt: new Date(Date.now() + 30 * 86400000).toISOString(),
+      preview: true,
+    };
+  }
+  return invokeSupabaseAction('share-snapshot', { action: 'create', kind });
+}
+
+export async function createSharingRewardIntent(shareKind) {
+  if (isLocalDemoMode()) {
+    const grant = readJson(MOCK_SHARING_REWARD_KEY, null);
+    return grant
+      ? { eligible: false, alreadyGranted: true, shareKind }
+      : {
+          eligible: true,
+          alreadyGranted: false,
+          shareKind,
+          completionToken: randomSecret(),
+          expiresAt: new Date(Date.now() + 15 * 60000).toISOString(),
+        };
+  }
+
+  const client = requireSupabase();
+  await requireUser();
+  const { data, error } = await client.rpc('create_sharing_reward_intent', {
+    target_share_kind: shareKind,
+  });
+  if (error) throw error;
+  return data || {};
+}
+
+export async function completeSharingReward(completionToken) {
+  if (isLocalDemoMode()) {
+    const existing = readJson(MOCK_SHARING_REWARD_KEY, null);
+    if (existing) return { granted: false, alreadyGranted: true, ...existing };
+
+    const grantedAt = new Date().toISOString();
+    const stats = readJson('dominion:gameStats', {});
+    writeJson('dominion:gameStats', {
+      ...stats,
+      totalPoints: Number(stats.totalPoints ?? stats.challengePoints ?? 0) + 14,
+      challengePoints: Number(stats.challengePoints ?? stats.totalPoints ?? 0) + 14,
+    });
+    const badges = readJson('dominion:badges', []);
+    if (!badges.some((badge) => (badge.badge_key || badge.key) === 'sharing')) {
+      badges.unshift({
+        key: 'sharing',
+        name: 'Share the Challenge',
+        description: 'Shared the challenge or brought another person into a private group.',
+        category: 'community',
+        tier: 'bronze',
+        icon: 'share',
+        earnedAt: grantedAt,
+      });
+      writeJson('dominion:badges', badges);
+    }
+    const grant = { points: 14, badgeKey: 'sharing', grantedAt };
+    writeJson(MOCK_SHARING_REWARD_KEY, grant);
+    return { granted: true, alreadyGranted: false, ...grant };
+  }
+
+  const client = requireSupabase();
+  await requireUser();
+  const { data, error } = await client.rpc('complete_sharing_reward', {
+    target_completion_token: completionToken,
+  });
+  if (error) throw error;
+  return data || {};
+}
+
 function getMockChallengeProgression() {
   const gameStats = readJson('dominion:gameStats', {});
   let records = readJson(MOCK_CHALLENGE_STATES_KEY, []);
@@ -1051,12 +1191,12 @@ export async function getEarnedBadges({ pageSize = 100 } = {}) {
   return normalizeEarnedBadges(badges);
 }
 
-async function queryLeaderboard(client, { scope = 'global', crewId = null, window = 'week' } = {}) {
-  const rpcName = scope === 'crew' ? 'get_crew_leaderboard' : 'get_global_leaderboard';
-  const payload = scope === 'crew'
-    ? { target_crew_id: crewId, target_window: window }
-    : { target_window: window };
-  const { data, error } = await client.rpc(rpcName, payload);
+async function queryLeaderboard(client, { crewId, window = 'week' } = {}) {
+  if (!crewId) return [];
+  const { data, error } = await client.rpc('get_crew_leaderboard', {
+    target_crew_id: crewId,
+    target_window: window,
+  });
   if (error) throw error;
   return (data || []).map(mapLeaderboardRow);
 }

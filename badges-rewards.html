@@ -8,6 +8,8 @@
     <link rel="stylesheet" href="./src/assets/styles.css" />
     <link rel="stylesheet" href="./src/assets/product.css" />
     <link rel="stylesheet" href="./src/assets/badges-rewards.css" />
+    <link rel="stylesheet" href="./src/assets/dialog.css" />
+    <link rel="stylesheet" href="./src/assets/share-composer.css" />
     <link rel="stylesheet" href="./src/assets/menu.css" />
   </head>
   <body>
@@ -20,6 +22,9 @@
         <p class="eyebrow">Your Progress</p>
         <h1 id="badgesRewardsTitle">Badges &amp; Rewards</h1>
         <p class="lead">See the proof you have earned, the rewards your points opened, and the next milestone ahead.</p>
+        <button class="share-entry-button" type="button" data-share-composer data-share-kind="progress">
+          Share my progress
+        </button>
       </section>
 
       <aside class="reward-unlock-notice" id="rewardUnlockNotice" role="status" aria-live="polite" aria-atomic="true" hidden>
@@ -90,5 +95,6 @@
 
     <script type="module" src="./src/static/menu.js"></script>
     <script type="module" src="./src/static/badges-rewards.js"></script>
+    <script type="module" src="./src/static/share-composer.js"></script>
   </body>
 </html>

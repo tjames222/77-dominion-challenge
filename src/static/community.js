@@ -5,9 +5,9 @@ import {
   getCrewMembers,
   getJournalEntries,
   getLeaderboard,
-  getOrCreateCrewInvite,
   hasSupabaseAuth,
   isLocalDemoMode,
+  manageGroupIntegration,
   redirectToLogin,
   saveJournalEntry,
   uploadJournalPhoto,
@@ -625,8 +625,10 @@ async function bootCommunity() {
     return;
   }
 
-  if (isLocalDemoMode()) setFeedback('Preview mode: crews, posts, comments, leaderboards, and journal entries are using mock local data.');
-  await Promise.all([refreshCrews(), refreshGlobal(), refreshJournal()]);
+  takeIntegrationCallbackFragment();
+  if (isLocalDemoMode()) setFeedback('Preview mode: groups, leaderboards, integrations, and journal entries use local mock data.');
+  await Promise.all([refreshCrews(), refreshJournal()]);
+  await loadIntegrationSetup();
 }
 
 $('crewSelect')?.addEventListener('change', async (event) => {
@@ -778,23 +780,6 @@ $('crewForm')?.addEventListener('submit', async (event) => {
   }
 });
 
-$('copyInviteButton')?.addEventListener('click', async (event) => {
-  const crew = activeCrew();
-  if (!crew) return;
-  const release = setButtonBusy(event.currentTarget, 'Preparing...');
-  try {
-    const invite = await getOrCreateCrewInvite(crew.id);
-    const url = new URL('./invite.html', window.location.href);
-    url.hash = `invite=${encodeURIComponent(invite.token)}`;
-    $('inviteLinkText').textContent = url.href;
-    await navigator.clipboard?.writeText(url.href);
-    setFeedback('Invite link copied.');
-  } catch (error) {
-    window.alert(error?.message || 'Unable to create an invite link right now.');
-  } finally {
-    release();
-  }
-});
 
 $('journalDate')?.addEventListener('change', fillJournalFormForDate);
 
