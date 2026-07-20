@@ -78,8 +78,8 @@ read -r event_count cached_points ledger_points current_streak <<<"$(
   "
 )"
 
-if [[ "$event_count" != "1" ]]; then
-  echo "Expected one app_visit ledger event after concurrent retries; found $event_count." >&2
+if [[ "$event_count" != "0" ]]; then
+  echo "Expected app visits to remain non-point signals; found $event_count ledger events." >&2
   exit 1
 fi
 
@@ -88,9 +88,14 @@ if [[ "$cached_points" != "$ledger_points" ]]; then
   exit 1
 fi
 
+if [[ "$cached_points" != "0" ]]; then
+  echo "Expected app visits to award zero points; found $cached_points cached points." >&2
+  exit 1
+fi
+
 if [[ "$current_streak" != "1" ]]; then
   echo "Expected the concurrent visit retry to advance the streak once; found $current_streak." >&2
   exit 1
 fi
 
-echo "Concurrent RPC retry preserved one ledger event, one streak advance, and a consistent point total."
+echo "Concurrent RPC retry preserved one streak advance and the zero-point app-visit policy."
