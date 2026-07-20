@@ -87,6 +87,18 @@ Stripe powers checkout, payment method updates, and membership cancellation. Sup
 npm run build
 ```
 
+## Browser quality gate
+
+Pull requests run deterministic Playwright coverage for every production HTML
+entry, authenticated route guards, keyboard interactions, axe accessibility,
+responsive screenshots, and first-paint theme behavior.
+
+    pnpm exec playwright install chromium
+    pnpm test:e2e
+
+See [the browser test guide](./tests/e2e/README.md) for fixtures, visual
+baseline updates, failure artifacts, and the FOU-556 alternate-theme handoff.
+
 ## Challenge standards
 
 - Bible reading: 5–8 chapters

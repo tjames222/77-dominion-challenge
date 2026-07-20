@@ -1,0 +1,84 @@
+name: Browser quality gate
+
+on:
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      generate_visual_baselines:
+        description: Generate reviewable Linux screenshot baselines instead of comparing them
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: browser-quality-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  browser-quality:
+    name: Routes, accessibility, and visuals
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    env:
+      CI: true
+      E2E_ALT_THEME_ID: ${{ vars.E2E_ALT_THEME_ID }}
+      E2E_ALT_THEME_COLOR_SCHEME: dark
+      E2E_STRICT_THEME_BOOTSTRAP: ${{ vars.E2E_STRICT_THEME_BOOTSTRAP || 'false' }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.32.0
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Install Chromium
+        run: pnpm exec playwright install --with-deps chromium
+
+      - name: Unit tests
+        run: pnpm test
+
+      - name: Production build
+        run: pnpm build
+
+      - name: Browser quality gate
+        if: github.event_name != 'workflow_dispatch' || !inputs.generate_visual_baselines
+        run: pnpm test:e2e
+
+      - name: Generate Linux visual baselines
+        if: github.event_name == 'workflow_dispatch' && inputs.generate_visual_baselines
+        run: pnpm test:e2e:update
+
+      - name: Upload generated visual baselines
+        if: github.event_name == 'workflow_dispatch' && inputs.generate_visual_baselines
+        uses: actions/upload-artifact@v4
+        with:
+          name: browser-visual-baselines-${{ github.sha }}
+          path: tests/e2e/__snapshots__/
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload browser diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: browser-quality-${{ github.run_attempt }}
+          path: |
+            playwright-report/
+            test-results/
+          if-no-files-found: ignore
+          retention-days: 14
