@@ -3,7 +3,7 @@ begin;
 create extension if not exists pgtap with schema extensions;
 set local search_path = public, extensions;
 
-select plan(53);
+select plan(54);
 
 select ok(exists (select 1 from supabase_migrations.schema_migrations where version = '20260720130000'),
   'the retired Community retention migration was replayed');
@@ -41,6 +41,9 @@ select ok(has_function_privilege('service_role',
   'service role can prove exports');
 select ok(has_function_privilege('service_role',
   'public.execute_retired_community_retention(uuid,text,text,text)', 'execute'), 'service role can execute approved retention');
+select ok(has_function_privilege('service_role',
+  'public.configure_retired_community_retention(timestamptz,boolean,text,text,integer)', 'execute'),
+  'service role can apply separately approved policy changes');
 select ok(not has_table_privilege('service_role', 'private.retired_community_export_runs', 'select'),
   'service role cannot bypass the audited functions');
 
@@ -126,9 +129,13 @@ select throws_ok(
   '55000', 'Deletion is not approved or its not-before window has not opened.',
   'production execution remains disabled by default');
 
-select public.configure_retired_community_retention(
-  clock_timestamp() - interval '1 minute', true, 'FOU-564-test-approval', 'operator@example.test', 250
-);
+do $configure$
+begin
+  perform public.configure_retired_community_retention(
+    clock_timestamp() - interval '1 minute', true, 'FOU-564-test-approval', 'operator@example.test', 250
+  );
+end;
+$configure$;
 select throws_ok(
   $$ select public.execute_retired_community_retention(
     (select (result->>'runId')::uuid from retention_run), 'operator@example.test', repeat('a', 64), 'wrong'
