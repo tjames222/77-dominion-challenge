@@ -26,6 +26,8 @@ const isOwnedReward = (reward) => Boolean(
   reward &&
   reward.active !== false &&
   rewardStateModel(reward) === 'ownership' &&
+  reward.canAccess !== false &&
+  reward.can_access !== false &&
   reward.status === 'owned',
 );
 
@@ -75,13 +77,16 @@ export function buildThemeOptionModels(catalog, registry = []) {
 
     let reason = null;
     if (!featureEnabled) reason = 'This theme is not available in this release.';
-    else if (requiresEntitlement && !catalogReward) reason = 'Theme ownership could not be verified.';
+    else if (catalogReward?.canAccess === false || catalogReward?.can_access === false) {
+      reason = catalogReward.accessReason || catalogReward.access_reason || 'Theme access is unavailable.';
+    } else if (requiresEntitlement && !catalogReward) reason = 'Theme ownership could not be verified.';
     else if (locked) reason = `${pointsRemaining} points to unlock.`;
 
     return {
       themeId: theme?.id || '',
       label: theme?.label || 'Theme',
       status: requiresEntitlement ? (owned ? 'owned' : 'locked') : 'public',
+      featureEnabled,
       available,
       locked,
       progressPercent: owned ? 100 : progressPercent,

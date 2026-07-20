@@ -40,6 +40,16 @@ test('authorizes an entitlement theme only from an active owned catalog record',
 
   const inactive = { totalPoints: 500, items: [nightReward({ status: 'owned', active: false })] };
   assert.deepEqual(deriveAuthorizedThemeIds(inactive, registry), []);
+
+  const inaccessible = {
+    totalPoints: 500,
+    items: [nightReward({ status: 'owned', canAccess: false, accessReason: 'Membership required.' })],
+  };
+  assert.deepEqual(deriveAuthorizedThemeIds(inaccessible, registry), []);
+  assert.equal(
+    buildThemeOptionModels(inaccessible, registry).find((model) => model.themeId === 'dominion-night').reason,
+    'Membership required.',
+  );
 });
 
 test('builds accessible locked progress from the typed reward catalog definition', () => {

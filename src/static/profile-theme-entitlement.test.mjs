@@ -11,11 +11,11 @@ test('Profile exposes an accessible fail-closed Dominion Night reward option', a
   const html = await read('profile.html');
   const nightButton = html.match(/<button(?=[^>]*data-theme-mode="dominion-night")[\s\S]*?<\/button>/)?.[0] || '';
 
-  assert.match(nightButton, /disabled/);
+  assert.match(nightButton, /aria-disabled="true"/);
+  assert.doesNotMatch(nightButton, /\sdisabled(?:\s|>)/);
   assert.match(nightButton, /aria-describedby="dominionNightStatus dominionNightProgressLabel"/);
-  assert.match(nightButton, /role="progressbar"/);
-  assert.match(nightButton, /aria-valuemin="0"/);
-  assert.match(nightButton, /aria-valuemax="100"/);
+  assert.doesNotMatch(nightButton, /role="progressbar"/);
+  assert.match(html, /role="progressbar"[\s\S]*aria-valuemin="0"[\s\S]*aria-valuemax="100"/);
   assert.match(html, /id="themeSelectionStatus" role="status" aria-live="polite"/);
 });
 

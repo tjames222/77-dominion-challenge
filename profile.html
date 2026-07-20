@@ -104,14 +104,49 @@
         </div>
       </section>
 
-      <section class="card reveal profile-appearance">
+      <section class="card reveal profile-appearance" id="appearance" aria-labelledby="appearanceTitle">
         <p class="eyebrow">Appearance</p>
-        <h2>Theme</h2>
+        <h2 id="appearanceTitle">Theme</h2>
         <p class="section-copy">Choose the look that feels best for your daily check-ins.</p>
-        <div class="appearance-toggle" role="group" aria-label="Theme selection">
-          <button class="appearance-option" type="button" data-theme-mode="dark" aria-pressed="false">Dark</button>
-          <button class="appearance-option" type="button" data-theme-mode="light" aria-pressed="false">Light</button>
+        <div class="appearance-toggle" role="group" aria-label="Theme selection" aria-describedby="themeSelectionStatus">
+          <button class="appearance-option" type="button" data-theme-mode="dark" aria-pressed="false">
+            <span class="appearance-swatch appearance-swatch-dark" aria-hidden="true"><i></i><i></i><i></i></span>
+            <span class="appearance-option-copy"><strong>Dark</strong><small>Available</small></span>
+          </button>
+          <button class="appearance-option" type="button" data-theme-mode="light" aria-pressed="false">
+            <span class="appearance-swatch appearance-swatch-light" aria-hidden="true"><i></i><i></i><i></i></span>
+            <span class="appearance-option-copy"><strong>Light</strong><small>Available</small></span>
+          </button>
+          <div class="appearance-reward-choice">
+            <button
+              class="appearance-option appearance-option-reward is-loading"
+              type="button"
+              data-theme-mode="dominion-night"
+              aria-pressed="false"
+              aria-disabled="true"
+              aria-describedby="dominionNightStatus dominionNightProgressLabel"
+            >
+              <span class="appearance-swatch appearance-swatch-night" aria-hidden="true"><i></i><i></i><i></i></span>
+              <span class="appearance-option-copy">
+                <strong>Dominion Night</strong>
+                <small id="dominionNightStatus">Locked reward · checking ownership…</small>
+              </span>
+            </button>
+            <div class="appearance-reward-progress">
+              <div
+              class="appearance-progress"
+              id="dominionNightProgress"
+              role="progressbar"
+              aria-labelledby="dominionNightProgressLabel"
+              aria-valuemin="0"
+              aria-valuemax="100"
+              aria-valuenow="0"
+              ><i></i></div>
+              <span class="appearance-progress-label" id="dominionNightProgressLabel">Reward progress is loading.</span>
+            </div>
+          </div>
         </div>
+        <p class="profile-theme-status" id="themeSelectionStatus" role="status" aria-live="polite">Theme rewards are checked securely from your account.</p>
       </section>
     </main>
 

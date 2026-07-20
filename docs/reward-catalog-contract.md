@@ -36,6 +36,24 @@ challenge, and remains owned after point corrections or membership changes.
 Its display metadata links the customer to `profile.html#appearance`; theme
 selection still must verify the trusted entitlement and active theme registry.
 
+### Theme-selection runtime
+
+Every route starts entitlement-backed themes in a fail-closed state. After an
+authenticated session is available, the shared menu runtime loads the catalog,
+derives theme authorization only from an active `ownership` item whose status is
+`owned`, and keeps that authorization in memory for the current page. It is
+never written to local storage and is cleared on catalog failure or logout.
+
+Local storage holds only the user's preferred theme key. If Dominion Night was
+previously selected, first paint safely uses Dark; the preference is applied
+after ownership is verified. Losing runtime authorization immediately returns
+the page to Dark without erasing the preference. The Profile appearance section
+uses the same catalog response to show authoritative locked progress and never
+unlocks a theme by calculating from client-side points.
+
+`VITE_ENABLE_DOMINION_NIGHT_THEME=true` is also required. The feature flag can
+disable rollout but cannot grant ownership.
+
 ## Authenticated read
 
 Call `get_reward_catalog(target_page_size, target_after_sort_order,

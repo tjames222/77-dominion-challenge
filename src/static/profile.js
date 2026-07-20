@@ -17,7 +17,13 @@ import {
   previewChallengeDay,
   setPreviewChallengeEnabled,
 } from './preview-challenge.mjs';
-import { getActiveTheme, setTheme } from './theme-state';
+import { hydrateThemeEntitlementState } from './theme-entitlement-state';
+import { buildThemeOptionModels } from './theme-entitlements.mjs';
+import {
+  getActiveTheme,
+  getThemeRegistry,
+  setTheme,
+} from './theme-state';
 
 const load = (key, fallback) => {
   try {
@@ -35,17 +41,102 @@ const localDateKey = () => {
 };
 const localPreviewMode = isLocalDemoMode();
 const themeOptions = [...document.querySelectorAll('[data-theme-mode]')];
+const themeSelectionStatus = document.getElementById('themeSelectionStatus');
+const dominionNightStatus = document.getElementById('dominionNightStatus');
+const dominionNightProgress = document.getElementById('dominionNightProgress');
+const dominionNightProgressLabel = document.getElementById('dominionNightProgressLabel');
+let themeModelsById = new Map(
+  buildThemeOptionModels(null, getThemeRegistry()).map((model) => [model.themeId, model]),
+);
+
+function setThemeSelectionStatus(message, tone = '') {
+  if (!themeSelectionStatus) return;
+  themeSelectionStatus.textContent = message;
+  themeSelectionStatus.classList.toggle('error', tone === 'error');
+}
+
 function syncThemeOptions() {
   const activeTheme = getActiveTheme();
   themeOptions.forEach((option) => {
     const isActive = option.dataset.themeMode === activeTheme;
     option.classList.toggle('active', isActive);
+    option.closest('.appearance-reward-choice')?.classList.toggle('is-active', isActive);
     option.setAttribute('aria-pressed', String(isActive));
   });
 }
+
+function renderThemeOptions(catalog, { error = false } = {}) {
+  const registry = getThemeRegistry();
+  const models = buildThemeOptionModels(catalog, registry);
+  themeModelsById = new Map(models.map((model) => [model.themeId, model]));
+
+  themeOptions.forEach((option) => {
+    const model = themeModelsById.get(option.dataset.themeMode || '');
+    option.setAttribute('aria-disabled', String(!model?.available));
+    option.classList.toggle('is-locked', Boolean(model?.locked));
+    option.classList.toggle('is-owned', model?.status === 'owned');
+    option.closest('.appearance-reward-choice')?.classList.toggle('is-owned', model?.status === 'owned');
+    option.classList.remove('is-loading');
+  });
+
+  const night = themeModelsById.get('dominion-night');
+  if (dominionNightStatus && night) {
+    const lowestTier = night.isLowestPointUnlock ? 'lowest point unlock · ' : '';
+    dominionNightStatus.textContent = night.available
+      ? 'Unlocked reward'
+      : !night.featureEnabled
+        ? 'Unavailable in this release'
+        : error
+          ? 'Ownership could not be verified'
+          : `Locked · ${lowestTier}${night.currentPoints} of ${night.pointsRequired} points`;
+  }
+  if (dominionNightProgress && night) {
+    const progress = Math.round(night.progressPercent);
+    dominionNightProgress.setAttribute('aria-valuenow', String(progress));
+    dominionNightProgress.style.setProperty('--theme-progress', `${progress}%`);
+  }
+  if (dominionNightProgressLabel && night) {
+    dominionNightProgressLabel.textContent = night.available
+      ? 'Dominion Night is unlocked.'
+      : !night.featureEnabled
+        ? 'Dominion Night is unavailable in this release.'
+        : night.locked && !error
+          ? `${Math.round(night.progressPercent)}% complete. ${night.pointsRemaining} points to unlock.`
+          : night.reason || 'Theme ownership could not be verified.';
+  }
+
+  if (error) {
+    setThemeSelectionStatus('Theme reward ownership could not be verified. Dark and Light remain available.', 'error');
+  } else if (night?.available) {
+    setThemeSelectionStatus('Dominion Night is unlocked and ready to use.');
+  } else if (!night?.featureEnabled) {
+    setThemeSelectionStatus('Dominion Night is unavailable in this release.');
+  } else if (night?.locked) {
+    setThemeSelectionStatus(`${night.isLowestPointUnlock ? 'Lowest point reward: ' : ''}Earn ${night.pointsRemaining} more points to unlock Dominion Night.`);
+  } else {
+    setThemeSelectionStatus(night?.reason || 'Theme rewards are unavailable in this release.');
+  }
+  syncThemeOptions();
+}
+
+async function hydrateThemeOptions() {
+  const result = await hydrateThemeEntitlementState();
+  if (result.error) console.warn('Unable to verify theme reward ownership', result.error);
+  renderThemeOptions(result.catalog, { error: Boolean(result.error) || !result.authenticated });
+}
+
 themeOptions.forEach((option) => {
   option.addEventListener('click', () => {
-    setTheme(option.dataset.themeMode || 'dark');
+    const themeId = option.dataset.themeMode || 'dark';
+    const model = themeModelsById.get(themeId);
+    if (!model?.available) {
+      setThemeSelectionStatus(model?.reason || 'This theme is locked.', 'error');
+      return;
+    }
+    const selectedTheme = setTheme(themeId);
+    setThemeSelectionStatus(selectedTheme === themeId
+      ? `${model.label} theme selected.`
+      : 'That theme is not available right now.', selectedTheme === themeId ? '' : 'error');
   });
 });
 window.addEventListener(window.DominionThemeRuntime.changeEvent, syncThemeOptions);
@@ -336,4 +427,5 @@ window.addEventListener('storage', (event) => {
 
 renderPreviewChallengeTools();
 hydrateProfile();
+hydrateThemeOptions();
 initReveal();
