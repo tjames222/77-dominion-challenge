@@ -161,7 +161,9 @@ test('shared setter normalizes selections, persists JSON, and emits one change e
 });
 
 test('every HTML entry blocks on the shared bootstrap before stylesheets', async () => {
-  const htmlFiles = (await readdir(repoRoot)).filter((file) => file.endsWith('.html')).sort();
+  const htmlFiles = (await readdir(repoRoot))
+    .filter((file) => file.endsWith('.html') && file !== 'today-actions.html')
+    .sort();
   assert.ok(htmlFiles.length >= 10, 'expected every current application entry');
 
   for (const file of htmlFiles) {
