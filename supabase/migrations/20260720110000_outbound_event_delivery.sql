@@ -173,14 +173,14 @@ begin
 
   for destination in
     select provider_destination.id, provider_destination.crew_id
-    from public.crew_members member
+    from public.crew_members crew_member
     join public.outbound_update_preferences preference
-      on preference.crew_id = member.crew_id
-      and preference.user_id = member.user_id
+      on preference.crew_id = crew_member.crew_id
+      and preference.user_id = crew_member.user_id
     join private.integration_destinations provider_destination
-      on provider_destination.crew_id = member.crew_id
-    where member.user_id = target_user_id
-      and (target_only_crew_id is null or member.crew_id = target_only_crew_id)
+      on provider_destination.crew_id = crew_member.crew_id
+    where crew_member.user_id = target_user_id
+      and (target_only_crew_id is null or crew_member.crew_id = target_only_crew_id)
       and preference.outbound_updates_enabled
       and provider_destination.status = 'active'
       and case target_event_type
@@ -415,10 +415,10 @@ begin
     and updates_enabled
     and membership_allowed
     and not membership_was_allowed then
-    select member.joined_at into joined_at
-    from public.crew_members member
-    where member.crew_id = preference_crew_id
-      and member.user_id = preference_user_id;
+    select crew_member.joined_at into joined_at
+    from public.crew_members crew_member
+    where crew_member.crew_id = preference_crew_id
+      and crew_member.user_id = preference_user_id;
 
     if joined_at is not null then
       if joined_at >= now() - interval '7 days' then
@@ -477,24 +477,24 @@ begin
       'periodLabel', 'Week of ' || to_char(period_start, 'YYYY-MM-DD'),
       'memberCount', (
         select count(*)::integer
-        from public.crew_members member
-        where member.crew_id = destination.crew_id
+        from public.crew_members crew_member
+        where crew_member.crew_id = destination.crew_id
       ),
       'checkInCount', (
         select count(*)::integer
         from public.check_ins check_in
-        join public.crew_members member
-          on member.user_id = check_in.user_id
-          and member.crew_id = destination.crew_id
+        join public.crew_members crew_member
+          on crew_member.user_id = check_in.user_id
+          and crew_member.crew_id = destination.crew_id
         where check_in.entry_date >= period_start
           and check_in.entry_date < period_start + 7
       ),
       'completedStandards', (
         select coalesce(sum(check_in.completed_count), 0)::integer
         from public.check_ins check_in
-        join public.crew_members member
-          on member.user_id = check_in.user_id
-          and member.crew_id = destination.crew_id
+        join public.crew_members crew_member
+          on crew_member.user_id = check_in.user_id
+          and crew_member.crew_id = destination.crew_id
         where check_in.entry_date >= period_start
           and check_in.entry_date < period_start + 7
       )
@@ -714,12 +714,12 @@ begin
       if delivery_eligible and presentation_mode = 'named' then
         select left(coalesce(
           nullif(btrim(profile.name), ''),
-          nullif(btrim(member.display_name), '')
+          nullif(btrim(crew_member.display_name), '')
         ), 120) into subject_name
-        from public.crew_members member
-        left join public.profiles profile on profile.user_id = member.user_id
-        where member.crew_id = delivery.crew_id
-          and member.user_id = delivery.subject_user_id;
+        from public.crew_members crew_member
+        left join public.profiles profile on profile.user_id = crew_member.user_id
+        where crew_member.crew_id = delivery.crew_id
+          and crew_member.user_id = delivery.subject_user_id;
       end if;
     end if;
   end if;
@@ -845,10 +845,10 @@ begin
 
   select destination_row.* into destination
   from private.integration_destinations destination_row
-  join public.crew_members member on member.crew_id = destination_row.crew_id
+  join public.crew_members crew_member on crew_member.crew_id = destination_row.crew_id
   where destination_row.id = target_destination_id
-    and member.user_id = target_actor_id
-    and member.role in ('owner', 'admin')
+    and crew_member.user_id = target_actor_id
+    and crew_member.role in ('owner', 'admin')
   for update of destination_row;
 
   if not found then

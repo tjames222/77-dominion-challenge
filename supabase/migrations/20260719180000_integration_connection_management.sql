@@ -154,10 +154,10 @@ begin
 
   if not exists (
     select 1
-    from public.crew_members member
-    where member.crew_id = target_crew_id
-      and member.user_id = target_user_id
-      and member.role in ('owner', 'admin')
+    from public.crew_members crew_member
+    where crew_member.crew_id = target_crew_id
+      and crew_member.user_id = target_user_id
+      and crew_member.role in ('owner', 'admin')
   ) then
     raise exception 'Only a group owner or admin can manage integrations.' using errcode = '42501';
   end if;
@@ -222,10 +222,10 @@ begin
 
   if not exists (
     select 1
-    from public.crew_members member
-    where member.crew_id = authorization.crew_id
-      and member.user_id = authorization.initiated_by
-      and member.role in ('owner', 'admin')
+    from public.crew_members crew_member
+    where crew_member.crew_id = authorization.crew_id
+      and crew_member.user_id = authorization.initiated_by
+      and crew_member.role in ('owner', 'admin')
   ) then
     raise exception 'Integration administrator access is no longer active.' using errcode = '42501';
   end if;
@@ -266,10 +266,10 @@ begin
   end if;
   if not exists (
     select 1
-    from public.crew_members member
-    where member.crew_id = target_crew_id
-      and member.user_id = target_user_id
-      and member.role in ('owner', 'admin')
+    from public.crew_members crew_member
+    where crew_member.crew_id = target_crew_id
+      and crew_member.user_id = target_user_id
+      and crew_member.role in ('owner', 'admin')
   ) then
     raise exception 'Integration administrator access is no longer active.' using errcode = '42501';
   end if;
@@ -342,10 +342,10 @@ begin
   if not exists (
     select 1
     from private.pending_integration_connections pending
-    join public.crew_members member
-      on member.crew_id = pending.crew_id
-     and member.user_id = target_user_id
-     and member.role in ('owner', 'admin')
+    join public.crew_members crew_member
+      on crew_member.crew_id = pending.crew_id
+     and crew_member.user_id = target_user_id
+     and crew_member.role in ('owner', 'admin')
     where pending.setup_token_hash = target_setup_token_hash
       and pending.initiated_by = target_user_id
       and pending.consumed_at is null
@@ -388,10 +388,10 @@ declare
   destination_id uuid;
 begin
   if not exists (
-    select 1 from public.crew_members member
-    where member.crew_id = target_crew_id
-      and member.user_id = target_user_id
-      and member.role in ('owner', 'admin')
+    select 1 from public.crew_members crew_member
+    where crew_member.crew_id = target_crew_id
+      and crew_member.user_id = target_user_id
+      and crew_member.role in ('owner', 'admin')
   ) then
     raise exception 'Only a group owner or admin can manage integrations.' using errcode = '42501';
   end if;
@@ -438,10 +438,10 @@ begin
     raise exception 'Pending integration setup is invalid or expired.' using errcode = '42501';
   end if;
   if not exists (
-    select 1 from public.crew_members member
-    where member.crew_id = pending.crew_id
-      and member.user_id = target_user_id
-      and member.role in ('owner', 'admin')
+    select 1 from public.crew_members crew_member
+    where crew_member.crew_id = pending.crew_id
+      and crew_member.user_id = target_user_id
+      and crew_member.role in ('owner', 'admin')
   ) then
     raise exception 'Integration administrator access is no longer active.' using errcode = '42501';
   end if;
@@ -611,10 +611,10 @@ begin
   if not exists (
     select 1
     from private.integration_destinations destination
-    join public.crew_members member on member.crew_id = destination.crew_id
+    join public.crew_members crew_member on crew_member.crew_id = destination.crew_id
     where destination.id = target_destination_id
-      and member.user_id = target_user_id
-      and member.role in ('owner', 'admin')
+      and crew_member.user_id = target_user_id
+      and crew_member.role in ('owner', 'admin')
   ) then
     raise exception 'Only a group owner or admin can manage integrations.' using errcode = '42501';
   end if;
@@ -660,10 +660,10 @@ declare
 begin
   select destination_row.* into destination
   from private.integration_destinations destination_row
-  join public.crew_members member on member.crew_id = destination_row.crew_id
+  join public.crew_members crew_member on crew_member.crew_id = destination_row.crew_id
   where destination_row.id = target_destination_id
-    and member.user_id = target_user_id
-    and member.role in ('owner', 'admin')
+    and crew_member.user_id = target_user_id
+    and crew_member.role in ('owner', 'admin')
   for update of destination_row;
 
   if not found then
@@ -705,10 +705,10 @@ declare
 begin
   select destination_row.* into destination
   from private.integration_destinations destination_row
-  join public.crew_members member on member.crew_id = destination_row.crew_id
+  join public.crew_members crew_member on crew_member.crew_id = destination_row.crew_id
   where destination_row.id = target_destination_id
-    and member.user_id = target_user_id
-    and member.role in ('owner', 'admin')
+    and crew_member.user_id = target_user_id
+    and crew_member.role in ('owner', 'admin')
   for update of destination_row;
 
   if not found then
