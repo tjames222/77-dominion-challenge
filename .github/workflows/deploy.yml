@@ -43,6 +43,8 @@ jobs:
       STRIPE_SECRET_KEY: ${{ secrets.STRIPE_SECRET_KEY }}
       STRIPE_WEBHOOK_SECRET: ${{ secrets.STRIPE_WEBHOOK_SECRET }}
       STRIPE_MEMBERSHIP_PRICE_ID: ${{ secrets.STRIPE_MEMBERSHIP_PRICE_ID }}
+      INTEGRATION_WORKER_SECRET: ${{ secrets.INTEGRATION_WORKER_SECRET }}
+      INTEGRATION_CREDENTIAL_KEYS: ${{ secrets.INTEGRATION_CREDENTIAL_KEYS }}
       PUBLIC_SITE_URL: ${{ vars.PUBLIC_SITE_URL }}
       PUBLIC_ALLOWED_SITE_URLS: ${{ vars.PUBLIC_ALLOWED_SITE_URLS }}
       CLOUDFLARE_PAGES_PROJECT_HOST: ${{ vars.CLOUDFLARE_PAGES_PROJECT_HOST }}
@@ -112,6 +114,7 @@ jobs:
       - name: Apply database migrations
         run: supabase db push --linked --password "$SUPABASE_DB_PASSWORD"
       - name: Synchronize Edge Function secrets
+        id: function-secrets
         shell: bash
         run: |
           function_secrets=(
@@ -126,6 +129,19 @@ jobs:
           if [[ -n "${CLOUDFLARE_PAGES_PROJECT_HOST:-}" ]]; then
             function_secrets+=("CLOUDFLARE_PAGES_PROJECT_HOST=${CLOUDFLARE_PAGES_PROJECT_HOST}")
           fi
+          if [[ -n "${INTEGRATION_WORKER_SECRET:-}" || -n "${INTEGRATION_CREDENTIAL_KEYS:-}" ]]; then
+            if [[ -z "${INTEGRATION_WORKER_SECRET:-}" || -z "${INTEGRATION_CREDENTIAL_KEYS:-}" ]]; then
+              echo "::error::INTEGRATION_WORKER_SECRET and INTEGRATION_CREDENTIAL_KEYS must be configured together."
+              exit 1
+            fi
+            function_secrets+=(
+              "INTEGRATION_WORKER_SECRET=${INTEGRATION_WORKER_SECRET}"
+              "INTEGRATION_CREDENTIAL_KEYS=${INTEGRATION_CREDENTIAL_KEYS}"
+            )
+            echo "integration_runtime_enabled=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "integration_runtime_enabled=false" >> "$GITHUB_OUTPUT"
+          fi
           supabase secrets set --project-ref "$SUPABASE_PROJECT_REF" "${function_secrets[@]}"
       - name: Deploy authenticated Edge Functions
         run: |
@@ -134,6 +150,9 @@ jobs:
           supabase functions deploy create-customer-portal-session --project-ref "$SUPABASE_PROJECT_REF"
       - name: Deploy Stripe webhook
         run: supabase functions deploy stripe-webhook --project-ref "$SUPABASE_PROJECT_REF" --no-verify-jwt
+      - name: Deploy integration delivery worker
+        if: steps.function-secrets.outputs.integration_runtime_enabled == 'true'
+        run: supabase functions deploy process-integration-outbox --project-ref "$SUPABASE_PROJECT_REF" --no-verify-jwt
       - name: Verify migrations and deployed functions
         shell: bash
         run: |
@@ -149,6 +168,20 @@ jobs:
           if [[ "$status" != "401" ]]; then
             echo "::error::Expected the unauthenticated function smoke test to return 401; received ${status}."
             exit 1
+          fi
+
+          if [[ "${{ steps.function-secrets.outputs.integration_runtime_enabled }}" == "true" ]]; then
+            integration_response="${RUNNER_TEMP}/integration-health-response.json"
+            integration_status="$(curl --silent --show-error --output "$integration_response" --write-out '%{http_code}' \
+              --request POST \
+              --header "Content-Type: application/json" \
+              --header "x-dominion-worker-key: ${INTEGRATION_WORKER_SECRET}" \
+              --data '{"mode":"health"}' \
+              "${VITE_SUPABASE_URL}/functions/v1/process-integration-outbox")"
+            if [[ "$integration_status" != "200" ]]; then
+              echo "::error::Expected the integration worker health check to return 200; received ${integration_status}."
+              exit 1
+            fi
           fi
       - name: Release backend feature gates
         run: |

@@ -68,3 +68,6 @@ enabled = false
 
 [functions.stripe-webhook]
 verify_jwt = false
+
+[functions.process-integration-outbox]
+verify_jwt = false

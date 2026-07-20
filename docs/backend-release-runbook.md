@@ -73,6 +73,8 @@ YAML, pull-request logs, seeds, or test fixtures.
 | `STRIPE_SECRET_KEY` | Calls Stripe from Edge Functions | Stripe administrator |
 | `STRIPE_WEBHOOK_SECRET` | Verifies Stripe webhook signatures | Stripe administrator |
 | `STRIPE_MEMBERSHIP_PRICE_ID` | Selects the approved recurring membership price | Billing owner |
+| `INTEGRATION_WORKER_SECRET` | Authorizes the private Cron-to-worker request when integrations are enabled | Integration administrator |
+| `INTEGRATION_CREDENTIAL_KEYS` | Versioned AES-256-GCM key ring for provider credentials when integrations are enabled | Security administrator |
 
 ### GitHub production variables
 
@@ -101,6 +103,12 @@ in GitHub. The workflow synchronizes the Stripe and allowed-origin values above
 to Supabase Function Secrets before function deployment. `ALLOWED_SITE_ORIGINS`
 is supported only as a compatibility alias; new configuration should use
 `PUBLIC_ALLOWED_SITE_URLS`.
+
+The integration secrets are optional only while Slack/Discord functionality is
+dormant. Configure both together before deploying the worker; the workflow fails
+closed when exactly one is present. Provider app credentials, Cron provisioning,
+rotation, staging acceptance, alerts, and retention are documented in
+`docs/integrations/provider-delivery-runbook.md`.
 
 For local function serving only, copy `supabase/.env.example` to
 `supabase/.env.local`, fill it with local/test values, and pass it explicitly:
@@ -199,7 +207,10 @@ next stage when one fails:
    `supabase/schema.sql` manually in production.
 3. **Synchronize secrets and deploy functions:** update Function Secrets, deploy
    the three JWT-protected billing functions, then deploy `stripe-webhook` with
-   JWT verification disabled because Stripe authenticates it by signature.
+   JWT verification disabled because Stripe authenticates it by signature. When
+   both integration runtime secrets are present, also deploy
+   `process-integration-outbox` without JWT verification; it authenticates the
+   Vault-backed Cron request with its independent worker secret.
 4. **Verify backend and release feature gates:** list remote migrations and
    functions, then confirm an unauthenticated billing-function request is rejected
    before releasing the frontend build. Keep mock mode off and leave new
@@ -230,10 +241,14 @@ the release or incident record.
    access.
 5. Send a Stripe test-mode signed event to `stripe-webhook`; confirm one expected
    subscription/entitlement transition and no duplicate transition on replay.
-6. Load the production frontend in a fresh browser profile. Confirm it targets
+6. When the integration runtime is enabled, invoke health with the worker secret,
+   confirm Cron history is healthy, and deliver one non-sensitive synthetic event
+   to each staging-approved provider before enabling connection UI.
+7. Load the production frontend in a fresh browser profile. Confirm it targets
    the production Supabase project, mock identities are unavailable, and core
    Dashboard, Check-In, billing, and sign-out flows work.
-7. Review Supabase Function logs, Postgres logs, and Stripe delivery logs for new
+8. Review Supabase Function logs, Postgres logs, Stripe delivery logs, integration
+   health, and Cron history for new
    authorization errors, repeated retries, or unexpected elevated-role access.
 
 Only after these checks pass may a new customer-facing feature flag be enabled.
