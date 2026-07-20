@@ -22,7 +22,7 @@
         }
       })();
     </script>
-    <title>Dominion Community</title>
+    <title>Dominion Private Groups</title>
     <link rel="stylesheet" href="./src/assets/styles.css" />
     <link rel="stylesheet" href="./src/assets/product.css" />
     <link rel="stylesheet" href="./src/assets/community.css" />
@@ -32,7 +32,7 @@
     <main class="app-shell community-shell">
       <header class="topbar">
         <a class="back-link" href="./dashboard.html">Dashboard</a>
-        <span class="brand-name">Community</span>
+        <span class="brand-name">Private Groups</span>
       </header>
 
       <section class="community-hero reveal is-visible">
@@ -54,14 +54,14 @@
           <div>
             <p class="eyebrow">Private Group</p>
             <h2 id="crewTitle">Create or join a crew.</h2>
-            <p id="crewDescription">Private crews keep accountability close: one start date, one channel, and people you actually know.</p>
+            <p id="crewDescription">Private groups keep accountability close: one start date and people you actually know.</p>
           </div>
         </div>
 
         <section class="community-tools card" id="crewCreateCard">
           <div>
             <p class="eyebrow">Start a Crew</p>
-            <h2>Build your private channel.</h2>
+            <h2>Build your accountability group.</h2>
           </div>
           <form class="community-form" id="crewForm">
             <label>
@@ -102,6 +102,9 @@
           <p class="integration-disclosure">
             Connected channels can receive approved Daily Check-Ins, streak milestones, badge and reward unlocks, new-member notices, and an optional weekly leaderboard recap. Conversations and replies stay in Slack or Discord and are not synchronized back into Dominion.
           </p>
+          <p class="integration-conversation-note">
+            Dominion keeps the roster and leaderboard here. Use the connected Slack or Discord channel for conversation.
+          </p>
           <div class="integration-destination-list" id="integrationDestinationList" aria-live="polite"></div>
           <div class="integration-connect-actions" id="integrationConnectActions" hidden>
             <button class="secondary" type="button" data-connect-provider="slack">Connect Slack</button>
@@ -127,7 +130,6 @@
         <div class="community-stats" id="crewStats">
           <article class="card"><strong id="crewMemberCount">0</strong><span>Members</span></article>
           <article class="card"><strong id="crewDayCount">Day 1</strong><span>Group pace</span></article>
-          <article class="card"><strong id="crewPostCount">0</strong><span>Posts loaded</span></article>
         </div>
 
         <section class="member-activity card" id="crewMembersCard" hidden>
@@ -155,46 +157,6 @@
           <div class="leaderboard-list" id="crewLeaderboard"></div>
         </section>
 
-        <section class="composer-card card" id="crewComposerCard" hidden>
-          <p class="eyebrow">Encourage Your Crew</p>
-          <form id="crewPostForm">
-            <label class="sr-only" for="crewPostBody">Post message</label>
-            <textarea id="crewPostBody" maxlength="2000" placeholder="Share a win, challenge, or word of encouragement..."></textarea>
-            <div class="composer-upload-row">
-              <label class="photo-picker" for="crewPostImage">
-                <input id="crewPostImage" type="file" accept="image/jpeg,image/png,image/webp,image/heic,image/heif" />
-                <span>Add a photo</span>
-              </label>
-              <small>JPG, PNG, WebP, HEIC · 10 MB max</small>
-            </div>
-            <div class="post-image-preview" id="crewPostImagePreview" hidden>
-              <img id="crewPostImagePreviewImage" alt="Selected post preview" />
-              <button class="secondary compact" id="removeCrewPostImage" type="button">Remove photo</button>
-            </div>
-            <label class="post-image-alt" id="crewPostImageAltLabel" hidden>
-              <span>Photo description <small>(helps members using screen readers)</small></span>
-              <input id="crewPostImageAlt" type="text" maxlength="240" placeholder="Describe what is in the photo" />
-            </label>
-            <div class="composer-actions">
-              <small id="crewPostCharacterCount">0 / 2,000</small>
-              <button class="primary" type="submit">Post to Private Group</button>
-            </div>
-          </form>
-        </section>
-
-        <section class="private-feed-section" id="crewFeedSection" hidden>
-          <div class="section-heading-row feed-heading">
-            <div>
-              <p class="eyebrow">Private Group Feed</p>
-              <h2>Latest encouragement.</h2>
-            </div>
-            <button class="secondary compact" id="refreshCrewFeedButton" type="button">Refresh</button>
-          </div>
-          <div class="private-feed-scroll" id="crewFeedScroll" tabindex="-1" aria-label="Private group posts">
-            <div class="feed-list" id="crewFeed" aria-busy="true"></div>
-            <div class="feed-sentinel" id="crewFeedSentinel"></div>
-          </div>
-        </section>
       </section>
 
       <section class="community-panel" id="journey" role="tabpanel" aria-labelledby="journey-tab" hidden>

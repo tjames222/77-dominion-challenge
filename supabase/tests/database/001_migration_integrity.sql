@@ -3,7 +3,7 @@ begin;
 create extension if not exists pgtap with schema extensions;
 set local search_path = public, extensions;
 
-select plan(29);
+select plan(30);
 
 select ok(
   exists (
@@ -39,6 +39,15 @@ select ok(
     where version = '20260720100000'
   ),
   'the outbound consent migration was replayed'
+);
+
+select ok(
+  exists (
+    select 1
+    from supabase_migrations.schema_migrations
+    where version = '20260720120000'
+  ),
+  'the private-group social retirement migration was replayed'
 );
 
 select ok(to_regclass('public.profiles') is not null, 'profiles exists');
