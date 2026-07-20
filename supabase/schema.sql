@@ -8846,3 +8846,7 @@ grant execute on function public.record_confirmed_group_invite_share(uuid, uuid)
 revoke execute on function public.record_confirmed_group_invite_share(uuid) from public, anon, authenticated;
 grant execute on function public.record_confirmed_group_invite_share(uuid) to service_role;
 revoke execute on function public.grant_sharing_reward_after_invite_redemption() from public, anon, authenticated, service_role;
+
+-- Canonical Dominion Night reward additions are replayed after the combined
+-- typed-catalog, invitation, sharing, and Community lifecycle definitions.
+\ir migrations/20260720220000_dominion_night_theme_reward.sql

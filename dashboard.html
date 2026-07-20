@@ -4,12 +4,14 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <meta name="theme-color" content="#0e1116" />
+    <script vite-ignore src="./theme-bootstrap.js" data-enable-dominion-night="false"></script>
     <title>Dominion Dashboard</title>
     <link rel="stylesheet" href="./src/assets/styles.css" />
     <link rel="stylesheet" href="./src/assets/product.css" />
     <link rel="stylesheet" href="./src/assets/dialog.css" />
     <link rel="stylesheet" href="./src/assets/share-composer.css" />
     <link rel="stylesheet" href="./src/assets/menu.css" />
+    <link rel="stylesheet" href="./src/assets/dominion-night.css" />
   </head>
   <body>
     <main class="app-shell dashboard-shell">
@@ -49,7 +51,7 @@
         </button>
       </section>
 
-      <section class="challenge-complete-panel reveal" id="challengeCompletePanel" data-section-surface="accent" hidden>
+      <section class="challenge-complete-panel reveal" id="challengeCompletePanel" data-section-surface="plain" hidden>
         <p class="eyebrow">77 Days Complete</p>
         <h2>Your next challenge is ready.</h2>
         <p>You finished the Dominion Challenge. Hold the ground you gained and choose the next path from Badges &amp; Rewards.</p>
@@ -145,6 +147,7 @@
 
       <section class="dashboard-brand-panel reveal" data-section-surface="accent" aria-label="77 Dominion Challenge mark">
         <img
+          data-theme-asset
           src="/images/dominion-77-mark.jpg"
           data-theme-src-dark="/images/dominion-77-mark.jpg"
           data-theme-src-light="https://pub-53499389187a4de4984349b4f9b36b74.r2.dev/photo_1783730958.105418.png"

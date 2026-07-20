@@ -3,7 +3,7 @@ begin;
 create extension if not exists pgtap with schema extensions;
 set local search_path = public, extensions;
 
-select plan(46);
+select plan(52);
 
 select ok(
   exists (
@@ -50,6 +50,15 @@ select ok(
   'the hardened private-group invite migration was replayed'
 );
 
+select ok(
+  exists (
+    select 1
+    from supabase_migrations.schema_migrations
+    where version = '20260720220000'
+  ),
+  'the Dominion Night theme reward migration was replayed'
+);
+
 select ok(to_regclass('public.profiles') is not null, 'profiles exists');
 select ok(to_regclass('public.challenge_entries') is not null, 'challenge_entries exists');
 select ok(to_regclass('public.check_ins') is not null, 'check_ins exists');
@@ -61,6 +70,9 @@ select ok(to_regclass('public.challenge_definitions') is not null, 'challenge_de
 select ok(to_regclass('public.sharing_reward_intents') is not null, 'sharing_reward_intents exists');
 select ok(to_regclass('public.sharing_reward_evidence') is not null, 'sharing_reward_evidence exists');
 select ok(to_regclass('public.sharing_reward_grants') is not null, 'sharing_reward_grants exists');
+select ok(to_regclass('public.reward_definitions') is not null, 'reward_definitions exists');
+select ok(to_regclass('public.user_reward_entitlements') is not null, 'user_reward_entitlements exists');
+select ok(to_regclass('private.reward_audit_events') is not null, 'private reward audit events exist');
 
 select ok(
   to_regprocedure('public.submit_daily_check_in(text,text[],jsonb,text,date)') is not null,
@@ -91,6 +103,19 @@ select ok(to_regprocedure('public.issue_crew_invite(uuid)') is not null, 'the se
 select ok(to_regprocedure('public.revoke_crew_invite(uuid)') is not null, 'the server-authoritative invite revocation RPC exists');
 select ok(to_regprocedure('public.preview_crew_invite(text,text)') is not null, 'the privacy-safe invite preview RPC exists');
 select ok(to_regprocedure('public.confirm_crew_invite(text)') is not null, 'the explicit invite confirmation RPC exists');
+select ok(
+  to_regprocedure('public.backfill_reward_entitlements(text,uuid,integer,boolean)') is not null,
+  'the resumable reward backfill RPC exists'
+);
+select is(
+  (
+    select points_required
+    from public.reward_definitions
+    where reward_key = 'dominion_night_theme'
+  ),
+  500,
+  'the Dominion Night theme reward starts at exactly 500 points'
+);
 select is(
   (
     select procedure_row.pronargdefaults::integer

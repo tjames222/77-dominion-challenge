@@ -76,7 +76,7 @@
 }
 .community-tab.active {
   background: var(--accent);
-  color: #070604;
+  color: var(--button-primary-text);
 }
 .community-panel {
   display: none;
@@ -212,7 +212,7 @@
 }
 .leaderboard-toggle button.active {
   background: var(--accent);
-  color: #070604;
+  color: var(--button-primary-text);
 }
 .leaderboard-list {
   display: grid;
@@ -429,7 +429,6 @@
   color: var(--text-muted);
   line-height: 1.5;
 }
-
 .skeleton {
   display: block;
   border-radius: 999px;

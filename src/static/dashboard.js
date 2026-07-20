@@ -759,7 +759,6 @@ function queueChallengeUnlockCelebration(challenges = [], delay = 0) {
   if (!challenges.length) return;
   window.setTimeout(() => showChallengeUnlockCelebration(challenges), delay);
 }
-let theme = load('dominion:theme', 'dark');
 let startDate = localDemoMode ? load('dominion:startDate', todayKey()) : todayKey();
 let entries = load(ENTRY_STORAGE_KEY, []);
 let checkInCacheOwner = localDemoMode
@@ -1091,10 +1090,8 @@ function updateCountdownCard() {
   if (countdownActionsLabel) countdownActionsLabel.textContent = `${entry.completed.length} of 7 actions complete`;
 }
 function render() {
-  document.documentElement.dataset.theme = theme;
   const finished = isChallengeFinished();
   document.body.classList.toggle('challenge-finished', finished);
-  const themeToggle = $('themeToggle');
   const dashboardTitle = $('dashboardTitle');
   const dashboardLead = $('dashboardLead');
   const challengeCompletePanel = $('challengeCompletePanel');
@@ -1117,7 +1114,6 @@ function render() {
   if (dashboardTitle) dashboardTitle.textContent = finished ? COMPLETION_HERO.title : 'Today’s Dominion';
   if (dashboardLead) dashboardLead.textContent = finished ? COMPLETION_HERO.lead : 'Track your standards, post your check-in, and stay honest.';
   if (challengeCompletePanel) challengeCompletePanel.hidden = !finished;
-  if (themeToggle) themeToggle.textContent = `${theme === 'dark' ? 'Dark' : 'Light'} Theme`;
   if (startDateInput) {
     startDateInput.value = previewChallengeMode() ? previewChallengeState.anchorDate : startDate;
     const startDateLocked = previewChallengeMode() || submittedCheckInDates.size > 0 || submittedChallengeDays.size > 0;
@@ -1353,7 +1349,6 @@ async function recordDailyAppVisit() {
   }
 }
 
-const themeToggle = $('themeToggle');
 const startDateInput = $('startDate');
 const checklist = $('checklist');
 const selectAllActionsButton = $('selectAllActionsButton');
@@ -1361,7 +1356,6 @@ const checkInButton = $('checkInButton');
 const countdownCheckInButton = $('countdownCheckInButton');
 const rewardBackdrop = $('rewardBackdrop');
 const rewardToast = $('rewardToast');
-if (themeToggle) themeToggle.addEventListener('click', () => { theme = theme === 'dark' ? 'light' : 'dark'; save('dominion:theme', theme); render(); });
 if (rewardBackdrop && rewardToast) {
   rewardBackdrop.addEventListener('click', () => dismissRewardToast(rewardToast, rewardBackdrop));
 }

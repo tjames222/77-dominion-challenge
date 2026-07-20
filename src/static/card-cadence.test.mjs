@@ -6,7 +6,6 @@ const root = new URL('../../', import.meta.url);
 const viteSource = readFileSync(new URL('../../vite.config.ts', import.meta.url), 'utf8');
 const stylesSource = readFileSync(new URL('../assets/styles.css', import.meta.url), 'utf8');
 const activeRoutes = [...viteSource.matchAll(/\w+:\s*'([^']+\.html)'/g)].map((match) => match[1]);
-const deferredRoutes = new Set(['profile.html']);
 const voidElements = new Set(['area', 'base', 'br', 'col', 'embed', 'hr', 'img', 'input', 'link', 'meta', 'source', 'track', 'wbr']);
 
 function directPageSections(source) {
@@ -26,7 +25,6 @@ function directPageSections(source) {
     if (name === 'section' && stack.at(-1) === 'main') {
       sections.push({
         markup: token,
-        hidden: /\shidden(?:\s|=|>)/i.test(token),
         surface: token.match(/\sdata-section-surface=["'](plain|accent)["']/i)?.[1] || '',
       });
     }
@@ -36,22 +34,20 @@ function directPageSections(source) {
 }
 
 describe('app-wide section surface cadence', () => {
-  test('audits every active Vite HTML input with one explicit merge-safe deferral', () => {
+  test('audits every active Vite HTML input without route exceptions', () => {
     assert.equal(activeRoutes.length, 18);
-    assert.deepEqual([...deferredRoutes], ['profile.html']);
     for (const route of activeRoutes) {
       const source = readFileSync(new URL(`../../${route}`, import.meta.url), 'utf8');
       const sections = directPageSections(source);
       assert.ok(sections.length, `${route} must contain a direct page section`);
-      if (deferredRoutes.has(route)) continue;
       assert.ok(sections.every((section) => section.surface), `${route} has an unclassified page section`);
     }
   });
 
-  test('uses card surfaces as accents at most every other visible page section', () => {
-    for (const route of activeRoutes.filter((route) => !deferredRoutes.has(route))) {
+  test('uses card surfaces as accents at most every other section in every visibility state', () => {
+    for (const route of activeRoutes) {
       const source = readFileSync(new URL(`../../${route}`, import.meta.url), 'utf8');
-      const sections = directPageSections(source).filter((section) => !section.hidden);
+      const sections = directPageSections(source);
       const accents = sections.filter((section) => section.surface === 'accent');
       assert.ok(accents.length <= Math.ceil(sections.length / 2), `${route} overuses accent sections`);
       sections.slice(1).forEach((section, index) => {

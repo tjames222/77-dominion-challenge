@@ -64,9 +64,9 @@ describe('seven-point economy contract', () => {
     assert.equal(challengeInstancesRequired(10000), 19);
   });
 
-  it('rejects active rewards cheaper than the alternate theme', () => {
+  it('rejects active rewards cheaper than Dominion Night', () => {
     assert.equal(validateRewardThresholds([
-      { key: 'alternate_dark_theme', pointsRequired: 500 },
+      { key: 'dominion_night_theme', pointsRequired: 500 },
       { key: 'reset', pointsRequired: 1000 },
     ]).valid, true);
 

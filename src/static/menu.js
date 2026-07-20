@@ -1,4 +1,8 @@
 import { clearAuthSession, getLocalOrSessionUser } from './api';
+import {
+  clearThemeEntitlementState,
+  hydrateThemeEntitlementState,
+} from './theme-entitlement-state';
 import { initThemeState } from './theme-state';
 import { initThemeAssets } from './theme-assets';
 
@@ -152,6 +156,7 @@ async function buildMenu() {
   overlay.addEventListener('click', closeMenu);
   menu.querySelector('.global-menu-close')?.addEventListener('click', closeMenu);
   menu.querySelector('.global-menu-logout')?.addEventListener('click', async () => {
+    clearThemeEntitlementState();
     await clearAuthSession();
     closeMenu();
     window.location.href = './index.html';
@@ -163,6 +168,9 @@ async function buildMenu() {
 
 initThemeState();
 initThemeAssets();
+hydrateThemeEntitlementState().then(({ error }) => {
+  if (error) console.warn('Unable to verify theme reward ownership', error);
+});
 initDirectionalTopbar();
 initTopbarStickyOffset();
 buildMenu();

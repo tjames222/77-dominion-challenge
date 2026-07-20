@@ -13,6 +13,5 @@ retain dark/light theme tokens, focus treatment, and mobile behavior.
 
 The static cadence test reads every active HTML input from `vite.config.ts`,
 requires explicit surface metadata, and caps accent sections at every other
-visible section. `profile.html` is temporarily listed as a merge-safe deferral
-while its point-unlocked theme work lands; remove that deferral as soon as the
-profile branch is merged and annotate its route sections in the same cadence.
+section. Hidden sections participate in the sequence because application state
+can reveal them later; the contract must hold in every visibility state.

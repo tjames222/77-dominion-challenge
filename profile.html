@@ -4,11 +4,13 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <meta name="theme-color" content="#0e1116" />
+    <script vite-ignore src="./theme-bootstrap.js" data-enable-dominion-night="false"></script>
     <title>Profile | Dominion</title>
     <link rel="stylesheet" href="./src/assets/styles.css" />
     <link rel="stylesheet" href="./src/assets/product.css" />
     <link rel="stylesheet" href="./src/assets/dialog.css" />
     <link rel="stylesheet" href="./src/assets/menu.css" />
+    <link rel="stylesheet" href="./src/assets/dominion-night.css" />
   </head>
   <body>
     <main class="app-shell dashboard-shell">
@@ -16,13 +18,13 @@
         <a class="back-link" href="./dashboard.html">Dashboard</a>
       </header>
 
-      <section class="dashboard-hero compact-hero reveal is-visible">
+      <section class="dashboard-hero compact-hero reveal is-visible" data-section-surface="plain">
         <p class="eyebrow">Profile</p>
         <h1>Your Dominion</h1>
         <p class="lead">Manage your challenge identity, group, and account details.</p>
       </section>
 
-      <section class="card reveal profile-account-card">
+      <section class="card reveal profile-account-card" data-section-surface="accent">
         <p class="eyebrow">Account</p>
         <div class="profile-account-summary">
           <div class="profile-avatar-frame" aria-hidden="true">
@@ -69,14 +71,14 @@
         </form>
       </section>
 
-      <section class="card reveal">
+      <section class="card reveal" data-section-surface="plain">
         <p class="eyebrow">Challenge</p>
         <h2>77-Day Dominion Challenge</h2>
         <p class="section-copy">Group: San Marcos Men</p>
         <p class="section-copy" id="profileChallengeStatus">Status: Checking access</p>
       </section>
 
-      <section class="card reveal profile-integration-consent" id="integrationPrivacy" aria-labelledby="integrationPrivacyTitle">
+      <section class="card reveal profile-integration-consent" id="integrationPrivacy" data-section-surface="accent" aria-labelledby="integrationPrivacyTitle">
         <p class="eyebrow">Integrations</p>
         <h2 id="integrationPrivacyTitle">Group update privacy</h2>
         <p class="section-copy">You decide whether your activity can leave Dominion for each private group’s connected Slack or Discord channel. Group owners cannot opt in for you.</p>
@@ -152,7 +154,7 @@
         </div>
       </section>
 
-      <section class="card reveal profile-preview-tools" id="profilePreviewTools" aria-labelledby="profilePreviewTitle" hidden>
+      <section class="card reveal profile-preview-tools" id="profilePreviewTools" data-section-surface="plain" aria-labelledby="profilePreviewTitle" hidden>
         <p class="eyebrow">Preview Tools</p>
         <h2 id="profilePreviewTitle">77-day test mode</h2>
         <p class="section-copy" id="profilePreviewDescription">Each posted preview check-in moves to the next simulated challenge day. App streak advances every day; complete 7/7 posts also advance the full-standard streak.</p>
@@ -167,7 +169,7 @@
         <button class="secondary" id="resetPreviewChallengeButton" type="button">Reset preview challenge</button>
       </section>
 
-      <section class="card reveal profile-billing" id="billing">
+      <section class="card reveal profile-billing" id="billing" data-section-surface="accent">
         <p class="eyebrow">Billing</p>
         <h2 id="profileBillingTitle">Billing access</h2>
         <p class="section-copy" id="profileBillingCopy">Loading your subscription details.</p>
@@ -179,14 +181,49 @@
         </div>
       </section>
 
-      <section class="card reveal profile-appearance">
+      <section class="card reveal profile-appearance" id="appearance" data-section-surface="plain" aria-labelledby="appearanceTitle">
         <p class="eyebrow">Appearance</p>
-        <h2>Theme</h2>
+        <h2 id="appearanceTitle">Theme</h2>
         <p class="section-copy">Choose the look that feels best for your daily check-ins.</p>
-        <div class="appearance-toggle" role="group" aria-label="Theme selection">
-          <button class="appearance-option" type="button" data-theme-mode="dark" aria-pressed="false">Dark</button>
-          <button class="appearance-option" type="button" data-theme-mode="light" aria-pressed="false">Light</button>
+        <div class="appearance-toggle" role="group" aria-label="Theme selection" aria-describedby="themeSelectionStatus">
+          <button class="appearance-option" type="button" data-theme-mode="dark" aria-pressed="false">
+            <span class="appearance-swatch appearance-swatch-dark" aria-hidden="true"><i></i><i></i><i></i></span>
+            <span class="appearance-option-copy"><strong>Dark</strong><small>Available</small></span>
+          </button>
+          <button class="appearance-option" type="button" data-theme-mode="light" aria-pressed="false">
+            <span class="appearance-swatch appearance-swatch-light" aria-hidden="true"><i></i><i></i><i></i></span>
+            <span class="appearance-option-copy"><strong>Light</strong><small>Available</small></span>
+          </button>
+          <div class="appearance-reward-choice">
+            <button
+              class="appearance-option appearance-option-reward is-loading"
+              type="button"
+              data-theme-mode="dominion-night"
+              aria-pressed="false"
+              aria-disabled="true"
+              aria-describedby="dominionNightStatus dominionNightProgressLabel"
+            >
+              <span class="appearance-swatch appearance-swatch-night" aria-hidden="true"><i></i><i></i><i></i></span>
+              <span class="appearance-option-copy">
+                <strong>Dominion Night</strong>
+                <small id="dominionNightStatus">Locked reward · checking ownership…</small>
+              </span>
+            </button>
+            <div class="appearance-reward-progress">
+              <div
+              class="appearance-progress"
+              id="dominionNightProgress"
+              role="progressbar"
+              aria-labelledby="dominionNightProgressLabel"
+              aria-valuemin="0"
+              aria-valuemax="100"
+              aria-valuenow="0"
+              ><i></i></div>
+              <span class="appearance-progress-label" id="dominionNightProgressLabel">Reward progress is loading.</span>
+            </div>
+          </div>
         </div>
+        <p class="profile-theme-status" id="themeSelectionStatus" role="status" aria-live="polite">Theme rewards are checked securely from your account.</p>
       </section>
     </main>
 

@@ -2,6 +2,26 @@ const CHALLENGE_STATES = new Set(['locked', 'available', 'active', 'completed'])
 const OWNERSHIP_STATES = new Set(['locked', 'owned']);
 const STATE_MODELS = new Set(['challenge_lifecycle', 'ownership']);
 
+export const DOMINION_NIGHT_THEME_REWARD = Object.freeze({
+  key: 'dominion_night_theme',
+  rewardType: 'cosmetic',
+  stateModel: 'ownership',
+  title: 'Dominion Night',
+  description: 'Unlock a distinct dark app theme, then select it from Profile.',
+  pointsRequired: 500,
+  fulfillmentKey: 'dominion-night',
+  icon: 'palette',
+  sortOrder: 5,
+  active: true,
+  metadata: Object.freeze({
+    themeKey: 'dominion-night',
+    preview: 'dominion-night',
+    colorScheme: 'dark',
+    selectionRoute: 'profile.html#appearance',
+    selectionLabel: 'Select in Profile',
+  }),
+});
+
 const safeWholeNumber = (value, fallback = 0) => {
   const number = Number(value);
   return Number.isFinite(number) ? Math.max(0, Math.floor(number)) : fallback;
@@ -140,4 +160,125 @@ export function challengeProgressionToRewardCatalog(progression = {}) {
       nextCursor: null,
     },
   });
+}
+
+const resolveTimestamp = (now) => {
+  if (typeof now === 'function') return String(now());
+  if (typeof now === 'string' && now) return now;
+  return new Date().toISOString();
+};
+
+const normalizeOwnershipRecords = (records = []) => {
+  const recordsByKey = new Map();
+  for (const record of Array.isArray(records) ? records : []) {
+    const key = safeKey(record?.key || record?.rewardKey || record?.reward_key);
+    if (!key || recordsByKey.has(key)) continue;
+    recordsByKey.set(key, {
+      key,
+      ownedAt: record.ownedAt || record.owned_at || null,
+      celebrationSeenAt: record.celebrationSeenAt || record.celebration_seen_at || null,
+    });
+  }
+  return recordsByKey;
+};
+
+export function buildMockRewardCatalog({
+  progression = {},
+  ownershipRecords = [],
+  rewardDefinitions = [DOMINION_NIGHT_THEME_REWARD],
+  now,
+} = {}) {
+  const challengeCatalog = challengeProgressionToRewardCatalog(progression);
+  const totalPoints = challengeCatalog.totalPoints;
+  const recordsByKey = normalizeOwnershipRecords(ownershipRecords);
+  const timestamp = resolveTimestamp(now);
+
+  for (const definition of rewardDefinitions) {
+    const key = safeKey(definition?.key);
+    if (!key || recordsByKey.has(key) || definition.active === false) continue;
+    if (totalPoints >= safeWholeNumber(definition.pointsRequired)) {
+      recordsByKey.set(key, {
+        key,
+        ownedAt: timestamp,
+        celebrationSeenAt: null,
+      });
+    }
+  }
+
+  const cosmeticItems = rewardDefinitions.map((definition) => {
+    const ownership = recordsByKey.get(safeKey(definition?.key));
+    return normalizeReward({
+      ...definition,
+      status: ownership ? 'owned' : 'locked',
+      currentPoints: totalPoints,
+      ownedAt: ownership?.ownedAt || null,
+      celebrationSeenAt: ownership?.celebrationSeenAt || null,
+    });
+  });
+  const items = [...cosmeticItems, ...challengeCatalog.items]
+    .sort((left, right) => (
+      left.sortOrder - right.sortOrder || left.key.localeCompare(right.key)
+    ));
+  const nextUnlock = [...items]
+    .filter((reward) => reward.active && reward.status === 'locked' && reward.canAccess)
+    .sort((left, right) => (
+      left.pointsRequired - right.pointsRequired
+      || left.sortOrder - right.sortOrder
+      || left.key.localeCompare(right.key)
+    ))[0] || null;
+  const catalog = normalizeRewardCatalog({
+    schemaVersion: 1,
+    catalogVersion: 2,
+    totalPoints,
+    items,
+    nextUnlock,
+    page: {
+      limit: items.length,
+      totalItems: items.length,
+      hasMore: false,
+      nextCursor: null,
+    },
+  });
+
+  return {
+    catalog,
+    ownershipRecords: [...recordsByKey.values()],
+  };
+}
+
+export function claimMockRewardEntitlementUnlocks({
+  progression = {},
+  ownershipRecords = [],
+  rewardDefinitions = [DOMINION_NIGHT_THEME_REWARD],
+  now,
+} = {}) {
+  const timestamp = resolveTimestamp(now);
+  const initial = buildMockRewardCatalog({
+    progression,
+    ownershipRecords,
+    rewardDefinitions,
+    now: timestamp,
+  });
+  const claimedKeySet = new Set(
+    initial.ownershipRecords
+      .filter((record) => !record.celebrationSeenAt)
+      .map((record) => record.key),
+  );
+  const nextRecords = initial.ownershipRecords.map((record) => (
+    claimedKeySet.has(record.key)
+      ? { ...record, celebrationSeenAt: timestamp }
+      : record
+  ));
+  const next = buildMockRewardCatalog({
+    progression,
+    ownershipRecords: nextRecords,
+    rewardDefinitions,
+    now: timestamp,
+  });
+
+  return {
+    claimedUnlocks: initial.catalog.items.filter((reward) => claimedKeySet.has(reward.key)),
+    catalog: next.catalog,
+    ownershipRecords: next.ownershipRecords,
+  };
 }
