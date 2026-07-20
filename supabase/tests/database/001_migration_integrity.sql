@@ -3,7 +3,7 @@ begin;
 create extension if not exists pgtap with schema extensions;
 set local search_path = public, extensions;
 
-select plan(31);
+select plan(33);
 
 select ok(
   exists (
@@ -59,6 +59,24 @@ select ok(to_regprocedure('public.issue_crew_invite(uuid)') is not null, 'the se
 select ok(to_regprocedure('public.revoke_crew_invite(uuid)') is not null, 'the server-authoritative invite revocation RPC exists');
 select ok(to_regprocedure('public.preview_crew_invite(text,text)') is not null, 'the privacy-safe invite preview RPC exists');
 select ok(to_regprocedure('public.confirm_crew_invite(text)') is not null, 'the explicit invite confirmation RPC exists');
+select is(
+  (
+    select procedure_row.pronargdefaults::integer
+    from pg_proc procedure_row
+    where procedure_row.oid = 'public.add_game_points(uuid,text,integer,date,integer,uuid,jsonb,text)'::regprocedure
+  ),
+  5,
+  'the compatibility migration preserves the five trailing point-helper defaults'
+);
+select is(
+  (
+    select procedure_row.proargnames[3]
+    from pg_proc procedure_row
+    where procedure_row.oid = 'public.award_badge(uuid,text,date,jsonb)'::regprocedure
+  ),
+  'target_earned_date',
+  'the daily-badge migration preserves the deployed badge-helper parameter name'
+);
 
 select ok((select relrowsecurity from pg_class where oid = 'public.profiles'::regclass), 'profiles has RLS enabled');
 select ok((select relrowsecurity from pg_class where oid = 'public.challenge_entries'::regclass), 'challenge_entries has RLS enabled');
