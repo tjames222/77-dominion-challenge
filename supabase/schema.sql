@@ -10343,9 +10343,10 @@ begin
     raise exception 'The DR manifest does not match the local sealed batch.' using errcode = '22023';
   end if;
 
-  select reapply_batch_id into existing_batch_id
-  from private.retired_community_dr_reapplications
-  where source_batch_id = source_batch.id and imported_manifest_sha256 = expected_manifest_sha;
+  select reapplication.reapply_batch_id into existing_batch_id
+  from private.retired_community_dr_reapplications reapplication
+  where reapplication.source_batch_id = source_batch.id
+    and reapplication.imported_manifest_sha256 = expected_manifest_sha;
   if existing_batch_id is not null then
     return private.retired_community_batch_result(existing_batch_id);
   end if;

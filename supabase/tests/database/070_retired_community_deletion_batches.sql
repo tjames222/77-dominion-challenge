@@ -379,8 +379,14 @@ select is((select count(*)::integer from group_credential_claim), 1,
   'day 30 releases the exact credential despite routine delivery timestamp changes');
 select ok((select credential_ciphertext is not null and credential_nonce is not null
   from group_credential_claim), 'credential claim contains the encrypted provider material');
+-- Simulate an out-of-band credential mutation so the confirmation path's
+-- sealed-inventory check is exercised independently of the write freeze.
+alter table private.integration_destinations
+  disable trigger block_quarantined_integration_destination_write;
 update private.integration_destinations set credential_ciphertext = decode(repeat('aa', 17), 'hex')
 where id = 'f6420000-0000-4000-8000-000000000007';
+alter table private.integration_destinations
+  enable trigger block_quarantined_integration_destination_write;
 select throws_ok(
   $$ select public.confirm_retired_community_credential_work(
     current_setting('test.day30_group_batch_id')::uuid,
@@ -388,8 +394,12 @@ select throws_ok(
     'f6420000-0000-4000-8000-00000000000a', 'credential-worker', 'discord-revocation-1') $$,
   '55000', 'The provider credential no longer matches its sealed inventory.',
   'confirmation cannot erase credential material rotated after claim');
+alter table private.integration_destinations
+  disable trigger block_quarantined_integration_destination_write;
 update private.integration_destinations set credential_ciphertext = decode(repeat('ef', 17), 'hex')
 where id = 'f6420000-0000-4000-8000-000000000007';
+alter table private.integration_destinations
+  enable trigger block_quarantined_integration_destination_write;
 select ok((select array_agg(key order by key) = array['batchId','counts','status']
   from jsonb_object_keys(public.confirm_retired_community_credential_work(
     current_setting('test.day30_group_batch_id')::uuid,
