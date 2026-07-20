@@ -775,7 +775,6 @@ let gameStats = preserveBestStreaks(
 );
 let badges = localDemoMode ? load('dominion:badges', []) : [];
 let leaderboardPositions = {
-  globalRank: null,
   privateRank: null,
   crewId: null,
   window: LEADERBOARD_PRESTIGE_WINDOW,

@@ -58,7 +58,7 @@ temp_database_created=1
 
 # Canonical schema.sql references Supabase-owned auth and storage objects. The
 # isolated database only needs these minimal dependency shapes because the
-# comparison below is restricted to public application objects.
+# comparison below is restricted to public/private application objects.
 psql "$temp_database_url" --set=ON_ERROR_STOP=1 --quiet <<'SQL'
 create schema extensions;
 create extension pgcrypto with schema extensions;
@@ -123,7 +123,7 @@ with structural_records as (
   ) as record
   from pg_class relation_row
   join pg_namespace schema_row on schema_row.oid = relation_row.relnamespace
-  where schema_row.nspname = 'public'
+  where schema_row.nspname in ('public', 'private')
     and relation_row.relkind in ('r', 'p', 'v', 'm', 'S')
 
   union all
@@ -146,7 +146,7 @@ with structural_records as (
   left join pg_attrdef default_row
     on default_row.adrelid = column_row.attrelid
    and default_row.adnum = column_row.attnum
-  where schema_row.nspname = 'public'
+  where schema_row.nspname in ('public', 'private')
     and relation_row.relkind in ('r', 'p', 'v', 'm', 'S')
     and column_row.attnum > 0
     and not column_row.attisdropped
@@ -163,7 +163,7 @@ with structural_records as (
   from pg_constraint constraint_row
   join pg_class relation_row on relation_row.oid = constraint_row.conrelid
   join pg_namespace schema_row on schema_row.oid = relation_row.relnamespace
-  where schema_row.nspname = 'public'
+  where schema_row.nspname in ('public', 'private')
 
   union all
 
@@ -177,7 +177,7 @@ with structural_records as (
   join pg_class index_row on index_row.oid = index_metadata.indexrelid
   join pg_class table_row on table_row.oid = index_metadata.indrelid
   join pg_namespace schema_row on schema_row.oid = table_row.relnamespace
-  where schema_row.nspname = 'public'
+  where schema_row.nspname in ('public', 'private')
 
   union all
 
@@ -207,7 +207,7 @@ with structural_records as (
   from pg_proc procedure_row
   join pg_namespace schema_row on schema_row.oid = procedure_row.pronamespace
   join pg_language language_row on language_row.oid = procedure_row.prolang
-  where schema_row.nspname = 'public'
+  where schema_row.nspname in ('public', 'private')
 
   union all
 
@@ -221,7 +221,7 @@ with structural_records as (
   from pg_trigger trigger_row
   join pg_class relation_row on relation_row.oid = trigger_row.tgrelid
   join pg_namespace schema_row on schema_row.oid = relation_row.relnamespace
-  where schema_row.nspname = 'public'
+  where schema_row.nspname in ('public', 'private')
     and not trigger_row.tgisinternal
 
   union all
@@ -239,7 +239,7 @@ with structural_records as (
   from pg_policy policy_row
   join pg_class relation_row on relation_row.oid = policy_row.polrelid
   join pg_namespace schema_row on schema_row.oid = relation_row.relnamespace
-  where schema_row.nspname = 'public'
+  where schema_row.nspname in ('public', 'private')
      or (
        schema_row.nspname = 'storage'
        and policy_row.polname in (

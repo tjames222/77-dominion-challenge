@@ -1,0 +1,85 @@
+import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { describe, it } from 'node:test';
+
+const html = readFileSync(new URL('../../community.html', import.meta.url), 'utf8');
+const javascript = readFileSync(new URL('./community.js', import.meta.url), 'utf8');
+const api = readFileSync(new URL('./api.js', import.meta.url), 'utf8');
+const css = readFileSync(new URL('../assets/community.css', import.meta.url), 'utf8');
+const connectionMigration = readFileSync(
+  new URL('../../supabase/migrations/20260719180000_integration_connection_management.sql', import.meta.url),
+  'utf8',
+);
+const canonicalSchema = readFileSync(new URL('../../supabase/schema.sql', import.meta.url), 'utf8');
+
+describe('private-group provider connections', () => {
+  it('explains the external-only conversation model and exposes both supported providers', () => {
+    assert.match(html, /Conversations and replies stay in Slack or Discord/);
+    assert.match(html, /Daily Check-Ins, streak milestones, badge and reward unlocks/);
+    assert.match(html, /data-connect-provider="slack"/);
+    assert.match(html, /data-connect-provider="discord"/);
+    assert.match(html, /id="integrationDestinationList"[^>]+aria-live="polite"/);
+    assert.match(html, /for="integrationChannelSelect"/);
+  });
+
+  it('shows members sanitized status while keeping management actions leader-only', () => {
+    assert.match(javascript, /const canManage = isCrewLeader\(\)/);
+    assert.match(javascript, /destination\.canManage/);
+    assert.match(javascript, /Connected/);
+    assert.match(javascript, /Needs attention/);
+    assert.match(javascript, /Disconnected/);
+    assert.match(javascript, /data-test-integration/);
+    assert.match(javascript, /data-reconnect-provider/);
+    assert.match(javascript, /data-disconnect-integration/);
+    assert.match(javascript, /Updates that can leave Dominion/);
+    assert.match(javascript, /destination\.checkInsEnabled/);
+    assert.match(javascript, /destination\.recapCadence === 'weekly'/);
+    assert.match(javascript, /integrationHealthLabel/);
+    assert.match(javascript, /destination\.correctiveAction/);
+  });
+
+  it('lets destination admins configure each event, weekly recaps, and safe links', () => {
+    assert.match(javascript, /data-integration-settings/);
+    assert.match(javascript, /manageGroupIntegration\('configure'/);
+    assert.match(javascript, /checkInsEnabled: values\.has\('checkInsEnabled'\)/);
+    assert.match(javascript, /streakMilestonesEnabled: values\.has\('streakMilestonesEnabled'\)/);
+    assert.match(javascript, /badgesRewardsEnabled: values\.has\('badgesRewardsEnabled'\)/);
+    assert.match(javascript, /membershipEnabled: values\.has\('membershipEnabled'\)/);
+    assert.match(javascript, /includeSafeLink: values\.has\('includeSafeLink'\)/);
+    assert.match(javascript, /recapCadence: values\.get\('recapCadence'\)/);
+  });
+
+  it('takes the one-time setup token from the fragment and immediately removes it from the address', () => {
+    assert.match(javascript, /window\.location\.hash\.slice\(1\)/);
+    assert.match(javascript, /params\.get\('integration-setup'\)/);
+    assert.match(javascript, /window\.history\.replaceState/);
+    assert.doesNotMatch(javascript, /localStorage\.setItem\([^\n]*integration-setup/);
+  });
+
+  it('allows redirects only to the official Slack and Discord authorization hosts', () => {
+    assert.match(javascript, /\['slack\.com', 'discord\.com'\]\.includes\(authorization\.hostname\)/);
+    assert.match(javascript, /window\.location\.assign\(authorization\.toString\(\)\)/);
+  });
+
+  it('uses the fixed server action without accepting arbitrary webhook URLs', () => {
+    assert.match(api, /invokeSupabaseAction\('group-integrations', \{ action, \.\.\.values \}\)/);
+    assert.doesNotMatch(html, /webhook/i);
+    assert.doesNotMatch(javascript, /webhookUrl|destinationUrl/);
+  });
+
+  it('keeps the integration migrations replayable and represented in the canonical schema', () => {
+    assert.doesNotMatch(connectionMigration, /\bcrew_members\s+member\b|\bmember\./);
+    assert.doesNotMatch(connectionMigration, /\bauthorization\s+private\.|\bauthorization\./);
+    assert.match(canonicalSchema, /create table if not exists private\.integration_destinations/);
+    assert.match(canonicalSchema, /create table if not exists private\.integration_oauth_states/);
+    assert.match(canonicalSchema, /create or replace function public\.consume_integration_oauth_state/);
+  });
+
+  it('keeps controls usable on narrow screens and derives both themes from shared tokens', () => {
+    assert.match(css, /@media \(max-width: 520px\)[\s\S]*\.integration-destination/);
+    assert.match(css, /min-height: 44px/);
+    assert.match(css, /\.integration-settings/);
+    assert.match(css, /var\(--surface\)/);
+    assert.match(css, /var\(--text-muted\)/);
+  });
+});

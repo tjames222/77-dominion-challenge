@@ -55,11 +55,24 @@ update public.profiles
 set name = 'RLS tamper attempt'
 where user_id = '20000000-0000-4000-8000-000000000002';
 
+update public.outbound_update_preferences
+set presentation_mode = 'named'
+where user_id = '30000000-0000-4000-8000-000000000003';
+
 reset role;
 select is(
   (select name from public.profiles where user_id = '20000000-0000-4000-8000-000000000002'),
   'Bob Example',
   'Alice cannot update Bob profile through an invisible row'
+);
+select is(
+  (
+    select presentation_mode
+    from public.outbound_update_preferences
+    where user_id = '30000000-0000-4000-8000-000000000003'
+  ),
+  'anonymous',
+  'a crew owner cannot change another member consent'
 );
 
 set local role authenticated;
@@ -71,7 +84,12 @@ select is((select count(*)::integer from public.profiles), 1, 'Bob can read only
 select is((select min(name) from public.profiles), 'Bob Example', 'Bob cannot read Alice or Carol profiles');
 select is((select count(*)::integer from public.crews), 1, 'Bob cannot read the Alpha crew');
 select is((select count(*)::integer from public.crew_members), 1, 'Bob cannot read the Alpha roster');
-select is((select count(*)::integer from public.community_posts), 1, 'Bob cannot read the Alpha post');
+select ok(
+  not has_table_privilege('public.community_posts', 'select'),
+  'Bob cannot read retired private-group posts'
+);
+select is((select count(*)::integer from public.outbound_update_preferences), 0, 'Bob cannot read another crew consent preference');
+select is((select count(*)::integer from public.outbound_update_preference_audit), 0, 'Bob cannot read another member consent audit');
 
 set local "request.jwt.claim.sub" = '30000000-0000-4000-8000-000000000003';
 set local "request.jwt.claims" = '{"sub":"30000000-0000-4000-8000-000000000003","role":"authenticated","email":"carol@example.test"}';

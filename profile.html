@@ -76,6 +76,82 @@
         <p class="section-copy" id="profileChallengeStatus">Status: Checking access</p>
       </section>
 
+      <section class="card reveal profile-integration-consent" id="integrationPrivacy" aria-labelledby="integrationPrivacyTitle">
+        <p class="eyebrow">Integrations</p>
+        <h2 id="integrationPrivacyTitle">Group update privacy</h2>
+        <p class="section-copy">You decide whether your activity can leave Dominion for each private group’s connected Slack or Discord channel. Group owners cannot opt in for you.</p>
+
+        <label class="integration-group-field" for="integrationConsentCrew">
+          Group
+          <select id="integrationConsentCrew" disabled>
+            <option>Loading your groups...</option>
+          </select>
+        </label>
+        <p class="integration-empty" id="integrationConsentNoGroups" hidden>You are not currently in a private group, so there are no outbound update settings to manage.</p>
+
+        <div class="integration-consent-content" id="integrationConsentContent" hidden>
+          <div class="integration-destinations" aria-labelledby="integrationDestinationsTitle">
+            <div>
+              <p class="eyebrow">Connected destinations</p>
+              <h3 id="integrationDestinationsTitle">Where approved updates can go</h3>
+            </div>
+            <ul class="integration-destination-list" id="integrationDestinationList"></ul>
+            <p class="integration-destination-empty" id="integrationDestinationEmpty">No Slack or Discord destination is connected for this group.</p>
+          </div>
+
+          <form class="integration-consent-form" id="integrationConsentForm">
+            <label class="integration-master-switch" for="integrationUpdatesEnabled">
+              <span>
+                <strong>Allow outbound group updates</strong>
+                <small>Off is the default. Turning this off blocks every category below immediately.</small>
+              </span>
+              <input id="integrationUpdatesEnabled" type="checkbox" role="switch" />
+            </label>
+
+            <fieldset class="integration-consent-fieldset">
+              <legend>How you appear</legend>
+              <label>
+                <input type="radio" name="integrationPresentation" value="anonymous" checked />
+                <span><strong>Anonymous</strong><small>The destination sees “A group member,” not your profile name.</small></span>
+              </label>
+              <label>
+                <input type="radio" name="integrationPresentation" value="named" />
+                <span><strong>Use my profile name</strong><small>Your current Dominion profile name is included where the destination supports it.</small></span>
+              </label>
+            </fieldset>
+
+            <fieldset class="integration-consent-fieldset integration-event-options">
+              <legend>Updates you approve</legend>
+              <label>
+                <input id="integrationShareCheckIns" type="checkbox" />
+                <span><strong>Daily Check-Ins</strong><small>Challenge day, completion status, and completed action count.</small></span>
+              </label>
+              <label>
+                <input id="integrationShareStreaks" type="checkbox" />
+                <span><strong>Streak milestones</strong><small>The streak type and milestone number you reached.</small></span>
+              </label>
+              <label>
+                <input id="integrationShareBadges" type="checkbox" />
+                <span><strong>Badges and rewards</strong><small>The name of a badge or point reward you unlock.</small></span>
+              </label>
+              <label>
+                <input id="integrationShareMembership" type="checkbox" />
+                <span><strong>Group membership</strong><small>An update when you join the group. Leaving cancels pending updates.</small></span>
+              </label>
+            </fieldset>
+
+            <div class="integration-data-disclosure">
+              <h3>Before you opt in</h3>
+              <p>Approved data is sent outside Dominion to the selected group’s Slack workspace or Discord server and is then covered by that service’s settings and privacy practices.</p>
+              <p>Prayer content, journal entries, action notes, email, and billing details are never part of these updates. Consent, membership, account status, and the connection are checked again before an initial send and every retry.</p>
+            </div>
+
+            <p class="integration-consent-feedback" id="integrationConsentFeedback" role="status" aria-live="polite"></p>
+            <button class="primary" id="saveIntegrationConsent" type="submit">Save update privacy</button>
+          </form>
+        </div>
+      </section>
+
       <section class="card reveal profile-preview-tools" id="profilePreviewTools" aria-labelledby="profilePreviewTitle" hidden>
         <p class="eyebrow">Preview Tools</p>
         <h2 id="profilePreviewTitle">77-day test mode</h2>
