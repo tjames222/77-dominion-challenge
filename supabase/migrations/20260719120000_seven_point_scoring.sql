@@ -4,11 +4,11 @@ create or replace function public.add_game_points(
   target_user_id uuid,
   target_event_type text,
   target_points integer,
-  target_entry_date date,
-  target_challenge_day integer,
-  target_crew_id uuid,
-  target_metadata jsonb,
-  target_idempotency_key text
+  target_entry_date date default null,
+  target_challenge_day integer default null,
+  target_crew_id uuid default null,
+  target_metadata jsonb default '{}'::jsonb,
+  target_idempotency_key text default null
 )
 returns boolean
 language plpgsql
