@@ -80,6 +80,7 @@ YAML, pull-request logs, seeds, or test fixtures.
 | --- | --- | --- |
 | `SUPABASE_PROJECT_REF` | Yes | Production Supabase project targeted by the release |
 | `PUBLIC_SITE_URL` | Yes | Canonical HTTPS origin returned by billing flows |
+| `PUBLIC_SHARE_URL` | Optional | Custom HTTPS route for public share snapshots; defaults to the Edge Function URL |
 | `PUBLIC_ALLOWED_SITE_URLS` | Recommended | Comma-separated exact preview or secondary origins |
 | `CLOUDFLARE_PAGES_PROJECT_HOST` | When Cloudflare previews are used | Allows the configured Pages host and its preview subdomains |
 | `VITE_SUPABASE_URL` | Yes | Public Supabase URL baked into the frontend |
@@ -198,8 +199,9 @@ next stage when one fails:
    reconciled remote history. Never use `--include-all` or run
    `supabase/schema.sql` manually in production.
 3. **Synchronize secrets and deploy functions:** update Function Secrets, deploy
-   the three JWT-protected billing functions, then deploy `stripe-webhook` with
-   JWT verification disabled because Stripe authenticates it by signature.
+   the three JWT-protected billing functions, deploy `stripe-webhook` with JWT
+   verification disabled because Stripe authenticates it by signature, and
+   deploy the public `share-snapshot` renderer with its own POST authentication.
 4. **Verify backend and release feature gates:** list remote migrations and
    functions, then confirm an unauthenticated billing-function request is rejected
    before releasing the frontend build. Keep mock mode off and leave new
@@ -227,7 +229,8 @@ the release or incident record.
    simulated client retry and confirm invariants still hold.
 4. Exercise each authenticated billing function with a test member. Confirm an
    unauthenticated request is rejected and an unapproved origin receives no CORS
-   access.
+   access. Preview and create one share snapshot, inspect its server-rendered
+   metadata, revoke it, and confirm the same URL then returns the generic 404.
 5. Send a Stripe test-mode signed event to `stripe-webhook`; confirm one expected
    subscription/entitlement transition and no duplicate transition on replay.
 6. Load the production frontend in a fresh browser profile. Confirm it targets
