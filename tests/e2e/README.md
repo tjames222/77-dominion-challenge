@@ -28,11 +28,15 @@ pretending a comparison occurred. Download the
 `browser-visual-baselines-<sha>` artifact, review its PNGs, and commit the
 approved `tests/e2e/__snapshots__` directory; the next run is the strict gate.
 Generate intentionally changed baselines later by manually running **Browser
-quality gate** with **Generate visual baselines** enabled.
+quality gate** with **Generate visual baselines** enabled. That generation path
+uses Playwright's explicit `all` update mode, so every expected PNG is rewritten
+even when a rendered change falls within the normal screenshot comparison
+tolerance. The uploaded artifact is therefore a complete Linux baseline set,
+not a mixture of newly rendered and stale images.
 
 For local iteration only, update baselines with:
 
-    pnpm exec playwright test visual-routes.spec.mjs --update-snapshots
+    pnpm exec playwright test visual-routes.spec.mjs --update-snapshots=all
 
 Do not commit macOS-generated baselines: font rasterization and native controls
 can differ from the Linux comparison environment.

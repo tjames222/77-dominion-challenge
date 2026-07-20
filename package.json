@@ -14,7 +14,7 @@
     "check:frontend": "pnpm run test:frontend && pnpm run build",
     "test:e2e": "playwright test",
     "test:e2e:headed": "playwright test --headed --project=chromium-functional",
-    "test:e2e:update": "playwright test --update-snapshots",
+    "test:e2e:update": "playwright test --update-snapshots=all",
     "test:quality": "pnpm test && pnpm build && pnpm test:e2e",
     "supabase:start": "supabase start",
     "supabase:stop": "supabase stop --no-backup",
