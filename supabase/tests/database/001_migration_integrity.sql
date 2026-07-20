@@ -3,7 +3,7 @@ begin;
 create extension if not exists pgtap with schema extensions;
 set local search_path = public, extensions;
 
-select plan(30);
+select plan(32);
 
 select ok(
   exists (
@@ -82,6 +82,24 @@ select is(
   ),
   500,
   'the Dominion Night theme reward starts at exactly 500 points'
+);
+select is(
+  (
+    select procedure_row.pronargdefaults::integer
+    from pg_proc procedure_row
+    where procedure_row.oid = 'public.add_game_points(uuid,text,integer,date,integer,uuid,jsonb,text)'::regprocedure
+  ),
+  5,
+  'the compatibility migration preserves the five trailing point-helper defaults'
+);
+select is(
+  (
+    select procedure_row.proargnames[3]
+    from pg_proc procedure_row
+    where procedure_row.oid = 'public.award_badge(uuid,text,date,jsonb)'::regprocedure
+  ),
+  'target_earned_date',
+  'the daily-badge migration preserves the deployed badge-helper parameter name'
 );
 
 select ok((select relrowsecurity from pg_class where oid = 'public.profiles'::regclass), 'profiles has RLS enabled');
