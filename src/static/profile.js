@@ -17,6 +17,7 @@ import {
   previewChallengeDay,
   setPreviewChallengeEnabled,
 } from './preview-challenge.mjs';
+import { getActiveTheme, setTheme } from './theme-state';
 
 const load = (key, fallback) => {
   try {
@@ -33,25 +34,22 @@ const localDateKey = () => {
   return `${values.year}-${values.month}-${values.day}`;
 };
 const localPreviewMode = isLocalDemoMode();
-let theme = load('dominion:theme', 'dark');
 const themeOptions = [...document.querySelectorAll('[data-theme-mode]')];
-function applyTheme() {
-  document.documentElement.dataset.theme = theme;
-  document.documentElement.style.colorScheme = theme;
+function syncThemeOptions() {
+  const activeTheme = getActiveTheme();
   themeOptions.forEach((option) => {
-    const isActive = option.dataset.themeMode === theme;
+    const isActive = option.dataset.themeMode === activeTheme;
     option.classList.toggle('active', isActive);
     option.setAttribute('aria-pressed', String(isActive));
   });
 }
 themeOptions.forEach((option) => {
   option.addEventListener('click', () => {
-    theme = option.dataset.themeMode || 'dark';
-    save('dominion:theme', theme);
-    applyTheme();
+    setTheme(option.dataset.themeMode || 'dark');
   });
 });
-applyTheme();
+window.addEventListener(window.DominionThemeRuntime.changeEvent, syncThemeOptions);
+syncThemeOptions();
 
 const profileNameEl = document.getElementById('profileName');
 const profileEmailEl = document.getElementById('profileEmail');

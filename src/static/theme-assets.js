@@ -1,9 +1,6 @@
-const THEME_ATTRIBUTE = 'data-theme';
-const THEME_ASSET_SELECTOR = '[data-theme-src-dark][data-theme-src-light]';
+import { getActiveTheme, getThemeDefinition } from './theme-state';
 
-function getActiveTheme() {
-  return document.documentElement.dataset.theme === 'light' ? 'light' : 'dark';
-}
+const THEME_ASSET_SELECTOR = '[data-theme-src-dark]';
 
 function preloadSource(source) {
   if (!source) return;
@@ -12,43 +9,42 @@ function preloadSource(source) {
   image.src = source;
 }
 
-function updateImage(image, theme) {
-  const source = theme === 'light'
-    ? image.dataset.themeSrcLight
-    : image.dataset.themeSrcDark;
+function sourceForVariant(image, variant) {
+  return image.getAttribute(`data-theme-src-${variant}`);
+}
 
+function resolveImageSource(image, theme) {
+  const variants = window.DominionThemeRuntime.getAssetVariants(theme.id);
+  for (const variant of variants) {
+    const source = sourceForVariant(image, variant);
+    if (source) return source;
+  }
+  return image.getAttribute('src');
+}
+
+function updateImage(image, theme) {
+  const source = resolveImageSource(image, theme);
   if (!source || image.getAttribute('src') === source) return;
-  image.src = source;
+  image.setAttribute('src', source);
 }
 
 export function syncThemeAssets() {
-  const theme = getActiveTheme();
+  const theme = getThemeDefinition(getActiveTheme());
+  if (!theme) return;
+
   document.querySelectorAll(THEME_ASSET_SELECTOR).forEach((image) => {
     updateImage(image, theme);
-    const alternateSource = theme === 'light'
-      ? image.dataset.themeSrcDark
-      : image.dataset.themeSrcLight;
-    preloadSource(alternateSource);
+    const sources = new Set();
+    window.DominionThemeRuntime.themes
+      .filter((candidate) => candidate.availability.enabled)
+      .flatMap((candidate) => window.DominionThemeRuntime.getAssetVariants(candidate.id))
+      .forEach((variant) => sources.add(sourceForVariant(image, variant)));
+    sources.delete(image.getAttribute('src'));
+    sources.forEach(preloadSource);
   });
 }
 
 export function initThemeAssets() {
   syncThemeAssets();
-
-  const observer = new MutationObserver((mutations) => {
-    if (mutations.some((mutation) => mutation.attributeName === THEME_ATTRIBUTE)) {
-      syncThemeAssets();
-    }
-  });
-
-  observer.observe(document.documentElement, {
-    attributes: true,
-    attributeFilter: [THEME_ATTRIBUTE],
-  });
-
-  window.addEventListener('storage', (event) => {
-    if (event.key === 'dominion:theme') syncThemeAssets();
-  });
-
-  window.addEventListener('dominion:themechange', syncThemeAssets);
+  window.addEventListener(window.DominionThemeRuntime.changeEvent, syncThemeAssets);
 }
