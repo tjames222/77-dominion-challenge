@@ -3,7 +3,7 @@ begin;
 create extension if not exists pgtap with schema extensions;
 set local search_path = public, extensions;
 
-select plan(29);
+select plan(42);
 
 select ok(
   exists (
@@ -39,6 +39,105 @@ select ok(
     where version = '20260720100000'
   ),
   'the outbound consent migration was replayed'
+);
+
+select ok(
+  exists (
+    select 1
+    from supabase_migrations.schema_migrations
+    where version = '20260720110000'
+  ),
+  'the canonical outbound event migration was replayed'
+);
+
+select ok(
+  (
+    select count(*)
+    from information_schema.columns
+    where table_schema = 'private'
+      and table_name = 'integration_destinations'
+      and column_name in (
+        'check_ins_enabled',
+        'streak_milestones_enabled',
+        'badges_rewards_enabled',
+        'membership_enabled',
+        'recap_cadence',
+        'include_safe_link'
+      )
+  ) = 6,
+  'provider destinations expose the six outbound event settings'
+);
+
+select ok(
+  (
+    select count(*)
+    from information_schema.columns
+    where table_schema = 'private'
+      and table_name = 'outbound_deliveries'
+      and column_name in ('subject_user_id', 'source_reference')
+  ) = 2,
+  'outbound deliveries retain a consent subject and private source reference'
+);
+
+select ok(
+  to_regprocedure('private.outbound_event_payload_is_safe(text,jsonb)') is not null,
+  'the strict outbound payload validator exists'
+);
+select ok(
+  to_regprocedure('public.queue_due_leaderboard_recaps()') is not null,
+  'the anonymous weekly recap queue RPC exists'
+);
+select ok(
+  to_regprocedure('public.resolve_claimed_outbound_delivery(uuid,uuid)') is not null,
+  'the send-time delivery resolver exists'
+);
+select ok(
+  to_regprocedure('public.cancel_claimed_outbound_delivery(uuid,uuid,text)') is not null,
+  'the claimed delivery cancellation RPC exists'
+);
+select ok(
+  to_regprocedure('public.update_integration_destination_settings(uuid,uuid,boolean,boolean,boolean,boolean,text,boolean)') is not null,
+  'the destination event settings RPC has the Edge contract signature'
+);
+select ok(
+  to_regprocedure('public.claim_outbound_deliveries(uuid,integer)') is not null,
+  'the delivery claim RPC remains available after adding consent context'
+);
+select ok(
+  to_regprocedure('public.list_crew_integration_destinations(uuid)') is not null,
+  'the member-readable destination list RPC remains available'
+);
+select ok(
+  (
+    select count(*)
+    from pg_trigger trigger_row
+    where not trigger_row.tgisinternal
+      and trigger_row.tgname in (
+        'emit_check_in_outbound_event',
+        'emit_badge_outbound_event',
+        'emit_challenge_reward_outbound_event',
+        'emit_streak_milestone_outbound_event'
+      )
+  ) = 4,
+  'canonical source tables have outbound event emitters'
+);
+select ok(
+  exists (
+    select 1
+    from pg_trigger trigger_row
+    where not trigger_row.tgisinternal
+      and trigger_row.tgname = 'apply_outbound_preference_to_deliveries'
+  ),
+  'consent changes synchronously cancel pending member deliveries'
+);
+select ok(
+  exists (
+    select 1
+    from pg_constraint constraint_row
+    where constraint_row.conname = 'integration_delivery_attempts_outcome_check'
+      and pg_get_constraintdef(constraint_row.oid) like '%cancelled%'
+  ),
+  'delivery attempt history records send-time cancellations'
 );
 
 select ok(to_regclass('public.profiles') is not null, 'profiles exists');
