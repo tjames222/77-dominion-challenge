@@ -33,6 +33,54 @@ function directPageSections(source) {
   return sections;
 }
 
+function nestedCadenceGroups(source) {
+  const stack = [];
+  const groups = [];
+  const tokens = source.matchAll(/<!--[\s\S]*?-->|<![^>]*>|<\/?[a-z][^>]*>/gi);
+  for (const match of tokens) {
+    const token = match[0];
+    if (token.startsWith('<!')) continue;
+    const closing = /^<\//.test(token);
+    const name = token.match(/^<\/?\s*([a-z0-9-]+)/i)?.[1]?.toLowerCase();
+    if (!name) continue;
+    if (closing) {
+      while (stack.length && stack.pop().name !== name) {}
+      continue;
+    }
+
+    const parent = stack.at(-1);
+    if (Number.isInteger(parent?.cadenceGroup)) {
+      groups[parent.cadenceGroup].push({
+        markup: token,
+        surface: token.match(/\sdata-section-surface=["'](plain|accent)["']/i)?.[1] || '',
+        hidden: /\shidden(?:\s|=|>)/i.test(token),
+      });
+    }
+
+    let cadenceGroup = null;
+    if (/\sdata-section-cadence(?:\s|=|>)/i.test(token)) {
+      cadenceGroup = groups.length;
+      groups.push([]);
+    }
+    if (!voidElements.has(name) && !/\/>$/.test(token)) {
+      stack.push({ name, cadenceGroup });
+    }
+  }
+  return groups;
+}
+
+function assertAccentCadence(sections, label) {
+  const accents = sections.filter((section) => section.surface === 'accent');
+  assert.ok(accents.length <= Math.ceil(sections.length / 2), `${label} overuses accent sections`);
+  sections.slice(1).forEach((section, index) => {
+    assert.notEqual(
+      `${sections[index].surface}:${section.surface}`,
+      'accent:accent',
+      `${label} has adjacent accent sections at positions ${index + 1} and ${index + 2}`,
+    );
+  });
+}
+
 describe('app-wide section surface cadence', () => {
   test('audits every active Vite HTML input without route exceptions', () => {
     assert.equal(activeRoutes.length, 18);
@@ -48,13 +96,21 @@ describe('app-wide section surface cadence', () => {
     for (const route of activeRoutes) {
       const source = readFileSync(new URL(`../../${route}`, import.meta.url), 'utf8');
       const sections = directPageSections(source);
-      const accents = sections.filter((section) => section.surface === 'accent');
-      assert.ok(accents.length <= Math.ceil(sections.length / 2), `${route} overuses accent sections`);
-      sections.slice(1).forEach((section, index) => {
-        assert.notEqual(
-          `${sections[index].surface}:${section.surface}`,
-          'accent:accent',
-          `${route} has adjacent accent sections at positions ${index + 1} and ${index + 2}`,
+      assertAccentCadence(sections, route);
+    }
+  });
+
+  test('audits explicitly nested page-section cadences, including hidden states', () => {
+    for (const route of activeRoutes) {
+      const source = readFileSync(new URL(`../../${route}`, import.meta.url), 'utf8');
+      nestedCadenceGroups(source).forEach((sections, groupIndex) => {
+        const label = `${route} nested cadence ${groupIndex + 1}`;
+        assert.ok(sections.length, `${label} must contain direct sections`);
+        assert.ok(sections.every((section) => section.surface), `${label} has an unclassified section`);
+        assertAccentCadence(sections, label);
+        assertAccentCadence(
+          sections.filter((section) => !section.hidden),
+          `${label} without initially hidden sections`,
         );
       });
     }
@@ -81,5 +137,10 @@ describe('app-wide section surface cadence', () => {
       assert.match(source, /class="card auth-card" data-section-surface="accent"/);
       assert.match(source, /<form/);
     }
+
+    const communitySource = readFileSync(new URL('../../community.html', import.meta.url), 'utf8');
+    assert.match(communitySource, /class="community-tools-slot card" data-section-surface="accent"/);
+    assert.match(communitySource, /class="leaderboard-card card" data-section-surface="accent"/);
+    assert.doesNotMatch(communitySource, /class="(?:community-summary|group-integrations|member-activity) card"/);
   });
 });

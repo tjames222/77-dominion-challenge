@@ -90,6 +90,8 @@
   grid-template-columns: auto 1fr;
   gap: 14px;
   align-items: start;
+  padding: 14px 0 18px;
+  border-bottom: 1px solid var(--border);
 }
 .community-summary p:not(.eyebrow) {
   margin: 8px 0 0;
@@ -98,13 +100,17 @@
 }
 .community-stats {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 10px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  border-block: 1px solid var(--border);
 }
 .community-stats article {
   display: grid;
   gap: 4px;
+  padding: 18px 12px;
   text-align: center;
+}
+.community-stats article + article {
+  border-inline-start: 1px solid var(--border);
 }
 .community-stats strong {
   color: var(--text);
@@ -140,6 +146,8 @@
 .member-activity {
   display: grid;
   gap: 16px;
+  padding-block: 22px;
+  border-block: 1px solid var(--border);
 }
 .member-list {
   display: flex;
@@ -289,6 +297,9 @@
   display: grid;
   gap: 12px;
 }
+.community-tools-slot {
+  display: grid;
+}
 .composer-card form,
 .community-tools,
 .community-form,
@@ -371,6 +382,7 @@
 .journey-timeline {
   display: grid;
   gap: 12px;
+  padding-block: 8px;
 }
 .member-avatar {
   position: relative;
@@ -529,7 +541,8 @@
 .group-integrations {
   display: grid;
   gap: 16px;
-  border-color: color-mix(in srgb, var(--accent) 38%, var(--border));
+  padding-block: 24px;
+  border-block: 1px solid var(--border);
 }
 .integration-disclosure {
   max-width: 72ch;
@@ -720,6 +733,10 @@
   .community-tabs { border-radius: 22px; }
   .community-tab { border-radius: 16px; padding-inline: 5px; font-size: .7rem; }
   .community-stats { grid-template-columns: 1fr; }
+  .community-stats article + article {
+    border-inline-start: 0;
+    border-block-start: 1px solid var(--border);
+  }
   .leaderboard-row {
     grid-template-columns: auto minmax(0, 1fr);
   }

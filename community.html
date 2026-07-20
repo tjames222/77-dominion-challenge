@@ -34,8 +34,8 @@
 
       <div class="community-feedback" id="communityFeedback" role="status" aria-live="polite"></div>
 
-      <section class="community-panel active" id="crew" data-section-surface="plain" role="tabpanel" aria-labelledby="crew-tab">
-        <div class="community-summary card">
+      <section class="community-panel active" id="crew" data-section-surface="plain" data-section-cadence role="tabpanel" aria-labelledby="crew-tab">
+        <div class="community-summary" data-section-surface="plain">
           <span class="app-icon icon-users" aria-hidden="true"></span>
           <div>
             <p class="eyebrow">Private Group</p>
@@ -44,47 +44,49 @@
           </div>
         </div>
 
-        <section class="community-tools card" id="crewCreateCard">
-          <div>
-            <p class="eyebrow">Start a Crew</p>
-            <h2>Build your accountability group.</h2>
-          </div>
-          <form class="community-form" id="crewForm">
-            <label>
-              <span>Crew name</span>
-              <input id="crewNameInput" name="name" type="text" maxlength="80" placeholder="San Marcos Men" required />
-            </label>
-            <label>
-              <span>Challenge start date</span>
-              <input id="crewStartDateInput" name="challengeStartDate" type="date" required />
-            </label>
-            <label class="full-span">
-              <span>Description</span>
-              <textarea id="crewDescriptionInput" name="description" rows="3" placeholder="Who is this crew for?"></textarea>
-            </label>
-            <button class="primary" type="submit">Create Crew</button>
-          </form>
-        </section>
+        <div class="community-tools-slot card" data-section-surface="accent">
+          <section class="community-tools" id="crewCreateCard">
+            <div>
+              <p class="eyebrow">Start a Crew</p>
+              <h2>Build your accountability group.</h2>
+            </div>
+            <form class="community-form" id="crewForm">
+              <label>
+                <span>Crew name</span>
+                <input id="crewNameInput" name="name" type="text" maxlength="80" placeholder="San Marcos Men" required />
+              </label>
+              <label>
+                <span>Challenge start date</span>
+                <input id="crewStartDateInput" name="challengeStartDate" type="date" required />
+              </label>
+              <label class="full-span">
+                <span>Description</span>
+                <textarea id="crewDescriptionInput" name="description" rows="3" placeholder="Who is this crew for?"></textarea>
+              </label>
+              <button class="primary" type="submit">Create Crew</button>
+            </form>
+          </section>
 
-        <section class="community-tools card" id="crewManageCard" hidden>
-          <div class="crew-toolbar">
-            <label>
-              <span>Active crew</span>
-              <select id="crewSelect"></select>
-            </label>
-            <button
-              class="secondary"
-              id="copyInviteButton"
-              type="button"
-              data-share-composer
-              data-share-kind="invite"
-            >
-              Invite people
-            </button>
-          </div>
-        </section>
+          <section class="community-tools" id="crewManageCard" hidden>
+            <div class="crew-toolbar">
+              <label>
+                <span>Active crew</span>
+                <select id="crewSelect"></select>
+              </label>
+              <button
+                class="secondary"
+                id="copyInviteButton"
+                type="button"
+                data-share-composer
+                data-share-kind="invite"
+              >
+                Invite people
+              </button>
+            </div>
+          </section>
+        </div>
 
-        <section class="group-integrations card" id="crewIntegrationsCard" aria-labelledby="groupIntegrationsTitle" hidden>
+        <section class="group-integrations" id="crewIntegrationsCard" data-section-surface="plain" aria-labelledby="groupIntegrationsTitle" hidden>
           <div class="section-heading-row">
             <div>
               <p class="eyebrow">External Updates</p>
@@ -120,12 +122,12 @@
           </form>
         </section>
 
-        <div class="community-stats" id="crewStats">
-          <article class="card"><strong id="crewMemberCount">0</strong><span>Members</span></article>
-          <article class="card"><strong id="crewDayCount">Day 1</strong><span>Group pace</span></article>
+        <div class="community-stats" id="crewStats" data-section-surface="plain">
+          <article><strong id="crewMemberCount">0</strong><span>Members</span></article>
+          <article><strong id="crewDayCount">Day 1</strong><span>Group pace</span></article>
         </div>
 
-        <section class="member-activity card" id="crewMembersCard" hidden>
+        <section class="member-activity" id="crewMembersCard" data-section-surface="plain" hidden>
           <div class="section-heading-row">
             <div>
               <p class="eyebrow">Group Activity</p>
@@ -136,7 +138,7 @@
           <div class="member-list" id="crewMemberList" tabindex="0" aria-label="Private group members" aria-live="polite"></div>
         </section>
 
-        <section class="leaderboard-card card">
+        <section class="leaderboard-card card" data-section-surface="accent">
           <div class="leaderboard-header">
             <div>
               <p class="eyebrow">Crew Leaderboard</p>
@@ -152,8 +154,8 @@
 
       </section>
 
-      <section class="community-panel" id="journey" data-section-surface="plain" role="tabpanel" aria-labelledby="journey-tab" hidden>
-        <div class="community-summary card">
+      <section class="community-panel" id="journey" data-section-surface="plain" data-section-cadence role="tabpanel" aria-labelledby="journey-tab" hidden>
+        <div class="community-summary" data-section-surface="plain">
           <span class="app-icon icon-book" aria-hidden="true"></span>
           <div>
             <p class="eyebrow">Private Journal</p>
@@ -162,7 +164,7 @@
           </div>
         </div>
 
-        <section class="composer-card card">
+        <section class="composer-card card" data-section-surface="accent">
           <p class="eyebrow">Today’s Note</p>
           <form class="journal-form" id="journalForm">
             <label>
@@ -213,7 +215,7 @@
           </form>
         </section>
 
-        <div class="journey-timeline" id="journalTimeline"></div>
+        <div class="journey-timeline" id="journalTimeline" data-section-surface="plain"></div>
       </section>
     </main>
 
