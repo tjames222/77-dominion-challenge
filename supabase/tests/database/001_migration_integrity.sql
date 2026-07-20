@@ -3,7 +3,7 @@ begin;
 create extension if not exists pgtap with schema extensions;
 set local search_path = public, extensions;
 
-select plan(22);
+select plan(33);
 
 select ok(
   exists (
@@ -32,12 +32,24 @@ select ok(
   'the latest develop migration was replayed'
 );
 
+select ok(
+  exists (
+    select 1
+    from supabase_migrations.schema_migrations
+    where version = '20260721010000'
+  ),
+  'the Sharing reward migration was replayed'
+);
+
 select ok(to_regclass('public.profiles') is not null, 'profiles exists');
 select ok(to_regclass('public.challenge_entries') is not null, 'challenge_entries exists');
 select ok(to_regclass('public.check_ins') is not null, 'check_ins exists');
 select ok(to_regclass('public.game_point_events') is not null, 'game_point_events exists');
 select ok(to_regclass('public.crews') is not null, 'crews exists');
 select ok(to_regclass('public.challenge_definitions') is not null, 'challenge_definitions exists');
+select ok(to_regclass('public.sharing_reward_intents') is not null, 'sharing_reward_intents exists');
+select ok(to_regclass('public.sharing_reward_evidence') is not null, 'sharing_reward_evidence exists');
+select ok(to_regclass('public.sharing_reward_grants') is not null, 'sharing_reward_grants exists');
 
 select ok(
   to_regprocedure('public.submit_daily_check_in(text,text[],jsonb,text,date)') is not null,
@@ -45,6 +57,12 @@ select ok(
 );
 select ok(to_regprocedure('public.record_app_visit()') is not null, 'the app-visit RPC exists');
 select ok(to_regprocedure('public.join_crew_by_invite(text)') is not null, 'the crew invite RPC exists');
+select ok(to_regprocedure('public.create_sharing_reward_intent(text)') is not null, 'the Sharing intent RPC exists');
+select ok(to_regprocedure('public.complete_sharing_reward(text)') is not null, 'the Sharing completion RPC exists');
+select ok(
+  to_regprocedure('public.record_confirmed_group_invite_share(uuid,uuid)') is not null,
+  'the confirmed-invite Sharing hook exists'
+);
 
 select ok((select relrowsecurity from pg_class where oid = 'public.profiles'::regclass), 'profiles has RLS enabled');
 select ok((select relrowsecurity from pg_class where oid = 'public.challenge_entries'::regclass), 'challenge_entries has RLS enabled');
@@ -52,6 +70,23 @@ select ok((select relrowsecurity from pg_class where oid = 'public.check_ins'::r
 select ok((select relrowsecurity from pg_class where oid = 'public.game_point_events'::regclass), 'game_point_events has RLS enabled');
 select ok((select relrowsecurity from pg_class where oid = 'public.crews'::regclass), 'crews has RLS enabled');
 select ok((select relrowsecurity from pg_class where oid = 'public.community_posts'::regclass), 'community_posts has RLS enabled');
+select ok(
+  (select relrowsecurity from pg_class where oid = 'public.sharing_reward_intents'::regclass),
+  'sharing_reward_intents has RLS enabled'
+);
+select ok(
+  (select relrowsecurity from pg_class where oid = 'public.sharing_reward_evidence'::regclass),
+  'sharing_reward_evidence has RLS enabled'
+);
+select ok(
+  (select relrowsecurity from pg_class where oid = 'public.sharing_reward_grants'::regclass),
+  'sharing_reward_grants has RLS enabled'
+);
+
+select ok(
+  exists (select 1 from public.badge_definitions where badge_key = 'sharing'),
+  'the all-badges catalog includes the permanent Sharing badge'
+);
 
 select ok(
   exists (
