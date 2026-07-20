@@ -1281,6 +1281,17 @@ function ensureMockCrews() {
       joinedAt: createdAt,
     }];
     writeJson(MOCK_CREWS_KEY, crews);
+  } else {
+    const retiredPreviewDescription = 'A private mock crew for testing invites, posts, comments, and leaderboards.';
+    const nextCrews = crews.map((crew) => (
+      crew.id === 'preview_crew_alpha' && crew.description === retiredPreviewDescription
+        ? { ...crew, description: 'A private mock crew for testing invites, members, and leaderboards.' }
+        : crew
+    ));
+    if (nextCrews.some((crew, index) => crew !== crews[index])) {
+      crews = nextCrews;
+      writeJson(MOCK_CREWS_KEY, crews);
+    }
   }
 
   if (!members || typeof members !== 'object') {

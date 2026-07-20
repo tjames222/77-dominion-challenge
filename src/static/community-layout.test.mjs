@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import { describe, test } from 'node:test';
 
 const communityHtml = readFileSync(new URL('../../community.html', import.meta.url), 'utf8');
+const billingHtml = readFileSync(new URL('../../billing.html', import.meta.url), 'utf8');
 const communityCss = readFileSync(new URL('../assets/community.css', import.meta.url), 'utf8');
 const communityJs = readFileSync(new URL('./community.js', import.meta.url), 'utf8');
 const apiJs = readFileSync(new URL('./api.js', import.meta.url), 'utf8');
@@ -59,6 +60,9 @@ describe('simplified private groups', () => {
     assert.doesNotMatch(communityHtml, /crewPost|crewFeed|Private Group Feed|Post to Private Group|Posts loaded/);
     assert.doesNotMatch(communityJs, /CommunityPost|PostComment|PostLiked|crewPosts|crewFeed|data-(?:like|comment|edit|delete)-post/);
     assert.doesNotMatch(communityCss, /\.(?:post-actions|comment-form|reaction-row|private-feed-scroll|post-image)(?:\W|$)/);
+    assert.match(apiJs, /description: 'A private mock crew for testing invites, members, and leaderboards\.'/);
+    assert.equal((apiJs.match(/invites, posts, comments/g) || []).length, 1);
+    assert.doesNotMatch(billingHtml, /community posts, comments, and likes/i);
   });
 
   test('removes social data and image operations from the supported browser API', () => {
