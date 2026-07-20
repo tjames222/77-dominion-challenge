@@ -1289,7 +1289,7 @@ function ensureMockCrews() {
     crews = [{
       id: 'preview_crew_alpha',
       name: 'Preview Crew',
-      description: 'A private mock crew for testing invites, posts, comments, and leaderboards.',
+      description: 'A private mock crew for testing invites, members, and leaderboards.',
       challengeStartDate: new Date().toISOString().slice(0, 10),
       createdBy: userId,
       createdAt,
