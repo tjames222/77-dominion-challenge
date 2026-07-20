@@ -169,9 +169,9 @@ select is((select deadline_at from private.retired_community_deletion_batches
   (select requested_at + interval '24 hours' from private.retired_community_deletion_batches
     where id = current_setting('test.account_batch_id')::uuid), 'account erasure deadline is exactly 24 hours');
 select is((select post_count from private.retired_community_deletion_batches
-  where id = current_setting('test.account_batch_id')::uuid), 1, 'account scope has only Alice authored post');
+  where id = current_setting('test.account_batch_id')::uuid), 1::bigint, 'account scope has only Alice authored post');
 select is((select object_count from private.retired_community_deletion_batches
-  where id = current_setting('test.account_batch_id')::uuid), 1, 'account scope has only Alice exact image object');
+  where id = current_setting('test.account_batch_id')::uuid), 1::bigint, 'account scope has only Alice exact image object');
 select throws_ok(
   $$ update private.retired_community_deletion_batches set post_count = 99
     where id = current_setting('test.account_batch_id')::uuid $$,
@@ -348,7 +348,7 @@ begin
 end;
 $day30_group$;
 select is((select credential_count from private.retired_community_deletion_batches
-  where id = current_setting('test.day30_group_batch_id')::uuid), 1,
+  where id = current_setting('test.day30_group_batch_id')::uuid), 1::bigint,
   'day-30 group batch inventories its provider credential');
 do $day30_group_proof$
 declare batch_row private.retired_community_deletion_batches%rowtype;

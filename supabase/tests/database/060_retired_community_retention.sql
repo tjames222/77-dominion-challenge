@@ -191,25 +191,25 @@ set local "request.jwt.claim.sub" = '10000000-0000-4000-8000-000000000001';
 set local "request.jwt.claims" = '{"sub":"10000000-0000-4000-8000-000000000001","role":"authenticated"}';
 select is(jsonb_array_length(public.export_own_retired_community_content()->'posts'), 1,
   'auth.uid scopes the export to Alice authored posts');
-select like(public.export_own_retired_community_content()::text, '%Alpha fixture post%',
+select alike(public.export_own_retired_community_content()::text, '%Alpha fixture post%',
   'Alice receives her own post body');
-select like(public.export_own_retired_community_content()::text, '%referenced.jpg%',
+select alike(public.export_own_retired_community_content()::text, '%referenced.jpg%',
   'Alice receives a usable path for only her own attachment');
 select is(jsonb_array_length(public.export_own_retired_community_content()->'comments'), 1,
   'auth.uid scopes the export to Alice authored comments');
-select like(public.export_own_retired_community_content()::text, '%Alice comment on Bob%',
+select alike(public.export_own_retired_community_content()::text, '%Alice comment on Bob%',
   'Alice receives her own comment body with opaque parent context');
 select is(jsonb_array_length(public.export_own_retired_community_content()->'likes'), 1,
   'auth.uid scopes the export to Alice reactions');
-select unlike(public.export_own_retired_community_content()::text, '%Bravo fixture post%',
+select unalike(public.export_own_retired_community_content()::text, '%Bravo fixture post%',
   'another member post body never leaks');
-select unlike(public.export_own_retired_community_content()::text, '%Bob comment on Alice%',
+select unalike(public.export_own_retired_community_content()::text, '%Bob comment on Alice%',
   'another member comment body never leaks even on Alice post');
-select unlike(public.export_own_retired_community_content()::text, '%Bob global private body%',
+select unalike(public.export_own_retired_community_content()::text, '%Bob global private body%',
   'another member global post body never leaks');
-select unlike(public.export_own_retired_community_content()::text, '%missing.jpg%',
+select unalike(public.export_own_retired_community_content()::text, '%missing.jpg%',
   'another member attachment path never leaks');
-select unlike(public.export_own_retired_community_content()::text, '%Bob Private Name%',
+select unalike(public.export_own_retired_community_content()::text, '%Bob Private Name%',
   'another member display data never leaks');
 select ok(public.export_own_retired_community_content()::text
   !~ '"(authorId|userId|displayName|avatar|email|crewId)"', 'the export omits profile and subject fields');

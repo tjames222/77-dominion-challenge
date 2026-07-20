@@ -361,7 +361,8 @@ select is((select actor from private.retired_community_deletion_ledger
 
 insert into storage.objects (id, bucket_id, name, owner) values (
   'f6440000-0000-4000-8000-000000000010', 'community-post-images',
-  'orphan/fou-564-p4.jpg', '30000000-0000-4000-8000-000000000003'
+  'b0000000-0000-4000-8000-000000000002/20000000-0000-4000-8000-000000000002/fou-564-p4.jpg',
+  '30000000-0000-4000-8000-000000000003'
 );
 
 select throws_ok(
@@ -426,7 +427,8 @@ select throws_ok(
     'f6440000-0000-4000-8000-000000000014',
     '20000000-0000-4000-8000-000000000002', 'Bob',
     'b0000000-0000-4000-8000-000000000002', 'crew',
-    'late orphan reference', 'message', 'orphan/fou-564-p4.jpg',
+    'late orphan reference', 'message',
+    'b0000000-0000-4000-8000-000000000002/20000000-0000-4000-8000-000000000002/fou-564-p4.jpg',
     clock_timestamp(), clock_timestamp()) $$,
   '55000', 'Community image references are frozen while deletion is pending.',
   'a sealed Storage deletion path cannot acquire a new Community post reference');
@@ -462,7 +464,8 @@ insert into public.community_posts (
   'f6440000-0000-4000-8000-000000000014',
   '20000000-0000-4000-8000-000000000002', 'Bob',
   'b0000000-0000-4000-8000-000000000002', 'crew',
-  'privileged orphan drift', 'message', 'orphan/fou-564-p4.jpg',
+  'privileged orphan drift', 'message',
+  'b0000000-0000-4000-8000-000000000002/20000000-0000-4000-8000-000000000002/fou-564-p4.jpg',
   clock_timestamp(), clock_timestamp()
 );
 alter table public.community_posts
