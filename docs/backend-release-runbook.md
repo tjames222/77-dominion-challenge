@@ -76,6 +76,8 @@ YAML, pull-request logs, seeds, or test fixtures.
 | `INTEGRATION_WORKER_SECRET` | Authorizes the private Cron-to-worker request when integrations are enabled | Integration administrator |
 | `INTEGRATION_CREDENTIAL_KEYS` | Versioned AES-256-GCM key ring for provider credentials when integrations are enabled | Security administrator |
 | `INTEGRATION_OAUTH_STATE_SECRET` | Signs short-lived, one-use provider authorization state | Security administrator |
+| `RETIRED_COMMUNITY_WORKER_SECRET` | Authorizes only the retired Community scan/deletion worker | Security administrator |
+| `RETIRED_COMMUNITY_DR_HMAC_SECRET` | Signs and verifies the redacted off-platform purge ledger | Disaster-recovery owner |
 | `SLACK_CLIENT_ID` | Identifies the environment-specific Slack app | Integration administrator |
 | `SLACK_CLIENT_SECRET` | Exchanges Slack authorization codes server-side | Integration administrator |
 | `SLACK_SIGNING_SECRET` | Retained with the reviewed Slack app configuration | Integration administrator |
@@ -112,13 +114,16 @@ to Supabase Function Secrets before function deployment. `ALLOWED_SITE_ORIGINS`
 is supported only as a compatibility alias; new configuration should use
 `PUBLIC_ALLOWED_SITE_URLS`.
 
-The two runtime secrets are optional only while Slack/Discord functionality is
-dormant. Configure them together before deploying the worker; the workflow fails
-closed when exactly one is present. Provider connections are deployed only when
-all provider credentials and the OAuth state secret are present, and they require
-the runtime to be enabled first. Provider app registration, callback URLs, Cron
-provisioning, rotation, staging acceptance, alerts, and retention are documented
-in `docs/integrations/provider-delivery-runbook.md`.
+The integration worker secret requires the provider credential key ring. The two
+retired Community secrets are optional only while its production worker is
+dormant; configure both together, along with the same credential key ring used to
+revoke Slack/Discord access. The workflow deploys each worker only when its full
+secret set is present and fails closed on partial configuration. Provider
+connections are deployed only when all provider credentials and the OAuth state
+secret are present, and they require the integration runtime first. Provider app
+registration is documented in `docs/integrations/provider-delivery-runbook.md`;
+retired data operations and DR are documented in
+`docs/retired-community-deletion-runbook.md`.
 
 For local function serving only, copy `supabase/.env.example` to
 `supabase/.env.local`, fill it with local/test values, and pass it explicitly:
@@ -224,7 +229,10 @@ next stage when one fails:
    provider secret set is also present, deploy the authenticated
    `group-integrations` function and the public Slack and Discord OAuth callback
    functions. The callbacks authenticate signed, expiring, one-use state rather
-   than a user JWT.
+   than a user JWT. Deploy the JWT-protected `retired-community-export` with the
+   authenticated function set. When both retired Community secrets and the
+   credential key ring are present, also deploy the private-header-authenticated
+   `process-retired-community-deletions` worker.
 4. **Verify backend and release feature gates:** list remote migrations and
    functions, then confirm an unauthenticated billing-function request is rejected
    before releasing the frontend build. Keep mock mode off and leave new
@@ -268,6 +276,11 @@ the release or incident record.
 9. Review Supabase Function logs, Postgres logs, Stripe delivery logs, integration
    health, and Cron history for new
    authorization errors, repeated retries, or unexpected elevated-role access.
+10. Before enabling any retired Community deletion schedule, invoke its worker
+    health endpoint and record the aggregate counts. Require no overdue account
+    erasures, stale claims, repeated work failures, pending DR reapplications, or
+    quarantined restore data; verify an account batch inventories profile,
+    journal, and Community buckets before approving execution.
 
 Only after these checks pass may a new customer-facing feature flag be enabled.
 If a flag is build-time (`VITE_*`), update the production variable and rerun the

@@ -254,6 +254,26 @@ Deno.test("provider revocation uses supported Slack and Discord operations", asy
   assertEquals(discord, true);
 });
 
+Deno.test("provider revocation treats already-revoked credentials as idempotent success", async () => {
+  const slack = await revokeProviderCredential(
+    "slack",
+    "revoked-token",
+    "T1",
+    (async () =>
+      new Response(JSON.stringify({ ok: false, error: "token_revoked" }), {
+        status: 200,
+      })) as typeof fetch,
+  );
+  const discord = await revokeProviderCredential(
+    "discord",
+    "removed-bot-token",
+    "123456789012345678",
+    (async () => new Response(null, { status: 404 })) as typeof fetch,
+  );
+  assertEquals(slack, true);
+  assertEquals(discord, true);
+});
+
 Deno.test("provider errors expose normalized messages instead of raw bodies", async () => {
   const error = await rejectsProvider(() =>
     exchangeProviderCode("slack", "bad-code", {
