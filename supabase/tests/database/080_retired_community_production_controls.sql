@@ -490,7 +490,13 @@ select ok(public.verify_retired_community_storage_work(
   (select work_id from orphan_claim),
   'f6440000-0000-4000-8000-000000000013'),
   'metadata is rechecked immediately before the Storage API boundary');
-delete from storage.objects where id = 'f6440000-0000-4000-8000-000000000010';
+do $storage_api_delete$
+begin
+  perform set_config('storage.allow_delete_query', 'true', true);
+  delete from storage.objects where id = 'f6440000-0000-4000-8000-000000000010';
+  perform set_config('storage.allow_delete_query', 'false', true);
+end;
+$storage_api_delete$;
 select is((public.confirm_retired_community_storage_work(
   (select (result->>'batchId')::uuid from orphan_batch),
   (select work_id from orphan_claim),
@@ -524,9 +530,9 @@ from jsonb_array_elements(public.export_retired_community_dr_ledger()) as export
 where manifest->>'batchId' = (select result->>'batchId' from orphan_batch);
 select is((select count(*)::integer from exported_manifest), 1,
   'the executed purge is present in the DR ledger export');
-select unlike((select manifest::text from exported_manifest), 'objectName',
+select unalike((select manifest::text from exported_manifest), '%objectName%',
   'the DR ledger contains no Storage path');
-select unlike((select manifest::text from exported_manifest), 'credentialCiphertext',
+select unalike((select manifest::text from exported_manifest), '%credentialCiphertext%',
   'the DR ledger contains no provider credential material');
 select is((select manifest->'counts'->>'objects' from exported_manifest), '1',
   'the DR ledger preserves aggregate deletion evidence');

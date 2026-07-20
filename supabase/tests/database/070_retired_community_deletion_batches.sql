@@ -244,9 +244,15 @@ select * from public.claim_retired_community_storage_work(
   'f6420000-0000-4000-8000-000000000008', 10
 );
 select is((select count(*)::integer from account_storage_claim), 1, 'worker claims the exact account object');
-select like((select object_name from account_storage_claim), '%/account.jpg',
+select alike((select object_name from account_storage_claim), '%/account.jpg',
   'only the worker claim exposes the exact Storage path');
-delete from storage.objects where id = 'f6420000-0000-4000-8000-000000000003';
+do $storage_api_delete$
+begin
+  perform set_config('storage.allow_delete_query', 'true', true);
+  delete from storage.objects where id = 'f6420000-0000-4000-8000-000000000003';
+  perform set_config('storage.allow_delete_query', 'false', true);
+end;
+$storage_api_delete$;
 select ok((select array_agg(key order by key) = array['batchId','counts','status']
   from jsonb_object_keys(public.confirm_retired_community_storage_work(
     current_setting('test.account_batch_id')::uuid,
