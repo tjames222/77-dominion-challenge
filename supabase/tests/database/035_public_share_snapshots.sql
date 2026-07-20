@@ -63,6 +63,7 @@ create temporary table share_test_values (
   snapshot_id uuid,
   token text not null
 ) on commit drop;
+grant select, insert on share_test_values to authenticated;
 
 set local role authenticated;
 set local "request.jwt.claim.sub" = '10000000-0000-4000-8000-000000000001';
