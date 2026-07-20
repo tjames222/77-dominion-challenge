@@ -202,7 +202,15 @@ select ok(
 );
 
 reset role;
-update public.crews set member_limit = 1 where id = 'b0000000-0000-4000-8000-000000000002';
+insert into public.crew_members (crew_id, user_id, display_name, role)
+values (
+  'b0000000-0000-4000-8000-000000000002',
+  '30000000-0000-4000-8000-000000000003',
+  'Carol Example',
+  'member'
+)
+on conflict (crew_id, user_id) do nothing;
+update public.crews set member_limit = 2 where id = 'b0000000-0000-4000-8000-000000000002';
 insert into public.crew_invites (id, crew_id, token_hash, created_by, expires_at, created_at)
 values (
   '11111111-0000-4000-8000-000000000007',
