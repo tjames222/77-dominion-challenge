@@ -135,11 +135,14 @@ must use a sanitized projection that excludes ciphertext, nonce, key version,
 fingerprint, and raw provider error diagnostics. It may expose only the reviewed
 safe error category and corrective-action copy used by the admin health UI.
 
-FOU-542 publishes through `enqueue_outbound_delivery`. Its group ID must match
-the destination's group, event names must use the registered lowercase contract,
-and the idempotency key must identify one logical event/destination pair. An
-exact retry returns the existing row; reusing a key with changed event data is an
-error. Publication must not wait for or call a provider.
+FOU-542 source triggers publish through a private canonical emitter. It writes
+the consent subject and source reference with the event in one idempotent outbox
+insert, so a concurrent destination-state change cannot make a member's source
+action call the provider or fail on a stale connection snapshot. The service-only
+`enqueue_outbound_delivery` RPC remains the lower-level runtime contract for the
+fixed synthetic diagnostic and migration-compatibility tests. Its group ID must
+match the destination's group, and its idempotency key must identify one logical
+event/destination pair.
 
 The registered event and payload contracts are intentionally closed:
 
@@ -151,9 +154,18 @@ The registered event and payload contracts are intentionally closed:
 | `membership` | Empty object |
 | `leaderboard_recap` | `periodLabel`, `memberCount`, `checkInCount`, `completedStandards` |
 
+Trusted database triggers emit the four member event types from submitted
+Check-Ins, earned badges, unlocked challenge rewards, and supported streak
+milestones. Membership is emitted only when a current member first enables that
+event in outbound consent within seven days of joining; old memberships are not
+misrepresented as new joins, and a later rejoin has a distinct source reference.
+Weekly recaps are generated as anonymous aggregates for the previous completed
+UTC week and are idempotent per destination and period.
+
 Unknown event names, missing fields, extra fields, and free-form private fields
-are rejected by the in-memory renderer. Display names, group names, catalog
-labels, and period labels are neutralized before provider transport. Slack
+are rejected by the database emitter and independently by the in-memory
+renderer. Display names, group names, catalog labels, and period labels are
+neutralized before provider transport. Slack
 markup and link expansion are disabled, and Discord receives an empty
 `allowed_mentions.parse` list.
 

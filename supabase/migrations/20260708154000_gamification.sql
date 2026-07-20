@@ -465,13 +465,13 @@ begin
     next_app_streak := 1;
   end if;
 
-  update public.user_game_stats
+  update public.user_game_stats as game_stats
   set
     current_app_streak = next_app_streak,
-    best_app_streak = greatest(best_app_streak, next_app_streak),
+    best_app_streak = greatest(game_stats.best_app_streak, next_app_streak),
     last_seen_date = today,
     updated_at = now()
-  where user_id = current_user_id;
+  where game_stats.user_id = current_user_id;
 
   perform public.add_game_points(
     current_user_id,
