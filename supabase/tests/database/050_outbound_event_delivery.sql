@@ -3,7 +3,7 @@ begin;
 create extension if not exists pgtap with schema extensions;
 set local search_path = public, extensions;
 
-select plan(67);
+select plan(68);
 
 select is(
   has_function_privilege(
@@ -325,6 +325,20 @@ select ok(
   'membership delivery stores consent context but no member content'
 );
 
+insert into public.challenge_entries (
+  user_id,
+  entry_date,
+  completed,
+  workout_difficulty
+) values (
+  '10000000-0000-4000-8000-000000000001',
+  current_date - 30,
+  array['bible'],
+  '{}'::jsonb
+) on conflict (user_id, entry_date) do update set
+  completed = excluded.completed,
+  workout_difficulty = excluded.workout_difficulty;
+
 insert into public.check_ins (
   id,
   user_id,
@@ -366,24 +380,45 @@ select is(
   'the Check-In event contains only the rendered allowlist fields'
 );
 
-insert into public.check_ins (
-  id,
+insert into public.challenge_entries (
   user_id,
   entry_date,
-  challenge_day,
-  status,
-  completed_count,
   completed,
   workout_difficulty
 ) values (
-  'd1000000-0000-4000-8000-000000000002',
   '10000000-0000-4000-8000-000000000001',
   current_date - 29,
-  3,
-  'scheduled',
-  0,
-  '{}',
+  array['bible'],
   '{}'::jsonb
+) on conflict (user_id, entry_date) do update set
+  completed = excluded.completed,
+  workout_difficulty = excluded.workout_difficulty;
+
+select throws_ok(
+  $$
+    insert into public.check_ins (
+      id,
+      user_id,
+      entry_date,
+      challenge_day,
+      status,
+      completed_count,
+      completed,
+      workout_difficulty
+    ) values (
+      'd1000000-0000-4000-8000-000000000002',
+      '10000000-0000-4000-8000-000000000001',
+      current_date - 29,
+      3,
+      'scheduled',
+      0,
+      '{}',
+      '{}'::jsonb
+    )
+  $$,
+  '22023',
+  'Scheduled miss Check-Ins are no longer supported.',
+  'the retired scheduled-miss status is rejected before outbound delivery'
 );
 
 select is(
@@ -766,6 +801,20 @@ select ok(
 );
 
 delete from private.outbound_deliveries;
+
+insert into public.challenge_entries (
+  user_id,
+  entry_date,
+  completed,
+  workout_difficulty
+) values (
+  '10000000-0000-4000-8000-000000000001',
+  date_trunc('week', now() at time zone 'UTC')::date - 6,
+  array['bible', 'water'],
+  '{}'::jsonb
+) on conflict (user_id, entry_date) do update set
+  completed = excluded.completed,
+  workout_difficulty = excluded.workout_difficulty;
 
 insert into public.check_ins (
   id,

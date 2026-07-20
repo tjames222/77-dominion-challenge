@@ -24,7 +24,10 @@ select is((select count(*)::integer from public.challenge_entries), 1, 'Alice ca
 select is((select count(*)::integer from public.game_point_events), 1, 'Alice can read only her point ledger');
 select is((select count(*)::integer from public.crews), 1, 'Alice can read only crews she belongs to');
 select is((select count(*)::integer from public.crew_members), 2, 'Alice can read her complete crew roster');
-select is((select count(*)::integer from public.community_posts), 1, 'Alice cannot read another crew post');
+select ok(
+  not has_table_privilege('public.community_posts', 'select'),
+  'Alice cannot read retired private-group posts'
+);
 select is((select count(id)::integer from public.crew_invites), 1, 'Alice can read invites for the crew she owns');
 
 select throws_ok(
