@@ -92,6 +92,11 @@ if [[ "$cached_points" != "$ledger_points" ]]; then
   exit 1
 fi
 
+if [[ "$cached_points" != "0" ]]; then
+  echo "Expected app visits to award zero points; found $cached_points cached points." >&2
+  exit 1
+fi
+
 if [[ "$current_streak" != "1" ]]; then
   echo "Expected the concurrent visit retry to advance the streak once; found $current_streak." >&2
   exit 1
@@ -204,4 +209,4 @@ if [[ "$claimed_occurrences" != "1" ]]; then
   exit 1
 fi
 
-echo "Concurrent RPC retries preserved one streak advance, one reward entitlement, and one unlock claim."
+echo "Concurrent RPC retries preserved one streak advance, zero app-visit points, one reward entitlement, and one unlock claim."
