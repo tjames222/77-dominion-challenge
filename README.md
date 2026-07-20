@@ -49,6 +49,14 @@ Production values live in `public.workout_difficulty_point_values`. A trusted op
 - Production should not set `VITE_ENABLE_MOCKS`; the default is `false`.
 - Local Vite dev on localhost also enables mock mode for rapid UI testing.
 
+### Feature-flagged Dominion Night theme
+
+The alternate dark visual profile is registered as `dominion-night` and remains
+hidden unless `VITE_ENABLE_DOMINION_NIGHT_THEME=true`. The flag is intended for
+preview, browser-matrix, and integration testing until reward entitlement and the
+Profile selector ship. Its palette, asset behavior, contrast checks, and route
+audit are documented in `docs/dominion-night-theme-audit.md`.
+
 ## Billing and monetization
 
 The app uses one subscription product:

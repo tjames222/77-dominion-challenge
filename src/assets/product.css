@@ -785,7 +785,7 @@ body.challenge-finished .confetti-layer {
   --streak-accent: var(--accent);
 }
 .full-streak-card {
-  --streak-accent: #d98e42;
+  --streak-accent: var(--streak-highlight);
 }
 .progression-badges {
   display: grid;
@@ -827,7 +827,7 @@ body.challenge-finished .confetti-layer {
   gap: 10px;
 }
 .progression-badge-card {
-  --badge-color: #c08b55;
+  --badge-color: var(--badge-accent);
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);
   align-items: start;
@@ -1301,7 +1301,7 @@ body.challenge-finished .confetti-layer {
   padding: 0 16px;
   border: 1px solid color-mix(in srgb, var(--accent-strong) 64%, var(--border));
   border-radius: 14px;
-  color: color-mix(in srgb, var(--accent-strong) 16%, #17120a);
+  color: var(--button-primary-text);
   background: linear-gradient(145deg, var(--accent-strong), var(--accent));
   font-weight: 950;
   cursor: pointer;
@@ -2113,7 +2113,7 @@ body.challenge-finished .reward-backdrop {
 .billing-inline-actions > .primary {
   border: 1px solid color-mix(in srgb, var(--accent-strong) 64%, var(--border));
   background: linear-gradient(135deg, color-mix(in srgb, var(--accent) 88%, #ffffff), var(--accent));
-  color: #211301;
+  color: var(--button-primary-text);
   box-shadow: 0 10px 24px color-mix(in srgb, var(--accent) 15%, transparent);
 }
 .billing-inline-actions > .secondary-button {
@@ -2353,7 +2353,7 @@ body.challenge-finished .reward-backdrop {
   border: 1px solid color-mix(in srgb, var(--accent-strong) 50%, transparent);
   border-radius: 10px;
   background: linear-gradient(145deg, var(--accent-strong), var(--accent));
-  color: #211301;
+  color: var(--button-primary-text);
   font-size: 1.18rem;
   font-weight: 900;
   line-height: 1;
@@ -2680,7 +2680,7 @@ body.challenge-finished .reward-backdrop {
   color: color-mix(in srgb, var(--success) 72%, var(--text));
 }
 .action-completion-button.completed .action-completion-box {
-  color: #070604;
+  color: var(--text-inverse);
   background: var(--success);
   border-color: var(--success);
   transform: scale(1.04);
@@ -2704,7 +2704,7 @@ body.challenge-finished .reward-backdrop {
   border: 1px solid color-mix(in srgb, var(--accent) 72%, var(--border));
   border-radius: 18px;
   background: color-mix(in srgb, var(--accent) 92%, #ffffff 8%);
-  color: #070604;
+  color: var(--button-primary-text);
   box-shadow: 0 18px 50px color-mix(in srgb, #000000 42%, transparent), 0 0 0 5px color-mix(in srgb, var(--accent) 12%, transparent);
   font-weight: 950;
   opacity: 0;
@@ -2720,7 +2720,7 @@ body.challenge-finished .reward-backdrop {
   transform: translate(-50%, 0) scale(1);
 }
 .floating-check-in-cta .app-icon {
-  color: #070604;
+  color: var(--button-primary-text);
   background: color-mix(in srgb, #ffffff 36%, transparent);
 }
 .check-in-cta-visible .actions-page {
@@ -2766,18 +2766,18 @@ body.challenge-finished .reward-backdrop {
     color-mix(in srgb, var(--surface-elevated) 82%, transparent);
 }
 .workout-card {
-  --card-accent: #d89c50;
+  --card-accent: var(--workout-accent);
   background:
-    linear-gradient(180deg, color-mix(in srgb, #d89c50 12%, transparent), transparent 58%),
+    linear-gradient(180deg, color-mix(in srgb, var(--workout-accent) 12%, transparent), transparent 58%),
     color-mix(in srgb, var(--surface-elevated) 84%, transparent);
 }
 .workout-card-secondary {
-  --card-accent: #c9c160;
+  --card-accent: var(--workout-secondary-accent);
 }
 .walk-card {
-  --card-accent: #7ab08a;
+  --card-accent: var(--walk-accent);
   background:
-    linear-gradient(135deg, color-mix(in srgb, #7ab08a 14%, transparent), transparent 52%),
+    linear-gradient(135deg, color-mix(in srgb, var(--walk-accent) 14%, transparent), transparent 52%),
     color-mix(in srgb, var(--surface-elevated) 80%, transparent);
 }
 .evening-prayer-card {

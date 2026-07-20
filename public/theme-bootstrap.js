@@ -55,7 +55,7 @@
       id: 'dominion-night',
       label: 'Dominion Night',
       colorScheme: 'dark',
-      themeColor: '#0e1116',
+      themeColor: '#071317',
       assets: { variant: 'dominion-night', fallback: 'dark' },
       availability: {
         kind: 'feature-flag',
