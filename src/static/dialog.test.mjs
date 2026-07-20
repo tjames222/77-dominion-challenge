@@ -19,15 +19,21 @@ import {
 const dialogCss = readFileSync(new URL('../assets/dialog.css', import.meta.url), 'utf8');
 const pageNames = [
   'billing.html',
+  'bible-reading.html',
   'community.html',
   'dashboard.html',
+  'evening-prayer.html',
   'index.html',
+  'intentional-walk.html',
   'login.html',
   'membership.html',
+  'morning-prayer.html',
   'profile.html',
   'register.html',
   'science.html',
-  'today-actions.html',
+  'workout-one.html',
+  'workout-two.html',
+  'worship.html',
 ];
 
 class FakeElement {
@@ -222,6 +228,7 @@ describe('dialog accessibility contract', () => {
     const { document, page, trigger } = createPage();
     const dialog = createConfirmationDialog({
       document,
+      id: 'share-confirmation',
       title: 'Share progress?',
       description: 'Choose whether to share this update.',
       onConfirm: () => true,
@@ -230,6 +237,7 @@ describe('dialog accessibility contract', () => {
 
     assert.equal(dialog.elements.panel.getAttribute('role'), 'dialog');
     assert.equal(dialog.elements.panel.getAttribute('aria-modal'), 'true');
+    assert.equal(dialog.elements.panel.id, 'share-confirmation');
     dialog.open(trigger);
 
     assert.equal(document.activeElement, cancelButton);

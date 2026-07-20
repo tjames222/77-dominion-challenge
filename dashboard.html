@@ -14,6 +14,20 @@
     <main class="app-shell dashboard-shell">
       <header class="topbar">
         <a class="back-link" href="./index.html">Dominion</a>
+        <div class="topbar-trailing-actions">
+          <button
+            class="dashboard-streak-button"
+            id="dashboardStreakButton"
+            type="button"
+            aria-label="App streak: 0 days. View streak details."
+            aria-haspopup="dialog"
+            aria-controls="streakDetailsDialog"
+            aria-expanded="false"
+          >
+            <strong id="dashboardAppStreakCount">0</strong>
+            <span class="app-icon icon-lightning" aria-hidden="true"></span>
+          </button>
+        </div>
       </header>
 
       <section class="dashboard-hero compact-hero reveal">
@@ -97,25 +111,6 @@
             <span class="app-icon icon-spark" aria-hidden="true"></span>
             <span id="gameMomentumMessage">Your first honest check-in starts the climb.</span>
           </p>
-        </div>
-
-        <div class="game-streak-grid" aria-label="Current and best streaks">
-          <article class="game-streak-card app-streak-card">
-            <span class="app-icon icon-eye" aria-hidden="true"></span>
-            <div>
-              <p>App streak</p>
-              <div class="game-streak-value"><strong id="appStreakCount">0</strong><span id="appStreakUnit">days</span></div>
-              <small id="appStreakBest">Best 0 days</small>
-            </div>
-          </article>
-          <article class="game-streak-card full-streak-card">
-            <span class="app-icon icon-flame" aria-hidden="true"></span>
-            <div>
-              <p>Full-standard streak</p>
-              <div class="game-streak-value"><strong id="fullDayStreakCount">0</strong><span id="fullDayStreakUnit">days</span></div>
-              <small id="fullDayStreakBest">Best 0 days</small>
-            </div>
-          </article>
         </div>
 
         <div class="progression-badges">

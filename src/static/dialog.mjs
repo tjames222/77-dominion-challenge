@@ -249,6 +249,7 @@ export function createDialog(options = {}) {
   backdrop.setAttribute('aria-hidden', 'true');
 
   const panel = ownerDocument.createElement('section');
+  panel.id = id;
   panel.className = 'app-dialog-panel';
   panel.dataset.presentation = presentation;
   panel.tabIndex = -1;

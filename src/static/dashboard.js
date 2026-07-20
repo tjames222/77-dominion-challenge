@@ -1,4 +1,5 @@
 import { initReveal } from './reveal';
+import { createDialog } from './dialog.mjs';
 import {
   claimChallengeUnlocks,
   getBillingState,
@@ -33,12 +34,18 @@ import {
   checkInCacheForOwner,
   createCheckInCache,
   createCheckInAlreadyCompleteError,
-  currentFullDayStreakForDate,
   dateKeyForTimeZone,
   normalizeChallengeDays,
 } from './check-in.mjs';
 import { syncWorkoutDifficultyControls } from './workout-difficulty-controls.mjs';
 import { resolveLeaderboardPrestige } from './leaderboard-prestige.mjs';
+import {
+  STREAK_METRIC_DEFINITIONS,
+  buildStreakSummary,
+  preserveBestStreaks,
+  streakIndicatorLabel,
+  streakMetrics,
+} from './streak-summary.mjs';
 import {
   PREVIEW_CHALLENGE_STORAGE_KEY,
   PREVIEW_CHECK_IN_DATES_STORAGE_KEY,
@@ -287,6 +294,63 @@ const progressionBadgeCard = (badge) => {
   return `<article class="progression-badge-card ${tier}"><span class="progression-badge-icon app-icon ${badgeIconClass(badge)}" aria-hidden="true"></span><div class="progression-badge-copy"><div class="progression-badge-meta"><span>${escapeHtml(tierLabel)}</span>${earnedMarkup}</div><strong>${escapeHtml(name)}</strong><p>${escapeHtml(description)}</p></div></article>`;
 };
 const dayCountLabel = (value) => `${value} ${value === 1 ? 'day' : 'days'}`;
+function createStreakDetailsContent(ownerDocument) {
+  const wrapper = ownerDocument.createElement('div');
+  wrapper.className = 'streak-details-content';
+
+  const zeroState = ownerDocument.createElement('p');
+  zeroState.className = 'streak-details-zero';
+  zeroState.dataset.streakZeroState = '';
+  zeroState.setAttribute('role', 'status');
+  zeroState.textContent = 'No streak history yet. Open the app and complete the full standard to begin.';
+
+  const grid = ownerDocument.createElement('div');
+  grid.className = 'streak-details-grid';
+  STREAK_METRIC_DEFINITIONS.forEach(({ key, kind, label }) => {
+    const metric = ownerDocument.createElement('article');
+    metric.className = 'streak-detail-metric';
+    metric.dataset.streakKind = kind === 'Personal best' ? 'best' : 'current';
+
+    const kindElement = ownerDocument.createElement('span');
+    kindElement.className = 'streak-detail-kind';
+    kindElement.textContent = kind;
+
+    const labelElement = ownerDocument.createElement('h3');
+    labelElement.textContent = label;
+
+    const valueRow = ownerDocument.createElement('p');
+    valueRow.className = 'streak-detail-value';
+    const valueElement = ownerDocument.createElement('strong');
+    valueElement.dataset.streakValue = key;
+    valueElement.textContent = '0';
+    const unitElement = ownerDocument.createElement('span');
+    unitElement.dataset.streakUnit = key;
+    unitElement.textContent = 'days';
+    valueRow.append(valueElement, unitElement);
+
+    metric.append(kindElement, labelElement, valueRow);
+    grid.append(metric);
+  });
+
+  wrapper.append(zeroState, grid);
+  return wrapper;
+}
+function renderStreakExperience(summary) {
+  const indicator = $('dashboardStreakButton');
+  const indicatorValue = $('dashboardAppStreakCount');
+  if (indicatorValue) indicatorValue.textContent = String(summary.currentAppStreak);
+  if (indicator) indicator.setAttribute('aria-label', streakIndicatorLabel(summary));
+
+  streakMetrics(summary).forEach(({ key, value, unit }) => {
+    const valueElement = document.querySelector(`[data-streak-value="${key}"]`);
+    const unitElement = document.querySelector(`[data-streak-unit="${key}"]`);
+    if (valueElement) valueElement.textContent = String(value);
+    if (unitElement) unitElement.textContent = unit;
+  });
+
+  const zeroState = document.querySelector('[data-streak-zero-state]');
+  if (zeroState) zeroState.hidden = summary.hasHistory;
+}
 const getLevelProgress = (rawTotalPoints) => {
   const numericPoints = Number(rawTotalPoints);
   const totalPoints = Number.isFinite(numericPoints) ? Math.max(0, Math.floor(numericPoints)) : 0;
@@ -372,19 +436,12 @@ function renderGameSummary() {
   const gameLevelProgress = $('gameLevelProgress');
   const gameLevelProgressFill = $('gameLevelProgressFill');
   const gameMomentumMessage = $('gameMomentumMessage');
-  const appStreakCount = $('appStreakCount');
-  const appStreakUnit = $('appStreakUnit');
-  const appStreakBest = $('appStreakBest');
-  const fullDayStreakCount = $('fullDayStreakCount');
-  const fullDayStreakUnit = $('fullDayStreakUnit');
-  const fullDayStreakBest = $('fullDayStreakBest');
   const recentBadgeSummary = $('recentBadgeSummary');
   const badgeShelf = $('badgeShelf');
   const levelProgress = getLevelProgress(gameStats.totalPoints ?? gameStats.challengePoints ?? 0);
-  const appStreak = Math.max(0, Math.floor(Number(gameStats.currentAppStreak) || 0));
-  const bestAppStreak = Math.max(appStreak, Math.floor(Number(gameStats.bestAppStreak) || 0));
-  const fullDayStreak = currentFullDayStreakForDate(gameStats, todayKey());
-  const bestFullDayStreak = Math.max(fullDayStreak, Math.floor(Number(gameStats.bestFullDayStreak) || 0));
+  const streakSummary = buildStreakSummary(gameStats, todayKey());
+  const appStreak = streakSummary.currentAppStreak;
+  const fullDayStreak = streakSummary.currentFullStandardStreak;
   const recentBadges = badges.filter(Boolean).slice(0, 4);
   const prestige = resolveLeaderboardPrestige(leaderboardPositions);
   const levelLabel = prestige.shortLabel
@@ -424,12 +481,7 @@ function renderGameSummary() {
     });
     if (gameMomentumMessage.textContent !== momentumMessage) gameMomentumMessage.textContent = momentumMessage;
   }
-  if (appStreakCount) appStreakCount.textContent = String(appStreak);
-  if (appStreakUnit) appStreakUnit.textContent = appStreak === 1 ? 'day' : 'days';
-  if (appStreakBest) appStreakBest.textContent = `Best ${dayCountLabel(bestAppStreak)}`;
-  if (fullDayStreakCount) fullDayStreakCount.textContent = String(fullDayStreak);
-  if (fullDayStreakUnit) fullDayStreakUnit.textContent = fullDayStreak === 1 ? 'day' : 'days';
-  if (fullDayStreakBest) fullDayStreakBest.textContent = `Best ${dayCountLabel(bestFullDayStreak)}`;
+  renderStreakExperience(streakSummary);
   if (recentBadgeSummary) recentBadgeSummary.textContent = recentBadges.length ? `${recentBadges.length} recent` : 'No badges yet';
   if (badgeShelf) {
     badgeShelf.innerHTML = recentBadges.length
@@ -827,7 +879,9 @@ let submittedCheckInDates = new Set(initialCheckInCache.dates);
 let submittedChallengeDays = new Set(initialCheckInCache.challengeDays);
 let feed = localDemoMode ? load('dominion:feed', starterFeed) : starterFeed;
 let workoutDifficulty = normalizeWorkoutDifficulty(load(WORKOUT_DIFFICULTY_STORAGE_KEY, DEFAULT_WORKOUT_DIFFICULTY));
-let gameStats = localDemoMode ? load('dominion:gameStats', DEFAULT_DEMO_GAME_STATS) : {};
+let gameStats = preserveBestStreaks(
+  localDemoMode ? load('dominion:gameStats', DEFAULT_DEMO_GAME_STATS) : {},
+);
 let badges = localDemoMode ? load('dominion:badges', []) : [];
 let leaderboardPositions = {
   globalRank: null,
@@ -859,6 +913,22 @@ let renderedDateKey = todayKey();
 let checkInStatusHydratedDate = hasSupabaseAuth() ? '' : renderedDateKey;
 let dashboardHydrationRequestId = 0;
 const $ = (id) => document.getElementById(id);
+const dashboardStreakButton = $('dashboardStreakButton');
+const streakDetailsDialog = dashboardStreakButton ? createDialog({
+  id: 'streakDetailsDialog',
+  title: 'Streak details',
+  eyebrow: 'Your consistency',
+  description: 'Current streaks reflect the active challenge day. Personal bests remain after a streak resets.',
+  content: createStreakDetailsContent(document),
+  onOpen: () => {
+    dashboardStreakButton.setAttribute('aria-expanded', 'true');
+    renderStreakExperience(buildStreakSummary(gameStats, todayKey()));
+  },
+  onClose: () => dashboardStreakButton.setAttribute('aria-expanded', 'false'),
+}) : null;
+dashboardStreakButton?.addEventListener('click', () => {
+  streakDetailsDialog?.open(dashboardStreakButton);
+});
 async function refreshChallengeProgression({ claimCelebrations = false, celebrationDelay = 0 } = {}) {
   if (!$('challengeCatalog')) return [];
   challengeProgressionStatus = challengeProgression.challenges.length ? 'ready' : 'loading';
@@ -1324,7 +1394,7 @@ async function hydrateDashboardFromApi() {
       save('dominion:feed', feed);
     }
     if (dashboard?.gameStats) {
-      gameStats = dashboard.gameStats;
+      gameStats = preserveBestStreaks(dashboard.gameStats, gameStats);
       save('dominion:gameStats', gameStats);
     }
     if (Array.isArray(dashboard?.badges)) {
@@ -1383,7 +1453,7 @@ async function refreshGameSummary(previousBadgeKeys = new Set()) {
     getGameSummary(),
     refreshLeaderboardPrestige({ renderAfter: false }),
   ]);
-  gameStats = summary.gameStats;
+  gameStats = preserveBestStreaks(summary.gameStats, gameStats);
   badges = summary.badges || [];
   save('dominion:gameStats', gameStats);
   save('dominion:badges', badges);
@@ -1396,12 +1466,12 @@ async function recordDailyAppVisit() {
   try {
     const visit = await recordAppVisit();
     if (visit) {
-      gameStats = {
+      gameStats = preserveBestStreaks({
         ...gameStats,
         totalPoints: visit.totalPoints,
         currentAppStreak: visit.currentAppStreak,
         bestAppStreak: visit.bestAppStreak,
-      };
+      }, gameStats);
       save('dominion:gameStats', gameStats);
     }
     await refreshGameSummary(previousBadgeKeys);
@@ -1532,7 +1602,7 @@ window.addEventListener('storage', (event) => {
   } else if (event.key === 'dominion:badges') {
     badges = localDemoMode ? load('dominion:badges', []) : [];
   } else if (event.key === 'dominion:gameStats') {
-    gameStats = load('dominion:gameStats', DEFAULT_DEMO_GAME_STATS);
+    gameStats = preserveBestStreaks(load('dominion:gameStats', DEFAULT_DEMO_GAME_STATS), gameStats);
     refreshChallengeProgression({ claimCelebrations: true, celebrationDelay: 350 });
     refreshLeaderboardPrestige();
   } else if (event.key === 'dominion:mockChallengeStates' || event.key === 'dominion:mockChallengeThresholdsVersion') {
@@ -1649,7 +1719,7 @@ if (checkInButton) checkInButton.addEventListener('click', async () => {
       let points = calculateLocalPoints(entry, status);
       let nextStreak = gameStats.currentFullDayStreak || 0;
       if (simulatedPreviewPost) {
-        gameStats = advancePreviewStreaks(gameStats, status, entry.date);
+        gameStats = preserveBestStreaks(advancePreviewStreaks(gameStats, status, entry.date), gameStats);
         nextStreak = gameStats.currentFullDayStreak;
       } else if (status === 'complete') {
         nextStreak += 1;
