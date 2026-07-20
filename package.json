@@ -1,4 +1,6 @@
 {
+  "name": "77-dominion-challenge",
+  "private": true,
   "packageManager": "pnpm@10.17.1",
   "engines": {
     "node": ">=22"
@@ -10,6 +12,10 @@
     "test": "node --test src/static/*.test.mjs",
     "test:frontend": "pnpm run test",
     "check:frontend": "pnpm run test:frontend && pnpm run build",
+    "test:e2e": "playwright test",
+    "test:e2e:headed": "playwright test --headed --project=chromium-functional",
+    "test:e2e:update": "playwright test --update-snapshots",
+    "test:quality": "pnpm test && pnpm build && pnpm test:e2e",
     "supabase:start": "supabase start",
     "supabase:stop": "supabase stop --no-backup",
     "supabase:reset": "supabase db reset --local",
@@ -32,6 +38,8 @@
     "vue-tsc": "latest"
   },
   "devDependencies": {
+    "@axe-core/playwright": "4.12.1",
+    "@playwright/test": "1.61.1",
     "npm": "^11.18.0",
     "supabase": "2.109.0",
     "wrangler": "^4.107.0"

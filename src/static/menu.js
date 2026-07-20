@@ -124,7 +124,7 @@ async function buildMenu() {
 
   const menu = document.createElement('aside');
   menu.className = 'global-menu';
-  menu.setAttribute('aria-label', 'Global navigation');
+  menu.setAttribute('aria-label', 'Application menu');
 
   const links = isLoggedIn ? loggedInLinks : publicLinks;
   const profileLabel = isLoggedIn ? (user?.name || 'Member') : 'Visitor';
@@ -139,7 +139,7 @@ async function buildMenu() {
       </div>
       <button class="global-menu-close" type="button" aria-label="Close menu">×</button>
     </div>
-    <nav class="global-menu-links">
+    <nav class="global-menu-links" aria-label="Global navigation">
       ${links.map(([label, href]) => `<a href="${href}">${label}</a>`).join('')}
     </nav>
     ${isLoggedIn ? '<button class="global-menu-logout" type="button">Log Out</button>' : ''}

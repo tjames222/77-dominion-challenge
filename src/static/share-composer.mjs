@@ -128,7 +128,9 @@ export async function executeSnapshotShare({
 
   const reward = intent?.completionToken && typeof completeReward === 'function'
     ? await completeReward(intent.completionToken)
-    : null;
+    : intent?.alreadyGranted
+      ? { granted: false, alreadyGranted: true }
+      : null;
   return { snapshot, payload, reward, method: normalizedMethod };
 }
 
