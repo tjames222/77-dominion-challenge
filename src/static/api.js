@@ -18,6 +18,12 @@ import {
 import { normalizeLeaderboardRank } from './leaderboard-prestige.mjs';
 import { normalizeEarnedBadges } from './badges-rewards.mjs';
 import {
+  normalizeConnectedDestinations,
+  normalizeOutboundConsent,
+  outboundConsentSettingsEqual,
+  outboundConsentWritePayload,
+} from './integration-consent.mjs';
+import {
   challengeProgressionToRewardCatalog,
   normalizeRewardCatalog,
 } from './reward-catalog.mjs';
