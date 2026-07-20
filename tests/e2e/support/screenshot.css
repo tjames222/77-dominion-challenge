@@ -11,9 +11,11 @@
 
 .pending-reveal,
 .reveal {
+  filter: none !important;
   opacity: 1 !important;
   transform: none !important;
   visibility: visible !important;
+  will-change: auto !important;
 }
 
 html,
