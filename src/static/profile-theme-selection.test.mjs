@@ -33,7 +33,7 @@ test('all routes hydrate authoritative theme ownership and clear it on logout', 
   assert.match(menu, /clearThemeEntitlementState\(\)[\s\S]*clearAuthSession\(\)/);
   assert.match(hydration, /getLocalOrSessionUser\(\)/);
   assert.match(hydration, /getRewardCatalog\(\{ limit: 100 \}\)/);
-  assert.match(hydration, /deriveAuthorizedThemeIds\(catalog, getThemeRegistry\(\)\)/);
+  assert.match(hydration, /const registry = getThemeRegistry\(\)[\s\S]*deriveAuthorizedThemeIds\(catalog, registry\)/);
   assert.match(hydration, /setThemeEntitlements\(\[\]\)/);
   assert.doesNotMatch(hydration, /localStorage|sessionStorage/);
 });

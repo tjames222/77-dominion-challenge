@@ -6,6 +6,7 @@ import {
   hasSupabaseAuth,
   isLocalDemoMode,
   redirectToLogin,
+  setThemePreference,
   updateProfile,
   uploadProfilePhoto,
 } from './api';
@@ -48,6 +49,7 @@ const dominionNightProgressLabel = document.getElementById('dominionNightProgres
 let themeModelsById = new Map(
   buildThemeOptionModels(null, getThemeRegistry()).map((model) => [model.themeId, model]),
 );
+let themePreferenceSaving = false;
 
 function setThemeSelectionStatus(message, tone = '') {
   if (!themeSelectionStatus) return;
@@ -126,17 +128,35 @@ async function hydrateThemeOptions() {
 }
 
 themeOptions.forEach((option) => {
-  option.addEventListener('click', () => {
+  option.addEventListener('click', async () => {
+    if (themePreferenceSaving) return;
     const themeId = option.dataset.themeMode || 'dark';
     const model = themeModelsById.get(themeId);
     if (!model?.available) {
       setThemeSelectionStatus(model?.reason || 'This theme is locked.', 'error');
       return;
     }
+    const previousTheme = getActiveTheme();
     const selectedTheme = setTheme(themeId);
-    setThemeSelectionStatus(selectedTheme === themeId
-      ? `${model.label} theme selected.`
-      : 'That theme is not available right now.', selectedTheme === themeId ? '' : 'error');
+    if (selectedTheme !== themeId) {
+      setThemeSelectionStatus('That theme is not available right now.', 'error');
+      return;
+    }
+
+    themePreferenceSaving = true;
+    option.setAttribute('aria-busy', 'true');
+    setThemeSelectionStatus(`Saving ${model.label} theme...`);
+    try {
+      await setThemePreference(themeId);
+      setThemeSelectionStatus(`${model.label} theme selected.`);
+    } catch (error) {
+      setTheme(previousTheme);
+      setThemeSelectionStatus(error?.message || 'Unable to save that theme right now.', 'error');
+    } finally {
+      themePreferenceSaving = false;
+      option.removeAttribute('aria-busy');
+      syncThemeOptions();
+    }
   });
 });
 window.addEventListener(window.DominionThemeRuntime.changeEvent, syncThemeOptions);

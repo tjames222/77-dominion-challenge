@@ -58,6 +58,7 @@ const MOCK_JOURNAL_KEY = 'dominion:mockJournalEntries';
 const MOCK_CHALLENGE_STATES_KEY = 'dominion:mockChallengeStates';
 const MOCK_REWARD_ENTITLEMENTS_KEY = 'dominion:mockRewardEntitlements';
 const MOCK_CHALLENGE_THRESHOLDS_VERSION_KEY = 'dominion:mockChallengeThresholdsVersion';
+const MOCK_THEME_PREFERENCES_KEY = 'dominion:mockThemePreferences';
 const MOCK_CHALLENGE_THRESHOLDS_VERSION = 2;
 const MOCK_MEDIA_DB_NAME = 'dominion-preview-media';
 const MOCK_MEDIA_STORE_NAME = 'community-post-images';
@@ -243,7 +244,7 @@ export function sessionToUser(session, fallbackName = 'Member') {
   const email = user.email || '';
   const name = metadata.name || metadata.full_name || fallbackName || email.split('@')[0] || 'Member';
   const avatarUrl = metadata.avatar_url || metadata.picture || '';
-  return { name, email, avatarUrl, authenticated: Boolean(session?.access_token) };
+  return { userId: user.id || '', name, email, avatarUrl, authenticated: Boolean(session?.access_token) };
 }
 
 export const hasSupabaseAuth = () => Boolean(supabase) && !isLocalDemoMode();
@@ -281,6 +282,7 @@ export async function clearAuthSession() {
   if (supabase) await supabase.auth.signOut();
   localStorage.removeItem('dominion:user');
   localStorage.removeItem(MOCK_SUBSCRIPTION_KEY);
+  localStorage.removeItem('dominion:theme');
 }
 
 export function saveLocalUserFromSession(session, fallbackName) {
@@ -291,10 +293,60 @@ export function saveLocalUserFromSession(session, fallbackName) {
 }
 
 export async function getLocalOrSessionUser() {
-  if (isLocalDemoMode()) return readJson('dominion:user', null);
+  if (isLocalDemoMode()) {
+    const user = readJson('dominion:user', null);
+    return user ? { ...user, userId: getMockUserId() } : null;
+  }
   const session = await getAuthSession();
   if (session?.user) return sessionToUser(session);
   return null;
+}
+
+const normalizeThemePreference = (preference = {}) => ({
+  themeKey: typeof (preference.themeKey ?? preference.theme_key) === 'string'
+    ? (preference.themeKey ?? preference.theme_key)
+    : null,
+  updatedAt: preference.updatedAt ?? preference.updated_at ?? null,
+});
+
+export async function getThemePreference() {
+  if (isLocalDemoMode()) {
+    const userId = getMockUserId();
+    return normalizeThemePreference(readJson(MOCK_THEME_PREFERENCES_KEY, {})[userId]);
+  }
+
+  const client = requireSupabase();
+  await requireUser();
+  const { data, error } = await client.rpc('get_theme_preference');
+  if (error) throw error;
+  return normalizeThemePreference(data);
+}
+
+export async function setThemePreference(themeKey) {
+  const normalizedThemeKey = String(themeKey || '').trim().toLowerCase();
+  if (!['dark', 'light', 'dominion-night'].includes(normalizedThemeKey)) {
+    throw new Error('The requested theme is unavailable.');
+  }
+
+  if (isLocalDemoMode()) {
+    const userId = getMockUserId();
+    const preferences = readJson(MOCK_THEME_PREFERENCES_KEY, {});
+    const preference = {
+      themeKey: normalizedThemeKey,
+      updatedAt: new Date().toISOString(),
+    };
+    preferences[userId] = preference;
+    writeJson(MOCK_THEME_PREFERENCES_KEY, preferences);
+    return preference;
+  }
+
+  const client = requireSupabase();
+  await requireUser();
+  const { data, error } = await client.rpc('set_theme_preference', {
+    target_theme_key: normalizedThemeKey,
+  });
+  if (error) throw error;
+  return normalizeThemePreference(data);
 }
 
 export async function upsertProfile({ name, email, avatarUrl, challengeStartDate } = {}) {

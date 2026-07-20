@@ -3483,3 +3483,4 @@ create policy "Users can delete own journal photo objects"
 -- psql resolves this path relative to this canonical schema file.
 \ir migrations/20260720210000_typed_reward_catalog.sql
 \ir migrations/20260720220000_dominion_night_theme_reward.sql
+\ir migrations/20260720230000_user_theme_preferences.sql
