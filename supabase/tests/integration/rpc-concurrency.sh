@@ -29,6 +29,10 @@ psql "$database_url" --set=ON_ERROR_STOP=1 --quiet <<SQL
 delete from public.game_point_events where user_id = '$fixture_user';
 delete from public.user_badges where user_id = '$fixture_user';
 delete from public.user_challenge_states where user_id = '$fixture_user';
+delete from public.user_reward_entitlements
+where user_id = '$fixture_user'
+   or reward_key = 'concurrency_reward';
+delete from public.reward_definitions where reward_key = 'concurrency_reward';
 delete from public.user_game_stats where user_id = '$fixture_user';
 insert into public.user_game_stats (user_id) values ('$fixture_user');
 SQL
@@ -78,8 +82,8 @@ read -r event_count cached_points ledger_points current_streak <<<"$(
   "
 )"
 
-if [[ "$event_count" != "1" ]]; then
-  echo "Expected one app_visit ledger event after concurrent retries; found $event_count." >&2
+if [[ "$event_count" != "0" ]]; then
+  echo "Expected app visits to remain outside the seven-point ledger; found $event_count event(s)." >&2
   exit 1
 fi
 
@@ -93,4 +97,107 @@ if [[ "$current_streak" != "1" ]]; then
   exit 1
 fi
 
-echo "Concurrent RPC retry preserved one ledger event, one streak advance, and a consistent point total."
+psql "$database_url" --set=ON_ERROR_STOP=1 --quiet <<SQL
+begin;
+alter table public.reward_definitions disable trigger sync_reward_definition_entitlements;
+insert into public.reward_definitions (
+  reward_key,
+  reward_type,
+  state_model,
+  title,
+  points_required,
+  fulfillment_key,
+  icon,
+  sort_order
+) values (
+  'concurrency_reward',
+  'cosmetic',
+  'ownership',
+  'Concurrency Reward',
+  0,
+  'concurrency_reward_asset',
+  'gift',
+  999
+);
+alter table public.reward_definitions enable trigger sync_reward_definition_entitlements;
+commit;
+SQL
+
+grant_call="select public.grant_reward_entitlement('$fixture_user', 'concurrency_reward', 'concurrency_test', 'shared_source', false);"
+
+psql "$database_url" --set=ON_ERROR_STOP=1 --tuples-only --no-align --quiet --command "$grant_call" >"$test_directory/grant-first.log" 2>&1 &
+first_grant_pid=$!
+psql "$database_url" --set=ON_ERROR_STOP=1 --tuples-only --no-align --quiet --command "$grant_call" >"$test_directory/grant-second.log" 2>&1 &
+second_grant_pid=$!
+
+first_grant_status=0
+second_grant_status=0
+wait "$first_grant_pid" || first_grant_status=$?
+wait "$second_grant_pid" || second_grant_status=$?
+
+if (( first_grant_status != 0 || second_grant_status != 0 )); then
+  cat "$test_directory/grant-first.log" >&2
+  cat "$test_directory/grant-second.log" >&2
+  echo "Concurrent reward grants did not both complete." >&2
+  exit 1
+fi
+
+successful_grants="$(
+  { grep -h '^t$' "$test_directory/grant-first.log" "$test_directory/grant-second.log" || true; } \
+    | wc -l \
+    | tr -d ' '
+)"
+entitlement_count="$(psql "$database_url" --set=ON_ERROR_STOP=1 --tuples-only --no-align --quiet --command "
+  select count(*)
+  from public.user_reward_entitlements
+  where user_id = '$fixture_user'
+    and reward_key = 'concurrency_reward';
+")"
+
+if [[ "$successful_grants" != "1" || "$entitlement_count" != "1" ]]; then
+  echo "Expected one successful concurrent grant and one entitlement; found $successful_grants grant(s) and $entitlement_count row(s)." >&2
+  exit 1
+fi
+
+claim_call=$(cat <<SQL
+begin;
+set local role authenticated;
+select set_config('request.jwt.claim.sub', '$fixture_user', true);
+select set_config(
+  'request.jwt.claims',
+  '{"sub":"$fixture_user","role":"authenticated","email":"carol@example.test"}',
+  true
+);
+select public.claim_reward_entitlement_unlocks() -> 'claimedKeys';
+commit;
+SQL
+)
+
+psql "$database_url" --set=ON_ERROR_STOP=1 --tuples-only --no-align --quiet --command "$claim_call" >"$test_directory/claim-first.log" 2>&1 &
+first_claim_pid=$!
+psql "$database_url" --set=ON_ERROR_STOP=1 --tuples-only --no-align --quiet --command "$claim_call" >"$test_directory/claim-second.log" 2>&1 &
+second_claim_pid=$!
+
+first_claim_status=0
+second_claim_status=0
+wait "$first_claim_pid" || first_claim_status=$?
+wait "$second_claim_pid" || second_claim_status=$?
+
+if (( first_claim_status != 0 || second_claim_status != 0 )); then
+  cat "$test_directory/claim-first.log" >&2
+  cat "$test_directory/claim-second.log" >&2
+  echo "Concurrent reward claims did not both complete." >&2
+  exit 1
+fi
+
+claimed_occurrences="$(
+  { grep -h 'concurrency_reward' "$test_directory/claim-first.log" "$test_directory/claim-second.log" || true; } \
+    | wc -l \
+    | tr -d ' '
+)"
+if [[ "$claimed_occurrences" != "1" ]]; then
+  echo "Expected the concurrent celebration claim to return the reward once; found $claimed_occurrences." >&2
+  exit 1
+fi
+
+echo "Concurrent RPC retries preserved one streak advance, one reward entitlement, and one unlock claim."

@@ -17,6 +17,10 @@ import {
   prepareMockCrewMembersForStorage,
 } from './mock-community-storage.mjs';
 import { normalizeLeaderboardRank } from './leaderboard-prestige.mjs';
+import {
+  challengeProgressionToRewardCatalog,
+  normalizeRewardCatalog,
+} from './reward-catalog.mjs';
 
 const SUPABASE_URL = (import.meta.env.VITE_SUPABASE_URL || '').replace(/\/$/, '');
 const SUPABASE_KEY =
@@ -763,6 +767,42 @@ export async function getChallengeProgression() {
   const { data, error } = await client.rpc('get_challenge_progression');
   if (error) throw error;
   return normalizeChallengeProgression(data || {});
+}
+
+export async function getRewardCatalog({ limit = 50, cursor = null } = {}) {
+  if (isLocalDemoMode()) {
+    return challengeProgressionToRewardCatalog(getMockChallengeProgression());
+  }
+
+  const client = requireSupabase();
+  await requireUser();
+  const { data, error } = await client.rpc('get_reward_catalog', {
+    target_page_size: limit,
+    target_after_sort_order: cursor?.sortOrder ?? null,
+    target_after_reward_key: cursor?.key || null,
+  });
+  if (error) throw error;
+  return normalizeRewardCatalog(data || {});
+}
+
+export async function claimRewardEntitlementUnlocks() {
+  if (isLocalDemoMode()) {
+    return {
+      claimedUnlocks: [],
+      catalog: challengeProgressionToRewardCatalog(getMockChallengeProgression()),
+    };
+  }
+
+  const client = requireSupabase();
+  await requireUser();
+  const { data, error } = await client.rpc('claim_reward_entitlement_unlocks');
+  if (error) throw error;
+  const catalog = normalizeRewardCatalog(data?.catalog || {});
+  const claimedKeys = new Set(data?.claimedKeys || data?.claimed_keys || []);
+  return {
+    claimedUnlocks: catalog.items.filter((reward) => claimedKeys.has(reward.key)),
+    catalog,
+  };
 }
 
 export async function claimChallengeUnlocks() {

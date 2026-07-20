@@ -67,3 +67,6 @@ Group leaderboards use lifetime points by default. A future time-boxed leaderboa
 * App visits, streaks, statuses, and workout difficulty cannot add points.
 * Every active point reward is reachable through repeatable challenge instances.
 * No active point reward is cheaper than the 500-point alternate theme.
+
+The server/client shape that exposes these thresholds, lifecycle states, and
+permanent ownership is documented in [reward-catalog-contract.md](reward-catalog-contract.md).

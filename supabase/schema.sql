@@ -3478,3 +3478,7 @@ create policy "Users can delete own journal photo objects"
     and (storage.foldername(name))[1] = (select auth.uid())::text
     and public.has_active_entitlement('membership_active')
   );
+
+-- The typed reward catalog is additive over the existing challenge lifecycle.
+-- psql resolves this path relative to this canonical schema file.
+\ir migrations/20260720210000_typed_reward_catalog.sql

@@ -3,7 +3,7 @@ begin;
 create extension if not exists pgtap with schema extensions;
 set local search_path = public, extensions;
 
-select plan(22);
+select plan(26);
 
 select ok(
   exists (
@@ -32,12 +32,23 @@ select ok(
   'the latest develop migration was replayed'
 );
 
+select ok(
+  exists (
+    select 1
+    from supabase_migrations.schema_migrations
+    where version = '20260720210000'
+  ),
+  'the typed reward catalog migration was replayed'
+);
+
 select ok(to_regclass('public.profiles') is not null, 'profiles exists');
 select ok(to_regclass('public.challenge_entries') is not null, 'challenge_entries exists');
 select ok(to_regclass('public.check_ins') is not null, 'check_ins exists');
 select ok(to_regclass('public.game_point_events') is not null, 'game_point_events exists');
 select ok(to_regclass('public.crews') is not null, 'crews exists');
 select ok(to_regclass('public.challenge_definitions') is not null, 'challenge_definitions exists');
+select ok(to_regclass('public.reward_definitions') is not null, 'reward_definitions exists');
+select ok(to_regclass('public.user_reward_entitlements') is not null, 'user_reward_entitlements exists');
 
 select ok(
   to_regprocedure('public.submit_daily_check_in(text,text[],jsonb,text,date)') is not null,
@@ -45,6 +56,10 @@ select ok(
 );
 select ok(to_regprocedure('public.record_app_visit()') is not null, 'the app-visit RPC exists');
 select ok(to_regprocedure('public.join_crew_by_invite(text)') is not null, 'the crew invite RPC exists');
+select ok(
+  to_regprocedure('public.get_reward_catalog(integer,integer,text)') is not null,
+  'the typed reward catalog RPC exists'
+);
 
 select ok((select relrowsecurity from pg_class where oid = 'public.profiles'::regclass), 'profiles has RLS enabled');
 select ok((select relrowsecurity from pg_class where oid = 'public.challenge_entries'::regclass), 'challenge_entries has RLS enabled');
