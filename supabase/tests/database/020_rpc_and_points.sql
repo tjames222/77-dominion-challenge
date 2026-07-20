@@ -3,7 +3,7 @@ begin;
 create extension if not exists pgtap with schema extensions;
 set local search_path = public, extensions;
 
-select plan(16);
+select plan(17);
 
 delete from public.game_point_events
 where user_id = '30000000-0000-4000-8000-000000000003';
@@ -84,6 +84,11 @@ set local role authenticated;
 set local "request.jwt.claim.sub" = '10000000-0000-4000-8000-000000000001';
 set local "request.jwt.claims" = '{"sub":"10000000-0000-4000-8000-000000000001","role":"authenticated","email":"alice@example.test","user_metadata":{"name":"Alice Example"}}';
 
+select lives_ok(
+  $$ select public.mutate_daily_standard_draft(current_date, 'bible', true) $$,
+  'the trusted draft mutation records the completed Daily Standard before submission'
+);
+
 select is(
   public.submit_daily_check_in(
     'complete',
@@ -93,7 +98,7 @@ select is(
     current_date
   ) ->> 'status',
   'partial',
-  'the RPC derives status from normalized server-side actions'
+  'the RPC derives status from the authoritative draft instead of client-supplied actions'
 );
 
 reset role;
@@ -101,7 +106,7 @@ reset role;
 select is(
   (select completed_count from public.check_ins where user_id = '10000000-0000-4000-8000-000000000001' and entry_date = current_date),
   1,
-  'duplicate and unknown action identifiers are discarded'
+  'spoofed duplicate and unknown submission identifiers are ignored'
 );
 select is(
   (select count(*)::integer from public.check_ins where user_id = '10000000-0000-4000-8000-000000000001' and entry_date = current_date),
