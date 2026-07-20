@@ -1,4 +1,5 @@
 import { initReveal } from './reveal';
+import { buildInviteAuthHref, isInviteReturnPath } from './invite-flow.mjs';
 import {
   getBillingState,
   hasSupabaseAuth,
@@ -27,6 +28,15 @@ if (themeToggle) {
 applyTheme();
 
 const form = document.getElementById('authForm');
+const rawReturnTo = new URLSearchParams(window.location.search).get('returnTo');
+const returnTo = sanitizeReturnTo(rawReturnTo);
+const inviteReturn = isInviteReturnPath(returnTo);
+const authSwitchLink = document.querySelector('[data-auth-switch]');
+if (authSwitchLink && inviteReturn) {
+  const switchingToRegister = Boolean(document.getElementById('email') && !document.getElementById('name'));
+  authSwitchLink.href = buildInviteAuthHref(switchingToRegister ? 'register' : 'login');
+  if (switchingToRegister) authSwitchLink.textContent = 'Create an account';
+}
 if (form) {
   form.addEventListener('submit', async (event) => {
     event.preventDefault();
@@ -56,7 +66,6 @@ if (form) {
         }
 
         saveLocalUserFromSession(result.session, name);
-        const returnTo = sanitizeReturnTo(new URLSearchParams(window.location.search).get('returnTo'));
         if (returnTo && returnTo !== './dashboard.html') {
           window.location.href = returnTo;
           return;
@@ -79,7 +88,6 @@ if (form) {
       };
       save('dominion:user', user);
       if (user.name) save('dominion:memberName', user.name);
-      const returnTo = sanitizeReturnTo(new URLSearchParams(window.location.search).get('returnTo'));
       window.location.href = returnTo || './dashboard.html';
     } catch (error) {
       window.alert(error?.message || 'Unable to authenticate right now.');

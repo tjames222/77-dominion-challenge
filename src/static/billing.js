@@ -9,6 +9,7 @@ import {
   redirectToLogin,
 } from './api';
 import { initReveal } from './reveal';
+import { INVITE_PAGE_PATH, getStoredInviteContinuation } from './invite-flow.mjs';
 
 const SUBSCRIPTION_PRODUCT_KEY = 'dominion_membership';
 
@@ -55,7 +56,11 @@ function renderStatus(state) {
       : 'You are one step from the dashboard, the daily standard, and the accountability that helps discipline turn into a new normal.';
   }
 
-  if (billingDashboardLink) billingDashboardLink.hidden = !state.appAccess;
+  if (billingDashboardLink) {
+    billingDashboardLink.hidden = !state.appAccess;
+    billingDashboardLink.href = getStoredInviteContinuation(sessionStorage) ? INVITE_PAGE_PATH : './dashboard.html';
+    billingDashboardLink.textContent = getStoredInviteContinuation(sessionStorage) ? 'Return to invitation' : 'Go to dashboard';
+  }
   if (subscriptionStatusPill) {
     subscriptionStatusPill.textContent = isPreviewBilling
       ? 'Preview mock'
@@ -131,7 +136,7 @@ async function hydrateBillingPage() {
       if (settledState.appAccess) {
         billingFeedback.textContent = 'Subscription active. Taking you to the dashboard.';
         window.setTimeout(() => {
-          window.location.href = './dashboard.html';
+          window.location.href = getStoredInviteContinuation(sessionStorage) ? INVITE_PAGE_PATH : './dashboard.html';
         }, 1200);
       }
     }
