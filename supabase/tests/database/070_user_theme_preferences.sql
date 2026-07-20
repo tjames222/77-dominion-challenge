@@ -77,12 +77,13 @@ select is(
   'dark',
   'an owner can switch back to a public theme'
 );
+
+reset role;
 select is(
   (select count(*)::integer from public.user_theme_preferences),
   2,
   'each account has exactly one isolated preference row'
 );
 
-reset role;
 select * from finish();
 rollback;
