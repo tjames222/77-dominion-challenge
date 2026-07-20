@@ -8850,3 +8850,4 @@ revoke execute on function public.grant_sharing_reward_after_invite_redemption()
 -- Canonical Dominion Night reward additions are replayed after the combined
 -- typed-catalog, invitation, sharing, and Community lifecycle definitions.
 \ir migrations/20260720220000_dominion_night_theme_reward.sql
+\ir migrations/20260720230000_user_theme_preferences.sql

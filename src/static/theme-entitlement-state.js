@@ -1,6 +1,16 @@
-import { getLocalOrSessionUser, getRewardCatalog } from './api';
+import {
+  getLocalOrSessionUser,
+  getRewardCatalog,
+  getThemePreference,
+  setThemePreference,
+} from './api';
 import { deriveAuthorizedThemeIds } from './theme-entitlements.mjs';
-import { getThemeRegistry, setThemeEntitlements } from './theme-state';
+import {
+  getThemeRegistry,
+  readPreferredTheme,
+  setTheme,
+  setThemeEntitlements,
+} from './theme-state';
 
 let hydrationPromise = null;
 
@@ -20,9 +30,28 @@ export function hydrateThemeEntitlementState() {
         return { authenticated: false, catalog: null, error: null };
       }
 
-      const catalog = await getRewardCatalog({ limit: 100 });
-      setThemeEntitlements(deriveAuthorizedThemeIds(catalog, getThemeRegistry()));
-      return { authenticated: true, catalog, error: null };
+      const [catalog, preference] = await Promise.all([
+        getRewardCatalog({ limit: 100 }),
+        getThemePreference(),
+      ]);
+      const registry = getThemeRegistry();
+      setThemeEntitlements(deriveAuthorizedThemeIds(catalog, registry));
+
+      let preferredTheme = preference.themeKey;
+      if (!preferredTheme) {
+        const localPreference = readPreferredTheme();
+        const localDefinition = registry.find((theme) => theme.id === localPreference);
+        preferredTheme = localDefinition && !localDefinition.availability.requiresEntitlement
+          ? localPreference
+          : 'dark';
+        try {
+          await setThemePreference(preferredTheme);
+        } catch (preferenceError) {
+          console.warn('Unable to migrate the local theme preference', preferenceError);
+        }
+      }
+      setTheme(preferredTheme);
+      return { authenticated: true, catalog, preference, error: null };
     } catch (error) {
       setThemeEntitlements([]);
       return { authenticated: false, catalog: null, error };
