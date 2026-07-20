@@ -1,6 +1,6 @@
 import { getActiveTheme, getThemeDefinition } from './theme-state';
 
-const THEME_ASSET_SELECTOR = '[data-theme-src-dark]';
+const THEME_ASSET_SELECTOR = '[data-theme-asset]';
 
 function preloadSource(source) {
   if (!source) return;

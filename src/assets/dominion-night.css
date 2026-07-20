@@ -1,0 +1,372 @@
+/*
+ * Dominion Night
+ * Stable theme key: dominion-night
+ *
+ * A moonlit blue-green profile gives the app a calmer, expedition-at-night
+ * character than the black-and-gold Dark theme. Dominion gold remains reserved
+ * for earned prestige, crowns, and reward moments so those assets retain meaning.
+ */
+
+:root[data-theme="dominion-night"] {
+  color-scheme: dark;
+
+  /* Foundational surfaces */
+  --background: #071317;
+  --background-soft: #0b1f24;
+  --surface: #102b30;
+  --surface-elevated: #17383e;
+  --glass: #102b30;
+  --input: #0c2429;
+
+  /* Type and boundaries */
+  --text: #f1f8f6;
+  --text-muted: #aec5c1;
+  --text-disabled: #8da4a0;
+  --text-inverse: #04110f;
+  --border: #4e7b7b;
+  --divider: #315356;
+
+  /* Brand and interaction */
+  --accent: #4fd1b5;
+  --accent-strong: #9af0dc;
+  --focus-ring: #c6fff2;
+  --selection-background: #286f63;
+  --selection-text: #ffffff;
+  --link: #a8f5e4;
+
+  /* Status */
+  --success: #78d79f;
+  --warning: #f3c76d;
+  --danger: #ff9a91;
+  --info: #7bd0f5;
+
+  /* Depth, overlays, menus, and controls */
+  --shadow-color: #01090b;
+  --highlight-color: #dffff7;
+  --scrim: #01090b;
+  --shadow: 0 20px 54px color-mix(in srgb, var(--shadow-color) 72%, transparent);
+  --overlay-background: color-mix(in srgb, var(--scrim) 78%, transparent);
+  --tooltip-background: #1d4549;
+  --tooltip-text: #f1f8f6;
+  --button-primary-background: #4fd1b5;
+  --button-primary-text: #04110f;
+  --button-secondary-background: #17383e;
+  --button-secondary-text: #f1f8f6;
+  --button-danger-background: #512d30;
+  --button-danger-text: #fff5f3;
+
+  /* Progress, data visualization, and earned states */
+  --progress-track: #0b2227;
+  --progress-fill-start: #4fd1b5;
+  --progress-fill-end: #78d79f;
+  --chart-1: #4fd1b5;
+  --chart-2: #78d79f;
+  --chart-3: #f3c76d;
+  --chart-4: #7bd0f5;
+  --streak-highlight: #ffb86c;
+  --reward-accent: #e8bd65;
+  --badge-accent: #dc9e6b;
+  --workout-accent: #ef9f76;
+  --workout-secondary-accent: #d5cc75;
+  --walk-accent: #7dd6a1;
+  --calendar-picker-filter: invert(88%) sepia(12%) saturate(452%) hue-rotate(113deg) brightness(103%);
+}
+
+:root[data-theme="dominion-night"],
+:root[data-theme="dominion-night"] body {
+  background-color: var(--background);
+}
+
+:root[data-theme="dominion-night"] body {
+  background-image:
+    radial-gradient(circle at 8% -8%, color-mix(in srgb, var(--accent) 10%, transparent), transparent 34rem),
+    radial-gradient(circle at 102% 28%, color-mix(in srgb, var(--info) 7%, transparent), transparent 30rem);
+  background-attachment: fixed;
+}
+
+:root[data-theme="dominion-night"] ::selection {
+  background: var(--selection-background);
+  color: var(--selection-text);
+}
+
+:root[data-theme="dominion-night"] :where(a, button, input, select, textarea, summary, [tabindex]):focus-visible {
+  outline-color: var(--focus-ring);
+  box-shadow: 0 0 0 5px color-mix(in srgb, var(--focus-ring) 18%, transparent);
+}
+
+:root[data-theme="dominion-night"] :where(button, input, select, textarea):disabled {
+  color: var(--text-disabled);
+}
+
+:root[data-theme="dominion-night"] input,
+:root[data-theme="dominion-night"] select,
+:root[data-theme="dominion-night"] textarea {
+  border-color: color-mix(in srgb, var(--border) 86%, var(--input));
+  background: var(--input);
+  color: var(--text);
+}
+
+:root[data-theme="dominion-night"] input:focus,
+:root[data-theme="dominion-night"] select:focus,
+:root[data-theme="dominion-night"] textarea:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--focus-ring) 24%, transparent);
+}
+
+:root[data-theme="dominion-night"] .topbar {
+  background: color-mix(in srgb, var(--background) 88%, transparent);
+  border-bottom-color: color-mix(in srgb, var(--divider) 76%, transparent);
+}
+
+:root[data-theme="dominion-night"] .topbar.topbar-collapsed {
+  background: color-mix(in srgb, var(--background-soft) 82%, transparent);
+}
+
+:root[data-theme="dominion-night"] .global-menu {
+  background:
+    radial-gradient(circle at top right, color-mix(in srgb, var(--accent) 18%, transparent), transparent 44%),
+    linear-gradient(180deg, var(--background-soft), var(--background));
+}
+
+:root[data-theme="dominion-night"] .global-menu-links a,
+:root[data-theme="dominion-night"] .global-menu-logout,
+:root[data-theme="dominion-night"] .theme-toggle,
+:root[data-theme="dominion-night"] .back-link {
+  background: color-mix(in srgb, var(--surface) 92%, var(--background));
+}
+
+/* Cards continue to be accents only; this profile changes color, never layout. */
+:root[data-theme="dominion-night"] .card {
+  border-color: color-mix(in srgb, var(--border) 82%, var(--surface));
+  background: color-mix(in srgb, var(--surface) 94%, var(--background));
+  box-shadow: none;
+}
+
+:root[data-theme="dominion-night"] blockquote,
+:root[data-theme="dominion-night"] .timeline article,
+:root[data-theme="dominion-night"] .standard-stack article,
+:root[data-theme="dominion-night"] .verse-grid article,
+:root[data-theme="dominion-night"] .landing-grid article,
+:root[data-theme="dominion-night"] .mini-proof-grid article {
+  background: color-mix(in srgb, var(--surface-elevated) 82%, var(--background));
+}
+
+:root[data-theme="dominion-night"] .hero::after {
+  border-color: color-mix(in srgb, var(--accent) 22%, transparent);
+}
+
+:root[data-theme="dominion-night"] .dashboard-hero::before {
+  background:
+    linear-gradient(135deg, color-mix(in srgb, var(--accent) 24%, transparent), transparent 44%),
+    repeating-linear-gradient(90deg, color-mix(in srgb, var(--info) 10%, transparent) 0 1px, transparent 1px 42px);
+}
+
+:root[data-theme="dominion-night"] .scorecard-training-panel,
+:root[data-theme="dominion-night"] .countdown-card,
+:root[data-theme="dominion-night"] .game-summary-card,
+:root[data-theme="dominion-night"] .challenge-vault-card,
+:root[data-theme="dominion-night"] .billing-offer-flagship,
+:root[data-theme="dominion-night"] .membership-hero,
+:root[data-theme="dominion-night"] .profile-preview-tools,
+:root[data-theme="dominion-night"] .featured-card {
+  background:
+    radial-gradient(circle at 0 0, color-mix(in srgb, var(--accent) 16%, transparent), transparent 42%),
+    radial-gradient(circle at 100% 100%, color-mix(in srgb, var(--info) 9%, transparent), transparent 38%),
+    color-mix(in srgb, var(--surface) 94%, var(--background));
+}
+
+:root[data-theme="dominion-night"] .game-summary-card,
+:root[data-theme="dominion-night"] .challenge-vault-card,
+:root[data-theme="dominion-night"] .dashboard-brand-panel,
+:root[data-theme="dominion-night"] .science-photo-panel {
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, var(--highlight-color) 8%, transparent),
+    0 20px 52px color-mix(in srgb, var(--shadow-color) 44%, transparent);
+}
+
+:root[data-theme="dominion-night"] .ring {
+  background: conic-gradient(var(--chart-1) var(--value), var(--progress-track) 0);
+}
+
+:root[data-theme="dominion-night"] .ring-inner,
+:root[data-theme="dominion-night"] .countdown-progress,
+:root[data-theme="dominion-night"] .game-level-progress-track,
+:root[data-theme="dominion-night"] .challenge-unlock-progress,
+:root[data-theme="dominion-night"] .pulse-bar {
+  background: var(--progress-track);
+}
+
+:root[data-theme="dominion-night"] .countdown-progress span,
+:root[data-theme="dominion-night"] .game-level-progress-track > span,
+:root[data-theme="dominion-night"] .challenge-unlock-progress > span,
+:root[data-theme="dominion-night"] .pulse-bar span {
+  background: linear-gradient(90deg, var(--progress-fill-start), var(--accent-strong), var(--progress-fill-end));
+}
+
+:root[data-theme="dominion-night"] .game-level-emblem[data-prestige="default"] {
+  --coin-border: color-mix(in srgb, var(--accent) 48%, var(--border));
+  --coin-highlight: color-mix(in srgb, var(--highlight-color) 18%, transparent);
+  --coin-mid: color-mix(in srgb, var(--surface-elevated) 80%, var(--accent));
+  --coin-depth: color-mix(in srgb, var(--background) 84%, var(--surface));
+  --coin-text: var(--text);
+  --coin-ring: color-mix(in srgb, var(--accent-strong) 28%, transparent);
+  --coin-aura: color-mix(in srgb, var(--accent) 14%, transparent);
+  --coin-inset-shadow: color-mix(in srgb, var(--shadow-color) 32%, transparent);
+  --coin-drop-shadow: color-mix(in srgb, var(--shadow-color) 42%, transparent);
+  --orbit-color: var(--accent-strong);
+}
+
+:root[data-theme="dominion-night"] .full-streak-card {
+  --streak-accent: var(--streak-highlight);
+}
+
+:root[data-theme="dominion-night"] .progression-badge-card {
+  --badge-color: var(--badge-accent);
+}
+
+:root[data-theme="dominion-night"] .progression-badge-card.silver {
+  --badge-color: #c6d7da;
+}
+
+:root[data-theme="dominion-night"] .progression-badge-card.gold {
+  --badge-color: var(--reward-accent);
+}
+
+:root[data-theme="dominion-night"] .challenge-card.is-locked {
+  border-color: color-mix(in srgb, var(--text-disabled) 48%, var(--border));
+  background: color-mix(in srgb, var(--background-soft) 76%, var(--surface));
+}
+
+:root[data-theme="dominion-night"] .challenge-card.is-available {
+  border-color: var(--accent);
+}
+
+:root[data-theme="dominion-night"] .challenge-card.is-active,
+:root[data-theme="dominion-night"] .challenge-card.is-completed,
+:root[data-theme="dominion-night"] .action-card.action-completed,
+:root[data-theme="dominion-night"] .verse-card.action-completed {
+  border-color: color-mix(in srgb, var(--success) 72%, var(--border));
+}
+
+:root[data-theme="dominion-night"] .challenge-unlock-celebration .badge-medal {
+  color: var(--text);
+  background:
+    radial-gradient(circle at 50% 0, color-mix(in srgb, var(--success) 18%, transparent), transparent 46%),
+    linear-gradient(145deg, #0a2c25, #143f35 46%, #071813);
+}
+
+:root[data-theme="dominion-night"] .reward-backdrop,
+:root[data-theme="dominion-night"] .badge-celebration {
+  background:
+    radial-gradient(circle at 50% 48%, color-mix(in srgb, var(--accent) 18%, transparent), transparent 42%),
+    var(--overlay-background);
+}
+
+:root[data-theme="dominion-night"] .reward-toast {
+  border-color: color-mix(in srgb, var(--reward-accent) 62%, var(--border));
+  background:
+    radial-gradient(circle at 50% 0, color-mix(in srgb, var(--reward-accent) 20%, transparent), transparent 42%),
+    linear-gradient(135deg, color-mix(in srgb, var(--accent) 15%, transparent), transparent 50%),
+    color-mix(in srgb, var(--surface) 96%, var(--background));
+}
+
+:root[data-theme="dominion-night"] .reward-toast .eyebrow,
+:root[data-theme="dominion-night"] .badge-chip.gold {
+  color: var(--reward-accent);
+}
+
+:root[data-theme="dominion-night"] .community-tabs,
+:root[data-theme="dominion-night"] .leaderboard-toggle {
+  background: color-mix(in srgb, var(--background-soft) 88%, transparent);
+}
+
+:root[data-theme="dominion-night"] .leaderboard-card {
+  background:
+    linear-gradient(135deg, color-mix(in srgb, var(--accent) 15%, transparent), transparent 44%),
+    color-mix(in srgb, var(--surface) 94%, var(--background));
+}
+
+:root[data-theme="dominion-night"] .leaderboard-row:nth-child(1) .leaderboard-rank {
+  border: 1px solid color-mix(in srgb, var(--reward-accent) 70%, var(--border));
+  background: color-mix(in srgb, var(--reward-accent) 18%, var(--surface));
+  color: var(--reward-accent);
+}
+
+:root[data-theme="dominion-night"] .leaderboard-row:nth-child(2) .leaderboard-rank {
+  color: #d5e3e5;
+}
+
+:root[data-theme="dominion-night"] .leaderboard-row:nth-child(3) .leaderboard-rank {
+  color: var(--badge-accent);
+}
+
+:root[data-theme="dominion-night"] .skeleton {
+  background: linear-gradient(90deg, var(--surface), color-mix(in srgb, var(--accent) 13%, var(--surface-elevated)), var(--surface));
+  background-size: 220% 100%;
+}
+
+:root[data-theme="dominion-night"] .community-feedback,
+:root[data-theme="dominion-night"] .check-in-status,
+:root[data-theme="dominion-night"] .profile-feedback,
+:root[data-theme="dominion-night"] .billing-feedback {
+  border-color: color-mix(in srgb, var(--info) 38%, var(--border));
+  color: color-mix(in srgb, var(--info) 78%, var(--text));
+}
+
+:root[data-theme="dominion-night"] .feed-error,
+:root[data-theme="dominion-night"] .inline-error,
+:root[data-theme="dominion-night"] .profile-feedback.error {
+  border-color: color-mix(in srgb, var(--danger) 58%, var(--border));
+  color: var(--danger);
+}
+
+:root[data-theme="dominion-night"] .danger-button,
+:root[data-theme="dominion-night"] .billing-inline-actions > .danger-button {
+  background: var(--button-danger-background);
+  color: var(--button-danger-text);
+}
+
+:root[data-theme="dominion-night"] .action-completion-button.completed .action-completion-box,
+:root[data-theme="dominion-night"] .check-row.checked .box {
+  color: var(--text-inverse);
+}
+
+:root[data-theme="dominion-night"] .workout-card {
+  --card-accent: var(--workout-accent);
+}
+
+:root[data-theme="dominion-night"] .workout-card-secondary {
+  --card-accent: var(--workout-secondary-accent);
+}
+
+:root[data-theme="dominion-night"] .walk-card {
+  --card-accent: var(--walk-accent);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root[data-theme="dominion-night"] body {
+    background-attachment: scroll;
+  }
+
+  :root[data-theme="dominion-night"] *,
+  :root[data-theme="dominion-night"] *::before,
+  :root[data-theme="dominion-night"] *::after {
+    scroll-behavior: auto !important;
+  }
+}
+
+@media (forced-colors: active) {
+  :root[data-theme="dominion-night"] :where(a, button, input, select, textarea, summary, [tabindex]):focus-visible {
+    outline: 3px solid Highlight;
+    box-shadow: none;
+  }
+
+  :root[data-theme="dominion-night"] :where(.challenge-card.is-locked, .challenge-card.is-available, .challenge-card.is-active, .challenge-card.is-completed) {
+    border-style: solid;
+    forced-color-adjust: auto;
+  }
+
+  :root[data-theme="dominion-night"] :where(.check-row.checked .box, .action-completion-button.completed .action-completion-box) {
+    border: 2px solid ButtonText;
+  }
+}

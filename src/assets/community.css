@@ -77,7 +77,7 @@
 }
 .community-tab.active {
   background: var(--accent);
-  color: #070604;
+  color: var(--button-primary-text);
 }
 .community-panel {
   display: none;
@@ -213,7 +213,7 @@
 }
 .leaderboard-toggle button.active {
   background: var(--accent);
-  color: #070604;
+  color: var(--button-primary-text);
 }
 .leaderboard-list {
   display: grid;
@@ -731,7 +731,7 @@
   border-radius: 16px;
   padding: 0 16px;
   background: var(--accent);
-  color: #070604;
+  color: var(--button-primary-text);
   font-weight: 950;
 }
 .feed-sentinel {
