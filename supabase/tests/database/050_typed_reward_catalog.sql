@@ -62,7 +62,7 @@ select lives_ok(
       'dominion_night_test',
       null,
       'palette',
-      5,
+      0,
       '{"preview":"night"}'
     )
   $$,
@@ -105,16 +105,16 @@ set local "request.jwt.claims" = '{"sub":"10000000-0000-4000-8000-000000000001",
 
 select is(
   jsonb_array_length(public.get_reward_catalog() -> 'items'),
-  6,
+  7,
   'the authenticated read contract returns challenges and cosmetics together'
 );
 select is(
-  public.get_reward_catalog() #>> '{items,1,status}',
+  public.get_reward_catalog() #>> '{items,2,status}',
   'available',
   'the existing unlocked challenge stays available'
 );
 select is(
-  public.get_reward_catalog() #>> '{items,1,allowedActions,0}',
+  public.get_reward_catalog() #>> '{items,2,allowedActions,0}',
   'start',
   'only the available challenge exposes its existing Start action'
 );
@@ -135,13 +135,13 @@ select is(
 );
 select is(
   public.get_reward_catalog(2) #>> '{page,nextCursor,key}',
-  'seven_day_reset',
+  'dominion_night_theme',
   'the stable cursor points after the last returned reward'
 );
 select is(
   (select count(*)::integer from public.user_reward_entitlements),
-  1,
-  'RLS exposes only the current user reward entitlement'
+  2,
+  'RLS exposes only the current user reward entitlements'
 );
 select throws_ok(
   $$
@@ -296,8 +296,8 @@ set local "request.jwt.claim.sub" = '30000000-0000-4000-8000-000000000003';
 set local "request.jwt.claims" = '{"sub":"30000000-0000-4000-8000-000000000003","role":"authenticated"}';
 select is(
   jsonb_array_length(public.claim_reward_entitlement_unlocks() -> 'claimedKeys'),
-  1,
-  'one cosmetic unlock celebration is claimed'
+  2,
+  'each newly earned cosmetic unlock celebration is claimed once'
 );
 select is(
   jsonb_array_length(public.claim_reward_entitlement_unlocks() -> 'claimedKeys'),

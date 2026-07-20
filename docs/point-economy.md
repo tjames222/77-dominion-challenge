@@ -35,14 +35,14 @@ Repeatable challenge instances are the long-term earning path. Existing challeng
 
 | Lifetime threshold | Perfect 77-day instances required without sharing |
 | ---: | ---: |
-| Alternate dark theme — 500 | 1 |
+| Dominion Night theme — 500 | 1 |
 | 7-Day Reset — 1,000 | 2 |
 | 21-Day Prayer Track — 3,000 | 6 |
 | 30-Day Strength Intensive — 4,500 | 9 |
 | 40-Day Fasting & Prayer Track — 6,000 | 12 |
 | Bible in a Year — 10,000 | 19 |
 
-The alternate dark theme is intentionally the least-expensive point reward. Catalog code must reject a new active reward below 500 points unless the product contract is deliberately revised.
+The Dominion Night theme is intentionally the least-expensive point reward. Catalog code must reject a new active reward below 500 points unless the product contract is deliberately revised.
 
 ## Totals and consumers
 
@@ -66,7 +66,7 @@ Group leaderboards use lifetime points by default. A future time-boxed leaderboa
 * A share can grant at most one 14-point bonus per user.
 * App visits, streaks, statuses, and workout difficulty cannot add points.
 * Every active point reward is reachable through repeatable challenge instances.
-* No active point reward is cheaper than the 500-point alternate theme.
+* No active point reward is cheaper than the 500-point Dominion Night theme.
 
 The server/client shape that exposes these thresholds, lifecycle states, and
 permanent ownership is documented in [reward-catalog-contract.md](reward-catalog-contract.md).

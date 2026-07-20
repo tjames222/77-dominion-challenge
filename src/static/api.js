@@ -18,7 +18,8 @@ import {
 } from './mock-community-storage.mjs';
 import { normalizeLeaderboardRank } from './leaderboard-prestige.mjs';
 import {
-  challengeProgressionToRewardCatalog,
+  buildMockRewardCatalog,
+  claimMockRewardEntitlementUnlocks,
   normalizeRewardCatalog,
 } from './reward-catalog.mjs';
 
@@ -55,6 +56,7 @@ const MOCK_INVITES_KEY = 'dominion:mockCrewInvites';
 const MOCK_POSTS_KEY = 'dominion:mockCommunityPosts';
 const MOCK_JOURNAL_KEY = 'dominion:mockJournalEntries';
 const MOCK_CHALLENGE_STATES_KEY = 'dominion:mockChallengeStates';
+const MOCK_REWARD_ENTITLEMENTS_KEY = 'dominion:mockRewardEntitlements';
 const MOCK_CHALLENGE_THRESHOLDS_VERSION_KEY = 'dominion:mockChallengeThresholdsVersion';
 const MOCK_CHALLENGE_THRESHOLDS_VERSION = 2;
 const MOCK_MEDIA_DB_NAME = 'dominion-preview-media';
@@ -759,6 +761,15 @@ function getMockChallengeProgression() {
   return progression;
 }
 
+function getMockRewardCatalog() {
+  const result = buildMockRewardCatalog({
+    progression: getMockChallengeProgression(),
+    ownershipRecords: readJson(MOCK_REWARD_ENTITLEMENTS_KEY, []),
+  });
+  writeJson(MOCK_REWARD_ENTITLEMENTS_KEY, result.ownershipRecords);
+  return result.catalog;
+}
+
 export async function getChallengeProgression() {
   if (isLocalDemoMode()) return getMockChallengeProgression();
 
@@ -771,7 +782,7 @@ export async function getChallengeProgression() {
 
 export async function getRewardCatalog({ limit = 50, cursor = null } = {}) {
   if (isLocalDemoMode()) {
-    return challengeProgressionToRewardCatalog(getMockChallengeProgression());
+    return getMockRewardCatalog();
   }
 
   const client = requireSupabase();
@@ -787,9 +798,14 @@ export async function getRewardCatalog({ limit = 50, cursor = null } = {}) {
 
 export async function claimRewardEntitlementUnlocks() {
   if (isLocalDemoMode()) {
+    const result = claimMockRewardEntitlementUnlocks({
+      progression: getMockChallengeProgression(),
+      ownershipRecords: readJson(MOCK_REWARD_ENTITLEMENTS_KEY, []),
+    });
+    writeJson(MOCK_REWARD_ENTITLEMENTS_KEY, result.ownershipRecords);
     return {
-      claimedUnlocks: [],
-      catalog: challengeProgressionToRewardCatalog(getMockChallengeProgression()),
+      claimedUnlocks: result.claimedUnlocks,
+      catalog: result.catalog,
     };
   }
 

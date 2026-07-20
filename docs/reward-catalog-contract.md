@@ -29,6 +29,13 @@ and Start behavior remain authoritative. Ownership definitions are evaluated
 against `user_game_stats.total_points`, which is the cached total of the
 idempotent point ledger.
 
+The first ownership definition is `dominion_night_theme`. It unlocks at 500
+total points and fulfills the stable `dominion-night` theme key. It is a
+`cosmetic` with the `ownership` state model, sorts before every 1,000-point
+challenge, and remains owned after point corrections or membership changes.
+Its display metadata links the customer to `profile.html#appearance`; theme
+selection still must verify the trusted entitlement and active theme registry.
+
 ## Authenticated read
 
 Call `get_reward_catalog(target_page_size, target_after_sort_order,
@@ -79,6 +86,14 @@ an earned row.
 `claim_reward_entitlement_unlocks()` atomically marks unseen ownership
 celebrations and returns each stable key once. Challenge celebrations continue
 to use the existing `claim_challenge_unlocks()` contract.
+
+For rollout and repair, the service-only
+`backfill_reward_entitlements(reward_key, after_user_id, batch_size,
+celebration_seen)` RPC scans eligible users in UUID order and returns a stable
+cursor, processed/inserted counts, and a completion flag. The ownership primary
+key and audit-event key make every page safe to retry. Definition changes and
+each first grant are recorded without profile or private-content fields in
+`private.reward_audit_events`; browser roles cannot read that schema.
 
 Authenticated users may select only their own ownership rows under RLS and have
 no insert, update, or delete privileges. The catalog RPC is the preferred UI

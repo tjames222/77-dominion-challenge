@@ -3,7 +3,7 @@ begin;
 create extension if not exists pgtap with schema extensions;
 set local search_path = public, extensions;
 
-select plan(26);
+select plan(30);
 
 select ok(
   exists (
@@ -41,6 +41,15 @@ select ok(
   'the typed reward catalog migration was replayed'
 );
 
+select ok(
+  exists (
+    select 1
+    from supabase_migrations.schema_migrations
+    where version = '20260720220000'
+  ),
+  'the Dominion Night theme reward migration was replayed'
+);
+
 select ok(to_regclass('public.profiles') is not null, 'profiles exists');
 select ok(to_regclass('public.challenge_entries') is not null, 'challenge_entries exists');
 select ok(to_regclass('public.check_ins') is not null, 'check_ins exists');
@@ -49,6 +58,7 @@ select ok(to_regclass('public.crews') is not null, 'crews exists');
 select ok(to_regclass('public.challenge_definitions') is not null, 'challenge_definitions exists');
 select ok(to_regclass('public.reward_definitions') is not null, 'reward_definitions exists');
 select ok(to_regclass('public.user_reward_entitlements') is not null, 'user_reward_entitlements exists');
+select ok(to_regclass('private.reward_audit_events') is not null, 'private reward audit events exist');
 
 select ok(
   to_regprocedure('public.submit_daily_check_in(text,text[],jsonb,text,date)') is not null,
@@ -59,6 +69,19 @@ select ok(to_regprocedure('public.join_crew_by_invite(text)') is not null, 'the 
 select ok(
   to_regprocedure('public.get_reward_catalog(integer,integer,text)') is not null,
   'the typed reward catalog RPC exists'
+);
+select ok(
+  to_regprocedure('public.backfill_reward_entitlements(text,uuid,integer,boolean)') is not null,
+  'the resumable reward backfill RPC exists'
+);
+select is(
+  (
+    select points_required
+    from public.reward_definitions
+    where reward_key = 'dominion_night_theme'
+  ),
+  500,
+  'the Dominion Night theme reward starts at exactly 500 points'
 );
 
 select ok((select relrowsecurity from pg_class where oid = 'public.profiles'::regclass), 'profiles has RLS enabled');

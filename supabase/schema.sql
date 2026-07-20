@@ -3482,3 +3482,4 @@ create policy "Users can delete own journal photo objects"
 -- The typed reward catalog is additive over the existing challenge lifecycle.
 -- psql resolves this path relative to this canonical schema file.
 \ir migrations/20260720210000_typed_reward_catalog.sql
+\ir migrations/20260720220000_dominion_night_theme_reward.sql
