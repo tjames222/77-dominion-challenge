@@ -133,6 +133,22 @@ button { cursor: pointer; }
   min-width: 0;
 }
 
+/* Page sections stay open by default; cards are deliberate visual accents. */
+main.app-shell > section[data-section-surface="plain"] {
+  background: transparent !important;
+  border: 0 !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+}
+
+main.app-shell > section[data-section-surface="plain"].card {
+  padding-inline: 0;
+}
+
+main.app-shell > section[data-section-surface="accent"] {
+  isolation: isolate;
+}
+
 .hero {
   position: relative;
   overflow: hidden;
