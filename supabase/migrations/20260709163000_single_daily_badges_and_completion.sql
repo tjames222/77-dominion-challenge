@@ -93,7 +93,7 @@ create unique index if not exists user_badges_user_entry_date_unique
 create or replace function public.award_badge(
   target_user_id uuid,
   target_badge_key text,
-  target_entry_date date default null,
+  target_earned_date date default null,
   target_metadata jsonb default '{}'::jsonb
 )
 returns boolean
@@ -104,17 +104,17 @@ as $$
 declare
   inserted_key text;
 begin
-  if target_entry_date is not null and exists (
+  if target_earned_date is not null and exists (
     select 1
     from public.user_badges
     where user_id = target_user_id
-      and entry_date = target_entry_date
+      and entry_date = target_earned_date
   ) then
     return false;
   end if;
 
   insert into public.user_badges (user_id, badge_key, entry_date, metadata)
-  values (target_user_id, target_badge_key, target_entry_date, target_metadata)
+  values (target_user_id, target_badge_key, target_earned_date, target_metadata)
   on conflict do nothing
   returning badge_key into inserted_key;
 
@@ -378,13 +378,13 @@ begin
     next_app_streak := 1;
   end if;
 
-  update public.user_game_stats
+  update public.user_game_stats as game_stats
   set
     current_app_streak = next_app_streak,
-    best_app_streak = greatest(best_app_streak, next_app_streak),
+    best_app_streak = greatest(game_stats.best_app_streak, next_app_streak),
     last_seen_date = today,
     updated_at = now()
-  where user_id = current_user_id;
+  where game_stats.user_id = current_user_id;
 
   perform public.add_game_points(
     current_user_id,
