@@ -31,6 +31,20 @@ select ok(
   'anonymous recipients can resolve an opaque public token'
 );
 
+insert into public.challenge_entries (
+  user_id,
+  entry_date,
+  completed,
+  workout_difficulty
+) values (
+  '10000000-0000-4000-8000-000000000001',
+  '2026-07-10',
+  array['bible', 'workout', 'water'],
+  '{}'::jsonb
+) on conflict (user_id, entry_date) do update set
+  completed = excluded.completed,
+  workout_difficulty = excluded.workout_difficulty;
+
 insert into public.check_ins (
   id,
   user_id,
