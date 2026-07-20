@@ -114,13 +114,12 @@ PGOPTIONS="-c search_path=public,extensions" \
 snapshot_query=$(cat <<'SQL'
 with structural_records as (
   select format(
-    'relation|%I.%I|kind=%s|rls=%s|forcerls=%s|acl=%s',
+    'relation|%I.%I|kind=%s|rls=%s|forcerls=%s',
     schema_row.nspname,
     relation_row.relname,
     relation_row.relkind,
     relation_row.relrowsecurity,
-    relation_row.relforcerowsecurity,
-    coalesce(relation_row.relacl::text, '')
+    relation_row.relforcerowsecurity
   ) as record
   from pg_class relation_row
   join pg_namespace schema_row on schema_row.oid = relation_row.relnamespace
@@ -183,15 +182,31 @@ with structural_records as (
   union all
 
   select format(
-    'function|%I.%I(%s)|definition=%s|acl=%s',
+    'function|%I.%I(%s)|arguments=%s|result=%s|language=%s|kind=%s|volatility=%s|parallel=%s|security-definer=%s|strict=%s|leakproof=%s|config=%s|body=%s',
     schema_row.nspname,
     procedure_row.proname,
     pg_get_function_identity_arguments(procedure_row.oid),
-    encode(convert_to(pg_get_functiondef(procedure_row.oid), 'UTF8'), 'hex'),
-    coalesce(procedure_row.proacl::text, '')
+    pg_get_function_arguments(procedure_row.oid),
+    pg_get_function_result(procedure_row.oid),
+    language_row.lanname,
+    procedure_row.prokind,
+    procedure_row.provolatile,
+    procedure_row.proparallel,
+    procedure_row.prosecdef,
+    procedure_row.proisstrict,
+    procedure_row.proleakproof,
+    coalesce(procedure_row.proconfig::text, ''),
+    encode(
+      convert_to(
+        trim(regexp_replace(procedure_row.prosrc, '[[:space:]]+', ' ', 'g')),
+        'UTF8'
+      ),
+      'hex'
+    )
   )
   from pg_proc procedure_row
   join pg_namespace schema_row on schema_row.oid = procedure_row.pronamespace
+  join pg_language language_row on language_row.oid = procedure_row.prolang
   where schema_row.nspname in ('public', 'private')
 
   union all
@@ -265,6 +280,14 @@ psql "$database_url" --set=ON_ERROR_STOP=1 --tuples-only --no-align --command "$
   >"$work_directory/migrations.snapshot"
 psql "$temp_database_url" --set=ON_ERROR_STOP=1 --tuples-only --no-align --command "$snapshot_query" \
   >"$work_directory/canonical.snapshot"
+
+# Supabase applies platform-managed default table/function grants after a local
+# migration reset. The isolated canonical database intentionally does not run
+# that platform bootstrap, so those environment ACLs are not stable drift
+# signals. Column ACLs remain in the snapshot because they encode deliberate
+# least-privilege grants. Function bodies are whitespace-normalized while their
+# signature, defaults, result, language, volatility, parallel safety, security,
+# strictness, leakproof flag, and runtime configuration are compared separately.
 
 if ! diff -u "$work_directory/migrations.snapshot" "$work_directory/canonical.snapshot" \
   >"$work_directory/schema.diff"; then
