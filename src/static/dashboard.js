@@ -245,7 +245,7 @@ const escapeHtml = (value = '') => String(value).replace(/[&<>"']/g, (char) => (
 const badgeChip = (badge) => `<span class="badge-chip ${badge.tier || 'bronze'}"><span class="app-icon icon-sm ${badgeIconClass(badge)}" aria-hidden="true"></span><span>${escapeHtml(badge.name || 'Badge')}</span></span>`;
 const badgeIconClass = (badge) => {
   const icon = String(badge?.icon || '').replace(/[^a-z-]/g, '');
-  return ['shield', 'check', 'spark', 'flame', 'dumbbell', 'run', 'repeat', 'eye', 'crown', 'calendar', 'target', 'flag', 'mountain', 'star'].includes(icon) ? `icon-${icon}` : 'icon-shield';
+  return ['shield', 'check', 'spark', 'flame', 'dumbbell', 'run', 'repeat', 'eye', 'crown', 'calendar', 'target', 'flag', 'mountain', 'star', 'share'].includes(icon) ? `icon-${icon}` : 'icon-shield';
 };
 const badgeRank = (badge) => badgePriorityRank.get(badge?.key) ?? 999;
 const oneBadgeForDisplay = (earnedBadges = []) => earnedBadges
