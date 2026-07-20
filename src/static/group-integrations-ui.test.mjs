@@ -6,6 +6,11 @@ const html = readFileSync(new URL('../../community.html', import.meta.url), 'utf
 const javascript = readFileSync(new URL('./community.js', import.meta.url), 'utf8');
 const api = readFileSync(new URL('./api.js', import.meta.url), 'utf8');
 const css = readFileSync(new URL('../assets/community.css', import.meta.url), 'utf8');
+const connectionMigration = readFileSync(
+  new URL('../../supabase/migrations/20260719180000_integration_connection_management.sql', import.meta.url),
+  'utf8',
+);
+const canonicalSchema = readFileSync(new URL('../../supabase/schema.sql', import.meta.url), 'utf8');
 
 describe('private-group provider connections', () => {
   it('explains the external-only conversation model and exposes both supported providers', () => {
@@ -43,6 +48,13 @@ describe('private-group provider connections', () => {
     assert.match(api, /invokeSupabaseAction\('group-integrations', \{ action, \.\.\.values \}\)/);
     assert.doesNotMatch(html, /webhook/i);
     assert.doesNotMatch(javascript, /webhookUrl|destinationUrl/);
+  });
+
+  it('keeps the integration migrations replayable and represented in the canonical schema', () => {
+    assert.doesNotMatch(connectionMigration, /\bcrew_members\s+member\b|\bmember\./);
+    assert.match(canonicalSchema, /create table if not exists private\.integration_destinations/);
+    assert.match(canonicalSchema, /create table if not exists private\.integration_oauth_states/);
+    assert.match(canonicalSchema, /create or replace function public\.consume_integration_oauth_state/);
   });
 
   it('keeps controls usable on narrow screens and derives both themes from shared tokens', () => {
