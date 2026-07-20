@@ -86,6 +86,7 @@ select 'alice-streak', (result ->> 'snapshotId')::uuid, result ->> 'token' from 
 
 select is(length((select token from share_test_values where label = 'alice-streak')), 64, 'created public tokens contain 256 bits of entropy');
 select ok((select token from share_test_values where label = 'alice-streak') ~ '^[0-9a-f]{64}$', 'created public tokens are URL-safe lowercase hex');
+reset role;
 select ok(
   (
     select encode(public_token_digest, 'hex') <> values_row.token
@@ -95,6 +96,7 @@ select ok(
   ),
   'the usable public token is not stored'
 );
+set local role authenticated;
 select throws_ok(
   $$ select count(*) from public.public_share_snapshots $$,
   '42501',
