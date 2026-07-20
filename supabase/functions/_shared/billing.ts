@@ -30,28 +30,40 @@ function asQueryBuilder<T>(value: unknown) {
   return value as QueryBuilder<T>;
 }
 
-export async function getOrCreateStripeCustomer(admin: SupabaseAdmin, user: SupabaseUser) {
+export async function getOrCreateStripeCustomer(
+  admin: SupabaseAdmin,
+  user: SupabaseUser,
+  requestStripe: typeof stripeRequest = stripeRequest,
+) {
   const [customerResult, profileResult] = await Promise.all([
-    asQueryBuilder<BillingCustomer>(admin
-      .from("billing_customers")
-      .select("stripe_customer_id"))
+    asQueryBuilder<BillingCustomer>(
+      admin
+        .from("billing_customers")
+        .select("stripe_customer_id"),
+    )
       .eq("user_id", user.id)
       .maybeSingle(),
-    asQueryBuilder<Profile>(admin
-      .from("profiles")
-      .select("name, email"))
+    asQueryBuilder<Profile>(
+      admin
+        .from("profiles")
+        .select("name, email"),
+    )
       .eq("user_id", user.id)
       .maybeSingle(),
   ]);
 
   if (customerResult.error) throw customerResult.error;
   if (profileResult.error) throw profileResult.error;
-  if (customerResult.data?.stripe_customer_id) return customerResult.data.stripe_customer_id;
+  if (customerResult.data?.stripe_customer_id) {
+    return customerResult.data.stripe_customer_id;
+  }
 
   const email = user.email || profileResult.data?.email || "";
-  const metadataName = typeof user.user_metadata?.name === "string" ? user.user_metadata.name : "";
+  const metadataName = typeof user.user_metadata?.name === "string"
+    ? user.user_metadata.name
+    : "";
   const name = profileResult.data?.name || metadataName;
-  const customer = await stripeRequest(
+  const customer = await requestStripe(
     "/v1/customers",
     "POST",
     createFormBody({

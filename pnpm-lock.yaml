@@ -37,7 +37,7 @@ importers:
         specifier: ^11.18.0
         version: 11.18.0
       supabase:
-        specifier: ^2.109.0
+        specifier: 2.109.0
         version: 2.109.0
       wrangler:
         specifier: ^4.107.0

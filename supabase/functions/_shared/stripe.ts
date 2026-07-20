@@ -1,25 +1,40 @@
-import { resolveSiteOrigin } from "./http.ts";
+import { type EnvReader, readEnv, resolveSiteOrigin } from "./http.ts";
 
 const encoder = new TextEncoder();
 
 type StripeMethod = "DELETE" | "GET" | "POST";
 
-function getEnv(name: string) {
-  const value = Deno.env.get(name);
+type StripeRequestOptions = {
+  env?: EnvReader;
+  fetch?: typeof fetch;
+};
+
+type SignatureOptions = {
+  env?: EnvReader;
+  now?: () => number;
+  toleranceSeconds?: number;
+};
+
+function getEnv(name: string, env: EnvReader = readEnv) {
+  const value = env(name);
   if (!value) throw new Error(`Missing ${name}.`);
   return value;
 }
 
-export function getSiteUrl(req: Request) {
-  return resolveSiteOrigin(req);
+export function getSiteUrl(req: Request, env: EnvReader = readEnv) {
+  return resolveSiteOrigin(req, env);
 }
 
-export function getPriceId(productKey: string) {
-  if (productKey === "dominion_membership") return getEnv("STRIPE_MEMBERSHIP_PRICE_ID");
+export function getPriceId(productKey: string, env: EnvReader = readEnv) {
+  if (productKey === "dominion_membership") {
+    return getEnv("STRIPE_MEMBERSHIP_PRICE_ID", env);
+  }
   throw new Error(`Unsupported product key: ${productKey}`);
 }
 
-export function createFormBody(values: Record<string, string | number | boolean | undefined>) {
+export function createFormBody(
+  values: Record<string, string | number | boolean | undefined>,
+) {
   const params = new URLSearchParams();
   for (const [key, value] of Object.entries(values)) {
     if (value === undefined) continue;
@@ -28,9 +43,15 @@ export function createFormBody(values: Record<string, string | number | boolean 
   return params;
 }
 
-export async function stripeRequest(path: string, method: StripeMethod, body?: URLSearchParams) {
-  const secretKey = getEnv("STRIPE_SECRET_KEY");
-  const response = await fetch(`https://api.stripe.com${path}`, {
+export async function stripeRequest(
+  path: string,
+  method: StripeMethod,
+  body?: URLSearchParams,
+  options: StripeRequestOptions = {},
+) {
+  const secretKey = getEnv("STRIPE_SECRET_KEY", options.env);
+  const request = options.fetch || fetch;
+  const response = await request(`https://api.stripe.com${path}`, {
     method,
     headers: {
       Authorization: `Bearer ${secretKey}`,
@@ -40,7 +61,16 @@ export async function stripeRequest(path: string, method: StripeMethod, body?: U
   });
 
   const payload = await response.text();
-  const data = payload ? JSON.parse(payload) : null;
+  let data = null;
+  try {
+    data = payload ? JSON.parse(payload) : null;
+  } catch {
+    throw new Error(
+      response.ok
+        ? "Stripe returned an invalid response."
+        : "Stripe request failed.",
+    );
+  }
   if (!response.ok) {
     throw new Error(data?.error?.message || "Stripe request failed.");
   }
@@ -63,20 +93,36 @@ function constantTimeEqual(a: string, b: string) {
   return mismatch === 0;
 }
 
-export async function verifyStripeSignature(payload: string, header: string | null) {
-  const webhookSecret = getEnv("STRIPE_WEBHOOK_SECRET");
+export async function verifyStripeSignature(
+  payload: string,
+  header: string | null,
+  options: SignatureOptions = {},
+) {
+  const webhookSecret = getEnv("STRIPE_WEBHOOK_SECRET", options.env);
   if (!header) return false;
 
   const timestamp = header
     .split(",")
+    .map((part) => part.trim())
     .find((part) => part.startsWith("t="))
     ?.slice(2);
   const signatures = header
     .split(",")
+    .map((part) => part.trim())
     .filter((part) => part.startsWith("v1="))
     .map((part) => part.slice(3));
 
-  if (!timestamp || !signatures.length) return false;
+  const timestampSeconds = Number(timestamp);
+  if (!timestamp || !Number.isFinite(timestampSeconds) || !signatures.length) {
+    return false;
+  }
+
+  const toleranceSeconds = options.toleranceSeconds ?? 300;
+  const nowSeconds = Math.floor((options.now || Date.now)() / 1000);
+  if (
+    toleranceSeconds >= 0 &&
+    Math.abs(nowSeconds - timestampSeconds) > toleranceSeconds
+  ) return false;
 
   const key = await crypto.subtle.importKey(
     "raw",
@@ -85,7 +131,11 @@ export async function verifyStripeSignature(payload: string, header: string | nu
     false,
     ["sign"],
   );
-  const digest = await crypto.subtle.sign("HMAC", key, encoder.encode(`${timestamp}.${payload}`));
+  const digest = await crypto.subtle.sign(
+    "HMAC",
+    key,
+    encoder.encode(`${timestamp}.${payload}`),
+  );
   const expected = hex(digest);
 
   return signatures.some((signature) => constantTimeEqual(signature, expected));
