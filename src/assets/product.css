@@ -1005,6 +1005,45 @@ body.challenge-finished .confetti-layer {
   font-size: .82rem;
   line-height: 1.45;
 }
+.game-summary-rewards-link {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 14px;
+  min-height: 58px;
+  padding: 12px 14px;
+  border-top: 1px solid color-mix(in srgb, var(--accent) 22%, var(--border));
+  color: var(--text);
+  text-decoration: none;
+}
+.game-summary-rewards-link .app-icon {
+  color: var(--accent-strong);
+}
+.game-summary-rewards-link strong,
+.game-summary-rewards-link small {
+  display: block;
+}
+.game-summary-rewards-link strong {
+  line-height: 1.25;
+}
+.game-summary-rewards-link small {
+  margin-top: 3px;
+  color: var(--text-muted);
+  font-size: .73rem;
+  line-height: 1.4;
+}
+.game-summary-rewards-link > span:last-child {
+  color: var(--accent-strong);
+  font-size: 1.3rem;
+  transition: transform 180ms ease;
+}
+.game-summary-rewards-link:hover > span:last-child {
+  transform: translateX(3px);
+}
+.game-summary-rewards-link:focus-visible {
+  outline: 3px solid color-mix(in srgb, var(--accent-strong) 60%, transparent);
+  outline-offset: 3px;
+}
 :root[data-theme="light"] .game-summary-card {
   background:
     radial-gradient(circle at 8% 0%, color-mix(in srgb, var(--accent) 18%, transparent), transparent 31%),

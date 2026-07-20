@@ -3,7 +3,6 @@ import { createDialog } from './dialog.mjs';
 import {
   claimChallengeUnlocks,
   getBillingState,
-  getChallengeProgression,
   getDailyStandardDraft,
   getDashboard,
   getGameSummary,
@@ -15,7 +14,6 @@ import {
   recordAppVisit,
   redirectToLogin,
   setDailyStandardWorkoutDifficulty,
-  startChallenge,
   updateProfile,
 } from './api';
 import {
@@ -268,7 +266,6 @@ const calculateLocalPoints = (entry, status) => {
 };
 const badgeEarnedDate = (badge) => badge.entryDate || badge.earnedDate || badge.metadata?.entryDate || String(badge.earnedAt || '').slice(0, 10);
 const badgeDateFormatter = new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric' });
-const challengeDateFormatter = new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
 const safeBadgeTier = (badge) => {
   const tier = String(badge?.tier || '').toLowerCase();
   return ['bronze', 'silver', 'gold'].includes(tier) ? tier : 'bronze';
@@ -495,112 +492,6 @@ const challengeIconClass = (challenge) => {
     ? `icon-${icon}`
     : 'icon-target';
 };
-const challengeDate = (value) => {
-  if (!value) return '';
-  const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? '' : challengeDateFormatter.format(date);
-};
-const challengeStatusLabel = (challenge) => {
-  const status = ({ locked: 'Locked', available: 'Available', active: 'Active', completed: 'Completed' })[challenge.status] || 'Locked';
-  return challenge.accessGranted ? status : `${status} · Access required`;
-};
-const challengeAccessMessage = (challenge) => {
-  if (challenge.accessReason === 'membership_required') return 'An active membership is required for this track.';
-  return challenge.accessReason || 'Access is required for this track.';
-};
-const challengeCard = (challenge) => {
-  const pointsRequired = Math.max(0, Number(challenge.pointsRequired) || 0);
-  const pointsRemaining = Math.max(0, Number(challenge.pointsRemaining) || 0);
-  const duration = challenge.durationDays ? `${Number(challenge.durationDays).toLocaleString()} days` : 'Flexible length';
-  const unlocked = challenge.status !== 'locked';
-  const unlockedDate = challengeDate(challenge.unlockedAt);
-  const startedDate = challengeDate(challenge.startedAt);
-  const completedDate = challengeDate(challenge.completedAt);
-  let detail = '';
-  let action = '';
-
-  if (!challenge.accessGranted) {
-    detail = escapeHtml(challengeAccessMessage(challenge));
-  } else if (challenge.status === 'locked') {
-    detail = `${pointsRemaining.toLocaleString()} ${pointsRemaining === 1 ? 'point' : 'points'} remaining · Unlocks at ${pointsRequired.toLocaleString()}`;
-  } else if (challenge.status === 'available') {
-    detail = unlockedDate ? `Unlocked ${escapeHtml(unlockedDate)}` : 'Unlocked and ready to start';
-    action = `<button class="challenge-start-button" type="button" data-start-challenge="${escapeHtml(challenge.key)}"${challengeActionKey === challenge.key ? ' disabled' : ''}>${challengeActionKey === challenge.key ? 'Starting…' : 'Start track'}</button>`;
-  } else if (challenge.status === 'active') {
-    detail = startedDate ? `Started ${escapeHtml(startedDate)}` : 'Track in progress';
-  } else {
-    detail = completedDate ? `Completed ${escapeHtml(completedDate)}` : 'Challenge completed';
-  }
-
-  return `<article class="challenge-card is-${escapeHtml(challenge.status)}${challenge.accessGranted ? '' : ' is-inaccessible'}"><div class="challenge-card-topline"><span class="challenge-card-icon app-icon ${challengeIconClass(challenge)}" aria-hidden="true"></span><span class="challenge-card-status">${escapeHtml(challengeStatusLabel(challenge))}</span></div><div class="challenge-card-copy"><p>${escapeHtml(challenge.type || 'Challenge')} · ${escapeHtml(duration)}</p><h3>${escapeHtml(challenge.title)}</h3><p>${escapeHtml(challenge.teaser || '')}</p></div><div class="challenge-card-footer"><small>${detail}</small>${action}</div>${unlocked ? '<span class="challenge-card-unlocked" aria-hidden="true"><span class="app-icon icon-check"></span></span>' : ''}</article>`;
-};
-function setChallengeVaultExpanded(expanded) {
-  const vault = $('challengeVault');
-  const toggle = $('challengeVaultToggle');
-  const label = $('challengeVaultToggleLabel');
-  const details = $('challengeVaultDetails');
-  if (!vault || !toggle || !details) return;
-
-  const nextExpanded = Boolean(expanded);
-  vault.classList.toggle('is-expanded', nextExpanded);
-  toggle.setAttribute('aria-expanded', String(nextExpanded));
-  details.setAttribute('aria-hidden', String(!nextExpanded));
-  details.toggleAttribute('inert', !nextExpanded);
-  if (label) label.textContent = nextExpanded ? 'Hide challenge paths' : 'View challenge paths';
-}
-function renderChallengeProgression() {
-  const catalog = $('challengeCatalog');
-  const summary = $('challengeVaultSummary');
-  const nextTitle = $('challengeNextTitle');
-  const nextPoints = $('challengeNextPoints');
-  const progress = $('challengeUnlockProgress');
-  const progressFill = $('challengeUnlockProgressFill');
-  if (!catalog) return;
-
-  if (challengeProgressionStatus === 'loading') {
-    catalog.setAttribute('aria-busy', 'true');
-    catalog.innerHTML = '<article class="challenge-catalog-empty">Challenge progression is loading.</article>';
-    if (summary) summary.textContent = 'Loading challenges';
-    return;
-  }
-
-  catalog.setAttribute('aria-busy', 'false');
-  if (challengeProgressionStatus === 'error') {
-    catalog.innerHTML = `<article class="challenge-catalog-empty"><strong>Challenge tracks are temporarily unavailable.</strong><p>${escapeHtml(challengeProgressionError)}</p><button class="challenge-retry-button" type="button" data-retry-challenges>Try again</button></article>`;
-    if (summary) summary.textContent = 'Unable to load';
-    return;
-  }
-
-  const challenges = challengeProgression.challenges || [];
-  const unlockedCount = challenges.filter((challenge) => challenge.status !== 'locked').length;
-  const next = challengeProgression.nextUnlock;
-  if (summary) summary.textContent = `${unlockedCount} of ${challenges.length} unlocked`;
-  if (catalog) catalog.innerHTML = challenges.length
-    ? challenges.map(challengeCard).join('')
-    : '<article class="challenge-catalog-empty">No challenge tracks are configured yet.</article>';
-
-  if (next) {
-    const totalPoints = Math.min(challengeProgression.totalPoints, next.pointsRequired);
-    if (nextTitle) nextTitle.textContent = next.title;
-    if (nextPoints) nextPoints.textContent = `${next.pointsRemaining.toLocaleString()} points to go · ${challengeProgression.totalPoints.toLocaleString()} of ${next.pointsRequired.toLocaleString()}`;
-    if (progress) {
-      progress.setAttribute('aria-valuemax', String(next.pointsRequired));
-      progress.setAttribute('aria-valuenow', String(totalPoints));
-      progress.setAttribute('aria-valuetext', `${totalPoints} of ${next.pointsRequired} points earned toward ${next.title}`);
-    }
-    if (progressFill) progressFill.style.setProperty('--challenge-progress', `${next.progressPercent}%`);
-  } else {
-    const inaccessible = challenges.some((challenge) => challenge.status === 'locked' && !challenge.accessGranted);
-    if (nextTitle) nextTitle.textContent = inaccessible ? 'Membership access is required.' : 'Every configured challenge is open.';
-    if (nextPoints) nextPoints.textContent = inaccessible ? 'Restore access to continue your challenge progression.' : 'Keep building points for the tracks that come next.';
-    if (progress) {
-      progress.setAttribute('aria-valuemax', '1');
-      progress.setAttribute('aria-valuenow', inaccessible ? '0' : '1');
-      progress.setAttribute('aria-valuetext', inaccessible ? 'Challenge progression requires membership access' : 'All configured challenges unlocked');
-    }
-    if (progressFill) progressFill.style.setProperty('--challenge-progress', inaccessible ? '0%' : '100%');
-  }
-}
 function launchConfetti({ endless = false } = {}) {
   const layer = $('confettiLayer');
   if (!layer) return;
@@ -848,8 +739,8 @@ function showChallengeUnlockCelebration(challenges = []) {
   if (icon) icon.className = `badge-medal-icon app-icon ${challengeIconClass(first)}`;
   if (title) title.textContent = challenges.length === 1 ? first.title : `${challenges.length} challenge tracks unlocked`;
   if (copy) copy.textContent = challenges.length === 1
-    ? 'Your points opened a new path. It is ready in the Challenge Vault.'
-    : `${challengeNames.join(', ')} are now ready in the Challenge Vault.`;
+    ? 'Your points opened a new path. It is ready in Badges & Rewards.'
+    : `${challengeNames.join(', ')} are now ready in Badges & Rewards.`;
   if (stage.hideTimer) window.clearTimeout(stage.hideTimer);
   if (stage.exitTimer) window.clearTimeout(stage.exitTimer);
   stage.hidden = false;
@@ -891,10 +782,6 @@ let leaderboardPositions = {
 };
 let leaderboardPrestigeRequestId = 0;
 let leaderboardPrestigeTimer = null;
-let challengeProgression = { totalPoints: 0, challenges: [], nextUnlock: null, unseenUnlocks: [] };
-let challengeProgressionStatus = 'loading';
-let challengeProgressionError = '';
-let challengeActionKey = '';
 let countdownTimer = null;
 let activeCountdownCallout = '';
 let confettiTimer = null;
@@ -930,28 +817,13 @@ dashboardStreakButton?.addEventListener('click', () => {
   streakDetailsDialog?.open(dashboardStreakButton);
 });
 async function refreshChallengeProgression({ claimCelebrations = false, celebrationDelay = 0 } = {}) {
-  if (!$('challengeCatalog')) return [];
-  challengeProgressionStatus = challengeProgression.challenges.length ? 'ready' : 'loading';
-  challengeProgressionError = '';
-  renderChallengeProgression();
+  if (!claimCelebrations) return [];
   try {
-    if (claimCelebrations) {
-      const result = await claimChallengeUnlocks();
-      challengeProgression = result.progression;
-      challengeProgressionStatus = 'ready';
-      renderChallengeProgression();
-      queueChallengeUnlockCelebration(result.claimedUnlocks, celebrationDelay);
-      return result.claimedUnlocks;
-    }
-    challengeProgression = await getChallengeProgression();
-    challengeProgressionStatus = 'ready';
-    renderChallengeProgression();
-    return [];
+    const result = await claimChallengeUnlocks();
+    queueChallengeUnlockCelebration(result.claimedUnlocks, celebrationDelay);
+    return result.claimedUnlocks;
   } catch (error) {
-    challengeProgressionStatus = 'error';
-    challengeProgressionError = error?.message || 'Please try again in a moment.';
-    renderChallengeProgression();
-    console.warn('Unable to load challenge progression', error);
+    console.warn('Unable to claim challenge unlock celebrations', error);
     return [];
   }
 }
@@ -1199,7 +1071,7 @@ function updateCountdownCard() {
   if (isChallengeFinished()) {
     countdownTime.textContent = '77 days complete';
     countdownProgress.style.setProperty('--progress', '100%');
-    countdownCallout.textContent = 'You finished the 77-day challenge. Your next path is waiting in the Challenge Vault.';
+    countdownCallout.textContent = 'You finished the 77-day challenge. Your next path is waiting in Badges & Rewards.';
     activeCountdownCallout = countdownCallout.textContent;
     if (countdownProgressLabel) countdownProgressLabel.textContent = 'Challenge complete';
     if (countdownActionsLabel) countdownActionsLabel.textContent = 'Point-unlocked tracks are ready';
@@ -1329,7 +1201,6 @@ function render() {
   }
   if (completedToday) completedToday.textContent = `${feed.filter(item => item.status === 'complete' && item.timestamp === 'Today').length} people completed today`;
   renderGameSummary();
-  renderChallengeProgression();
   updateCountdownCard();
   if (finished && !finishCelebrated) {
     finishCelebrated = true;
@@ -1491,14 +1362,6 @@ const checkInButton = $('checkInButton');
 const countdownCheckInButton = $('countdownCheckInButton');
 const rewardBackdrop = $('rewardBackdrop');
 const rewardToast = $('rewardToast');
-const challengeCatalog = $('challengeCatalog');
-const challengeVaultToggle = $('challengeVaultToggle');
-if (challengeVaultToggle) {
-  setChallengeVaultExpanded(false);
-  challengeVaultToggle.addEventListener('click', () => {
-    setChallengeVaultExpanded(challengeVaultToggle.getAttribute('aria-expanded') !== 'true');
-  });
-}
 if (themeToggle) themeToggle.addEventListener('click', () => { theme = theme === 'dark' ? 'light' : 'dark'; save('dominion:theme', theme); render(); });
 if (rewardBackdrop && rewardToast) {
   rewardBackdrop.addEventListener('click', () => dismissRewardToast(rewardToast, rewardBackdrop));
@@ -1613,30 +1476,6 @@ window.addEventListener('storage', (event) => {
   } else return;
   render();
 });
-if (challengeCatalog) challengeCatalog.addEventListener('click', async (event) => {
-  const retryButton = event.target.closest('[data-retry-challenges]');
-  if (retryButton) {
-    await refreshChallengeProgression({ claimCelebrations: true });
-    return;
-  }
-  const startButton = event.target.closest('[data-start-challenge]');
-  if (!startButton || challengeActionKey) return;
-  const feedback = $('challengeCatalogFeedback');
-  challengeActionKey = startButton.dataset.startChallenge;
-  renderChallengeProgression();
-  try {
-    challengeProgression = await startChallenge(challengeActionKey);
-    challengeProgressionStatus = 'ready';
-    const activeChallenge = challengeProgression.challenges.find((challenge) => challenge.key === challengeActionKey);
-    if (feedback) feedback.textContent = `${activeChallenge?.title || 'Challenge'} started.`;
-  } catch (error) {
-    if (feedback) feedback.textContent = error?.message || 'Unable to start that challenge right now.';
-    console.warn('Unable to start challenge', error);
-  } finally {
-    challengeActionKey = '';
-    renderChallengeProgression();
-  }
-});
 if (selectAllActionsButton) selectAllActionsButton.addEventListener('click', () => {
   if (isChallengeFinished() || !isCheckInStatusReady() || hasSubmittedCheckIn() || isCheckInPending()) return;
   const currentEntry = todayEntry();
@@ -1658,7 +1497,7 @@ if (checkInButton) checkInButton.addEventListener('click', async () => {
     return;
   }
   if (isChallengeFinished()) {
-    window.alert('The 77-day challenge is complete. Choose your next path in the Challenge Vault.');
+    window.alert('The 77-day challenge is complete. Choose your next path in Badges & Rewards.');
     render();
     return;
   }

@@ -17,6 +17,7 @@ import {
   prepareMockCrewMembersForStorage,
 } from './mock-community-storage.mjs';
 import { normalizeLeaderboardRank } from './leaderboard-prestige.mjs';
+import { normalizeEarnedBadges } from './badges-rewards.mjs';
 import {
   challengeProgressionToRewardCatalog,
   normalizeRewardCatalog,
@@ -785,6 +786,43 @@ export async function getRewardCatalog({ limit = 50, cursor = null } = {}) {
   return normalizeRewardCatalog(data || {});
 }
 
+export async function getAllRewardCatalog({ pageSize = 100 } = {}) {
+  const normalizedPageSize = Math.floor(Math.min(Math.max(Number(pageSize) || 100, 1), 100));
+  const itemsByKey = new Map();
+  const visitedCursors = new Set();
+  let cursor = null;
+  let firstPage = null;
+  let totalItems = 0;
+
+  while (true) {
+    const page = await getRewardCatalog({ limit: normalizedPageSize, cursor });
+    firstPage ||= page;
+    totalItems = Math.max(totalItems, page.page.totalItems);
+    for (const reward of page.items) itemsByKey.set(reward.key, reward);
+
+    if (!page.page.hasMore) break;
+    const nextCursor = page.page.nextCursor;
+    const cursorKey = nextCursor ? `${nextCursor.sortOrder}:${nextCursor.key}` : '';
+    if (!nextCursor?.key || visitedCursors.has(cursorKey)) {
+      throw new Error('Reward catalog pagination did not advance.');
+    }
+    visitedCursors.add(cursorKey);
+    cursor = nextCursor;
+  }
+
+  const items = [...itemsByKey.values()];
+  return normalizeRewardCatalog({
+    ...(firstPage || {}),
+    items,
+    page: {
+      limit: items.length,
+      totalItems: Math.max(totalItems, items.length),
+      hasMore: false,
+      nextCursor: null,
+    },
+  });
+}
+
 export async function claimRewardEntitlementUnlocks() {
   if (isLocalDemoMode()) {
     return {
@@ -1074,6 +1112,37 @@ export async function getGameSummary() {
     gameStats: mapGameStats(statsResult.data),
     badges: (badgesResult.data || []).map(mapBadge).filter(Boolean),
   };
+}
+
+export async function getEarnedBadges({ pageSize = 100 } = {}) {
+  if (isLocalDemoMode()) {
+    return normalizeEarnedBadges(readJson('dominion:badges', []).map(mapBadge).filter(Boolean));
+  }
+
+  const client = requireSupabase();
+  const user = await requireUser();
+  const normalizedPageSize = Math.floor(Math.min(Math.max(Number(pageSize) || 100, 25), 500));
+  const badges = [];
+  let offset = 0;
+
+  while (true) {
+    const { data, error } = await client
+      .from('user_badges')
+      .select('badge_key, earned_at, entry_date, metadata, badge_definitions(name, description, category, tier, icon)')
+      .eq('user_id', user.id)
+      .order('earned_at', { ascending: false })
+      .order('badge_key', { ascending: true })
+      .range(offset, offset + normalizedPageSize - 1);
+    if (error) throw error;
+
+    const rows = data || [];
+    const page = rows.map(mapBadge).filter(Boolean);
+    badges.push(...page);
+    if (rows.length < normalizedPageSize) break;
+    offset += normalizedPageSize;
+  }
+
+  return normalizeEarnedBadges(badges);
 }
 
 async function queryLeaderboard(client, { scope = 'global', crewId = null, window = 'week' } = {}) {
