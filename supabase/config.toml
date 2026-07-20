@@ -68,3 +68,6 @@ enabled = false
 
 [functions.stripe-webhook]
 verify_jwt = false
+
+[functions.share-snapshot]
+verify_jwt = false

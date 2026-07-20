@@ -44,6 +44,7 @@ jobs:
       STRIPE_WEBHOOK_SECRET: ${{ secrets.STRIPE_WEBHOOK_SECRET }}
       STRIPE_MEMBERSHIP_PRICE_ID: ${{ secrets.STRIPE_MEMBERSHIP_PRICE_ID }}
       PUBLIC_SITE_URL: ${{ vars.PUBLIC_SITE_URL }}
+      PUBLIC_SHARE_URL: ${{ vars.PUBLIC_SHARE_URL }}
       PUBLIC_ALLOWED_SITE_URLS: ${{ vars.PUBLIC_ALLOWED_SITE_URLS }}
       CLOUDFLARE_PAGES_PROJECT_HOST: ${{ vars.CLOUDFLARE_PAGES_PROJECT_HOST }}
       VITE_SUPABASE_URL: ${{ vars.VITE_SUPABASE_URL }}
@@ -120,6 +121,9 @@ jobs:
             "STRIPE_MEMBERSHIP_PRICE_ID=${STRIPE_MEMBERSHIP_PRICE_ID}"
             "PUBLIC_SITE_URL=${PUBLIC_SITE_URL}"
           )
+          if [[ -n "${PUBLIC_SHARE_URL:-}" ]]; then
+            function_secrets+=("PUBLIC_SHARE_URL=${PUBLIC_SHARE_URL}")
+          fi
           if [[ -n "${PUBLIC_ALLOWED_SITE_URLS:-}" ]]; then
             function_secrets+=("PUBLIC_ALLOWED_SITE_URLS=${PUBLIC_ALLOWED_SITE_URLS}")
           fi
@@ -134,6 +138,8 @@ jobs:
           supabase functions deploy create-customer-portal-session --project-ref "$SUPABASE_PROJECT_REF"
       - name: Deploy Stripe webhook
         run: supabase functions deploy stripe-webhook --project-ref "$SUPABASE_PROJECT_REF" --no-verify-jwt
+      - name: Deploy public share renderer
+        run: supabase functions deploy share-snapshot --project-ref "$SUPABASE_PROJECT_REF" --no-verify-jwt
       - name: Verify migrations and deployed functions
         shell: bash
         run: |
@@ -148,6 +154,13 @@ jobs:
             "${VITE_SUPABASE_URL}/functions/v1/cancel-membership")"
           if [[ "$status" != "401" ]]; then
             echo "::error::Expected the unauthenticated function smoke test to return 401; received ${status}."
+            exit 1
+          fi
+
+          share_status="$(curl --silent --show-error --output "${RUNNER_TEMP}/share-snapshot-response.html" --write-out '%{http_code}' \
+            "${VITE_SUPABASE_URL}/functions/v1/share-snapshot")"
+          if [[ "$share_status" != "404" ]]; then
+            echo "::error::Expected the tokenless public-share smoke test to return 404; received ${share_status}."
             exit 1
           fi
       - name: Release backend feature gates
