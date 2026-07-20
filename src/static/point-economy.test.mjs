@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { describe, it } from 'node:test';
 
 import {
@@ -12,6 +13,11 @@ import {
   challengeInstancesRequired,
   validateRewardThresholds,
 } from './point-economy.mjs';
+
+const scoringMigration = readFileSync(
+  new URL('../../supabase/migrations/20260719120000_seven_point_scoring.sql', import.meta.url),
+  'utf8',
+);
 
 describe('seven-point economy contract', () => {
   it('caps Daily Standards at seven one-point completions', () => {
@@ -80,5 +86,12 @@ describe('seven-point economy contract', () => {
       sharingBonusPoints: 0,
       adjustmentPoints: -3,
     });
+  });
+
+  it('preserves the deployed point-helper defaults when replacing its body', () => {
+    assert.match(
+      scoringMigration,
+      /target_entry_date date default null,[\s\S]*target_idempotency_key text default null/,
+    );
   });
 });
