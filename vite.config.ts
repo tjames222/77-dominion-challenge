@@ -14,6 +14,7 @@ export default defineConfig({
         invite: 'invite.html',
         billing: 'billing.html',
         dashboard: 'dashboard.html',
+        badgesRewards: 'badges-rewards.html',
         bibleReading: 'bible-reading.html',
         morningPrayer: 'morning-prayer.html',
         worship: 'worship.html',

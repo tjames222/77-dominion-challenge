@@ -6,7 +6,7 @@ const topbar = document.querySelector('.topbar');
 
 const loggedInLinks = [
   ['Dashboard', './dashboard.html'],
-  ['Challenges', './dashboard.html#challengeVault'],
+  ['Badges & Rewards', './badges-rewards.html'],
   ['Billing', './billing.html'],
   ['Community', './community.html'],
   ['Check-In', './dashboard.html#check-in'],
@@ -141,7 +141,8 @@ async function buildMenu() {
     ${isLoggedIn ? '<button class="global-menu-logout" type="button">Log Out</button>' : ''}
   `;
 
-  topbar.appendChild(button);
+  const trailingActions = topbar.querySelector('.topbar-trailing-actions');
+  (trailingActions || topbar).appendChild(button);
   document.body.appendChild(overlay);
   document.body.appendChild(menu);
 

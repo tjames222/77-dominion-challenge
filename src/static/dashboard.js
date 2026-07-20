@@ -1,8 +1,8 @@
 import { initReveal } from './reveal';
+import { createDialog } from './dialog.mjs';
 import {
   claimChallengeUnlocks,
   getBillingState,
-  getChallengeProgression,
   getDailyStandardDraft,
   getDashboard,
   getGameSummary,
@@ -14,7 +14,6 @@ import {
   recordAppVisit,
   redirectToLogin,
   setDailyStandardWorkoutDifficulty,
-  startChallenge,
   updateProfile,
 } from './api';
 import {
@@ -33,12 +32,18 @@ import {
   checkInCacheForOwner,
   createCheckInCache,
   createCheckInAlreadyCompleteError,
-  currentFullDayStreakForDate,
   dateKeyForTimeZone,
   normalizeChallengeDays,
 } from './check-in.mjs';
 import { syncWorkoutDifficultyControls } from './workout-difficulty-controls.mjs';
 import { resolveLeaderboardPrestige } from './leaderboard-prestige.mjs';
+import {
+  STREAK_METRIC_DEFINITIONS,
+  buildStreakSummary,
+  preserveBestStreaks,
+  streakIndicatorLabel,
+  streakMetrics,
+} from './streak-summary.mjs';
 import {
   PREVIEW_CHALLENGE_STORAGE_KEY,
   PREVIEW_CHECK_IN_DATES_STORAGE_KEY,
@@ -261,7 +266,6 @@ const calculateLocalPoints = (entry, status) => {
 };
 const badgeEarnedDate = (badge) => badge.entryDate || badge.earnedDate || badge.metadata?.entryDate || String(badge.earnedAt || '').slice(0, 10);
 const badgeDateFormatter = new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric' });
-const challengeDateFormatter = new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
 const safeBadgeTier = (badge) => {
   const tier = String(badge?.tier || '').toLowerCase();
   return ['bronze', 'silver', 'gold'].includes(tier) ? tier : 'bronze';
@@ -287,6 +291,63 @@ const progressionBadgeCard = (badge) => {
   return `<article class="progression-badge-card ${tier}"><span class="progression-badge-icon app-icon ${badgeIconClass(badge)}" aria-hidden="true"></span><div class="progression-badge-copy"><div class="progression-badge-meta"><span>${escapeHtml(tierLabel)}</span>${earnedMarkup}</div><strong>${escapeHtml(name)}</strong><p>${escapeHtml(description)}</p></div></article>`;
 };
 const dayCountLabel = (value) => `${value} ${value === 1 ? 'day' : 'days'}`;
+function createStreakDetailsContent(ownerDocument) {
+  const wrapper = ownerDocument.createElement('div');
+  wrapper.className = 'streak-details-content';
+
+  const zeroState = ownerDocument.createElement('p');
+  zeroState.className = 'streak-details-zero';
+  zeroState.dataset.streakZeroState = '';
+  zeroState.setAttribute('role', 'status');
+  zeroState.textContent = 'No streak history yet. Open the app and complete the full standard to begin.';
+
+  const grid = ownerDocument.createElement('div');
+  grid.className = 'streak-details-grid';
+  STREAK_METRIC_DEFINITIONS.forEach(({ key, kind, label }) => {
+    const metric = ownerDocument.createElement('article');
+    metric.className = 'streak-detail-metric';
+    metric.dataset.streakKind = kind === 'Personal best' ? 'best' : 'current';
+
+    const kindElement = ownerDocument.createElement('span');
+    kindElement.className = 'streak-detail-kind';
+    kindElement.textContent = kind;
+
+    const labelElement = ownerDocument.createElement('h3');
+    labelElement.textContent = label;
+
+    const valueRow = ownerDocument.createElement('p');
+    valueRow.className = 'streak-detail-value';
+    const valueElement = ownerDocument.createElement('strong');
+    valueElement.dataset.streakValue = key;
+    valueElement.textContent = '0';
+    const unitElement = ownerDocument.createElement('span');
+    unitElement.dataset.streakUnit = key;
+    unitElement.textContent = 'days';
+    valueRow.append(valueElement, unitElement);
+
+    metric.append(kindElement, labelElement, valueRow);
+    grid.append(metric);
+  });
+
+  wrapper.append(zeroState, grid);
+  return wrapper;
+}
+function renderStreakExperience(summary) {
+  const indicator = $('dashboardStreakButton');
+  const indicatorValue = $('dashboardAppStreakCount');
+  if (indicatorValue) indicatorValue.textContent = String(summary.currentAppStreak);
+  if (indicator) indicator.setAttribute('aria-label', streakIndicatorLabel(summary));
+
+  streakMetrics(summary).forEach(({ key, value, unit }) => {
+    const valueElement = document.querySelector(`[data-streak-value="${key}"]`);
+    const unitElement = document.querySelector(`[data-streak-unit="${key}"]`);
+    if (valueElement) valueElement.textContent = String(value);
+    if (unitElement) unitElement.textContent = unit;
+  });
+
+  const zeroState = document.querySelector('[data-streak-zero-state]');
+  if (zeroState) zeroState.hidden = summary.hasHistory;
+}
 const getLevelProgress = (rawTotalPoints) => {
   const numericPoints = Number(rawTotalPoints);
   const totalPoints = Number.isFinite(numericPoints) ? Math.max(0, Math.floor(numericPoints)) : 0;
@@ -372,19 +433,12 @@ function renderGameSummary() {
   const gameLevelProgress = $('gameLevelProgress');
   const gameLevelProgressFill = $('gameLevelProgressFill');
   const gameMomentumMessage = $('gameMomentumMessage');
-  const appStreakCount = $('appStreakCount');
-  const appStreakUnit = $('appStreakUnit');
-  const appStreakBest = $('appStreakBest');
-  const fullDayStreakCount = $('fullDayStreakCount');
-  const fullDayStreakUnit = $('fullDayStreakUnit');
-  const fullDayStreakBest = $('fullDayStreakBest');
   const recentBadgeSummary = $('recentBadgeSummary');
   const badgeShelf = $('badgeShelf');
   const levelProgress = getLevelProgress(gameStats.totalPoints ?? gameStats.challengePoints ?? 0);
-  const appStreak = Math.max(0, Math.floor(Number(gameStats.currentAppStreak) || 0));
-  const bestAppStreak = Math.max(appStreak, Math.floor(Number(gameStats.bestAppStreak) || 0));
-  const fullDayStreak = currentFullDayStreakForDate(gameStats, todayKey());
-  const bestFullDayStreak = Math.max(fullDayStreak, Math.floor(Number(gameStats.bestFullDayStreak) || 0));
+  const streakSummary = buildStreakSummary(gameStats, todayKey());
+  const appStreak = streakSummary.currentAppStreak;
+  const fullDayStreak = streakSummary.currentFullStandardStreak;
   const recentBadges = badges.filter(Boolean).slice(0, 4);
   const prestige = resolveLeaderboardPrestige(leaderboardPositions);
   const levelLabel = prestige.shortLabel
@@ -424,12 +478,7 @@ function renderGameSummary() {
     });
     if (gameMomentumMessage.textContent !== momentumMessage) gameMomentumMessage.textContent = momentumMessage;
   }
-  if (appStreakCount) appStreakCount.textContent = String(appStreak);
-  if (appStreakUnit) appStreakUnit.textContent = appStreak === 1 ? 'day' : 'days';
-  if (appStreakBest) appStreakBest.textContent = `Best ${dayCountLabel(bestAppStreak)}`;
-  if (fullDayStreakCount) fullDayStreakCount.textContent = String(fullDayStreak);
-  if (fullDayStreakUnit) fullDayStreakUnit.textContent = fullDayStreak === 1 ? 'day' : 'days';
-  if (fullDayStreakBest) fullDayStreakBest.textContent = `Best ${dayCountLabel(bestFullDayStreak)}`;
+  renderStreakExperience(streakSummary);
   if (recentBadgeSummary) recentBadgeSummary.textContent = recentBadges.length ? `${recentBadges.length} recent` : 'No badges yet';
   if (badgeShelf) {
     badgeShelf.innerHTML = recentBadges.length
@@ -443,112 +492,6 @@ const challengeIconClass = (challenge) => {
     ? `icon-${icon}`
     : 'icon-target';
 };
-const challengeDate = (value) => {
-  if (!value) return '';
-  const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? '' : challengeDateFormatter.format(date);
-};
-const challengeStatusLabel = (challenge) => {
-  const status = ({ locked: 'Locked', available: 'Available', active: 'Active', completed: 'Completed' })[challenge.status] || 'Locked';
-  return challenge.accessGranted ? status : `${status} · Access required`;
-};
-const challengeAccessMessage = (challenge) => {
-  if (challenge.accessReason === 'membership_required') return 'An active membership is required for this track.';
-  return challenge.accessReason || 'Access is required for this track.';
-};
-const challengeCard = (challenge) => {
-  const pointsRequired = Math.max(0, Number(challenge.pointsRequired) || 0);
-  const pointsRemaining = Math.max(0, Number(challenge.pointsRemaining) || 0);
-  const duration = challenge.durationDays ? `${Number(challenge.durationDays).toLocaleString()} days` : 'Flexible length';
-  const unlocked = challenge.status !== 'locked';
-  const unlockedDate = challengeDate(challenge.unlockedAt);
-  const startedDate = challengeDate(challenge.startedAt);
-  const completedDate = challengeDate(challenge.completedAt);
-  let detail = '';
-  let action = '';
-
-  if (!challenge.accessGranted) {
-    detail = escapeHtml(challengeAccessMessage(challenge));
-  } else if (challenge.status === 'locked') {
-    detail = `${pointsRemaining.toLocaleString()} ${pointsRemaining === 1 ? 'point' : 'points'} remaining · Unlocks at ${pointsRequired.toLocaleString()}`;
-  } else if (challenge.status === 'available') {
-    detail = unlockedDate ? `Unlocked ${escapeHtml(unlockedDate)}` : 'Unlocked and ready to start';
-    action = `<button class="challenge-start-button" type="button" data-start-challenge="${escapeHtml(challenge.key)}"${challengeActionKey === challenge.key ? ' disabled' : ''}>${challengeActionKey === challenge.key ? 'Starting…' : 'Start track'}</button>`;
-  } else if (challenge.status === 'active') {
-    detail = startedDate ? `Started ${escapeHtml(startedDate)}` : 'Track in progress';
-  } else {
-    detail = completedDate ? `Completed ${escapeHtml(completedDate)}` : 'Challenge completed';
-  }
-
-  return `<article class="challenge-card is-${escapeHtml(challenge.status)}${challenge.accessGranted ? '' : ' is-inaccessible'}"><div class="challenge-card-topline"><span class="challenge-card-icon app-icon ${challengeIconClass(challenge)}" aria-hidden="true"></span><span class="challenge-card-status">${escapeHtml(challengeStatusLabel(challenge))}</span></div><div class="challenge-card-copy"><p>${escapeHtml(challenge.type || 'Challenge')} · ${escapeHtml(duration)}</p><h3>${escapeHtml(challenge.title)}</h3><p>${escapeHtml(challenge.teaser || '')}</p></div><div class="challenge-card-footer"><small>${detail}</small>${action}</div>${unlocked ? '<span class="challenge-card-unlocked" aria-hidden="true"><span class="app-icon icon-check"></span></span>' : ''}</article>`;
-};
-function setChallengeVaultExpanded(expanded) {
-  const vault = $('challengeVault');
-  const toggle = $('challengeVaultToggle');
-  const label = $('challengeVaultToggleLabel');
-  const details = $('challengeVaultDetails');
-  if (!vault || !toggle || !details) return;
-
-  const nextExpanded = Boolean(expanded);
-  vault.classList.toggle('is-expanded', nextExpanded);
-  toggle.setAttribute('aria-expanded', String(nextExpanded));
-  details.setAttribute('aria-hidden', String(!nextExpanded));
-  details.toggleAttribute('inert', !nextExpanded);
-  if (label) label.textContent = nextExpanded ? 'Hide challenge paths' : 'View challenge paths';
-}
-function renderChallengeProgression() {
-  const catalog = $('challengeCatalog');
-  const summary = $('challengeVaultSummary');
-  const nextTitle = $('challengeNextTitle');
-  const nextPoints = $('challengeNextPoints');
-  const progress = $('challengeUnlockProgress');
-  const progressFill = $('challengeUnlockProgressFill');
-  if (!catalog) return;
-
-  if (challengeProgressionStatus === 'loading') {
-    catalog.setAttribute('aria-busy', 'true');
-    catalog.innerHTML = '<article class="challenge-catalog-empty">Challenge progression is loading.</article>';
-    if (summary) summary.textContent = 'Loading challenges';
-    return;
-  }
-
-  catalog.setAttribute('aria-busy', 'false');
-  if (challengeProgressionStatus === 'error') {
-    catalog.innerHTML = `<article class="challenge-catalog-empty"><strong>Challenge tracks are temporarily unavailable.</strong><p>${escapeHtml(challengeProgressionError)}</p><button class="challenge-retry-button" type="button" data-retry-challenges>Try again</button></article>`;
-    if (summary) summary.textContent = 'Unable to load';
-    return;
-  }
-
-  const challenges = challengeProgression.challenges || [];
-  const unlockedCount = challenges.filter((challenge) => challenge.status !== 'locked').length;
-  const next = challengeProgression.nextUnlock;
-  if (summary) summary.textContent = `${unlockedCount} of ${challenges.length} unlocked`;
-  if (catalog) catalog.innerHTML = challenges.length
-    ? challenges.map(challengeCard).join('')
-    : '<article class="challenge-catalog-empty">No challenge tracks are configured yet.</article>';
-
-  if (next) {
-    const totalPoints = Math.min(challengeProgression.totalPoints, next.pointsRequired);
-    if (nextTitle) nextTitle.textContent = next.title;
-    if (nextPoints) nextPoints.textContent = `${next.pointsRemaining.toLocaleString()} points to go · ${challengeProgression.totalPoints.toLocaleString()} of ${next.pointsRequired.toLocaleString()}`;
-    if (progress) {
-      progress.setAttribute('aria-valuemax', String(next.pointsRequired));
-      progress.setAttribute('aria-valuenow', String(totalPoints));
-      progress.setAttribute('aria-valuetext', `${totalPoints} of ${next.pointsRequired} points earned toward ${next.title}`);
-    }
-    if (progressFill) progressFill.style.setProperty('--challenge-progress', `${next.progressPercent}%`);
-  } else {
-    const inaccessible = challenges.some((challenge) => challenge.status === 'locked' && !challenge.accessGranted);
-    if (nextTitle) nextTitle.textContent = inaccessible ? 'Membership access is required.' : 'Every configured challenge is open.';
-    if (nextPoints) nextPoints.textContent = inaccessible ? 'Restore access to continue your challenge progression.' : 'Keep building points for the tracks that come next.';
-    if (progress) {
-      progress.setAttribute('aria-valuemax', '1');
-      progress.setAttribute('aria-valuenow', inaccessible ? '0' : '1');
-      progress.setAttribute('aria-valuetext', inaccessible ? 'Challenge progression requires membership access' : 'All configured challenges unlocked');
-    }
-    if (progressFill) progressFill.style.setProperty('--challenge-progress', inaccessible ? '0%' : '100%');
-  }
-}
 function launchConfetti({ endless = false } = {}) {
   const layer = $('confettiLayer');
   if (!layer) return;
@@ -796,8 +739,8 @@ function showChallengeUnlockCelebration(challenges = []) {
   if (icon) icon.className = `badge-medal-icon app-icon ${challengeIconClass(first)}`;
   if (title) title.textContent = challenges.length === 1 ? first.title : `${challenges.length} challenge tracks unlocked`;
   if (copy) copy.textContent = challenges.length === 1
-    ? 'Your points opened a new path. It is ready in the Challenge Vault.'
-    : `${challengeNames.join(', ')} are now ready in the Challenge Vault.`;
+    ? 'Your points opened a new path. It is ready in Badges & Rewards.'
+    : `${challengeNames.join(', ')} are now ready in Badges & Rewards.`;
   if (stage.hideTimer) window.clearTimeout(stage.hideTimer);
   if (stage.exitTimer) window.clearTimeout(stage.exitTimer);
   stage.hidden = false;
@@ -827,7 +770,9 @@ let submittedCheckInDates = new Set(initialCheckInCache.dates);
 let submittedChallengeDays = new Set(initialCheckInCache.challengeDays);
 let feed = localDemoMode ? load('dominion:feed', starterFeed) : starterFeed;
 let workoutDifficulty = normalizeWorkoutDifficulty(load(WORKOUT_DIFFICULTY_STORAGE_KEY, DEFAULT_WORKOUT_DIFFICULTY));
-let gameStats = localDemoMode ? load('dominion:gameStats', DEFAULT_DEMO_GAME_STATS) : {};
+let gameStats = preserveBestStreaks(
+  localDemoMode ? load('dominion:gameStats', DEFAULT_DEMO_GAME_STATS) : {},
+);
 let badges = localDemoMode ? load('dominion:badges', []) : [];
 let leaderboardPositions = {
   globalRank: null,
@@ -837,10 +782,6 @@ let leaderboardPositions = {
 };
 let leaderboardPrestigeRequestId = 0;
 let leaderboardPrestigeTimer = null;
-let challengeProgression = { totalPoints: 0, challenges: [], nextUnlock: null, unseenUnlocks: [] };
-let challengeProgressionStatus = 'loading';
-let challengeProgressionError = '';
-let challengeActionKey = '';
 let countdownTimer = null;
 let activeCountdownCallout = '';
 let confettiTimer = null;
@@ -859,29 +800,30 @@ let renderedDateKey = todayKey();
 let checkInStatusHydratedDate = hasSupabaseAuth() ? '' : renderedDateKey;
 let dashboardHydrationRequestId = 0;
 const $ = (id) => document.getElementById(id);
+const dashboardStreakButton = $('dashboardStreakButton');
+const streakDetailsDialog = dashboardStreakButton ? createDialog({
+  id: 'streakDetailsDialog',
+  title: 'Streak details',
+  eyebrow: 'Your consistency',
+  description: 'Current streaks reflect the active challenge day. Personal bests remain after a streak resets.',
+  content: createStreakDetailsContent(document),
+  onOpen: () => {
+    dashboardStreakButton.setAttribute('aria-expanded', 'true');
+    renderStreakExperience(buildStreakSummary(gameStats, todayKey()));
+  },
+  onClose: () => dashboardStreakButton.setAttribute('aria-expanded', 'false'),
+}) : null;
+dashboardStreakButton?.addEventListener('click', () => {
+  streakDetailsDialog?.open(dashboardStreakButton);
+});
 async function refreshChallengeProgression({ claimCelebrations = false, celebrationDelay = 0 } = {}) {
-  if (!$('challengeCatalog')) return [];
-  challengeProgressionStatus = challengeProgression.challenges.length ? 'ready' : 'loading';
-  challengeProgressionError = '';
-  renderChallengeProgression();
+  if (!claimCelebrations) return [];
   try {
-    if (claimCelebrations) {
-      const result = await claimChallengeUnlocks();
-      challengeProgression = result.progression;
-      challengeProgressionStatus = 'ready';
-      renderChallengeProgression();
-      queueChallengeUnlockCelebration(result.claimedUnlocks, celebrationDelay);
-      return result.claimedUnlocks;
-    }
-    challengeProgression = await getChallengeProgression();
-    challengeProgressionStatus = 'ready';
-    renderChallengeProgression();
-    return [];
+    const result = await claimChallengeUnlocks();
+    queueChallengeUnlockCelebration(result.claimedUnlocks, celebrationDelay);
+    return result.claimedUnlocks;
   } catch (error) {
-    challengeProgressionStatus = 'error';
-    challengeProgressionError = error?.message || 'Please try again in a moment.';
-    renderChallengeProgression();
-    console.warn('Unable to load challenge progression', error);
+    console.warn('Unable to claim challenge unlock celebrations', error);
     return [];
   }
 }
@@ -1129,7 +1071,7 @@ function updateCountdownCard() {
   if (isChallengeFinished()) {
     countdownTime.textContent = '77 days complete';
     countdownProgress.style.setProperty('--progress', '100%');
-    countdownCallout.textContent = 'You finished the 77-day challenge. Your next path is waiting in the Challenge Vault.';
+    countdownCallout.textContent = 'You finished the 77-day challenge. Your next path is waiting in Badges & Rewards.';
     activeCountdownCallout = countdownCallout.textContent;
     if (countdownProgressLabel) countdownProgressLabel.textContent = 'Challenge complete';
     if (countdownActionsLabel) countdownActionsLabel.textContent = 'Point-unlocked tracks are ready';
@@ -1259,7 +1201,6 @@ function render() {
   }
   if (completedToday) completedToday.textContent = `${feed.filter(item => item.status === 'complete' && item.timestamp === 'Today').length} people completed today`;
   renderGameSummary();
-  renderChallengeProgression();
   updateCountdownCard();
   if (finished && !finishCelebrated) {
     finishCelebrated = true;
@@ -1324,7 +1265,7 @@ async function hydrateDashboardFromApi() {
       save('dominion:feed', feed);
     }
     if (dashboard?.gameStats) {
-      gameStats = dashboard.gameStats;
+      gameStats = preserveBestStreaks(dashboard.gameStats, gameStats);
       save('dominion:gameStats', gameStats);
     }
     if (Array.isArray(dashboard?.badges)) {
@@ -1383,7 +1324,7 @@ async function refreshGameSummary(previousBadgeKeys = new Set()) {
     getGameSummary(),
     refreshLeaderboardPrestige({ renderAfter: false }),
   ]);
-  gameStats = summary.gameStats;
+  gameStats = preserveBestStreaks(summary.gameStats, gameStats);
   badges = summary.badges || [];
   save('dominion:gameStats', gameStats);
   save('dominion:badges', badges);
@@ -1396,12 +1337,12 @@ async function recordDailyAppVisit() {
   try {
     const visit = await recordAppVisit();
     if (visit) {
-      gameStats = {
+      gameStats = preserveBestStreaks({
         ...gameStats,
         totalPoints: visit.totalPoints,
         currentAppStreak: visit.currentAppStreak,
         bestAppStreak: visit.bestAppStreak,
-      };
+      }, gameStats);
       save('dominion:gameStats', gameStats);
     }
     await refreshGameSummary(previousBadgeKeys);
@@ -1421,14 +1362,6 @@ const checkInButton = $('checkInButton');
 const countdownCheckInButton = $('countdownCheckInButton');
 const rewardBackdrop = $('rewardBackdrop');
 const rewardToast = $('rewardToast');
-const challengeCatalog = $('challengeCatalog');
-const challengeVaultToggle = $('challengeVaultToggle');
-if (challengeVaultToggle) {
-  setChallengeVaultExpanded(false);
-  challengeVaultToggle.addEventListener('click', () => {
-    setChallengeVaultExpanded(challengeVaultToggle.getAttribute('aria-expanded') !== 'true');
-  });
-}
 if (themeToggle) themeToggle.addEventListener('click', () => { theme = theme === 'dark' ? 'light' : 'dark'; save('dominion:theme', theme); render(); });
 if (rewardBackdrop && rewardToast) {
   rewardBackdrop.addEventListener('click', () => dismissRewardToast(rewardToast, rewardBackdrop));
@@ -1532,7 +1465,7 @@ window.addEventListener('storage', (event) => {
   } else if (event.key === 'dominion:badges') {
     badges = localDemoMode ? load('dominion:badges', []) : [];
   } else if (event.key === 'dominion:gameStats') {
-    gameStats = load('dominion:gameStats', DEFAULT_DEMO_GAME_STATS);
+    gameStats = preserveBestStreaks(load('dominion:gameStats', DEFAULT_DEMO_GAME_STATS), gameStats);
     refreshChallengeProgression({ claimCelebrations: true, celebrationDelay: 350 });
     refreshLeaderboardPrestige();
   } else if (event.key === 'dominion:mockChallengeStates' || event.key === 'dominion:mockChallengeThresholdsVersion') {
@@ -1542,30 +1475,6 @@ window.addEventListener('storage', (event) => {
     return;
   } else return;
   render();
-});
-if (challengeCatalog) challengeCatalog.addEventListener('click', async (event) => {
-  const retryButton = event.target.closest('[data-retry-challenges]');
-  if (retryButton) {
-    await refreshChallengeProgression({ claimCelebrations: true });
-    return;
-  }
-  const startButton = event.target.closest('[data-start-challenge]');
-  if (!startButton || challengeActionKey) return;
-  const feedback = $('challengeCatalogFeedback');
-  challengeActionKey = startButton.dataset.startChallenge;
-  renderChallengeProgression();
-  try {
-    challengeProgression = await startChallenge(challengeActionKey);
-    challengeProgressionStatus = 'ready';
-    const activeChallenge = challengeProgression.challenges.find((challenge) => challenge.key === challengeActionKey);
-    if (feedback) feedback.textContent = `${activeChallenge?.title || 'Challenge'} started.`;
-  } catch (error) {
-    if (feedback) feedback.textContent = error?.message || 'Unable to start that challenge right now.';
-    console.warn('Unable to start challenge', error);
-  } finally {
-    challengeActionKey = '';
-    renderChallengeProgression();
-  }
 });
 if (selectAllActionsButton) selectAllActionsButton.addEventListener('click', () => {
   if (isChallengeFinished() || !isCheckInStatusReady() || hasSubmittedCheckIn() || isCheckInPending()) return;
@@ -1588,7 +1497,7 @@ if (checkInButton) checkInButton.addEventListener('click', async () => {
     return;
   }
   if (isChallengeFinished()) {
-    window.alert('The 77-day challenge is complete. Choose your next path in the Challenge Vault.');
+    window.alert('The 77-day challenge is complete. Choose your next path in Badges & Rewards.');
     render();
     return;
   }
@@ -1649,7 +1558,7 @@ if (checkInButton) checkInButton.addEventListener('click', async () => {
       let points = calculateLocalPoints(entry, status);
       let nextStreak = gameStats.currentFullDayStreak || 0;
       if (simulatedPreviewPost) {
-        gameStats = advancePreviewStreaks(gameStats, status, entry.date);
+        gameStats = preserveBestStreaks(advancePreviewStreaks(gameStats, status, entry.date), gameStats);
         nextStreak = gameStats.currentFullDayStreak;
       } else if (status === 'complete') {
         nextStreak += 1;

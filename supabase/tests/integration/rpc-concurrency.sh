@@ -30,6 +30,10 @@ delete from public.sharing_reward_intents where user_id = '$fixture_user';
 delete from public.game_point_events where user_id = '$fixture_user';
 delete from public.user_badges where user_id = '$fixture_user';
 delete from public.user_challenge_states where user_id = '$fixture_user';
+delete from public.user_reward_entitlements
+where user_id = '$fixture_user'
+   or reward_key = 'concurrency_reward';
+delete from public.reward_definitions where reward_key = 'concurrency_reward';
 delete from public.user_game_stats where user_id = '$fixture_user';
 insert into public.user_game_stats (user_id) values ('$fixture_user');
 SQL
