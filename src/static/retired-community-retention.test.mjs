@@ -106,6 +106,11 @@ describe('retired Community retention safety', () => {
     assert.match(p4Migration, /Storage assets are frozen while account erasure is pending/);
     assert.match(p4Migration, /Integration credentials are frozen while group deletion is pending/);
     assert.match(p4Migration, /Outbound delivery is blocked while account erasure is pending/);
+    assert.match(
+      p4Migration,
+      /\(to_jsonb\(new\) ->> 'actor'\) = 'redacted-after-retention'/,
+    );
+    assert.doesNotMatch(p4Migration, /\band new\.actor = 'redacted-after-retention'/);
   });
 
   test('handles credentialless destinations and DR evidence expiry without wedging', () => {

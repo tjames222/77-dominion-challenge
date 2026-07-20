@@ -9232,7 +9232,7 @@ returns trigger language plpgsql security definer
 set search_path = pg_catalog, private, pg_temp as $$
 begin
   if tg_op = 'UPDATE' and tg_table_name = 'retired_community_deletion_ledger'
-     and new.actor = 'redacted-after-retention'
+     and (to_jsonb(new) ->> 'actor') = 'redacted-after-retention'
      and (to_jsonb(new) - 'actor') = (to_jsonb(old) - 'actor')
      and exists (
        select 1 from private.retired_community_batch_identity_redactions redaction
