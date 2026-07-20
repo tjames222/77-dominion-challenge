@@ -4,6 +4,8 @@ export type ClaimedDelivery = {
   delivery_id: string;
   crew_id: string;
   destination_id: string;
+  subject_user_id: string | null;
+  source_reference: string | null;
   provider: IntegrationProvider;
   provider_workspace_id: string;
   provider_destination_id: string;
@@ -276,6 +278,8 @@ async function sendSlack(
   const body: Record<string, unknown> = {
     channel: delivery.provider_destination_id,
     text: textPayload(delivery),
+    link_names: false,
+    mrkdwn: false,
   };
   if (Array.isArray(delivery.payload.blocks)) {
     body.blocks = delivery.payload.blocks;
@@ -342,7 +346,10 @@ async function sendDiscord(
   credential: ProviderCredential,
   fetcher: Fetcher,
 ): Promise<DeliveryResult> {
-  const body: Record<string, unknown> = { content: textPayload(delivery) };
+  const body: Record<string, unknown> = {
+    content: textPayload(delivery),
+    allowed_mentions: { parse: [] },
+  };
   if (Array.isArray(delivery.payload.embeds)) {
     body.embeds = delivery.payload.embeds;
   }

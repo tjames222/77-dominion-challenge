@@ -126,6 +126,20 @@ function channel(value: unknown) {
   return value;
 }
 
+function requiredBoolean(value: unknown, label: string) {
+  if (typeof value !== "boolean") {
+    throw new HttpError(`${label} must be enabled or disabled.`, 400);
+  }
+  return value;
+}
+
+function recapCadence(value: unknown) {
+  if (value !== "off" && value !== "weekly") {
+    throw new HttpError("Unsupported leaderboard recap cadence.", 400);
+  }
+  return value;
+}
+
 function credentialKeys(env: EnvReader) {
   const serialized = env("INTEGRATION_CREDENTIAL_KEYS");
   if (!serialized) {
@@ -204,6 +218,14 @@ function normalizedDestination(item: Record<string, unknown>) {
     lastTestedAt: item.last_tested_at,
     lastDeliveredAt: item.last_delivered_at,
     healthCode: item.health_code,
+    lastErrorCode: item.last_error_code,
+    correctiveAction: item.corrective_action,
+    checkInsEnabled: item.check_ins_enabled,
+    streakMilestonesEnabled: item.streak_milestones_enabled,
+    badgesRewardsEnabled: item.badges_rewards_enabled,
+    membershipEnabled: item.membership_enabled,
+    recapCadence: item.recap_cadence,
+    includeSafeLink: item.include_safe_link,
     canManage: item.can_manage,
   };
 }
@@ -336,13 +358,15 @@ async function testDestination(
     delivery_id: secret.destination_id,
     crew_id: secret.crew_id,
     destination_id: secret.destination_id,
+    subject_user_id: null,
+    source_reference: "integration:test",
     provider: secret.provider,
     provider_workspace_id: secret.provider_workspace_id,
     provider_destination_id: secret.provider_destination_id,
     event_type: "integration.test",
     payload: {
       text:
-        "77 Dominion connection confirmed. Group updates can be delivered here.",
+        "[TEST] 77 Dominion connection confirmed. Group updates can be delivered here.",
     },
     attempt_number: 1,
     max_attempts: 1,
@@ -516,6 +540,41 @@ export function createHandler(overrides: Partial<Dependencies> = {}) {
         const secret = await destinationSecret(admin, destinationId, user.id);
         return jsonResponse(
           await testDestination(admin, secret, user.id, dependencies),
+          200,
+          req,
+          dependencies.env,
+        );
+      }
+
+      if (action === "configure") {
+        const destinationId = uuid(parsed.destinationId, "destination ID");
+        await rpc(admin, "update_integration_destination_settings", {
+          target_destination_id: destinationId,
+          target_actor_id: user.id,
+          target_check_ins_enabled: requiredBoolean(
+            parsed.checkInsEnabled,
+            "Daily Check-In updates",
+          ),
+          target_streak_milestones_enabled: requiredBoolean(
+            parsed.streakMilestonesEnabled,
+            "Streak milestone updates",
+          ),
+          target_badges_rewards_enabled: requiredBoolean(
+            parsed.badgesRewardsEnabled,
+            "Badge and reward updates",
+          ),
+          target_membership_enabled: requiredBoolean(
+            parsed.membershipEnabled,
+            "Membership updates",
+          ),
+          target_recap_cadence: recapCadence(parsed.recapCadence),
+          target_include_safe_link: requiredBoolean(
+            parsed.includeSafeLink,
+            "Dominion links",
+          ),
+        });
+        return jsonResponse(
+          { configured: true, destinationId },
           200,
           req,
           dependencies.env,

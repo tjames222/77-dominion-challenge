@@ -75,6 +75,7 @@ function integrationHandler(
     complete_pending_integration_connection: destinationId,
     get_integration_destination_secret: [secret],
     mark_integration_destination_health: true,
+    update_integration_destination_settings: true,
     disconnect_integration_destination: true,
     create_integration_oauth_state: true,
     ...values,
@@ -144,6 +145,14 @@ Deno.test("members receive only sanitized connection status", async () => {
         last_tested_at: null,
         last_delivered_at: null,
         health_code: null,
+        last_error_code: "provider_rate_limited",
+        corrective_action: "Wait for the provider and retry the test.",
+        check_ins_enabled: true,
+        streak_milestones_enabled: false,
+        badges_rewards_enabled: true,
+        membership_enabled: false,
+        recap_cadence: "weekly",
+        include_safe_link: true,
         can_manage: false,
       }],
     },
@@ -156,6 +165,13 @@ Deno.test("members receive only sanitized connection status", async () => {
   >;
   assertEquals(destinations[0].workspaceName, "Test Workspace");
   assertEquals(destinations[0].canManage, false);
+  assertEquals(destinations[0].checkInsEnabled, true);
+  assertEquals(destinations[0].recapCadence, "weekly");
+  assertEquals(destinations[0].lastErrorCode, "provider_rate_limited");
+  assertEquals(
+    destinations[0].correctiveAction,
+    "Wait for the provider and retry the test.",
+  );
   assert(!JSON.stringify(destinations).includes("credential"));
   assertEquals(calls[0].name, "list_crew_integration_destinations");
 });
@@ -218,7 +234,17 @@ Deno.test("confirm validates the channel and re-encrypts for the stable destinat
 
 Deno.test("test message records healthy state after provider delivery", async () => {
   const calls: Call[] = [];
-  const response = await integrationHandler({}, {}, calls)(request("POST", {
+  let text = "";
+  const response = await integrationHandler({}, {
+    sendProviderMessage: async (delivery: { payload: { text: string } }) => {
+      text = delivery.payload.text;
+      return {
+        outcome: "delivered",
+        httpStatus: 200,
+        responseMetadata: { provider: "slack" },
+      };
+    },
+  }, calls)(request("POST", {
     action: "test",
     destinationId,
   }));
@@ -231,6 +257,60 @@ Deno.test("test message records healthy state after provider delivery", async ()
     call.name === "mark_integration_destination_health"
   );
   assertEquals(health?.args.target_healthy, true);
+  assert(text.startsWith("[TEST]"));
+});
+
+Deno.test("authorized configuration maps the complete destination settings contract", async () => {
+  const calls: Call[] = [];
+  const response = await integrationHandler({}, {}, calls)(request("POST", {
+    action: "configure",
+    destinationId,
+    checkInsEnabled: true,
+    streakMilestonesEnabled: false,
+    badgesRewardsEnabled: true,
+    membershipEnabled: false,
+    recapCadence: "weekly",
+    includeSafeLink: true,
+  }));
+  assertEquals(response.status, 200);
+  assertEquals(await responseJson(response), {
+    configured: true,
+    destinationId,
+  });
+  const configure = calls.find((call) =>
+    call.name === "update_integration_destination_settings"
+  );
+  assertEquals(configure?.args, {
+    target_destination_id: destinationId,
+    target_actor_id: userId,
+    target_check_ins_enabled: true,
+    target_streak_milestones_enabled: false,
+    target_badges_rewards_enabled: true,
+    target_membership_enabled: false,
+    target_recap_cadence: "weekly",
+    target_include_safe_link: true,
+  });
+});
+
+Deno.test("configuration rejects missing toggles and unsupported recap cadence", async () => {
+  const missing = await integrationHandler()(request("POST", {
+    action: "configure",
+    destinationId,
+    recapCadence: "weekly",
+  }));
+  assertEquals(missing.status, 400);
+
+  const unsupported = await integrationHandler()(request("POST", {
+    action: "configure",
+    destinationId,
+    checkInsEnabled: true,
+    streakMilestonesEnabled: true,
+    badgesRewardsEnabled: true,
+    membershipEnabled: true,
+    recapCadence: "daily",
+    includeSafeLink: true,
+  }));
+  assertEquals(unsupported.status, 400);
 });
 
 Deno.test("revoked or missing provider destinations transition to needs attention", async () => {

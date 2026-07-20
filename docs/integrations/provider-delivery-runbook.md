@@ -82,6 +82,7 @@ environment secrets. Use independent values per environment.
 | `DISCORD_CLIENT_SECRET` | Provider secret | Rotate at provider and update Function Secret atomically |
 | `DISCORD_PUBLIC_KEY` | Provider value | Update when the Discord app changes |
 | `DISCORD_BOT_TOKEN` | Provider secret | Reset at provider, replace encrypted destination credentials, then revoke the old token |
+| `PUBLIC_SITE_URL` | Canonical HTTPS application origin | Update with the deployed application origin; the worker discards unsafe or credential-bearing URLs |
 
 Generate AES key material with a trusted secret-management tool that can produce
 32 random bytes and base64 encode them. Do not print generated values into CI
@@ -131,15 +132,44 @@ one `accessToken` field, and encrypts with AES-256-GCM using:
 Only a server callback or authenticated server connection action may persist or
 replace ciphertext. Browser-facing reads
 must use a sanitized projection that excludes ciphertext, nonce, key version,
-fingerprint, and provider error diagnostics.
+fingerprint, and raw provider error diagnostics. It may expose only the reviewed
+safe error category and corrective-action copy used by the admin health UI.
 
 FOU-542 publishes through `enqueue_outbound_delivery`. Its group ID must match
 the destination's group, event names must use the registered lowercase contract,
 and the idempotency key must identify one logical event/destination pair. An
 exact retry returns the existing row; reusing a key with changed event data is an
-error. Publication must not wait for or call a provider. The worker exclusively
-uses `claim_outbound_deliveries`, `settle_outbound_delivery`, health, stale-lock,
-and retention RPCs with the service role.
+error. Publication must not wait for or call a provider.
+
+The registered event and payload contracts are intentionally closed:
+
+| Event | Provider-neutral payload |
+| --- | --- |
+| `check_in` | `challengeDay`, `status` (`complete` or `partial`), `completedCount` |
+| `streak_milestone` | `streakType` (`app` or `full_standard`), `milestone` |
+| `badge_reward` | `rewardKind` (`badge` or `challenge`), `rewardName` |
+| `membership` | Empty object |
+| `leaderboard_recap` | `periodLabel`, `memberCount`, `checkInCount`, `completedStandards` |
+
+Unknown event names, missing fields, extra fields, and free-form private fields
+are rejected by the in-memory renderer. Display names, group names, catalog
+labels, and period labels are neutralized before provider transport. Slack
+markup and link expansion are disabled, and Discord receives an empty
+`allowed_mentions.parse` list.
+
+Before every claim batch, the worker calls `queue_due_leaderboard_recaps`. Before
+each initial send or retry it calls `resolve_claimed_outbound_delivery` with the
+delivery ID and worker token. That atomic resolver rechecks current member
+consent, membership, account, destination, and destination event settings. An
+ineligible result is terminally passed to `cancel_claimed_outbound_delivery`;
+credentials are not decrypted and the provider is not contacted. A temporarily
+unavailable resolution is safely retried through `settle_outbound_delivery`.
+
+Owners and admins change destination event flags, weekly recap cadence, and the
+safe-link preference through `update_integration_destination_settings`. All
+members can read the sanitized flags so it is clear which activity may leave
+Dominion. Only `PUBLIC_SITE_URL` can supply the optional Dominion link; event
+payloads cannot choose a URL.
 
 ## Staging acceptance exercise
 
@@ -152,8 +182,8 @@ promotion:
    version.
 2. Invoke the worker with `mode=synthetic`, the destination's group and
    destination IDs, an idempotency key unique to the test, and non-sensitive test
-   text. Confirm one message arrives and an identical retry creates no second
-   queue row.
+   text. Confirm one message visibly begins `[TEST]`, contains no member activity,
+   and an identical retry creates no second queue row.
 3. Temporarily make the destination return a retryable response or use a test
    adapter. Confirm the attempt is recorded, the outbox is rescheduled, Check-In
    submission remains successful, and the next worker run succeeds.

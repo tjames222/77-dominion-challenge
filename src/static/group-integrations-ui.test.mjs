@@ -10,6 +10,7 @@ const css = readFileSync(new URL('../assets/community.css', import.meta.url), 'u
 describe('private-group provider connections', () => {
   it('explains the external-only conversation model and exposes both supported providers', () => {
     assert.match(html, /Conversations and replies stay in Slack or Discord/);
+    assert.match(html, /Daily Check-Ins, streak milestones, badge and reward unlocks/);
     assert.match(html, /data-connect-provider="slack"/);
     assert.match(html, /data-connect-provider="discord"/);
     assert.match(html, /id="integrationDestinationList"[^>]+aria-live="polite"/);
@@ -25,6 +26,22 @@ describe('private-group provider connections', () => {
     assert.match(javascript, /data-test-integration/);
     assert.match(javascript, /data-reconnect-provider/);
     assert.match(javascript, /data-disconnect-integration/);
+    assert.match(javascript, /Updates that can leave Dominion/);
+    assert.match(javascript, /destination\.checkInsEnabled/);
+    assert.match(javascript, /destination\.recapCadence === 'weekly'/);
+    assert.match(javascript, /integrationHealthLabel/);
+    assert.match(javascript, /destination\.correctiveAction/);
+  });
+
+  it('lets destination admins configure each event, weekly recaps, and safe links', () => {
+    assert.match(javascript, /data-integration-settings/);
+    assert.match(javascript, /manageGroupIntegration\('configure'/);
+    assert.match(javascript, /checkInsEnabled: values\.has\('checkInsEnabled'\)/);
+    assert.match(javascript, /streakMilestonesEnabled: values\.has\('streakMilestonesEnabled'\)/);
+    assert.match(javascript, /badgesRewardsEnabled: values\.has\('badgesRewardsEnabled'\)/);
+    assert.match(javascript, /membershipEnabled: values\.has\('membershipEnabled'\)/);
+    assert.match(javascript, /includeSafeLink: values\.has\('includeSafeLink'\)/);
+    assert.match(javascript, /recapCadence: values\.get\('recapCadence'\)/);
   });
 
   it('takes the one-time setup token from the fragment and immediately removes it from the address', () => {
@@ -48,6 +65,7 @@ describe('private-group provider connections', () => {
   it('keeps controls usable on narrow screens and derives both themes from shared tokens', () => {
     assert.match(css, /@media \(max-width: 520px\)[\s\S]*\.integration-destination/);
     assert.match(css, /min-height: 44px/);
+    assert.match(css, /\.integration-settings/);
     assert.match(css, /var\(--surface\)/);
     assert.match(css, /var\(--text-muted\)/);
   });

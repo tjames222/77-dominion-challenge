@@ -327,6 +327,62 @@ function integrationActivityLabel(destination = {}) {
   return `Last verified ${date.toLocaleString()}`;
 }
 
+function integrationHealthLabel(destination = {}) {
+  if (destination.correctiveAction) return destination.correctiveAction;
+  if (destination.status === 'reconnect_required') return 'Reconnect this destination, then send a test update.';
+  if (destination.lastErrorCode === 'provider_rate_limited') return 'The provider is rate limiting updates. Dominion will retry automatically.';
+  if (destination.lastErrorCode) return 'Review the connection and send a test update.';
+  if (destination.status === 'active') return 'Delivery health is good.';
+  return 'Connect or reconnect this destination to deliver updates.';
+}
+
+function integrationEventSummary(destination = {}) {
+  const events = [
+    ['Daily Check-Ins', destination.checkInsEnabled],
+    ['Streak milestones', destination.streakMilestonesEnabled],
+    ['Badges & rewards', destination.badgesRewardsEnabled],
+    ['New members', destination.membershipEnabled],
+    ['Weekly leaderboard recap', destination.recapCadence === 'weekly'],
+  ];
+  return `
+    <div class="integration-event-summary" aria-label="External update settings">
+      <strong>Updates that can leave Dominion</strong>
+      <ul>
+        ${events.map(([label, enabled]) => `
+          <li class="${enabled ? 'enabled' : 'disabled'}">
+            <span aria-hidden="true">${enabled ? 'On' : 'Off'}</span>
+            ${escapeHtml(label)}
+          </li>
+        `).join('')}
+      </ul>
+    </div>
+  `;
+}
+
+function integrationSettingsForm(destination = {}) {
+  if (!destination.canManage || !isCrewLeader()) return '';
+  return `
+    <form class="integration-settings" data-integration-settings="${escapeHtml(destination.id)}">
+      <fieldset>
+        <legend>Channel update settings</legend>
+        <label><input type="checkbox" name="checkInsEnabled" ${destination.checkInsEnabled ? 'checked' : ''} /> Daily Check-Ins</label>
+        <label><input type="checkbox" name="streakMilestonesEnabled" ${destination.streakMilestonesEnabled ? 'checked' : ''} /> Streak milestones</label>
+        <label><input type="checkbox" name="badgesRewardsEnabled" ${destination.badgesRewardsEnabled ? 'checked' : ''} /> Badges &amp; rewards</label>
+        <label><input type="checkbox" name="membershipEnabled" ${destination.membershipEnabled ? 'checked' : ''} /> New group members</label>
+        <label><input type="checkbox" name="includeSafeLink" ${destination.includeSafeLink ? 'checked' : ''} /> Include a safe link to Dominion</label>
+      </fieldset>
+      <label class="integration-recap-cadence">
+        <span>Leaderboard recap</span>
+        <select name="recapCadence">
+          <option value="off" ${destination.recapCadence !== 'weekly' ? 'selected' : ''}>Off</option>
+          <option value="weekly" ${destination.recapCadence === 'weekly' ? 'selected' : ''}>Weekly</option>
+        </select>
+      </label>
+      <button class="secondary compact" type="submit">Save update settings</button>
+    </form>
+  `;
+}
+
 function renderIntegrations({ loading = false, error = '' } = {}) {
   const container = $('integrationDestinationList');
   const actions = $('integrationConnectActions');
@@ -371,6 +427,9 @@ function renderIntegrations({ loading = false, error = '' } = {}) {
             </div>
             <span>${escapeHtml(destination.workspaceName || destination.workspaceId || 'Workspace')} · #${escapeHtml(destination.channelName || destination.channelId || 'channel')}</span>
             <small>${escapeHtml(integrationActivityLabel(destination))}</small>
+            <small class="integration-health-detail">${escapeHtml(integrationHealthLabel(destination))}</small>
+            ${integrationEventSummary(destination)}
+            ${integrationSettingsForm(destination)}
           </div>
           ${actionMarkup}
         </article>
@@ -979,6 +1038,34 @@ $('crewIntegrationsCard')?.addEventListener('click', async (event) => {
     await loadCrewIntegrations();
   } catch (error) {
     setFeedback(error?.message || 'Unable to disconnect that channel right now.');
+  } finally {
+    release();
+  }
+});
+
+$('crewIntegrationsCard')?.addEventListener('submit', async (event) => {
+  const form = event.target.closest('[data-integration-settings]');
+  if (!form) return;
+  event.preventDefault();
+  const destination = state.integrations.find((item) => item.id === form.dataset.integrationSettings);
+  if (!destination?.canManage || !isCrewLeader()) return;
+  const values = new FormData(form);
+  const submitButton = form.querySelector('button[type="submit"]');
+  const release = setButtonBusy(submitButton, 'Saving…');
+  try {
+    await manageGroupIntegration('configure', {
+      destinationId: destination.id,
+      checkInsEnabled: values.has('checkInsEnabled'),
+      streakMilestonesEnabled: values.has('streakMilestonesEnabled'),
+      badgesRewardsEnabled: values.has('badgesRewardsEnabled'),
+      membershipEnabled: values.has('membershipEnabled'),
+      recapCadence: values.get('recapCadence') === 'weekly' ? 'weekly' : 'off',
+      includeSafeLink: values.has('includeSafeLink'),
+    });
+    setFeedback('External update settings saved. New and queued deliveries use the current settings.');
+    await loadCrewIntegrations();
+  } catch (error) {
+    setFeedback(error?.message || 'Unable to save external update settings.');
   } finally {
     release();
   }

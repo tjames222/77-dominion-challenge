@@ -20,6 +20,8 @@ function delivery(
     delivery_id: "10000000-0000-4000-8000-000000000001",
     crew_id: "20000000-0000-4000-8000-000000000002",
     destination_id: "30000000-0000-4000-8000-000000000003",
+    subject_user_id: null,
+    source_reference: "synthetic:test",
     provider,
     provider_workspace_id: "workspace-1",
     provider_destination_id: "channel-1",
@@ -118,6 +120,8 @@ Deno.test("Slack delivery uses the channel contract without returning content", 
   assertEquals(requestBody, {
     channel: "channel-1",
     text: "Keep the standard.",
+    link_names: false,
+    mrkdwn: false,
   });
   assertEquals(result, {
     outcome: "delivered",
@@ -171,7 +175,10 @@ Deno.test("Discord delivery targets the selected channel with bot authentication
     }) as typeof fetch,
   );
   assert(url.endsWith("/channels/channel-1/messages"));
-  assertEquals(body, { content: "Keep the standard." });
+  assertEquals(body, {
+    content: "Keep the standard.",
+    allowed_mentions: { parse: [] },
+  });
   assertEquals(authorization, "Bot discord-token");
   assertEquals(result.outcome, "delivered");
 });

@@ -9,6 +9,14 @@ const workerSecret = "a-secure-worker-secret-with-more-than-32-characters";
 const credentialKeys = JSON.stringify({
   1: btoa(String.fromCharCode(...new Uint8Array(32).fill(9))),
 });
+const eligibleResolution = {
+  eligible: true,
+  reason: "approved",
+  presentationMode: "anonymous",
+  subjectName: "Private Name",
+  crewName: "Test Crew",
+  includeSafeLink: true,
+};
 
 function request(body: unknown = { mode: "process" }, secret = workerSecret) {
   return new Request("https://functions.test/process-integration-outbox", {
@@ -26,11 +34,13 @@ function claimedDelivery(): ClaimedDelivery {
     delivery_id: "10000000-0000-4000-8000-000000000001",
     crew_id: "20000000-0000-4000-8000-000000000002",
     destination_id: "30000000-0000-4000-8000-000000000003",
+    subject_user_id: "60000000-0000-4000-8000-000000000006",
+    source_reference: "check-in:70000000-0000-4000-8000-000000000007",
     provider: "slack",
     provider_workspace_id: "workspace-1",
     provider_destination_id: "channel-1",
-    event_type: "check_in.committed",
-    payload: { text: "A member checked in." },
+    event_type: "check_in",
+    payload: { challengeDay: 12, status: "complete", completedCount: 7 },
     attempt_number: 1,
     max_attempts: 5,
     credential_ciphertext: "AA==",
@@ -43,6 +53,7 @@ function environment(name: string) {
   return {
     INTEGRATION_WORKER_SECRET: workerSecret,
     INTEGRATION_CREDENTIAL_KEYS: credentialKeys,
+    PUBLIC_SITE_URL: "https://app.example.com",
   }[name];
 }
 
@@ -117,16 +128,26 @@ Deno.test("health mode returns server-side queue signals without loading credent
 Deno.test("worker releases stale locks, delivers a claimed batch, and settles it", async () => {
   const calls: Array<{ name: string; args: Record<string, unknown> }> = [];
   const logs: string[] = [];
+  let sentPayload: Record<string, unknown> = {};
   const response = await workerHandler({
     release_stale_outbound_deliveries: 1,
+    queue_due_leaderboard_recaps: 2,
     claim_outbound_deliveries: [claimedDelivery()],
-    validate_claimed_outbound_delivery: true,
+    resolve_claimed_outbound_delivery: eligibleResolution,
     settle_outbound_delivery: "delivered",
     integration_delivery_health: { queued: 0, processing: 0 },
   }, {
     logger: {
       info: (value: string) => logs.push(value),
       error: () => undefined,
+    },
+    sendProviderMessage: async (delivery: ClaimedDelivery) => {
+      sentPayload = delivery.payload;
+      return {
+        outcome: "delivered",
+        httpStatus: 200,
+        responseMetadata: { provider: "slack" },
+      };
     },
   }, calls)(request({ mode: "process", batchSize: 10 }));
 
@@ -137,16 +158,25 @@ Deno.test("worker releases stale locks, delivers a claimed batch, and settles it
   assertEquals(body.delivered, 1);
   assertEquals(body.retried, 0);
   assertEquals(body.deadLettered, 0);
+  assertEquals(body.cancelled, 0);
+  assertEquals(body.leaderboardRecapsQueued, 2);
   assertEquals(calls.map((call) => call.name), [
     "release_stale_outbound_deliveries",
+    "queue_due_leaderboard_recaps",
     "claim_outbound_deliveries",
-    "validate_claimed_outbound_delivery",
+    "resolve_claimed_outbound_delivery",
     "settle_outbound_delivery",
     "integration_delivery_health",
   ]);
   const settle = calls.find((call) => call.name === "settle_outbound_delivery");
   assertEquals(settle?.args.target_delivery_id, claimedDelivery().delivery_id);
   assertEquals(settle?.args.target_started_at, "2026-07-19T12:00:00.000Z");
+  assert(String(sentPayload.text).includes("A group member"));
+  assert(!String(sentPayload.text).includes("Private Name"));
+  assert(
+    String(sentPayload.text).includes("https://app.example.com/community.html"),
+  );
+  assert(!Object.hasOwn(sentPayload, "challengeDay"));
   assert(!logs.join(" ").includes("provider-token"));
   assert(!logs.join(" ").includes("A member checked in"));
 });
@@ -161,8 +191,9 @@ Deno.test("database-enforced final outcome is reflected in dead-letter counts", 
   };
   const response = await workerHandler({
     release_stale_outbound_deliveries: 0,
+    queue_due_leaderboard_recaps: 0,
     claim_outbound_deliveries: [claimedDelivery()],
-    validate_claimed_outbound_delivery: true,
+    resolve_claimed_outbound_delivery: eligibleResolution,
     settle_outbound_delivery: "dead_letter",
     integration_delivery_health: {},
   }, { sendProviderMessage: async () => retry })(request());
@@ -178,8 +209,9 @@ Deno.test("credential failures dead-letter without invoking a provider", async (
   const calls: Array<{ name: string; args: Record<string, unknown> }> = [];
   const response = await workerHandler({
     release_stale_outbound_deliveries: 0,
+    queue_due_leaderboard_recaps: 0,
     claim_outbound_deliveries: [claimedDelivery()],
-    validate_claimed_outbound_delivery: true,
+    resolve_claimed_outbound_delivery: eligibleResolution,
     settle_outbound_delivery: "dead_letter",
     integration_delivery_health: {},
   }, {
@@ -199,15 +231,53 @@ Deno.test("credential failures dead-letter without invoking a provider", async (
   assert(!JSON.stringify(settle).includes("ciphertext detail"));
 });
 
-Deno.test("a destination disconnected after claim is never sent", async () => {
+Deno.test("an ineligible delivery is cancelled after claim and never sent", async () => {
   let decrypted = false;
   let sent = false;
   const calls: Array<{ name: string; args: Record<string, unknown> }> = [];
   const response = await workerHandler({
     release_stale_outbound_deliveries: 0,
+    queue_due_leaderboard_recaps: 0,
     claim_outbound_deliveries: [claimedDelivery()],
-    validate_claimed_outbound_delivery: false,
-    settle_outbound_delivery: "dead_letter",
+    resolve_claimed_outbound_delivery: {
+      ...eligibleResolution,
+      eligible: false,
+      reason: "consent_revoked",
+    },
+    cancel_claimed_outbound_delivery: "cancelled",
+    integration_delivery_health: {},
+  }, {
+    decryptProviderCredential: async () => {
+      decrypted = true;
+      return { accessToken: "must-not-decrypt" };
+    },
+    sendProviderMessage: async () => {
+      sent = true;
+      throw new Error("must not send");
+    },
+  }, calls)(request());
+
+  assertEquals(response.status, 200);
+  assertEquals(decrypted, false);
+  assertEquals(sent, false);
+  const cancel = calls.find((call) =>
+    call.name === "cancel_claimed_outbound_delivery"
+  );
+  assertEquals(cancel?.args.target_reason, "consent_revoked");
+  assertEquals((await responseJson(response)).cancelled, 1);
+  assert(!calls.some((call) => call.name === "settle_outbound_delivery"));
+});
+
+Deno.test("an unavailable send-time resolution retries without decrypting or sending", async () => {
+  let decrypted = false;
+  let sent = false;
+  const calls: Array<{ name: string; args: Record<string, unknown> }> = [];
+  const response = await workerHandler({
+    release_stale_outbound_deliveries: 0,
+    queue_due_leaderboard_recaps: 0,
+    claim_outbound_deliveries: [claimedDelivery()],
+    resolve_claimed_outbound_delivery: new Error("temporary database error"),
+    settle_outbound_delivery: "retry",
     integration_delivery_health: {},
   }, {
     decryptProviderCredential: async () => {
@@ -224,7 +294,11 @@ Deno.test("a destination disconnected after claim is never sent", async () => {
   assertEquals(decrypted, false);
   assertEquals(sent, false);
   const settle = calls.find((call) => call.name === "settle_outbound_delivery");
-  assertEquals(settle?.args.target_error_code, "destination_disconnected");
+  assertEquals(
+    settle?.args.target_error_code,
+    "delivery_resolution_unavailable",
+  );
+  assertEquals((await responseJson(response)).retried, 1);
 });
 
 Deno.test("maintenance releases stale work and applies retention", async () => {
@@ -262,6 +336,7 @@ Deno.test("synthetic mode queues an idempotent diagnostic message before process
   const response = await workerHandler(
     {
       release_stale_outbound_deliveries: 0,
+      queue_due_leaderboard_recaps: 0,
       enqueue_outbound_delivery: "50000000-0000-4000-8000-000000000005",
       claim_outbound_deliveries: [],
       integration_delivery_health: { queued: 1 },
@@ -286,7 +361,8 @@ Deno.test("synthetic mode queues an idempotent diagnostic message before process
   );
   assertEquals(enqueue?.args.target_event_type, "synthetic.delivery");
   assertEquals(enqueue?.args.target_payload, {
-    text: "Synthetic staging delivery",
+    text:
+      "[TEST] 77 Dominion integration delivery. No member activity is included.",
   });
   assertEquals(enqueue?.args.target_max_attempts, 3);
 });

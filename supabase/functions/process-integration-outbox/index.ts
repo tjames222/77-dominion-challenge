@@ -8,6 +8,11 @@ import {
   safeDeliveryLog,
   sendProviderMessage,
 } from "../_shared/integration_delivery.ts";
+import {
+  parseOutboundDeliveryResolution,
+  renderOutboundEvent,
+  safeCommunityUrl,
+} from "../_shared/integration_event_renderer.ts";
 
 type AdminClient = ReturnType<typeof createAdminClient>;
 
@@ -103,6 +108,11 @@ async function processBatch(
   const keys = parseCredentialKeys(keySource);
   const workerToken = dependencies.randomUuid();
 
+  const leaderboardRecapsQueued = await rpc<number>(
+    admin,
+    "queue_due_leaderboard_recaps",
+  ) || 0;
+
   const deliveries = await rpc<ClaimedDelivery[]>(
     admin,
     "claim_outbound_deliveries",
@@ -114,32 +124,83 @@ async function processBatch(
     delivered: 0,
     retried: 0,
     deadLettered: 0,
+    cancelled: 0,
+    leaderboardRecapsQueued,
   };
   for (const delivery of deliveries) {
     const startedAt = dependencies.now();
-    let result: DeliveryResult;
-    const destinationActive = await rpc<boolean>(
-      admin,
-      "validate_claimed_outbound_delivery",
-      {
-        target_delivery_id: delivery.delivery_id,
-        worker_token: workerToken,
-      },
-    );
-    if (!destinationActive) {
+    let result: DeliveryResult | null = null;
+    let resolution;
+    try {
+      resolution = parseOutboundDeliveryResolution(
+        await rpc<unknown>(admin, "resolve_claimed_outbound_delivery", {
+          target_delivery_id: delivery.delivery_id,
+          worker_token: workerToken,
+        }),
+      );
+    } catch {
       result = {
-        outcome: "dead_letter",
-        errorCode: "destination_disconnected",
-        errorSummary: "The provider destination is no longer active.",
+        outcome: "retry",
+        errorCode: "delivery_resolution_unavailable",
+        errorSummary: "Current delivery eligibility could not be resolved.",
         responseMetadata: { provider: delivery.provider },
       };
-    } else {
+      const finalOutcome = await rpc<string>(
+        admin,
+        "settle_outbound_delivery",
+        settleArgs(delivery, workerToken, startedAt, result),
+      );
+      if (finalOutcome === "retry") counts.retried += 1;
+      else counts.deadLettered += 1;
+      dependencies.logger.info(JSON.stringify(safeDeliveryLog(
+        "integration.delivery.settled",
+        delivery,
+        { ...result, outcome: finalOutcome } as DeliveryResult,
+      )));
+      continue;
+    }
+
+    if (!resolution.eligible) {
+      await rpc(admin, "cancel_claimed_outbound_delivery", {
+        target_delivery_id: delivery.delivery_id,
+        worker_token: workerToken,
+        target_reason: resolution.reason,
+      });
+      counts.cancelled += 1;
+      dependencies.logger.info(JSON.stringify({
+        ...safeDeliveryLog("integration.delivery.cancelled", delivery),
+        outcome: "cancelled",
+        errorCode: resolution.reason,
+      }));
+      continue;
+    }
+
+    let renderedPayload: Record<string, unknown>;
+    try {
+      renderedPayload = renderOutboundEvent(
+        delivery,
+        resolution,
+        safeCommunityUrl(dependencies.env("PUBLIC_SITE_URL")),
+      );
+    } catch {
+      result = {
+        outcome: "dead_letter",
+        errorCode: "invalid_delivery_payload",
+        errorSummary: "The outbound event payload is invalid.",
+        responseMetadata: { provider: delivery.provider },
+      };
+    }
+
+    if (!result) {
       try {
         const credential = await dependencies.decryptProviderCredential(
           delivery,
           keys,
         );
-        result = await dependencies.sendProviderMessage(delivery, credential);
+        result = await dependencies.sendProviderMessage({
+          ...delivery,
+          payload: renderedPayload!,
+        }, credential);
       } catch {
         result = {
           outcome: "dead_letter",
@@ -224,7 +285,10 @@ async function enqueueSynthetic(
     target_destination_id: destinationId,
     target_event_type: "synthetic.delivery",
     target_idempotency_key: idempotencyKey,
-    target_payload: { text: body.text },
+    target_payload: {
+      text:
+        "[TEST] 77 Dominion integration delivery. No member activity is included.",
+    },
     target_max_attempts: 3,
   });
 }
