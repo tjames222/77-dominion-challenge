@@ -25,7 +25,10 @@ select is((select count(*)::integer from public.challenge_entries), 1, 'Alice ca
 select is((select count(*)::integer from public.game_point_events), 1, 'Alice can read only her point ledger');
 select is((select count(*)::integer from public.crews), 1, 'Alice can read only crews she belongs to');
 select is((select count(*)::integer from public.crew_members), 2, 'Alice can read her complete crew roster');
-select is((select count(*)::integer from public.community_posts), 1, 'Alice cannot read another crew post');
+select ok(
+  not has_table_privilege('public.community_posts', 'select'),
+  'Alice cannot read retired private-group posts'
+);
 select is((select count(*)::integer from public.crew_invites), 1, 'Alice can read invites for the crew she owns');
 select is((select count(*)::integer from public.outbound_update_preferences), 1, 'Alice can read only her consent preference');
 select is((select count(*)::integer from public.outbound_update_preference_audit), 1, 'Alice can read only her consent audit history');
@@ -86,7 +89,10 @@ select is((select count(*)::integer from public.profiles), 1, 'Bob can read only
 select is((select min(name) from public.profiles), 'Bob Example', 'Bob cannot read Alice or Carol profiles');
 select is((select count(*)::integer from public.crews), 1, 'Bob cannot read the Alpha crew');
 select is((select count(*)::integer from public.crew_members), 1, 'Bob cannot read the Alpha roster');
-select is((select count(*)::integer from public.community_posts), 1, 'Bob cannot read the Alpha post');
+select ok(
+  not has_table_privilege('public.community_posts', 'select'),
+  'Bob cannot read retired private-group posts'
+);
 select is((select count(*)::integer from public.outbound_update_preferences), 0, 'Bob cannot read another crew consent preference');
 select is((select count(*)::integer from public.outbound_update_preference_audit), 0, 'Bob cannot read another member consent audit');
 
