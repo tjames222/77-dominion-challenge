@@ -14,6 +14,7 @@ const ALLOWED_ICONS = new Set([
   'palette',
   'repeat',
   'run',
+  'share',
   'shield',
   'spark',
   'star',

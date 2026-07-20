@@ -26,6 +26,7 @@ import {
 import {
   buildMockRewardCatalog,
   claimMockRewardEntitlementUnlocks,
+  challengeProgressionToRewardCatalog,
   normalizeRewardCatalog,
 } from './reward-catalog.mjs';
 
