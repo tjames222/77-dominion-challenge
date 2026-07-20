@@ -198,19 +198,32 @@ select is(
 
 reset role;
 
+insert into public.crew_invite_attributions (
+  id,
+  invite_id,
+  crew_id,
+  inviter_user_id,
+  recipient_user_id
+) values (
+  'c1000000-0000-4000-8000-000000000001',
+  'b1000000-0000-4000-8000-000000000002',
+  'b0000000-0000-4000-8000-000000000002',
+  '20000000-0000-4000-8000-000000000002',
+  '10000000-0000-4000-8000-000000000001'
+);
+
 insert into sharing_test_state (key, payload)
 values (
   'invite-result',
   public.record_confirmed_group_invite_share(
-    '20000000-0000-4000-8000-000000000002',
     'c1000000-0000-4000-8000-000000000001'
   )
 );
 
 select is(
-  (select payload ->> 'granted' from sharing_test_state where key = 'invite-result'),
-  'true',
-  'a server-confirmed private-group invite grants the inviter reward'
+  (select count(*)::integer from public.sharing_reward_grants where user_id = '20000000-0000-4000-8000-000000000002'),
+  1,
+  'a server-confirmed private-group invite automatically grants the inviter reward'
 );
 select is(
   (select count(*)::integer from public.game_point_events where user_id = '20000000-0000-4000-8000-000000000002' and event_type = 'sharing_bonus'),
@@ -223,14 +236,9 @@ select is(
   'confirmed invite attribution creates one inviter badge'
 );
 select is(
-  (
-    public.record_confirmed_group_invite_share(
-      '20000000-0000-4000-8000-000000000002',
-      'c1000000-0000-4000-8000-000000000001'
-    ) ->> 'alreadyGranted'
-  ),
+  (select payload ->> 'alreadyGranted' from sharing_test_state where key = 'invite-result'),
   'true',
-  'retrying the same confirmed invite is idempotent'
+  'the attribution-only reconciliation hook is idempotent'
 );
 select throws_ok(
   $$

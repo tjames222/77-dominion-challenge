@@ -3,7 +3,16 @@ begin;
 create extension if not exists pgtap with schema extensions;
 set local search_path = public, extensions;
 
-select plan(18);
+select plan(21);
+
+select ok(
+  not has_table_privilege('authenticated', 'public.crew_invite_sessions', 'select'),
+  'authenticated clients cannot read invite continuations directly'
+);
+select ok(
+  not has_table_privilege('authenticated', 'public.crew_invite_attributions', 'select'),
+  'authenticated clients cannot read invite attribution identities directly'
+);
 
 set local role authenticated;
 set local "request.jwt.claim.sub" = '10000000-0000-4000-8000-000000000001';
@@ -16,7 +25,21 @@ select is((select count(*)::integer from public.game_point_events), 1, 'Alice ca
 select is((select count(*)::integer from public.crews), 1, 'Alice can read only crews she belongs to');
 select is((select count(*)::integer from public.crew_members), 2, 'Alice can read her complete crew roster');
 select is((select count(*)::integer from public.community_posts), 1, 'Alice cannot read another crew post');
-select is((select count(*)::integer from public.crew_invites), 1, 'Alice can read invites for the crew she owns');
+select is((select count(id)::integer from public.crew_invites), 1, 'Alice can read invites for the crew she owns');
+
+select throws_ok(
+  $$
+    insert into public.crew_invites (crew_id, token_hash, created_by)
+    values (
+      'a0000000-0000-4000-8000-000000000001',
+      repeat('a', 64),
+      '10000000-0000-4000-8000-000000000001'
+    )
+  $$,
+  '42501',
+  'permission denied for table crew_invites',
+  'invite creation cannot bypass the rate-limited issuance RPC'
+);
 
 select throws_ok(
   $$
@@ -55,7 +78,7 @@ set local "request.jwt.claims" = '{"sub":"30000000-0000-4000-8000-000000000003",
 
 select is((select count(*)::integer from public.crews), 1, 'a member can read her crew');
 select is((select count(*)::integer from public.crew_members), 2, 'a member can read her crew roster');
-select is((select count(*)::integer from public.crew_invites), 0, 'a non-admin cannot read crew invites');
+select is((select count(id)::integer from public.crew_invites), 0, 'a non-admin cannot read crew invites');
 
 select * from finish();
 rollback;

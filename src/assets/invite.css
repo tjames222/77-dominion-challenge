@@ -1,0 +1,137 @@
+.invite-shell {
+  width: min(100%, 760px);
+  min-height: 100vh;
+  display: grid;
+  grid-template-rows: auto 1fr;
+}
+
+.invite-security-label {
+  color: var(--text-muted);
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.invite-card {
+  align-self: center;
+  padding: clamp(1.5rem, 5vw, 3rem);
+  text-align: center;
+}
+
+.invite-mark {
+  width: 3.75rem;
+  height: 3.75rem;
+  margin: 0 auto 1.1rem;
+  border: 1px solid color-mix(in srgb, var(--accent) 55%, transparent);
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+}
+
+.invite-mark .app-icon {
+  width: 1.55rem;
+  height: 1.55rem;
+}
+
+.invite-card h1 {
+  max-width: 18ch;
+  margin-inline: auto;
+}
+
+.invite-card .lead {
+  max-width: 55ch;
+  margin-inline: auto;
+}
+
+.invite-preview {
+  margin: 1.5rem auto 0;
+  max-width: 32rem;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  background: var(--border);
+  text-align: left;
+}
+
+.invite-preview[hidden] {
+  display: none;
+}
+
+.invite-preview div {
+  min-width: 0;
+  padding: 1rem;
+  background: var(--surface);
+}
+
+.invite-preview dt {
+  margin-bottom: 0.3rem;
+  color: var(--text-muted);
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.invite-preview dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+  font-weight: 750;
+}
+
+.invite-actions {
+  margin-top: 1.5rem;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 0.65rem;
+}
+
+.invite-actions a,
+.invite-actions button {
+  min-width: 11rem;
+}
+
+.invite-safety-note {
+  max-width: 58ch;
+  margin: 1.5rem auto 0;
+  color: var(--text-muted);
+  font-size: 0.8rem;
+}
+
+@media (max-width: 560px) {
+  .invite-shell {
+    display: block;
+  }
+
+  .invite-card {
+    margin-top: 1rem;
+    text-align: left;
+  }
+
+  .invite-mark,
+  .invite-card h1,
+  .invite-card .lead,
+  .invite-safety-note {
+    margin-inline: 0;
+  }
+
+  .invite-preview {
+    grid-template-columns: 1fr;
+  }
+
+  .invite-actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .invite-actions a,
+  .invite-actions button {
+    width: 100%;
+  }
+}

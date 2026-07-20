@@ -11,6 +11,7 @@ export default defineConfig({
         membership: 'membership.html',
         login: 'login.html',
         register: 'register.html',
+        invite: 'invite.html',
         billing: 'billing.html',
         dashboard: 'dashboard.html',
         bibleReading: 'bible-reading.html',

@@ -14,7 +14,6 @@ import {
   getOrCreateCrewInvite,
   hasSupabaseAuth,
   isLocalDemoMode,
-  joinCrewByInvite,
   redirectToLogin,
   saveJournalEntry,
   setPostLiked,
@@ -677,20 +676,11 @@ async function refreshCrews() {
   await refreshCrew();
 }
 
-async function redeemInviteIfPresent() {
+function continueLegacyInviteIfPresent() {
   const params = new URLSearchParams(window.location.search);
   const token = params.get('invite');
   if (!token) return;
-
-  const crew = await joinCrewByInvite(token);
-  if (crew?.id) {
-    state.activeCrewId = crew.id;
-    localStorage.setItem('dominion:activeCrewId', crew.id);
-    setFeedback(`You joined ${crew.name}.`);
-  }
-  params.delete('invite');
-  const nextUrl = `${window.location.pathname}${params.toString() ? `?${params}` : ''}${window.location.hash}`;
-  window.history.replaceState({}, '', nextUrl);
+  window.location.replace(`./invite.html#invite=${encodeURIComponent(token)}`);
 }
 
 let crewPostImagePreviewUrl = '';
@@ -726,6 +716,8 @@ function setupCrewInfiniteScroll() {
 }
 
 async function bootCommunity() {
+  continueLegacyInviteIfPresent();
+  if (new URLSearchParams(window.location.search).has('invite')) return;
   $('crewStartDateInput').value = todayKey();
   $('journalDate').value = todayKey();
 
@@ -745,7 +737,6 @@ async function bootCommunity() {
   }
 
   if (isLocalDemoMode()) setFeedback('Preview mode: crews, posts, comments, leaderboards, and journal entries are using mock local data.');
-  await redeemInviteIfPresent();
   await Promise.all([refreshCrews(), refreshGlobal(), refreshJournal()]);
 }
 
@@ -831,8 +822,8 @@ $('copyInviteButton')?.addEventListener('click', async (event) => {
   const release = setButtonBusy(event.currentTarget, 'Preparing...');
   try {
     const invite = await getOrCreateCrewInvite(crew.id);
-    const url = new URL('./community.html', window.location.href);
-    url.searchParams.set('invite', invite.token);
+    const url = new URL('./invite.html', window.location.href);
+    url.hash = `invite=${encodeURIComponent(invite.token)}`;
     $('inviteLinkText').textContent = url.href;
     await navigator.clipboard?.writeText(url.href);
     setFeedback('Invite link copied.');

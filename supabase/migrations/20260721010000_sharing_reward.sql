@@ -354,6 +354,7 @@ as $$
 declare
   evidence_id uuid;
   existing_user_id uuid;
+  authoritative_inviter_user_id uuid;
   source_hash bytea;
 begin
   if target_inviter_user_id is null or target_redemption_id is null then
@@ -362,6 +363,19 @@ begin
 
   if not exists (select 1 from auth.users where id = target_inviter_user_id) then
     raise exception 'Confirmed invite attribution is invalid.';
+  end if;
+
+  select attribution.inviter_user_id
+    into authoritative_inviter_user_id
+    from public.crew_invite_attributions attribution
+    where attribution.id = target_redemption_id;
+
+  if authoritative_inviter_user_id is null then
+    raise exception 'Confirmed invite attribution is invalid.';
+  end if;
+
+  if authoritative_inviter_user_id <> target_inviter_user_id then
+    raise exception 'Confirmed invite attribution does not match its original inviter.';
   end if;
 
   source_hash := extensions.digest('confirmed_group_invite:' || target_redemption_id::text, 'sha256');
@@ -406,6 +420,48 @@ begin
 end;
 $$;
 
+create or replace function public.record_confirmed_group_invite_share(
+  target_redemption_id uuid
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  inviter_user_id uuid;
+begin
+  select attribution.inviter_user_id
+    into inviter_user_id
+    from public.crew_invite_attributions attribution
+    where attribution.id = target_redemption_id;
+
+  if inviter_user_id is null then
+    raise exception 'Confirmed invite attribution is invalid.';
+  end if;
+
+  return public.record_confirmed_group_invite_share(inviter_user_id, target_redemption_id);
+end;
+$$;
+
+create or replace function public.grant_sharing_reward_after_invite_redemption()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  perform public.record_confirmed_group_invite_share(new.inviter_user_id, new.id);
+  return new;
+end;
+$$;
+
+drop trigger if exists grant_sharing_reward_after_invite_redemption
+  on public.crew_invite_attributions;
+create trigger grant_sharing_reward_after_invite_redemption
+  after insert on public.crew_invite_attributions
+  for each row execute function public.grant_sharing_reward_after_invite_redemption();
+
 alter table public.sharing_reward_intents enable row level security;
 alter table public.sharing_reward_evidence enable row level security;
 alter table public.sharing_reward_grants enable row level security;
@@ -431,3 +487,6 @@ revoke execute on function public.complete_sharing_reward(text) from public, ano
 grant execute on function public.complete_sharing_reward(text) to authenticated;
 revoke execute on function public.record_confirmed_group_invite_share(uuid, uuid) from public, anon, authenticated;
 grant execute on function public.record_confirmed_group_invite_share(uuid, uuid) to service_role;
+revoke execute on function public.record_confirmed_group_invite_share(uuid) from public, anon, authenticated;
+grant execute on function public.record_confirmed_group_invite_share(uuid) to service_role;
+revoke execute on function public.grant_sharing_reward_after_invite_redemption() from public, anon, authenticated, service_role;

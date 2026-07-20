@@ -40,6 +40,10 @@ The frontend uses Supabase Auth for login/register and writes directly to Supaba
 
 The approved next-round point-source, reward-reachability, and migration contract is documented in [`docs/point-economy.md`](docs/point-economy.md). The current production scoring remains in place until its dependent database and UI cutover tickets are merged.
 
+### Private-group invitations
+
+Private-group links open a dedicated preview and confirmation page. They survive login, registration, and membership activation without putting the invite secret in an auth redirect, and opening a link never auto-joins the recipient. Issuance, rotation, revocation, expiry, one-time redemption, capacity, and inviter attribution are enforced by database RPCs. See [docs/private-group-invites.md](docs/private-group-invites.md) for the security contract and test matrix.
+
 ### Workout difficulty scoring
 
 Workout completions receive the standard 10 action points plus a configurable difficulty bonus. The default bonuses are Easy `2`, Medium `5`, Hard `10`, and Extreme `15` points.

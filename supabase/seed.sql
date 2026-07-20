@@ -192,20 +192,24 @@ on conflict (crew_id, user_id) do update set
 insert into public.crew_invites (
   id,
   crew_id,
-  token,
+  token_hash,
+  token_hint,
   created_by,
   expires_at,
   created_at
 )
 values
-  ('a1000000-0000-4000-8000-000000000001', 'a0000000-0000-4000-8000-000000000001', 'seed-alpha-invite', '10000000-0000-4000-8000-000000000001', '2099-01-01 00:00:00+00', '2026-07-01 12:00:00+00'),
-  ('b1000000-0000-4000-8000-000000000002', 'b0000000-0000-4000-8000-000000000002', 'seed-bravo-invite', '20000000-0000-4000-8000-000000000002', '2099-01-01 00:00:00+00', '2026-07-01 12:00:00+00')
+  ('a1000000-0000-4000-8000-000000000001', 'a0000000-0000-4000-8000-000000000001', encode(extensions.digest('seed-alpha-invite', 'sha256'), 'hex'), 'invite', '10000000-0000-4000-8000-000000000001', '2099-01-01 00:00:00+00', '2026-07-01 12:00:00+00'),
+  ('b1000000-0000-4000-8000-000000000002', 'b0000000-0000-4000-8000-000000000002', encode(extensions.digest('seed-bravo-invite', 'sha256'), 'hex'), 'invite', '20000000-0000-4000-8000-000000000002', '2099-01-01 00:00:00+00', '2026-07-01 12:00:00+00')
 on conflict (id) do update set
   crew_id = excluded.crew_id,
-  token = excluded.token,
+  token_hash = excluded.token_hash,
+  token_hint = excluded.token_hint,
   created_by = excluded.created_by,
   expires_at = excluded.expires_at,
-  revoked_at = null;
+  revoked_at = null,
+  redeemed_by = null,
+  redeemed_at = null;
 
 insert into public.community_posts (
   id,

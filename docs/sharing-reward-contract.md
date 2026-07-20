@@ -18,7 +18,7 @@ Raw completion tokens, URLs, captions, private-group names, recipient data, and 
 
 - `create_sharing_reward_intent('native_share' | 'copy_link')` returns a one-time completion token. Creating an intent never grants anything.
 - `complete_sharing_reward(token)` consumes eligible client completion evidence and returns the grant or the existing lifetime grant.
-- `record_confirmed_group_invite_share(inviter_user_id, redemption_id)` is executable only by the database owner or service role. The hardened invite flow supplies the immutable attribution ID; clients cannot nominate an inviter or redemption.
+- `record_confirmed_group_invite_share(redemption_id)` is executable only by the database owner or service role. It loads the inviter from the immutable attribution row; clients cannot nominate an inviter. An after-insert trigger invokes the same checked path when invite confirmation records that attribution.
 
 The internal grant takes a transaction-scoped user lock, inserts one 14-point ledger event, updates cached point totals, awards the badge with a null `entry_date`, and writes the audit row in the same transaction. Any failure rolls all of those writes back. Null badge dates deliberately avoid the unique daily-badge slot used by Check-Ins.
 
@@ -27,7 +27,7 @@ The internal grant takes a transaction-scoped user lock, inserts one 14-point le
 1. Deploy the seven-point economy and backend CI foundations.
 2. Deploy hardened invite attribution (`FOU-561`).
 3. Deploy this migration (`FOU-562`).
-4. Have the invite confirmation server path call `record_confirmed_group_invite_share` with the stored inviter and redemption ID. The hook is retry-safe, so an integration worker may retry after a transient failure without duplicating points or badges.
+4. Invite confirmation inserts its immutable attribution row; the trigger grants the inviter reward in the same transaction. The service-only one-argument hook remains retry-safe for reconciliation without duplicating points or badges.
 5. The share composer (`FOU-563`) creates and completes native/copy intents around the platform APIs.
 
 Reward progress and next-unlock calculations read `user_game_stats.total_points`, which the atomic grant updates immediately. The all-badges contract reads `badge_definitions` and `user_badges`, so the catalog entry and earned badge appear without a separate client-side badge definition.

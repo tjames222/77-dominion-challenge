@@ -3,7 +3,7 @@ begin;
 create extension if not exists pgtap with schema extensions;
 set local search_path = public, extensions;
 
-select plan(33);
+select plan(44);
 
 select ok(
   exists (
@@ -41,11 +41,22 @@ select ok(
   'the Sharing reward migration was replayed'
 );
 
+select ok(
+  exists (
+    select 1
+    from supabase_migrations.schema_migrations
+    where version = '20260721000000'
+  ),
+  'the hardened private-group invite migration was replayed'
+);
+
 select ok(to_regclass('public.profiles') is not null, 'profiles exists');
 select ok(to_regclass('public.challenge_entries') is not null, 'challenge_entries exists');
 select ok(to_regclass('public.check_ins') is not null, 'check_ins exists');
 select ok(to_regclass('public.game_point_events') is not null, 'game_point_events exists');
 select ok(to_regclass('public.crews') is not null, 'crews exists');
+select ok(to_regclass('public.crew_invite_sessions') is not null, 'invite continuations exist');
+select ok(to_regclass('public.crew_invite_attributions') is not null, 'invite attribution audit records exist');
 select ok(to_regclass('public.challenge_definitions') is not null, 'challenge_definitions exists');
 select ok(to_regclass('public.sharing_reward_intents') is not null, 'sharing_reward_intents exists');
 select ok(to_regclass('public.sharing_reward_evidence') is not null, 'sharing_reward_evidence exists');
@@ -56,13 +67,30 @@ select ok(
   'the check-in RPC has the expected signature'
 );
 select ok(to_regprocedure('public.record_app_visit()') is not null, 'the app-visit RPC exists');
-select ok(to_regprocedure('public.join_crew_by_invite(text)') is not null, 'the crew invite RPC exists');
 select ok(to_regprocedure('public.create_sharing_reward_intent(text)') is not null, 'the Sharing intent RPC exists');
 select ok(to_regprocedure('public.complete_sharing_reward(text)') is not null, 'the Sharing completion RPC exists');
 select ok(
   to_regprocedure('public.record_confirmed_group_invite_share(uuid,uuid)') is not null,
   'the confirmed-invite Sharing hook exists'
 );
+select ok(
+  to_regprocedure('public.record_confirmed_group_invite_share(uuid)') is not null,
+  'the attribution-only Sharing hook exists'
+);
+select ok(
+  exists (
+    select 1
+    from pg_trigger
+    where tgrelid = 'public.crew_invite_attributions'::regclass
+      and tgname = 'grant_sharing_reward_after_invite_redemption'
+      and not tgisinternal
+  ),
+  'confirmed invite attribution automatically invokes the Sharing reward'
+);
+select ok(to_regprocedure('public.issue_crew_invite(uuid)') is not null, 'the server-authoritative invite issuance RPC exists');
+select ok(to_regprocedure('public.revoke_crew_invite(uuid)') is not null, 'the server-authoritative invite revocation RPC exists');
+select ok(to_regprocedure('public.preview_crew_invite(text,text)') is not null, 'the privacy-safe invite preview RPC exists');
+select ok(to_regprocedure('public.confirm_crew_invite(text)') is not null, 'the explicit invite confirmation RPC exists');
 
 select ok((select relrowsecurity from pg_class where oid = 'public.profiles'::regclass), 'profiles has RLS enabled');
 select ok((select relrowsecurity from pg_class where oid = 'public.challenge_entries'::regclass), 'challenge_entries has RLS enabled');
@@ -86,6 +114,18 @@ select ok(
 select ok(
   exists (select 1 from public.badge_definitions where badge_key = 'sharing'),
   'the all-badges catalog includes the permanent Sharing badge'
+);
+select ok(
+  (select relrowsecurity from pg_class where oid = 'public.crew_invite_sessions'::regclass),
+  'invite continuations have RLS enabled'
+);
+select ok(
+  (select relrowsecurity from pg_class where oid = 'public.crew_invite_attributions'::regclass),
+  'invite attributions have RLS enabled'
+);
+select ok(
+  not has_column_privilege('authenticated', 'public.crew_invites', 'token_hash', 'select'),
+  'authenticated clients cannot select invite token hashes'
 );
 
 select ok(

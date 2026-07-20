@@ -48,6 +48,8 @@ const MOCK_SUBSCRIPTION_KEY = 'dominion:mockSubscription';
 const MOCK_CREWS_KEY = 'dominion:mockCrews';
 const MOCK_CREW_MEMBERS_KEY = 'dominion:mockCrewMembers';
 const MOCK_INVITES_KEY = 'dominion:mockCrewInvites';
+const MOCK_INVITE_SESSIONS_KEY = 'dominion:mockCrewInviteSessions';
+const MOCK_INVITE_ATTRIBUTIONS_KEY = 'dominion:mockCrewInviteAttributions';
 const MOCK_POSTS_KEY = 'dominion:mockCommunityPosts';
 const MOCK_JOURNAL_KEY = 'dominion:mockJournalEntries';
 const MOCK_CHALLENGE_STATES_KEY = 'dominion:mockChallengeStates';
@@ -150,6 +152,20 @@ async function withMockCommunityImageUrls(posts) {
 }
 
 const randomId = (prefix) => `${prefix}_${globalThis.crypto?.randomUUID?.() || Math.random().toString(16).slice(2)}`;
+
+const randomSecret = () => {
+  const bytes = new Uint8Array(32);
+  globalThis.crypto?.getRandomValues?.(bytes);
+  if (bytes.some(Boolean)) return Array.from(bytes, (value) => value.toString(16).padStart(2, '0')).join('');
+  return `${randomId('invite')}${randomId('secret')}`.replace(/[^A-Za-z0-9_-]/g, '');
+};
+
+const sha256Hex = async (value) => {
+  if (!globalThis.crypto?.subtle) return `preview-${String(value)}`;
+  const bytes = new TextEncoder().encode(String(value));
+  const digest = await globalThis.crypto.subtle.digest('SHA-256', bytes);
+  return Array.from(new Uint8Array(digest), (item) => item.toString(16).padStart(2, '0')).join('');
+};
 
 const getMockUserId = () => {
   let userId = localStorage.getItem(MOCK_USER_ID_KEY);
@@ -265,6 +281,9 @@ export function sanitizeReturnTo(returnTo, fallback = './dashboard.html') {
     const resolved = new URL(returnTo, window.location.origin);
     if (resolved.origin !== window.location.origin) return fallback;
     const path = resolved.pathname.split('/').pop() || 'dashboard.html';
+    const fragmentParams = new URLSearchParams(resolved.hash.replace(/^#/, ''));
+    if (resolved.searchParams.has('invite') || fragmentParams.has('invite')) return fallback;
+    if (path === 'invite.html') return './invite.html';
     return `./${path}${resolved.search}${resolved.hash}`;
   } catch {
     return fallback;
@@ -1450,82 +1469,209 @@ export async function getCrewMembers(crewId) {
 
 export async function getOrCreateCrewInvite(crewId) {
   if (isLocalDemoMode()) {
+    const { crews, members } = ensureMockCrews();
+    const crew = crews.find((item) => item.id === crewId);
+    const currentUserId = getMockUserId();
+    const canManage = crew && (crew.createdBy === currentUserId || (members[crewId] || []).some((member) => member.userId === currentUserId && ['owner', 'admin'].includes(member.role)));
+    if (!canManage) throw new Error('Only a private-group admin can create an invitation.');
+
     const invites = readJson(MOCK_INVITES_KEY, {});
-    if (!invites[crewId]) {
-      invites[crewId] = {
-        id: randomId('preview_invite'),
-        crew_id: crewId,
-        token: `preview-${crewId}`,
-        expires_at: new Date(Date.now() + 14 * 86400000).toISOString(),
-        revoked_at: null,
-        created_at: new Date().toISOString(),
-      };
-      writeJson(MOCK_INVITES_KEY, invites);
+    const previous = invites[crewId];
+    if (previous && Date.now() - new Date(previous.created_at).getTime() < 5000) {
+      throw new Error('Wait a few seconds before rotating this invitation.');
     }
-    return invites[crewId];
+    if (previous && !previous.revoked_at) previous.revoked_at = new Date().toISOString();
+
+    const token = randomSecret();
+    const invite = {
+      id: randomId('preview_invite'),
+      crew_id: crewId,
+      token_hash: await sha256Hex(token),
+      token_hint: token.slice(-6),
+      created_by: currentUserId,
+      expires_at: new Date(Date.now() + 14 * 86400000).toISOString(),
+      revoked_at: null,
+      redeemed_by: null,
+      redeemed_at: null,
+      created_at: new Date().toISOString(),
+    };
+    invites[crewId] = invite;
+    writeJson(MOCK_INVITES_KEY, invites);
+    return { ...invite, token };
   }
 
   const client = requireSupabase();
-  const user = await requireUser();
-  const { data: existing, error: existingError } = await client
-    .from('crew_invites')
-    .select('id, crew_id, token, expires_at, revoked_at, created_at')
-    .eq('crew_id', crewId)
-    .is('revoked_at', null)
-    .gt('expires_at', new Date().toISOString())
-    .order('created_at', { ascending: false })
-    .limit(1);
-
-  if (existingError) throw existingError;
-  if (existing?.[0]) return existing[0];
-
-  const { data, error } = await client
-    .from('crew_invites')
-    .insert({ crew_id: crewId, created_by: user.id })
-    .select('id, crew_id, token, expires_at, revoked_at, created_at')
-    .single();
-
+  await requireUser();
+  const { data, error } = await client.rpc('issue_crew_invite', { target_crew_id: crewId });
   if (error) throw error;
-  return data;
+  if (data?.status !== 'issued' || !data?.token) {
+    throw new Error(data?.status === 'rate_limited'
+      ? 'Wait a few minutes before rotating another invitation.'
+      : 'Unable to create an invitation right now.');
+  }
+  return {
+    id: data.inviteId,
+    crew_id: crewId,
+    token: data.token,
+    token_hint: data.tokenHint,
+    expires_at: data.expiresAt,
+  };
 }
 
-export async function joinCrewByInvite(token) {
-  if (isLocalDemoMode()) {
-    const { crews, members } = ensureMockCrews();
-    const invites = readJson(MOCK_INVITES_KEY, {});
-    const invite = Object.values(invites).find((item) => item.token === token) ||
-      (String(token).startsWith('preview-') ? { crew_id: String(token).replace('preview-', '') } : null);
-    const crew = crews.find((item) => item.id === invite?.crew_id);
-    if (!crew) return null;
+function mockInvitePreview(invite, crew, members) {
+  const inviter = (members[crew.id] || []).find((member) => member.userId === invite.created_by);
+  return {
+    groupName: crew.name || 'Private group',
+    inviterName: String(inviter?.name || 'Dominion member').trim().split(/\s+/)[0],
+    expiresAt: invite.expires_at,
+  };
+}
 
-    const crewMembers = members[crew.id] || [];
-    const userId = getMockUserId();
-    if (!crewMembers.some((member) => member.userId === userId)) {
-      crewMembers.push({
-        crewId: crew.id,
-        userId,
-        name: getMockUser().name || 'Preview Member',
-        avatarUrl: getMockUser().avatarUrl || '',
-        role: 'member',
-        joinedAt: new Date().toISOString(),
-      });
-      members[crew.id] = crewMembers;
-      saveMockCrewMembers(members);
+function mockInviteStatus(invite, crew, members, currentUserId = '') {
+  if (!invite || !crew) return 'invalid';
+  if (invite.revoked_at) return 'revoked';
+  if (new Date(invite.expires_at).getTime() <= Date.now()) return 'expired';
+  const crewMembers = members[crew.id] || [];
+  if (currentUserId && crewMembers.some((member) => member.userId === currentUserId)) return 'already_member';
+  if (invite.redeemed_by) return 'already_used';
+  if (crewMembers.length >= Number(crew.memberLimit || 50)) return 'full';
+  return 'ready';
+}
+
+export async function previewCrewInvite({ token = '', continuationToken = '' } = {}) {
+  if (isLocalDemoMode()) {
+    const crews = readJson(MOCK_CREWS_KEY, []);
+    const members = readJson(MOCK_CREW_MEMBERS_KEY, {});
+    const invites = readJson(MOCK_INVITES_KEY, {});
+    const sessions = readJson(MOCK_INVITE_SESSIONS_KEY, {});
+    const mockUser = getMockUser();
+    const currentUserId = mockUser.authenticated ? localStorage.getItem(MOCK_USER_ID_KEY) || '' : '';
+    let continuation = continuationToken;
+    let session = null;
+    let invite = null;
+
+    if (token) {
+      const tokenHash = await sha256Hex(token);
+      invite = Object.values(invites).find((item) => item.token_hash === tokenHash || item.token === token) || null;
+      if (invite) {
+        continuation = randomSecret();
+        session = {
+          id: randomId('preview_invite_session'),
+          invite_id: invite.id,
+          continuation_hash: await sha256Hex(continuation),
+          bound_user_id: currentUserId || null,
+          expires_at: new Date(Date.now() + 2 * 60 * 60 * 1000).toISOString(),
+          confirmation_attempts: 0,
+          confirmed_at: null,
+        };
+        sessions[session.id] = session;
+        writeJson(MOCK_INVITE_SESSIONS_KEY, sessions);
+      }
+    } else if (continuation) {
+      const continuationHash = await sha256Hex(continuation);
+      session = Object.values(sessions).find((item) => item.continuation_hash === continuationHash) || null;
+      if (!session) return { status: 'invalid' };
+      if (new Date(session.expires_at).getTime() <= Date.now()) return { status: 'session_expired' };
+      if (currentUserId && session.bound_user_id && session.bound_user_id !== currentUserId) return { status: 'wrong_account' };
+      if (currentUserId && !session.bound_user_id) {
+        session.bound_user_id = currentUserId;
+        writeJson(MOCK_INVITE_SESSIONS_KEY, sessions);
+      }
+      invite = Object.values(invites).find((item) => item.id === session.invite_id) || null;
     }
-    return { ...crew, role: 'member' };
+
+    const crew = crews.find((item) => item.id === invite?.crew_id);
+    const status = mockInviteStatus(invite, crew, members, currentUserId);
+    const response = { status };
+    if (['ready', 'already_member'].includes(status)) response.preview = mockInvitePreview(invite, crew, members);
+    if (token && continuation && ['ready', 'full'].includes(status)) response.continuationToken = continuation;
+    return response;
   }
 
   const client = requireSupabase();
-  const { data, error } = await client.rpc('join_crew_by_invite', { invite_token: token });
+  const { data, error } = await client.rpc('preview_crew_invite', {
+    invite_token: token || null,
+    continuation_token: continuationToken || null,
+  });
   if (error) throw error;
-  const crew = data?.[0];
-  return crew ? mapCrew({
-    id: crew.crew_id,
-    name: crew.name,
-    description: crew.description,
-    challenge_start_date: crew.challenge_start_date,
-    role: 'member',
-  }) : null;
+  return data || { status: 'invalid' };
+}
+
+export async function confirmCrewInvite(continuationToken) {
+  if (isLocalDemoMode()) {
+    const mockUser = getMockUser();
+    if (!mockUser.authenticated) return { status: 'authentication_required' };
+    const billing = getMockBillingState();
+    if (!billing.appAccess) return { status: 'subscription_required' };
+
+    const sessions = readJson(MOCK_INVITE_SESSIONS_KEY, {});
+    const sessionHash = await sha256Hex(continuationToken);
+    const session = Object.values(sessions).find((item) => item.continuation_hash === sessionHash) || null;
+    if (!session) return { status: 'invalid' };
+    if (new Date(session.expires_at).getTime() <= Date.now()) return { status: 'session_expired' };
+    const currentUserId = getMockUserId();
+    if (session.bound_user_id && session.bound_user_id !== currentUserId) return { status: 'wrong_account' };
+    session.bound_user_id = currentUserId;
+    session.confirmation_attempts = Number(session.confirmation_attempts || 0) + 1;
+    if (session.confirmation_attempts > 5) return { status: 'rate_limited' };
+
+    const invites = readJson(MOCK_INVITES_KEY, {});
+    const invite = Object.values(invites).find((item) => item.id === session.invite_id) || null;
+    const { crews, members } = ensureMockCrews();
+    const crew = crews.find((item) => item.id === invite?.crew_id);
+    const status = mockInviteStatus(invite, crew, members, currentUserId);
+    if (status !== 'ready') {
+      writeJson(MOCK_INVITE_SESSIONS_KEY, sessions);
+      return {
+        status,
+        ...(status === 'already_member' ? { preview: mockInvitePreview(invite, crew, members) } : {}),
+      };
+    }
+
+    const crewMembers = members[crew.id] || [];
+    crewMembers.push({
+      crewId: crew.id,
+      userId: currentUserId,
+      name: mockUser.name || 'Preview Member',
+      avatarUrl: mockUser.avatarUrl || '',
+      role: 'member',
+      joinedAt: new Date().toISOString(),
+    });
+    members[crew.id] = crewMembers;
+    saveMockCrewMembers(members);
+
+    const attributions = readJson(MOCK_INVITE_ATTRIBUTIONS_KEY, {});
+    const redemptionId = randomId('preview_invite_redemption');
+    attributions[redemptionId] = {
+      id: redemptionId,
+      invite_id: invite.id,
+      crew_id: crew.id,
+      inviter_user_id: invite.created_by,
+      recipient_user_id: currentUserId,
+      created_at: new Date().toISOString(),
+    };
+    writeJson(MOCK_INVITE_ATTRIBUTIONS_KEY, attributions);
+
+    invite.redeemed_by = currentUserId;
+    invite.redeemed_at = new Date().toISOString();
+    session.confirmed_at = new Date().toISOString();
+    writeJson(MOCK_INVITES_KEY, invites);
+    writeJson(MOCK_INVITE_SESSIONS_KEY, sessions);
+    return {
+      status: 'joined',
+      crewId: crew.id,
+      redemptionId,
+      preview: mockInvitePreview(invite, crew, members),
+    };
+  }
+
+  const client = requireSupabase();
+  await requireUser();
+  const { data, error } = await client.rpc('confirm_crew_invite', {
+    continuation_token: continuationToken,
+  });
+  if (error) throw error;
+  return data || { status: 'invalid' };
 }
 
 const COMMUNITY_POST_SELECT = 'id, author_id, display_name, avatar_url, crew_id, scope, body, image_path, image_alt, post_type, challenge_day, status, completed_count, created_at';
