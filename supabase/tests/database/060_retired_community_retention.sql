@@ -3,7 +3,7 @@ begin;
 create extension if not exists pgtap with schema extensions;
 set local search_path = public, extensions;
 
-select plan(52);
+select plan(54);
 
 select ok(exists (select 1 from supabase_migrations.schema_migrations where version = '20260720130000'),
   'the T0 retirement migration was replayed');
@@ -29,12 +29,13 @@ select is((select comment_count from private.retired_community_t0_census),
 select is((select like_count from private.retired_community_t0_census),
   (select count(*) from private.retired_community_t0_like_inventory), 'like census matches its inventory');
 select is((select referenced_image_count from private.retired_community_t0_census),
-  (select count(*) from private.retired_community_t0_post_inventory where image_reference_sha256 is not null),
+  (select count(distinct image_reference_sha256) from private.retired_community_t0_post_inventory
+    where image_reference_sha256 is not null),
   'referenced-image census matches its inventory');
 select is((select bucket_object_count from private.retired_community_t0_census),
   (select count(*) from private.retired_community_t0_object_inventory), 'bucket census matches its inventory');
 select is((select missing_object_count from private.retired_community_t0_census),
-  (select count(*) from private.retired_community_t0_post_inventory
+  (select count(distinct image_reference_sha256) from private.retired_community_t0_post_inventory
     where image_reference_sha256 is not null and object_sha256 is null), 'missing-object census matches its inventory');
 select is((select orphan_object_count from private.retired_community_t0_census),
   (select count(*) from private.retired_community_t0_object_inventory
@@ -192,6 +193,8 @@ select is(jsonb_array_length(public.export_own_retired_community_content()->'pos
   'auth.uid scopes the export to Alice authored posts');
 select like(public.export_own_retired_community_content()::text, '%Alpha fixture post%',
   'Alice receives her own post body');
+select like(public.export_own_retired_community_content()::text, '%referenced.jpg%',
+  'Alice receives a usable path for only her own attachment');
 select is(jsonb_array_length(public.export_own_retired_community_content()->'comments'), 1,
   'auth.uid scopes the export to Alice authored comments');
 select like(public.export_own_retired_community_content()::text, '%Alice comment on Bob%',
@@ -204,6 +207,8 @@ select unlike(public.export_own_retired_community_content()::text, '%Bob comment
   'another member comment body never leaks even on Alice post');
 select unlike(public.export_own_retired_community_content()::text, '%Bob global private body%',
   'another member global post body never leaks');
+select unlike(public.export_own_retired_community_content()::text, '%missing.jpg%',
+  'another member attachment path never leaks');
 select unlike(public.export_own_retired_community_content()::text, '%Bob Private Name%',
   'another member display data never leaks');
 select ok(public.export_own_retired_community_content()::text
