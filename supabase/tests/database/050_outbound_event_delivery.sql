@@ -129,7 +129,7 @@ select is(
     from private.integration_destinations
     where id = 'd0000000-0000-4000-8000-000000000001'
   ),
-  'false:false:false:false:off:true',
+  'f:f:f:f:off:t',
   'all event categories fail closed while safe Dominion links default on'
 );
 
@@ -230,7 +230,7 @@ select is(
       badges_rewards_enabled, membership_enabled, recap_cadence, include_safe_link, can_manage)
     from public.list_crew_integration_destinations('a0000000-0000-4000-8000-000000000001')
   ),
-  'true:true:true:true:weekly:true:false',
+  't:t:t:t:weekly:t:f',
   'members see read-only event settings while management remains restricted'
 );
 
