@@ -5220,7 +5220,7 @@ begin
   end if;
 
   delivery_key := 'canonical:' || target_event_type || ':'
-    || encode(digest(target_event_type || ':' || target_source_reference, 'sha256'), 'hex');
+    || encode(extensions.digest(target_event_type || ':' || target_source_reference, 'sha256'), 'hex');
 
   for destination in
     select provider_destination.id, provider_destination.crew_id
