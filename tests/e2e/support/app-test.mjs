@@ -24,6 +24,16 @@ function installExternalRequestIsolation(context) {
       return;
     }
 
+    if (request.resourceType() === 'stylesheet') {
+      await route.fulfill({
+        status: 200,
+        contentType: 'text/css',
+        body: '/* External styles are intentionally neutralized in browser fixtures. */',
+        headers: { 'cache-control': 'public, max-age=31536000, immutable' },
+      });
+      return;
+    }
+
     if (['fetch', 'xhr'].includes(request.resourceType())) {
       await route.fulfill({
         status: 200,
@@ -41,15 +51,19 @@ async function seedPage(page, stateName, theme) {
   const storage = fixtureFor(stateName, theme);
 
   await page.addInitScript(({ fixedNow, seededStorage, selectedTheme }) => {
-    localStorage.clear();
-    sessionStorage.clear();
+    const storageSeedKey = 'dominion:e2e-storage-seeded';
+    if (sessionStorage.getItem(storageSeedKey) !== 'true') {
+      localStorage.clear();
+      sessionStorage.clear();
 
-    for (const [key, value] of Object.entries(seededStorage.json)) {
-      localStorage.setItem(key, JSON.stringify(value));
-    }
-    for (const [key, value] of Object.entries(seededStorage.raw)) {
-      if (value === null || value === undefined) localStorage.removeItem(key);
-      else localStorage.setItem(key, String(value));
+      for (const [key, value] of Object.entries(seededStorage.json)) {
+        localStorage.setItem(key, JSON.stringify(value));
+      }
+      for (const [key, value] of Object.entries(seededStorage.raw)) {
+        if (value === null || value === undefined) localStorage.removeItem(key);
+        else localStorage.setItem(key, String(value));
+      }
+      sessionStorage.setItem(storageSeedKey, 'true');
     }
 
     const NativeDate = Date;
@@ -134,14 +148,24 @@ async function seedPage(page, stateName, theme) {
 async function waitForStablePage(page) {
   await page.waitForLoadState('domcontentloaded');
   await page.evaluate(async () => {
-    if (document.fonts?.ready) await document.fonts.ready;
-    await Promise.all([...document.images].map((image) => {
+    const settleWithin = (promise, timeoutMs = 5_000) => Promise.race([
+      promise,
+      new Promise((resolve) => setTimeout(resolve, timeoutMs)),
+    ]);
+
+    if (document.fonts?.ready) await settleWithin(document.fonts.ready);
+
+    const images = [...document.images];
+    for (const image of images) {
+      if (image.loading === 'lazy') image.loading = 'eager';
+    }
+    await settleWithin(Promise.all(images.map((image) => {
       if (image.complete) return Promise.resolve();
       return new Promise((resolve) => {
         image.addEventListener('load', resolve, { once: true });
         image.addEventListener('error', resolve, { once: true });
       });
-    }));
+    })));
     await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
   });
 }
@@ -166,6 +190,7 @@ export const test = base.extend({
         const theme = options.theme || testInfo.project.metadata.theme || 'dark';
         await seedPage(page, state, theme);
         await page.goto(route.path, { waitUntil: options.waitUntil || 'networkidle' });
+        await page.addStyleTag({ path: SCREENSHOT_STYLE });
         await expect(page.locator(route.ready).first()).toBeVisible();
         await expect(page).toHaveTitle(route.title);
         await waitForStablePage(page);

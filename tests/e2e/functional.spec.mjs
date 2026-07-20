@@ -70,16 +70,17 @@ test('login form submits with the keyboard and honors a safe return path', async
 
 test('daily action controls toggle by keyboard and persist the dated fixture', async ({ page, app }) => {
   await app.open(ROUTE_BY_ID.todayActions);
-  const bibleAction = page.getByRole('button', { name: 'Mark Bible Reading complete' });
-  await bibleAction.focus();
+  const workoutAction = page.locator('[data-action-completion="workoutOne"]');
+  await expect(workoutAction).toHaveAccessibleName('Mark Workout #1 complete');
+  await workoutAction.focus();
   await page.keyboard.press('Space');
-  await expect(bibleAction).toHaveAttribute('aria-pressed', 'true');
+  await expect(workoutAction).toHaveAttribute('aria-pressed', 'true');
 
   const entries = await page.evaluate(() => JSON.parse(localStorage.getItem('dominion:entries') || '[]'));
   expect(entries).toEqual(expect.arrayContaining([
     expect.objectContaining({
       date: FIXED_TODAY,
-      completed: expect.arrayContaining(['bible']),
+      completed: expect.arrayContaining(['workoutOne']),
     }),
   ]));
 });

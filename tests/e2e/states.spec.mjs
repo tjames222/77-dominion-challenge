@@ -57,7 +57,7 @@ test('locked challenge progression has a deterministic visual contract', async (
   await app.open(ROUTE_BY_ID.dashboard, { state: 'rewardsLocked' });
   await page.locator('#challengeVaultToggle').click();
   await expect(page.locator('#challengeVaultDetails')).toBeVisible();
-  await expect(page.locator('#challengeCatalog')).toContainText('1,000 points');
+  await expect(page.locator('#challengeCatalog')).toContainText('Unlocks at 1,000');
   await expectStableScreenshot(page, app, 'state-rewards-locked.png');
 });
 
@@ -66,14 +66,14 @@ test('unlocked challenge progression has a deterministic visual contract', async
   await page.locator('#challengeVaultToggle').click();
   await expect(page.locator('#challengeVaultDetails')).toBeVisible();
   await expect(page.locator('#challengeCatalog')).toContainText('7-Day Reset');
-  await expect(page.locator('#challengeCatalog')).toContainText('Ready');
+  await expect(page.locator('#challengeCatalog')).toContainText('Available');
   await expectStableScreenshot(page, app, 'state-rewards-unlocked.png');
 });
 
 test('submitted check-in state locks controls and remains accessible', async ({ page, app }) => {
   await app.open(ROUTE_BY_ID.dashboard, { state: 'submitted' });
   await expect(page.locator('#checkInButton')).toBeDisabled();
-  await expect(page.locator('#checkInButton')).toHaveText('Check-In Posted');
+  await expect(page.locator('#checkInButton')).toHaveText('Today’s Check-In Complete');
   await expectStableScreenshot(page, app, 'state-check-in-submitted.png');
 
   const results = await analyzeAccessibility(page);
