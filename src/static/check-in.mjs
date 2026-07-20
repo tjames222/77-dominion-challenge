@@ -27,6 +27,19 @@ export function calendarDayDifference(currentDateKey, startDateKey) {
   return calendarDayNumber(currentDateKey) - calendarDayNumber(startDateKey);
 }
 
+export function currentFullDayStreakForDate(stats = {}, currentDateKey) {
+  const currentStreak = Math.max(0, Math.floor(Number(stats.currentFullDayStreak) || 0));
+  const lastFullDayDate = String(stats.lastFullDayDate || '');
+  if (!currentStreak || !lastFullDayDate) return 0;
+
+  try {
+    const daysSinceFullCheckIn = calendarDayDifference(currentDateKey, lastFullDayDate);
+    return daysSinceFullCheckIn >= 0 && daysSinceFullCheckIn <= 1 ? currentStreak : 0;
+  } catch {
+    return 0;
+  }
+}
+
 export function normalizeCheckInDates(values = []) {
   return [...new Set((Array.isArray(values) ? values : [])
     .map((value) => String(value || '').trim())

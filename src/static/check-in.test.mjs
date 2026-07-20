@@ -10,6 +10,7 @@ import {
   checkInCacheForOwner,
   createCheckInCache,
   createCheckInAlreadyCompleteError,
+  currentFullDayStreakForDate,
   dateKeyForTimeZone,
   isDuplicateCheckInError,
   normalizeChallengeDays,
@@ -25,6 +26,14 @@ describe('daily check-in safeguards', () => {
   it('calculates challenge days without daylight-saving drift', () => {
     assert.equal(calendarDayDifference('2026-11-02', '2026-10-31'), 2);
     assert.equal(calendarDayDifference('2026-03-09', '2026-03-07'), 2);
+  });
+
+  it('resets the visible full-day streak after an unsubmitted day passes', () => {
+    const stats = { currentFullDayStreak: 6, lastFullDayDate: '2026-07-17' };
+    assert.equal(currentFullDayStreakForDate(stats, '2026-07-17'), 6);
+    assert.equal(currentFullDayStreakForDate(stats, '2026-07-18'), 6);
+    assert.equal(currentFullDayStreakForDate(stats, '2026-07-19'), 0);
+    assert.equal(currentFullDayStreakForDate({ currentFullDayStreak: 6 }, '2026-07-19'), 0);
   });
 
   it('normalizes and records a submitted date only once', () => {

@@ -30,11 +30,58 @@ create table if not exists public.challenge_entries (
   user_id uuid not null references auth.users(id) on delete cascade,
   entry_date date not null,
   completed text[] not null default '{}',
+  workout_difficulty jsonb not null default '{}'::jsonb,
+  version bigint not null default 0,
   scheduled_miss boolean not null default false,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
   primary key (user_id, entry_date)
 );
+
+alter table public.challenge_entries
+  add column if not exists workout_difficulty jsonb not null default '{}'::jsonb,
+  add column if not exists version bigint not null default 0;
+
+create or replace function public.normalize_daily_standard_completed(target_completed text[])
+returns text[]
+language sql
+immutable
+set search_path = pg_catalog, pg_temp
+as $$
+  select coalesce(array_agg(item.action_id order by item.first_position), '{}'::text[])
+  from (
+    select completed_item as action_id, min(item_position) as first_position
+    from unnest(coalesce(target_completed, '{}'::text[]))
+      with ordinality as supplied(completed_item, item_position)
+    where completed_item = any(array[
+      'bible', 'morningPrayer', 'worshipOnly', 'eveningPrayer',
+      'workoutOne', 'walk', 'workoutTwo'
+    ]::text[])
+    group by completed_item
+  ) item;
+$$;
+
+update public.challenge_entries draft
+set
+  completed = public.normalize_daily_standard_completed(draft.completed),
+  version = draft.version + 1
+where draft.completed is distinct from public.normalize_daily_standard_completed(draft.completed);
+
+create or replace function public.normalize_daily_standard_draft()
+returns trigger
+language plpgsql
+set search_path = pg_catalog, pg_temp
+as $$
+begin
+  new.completed := public.normalize_daily_standard_completed(new.completed);
+  return new;
+end;
+$$;
+
+drop trigger if exists normalize_daily_standard_draft_write on public.challenge_entries;
+create trigger normalize_daily_standard_draft_write
+  before insert or update of completed on public.challenge_entries
+  for each row execute function public.normalize_daily_standard_draft();
 
 create table if not exists public.check_ins (
   id uuid primary key default gen_random_uuid(),
@@ -54,19 +101,65 @@ alter table public.check_ins
   add column if not exists workout_difficulty jsonb not null default '{}'::jsonb,
   add column if not exists points_awarded integer not null default 0;
 
-create table if not exists public.workout_difficulty_point_values (
-  difficulty text primary key check (difficulty in ('easy', 'medium', 'hard', 'extreme')),
-  points integer not null check (points >= 0),
-  updated_at timestamptz not null default now()
-);
+update public.challenge_entries draft
+set
+  scheduled_miss = false,
+  updated_at = now()
+where draft.scheduled_miss
+  and not exists (
+    select 1
+    from public.check_ins finalized
+    where finalized.user_id = draft.user_id
+      and finalized.entry_date = draft.entry_date
+      and finalized.status = 'scheduled'
+  );
 
-insert into public.workout_difficulty_point_values (difficulty, points)
-values
-  ('easy', 2),
-  ('medium', 5),
-  ('hard', 10),
-  ('extreme', 15)
-on conflict (difficulty) do nothing;
+create or replace function public.reject_scheduled_miss_draft()
+returns trigger
+language plpgsql
+set search_path = public
+as $$
+begin
+  if new.scheduled_miss then
+    raise exception 'Scheduled miss days are no longer supported.' using errcode = '22023';
+  end if;
+  return new;
+end;
+$$;
+
+drop trigger if exists reject_scheduled_miss_draft_write on public.challenge_entries;
+create trigger reject_scheduled_miss_draft_write
+  before insert or update of scheduled_miss on public.challenge_entries
+  for each row execute function public.reject_scheduled_miss_draft();
+
+create or replace function public.reject_scheduled_check_in()
+returns trigger
+language plpgsql
+set search_path = public
+as $$
+begin
+  if new.status = 'scheduled' then
+    raise exception 'Scheduled miss Check-Ins are no longer supported.' using errcode = '22023';
+  end if;
+  return new;
+end;
+$$;
+
+drop trigger if exists block_scheduled_check_in_write on public.check_ins;
+create trigger block_scheduled_check_in_write
+  before insert or update of status on public.check_ins
+  for each row execute function public.reject_scheduled_check_in();
+
+create or replace function public.workout_difficulty_points(target_difficulty text)
+returns integer
+language sql
+immutable
+set search_path = public
+as $$
+  select 0;
+$$;
+
+drop table if exists public.workout_difficulty_point_values;
 
 create table if not exists public.billing_customers (
   user_id uuid primary key references auth.users(id) on delete cascade,
@@ -687,11 +780,6 @@ create trigger set_challenge_entries_updated_at
   before update on public.challenge_entries
   for each row execute function public.set_updated_at();
 
-drop trigger if exists set_workout_difficulty_point_values_updated_at on public.workout_difficulty_point_values;
-create trigger set_workout_difficulty_point_values_updated_at
-  before update on public.workout_difficulty_point_values
-  for each row execute function public.set_updated_at();
-
 drop trigger if exists set_billing_customers_updated_at on public.billing_customers;
 create trigger set_billing_customers_updated_at
   before update on public.billing_customers
@@ -802,8 +890,24 @@ set search_path = public
 as $$
 declare
   inserted_id uuid;
+  effective_points integer := target_points;
 begin
-  if target_points <= 0 then
+  if target_event_type in ('app_visit', 'app_streak_bonus', 'full_day_streak_bonus', 'workout_difficulty') then
+    return false;
+  end if;
+
+  if target_event_type = 'check_in' then
+    effective_points := least(greatest(
+      case
+        when coalesce(target_metadata ->> 'completedCount', '') ~ '^\d+$'
+          then (target_metadata ->> 'completedCount')::integer
+        else 0
+      end,
+      0
+    ), 7);
+  end if;
+
+  if effective_points <= 0 then
     return false;
   end if;
 
@@ -822,7 +926,7 @@ begin
   values (
     target_user_id,
     target_event_type,
-    target_points,
+    effective_points,
     target_entry_date,
     target_challenge_day,
     target_crew_id,
@@ -838,8 +942,8 @@ begin
 
   update public.user_game_stats
   set
-    total_points = total_points + target_points,
-    challenge_points = challenge_points + target_points,
+    total_points = total_points + effective_points,
+    challenge_points = challenge_points + effective_points,
     updated_at = now()
   where user_id = target_user_id;
 
@@ -1272,22 +1376,10 @@ $$;
 create or replace function public.workout_difficulty_points(target_difficulty text)
 returns integer
 language sql
-stable
+immutable
 set search_path = public
 as $$
-  select coalesce(
-    (
-      select config.points
-      from public.workout_difficulty_point_values config
-      where config.difficulty = lower(btrim(coalesce(target_difficulty, 'medium')))
-    ),
-    (
-      select config.points
-      from public.workout_difficulty_point_values config
-      where config.difficulty = 'medium'
-    ),
-    0
-  );
+  select 0;
 $$;
 
 create or replace function public.full_streak_bonus_points(target_streak integer)
@@ -1296,14 +1388,7 @@ language sql
 immutable
 set search_path = public
 as $$
-  select case target_streak
-    when 3 then 25
-    when 7 then 75
-    when 14 then 150
-    when 30 then 300
-    when 77 then 777
-    else 0
-  end;
+  select 0;
 $$;
 
 create or replace function public.process_check_in_game_rewards()
@@ -1314,15 +1399,11 @@ set search_path = public
 as $$
 declare
   action_points integer := 0;
-  bonus_points integer := 0;
-  workout_points integer := 0;
-  total_points integer := 0;
   difficulty_one text := coalesce(new.workout_difficulty ->> 'one', 'medium');
   difficulty_two text := coalesce(new.workout_difficulty ->> 'two', 'medium');
   points_inserted boolean := false;
   stats_row public.user_game_stats%rowtype;
   next_full_streak integer := 0;
-  streak_bonus integer := 0;
   selected_badge_key text := null;
   selected_badge_metadata jsonb := '{}'::jsonb;
 begin
@@ -1330,32 +1411,19 @@ begin
     raise exception 'The 77-day challenge is complete.';
   end if;
 
+  if new.status = 'scheduled' then
+    raise exception 'Scheduled miss Check-Ins are no longer supported.' using errcode = '22023';
+  end if;
+
   if cardinality(new.completed) > 0 then
     new.completed_count := cardinality(new.completed);
   end if;
 
-  action_points := greatest(new.completed_count, 0) * 10;
-  if new.status = 'complete' then
-    bonus_points := 30;
-  elsif new.status = 'partial' then
-    bonus_points := 10;
-  elsif new.status = 'scheduled' then
-    bonus_points := 15;
-  end if;
-
-  if 'workoutOne' = any(new.completed) then
-    workout_points := workout_points + public.workout_difficulty_points(difficulty_one);
-  end if;
-
-  if 'workoutTwo' = any(new.completed) then
-    workout_points := workout_points + public.workout_difficulty_points(difficulty_two);
-  end if;
-
-  total_points := action_points + bonus_points + workout_points;
+  action_points := least(greatest(new.completed_count, 0), 7);
   points_inserted := public.add_game_points(
     new.user_id,
     'check_in',
-    total_points,
+    action_points,
     new.entry_date,
     new.challenge_day,
     null,
@@ -1364,14 +1432,12 @@ begin
       'completedCount', new.completed_count,
       'completed', new.completed,
       'workoutDifficulty', new.workout_difficulty,
-      'actionPoints', action_points,
-      'bonusPoints', bonus_points,
-      'workoutPoints', workout_points
+      'actionPoints', action_points
     ),
     'checkin:' || new.user_id::text || ':' || new.entry_date::text
   );
 
-  new.points_awarded := case when points_inserted then total_points else 0 end;
+  new.points_awarded := case when points_inserted then action_points else 0 end;
 
   if not points_inserted then
     return new;
@@ -1399,19 +1465,6 @@ begin
       updated_at = now()
     where user_id = new.user_id;
 
-    streak_bonus := public.full_streak_bonus_points(next_full_streak);
-    if streak_bonus > 0 then
-      perform public.add_game_points(
-        new.user_id,
-        'full_day_streak_bonus',
-        streak_bonus,
-        new.entry_date,
-        new.challenge_day,
-        null,
-        jsonb_build_object('streak', next_full_streak),
-        'fullstreak:' || new.user_id::text || ':' || next_full_streak::text
-      );
-    end if;
   end if;
 
   select * into stats_row
@@ -1543,6 +1596,22 @@ drop trigger if exists process_check_in_game_rewards_before_insert on public.che
 create trigger process_check_in_game_rewards_before_insert
   before insert on public.check_ins
   for each row execute function public.process_check_in_game_rewards();
+
+create or replace function public.enforce_daily_standard_award()
+returns trigger
+language plpgsql
+set search_path = public
+as $$
+begin
+  new.points_awarded := least(greatest(cardinality(coalesce(new.completed, '{}'::text[])), 0), 7);
+  return new;
+end;
+$$;
+
+drop trigger if exists zz_enforce_daily_standard_award on public.check_ins;
+create trigger zz_enforce_daily_standard_award
+  before insert on public.check_ins
+  for each row execute function public.enforce_daily_standard_award();
 
 create or replace function public.create_community_feed_item()
 returns trigger
@@ -1693,6 +1762,277 @@ as $$
   );
 $$;
 
+create or replace function public.daily_standard_user_date(target_user_id uuid)
+returns date
+language plpgsql
+stable
+security definer
+set search_path = pg_catalog, pg_temp
+as $$
+declare
+  target_time_zone text;
+begin
+  select nullif(profile.time_zone, '') into target_time_zone
+  from public.profiles profile where profile.user_id = target_user_id;
+  if target_time_zone is null or not exists (
+    select 1 from pg_catalog.pg_timezone_names where name = target_time_zone
+  ) then
+    target_time_zone := 'UTC';
+  end if;
+  return (clock_timestamp() at time zone target_time_zone)::date;
+end;
+$$;
+
+create or replace function public.bootstrap_daily_standard_time_zone(target_time_zone text)
+returns text
+language plpgsql
+security definer
+set search_path = pg_catalog, pg_temp
+as $$
+declare
+  requested_time_zone text := nullif(btrim(target_time_zone), '');
+  effective_time_zone text;
+begin
+  if auth.uid() is null then
+    raise exception 'You need to log in to set your Daily Standards time zone.';
+  end if;
+  if requested_time_zone is null or not exists (
+    select 1 from pg_catalog.pg_timezone_names where name = requested_time_zone
+  ) then
+    raise exception 'Choose a valid time zone.' using errcode = '22023';
+  end if;
+
+  insert into public.profiles (user_id, name, email, time_zone)
+  values (
+    auth.uid(),
+    coalesce(nullif(auth.jwt() -> 'user_metadata' ->> 'name', ''), 'Member'),
+    coalesce(auth.jwt() ->> 'email', ''),
+    requested_time_zone
+  )
+  on conflict (user_id) do nothing;
+
+  select nullif(profile.time_zone, '')
+    into effective_time_zone
+    from public.profiles profile
+    where profile.user_id = auth.uid()
+    for update;
+
+  if effective_time_zone is null or not exists (
+    select 1 from pg_catalog.pg_timezone_names where name = effective_time_zone
+  ) then
+    update public.profiles
+    set time_zone = requested_time_zone
+    where user_id = auth.uid();
+    effective_time_zone := requested_time_zone;
+  end if;
+
+  return effective_time_zone;
+end;
+$$;
+
+create or replace function public.daily_standard_draft_payload(
+  target_user_id uuid,
+  target_entry_date date,
+  stale_write_reconciled boolean default false
+)
+returns jsonb
+language plpgsql
+stable
+security definer
+set search_path = pg_catalog, pg_temp
+as $$
+declare
+  draft public.challenge_entries%rowtype;
+  was_submitted boolean;
+begin
+  select * into draft from public.challenge_entries entry
+  where entry.user_id = target_user_id and entry.entry_date = target_entry_date;
+  select exists (
+    select 1 from public.check_ins check_in
+    where check_in.user_id = target_user_id and check_in.entry_date = target_entry_date
+  ) into was_submitted;
+  return jsonb_build_object(
+    'entry_date', target_entry_date,
+    'completed', coalesce(draft.completed, '{}'::text[]),
+    'workout_difficulty', coalesce(draft.workout_difficulty, '{}'::jsonb),
+    'version', coalesce(draft.version, 0),
+    'updated_at', draft.updated_at,
+    'submitted', was_submitted,
+    'locked', was_submitted
+      or target_entry_date <> public.daily_standard_user_date(target_user_id)
+      or exists (
+        select 1 from public.profiles profile
+        where profile.user_id = target_user_id
+          and profile.challenge_start_date is not null
+          and target_entry_date - profile.challenge_start_date + 1 not between 1 and 77
+      ),
+    'stale_write_reconciled', stale_write_reconciled
+  );
+end;
+$$;
+
+create or replace function public.get_daily_standard_draft(target_entry_date date)
+returns jsonb
+language plpgsql
+security definer
+set search_path = pg_catalog, pg_temp
+as $$
+begin
+  if auth.uid() is null then raise exception 'You need to log in to view Daily Standards.'; end if;
+  if target_entry_date is null then raise exception 'Choose a valid challenge date.' using errcode = '22023'; end if;
+  if not public.has_active_entitlement('membership_active') then
+    raise exception 'An active membership is required to view Daily Standards.';
+  end if;
+  return public.daily_standard_draft_payload(auth.uid(), target_entry_date);
+end;
+$$;
+
+create or replace function public.mutate_daily_standard_draft(
+  target_entry_date date,
+  target_action_id text,
+  target_completed boolean,
+  target_expected_version bigint default null
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = pg_catalog, pg_temp
+as $$
+declare
+  draft public.challenge_entries%rowtype;
+  valid_action_ids constant text[] := array[
+    'bible', 'morningPrayer', 'worshipOnly', 'eveningPrayer',
+    'workoutOne', 'walk', 'workoutTwo'
+  ]::text[];
+  stale_write boolean := false;
+  state_changed boolean := false;
+begin
+  if auth.uid() is null then raise exception 'You need to log in to update Daily Standards.'; end if;
+  if not public.has_active_entitlement('membership_active') then
+    raise exception 'An active membership is required to update Daily Standards.';
+  end if;
+  if target_entry_date is null or target_entry_date <> public.daily_standard_user_date(auth.uid()) then
+    raise exception 'That Daily Standards date is locked.' using errcode = '22023';
+  end if;
+  if exists (
+    select 1 from public.profiles profile
+    where profile.user_id = auth.uid()
+      and profile.challenge_start_date is not null
+      and target_entry_date - profile.challenge_start_date + 1 not between 1 and 77
+  ) then
+    raise exception 'The 77-day challenge is complete.' using errcode = '22023';
+  end if;
+  if target_action_id is null or not (target_action_id = any(valid_action_ids)) then
+    raise exception 'Choose a valid Daily Standard.' using errcode = '22023';
+  end if;
+  if target_completed is null then
+    raise exception 'Choose whether the action is complete.' using errcode = '22023';
+  end if;
+  if exists (
+    select 1 from public.check_ins check_in
+    where check_in.user_id = auth.uid() and check_in.entry_date = target_entry_date
+  ) then
+    raise exception 'This Check-In is already submitted.' using errcode = '55000';
+  end if;
+  insert into public.challenge_entries (user_id, entry_date, completed)
+  values (auth.uid(), target_entry_date, '{}'::text[])
+  on conflict (user_id, entry_date) do nothing;
+  select * into draft from public.challenge_entries entry
+  where entry.user_id = auth.uid() and entry.entry_date = target_entry_date for update;
+  if exists (
+    select 1 from public.check_ins check_in
+    where check_in.user_id = auth.uid() and check_in.entry_date = target_entry_date
+  ) then
+    raise exception 'This Check-In is already submitted.' using errcode = '55000';
+  end if;
+  stale_write := target_expected_version is not null and target_expected_version <> draft.version;
+  state_changed := (target_action_id = any(draft.completed)) is distinct from target_completed;
+  if state_changed then
+    update public.challenge_entries
+    set
+      completed = case
+        when target_completed then array_append(completed, target_action_id)
+        else array_remove(completed, target_action_id)
+      end,
+      version = version + 1
+    where user_id = auth.uid() and entry_date = target_entry_date;
+  end if;
+  return public.daily_standard_draft_payload(auth.uid(), target_entry_date, stale_write);
+end;
+$$;
+
+create or replace function public.set_daily_standard_workout_difficulty(
+  target_entry_date date,
+  target_workout_id text,
+  target_difficulty text,
+  target_expected_version bigint default null
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = pg_catalog, pg_temp
+as $$
+declare
+  draft public.challenge_entries%rowtype;
+  stale_write boolean := false;
+  current_difficulty text;
+begin
+  if auth.uid() is null then raise exception 'You need to log in to update workout difficulty.'; end if;
+  if not public.has_active_entitlement('membership_active') then
+    raise exception 'An active membership is required to update workout difficulty.';
+  end if;
+  if target_entry_date is null or target_entry_date <> public.daily_standard_user_date(auth.uid()) then
+    raise exception 'That Daily Standards date is locked.' using errcode = '22023';
+  end if;
+  if exists (
+    select 1 from public.profiles profile
+    where profile.user_id = auth.uid()
+      and profile.challenge_start_date is not null
+      and target_entry_date - profile.challenge_start_date + 1 not between 1 and 77
+  ) then
+    raise exception 'The 77-day challenge is complete.' using errcode = '22023';
+  end if;
+  if target_workout_id is null or target_workout_id not in ('one', 'two') then
+    raise exception 'Choose a valid workout.' using errcode = '22023';
+  end if;
+  if target_difficulty is null or target_difficulty not in ('easy', 'medium', 'hard', 'extreme') then
+    raise exception 'Choose a valid workout difficulty.' using errcode = '22023';
+  end if;
+  if exists (
+    select 1 from public.check_ins check_in
+    where check_in.user_id = auth.uid() and check_in.entry_date = target_entry_date
+  ) then
+    raise exception 'This Check-In is already submitted.' using errcode = '55000';
+  end if;
+  insert into public.challenge_entries (user_id, entry_date, completed)
+  values (auth.uid(), target_entry_date, '{}'::text[])
+  on conflict (user_id, entry_date) do nothing;
+  select * into draft from public.challenge_entries entry
+  where entry.user_id = auth.uid() and entry.entry_date = target_entry_date for update;
+  if exists (
+    select 1 from public.check_ins check_in
+    where check_in.user_id = auth.uid() and check_in.entry_date = target_entry_date
+  ) then
+    raise exception 'This Check-In is already submitted.' using errcode = '55000';
+  end if;
+  stale_write := target_expected_version is not null and target_expected_version <> draft.version;
+  current_difficulty := coalesce(draft.workout_difficulty ->> target_workout_id, 'medium');
+  if current_difficulty <> target_difficulty then
+    update public.challenge_entries
+    set
+      workout_difficulty = jsonb_set(
+        coalesce(workout_difficulty, '{}'::jsonb),
+        array[target_workout_id],
+        to_jsonb(target_difficulty),
+        true
+      ),
+      version = version + 1
+    where user_id = auth.uid() and entry_date = target_entry_date;
+  end if;
+  return public.daily_standard_draft_payload(auth.uid(), target_entry_date, stale_write);
+end;
+$$;
+
 create or replace function public.submit_daily_check_in(
   target_status text,
   target_completed text[] default '{}'::text[],
@@ -1703,7 +2043,7 @@ create or replace function public.submit_daily_check_in(
 returns jsonb
 language plpgsql
 security definer
-set search_path = public, pg_temp
+set search_path = pg_catalog, pg_temp
 as $$
 declare
   requested_time_zone text := coalesce(nullif(btrim(target_time_zone), ''), 'UTC');
@@ -1713,6 +2053,7 @@ declare
   challenge_start date;
   normalized_completed text[];
   effective_status text;
+  draft public.challenge_entries%rowtype;
   inserted_check_in public.check_ins%rowtype;
 begin
   if auth.uid() is null then
@@ -1723,11 +2064,11 @@ begin
     raise exception 'An active membership is required to post a check-in.';
   end if;
 
-  if target_status is null or target_status not in ('complete', 'partial', 'scheduled') then
+  if target_status is null or target_status not in ('complete', 'partial') then
     raise exception 'Choose a valid check-in status.' using errcode = '22023';
   end if;
 
-  if not exists (select 1 from pg_timezone_names where name = requested_time_zone) then
+  if not exists (select 1 from pg_catalog.pg_timezone_names where name = requested_time_zone) then
     raise exception 'Choose a valid time zone.' using errcode = '22023';
   end if;
 
@@ -1747,7 +2088,7 @@ begin
   for update;
 
   effective_time_zone := coalesce(nullif(effective_time_zone, ''), requested_time_zone);
-  if not exists (select 1 from pg_timezone_names where name = effective_time_zone) then
+  if not exists (select 1 from pg_catalog.pg_timezone_names where name = effective_time_zone) then
     effective_time_zone := requested_time_zone;
   end if;
   target_entry_date := (clock_timestamp() at time zone effective_time_zone)::date;
@@ -1755,29 +2096,33 @@ begin
     raise exception 'The challenge day changed. Review today''s actions and post again.' using errcode = '22023';
   end if;
 
-  select coalesce(array_agg(distinct completed_item), '{}'::text[])
-    into normalized_completed
-  from unnest(coalesce(target_completed, '{}'::text[])) completed_item
-  where completed_item = any(array[
-    'bible',
-    'morningPrayer',
-    'worshipOnly',
-    'eveningPrayer',
-    'workoutOne',
-    'walk',
-    'workoutTwo'
-  ]::text[]);
-
-  if target_status = 'scheduled' then
-    normalized_completed := '{}'::text[];
-    effective_status := 'scheduled';
-  elsif cardinality(normalized_completed) = 7 then
-    effective_status := 'complete';
-  elsif cardinality(normalized_completed) > 0 then
-    effective_status := 'partial';
-  else
-    raise exception 'Complete an action or choose a scheduled miss before posting.' using errcode = '22023';
+  select * into draft
+  from public.challenge_entries entry
+  where entry.user_id = auth.uid()
+    and entry.entry_date = target_entry_date
+  for update;
+  if not found then
+    raise exception 'Complete at least one action before posting.' using errcode = '22023';
   end if;
+
+  normalized_completed := public.normalize_daily_standard_completed(draft.completed);
+
+  if cardinality(normalized_completed) = 0 then
+    raise exception 'Complete at least one action before posting.' using errcode = '22023';
+  end if;
+  if draft.completed is distinct from normalized_completed then
+    update public.challenge_entries
+    set
+      completed = normalized_completed,
+      version = version + 1
+    where user_id = auth.uid()
+      and entry_date = target_entry_date;
+  end if;
+
+  effective_status := case
+    when cardinality(normalized_completed) = 7 then 'complete'
+    else 'partial'
+  end;
 
   if challenge_start is null then
     challenge_start := target_entry_date;
@@ -1809,7 +2154,7 @@ begin
     effective_status,
     cardinality(normalized_completed),
     normalized_completed,
-    coalesce(target_workout_difficulty, '{}'::jsonb)
+    coalesce(draft.workout_difficulty, '{}'::jsonb)
   )
   returning * into inserted_check_in;
 
@@ -1824,6 +2169,40 @@ begin
   );
 end;
 $$;
+
+create or replace function public.apply_authoritative_daily_standard_draft()
+returns trigger
+language plpgsql
+security definer
+set search_path = pg_catalog, pg_temp
+as $$
+declare
+  draft public.challenge_entries%rowtype;
+  normalized_completed text[];
+begin
+  select * into draft from public.challenge_entries entry
+  where entry.user_id = new.user_id and entry.entry_date = new.entry_date for update;
+  if not found then
+    raise exception 'Complete at least one action before posting.' using errcode = '22023';
+  end if;
+
+  normalized_completed := public.normalize_daily_standard_completed(draft.completed);
+  if cardinality(normalized_completed) = 0 then
+    raise exception 'Complete at least one action before posting.' using errcode = '22023';
+  end if;
+
+  new.completed := normalized_completed;
+  new.completed_count := cardinality(normalized_completed);
+  new.status := case when cardinality(normalized_completed) = 7 then 'complete' else 'partial' end;
+  new.workout_difficulty := draft.workout_difficulty;
+  return new;
+end;
+$$;
+
+drop trigger if exists a_apply_authoritative_daily_standard_draft on public.check_ins;
+create trigger a_apply_authoritative_daily_standard_draft
+  before insert on public.check_ins
+  for each row execute function public.apply_authoritative_daily_standard_draft();
 
 create or replace function public.can_read_community_post(target_post_id uuid)
 returns boolean
@@ -2007,7 +2386,6 @@ declare
   today date := current_date;
   stats_row public.user_game_stats%rowtype;
   next_app_streak integer := 1;
-  bonus_points integer := 0;
   awarded_badges jsonb := '[]'::jsonb;
 begin
   if current_user_id is null then
@@ -2048,31 +2426,6 @@ begin
     last_seen_date = today,
     updated_at = now()
   where user_id = current_user_id;
-
-  perform public.add_game_points(
-    current_user_id,
-    'app_visit',
-    5,
-    today,
-    null,
-    null,
-    jsonb_build_object('appStreak', next_app_streak),
-    'appvisit:' || current_user_id::text || ':' || today::text
-  );
-
-  bonus_points := public.full_streak_bonus_points(next_app_streak);
-  if bonus_points > 0 then
-    perform public.add_game_points(
-      current_user_id,
-      'app_streak_bonus',
-      bonus_points,
-      today,
-      null,
-      null,
-      jsonb_build_object('appStreak', next_app_streak),
-      'appstreak:' || current_user_id::text || ':' || next_app_streak::text
-    );
-  end if;
 
   select * into stats_row
   from public.user_game_stats
@@ -2256,6 +2609,33 @@ grant execute on function public.can_manage_crew(uuid) to authenticated;
 revoke execute on function public.has_active_entitlement(text) from public;
 revoke execute on function public.has_active_entitlement(text) from anon;
 grant execute on function public.has_active_entitlement(text) to authenticated;
+revoke execute on function public.normalize_daily_standard_completed(text[]) from public;
+revoke execute on function public.normalize_daily_standard_completed(text[]) from anon;
+revoke execute on function public.normalize_daily_standard_completed(text[]) from authenticated;
+revoke execute on function public.normalize_daily_standard_draft() from public;
+revoke execute on function public.normalize_daily_standard_draft() from anon;
+revoke execute on function public.normalize_daily_standard_draft() from authenticated;
+revoke execute on function public.daily_standard_user_date(uuid) from public;
+revoke execute on function public.daily_standard_user_date(uuid) from anon;
+revoke execute on function public.daily_standard_user_date(uuid) from authenticated;
+revoke execute on function public.daily_standard_draft_payload(uuid, date, boolean) from public;
+revoke execute on function public.daily_standard_draft_payload(uuid, date, boolean) from anon;
+revoke execute on function public.daily_standard_draft_payload(uuid, date, boolean) from authenticated;
+revoke execute on function public.bootstrap_daily_standard_time_zone(text) from public;
+revoke execute on function public.bootstrap_daily_standard_time_zone(text) from anon;
+grant execute on function public.bootstrap_daily_standard_time_zone(text) to authenticated;
+revoke execute on function public.get_daily_standard_draft(date) from public;
+revoke execute on function public.get_daily_standard_draft(date) from anon;
+grant execute on function public.get_daily_standard_draft(date) to authenticated;
+revoke execute on function public.mutate_daily_standard_draft(date, text, boolean, bigint) from public;
+revoke execute on function public.mutate_daily_standard_draft(date, text, boolean, bigint) from anon;
+grant execute on function public.mutate_daily_standard_draft(date, text, boolean, bigint) to authenticated;
+revoke execute on function public.set_daily_standard_workout_difficulty(date, text, text, bigint) from public;
+revoke execute on function public.set_daily_standard_workout_difficulty(date, text, text, bigint) from anon;
+grant execute on function public.set_daily_standard_workout_difficulty(date, text, text, bigint) to authenticated;
+revoke execute on function public.apply_authoritative_daily_standard_draft() from public;
+revoke execute on function public.apply_authoritative_daily_standard_draft() from anon;
+revoke execute on function public.apply_authoritative_daily_standard_draft() from authenticated;
 revoke execute on function public.lock_challenge_start_date_after_check_in() from public;
 revoke execute on function public.lock_challenge_start_date_after_check_in() from anon;
 revoke execute on function public.lock_challenge_start_date_after_check_in() from authenticated;
@@ -2369,7 +2749,6 @@ alter table public.badge_definitions enable row level security;
 alter table public.user_badges enable row level security;
 alter table public.user_game_stats enable row level security;
 alter table public.game_point_events enable row level security;
-alter table public.workout_difficulty_point_values enable row level security;
 alter table public.challenge_definitions enable row level security;
 alter table public.user_challenge_states enable row level security;
 
@@ -2462,23 +2841,6 @@ create policy "Users can read own entitlements"
   for select
   to authenticated
   using ((select auth.uid()) = user_id);
-
-drop policy if exists "Authenticated users can read workout difficulty point values"
-  on public.workout_difficulty_point_values;
-create policy "Authenticated users can read workout difficulty point values"
-  on public.workout_difficulty_point_values
-  for select
-  to authenticated
-  using (true);
-
-drop policy if exists "Service role can update workout difficulty point values"
-  on public.workout_difficulty_point_values;
-create policy "Service role can update workout difficulty point values"
-  on public.workout_difficulty_point_values
-  for update
-  to service_role
-  using (true)
-  with check (true);
 
 drop policy if exists "Authenticated users can read challenge definitions" on public.challenge_definitions;
 create policy "Authenticated users can read challenge definitions"
@@ -2892,10 +3254,6 @@ revoke all on public.user_game_stats from anon;
 revoke all on public.user_game_stats from authenticated;
 revoke all on public.game_point_events from anon;
 revoke all on public.game_point_events from authenticated;
-revoke all on public.workout_difficulty_point_values from public;
-revoke all on public.workout_difficulty_point_values from anon;
-revoke all on public.workout_difficulty_point_values from authenticated;
-revoke all on public.workout_difficulty_point_values from service_role;
 revoke all on public.challenge_definitions from public;
 revoke all on public.challenge_definitions from anon;
 revoke all on public.challenge_definitions from authenticated;
@@ -2908,7 +3266,10 @@ revoke all on public.user_challenge_states from service_role;
 revoke update on public.profiles from authenticated;
 grant select, insert on public.profiles to authenticated;
 grant update (user_id, name, email, avatar_url, challenge_start_date) on public.profiles to authenticated;
-grant select, insert, update on public.challenge_entries to authenticated;
+revoke insert, update, delete on public.challenge_entries from authenticated;
+revoke insert (user_id, entry_date, completed) on public.challenge_entries from authenticated;
+revoke update (user_id, entry_date, completed) on public.challenge_entries from authenticated;
+grant select on public.challenge_entries to authenticated;
 revoke insert on public.check_ins from authenticated;
 grant select (id, user_id, entry_date, challenge_day, status, completed_count, points_awarded, created_at)
   on public.check_ins to authenticated;
@@ -2931,9 +3292,6 @@ grant select on public.badge_definitions to authenticated;
 grant select on public.user_badges to authenticated;
 grant select on public.user_game_stats to authenticated;
 grant select on public.game_point_events to authenticated;
-grant select on public.workout_difficulty_point_values to authenticated;
-grant select on public.workout_difficulty_point_values to service_role;
-grant update (points) on public.workout_difficulty_point_values to service_role;
 grant select on public.challenge_definitions to authenticated;
 grant select on public.user_challenge_states to authenticated;
 grant select, insert, update, delete on public.challenge_definitions to service_role;
@@ -3120,3 +3478,8 @@ create policy "Users can delete own journal photo objects"
     and (storage.foldername(name))[1] = (select auth.uid())::text
     and public.has_active_entitlement('membership_active')
   );
+
+-- The typed reward catalog is additive over the existing challenge lifecycle.
+-- psql resolves this path relative to this canonical schema file.
+\ir migrations/20260720210000_typed_reward_catalog.sql
+\ir migrations/20260720220000_dominion_night_theme_reward.sql

@@ -3,26 +3,26 @@ import {
   claimChallengeUnlocks,
   getBillingState,
   getChallengeProgression,
+  getDailyStandardDraft,
   getDashboard,
   getGameSummary,
   getLeaderboardPrestige,
-  getWorkoutDifficultyPointValues,
   hasSupabaseAuth,
   isLocalDemoMode,
+  mutateDailyStandardDraft,
   postCheckIn,
   recordAppVisit,
   redirectToLogin,
-  saveChallengeEntry,
+  setDailyStandardWorkoutDifficulty,
   startChallenge,
   updateProfile,
 } from './api';
 import {
-  DEFAULT_DIFFICULTY_POINT_VALUES,
   DEFAULT_WORKOUT_DIFFICULTY,
   calculateCheckInScore,
-  normalizeDifficultyPointValues,
   normalizeWorkoutDifficulty,
 } from './scoring.mjs';
+import { dailyStandardRoute } from './daily-standard-routes.mjs';
 import {
   CHECK_IN_ALREADY_COMPLETE_CODE,
   CHECK_IN_ALREADY_COMPLETE_MESSAGE,
@@ -33,6 +33,7 @@ import {
   checkInCacheForOwner,
   createCheckInCache,
   createCheckInAlreadyCompleteError,
+  currentFullDayStreakForDate,
   dateKeyForTimeZone,
   normalizeChallengeDays,
 } from './check-in.mjs';
@@ -51,17 +52,6 @@ import {
 } from './preview-challenge.mjs';
 
 const TOTAL_DAYS = 77;
-const DIFFICULTY_LABELS = {
-  easy: 'Easy',
-  medium: 'Medium',
-  hard: 'Hard',
-  extreme: 'Extreme',
-};
-const YOUVERSION_VERSE_URL = import.meta.env.VITE_YOUVERSION_VERSE_URL || '';
-const YOUVERSION_APP_URL = import.meta.env.VITE_YOUVERSION_APP_URL || 'https://www.bible.com/';
-const YOUVERSION_PRAYER_URL = import.meta.env.VITE_YOUVERSION_PRAYER_URL || 'https://www.bible.com/prayer';
-const APPLE_FITNESS_URL = import.meta.env.VITE_APPLE_FITNESS_URL || 'https://fitness.apple.com/';
-const WALK_ALARM_URL = import.meta.env.VITE_WALK_ALARM_URL || '';
 const scorecardGroups = [
   {
     key: 'mind',
@@ -93,7 +83,6 @@ const standards = scorecardGroups.flatMap(group => group.items);
 const starterFeed = [
   { name: 'Josh', day: 12, status: 'complete', timestamp: 'Today' },
   { name: 'Sarah', day: 12, status: 'complete', timestamp: 'Today' },
-  { name: 'Matt', day: 11, status: 'scheduled', timestamp: 'Yesterday' },
   { name: 'Tim', day: 12, status: 'complete', timestamp: 'Today' },
 ];
 const DEFAULT_DEMO_GAME_STATS = {
@@ -102,10 +91,6 @@ const DEFAULT_DEMO_GAME_STATS = {
   bestAppStreak: 1,
   currentFullDayStreak: 0,
   bestFullDayStreak: 0,
-};
-const fallbackVerse = {
-  text: 'His mercies never come to an end; they are new every morning.',
-  reference: 'Lamentations 3:22-23',
 };
 const countdownCallouts = [
   'Do the next right action before the day gets louder.',
@@ -121,41 +106,6 @@ const countdownCallouts = [
   'Do not negotiate with drift. Choose the standard and begin.',
   'You are training your future self right now.',
 ];
-const worshipPlaylists = [
-  { label: 'Morning worship focus', url: 'https://open.spotify.com/search/morning%20worship%20playlist' },
-  { label: 'Acoustic worship reset', url: 'https://open.spotify.com/search/acoustic%20worship%20playlist' },
-  { label: 'Praise and worship lift', url: 'https://open.spotify.com/search/praise%20and%20worship%20playlist' },
-  { label: 'Instrumental worship flow', url: 'https://open.spotify.com/search/instrumental%20worship%20playlist' },
-  { label: 'Gospel worship strength', url: 'https://open.spotify.com/search/gospel%20worship%20playlist' },
-  { label: 'Evening worship surrender', url: 'https://open.spotify.com/search/evening%20worship%20playlist' },
-  { label: 'Christian worship today', url: 'https://open.spotify.com/search/christian%20worship%20playlist' },
-];
-const workoutPlans = {
-  easy: [
-    '3 rounds: 10 pushups, 20 squats, 20-second plank, 10 glute bridges.',
-    '3 rounds: 8 incline pushups, 12 reverse lunges per leg, 20 mountain climbers, 30-second wall sit.',
-    '3 rounds: 10 chair dips, 15 air squats, 10 dead bugs per side, 45-second easy walk.',
-    '3 rounds: 12 knee pushups, 20 step-ups, 20 jumping jacks, 20-second hollow hold.',
-  ],
-  medium: [
-    '4 rounds: 12 pushups, 20 squats, 12 alternating lunges per leg, 30-second plank.',
-    '4 rounds: 15 pushups, 15 jump squats, 20 bicycle crunches, 40-second side plank each side.',
-    '4 rounds: 10 burpees, 20 walking lunges, 15 pike pushups, 30-second squat hold.',
-    '4 rounds: 12 dips, 20 air squats, 12 mountain climbers per side, 1-minute brisk walk.',
-  ],
-  hard: [
-    '5 rounds: 15 pushups, 25 squats, 20 walking lunges, 45-second plank.',
-    '5 rounds: 12 burpees, 20 jump squats, 15 decline pushups, 30 bicycle crunches.',
-    '5 rounds: 20 alternating lunges per leg, 15 diamond pushups, 20 mountain climbers per side, 1-minute wall sit.',
-    '5 rounds: 15 pushups, 20 squat jumps, 20 sit-ups, 400-meter fast walk or jog.',
-  ],
-  extreme: [
-    '6 rounds: 20 pushups, 30 squats, 20 burpees, 60-second plank.',
-    '6 rounds: 15 hand-release pushups, 25 jump squats, 20 lunges per leg, 40 mountain climbers per side.',
-    '6 rounds: 20 dips, 20 pistol-squat progressions per side, 15 burpees, 90-second plank.',
-    '6 rounds: 25 pushups, 30 squats, 20 tuck jumps, 1-minute sprint or fast stair climb.',
-  ],
-};
 const POINTS_PER_LEVEL = 500;
 const CONFETTI_DURATION_MS = 10800;
 const REDUCED_CONFETTI_DURATION_MS = 2200;
@@ -282,7 +232,6 @@ const checkInDatesStorageKey = () => previewChallengeMode()
   ? PREVIEW_CHECK_IN_DATES_STORAGE_KEY
   : CHECK_IN_DATES_STORAGE_KEY;
 const statusLabel = (item) => {
-  if (item.status === 'scheduled') return 'scheduled miss';
   if (item.status === 'partial') return `partial check-in${item.completedCount ? ` (${item.completedCount}/7)` : ''}`;
   return 'complete';
 };
@@ -308,7 +257,6 @@ const calculateLocalPoints = (entry, status) => {
     completed: entry.completed,
     status,
     workoutDifficulty,
-    difficultyPointValues,
   }).totalPoints;
 };
 const badgeEarnedDate = (badge) => badge.entryDate || badge.earnedDate || badge.metadata?.entryDate || String(badge.earnedAt || '').slice(0, 10);
@@ -435,7 +383,7 @@ function renderGameSummary() {
   const levelProgress = getLevelProgress(gameStats.totalPoints ?? gameStats.challengePoints ?? 0);
   const appStreak = Math.max(0, Math.floor(Number(gameStats.currentAppStreak) || 0));
   const bestAppStreak = Math.max(appStreak, Math.floor(Number(gameStats.bestAppStreak) || 0));
-  const fullDayStreak = Math.max(0, Math.floor(Number(gameStats.currentFullDayStreak) || 0));
+  const fullDayStreak = currentFullDayStreakForDate(gameStats, todayKey());
   const bestFullDayStreak = Math.max(fullDayStreak, Math.floor(Number(gameStats.bestFullDayStreak) || 0));
   const recentBadges = badges.filter(Boolean).slice(0, 4);
   const prestige = resolveLeaderboardPrestige(leaderboardPositions);
@@ -878,7 +826,6 @@ let submittedCheckInDates = new Set(initialCheckInCache.dates);
 let submittedChallengeDays = new Set(initialCheckInCache.challengeDays);
 let feed = localDemoMode ? load('dominion:feed', starterFeed) : starterFeed;
 let workoutDifficulty = normalizeWorkoutDifficulty(load(WORKOUT_DIFFICULTY_STORAGE_KEY, DEFAULT_WORKOUT_DIFFICULTY));
-let difficultyPointValues = normalizeDifficultyPointValues(DEFAULT_DIFFICULTY_POINT_VALUES);
 let gameStats = localDemoMode ? load('dominion:gameStats', DEFAULT_DEMO_GAME_STATS) : {};
 let badges = localDemoMode ? load('dominion:badges', []) : [];
 let leaderboardPositions = {
@@ -899,6 +846,9 @@ let confettiTimer = null;
 let confettiRunId = 0;
 let finishCelebrated = false;
 let entrySaveQueue = Promise.resolve();
+const pendingActionMutations = new Map();
+const pendingWorkoutMutations = new Map();
+let pendingDetailsNavigation = '';
 let checkInSubmissionPending = false;
 let checkInSubmissionDate = '';
 let lastCheckInSubmissionAt = 0;
@@ -908,9 +858,6 @@ let renderedDateKey = todayKey();
 let checkInStatusHydratedDate = hasSupabaseAuth() ? '' : renderedDateKey;
 let dashboardHydrationRequestId = 0;
 const $ = (id) => document.getElementById(id);
-const verseText = $('verseText');
-const verseReference = $('verseReference');
-const verseAppLink = $('verseAppLink');
 async function refreshChallengeProgression({ claimCelebrations = false, celebrationDelay = 0 } = {}) {
   if (!$('challengeCatalog')) return [];
   challengeProgressionStatus = challengeProgression.challenges.length ? 'ready' : 'loading';
@@ -938,13 +885,14 @@ async function refreshChallengeProgression({ claimCelebrations = false, celebrat
   }
 }
 const dayIndex = () => Math.floor(new Date(`${todayKey()}T00:00:00`).getTime() / 86400000);
-const pickDaily = (items, offset = 0) => items[(dayIndex() + offset) % items.length];
 const todayEntry = () => {
   const entry = entries.find(item => item.date === todayKey()) || {};
   return {
-    date: todayKey(),
     ...entry,
+    date: todayKey(),
     completed: Array.isArray(entry.completed) ? entry.completed : [],
+    workoutDifficulty: normalizeWorkoutDifficulty(entry.workoutDifficulty || workoutDifficulty),
+    version: Math.max(Number.parseInt(entry.version, 10) || 0, 0),
   };
 };
 const hasSubmittedCheckIn = (dateKey = todayKey(), challengeDay = currentDay()) => (
@@ -979,78 +927,48 @@ function markCheckInSubmitted(dateKey, challengeDay) {
   return !alreadySubmitted;
 }
 const checkInStatusForEntry = (entry) => {
-  if (entry.scheduledMiss) return 'scheduled';
   if (!entry.completed.length) return null;
   return entry.completed.length === standards.length ? 'complete' : 'partial';
 };
-function renderPointPreview(entry = todayEntry()) {
-  const status = checkInStatusForEntry(entry);
-  const projectedAward = status
-    ? calculateCheckInScore({
-        completed: entry.completed,
-        status,
-        workoutDifficulty,
-        difficultyPointValues,
-      }).totalPoints
-    : 0;
-  const fullDayPotential = calculateCheckInScore({
-    completed: standards.map(([id]) => id),
-    status: 'complete',
-    workoutDifficulty,
-    difficultyPointValues,
-  }).totalPoints;
-  const projectedAwardPoints = $('projectedAwardPoints');
-  const fullDayPotentialPoints = $('fullDayPotentialPoints');
-  const workoutOnePointValue = $('workoutOnePointValue');
-  const workoutTwoPointValue = $('workoutTwoPointValue');
-  const pointPreviewAnnouncement = $('pointPreviewAnnouncement');
-
-  const projectedAwardText = projectedAward.toLocaleString();
-  const fullDayPotentialText = fullDayPotential.toLocaleString();
-  if (projectedAwardPoints && projectedAwardPoints.textContent !== projectedAwardText) {
-    projectedAwardPoints.textContent = projectedAwardText;
-  }
-  if (fullDayPotentialPoints && fullDayPotentialPoints.textContent !== fullDayPotentialText) {
-    fullDayPotentialPoints.textContent = fullDayPotentialText;
-  }
-  document.querySelectorAll('[data-difficulty-point]').forEach((pointLabel) => {
-    const difficulty = pointLabel.dataset.difficultyPoint;
-    const label = `+${difficultyPointValues[difficulty]} pts`;
-    if (pointLabel.textContent !== label) pointLabel.textContent = label;
-  });
-  if (workoutOnePointValue) {
-    const label = `${DIFFICULTY_LABELS[workoutDifficulty.one]} selected · +${difficultyPointValues[workoutDifficulty.one]} point bonus`;
-    if (workoutOnePointValue.textContent !== label) workoutOnePointValue.textContent = label;
-  }
-  if (workoutTwoPointValue) {
-    const label = `${DIFFICULTY_LABELS[workoutDifficulty.two]} selected · +${difficultyPointValues[workoutDifficulty.two]} point bonus`;
-    if (workoutTwoPointValue.textContent !== label) workoutTwoPointValue.textContent = label;
-  }
-  if (pointPreviewAnnouncement) {
-    const announcement = `Projected award ${projectedAwardText} points. Full-day potential ${fullDayPotentialText} points.`;
-    if (pointPreviewAnnouncement.textContent !== announcement) pointPreviewAnnouncement.textContent = announcement;
-  }
-}
-async function refreshWorkoutDifficultyPointValues() {
-  if (!hasSupabaseAuth()) return;
-  const latestValues = normalizeDifficultyPointValues(await getWorkoutDifficultyPointValues());
-  const changed = Object.keys(latestValues)
-    .some((difficulty) => latestValues[difficulty] !== difficultyPointValues[difficulty]);
-  if (!changed) return;
-  difficultyPointValues = latestValues;
-  renderPointPreview();
-}
-const saveEntry = (entry) => {
+const replaceEntry = (entry) => {
   const index = entries.findIndex(item => item.date === entry.date);
   if (index >= 0) entries[index] = entry;
   else entries.push(entry);
   save(ENTRY_STORAGE_KEY, entries);
-  if (hasSupabaseAuth()) {
-    entrySaveQueue = entrySaveQueue
-      .then(() => saveChallengeEntry(entry))
-      .catch((error) => console.warn('Unable to sync challenge entry', error));
-  }
 };
+
+const withPendingDraftMutations = (draft) => {
+  const completed = new Set(draft.completed);
+  pendingActionMutations.forEach((isCompleted, actionId) => {
+    if (isCompleted) completed.add(actionId);
+    else completed.delete(actionId);
+  });
+  const nextDifficulty = { ...draft.workoutDifficulty };
+  pendingWorkoutMutations.forEach((difficulty, workoutId) => {
+    nextDifficulty[workoutId] = difficulty;
+  });
+  return {
+    ...draft,
+    completed: [...completed],
+    workoutDifficulty: normalizeWorkoutDifficulty(nextDifficulty),
+  };
+};
+
+async function reconcileDailyStandardDraft(date, fallbackMessage) {
+  try {
+    const authoritative = await getDailyStandardDraft(date);
+    const reconciled = withPendingDraftMutations(authoritative);
+    replaceEntry(reconciled);
+    workoutDifficulty = normalizeWorkoutDifficulty(reconciled.workoutDifficulty);
+    save(WORKOUT_DIFFICULTY_STORAGE_KEY, workoutDifficulty);
+    setCheckInNotice(date, fallbackMessage);
+    render();
+  } catch (error) {
+    console.warn('Unable to reconcile Daily Standards draft', error);
+    setCheckInNotice(date, 'Unable to sync that change. Refresh and try again.');
+    render();
+  }
+}
 const rawChallengeDay = () => previewChallengeMode()
   ? previewChallengeState.day
   : calendarDayDifference(todayKey(), startDate) + 1;
@@ -1079,68 +997,95 @@ function renderChecklist(entry) {
 
   if (!checklist.dataset.mounted) {
     checklist.innerHTML = scorecardGroups.map((group) => {
-      const rows = group.items.map(([id, label, detail]) => (
-        `<button class="check-row" data-standard="${id}" aria-pressed="false" type="button"><span class="box"><span class="app-icon icon-sm icon-check" aria-hidden="true"></span></span><span><strong>${escapeHtml(label)}</strong><small>${escapeHtml(detail)}</small></span></button>`
-      )).join('');
+      const rows = group.items.map(([id, label, detail]) => {
+        const route = dailyStandardRoute(id);
+        const difficultyDescriptionId = `${id}DifficultyDescription`;
+        const difficultyControl = route?.workoutId
+          ? `<label class="check-row-difficulty" for="${id}Difficulty"><span>Difficulty <small id="${difficultyDescriptionId}">Context only · still +1</small></span><select id="${id}Difficulty" name="${id}Difficulty" data-workout="${route.workoutId}" aria-label="${escapeHtml(label)} difficulty" aria-describedby="${difficultyDescriptionId}"><option value="easy">Easy</option><option value="medium">Medium</option><option value="hard">Hard</option><option value="extreme">Extreme</option></select></label>`
+          : '';
+        return `<article class="check-row" id="standard-${id}" data-standard-card="${id}"><button class="check-row-toggle" data-standard="${id}" aria-label="Mark ${escapeHtml(label)} complete, worth 1 point" aria-pressed="false" type="button"><span class="box"><span class="app-icon icon-sm icon-check" aria-hidden="true"></span></span><span class="check-row-copy"><strong>${escapeHtml(label)}</strong><small>${escapeHtml(detail)}</small></span><span class="action-point-value" aria-label="1 point">+1</span></button><a class="check-row-details" href="${route?.route || './dashboard.html#daily-standards'}" aria-label="Open ${escapeHtml(label)} details">Details<span aria-hidden="true">→</span></a>${difficultyControl}</article>`;
+      }).join('');
       const itemLabel = group.items.length === 1 ? 'action' : 'actions';
-      return `<section class="checklist-group"><div class="checklist-group-header"><p class="checklist-group-title">${escapeHtml(group.label)}</p><span>${group.items.length} ${itemLabel}</span></div><div class="checklist-group-items">${rows}</div></section>`;
+      return `<section class="checklist-group" aria-labelledby="checklistGroup-${group.key}"><div class="checklist-group-header"><h3 class="checklist-group-title" id="checklistGroup-${group.key}">${escapeHtml(group.label)}</h3><span>${group.items.length} ${itemLabel}</span></div><div class="checklist-group-items">${rows}</div></section>`;
     }).join('');
     checklist.dataset.mounted = 'true';
   }
 
   const completed = new Set(entry.completed);
-  const locked = Boolean(entry.scheduledMiss)
-    || isChallengeFinished()
+  const draftBusy = pendingActionMutations.size > 0 || pendingWorkoutMutations.size > 0;
+  const locked = isChallengeFinished()
     || !isCheckInStatusReady(entry.date)
     || hasSubmittedCheckIn(entry.date)
-    || isCheckInPending(entry.date);
+    || isCheckInPending(entry.date)
+    || draftBusy;
   checklist.querySelectorAll('[data-standard]').forEach((row) => {
     const isChecked = completed.has(row.dataset.standard);
-    row.classList.toggle('checked', isChecked);
+    const card = row.closest('[data-standard-card]');
+    card?.classList.toggle('checked', isChecked);
+    card?.classList.toggle('is-locked', locked);
     row.disabled = locked;
     row.setAttribute('aria-pressed', String(isChecked));
+    row.setAttribute('aria-label', `Mark ${dailyStandardRoute(row.dataset.standard)?.title || 'action'} ${isChecked ? 'incomplete' : 'complete'}, worth 1 point`);
   });
-}
-function renderTodayActionCompletion(entry) {
-  const completed = new Set(entry.completed);
-  const locked = Boolean(entry.scheduledMiss)
-    || isChallengeFinished()
-    || !isCheckInStatusReady(entry.date)
-    || hasSubmittedCheckIn(entry.date)
-    || isCheckInPending(entry.date);
-
-  document.querySelectorAll('[data-action-completion]').forEach((button) => {
-    const isChecked = completed.has(button.dataset.actionCompletion);
-    const label = button.dataset.actionName
-      || button.getAttribute('aria-label')?.replace(/^Mark | complete$/g, '')
-      || 'Action';
-    const labelElement = button.querySelector('[data-completion-label]');
-    button.dataset.actionName = label;
-    button.classList.toggle('completed', isChecked);
-    button.disabled = locked;
-    button.setAttribute('aria-pressed', String(isChecked));
-    button.setAttribute('aria-label', `Mark ${label} ${isChecked ? 'incomplete' : 'complete'}`);
-    if (labelElement) labelElement.textContent = isChecked ? 'Completed' : `Mark ${label} complete`;
-    button.closest('.action-card, .verse-card')?.classList.toggle('action-completed', isChecked);
+  checklist.querySelectorAll('.check-row-details').forEach((link) => {
+    link.setAttribute('aria-disabled', String(draftBusy));
   });
+  const difficultyControls = checklist.querySelectorAll('[data-workout]');
+  syncWorkoutDifficultyControls(difficultyControls, workoutDifficulty);
+  difficultyControls.forEach((control) => { control.disabled = locked; });
 
-  const floatingCheckInCta = $('floatingCheckInCta');
-  if (floatingCheckInCta) {
-    const allActionsCompleted = standards.every(([id]) => completed.has(id)) && !locked;
-    floatingCheckInCta.classList.toggle('visible', allActionsCompleted);
-    floatingCheckInCta.setAttribute('aria-hidden', String(!allActionsCompleted));
-    floatingCheckInCta.tabIndex = allActionsCompleted ? 0 : -1;
-    document.body.classList.toggle('check-in-cta-visible', allActionsCompleted);
+  const requestedFocus = new URLSearchParams(window.location.search).get('focus');
+  const focusTarget = requestedFocus && dailyStandardRoute(requestedFocus)
+    ? checklist.querySelector(`[data-standard="${requestedFocus}"]`)
+    : null;
+  if (focusTarget && !checklist.dataset.focusRestored) {
+    checklist.dataset.focusRestored = 'true';
+    requestAnimationFrame(() => {
+      focusTarget.focus({ preventScroll: true });
+      focusTarget.closest('[data-standard-card]')?.scrollIntoView({ block: 'center' });
+      window.history.replaceState(null, '', `${window.location.pathname}${window.location.hash}`);
+    });
   }
 }
 function toggleStandard(id) {
-  if (isChallengeFinished() || !isCheckInStatusReady() || todayEntry().scheduledMiss || hasSubmittedCheckIn() || isCheckInPending()) return;
+  if (isChallengeFinished() || !isCheckInStatusReady() || hasSubmittedCheckIn() || isCheckInPending()) return;
   const currentEntry = todayEntry();
   const completed = new Set(currentEntry.completed);
-  if (completed.has(id)) completed.delete(id);
-  else completed.add(id);
-  saveEntry({ ...currentEntry, completed: [...completed], scheduledMiss: false });
+  const nextCompleted = !completed.has(id);
+  if (nextCompleted) completed.add(id);
+  else completed.delete(id);
+  pendingActionMutations.set(id, nextCompleted);
+  replaceEntry({ ...currentEntry, completed: [...completed], version: currentEntry.version + 1 });
   render();
+
+  if (!hasSupabaseAuth()) {
+    pendingActionMutations.delete(id);
+    render();
+    return;
+  }
+  entrySaveQueue = entrySaveQueue
+    .then(() => mutateDailyStandardDraft({
+      date: currentEntry.date,
+      actionId: id,
+      completed: nextCompleted,
+      expectedVersion: currentEntry.version,
+    }))
+    .then((authoritative) => {
+      if (pendingActionMutations.get(id) === nextCompleted) pendingActionMutations.delete(id);
+      const reconciled = withPendingDraftMutations(authoritative);
+      replaceEntry(reconciled);
+      workoutDifficulty = normalizeWorkoutDifficulty(reconciled.workoutDifficulty);
+      save(WORKOUT_DIFFICULTY_STORAGE_KEY, workoutDifficulty);
+      if (authoritative.staleWriteReconciled) {
+        setCheckInNotice(currentEntry.date, 'Your change was merged with newer activity from another tab.');
+      }
+      render();
+    })
+    .catch((error) => {
+      if (pendingActionMutations.get(id) === nextCompleted) pendingActionMutations.delete(id);
+      console.warn('Unable to sync Daily Standard', error);
+      return reconcileDailyStandardDraft(currentEntry.date, error?.message || 'That change could not be saved.');
+    });
 }
 const padClock = (value) => String(value).padStart(2, '0');
 function getDayTiming(now = new Date()) {
@@ -1203,86 +1148,6 @@ function updateCountdownCard() {
   if (countdownProgressLabel) countdownProgressLabel.textContent = `${elapsedPercent}% of the day used`;
   if (countdownActionsLabel) countdownActionsLabel.textContent = `${entry.completed.length} of 7 actions complete`;
 }
-function applyVerse(verse) {
-  if (!verseText || !verseReference) return;
-  verseText.textContent = verse.text;
-  verseReference.textContent = verse.reference;
-}
-function applyDailyActions() {
-  const morningPrayerLink = $('morningPrayerLink');
-  const eveningPrayerLink = $('eveningPrayerLink');
-  const worshipLink = $('worshipLink');
-  const worshipPrompt = $('worshipPrompt');
-  const workoutOneRecommendation = $('workoutOneRecommendation');
-  const workoutTwoRecommendation = $('workoutTwoRecommendation');
-  const workoutOneLink = $('workoutOneLink');
-  const workoutTwoLink = $('workoutTwoLink');
-  const workoutOneDifficulty = $('workoutOneDifficulty');
-  const workoutTwoDifficulty = $('workoutTwoDifficulty');
-  const scorecardLocked = !isCheckInStatusReady()
-    || hasSubmittedCheckIn()
-    || isChallengeFinished()
-    || isCheckInPending()
-    || Boolean(todayEntry().scheduledMiss);
-
-  if (morningPrayerLink) morningPrayerLink.href = YOUVERSION_PRAYER_URL;
-  if (eveningPrayerLink) eveningPrayerLink.href = YOUVERSION_PRAYER_URL;
-
-  const worship = pickDaily(worshipPlaylists);
-  if (worshipLink) {
-    worshipLink.href = worship.url;
-    const worshipLinkLabel = worshipLink.querySelector('span:nth-child(2)');
-    if (worshipLinkLabel) worshipLinkLabel.textContent = 'Open today’s worship';
-    else worshipLink.textContent = 'Open today’s worship';
-  }
-  if (worshipPrompt) worshipPrompt.textContent = worship.label;
-
-  workoutDifficulty = normalizeWorkoutDifficulty(workoutDifficulty);
-  syncWorkoutDifficultyControls(
-    document.querySelectorAll('[data-workout]'),
-    workoutDifficulty,
-  );
-  if (workoutOneDifficulty) workoutOneDifficulty.disabled = scorecardLocked;
-  if (workoutTwoDifficulty) workoutTwoDifficulty.disabled = scorecardLocked;
-
-  const onePlan = pickDaily(workoutPlans[workoutDifficulty.one], 0);
-  const twoPlan = pickDaily(workoutPlans[workoutDifficulty.two], 1);
-  if (workoutOneRecommendation) workoutOneRecommendation.textContent = onePlan;
-  if (workoutTwoRecommendation) workoutTwoRecommendation.textContent = twoPlan;
-  if (workoutOneLink) workoutOneLink.href = APPLE_FITNESS_URL;
-  if (workoutTwoLink) workoutTwoLink.href = APPLE_FITNESS_URL;
-  renderPointPreview();
-}
-async function loadVerseOfDay() {
-  if (!YOUVERSION_VERSE_URL) {
-    applyVerse(fallbackVerse);
-    return;
-  }
-
-  try {
-    const response = await fetch(YOUVERSION_VERSE_URL, { headers: { Accept: 'application/json' } });
-    if (!response.ok) throw new Error(`Verse request failed (${response.status})`);
-    const data = await response.json();
-    const verse = {
-      text:
-        data?.verse?.text ||
-        data?.data?.verse?.text ||
-        data?.data?.attributes?.text ||
-        data?.text ||
-        fallbackVerse.text,
-      reference:
-        data?.verse?.reference ||
-        data?.data?.verse?.reference ||
-        data?.data?.attributes?.reference ||
-        data?.reference ||
-        fallbackVerse.reference,
-    };
-    applyVerse(verse);
-  } catch (error) {
-    console.warn('Using fallback verse of the day', error);
-    applyVerse(fallbackVerse);
-  }
-}
 function render() {
   const finished = isChallengeFinished();
   document.body.classList.toggle('challenge-finished', finished);
@@ -1299,12 +1164,9 @@ function render() {
   const checkInButton = $('checkInButton');
   const checkInStatus = $('checkInStatus');
   const countdownCheckInButton = $('countdownCheckInButton');
-  const scheduledButton = $('scheduledButton');
   const selectAllActionsButton = $('selectAllActionsButton');
   const selectAllActionsLabel = $('selectAllActionsLabel');
   const scorecardSelectionStatus = $('scorecardSelectionStatus');
-  const workoutOneDifficulty = $('workoutOneDifficulty');
-  const workoutTwoDifficulty = $('workoutTwoDifficulty');
   const checklist = $('checklist');
   const feedEl = $('feed');
   const completedToday = $('completedToday');
@@ -1332,17 +1194,18 @@ function render() {
   const submissionPendingToday = isCheckInPending(entry.date);
   const checkInStatusReady = isCheckInStatusReady(entry.date);
   const scorecardLocked = !checkInStatusReady || submittedToday || submissionPendingToday;
-  const hasPostableCheckIn = !finished && !scorecardLocked && (hasCompletedActions || entry.scheduledMiss);
+  const dailyDraftBusy = pendingActionMutations.size > 0 || pendingWorkoutMutations.size > 0;
+  const hasPostableCheckIn = !finished && !scorecardLocked && hasCompletedActions;
   const allActionsCompleted = standards.every(([id]) => completedStandards.has(id));
   if (challengePercentEl) challengePercentEl.textContent = `${challengePercent}%`;
   if (challengeDayEl) challengeDayEl.textContent = `Day ${currentDay()} of 77`;
   if (challengeRing) challengeRing.style.setProperty('--value', `${challengePercent}%`);
   if (todayPercentEl) todayPercentEl.textContent = `${todayPercent}%`;
-  if (todayCountEl) todayCountEl.textContent = entry.scheduledMiss ? 'Scheduled miss day' : `${entry.completed.length} of ${standards.length} done`;
+  if (todayCountEl) todayCountEl.textContent = `${entry.completed.length} of ${standards.length} done`;
   if (todayRing) todayRing.style.setProperty('--value', `${todayPercent}%`);
   document.body.classList.toggle('check-in-complete', submittedToday);
   if (checkInButton) {
-    checkInButton.disabled = !hasPostableCheckIn;
+    checkInButton.disabled = !hasPostableCheckIn || dailyDraftBusy;
     checkInButton.classList.toggle('is-complete', submittedToday);
     checkInButton.textContent = submissionPendingToday
       ? 'Posting...'
@@ -1365,17 +1228,9 @@ function render() {
     countdownCheckInButton.disabled = finished || !checkInStatusReady || submittedToday || submissionPendingToday;
     countdownCheckInButton.textContent = submittedToday ? 'Today’s check-in complete' : 'Go to check-in';
   }
-  if (workoutOneDifficulty) workoutOneDifficulty.disabled = finished || scorecardLocked || !!entry.scheduledMiss;
-  if (workoutTwoDifficulty) workoutTwoDifficulty.disabled = finished || scorecardLocked || !!entry.scheduledMiss;
-  if (scheduledButton) {
-    scheduledButton.classList.toggle('active', !!entry.scheduledMiss);
-    scheduledButton.disabled = finished || scorecardLocked || (hasCompletedActions && !entry.scheduledMiss);
-    scheduledButton.textContent = entry.scheduledMiss ? 'Scheduled miss selected' : 'Scheduled miss day planned ahead';
-    scheduledButton.setAttribute('aria-pressed', String(!!entry.scheduledMiss));
-  }
   if (selectAllActionsButton) {
     selectAllActionsButton.classList.toggle('active', allActionsCompleted);
-    selectAllActionsButton.disabled = finished || scorecardLocked || !!entry.scheduledMiss;
+    selectAllActionsButton.disabled = finished || scorecardLocked || dailyDraftBusy;
     selectAllActionsButton.setAttribute('aria-pressed', String(allActionsCompleted));
     selectAllActionsButton.setAttribute('aria-label', allActionsCompleted
       ? 'Clear all daily actions'
@@ -1386,15 +1241,12 @@ function render() {
     selectAllActionsLabel.textContent = selectAllLabel;
   }
   if (scorecardSelectionStatus) {
-    const selectionStatus = entry.scheduledMiss
-      ? 'Scheduled miss selected'
-      : `${entry.completed.length} of ${standards.length} complete`;
+    const selectionStatus = `${entry.completed.length} of ${standards.length} complete`;
     if (scorecardSelectionStatus.textContent !== selectionStatus) {
       scorecardSelectionStatus.textContent = selectionStatus;
     }
   }
   if (checklist) renderChecklist(entry);
-  renderTodayActionCompletion(entry);
   if (feedEl) {
     feedEl.innerHTML = feed.slice(0, 6).map((item) => {
       const points = item.pointsAwarded ? ` · +${item.pointsAwarded} pts` : '';
@@ -1402,8 +1254,6 @@ function render() {
     }).join('');
   }
   if (completedToday) completedToday.textContent = `${feed.filter(item => item.status === 'complete' && item.timestamp === 'Today').length} people completed today`;
-  if (verseAppLink) verseAppLink.href = YOUVERSION_APP_URL;
-  applyDailyActions();
   renderGameSummary();
   renderChallengeProgression();
   updateCountdownCard();
@@ -1444,12 +1294,15 @@ async function hydrateDashboardFromApi() {
       save('dominion:startDate', startDate);
     }
     if (Array.isArray(dashboard?.entries)) {
-      entries = dashboard.entries.map((entry) => ({
-        date: entry.date,
-        completed: Array.isArray(entry.completed) ? entry.completed : [],
-        scheduledMiss: Boolean(entry.scheduledMiss),
-      }));
+      entries = dashboard.entries.map((entry) => (
+        entry.date === todayKey() ? withPendingDraftMutations(entry) : entry
+      ));
       save(ENTRY_STORAGE_KEY, entries);
+      const currentDraft = entries.find((entry) => entry.date === todayKey());
+      if (currentDraft?.workoutDifficulty) {
+        workoutDifficulty = normalizeWorkoutDifficulty(currentDraft.workoutDifficulty);
+        save(WORKOUT_DIFFICULTY_STORAGE_KEY, workoutDifficulty);
+      }
     }
     if (Array.isArray(dashboard?.checkIns)) {
       replaceSubmittedCheckIns({
@@ -1473,9 +1326,6 @@ async function hydrateDashboardFromApi() {
     if (Array.isArray(dashboard?.badges)) {
       badges = dashboard.badges;
       save('dominion:badges', badges);
-    }
-    if (dashboard?.workoutDifficultyPointValues) {
-      difficultyPointValues = normalizeDifficultyPointValues(dashboard.workoutDifficultyPointValues);
     }
     render();
     if (!isCheckInStatusReady()) hydrateDashboardFromApi();
@@ -1514,7 +1364,9 @@ async function refreshLeaderboardPrestige({ renderAfter = true } = {}) {
 function startLeaderboardPrestigeRefresh() {
   if (leaderboardPrestigeTimer) return;
   const refreshIfVisible = () => {
-    if (!document.hidden) refreshLeaderboardPrestige();
+    if (document.hidden) return;
+    refreshLeaderboardPrestige();
+    if (hasSupabaseAuth()) hydrateDashboardFromApi();
   };
   leaderboardPrestigeTimer = window.setInterval(refreshIfVisible, LEADERBOARD_PRESTIGE_REFRESH_MS);
   window.addEventListener('focus', refreshIfVisible);
@@ -1559,11 +1411,9 @@ async function recordDailyAppVisit() {
 
 const startDateInput = $('startDate');
 const checklist = $('checklist');
-const scheduledButton = $('scheduledButton');
 const selectAllActionsButton = $('selectAllActionsButton');
 const checkInButton = $('checkInButton');
 const countdownCheckInButton = $('countdownCheckInButton');
-const walkReminderButton = $('walkReminderButton');
 const rewardBackdrop = $('rewardBackdrop');
 const rewardToast = $('rewardToast');
 const challengeCatalog = $('challengeCatalog');
@@ -1589,43 +1439,61 @@ if (startDateInput) startDateInput.addEventListener('input', event => {
   }
   render();
 });
-document.querySelectorAll('[data-workout]').forEach((input) => {
-  input.addEventListener('change', (event) => {
-    if (!isCheckInStatusReady() || hasSubmittedCheckIn() || isCheckInPending()) {
-      applyDailyActions();
-      return;
-    }
-    const target = event.target;
-    if (target.type === 'radio' && !target.checked) return;
-    workoutDifficulty = normalizeWorkoutDifficulty({ ...workoutDifficulty, [target.dataset.workout]: target.value });
-    save(WORKOUT_DIFFICULTY_STORAGE_KEY, workoutDifficulty);
-    applyDailyActions();
-    refreshWorkoutDifficultyPointValues()
-      .catch((error) => console.warn('Unable to refresh workout difficulty points', error));
-  });
-});
-document.querySelectorAll('[data-native-health]').forEach((button) => {
-  button.addEventListener('click', () => {
-    window.alert('Apple Health activity rings and step data require a native iOS/watchOS app with HealthKit permission. For now, keep using the daily checkboxes here; this is ready for the native bridge later.');
-  });
-});
-if (walkReminderButton) walkReminderButton.addEventListener('click', () => {
-  if (WALK_ALARM_URL) {
-    window.location.href = WALK_ALARM_URL;
+document.addEventListener('change', (event) => {
+  const target = event.target.closest?.('[data-workout]');
+  if (!target) return;
+  if (!isCheckInStatusReady() || hasSubmittedCheckIn() || isCheckInPending()) {
+    render();
     return;
   }
-  const time = window.prompt('What time should your walk alarm be?', '12:30 PM');
-  const status = $('walkReminderStatus');
-  if (time && status) status.textContent = `Set an alarm in Clock for ${time} and label it Dominion Walk.`;
+  const currentEntry = todayEntry();
+  workoutDifficulty = normalizeWorkoutDifficulty({ ...workoutDifficulty, [target.dataset.workout]: target.value });
+  pendingWorkoutMutations.set(target.dataset.workout, target.value);
+  save(WORKOUT_DIFFICULTY_STORAGE_KEY, workoutDifficulty);
+  replaceEntry({ ...currentEntry, workoutDifficulty, version: currentEntry.version + 1 });
+  render();
+
+  if (!hasSupabaseAuth()) {
+    pendingWorkoutMutations.delete(target.dataset.workout);
+    render();
+    return;
+  }
+  entrySaveQueue = entrySaveQueue
+    .then(() => setDailyStandardWorkoutDifficulty({
+      date: currentEntry.date,
+      workoutId: target.dataset.workout,
+      difficulty: target.value,
+      expectedVersion: currentEntry.version,
+    }))
+    .then((authoritative) => {
+      if (pendingWorkoutMutations.get(target.dataset.workout) === target.value) pendingWorkoutMutations.delete(target.dataset.workout);
+      const reconciled = withPendingDraftMutations(authoritative);
+      replaceEntry(reconciled);
+      workoutDifficulty = normalizeWorkoutDifficulty(reconciled.workoutDifficulty);
+      save(WORKOUT_DIFFICULTY_STORAGE_KEY, workoutDifficulty);
+      render();
+    })
+    .catch((error) => {
+      if (pendingWorkoutMutations.get(target.dataset.workout) === target.value) pendingWorkoutMutations.delete(target.dataset.workout);
+      console.warn('Unable to sync workout difficulty', error);
+      return reconcileDailyStandardDraft(currentEntry.date, error?.message || 'That difficulty could not be saved.');
+    });
 });
 if (checklist) checklist.addEventListener('click', event => {
   const row = event.target.closest('[data-standard]');
   if (!row) return;
   toggleStandard(row.dataset.standard);
 });
-document.addEventListener('click', (event) => {
-  const button = event.target.closest('[data-action-completion]');
-  if (button) toggleStandard(button.dataset.actionCompletion);
+if (checklist) checklist.addEventListener('click', (event) => {
+  const link = event.target.closest('.check-row-details');
+  if (!link || (pendingActionMutations.size === 0 && pendingWorkoutMutations.size === 0)) return;
+  event.preventDefault();
+  if (pendingDetailsNavigation) return;
+  pendingDetailsNavigation = link.href;
+  link.setAttribute('aria-busy', 'true');
+  entrySaveQueue.finally(() => {
+    window.location.href = pendingDetailsNavigation;
+  });
 });
 window.addEventListener('storage', (event) => {
   if (event.key === PREVIEW_CHALLENGE_STORAGE_KEY) {
@@ -1641,7 +1509,10 @@ window.addEventListener('storage', (event) => {
     checkInNotice = '';
     checkInNoticeDate = '';
   } else if (event.key === 'dominion:startDate') startDate = load('dominion:startDate', calendarTodayKey());
-  else if (event.key === ENTRY_STORAGE_KEY) entries = load(ENTRY_STORAGE_KEY, []);
+  else if (event.key === ENTRY_STORAGE_KEY) {
+    entries = load(ENTRY_STORAGE_KEY, []);
+    workoutDifficulty = normalizeWorkoutDifficulty(todayEntry().workoutDifficulty);
+  }
   else if (event.key === checkInDatesStorageKey()) {
     const cache = checkInCacheForOwner(load(checkInDatesStorageKey(), {}), checkInCacheOwner);
     submittedCheckInDates = new Set(cache.dates);
@@ -1690,30 +1561,17 @@ if (challengeCatalog) challengeCatalog.addEventListener('click', async (event) =
     renderChallengeProgression();
   }
 });
-if (scheduledButton) scheduledButton.addEventListener('click', () => {
-  if (isChallengeFinished() || !isCheckInStatusReady() || hasSubmittedCheckIn() || isCheckInPending()) return;
-  const currentEntry = todayEntry();
-  if (currentEntry.completed.length > 0 && !currentEntry.scheduledMiss) return;
-  const entry = { ...currentEntry, completed: [], scheduledMiss: !currentEntry.scheduledMiss };
-  saveEntry(entry);
-  render();
-});
 if (selectAllActionsButton) selectAllActionsButton.addEventListener('click', () => {
   if (isChallengeFinished() || !isCheckInStatusReady() || hasSubmittedCheckIn() || isCheckInPending()) return;
   const currentEntry = todayEntry();
-  if (currentEntry.scheduledMiss) return;
   const completedStandards = new Set(currentEntry.completed);
   const allActionsCompleted = standards.every(([id]) => completedStandards.has(id));
-  const entry = {
-    ...currentEntry,
-    completed: allActionsCompleted ? [] : standards.map(([id]) => id),
-    scheduledMiss: false,
-  };
-  saveEntry(entry);
-  render();
+  standards.forEach(([id]) => {
+    if (completedStandards.has(id) === allActionsCompleted) toggleStandard(id);
+  });
 });
 if (checkInButton) checkInButton.addEventListener('click', async () => {
-  const entry = todayEntry();
+  let entry = todayEntry();
   const submissionDay = currentDay();
   const simulatedPreviewPost = previewChallengeMode();
   if (!isCheckInStatusReady(entry.date)) return;
@@ -1728,11 +1586,11 @@ if (checkInButton) checkInButton.addEventListener('click', async () => {
     render();
     return;
   }
-  if (!entry.scheduledMiss && entry.completed.length === 0) return;
+  if (entry.completed.length === 0) return;
   const submissionStartedAt = Date.now();
   if (!canStartCheckInSubmission(lastCheckInSubmissionAt, submissionStartedAt, CHECK_IN_SUBMISSION_COOLDOWN_MS)) return;
   lastCheckInSubmissionAt = submissionStartedAt;
-  const status = entry.scheduledMiss ? 'scheduled' : entry.completed.length === standards.length ? 'complete' : 'partial';
+  let status = entry.completed.length === standards.length ? 'complete' : 'partial';
   const previousBadgeKeys = new Set(badges.map((badge) => badge.key));
   let feedItem = {
     date: entry.date,
@@ -1753,8 +1611,12 @@ if (checkInButton) checkInButton.addEventListener('click', async () => {
 
   try {
     if (hasSupabaseAuth()) {
-      await refreshWorkoutDifficultyPointValues()
-        .catch((error) => console.warn('Unable to refresh workout difficulty points', error));
+      await entrySaveQueue;
+      entry = await getDailyStandardDraft(entry.date);
+      replaceEntry(entry);
+      workoutDifficulty = normalizeWorkoutDifficulty(entry.workoutDifficulty);
+      status = entry.completed.length === standards.length ? 'complete' : 'partial';
+      if (!entry.completed.length) throw new Error('Complete at least one action before posting.');
       const postedCheckIn = await postCheckIn({
         date: entry.date,
         day: submissionDay,
@@ -1783,13 +1645,8 @@ if (checkInButton) checkInButton.addEventListener('click', async () => {
       if (simulatedPreviewPost) {
         gameStats = advancePreviewStreaks(gameStats, status, entry.date);
         nextStreak = gameStats.currentFullDayStreak;
-        if (status === 'complete') {
-          points += { 3: 25, 7: 75, 14: 150, 30: 300, 77: 777 }[nextStreak] || 0;
-        }
       } else if (status === 'complete') {
         nextStreak += 1;
-        const streakBonus = { 3: 25, 7: 75, 14: 150, 30: 300, 77: 777 }[nextStreak] || 0;
-        points += streakBonus;
         gameStats.currentFullDayStreak = nextStreak;
         gameStats.bestFullDayStreak = Math.max(gameStats.bestFullDayStreak || 0, nextStreak);
       }
@@ -1866,8 +1723,6 @@ async function bootDashboard() {
   render();
   if (hasSupabaseAuth()) await recordDailyAppVisit();
   else await refreshChallengeProgression({ claimCelebrations: true, celebrationDelay: 450 });
-  loadVerseOfDay();
-  applyDailyActions();
   startCountdownCard();
   startLeaderboardPrestigeRefresh();
   requestAnimationFrame(() => initReveal());
