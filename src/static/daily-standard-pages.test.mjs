@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { describe, it } from 'node:test';
+import { PRODUCTION_ENTRYPOINTS } from '../../app-entrypoints.mjs';
 import { DAILY_STANDARD_ROUTE_LIST } from './daily-standard-routes.mjs';
 
 const read = (path) => readFile(new URL(path, import.meta.url), 'utf8');
@@ -42,9 +43,9 @@ describe('dedicated Daily Standard page framework', () => {
   });
 
   it('registers every dedicated page with the MPA build', async () => {
-    const viteConfig = await read('../../vite.config.ts');
+    const configuredEntries = new Set(Object.values(PRODUCTION_ENTRYPOINTS));
     DAILY_STANDARD_ROUTE_LIST.forEach((action) => {
-      assert.match(viteConfig, new RegExp(action.route.slice(2).replace('.', '\\.')));
+      assert.equal(configuredEntries.has(action.route.slice(2)), true);
     });
   });
 });

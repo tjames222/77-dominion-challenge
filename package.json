@@ -7,7 +7,7 @@
   },
   "scripts": {
     "dev": "vite --host 0.0.0.0",
-    "build": "vue-tsc -b && vite build",
+    "build": "vite build",
     "preview": "vite preview --host 0.0.0.0",
     "test": "node --test src/static/*.test.mjs",
     "test:frontend": "pnpm run test",
@@ -29,13 +29,7 @@
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.110.0",
-    "@vitejs/plugin-vue": "latest",
-    "@youversion/platform-core": "^2.2.0",
-    "lucide-vue-next": "latest",
-    "typescript": "latest",
-    "vite": "latest",
-    "vue": "latest",
-    "vue-tsc": "latest"
+    "vite": "latest"
   },
   "devDependencies": {
     "@axe-core/playwright": "4.12.1",

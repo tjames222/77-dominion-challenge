@@ -1,11 +1,11 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { describe, test } from 'node:test';
+import { PRODUCTION_ENTRYPOINTS } from '../../app-entrypoints.mjs';
 
 const root = new URL('../../', import.meta.url);
-const viteSource = readFileSync(new URL('../../vite.config.ts', import.meta.url), 'utf8');
 const stylesSource = readFileSync(new URL('../assets/styles.css', import.meta.url), 'utf8');
-const activeRoutes = [...viteSource.matchAll(/\w+:\s*'([^']+\.html)'/g)].map((match) => match[1]);
+const activeRoutes = Object.values(PRODUCTION_ENTRYPOINTS);
 const voidElements = new Set(['area', 'base', 'br', 'col', 'embed', 'hr', 'img', 'input', 'link', 'meta', 'source', 'track', 'wbr']);
 
 function directPageSections(source) {

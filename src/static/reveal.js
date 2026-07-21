@@ -6,10 +6,10 @@ const DEFAULT_TARGETS = [
   '.science-stats',
 ];
 
-export function initReveal(options: { selector?: string } = {}) {
+export function initReveal(options = {}) {
   const prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
   const selector = options.selector || DEFAULT_TARGETS.join(',');
-  const targets = Array.from(new Set(document.querySelectorAll<HTMLElement>(selector)));
+  const targets = Array.from(new Set(document.querySelectorAll(selector)));
 
   targets.forEach((element, index) => {
     element.classList.add('reveal');

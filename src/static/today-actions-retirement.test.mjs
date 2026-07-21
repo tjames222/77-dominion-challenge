@@ -25,7 +25,7 @@ describe('Today’s Actions retirement', () => {
     const [dashboardHtml, menuSource, viteConfig] = await Promise.all([
       read('../../dashboard.html'),
       read('./menu.js'),
-      read('../../vite.config.ts'),
+      read('../../vite.config.mjs'),
     ]);
 
     [dashboardHtml, menuSource, viteConfig].forEach((source) => {

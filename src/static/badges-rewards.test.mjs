@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { describe, it } from 'node:test';
+import { PRODUCTION_ENTRYPOINTS } from '../../app-entrypoints.mjs';
 
 import {
   buildBadgesRewardsPageModel,
@@ -15,7 +16,6 @@ const pageHtml = readFileSync(new URL('../../badges-rewards.html', import.meta.u
 const dashboardHtml = readFileSync(new URL('../../dashboard.html', import.meta.url), 'utf8');
 const dashboardSource = readFileSync(new URL('./dashboard.js', import.meta.url), 'utf8');
 const menuSource = readFileSync(new URL('./menu.js', import.meta.url), 'utf8');
-const viteSource = readFileSync(new URL('../../vite.config.ts', import.meta.url), 'utf8');
 
 describe('Badges & Rewards page model', () => {
   it('preserves the Sharing badge icon instead of falling back', () => {
@@ -132,7 +132,7 @@ describe('Badges & Rewards page model', () => {
 
 describe('Badges & Rewards route integration', () => {
   it('registers a dedicated authenticated Vite entry with refresh-safe loaders', () => {
-    assert.match(viteSource, /badgesRewards:\s*'badges-rewards\.html'/);
+    assert.equal(PRODUCTION_ENTRYPOINTS.badgesRewards, 'badges-rewards.html');
     assert.match(pageHtml, /src\/static\/badges-rewards\.js/);
     assert.match(pageSource, /redirectToLogin\('\.\/badges-rewards\.html'\)/);
     assert.match(pageSource, /getBillingState\(\)/);

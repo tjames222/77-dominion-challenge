@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { describe, test } from 'node:test';
+import { PRODUCTION_ENTRYPOINTS } from '../../app-entrypoints.mjs';
 
 const inviteHtml = readFileSync(new URL('../../invite.html', import.meta.url), 'utf8');
 const inviteCss = readFileSync(new URL('../assets/invite.css', import.meta.url), 'utf8');
@@ -8,14 +9,13 @@ const inviteJs = readFileSync(new URL('./invite.js', import.meta.url), 'utf8');
 const communityJs = readFileSync(new URL('./community.js', import.meta.url), 'utf8');
 const shareComposer = readFileSync(new URL('./share-composer.mjs', import.meta.url), 'utf8');
 const apiJs = readFileSync(new URL('./api.js', import.meta.url), 'utf8');
-const viteConfig = readFileSync(new URL('../../vite.config.ts', import.meta.url), 'utf8');
 
 describe('private-group invitation browser page', () => {
   test('is a dedicated no-referrer, non-indexed Vite entry', () => {
     assert.match(inviteHtml, /<meta name="referrer" content="no-referrer"\s*\/?>/);
     assert.match(inviteHtml, /<meta name="robots" content="noindex, nofollow"\s*\/?>/);
     assert.match(inviteHtml, /src="\.\/src\/static\/invite\.js"/);
-    assert.match(viteConfig, /invite:\s*'invite\.html'/);
+    assert.equal(PRODUCTION_ENTRYPOINTS.invite, 'invite.html');
   });
 
   test('requires a distinct user gesture before confirmation', () => {
