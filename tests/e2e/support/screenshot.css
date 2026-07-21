@@ -1,0 +1,71 @@
+@font-face {
+  font-family: "Dominion E2E Inter";
+  src: url("/tests/e2e/support/InterVariable.woff2") format("woff2-variations");
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: block;
+}
+
+html {
+  font-family: "Dominion E2E Inter", sans-serif !important;
+}
+
+*,
+*::before,
+*::after {
+  animation-delay: 0s !important;
+  animation-duration: 0s !important;
+  caret-color: transparent !important;
+  scroll-behavior: auto !important;
+  transition-delay: 0s !important;
+  transition-duration: 0s !important;
+}
+
+.pending-reveal,
+.reveal {
+  filter: none !important;
+  opacity: 1 !important;
+  transform: none !important;
+  visibility: visible !important;
+  will-change: auto !important;
+}
+
+html,
+body {
+  scroll-behavior: auto !important;
+}
+
+/*
+ * Chromium scrolls the document while stitching a full-page screenshot. The
+ * production header reacts to those synthetic scroll events by collapsing,
+ * which changes the document height partway through capture. Keep the visual
+ * fixture at its top-of-page geometry while leaving the production behavior
+ * untouched.
+ */
+.topbar.topbar-scrolled {
+  border-bottom-color: transparent !important;
+  box-shadow: none !important;
+}
+
+.topbar.topbar-collapsed {
+  min-height: 72px !important;
+  padding-top: calc(12px + env(safe-area-inset-top)) !important;
+  padding-bottom: 12px !important;
+  background: color-mix(in srgb, var(--background) 94%, transparent) !important;
+}
+
+.topbar.topbar-collapsed .brand-name,
+.topbar.topbar-collapsed .topbar-login,
+.topbar.topbar-collapsed .theme-toggle,
+.topbar.topbar-collapsed .brand-mark,
+.topbar.topbar-collapsed .back-link,
+.topbar.topbar-collapsed .global-menu-button {
+  opacity: 1 !important;
+  transform: none !important;
+}
+
+@media (max-width: 420px) {
+  .topbar.topbar-collapsed {
+    min-height: 64px !important;
+  }
+}

@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="referrer" content="no-referrer" />
+    <meta name="robots" content="noindex, nofollow" />
+    <meta name="theme-color" content="#0e1116" />
+    <script vite-ignore src="./theme-bootstrap.js" data-enable-dominion-night="false"></script>
+    <title>Private Group Invitation | Dominion</title>
+    <link rel="stylesheet" href="./src/assets/styles.css" />
+    <link rel="stylesheet" href="./src/assets/product.css" />
+    <link rel="stylesheet" href="./src/assets/invite.css" />
+    <link rel="stylesheet" href="./src/assets/menu.css" />
+    <link rel="stylesheet" href="./src/assets/dominion-night.css" />
+  </head>
+  <body>
+    <main class="app-shell invite-shell">
+      <header class="topbar">
+        <a class="back-link" href="./index.html">Dominion</a>
+        <span class="invite-security-label">Private invitation</span>
+      </header>
+
+      <section class="invite-card card" data-section-surface="accent" aria-labelledby="inviteTitle" aria-describedby="inviteMessage">
+        <div class="invite-mark" aria-hidden="true">
+          <span class="app-icon icon-users"></span>
+        </div>
+        <p class="eyebrow" id="inviteEyebrow">Checking invitation</p>
+        <h1 id="inviteTitle">Opening your private-group invitation…</h1>
+        <p class="lead" id="inviteMessage" role="status" aria-live="polite">
+          No membership change will happen until you confirm.
+        </p>
+
+        <dl class="invite-preview" id="invitePreview" hidden>
+          <div>
+            <dt>Private group</dt>
+            <dd id="inviteGroupName">—</dd>
+          </div>
+          <div>
+            <dt>Invited by</dt>
+            <dd id="inviteInviterName">—</dd>
+          </div>
+        </dl>
+
+        <div class="invite-actions" id="inviteActions" aria-live="polite">
+          <button class="primary" id="confirmInviteButton" type="button" hidden>Confirm and join group</button>
+          <a class="primary" id="loginInviteLink" href="./login.html?returnTo=.%2Finvite.html" hidden>Log in to continue</a>
+          <a class="secondary" id="registerInviteLink" href="./register.html?returnTo=.%2Finvite.html" hidden>Create an account</a>
+          <a class="primary" id="billingInviteLink" href="./billing.html?intent=invite" hidden>Activate membership</a>
+          <button class="secondary" id="retryInviteButton" type="button" hidden>Try again</button>
+          <a class="primary" id="openGroupLink" href="./community.html" hidden>Open private group</a>
+          <a class="secondary" id="leaveInviteLink" href="./dashboard.html">Go to dashboard</a>
+        </div>
+
+        <p class="invite-safety-note">
+          The invite secret is removed from the address bar before authentication. Opening this page never joins a group by itself.
+        </p>
+      </section>
+    </main>
+    <script type="module" src="./src/static/invite.js"></script>
+    <script type="module" src="./src/static/menu.js"></script>
+  </body>
+</html>

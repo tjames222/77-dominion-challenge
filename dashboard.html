@@ -4,30 +4,60 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <meta name="theme-color" content="#0e1116" />
+    <script vite-ignore src="./theme-bootstrap.js" data-enable-dominion-night="false"></script>
     <title>Dominion Dashboard</title>
     <link rel="stylesheet" href="./src/assets/styles.css" />
     <link rel="stylesheet" href="./src/assets/product.css" />
+    <link rel="stylesheet" href="./src/assets/dialog.css" />
+    <link rel="stylesheet" href="./src/assets/share-composer.css" />
     <link rel="stylesheet" href="./src/assets/menu.css" />
+    <link rel="stylesheet" href="./src/assets/dominion-night.css" />
   </head>
   <body>
     <main class="app-shell dashboard-shell">
       <header class="topbar">
         <a class="back-link" href="./index.html">Dominion</a>
+        <div class="topbar-trailing-actions">
+          <button
+            class="share-entry-button dashboard-share-button"
+            type="button"
+            data-share-composer
+            data-share-kind="streak"
+            aria-label="Share your streak"
+          >
+            Share
+          </button>
+          <button
+            class="dashboard-streak-button"
+            id="dashboardStreakButton"
+            type="button"
+            aria-label="App streak: 0 days. View streak details."
+            aria-haspopup="dialog"
+            aria-controls="streakDetailsDialog"
+            aria-expanded="false"
+          >
+            <strong id="dashboardAppStreakCount">0</strong>
+            <span class="app-icon icon-lightning" aria-hidden="true"></span>
+          </button>
+        </div>
       </header>
 
-      <section class="dashboard-hero compact-hero reveal">
+      <section class="dashboard-hero compact-hero reveal" data-section-surface="plain">
         <p class="eyebrow">Member Dashboard</p>
         <h1 id="dashboardTitle">Today’s Dominion</h1>
         <p class="lead" id="dashboardLead">Track your standards, post your check-in, and stay honest.</p>
+        <button class="share-entry-button" type="button" data-share-composer data-share-kind="general">
+          Share the challenge
+        </button>
       </section>
 
-      <section class="challenge-complete-panel reveal" id="challengeCompletePanel" hidden>
+      <section class="challenge-complete-panel reveal" id="challengeCompletePanel" data-section-surface="plain" hidden>
         <p class="eyebrow">77 Days Complete</p>
-        <h2>Your next challenge is ready below.</h2>
-        <p>You finished the Dominion Challenge. Hold the ground you gained and choose the next path your points opened.</p>
+        <h2>Your next challenge is ready.</h2>
+        <p>You finished the Dominion Challenge. Hold the ground you gained and choose the next path from Badges &amp; Rewards.</p>
       </section>
 
-      <section class="countdown-card spotlight-panel reveal" id="countdownCard">
+      <section class="countdown-card spotlight-panel reveal" id="countdownCard" data-section-surface="accent">
         <div class="countdown-topline">
           <span class="app-icon icon-clock countdown-icon" aria-hidden="true"></span>
           <div>
@@ -50,7 +80,7 @@
         <button class="action-button countdown-action" type="button" id="countdownCheckInButton">Go to check-in</button>
       </section>
 
-      <section class="game-summary-card reveal" id="gameSummaryCard" aria-labelledby="gameSummaryEyebrow gameSummaryTitle">
+      <section class="game-summary-card reveal" id="gameSummaryCard" data-section-surface="plain" aria-labelledby="gameSummaryEyebrow gameSummaryTitle">
         <div class="game-summary-hero">
           <div
             class="game-level-emblem"
@@ -98,25 +128,6 @@
           </p>
         </div>
 
-        <div class="game-streak-grid" aria-label="Current and best streaks">
-          <article class="game-streak-card app-streak-card">
-            <span class="app-icon icon-eye" aria-hidden="true"></span>
-            <div>
-              <p>App streak</p>
-              <div class="game-streak-value"><strong id="appStreakCount">0</strong><span id="appStreakUnit">days</span></div>
-              <small id="appStreakBest">Best 0 days</small>
-            </div>
-          </article>
-          <article class="game-streak-card full-streak-card">
-            <span class="app-icon icon-flame" aria-hidden="true"></span>
-            <div>
-              <p>Full-standard streak</p>
-              <div class="game-streak-value"><strong id="fullDayStreakCount">0</strong><span id="fullDayStreakUnit">days</span></div>
-              <small id="fullDayStreakBest">Best 0 days</small>
-            </div>
-          </article>
-        </div>
-
         <div class="progression-badges">
           <div class="progression-badges-heading">
             <div>
@@ -127,68 +138,16 @@
           </div>
           <div class="progression-badge-grid" id="badgeShelf" aria-label="Recent badges"></div>
         </div>
+        <a class="game-summary-rewards-link" href="./badges-rewards.html">
+          <span class="app-icon icon-crown" aria-hidden="true"></span>
+          <span><strong>View badges and rewards</strong><small>See every badge, point reward, and next unlock.</small></span>
+          <span aria-hidden="true">→</span>
+        </a>
       </section>
 
-      <section class="challenge-vault-card reveal" id="challengeVault" aria-labelledby="challengeVaultTitle">
-        <div class="challenge-vault-heading">
-          <div>
-            <p class="eyebrow">Challenge Vault</p>
-            <h2 id="challengeVaultTitle">Points open the next path.</h2>
-            <p>Keep stacking the standard. Every point moves a new challenge closer.</p>
-          </div>
-          <span id="challengeVaultSummary">Loading challenges</span>
-        </div>
-
-        <div class="challenge-next-unlock" id="challengeNextUnlock">
-          <div class="challenge-next-copy">
-            <span>Next unlock</span>
-            <strong id="challengeNextTitle">A new challenge is taking shape.</strong>
-            <small id="challengeNextPoints">Your point progress will load here.</small>
-          </div>
-          <div
-            class="challenge-unlock-progress"
-            id="challengeUnlockProgress"
-            role="progressbar"
-            aria-label="Progress toward the next challenge"
-            aria-valuemin="0"
-            aria-valuemax="1"
-            aria-valuenow="0"
-          >
-            <span id="challengeUnlockProgressFill"></span>
-          </div>
-        </div>
-
-        <div class="challenge-vault-disclosure">
-          <button
-            class="challenge-vault-toggle"
-            id="challengeVaultToggle"
-            type="button"
-            aria-expanded="false"
-            aria-controls="challengeVaultDetails"
-          >
-            <span id="challengeVaultToggleLabel">View challenge paths</span>
-            <span class="challenge-vault-toggle-icon" aria-hidden="true"></span>
-          </button>
-          <div
-            class="challenge-vault-details"
-            id="challengeVaultDetails"
-            role="region"
-            aria-label="Challenge paths"
-            aria-hidden="true"
-            inert
-          >
-            <div class="challenge-vault-details-inner">
-              <p class="sr-only" id="challengeCatalogFeedback" role="status" aria-live="polite" aria-atomic="true"></p>
-              <div class="challenge-catalog" id="challengeCatalog" aria-label="Point-unlock challenges" aria-busy="true">
-                <article class="challenge-catalog-empty">Challenge progression is loading.</article>
-              </div>
-            </div>
-          </div>
-        </div>
-      </section>
-
-      <section class="dashboard-brand-panel reveal" aria-label="77 Dominion Challenge mark">
+      <section class="dashboard-brand-panel reveal" data-section-surface="accent" aria-label="77 Dominion Challenge mark">
         <img
+          data-theme-asset
           src="/images/dominion-77-mark.jpg"
           data-theme-src-dark="/images/dominion-77-mark.jpg"
           data-theme-src-light="https://pub-53499389187a4de4984349b4f9b36b74.r2.dev/photo_1783730958.105418.png"
@@ -197,101 +156,23 @@
         />
       </section>
 
-      <section class="actions-handoff dashboard-section reveal">
-        <div>
-          <p class="eyebrow">Today's Actions</p>
-          <h2>Open the full playbook</h2>
-          <p>The dashboard keeps score. The action page gives you the details, links, and recommendations for each standard.</p>
-        </div>
-        <a class="action-button with-icon actions-handoff-link" href="./today-actions.html">
-          <span class="app-icon icon-check action-button-icon" aria-hidden="true"></span>
-          <span>Go to today’s actions</span>
-          <span aria-hidden="true">↗</span>
-        </a>
-      </section>
-
-      <section class="progress dashboard-section reveal" id="check-in">
+      <section class="progress dashboard-section reveal" id="check-in" data-section-surface="plain">
         <div class="progress-intro">
           <div class="section-heading">
             <p class="eyebrow">Progress</p>
             <h2>How today is tracking</h2>
           </div>
           <label>Challenge start date<input id="startDate" type="date" /></label>
+          <button class="share-entry-button" type="button" data-share-composer data-share-kind="progress">
+            Share my progress
+          </button>
         </div>
         <div class="rings">
           <div class="ring" id="challengeRing"><div class="ring-inner"><strong id="challengePercent">1%</strong><span>Challenge</span><small id="challengeDay">Day 1 of 77</small></div></div>
           <div class="ring" id="todayRing"><div class="ring-inner"><strong id="todayPercent">0%</strong><span>Today</span><small id="todayCount">0 of 7 done</small></div></div>
         </div>
-        <div class="progress-standard">
+        <div class="progress-standard" id="daily-standards">
           <div class="section-heading"><p class="eyebrow">Today's Scorecard</p><h3>Mind, Spirit, Body</h3></div>
-          <section class="scorecard-training-panel" aria-labelledby="scorecardTrainingTitle">
-            <div class="scorecard-training-heading">
-              <span class="scorecard-training-icon app-icon icon-dumbbell" aria-hidden="true"></span>
-              <div>
-                <p id="scorecardTrainingTitle">Workout intensity</p>
-                <span>Set the effort for each workout. The bonus applies when that action is complete.</span>
-              </div>
-            </div>
-            <div class="scorecard-difficulty-controls">
-              <fieldset class="scorecard-difficulty-control" id="workoutOneDifficulty" aria-describedby="workoutOnePointValue">
-                <legend>Workout 1</legend>
-                <p class="difficulty-point-value" id="workoutOnePointValue">Medium selected · +5 bonus</p>
-                <div class="difficulty-options">
-                  <label class="difficulty-option">
-                    <input type="radio" name="workoutOneDifficulty" value="easy" data-workout="one" />
-                    <span class="difficulty-option-content"><strong>Easy</strong><small data-difficulty-point="easy">+2 pts</small></span>
-                  </label>
-                  <label class="difficulty-option">
-                    <input type="radio" name="workoutOneDifficulty" value="medium" data-workout="one" checked />
-                    <span class="difficulty-option-content"><strong>Medium</strong><small data-difficulty-point="medium">+5 pts</small></span>
-                  </label>
-                  <label class="difficulty-option">
-                    <input type="radio" name="workoutOneDifficulty" value="hard" data-workout="one" />
-                    <span class="difficulty-option-content"><strong>Hard</strong><small data-difficulty-point="hard">+10 pts</small></span>
-                  </label>
-                  <label class="difficulty-option">
-                    <input type="radio" name="workoutOneDifficulty" value="extreme" data-workout="one" />
-                    <span class="difficulty-option-content"><strong>Extreme</strong><small data-difficulty-point="extreme">+15 pts</small></span>
-                  </label>
-                </div>
-              </fieldset>
-              <fieldset class="scorecard-difficulty-control" id="workoutTwoDifficulty" aria-describedby="workoutTwoPointValue">
-                <legend>Workout 2</legend>
-                <p class="difficulty-point-value" id="workoutTwoPointValue">Medium selected · +5 bonus</p>
-                <div class="difficulty-options">
-                  <label class="difficulty-option">
-                    <input type="radio" name="workoutTwoDifficulty" value="easy" data-workout="two" />
-                    <span class="difficulty-option-content"><strong>Easy</strong><small data-difficulty-point="easy">+2 pts</small></span>
-                  </label>
-                  <label class="difficulty-option">
-                    <input type="radio" name="workoutTwoDifficulty" value="medium" data-workout="two" checked />
-                    <span class="difficulty-option-content"><strong>Medium</strong><small data-difficulty-point="medium">+5 pts</small></span>
-                  </label>
-                  <label class="difficulty-option">
-                    <input type="radio" name="workoutTwoDifficulty" value="hard" data-workout="two" />
-                    <span class="difficulty-option-content"><strong>Hard</strong><small data-difficulty-point="hard">+10 pts</small></span>
-                  </label>
-                  <label class="difficulty-option">
-                    <input type="radio" name="workoutTwoDifficulty" value="extreme" data-workout="two" />
-                    <span class="difficulty-option-content"><strong>Extreme</strong><small data-difficulty-point="extreme">+15 pts</small></span>
-                  </label>
-                </div>
-              </fieldset>
-            </div>
-          </section>
-          <div class="point-preview">
-            <article class="point-preview-item">
-              <span>Projected award</span>
-              <strong><span id="projectedAwardPoints">0</span> pts</strong>
-              <small>Based on the actions completed now</small>
-            </article>
-            <article class="point-preview-item">
-              <span>Full-day potential</span>
-              <strong><span id="fullDayPotentialPoints">110</span> pts</strong>
-              <small>All 7 actions at the selected difficulties</small>
-            </article>
-            <span class="sr-only" id="pointPreviewAnnouncement" aria-live="polite" aria-atomic="true">Projected award 0 points. Full-day potential 110 points.</span>
-          </div>
           <div class="scorecard-checklist-heading">
             <div>
               <p>Daily standards</p>
@@ -304,17 +185,16 @@
           </div>
           <div id="checklist"></div>
           <div class="scorecard-actions">
-            <button class="scheduled" id="scheduledButton" type="button">Scheduled miss day planned ahead</button>
             <button class="primary" id="checkInButton" type="button" aria-describedby="checkInStatus" disabled>Post Check-In</button>
             <p class="check-in-status" id="checkInStatus" role="status" aria-live="polite" aria-atomic="true"></p>
           </div>
         </div>
       </section>
 
-      <section class="community dashboard-section reveal">
+      <section class="community dashboard-section reveal" data-section-surface="accent">
         <div class="section-heading"><p class="eyebrow">Accountability</p><h2 id="completedToday">3 people completed today</h2></div>
         <div id="feed"></div>
-        <a class="action-button with-icon actions-handoff-link" href="./community.html">
+        <a class="action-button with-icon dashboard-section-link" href="./community.html">
           <span class="app-icon icon-users action-button-icon" aria-hidden="true"></span>
           <span>Open Community</span>
           <span aria-hidden="true">↗</span>
@@ -350,5 +230,6 @@
     </div>
     <script type="module" src="./src/static/menu.js"></script>
     <script type="module" src="./src/static/dashboard.js"></script>
+    <script type="module" src="./src/static/share-composer.js"></script>
   </body>
 </html>

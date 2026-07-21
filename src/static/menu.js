@@ -1,4 +1,8 @@
 import { clearAuthSession, getLocalOrSessionUser } from './api';
+import {
+  clearThemeEntitlementState,
+  hydrateThemeEntitlementState,
+} from './theme-entitlement-state';
 import { initThemeState } from './theme-state';
 import { initThemeAssets } from './theme-assets';
 
@@ -6,10 +10,9 @@ const topbar = document.querySelector('.topbar');
 
 const loggedInLinks = [
   ['Dashboard', './dashboard.html'],
-  ['Challenges', './dashboard.html#challengeVault'],
+  ['Badges & Rewards', './badges-rewards.html'],
   ['Billing', './billing.html'],
   ['Community', './community.html'],
-  ["Today’s Actions", './today-actions.html'],
   ['Check-In', './dashboard.html#check-in'],
   ['Profile', './profile.html'],
 ];
@@ -121,7 +124,7 @@ async function buildMenu() {
 
   const menu = document.createElement('aside');
   menu.className = 'global-menu';
-  menu.setAttribute('aria-label', 'Global navigation');
+  menu.setAttribute('aria-label', 'Application menu');
 
   const links = isLoggedIn ? loggedInLinks : publicLinks;
   const profileLabel = isLoggedIn ? (user?.name || 'Member') : 'Visitor';
@@ -136,13 +139,14 @@ async function buildMenu() {
       </div>
       <button class="global-menu-close" type="button" aria-label="Close menu">×</button>
     </div>
-    <nav class="global-menu-links">
+    <nav class="global-menu-links" aria-label="Global navigation">
       ${links.map(([label, href]) => `<a href="${href}">${label}</a>`).join('')}
     </nav>
     ${isLoggedIn ? '<button class="global-menu-logout" type="button">Log Out</button>' : ''}
   `;
 
-  topbar.appendChild(button);
+  const trailingActions = topbar.querySelector('.topbar-trailing-actions');
+  (trailingActions || topbar).appendChild(button);
   document.body.appendChild(overlay);
   document.body.appendChild(menu);
 
@@ -152,6 +156,7 @@ async function buildMenu() {
   overlay.addEventListener('click', closeMenu);
   menu.querySelector('.global-menu-close')?.addEventListener('click', closeMenu);
   menu.querySelector('.global-menu-logout')?.addEventListener('click', async () => {
+    clearThemeEntitlementState();
     await clearAuthSession();
     closeMenu();
     window.location.href = './index.html';
@@ -163,6 +168,9 @@ async function buildMenu() {
 
 initThemeState();
 initThemeAssets();
+hydrateThemeEntitlementState().then(({ error }) => {
+  if (error) console.warn('Unable to verify theme reward ownership', error);
+});
 initDirectionalTopbar();
 initTopbarStickyOffset();
 buildMenu();

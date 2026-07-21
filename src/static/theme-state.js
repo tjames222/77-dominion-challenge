@@ -1,61 +1,75 @@
-const THEME_STORAGE_KEY = 'dominion:theme';
-const THEME_ATTRIBUTE = 'data-theme';
-const DEFAULT_THEME = 'dark';
-const VALID_THEMES = new Set(['dark', 'light']);
-const THEME_COLORS = {
-  dark: '#0e1116',
-  light: '#fbfaf7',
+const runtime = () => {
+  if (!window.DominionThemeRuntime) {
+    throw new Error('Dominion theme bootstrap must load before application modules.');
+  }
+  return window.DominionThemeRuntime;
 };
 
-function normalizeTheme(theme) {
-  return VALID_THEMES.has(theme) ? theme : DEFAULT_THEME;
+let initialized = false;
+
+export function getThemeRegistry() {
+  return runtime().themes;
+}
+
+export function getThemeDefinition(themeId) {
+  return runtime().getTheme(themeId);
+}
+
+export function getActiveTheme() {
+  return runtime().getActiveTheme();
 }
 
 export function readStoredTheme() {
-  let storedTheme;
-
-  try {
-    const rawTheme = window.localStorage.getItem(THEME_STORAGE_KEY);
-    storedTheme = rawTheme ? JSON.parse(rawTheme) : DEFAULT_THEME;
-  } catch {
-    return DEFAULT_THEME;
-  }
-
-  return normalizeTheme(storedTheme);
+  return runtime().readStoredTheme();
 }
 
-function syncThemeChrome(theme) {
-  const normalizedTheme = normalizeTheme(theme);
-  document.documentElement.style.colorScheme = normalizedTheme;
-  document.querySelector('meta[name="theme-color"]')?.setAttribute('content', THEME_COLORS[normalizedTheme]);
+export function readPreferredTheme() {
+  return runtime().readPreferredTheme();
 }
 
 export function applyStoredTheme(theme = readStoredTheme()) {
-  const normalizedTheme = normalizeTheme(theme);
-  document.documentElement.dataset.theme = normalizedTheme;
-  syncThemeChrome(normalizedTheme);
-  return normalizedTheme;
+  return runtime().applyTheme(theme);
+}
+
+export function setTheme(themeId) {
+  return runtime().setTheme(themeId);
+}
+
+export function setThemeEntitlements(themeIds) {
+  return runtime().setThemeEntitlements(themeIds);
+}
+
+export function toggleTheme() {
+  return runtime().toggleTheme();
+}
+
+function syncLegacyThemeToggles() {
+  const activeTheme = getThemeDefinition(getActiveTheme());
+  document.querySelectorAll('[data-theme-toggle], #themeToggle').forEach((toggle) => {
+    toggle.textContent = `${activeTheme?.label || 'Dark'} Theme`;
+  });
+}
+
+function initLegacyThemeToggles() {
+  document.querySelectorAll('[data-theme-toggle], #themeToggle').forEach((toggle) => {
+    if (toggle.dataset.themeToggleReady === 'true') return;
+    toggle.dataset.themeToggleReady = 'true';
+    toggle.addEventListener('click', toggleTheme);
+  });
+  syncLegacyThemeToggles();
 }
 
 export function initThemeState() {
-  applyStoredTheme();
+  if (initialized) return;
+  initialized = true;
 
-  const observer = new MutationObserver((mutations) => {
-    if (mutations.some((mutation) => mutation.attributeName === THEME_ATTRIBUTE)) {
-      syncThemeChrome(document.documentElement.dataset.theme);
-    }
-  });
-
-  observer.observe(document.documentElement, {
-    attributes: true,
-    attributeFilter: [THEME_ATTRIBUTE],
-  });
+  runtime().applyStoredTheme();
+  initLegacyThemeToggles();
 
   window.addEventListener('storage', (event) => {
-    if (event.key === THEME_STORAGE_KEY) applyStoredTheme();
+    if (event.key !== runtime().storageKey) return;
+    runtime().applyStoredTheme({ notify: true });
   });
 
-  window.addEventListener('dominion:themechange', (event) => {
-    applyStoredTheme(event.detail?.theme || readStoredTheme());
-  });
+  window.addEventListener(runtime().changeEvent, syncLegacyThemeToggles);
 }

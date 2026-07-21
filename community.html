@@ -4,101 +4,130 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <meta name="theme-color" content="#0e1116" />
-    <script>
-      (() => {
-        const fallbackTheme = 'dark';
-        const themeColors = { dark: '#0e1116', light: '#fbfaf7' };
-
-        try {
-          const rawTheme = localStorage.getItem('dominion:theme');
-          const storedTheme = rawTheme ? JSON.parse(rawTheme) : fallbackTheme;
-          const theme = storedTheme === 'light' || storedTheme === 'dark' ? storedTheme : fallbackTheme;
-          document.documentElement.dataset.theme = theme;
-          document.documentElement.style.colorScheme = theme;
-          document.querySelector('meta[name="theme-color"]')?.setAttribute('content', themeColors[theme]);
-        } catch {
-          document.documentElement.dataset.theme = fallbackTheme;
-          document.documentElement.style.colorScheme = fallbackTheme;
-        }
-      })();
-    </script>
-    <title>Dominion Community</title>
+    <script vite-ignore src="./theme-bootstrap.js" data-enable-dominion-night="false"></script>
+    <title>Dominion Private Groups</title>
     <link rel="stylesheet" href="./src/assets/styles.css" />
     <link rel="stylesheet" href="./src/assets/product.css" />
+    <link rel="stylesheet" href="./src/assets/dialog.css" />
+    <link rel="stylesheet" href="./src/assets/share-composer.css" />
     <link rel="stylesheet" href="./src/assets/community.css" />
     <link rel="stylesheet" href="./src/assets/menu.css" />
+    <link rel="stylesheet" href="./src/assets/dominion-night.css" />
   </head>
   <body>
     <main class="app-shell community-shell">
       <header class="topbar">
         <a class="back-link" href="./dashboard.html">Dashboard</a>
-        <span class="brand-name">Community</span>
+        <span class="brand-name">Private Groups</span>
       </header>
 
-      <section class="community-hero reveal is-visible">
+      <section class="community-hero reveal is-visible" data-section-surface="plain">
         <p class="eyebrow">77-Day Dominion Challenge</p>
         <h1>Walk together.</h1>
-        <p class="lead">Encourage your crew, connect with people on your same challenge day, and keep your own journey honest.</p>
+        <p class="lead">Stay accountable with the people you invited, compare private-group progress, and keep your own journey honest.</p>
       </section>
 
-      <nav class="community-tabs" role="tablist" aria-label="Community layers">
+      <nav class="community-tabs" role="tablist" aria-label="Private group and journal">
         <button class="community-tab active" id="crew-tab" type="button" role="tab" aria-selected="true" aria-controls="crew" data-tab="crew">Private Group</button>
-        <button class="community-tab" id="global-tab" type="button" role="tab" aria-selected="false" aria-controls="global" data-tab="global">Global</button>
-        <button class="community-tab" id="journey-tab" type="button" role="tab" aria-selected="false" aria-controls="journey" data-tab="journey">My Journey</button>
+        <button class="community-tab" id="journey-tab" type="button" role="tab" aria-selected="false" aria-controls="journey" data-tab="journey">Private Journal</button>
       </nav>
 
       <div class="community-feedback" id="communityFeedback" role="status" aria-live="polite"></div>
 
-      <section class="community-panel active" id="crew" role="tabpanel" aria-labelledby="crew-tab">
-        <div class="community-summary card">
+      <section class="community-panel active" id="crew" data-section-surface="plain" data-section-cadence role="tabpanel" aria-labelledby="crew-tab">
+        <div class="community-summary" data-section-surface="plain">
           <span class="app-icon icon-users" aria-hidden="true"></span>
           <div>
             <p class="eyebrow">Private Group</p>
             <h2 id="crewTitle">Create or join a crew.</h2>
-            <p id="crewDescription">Private crews keep accountability close: one start date, one channel, and people you actually know.</p>
+            <p id="crewDescription">Private groups keep accountability close: one start date and people you actually know.</p>
           </div>
         </div>
 
-        <section class="community-tools card" id="crewCreateCard">
-          <div>
-            <p class="eyebrow">Start a Crew</p>
-            <h2>Build your private channel.</h2>
+        <div class="community-tools-slot card" data-section-surface="accent">
+          <section class="community-tools" id="crewCreateCard">
+            <div>
+              <p class="eyebrow">Start a Crew</p>
+              <h2>Build your accountability group.</h2>
+            </div>
+            <form class="community-form" id="crewForm">
+              <label>
+                <span>Crew name</span>
+                <input id="crewNameInput" name="name" type="text" maxlength="80" placeholder="San Marcos Men" required />
+              </label>
+              <label>
+                <span>Challenge start date</span>
+                <input id="crewStartDateInput" name="challengeStartDate" type="date" required />
+              </label>
+              <label class="full-span">
+                <span>Description</span>
+                <textarea id="crewDescriptionInput" name="description" rows="3" placeholder="Who is this crew for?"></textarea>
+              </label>
+              <button class="primary" type="submit">Create Crew</button>
+            </form>
+          </section>
+
+          <section class="community-tools" id="crewManageCard" hidden>
+            <div class="crew-toolbar">
+              <label>
+                <span>Active crew</span>
+                <select id="crewSelect"></select>
+              </label>
+              <button
+                class="secondary"
+                id="copyInviteButton"
+                type="button"
+                data-share-composer
+                data-share-kind="invite"
+              >
+                Invite people
+              </button>
+            </div>
+          </section>
+        </div>
+
+        <section class="group-integrations" id="crewIntegrationsCard" data-section-surface="plain" aria-labelledby="groupIntegrationsTitle" hidden>
+          <div class="section-heading-row">
+            <div>
+              <p class="eyebrow">External Updates</p>
+              <h2 id="groupIntegrationsTitle">Slack &amp; Discord</h2>
+            </div>
+            <span class="privacy-badge">Group scoped</span>
           </div>
-          <form class="community-form" id="crewForm">
-            <label>
-              <span>Crew name</span>
-              <input id="crewNameInput" name="name" type="text" maxlength="80" placeholder="San Marcos Men" required />
+          <p class="integration-disclosure">
+            Connected channels can receive approved Daily Check-Ins, streak milestones, badge and reward unlocks, new-member notices, and an optional weekly leaderboard recap. Conversations and replies stay in Slack or Discord and are not synchronized back into Dominion.
+          </p>
+          <p class="integration-conversation-note">
+            Dominion keeps the roster and leaderboard here. Use the connected Slack or Discord channel for conversation.
+          </p>
+          <div class="integration-destination-list" id="integrationDestinationList" aria-live="polite"></div>
+          <div class="integration-connect-actions" id="integrationConnectActions" hidden>
+            <button class="secondary" type="button" data-connect-provider="slack">Connect Slack</button>
+            <button class="secondary" type="button" data-connect-provider="discord">Connect Discord</button>
+          </div>
+          <form class="integration-confirm" id="integrationConfirmForm" hidden>
+            <div>
+              <p class="eyebrow">Confirm Destination</p>
+              <h3 id="integrationConfirmTitle">Choose a channel</h3>
+              <p id="integrationConfirmWorkspace"></p>
+            </div>
+            <label for="integrationChannelSelect">
+              <span>Channel</span>
+              <select id="integrationChannelSelect" required></select>
             </label>
-            <label>
-              <span>Challenge start date</span>
-              <input id="crewStartDateInput" name="challengeStartDate" type="date" required />
-            </label>
-            <label class="full-span">
-              <span>Description</span>
-              <textarea id="crewDescriptionInput" name="description" rows="3" placeholder="Who is this crew for?"></textarea>
-            </label>
-            <button class="primary" type="submit">Create Crew</button>
+            <div class="integration-confirm-actions">
+              <button class="primary" type="submit">Confirm channel</button>
+              <button class="secondary" id="cancelIntegrationSetup" type="button">Cancel</button>
+            </div>
           </form>
         </section>
 
-        <section class="community-tools card" id="crewManageCard" hidden>
-          <div class="crew-toolbar">
-            <label>
-              <span>Active crew</span>
-              <select id="crewSelect"></select>
-            </label>
-            <button class="secondary" id="copyInviteButton" type="button">Copy Invite Link</button>
-          </div>
-          <p class="invite-link" id="inviteLinkText"></p>
-        </section>
-
-        <div class="community-stats" id="crewStats">
-          <article class="card"><strong id="crewMemberCount">0</strong><span>Members</span></article>
-          <article class="card"><strong id="crewDayCount">Day 1</strong><span>Group pace</span></article>
-          <article class="card"><strong id="crewPostCount">0</strong><span>Posts loaded</span></article>
+        <div class="community-stats" id="crewStats" data-section-surface="plain">
+          <article><strong id="crewMemberCount">0</strong><span>Members</span></article>
+          <article><strong id="crewDayCount">Day 1</strong><span>Group pace</span></article>
         </div>
 
-        <section class="member-activity card" id="crewMembersCard" hidden>
+        <section class="member-activity" id="crewMembersCard" data-section-surface="plain" hidden>
           <div class="section-heading-row">
             <div>
               <p class="eyebrow">Group Activity</p>
@@ -109,7 +138,7 @@
           <div class="member-list" id="crewMemberList" tabindex="0" aria-label="Private group members" aria-live="polite"></div>
         </section>
 
-        <section class="leaderboard-card card">
+        <section class="leaderboard-card card" data-section-surface="accent">
           <div class="leaderboard-header">
             <div>
               <p class="eyebrow">Crew Leaderboard</p>
@@ -123,85 +152,10 @@
           <div class="leaderboard-list" id="crewLeaderboard"></div>
         </section>
 
-        <section class="composer-card card" id="crewComposerCard" hidden>
-          <p class="eyebrow">Encourage Your Crew</p>
-          <form id="crewPostForm">
-            <label class="sr-only" for="crewPostBody">Post message</label>
-            <textarea id="crewPostBody" maxlength="2000" placeholder="Share a win, challenge, or word of encouragement..."></textarea>
-            <div class="composer-upload-row">
-              <label class="photo-picker" for="crewPostImage">
-                <input id="crewPostImage" type="file" accept="image/jpeg,image/png,image/webp,image/heic,image/heif" />
-                <span>Add a photo</span>
-              </label>
-              <small>JPG, PNG, WebP, HEIC · 10 MB max</small>
-            </div>
-            <div class="post-image-preview" id="crewPostImagePreview" hidden>
-              <img id="crewPostImagePreviewImage" alt="Selected post preview" />
-              <button class="secondary compact" id="removeCrewPostImage" type="button">Remove photo</button>
-            </div>
-            <label class="post-image-alt" id="crewPostImageAltLabel" hidden>
-              <span>Photo description <small>(helps members using screen readers)</small></span>
-              <input id="crewPostImageAlt" type="text" maxlength="240" placeholder="Describe what is in the photo" />
-            </label>
-            <div class="composer-actions">
-              <small id="crewPostCharacterCount">0 / 2,000</small>
-              <button class="primary" type="submit">Post to Private Group</button>
-            </div>
-          </form>
-        </section>
-
-        <section class="private-feed-section" id="crewFeedSection" hidden>
-          <div class="section-heading-row feed-heading">
-            <div>
-              <p class="eyebrow">Private Group Feed</p>
-              <h2>Latest encouragement.</h2>
-            </div>
-            <button class="secondary compact" id="refreshCrewFeedButton" type="button">Refresh</button>
-          </div>
-          <div class="private-feed-scroll" id="crewFeedScroll" tabindex="-1" aria-label="Private group posts">
-            <div class="feed-list" id="crewFeed" aria-busy="true"></div>
-            <div class="feed-sentinel" id="crewFeedSentinel"></div>
-          </div>
-        </section>
       </section>
 
-      <section class="community-panel" id="global" role="tabpanel" aria-labelledby="global-tab" hidden>
-        <div class="community-summary card">
-          <span class="app-icon icon-globe" aria-hidden="true"></span>
-          <div>
-            <p class="eyebrow">Global Community</p>
-            <h2>Challenge-wide encouragement.</h2>
-            <p>Post a win, a prayer request, or a word of encouragement for everyone currently walking the 77.</p>
-          </div>
-        </div>
-
-        <section class="leaderboard-card card">
-          <div class="leaderboard-header">
-            <div>
-              <p class="eyebrow">Global Leaderboard</p>
-              <h2>Points, streaks, and badges.</h2>
-            </div>
-            <div class="leaderboard-toggle" role="group" aria-label="Global leaderboard range">
-              <button class="active" type="button" data-leaderboard-scope="global" data-leaderboard-window="week">Week</button>
-              <button type="button" data-leaderboard-scope="global" data-leaderboard-window="challenge">Challenge</button>
-            </div>
-          </div>
-          <div class="leaderboard-list" id="globalLeaderboard"></div>
-        </section>
-
-        <section class="composer-card card">
-          <p class="eyebrow">Post to Global</p>
-          <form id="globalPostForm">
-            <textarea id="globalPostBody" placeholder="Encourage the broader Dominion community..." required></textarea>
-            <button class="primary" type="submit">Post Globally</button>
-          </form>
-        </section>
-
-        <div class="feed-list" id="globalFeed" tabindex="-1" aria-label="Global community posts"></div>
-      </section>
-
-      <section class="community-panel" id="journey" role="tabpanel" aria-labelledby="journey-tab" hidden>
-        <div class="community-summary card">
+      <section class="community-panel" id="journey" data-section-surface="plain" data-section-cadence role="tabpanel" aria-labelledby="journey-tab" hidden>
+        <div class="community-summary" data-section-surface="plain">
           <span class="app-icon icon-book" aria-hidden="true"></span>
           <div>
             <p class="eyebrow">Private Journal</p>
@@ -210,7 +164,7 @@
           </div>
         </div>
 
-        <section class="composer-card card">
+        <section class="composer-card card" data-section-surface="accent">
           <p class="eyebrow">Today’s Note</p>
           <form class="journal-form" id="journalForm">
             <label>
@@ -261,11 +215,12 @@
           </form>
         </section>
 
-        <div class="journey-timeline" id="journalTimeline"></div>
+        <div class="journey-timeline" id="journalTimeline" data-section-surface="plain"></div>
       </section>
     </main>
 
     <script type="module" src="./src/static/menu.js"></script>
     <script type="module" src="./src/static/community.js"></script>
+    <script type="module" src="./src/static/share-composer.js"></script>
   </body>
 </html>

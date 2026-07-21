@@ -11,11 +11,24 @@ import {
   createCheckInAlreadyCompleteError,
   isDuplicateCheckInError,
 } from './check-in.mjs';
+import { normalizeDailyStandardDraft } from './daily-standard-draft.mjs';
 import {
-  prepareMockCommunityPostsForStorage,
   prepareMockCrewMembersForStorage,
 } from './mock-community-storage.mjs';
 import { normalizeLeaderboardRank } from './leaderboard-prestige.mjs';
+import { normalizeEarnedBadges } from './badges-rewards.mjs';
+import {
+  normalizeConnectedDestinations,
+  normalizeOutboundConsent,
+  outboundConsentSettingsEqual,
+  outboundConsentWritePayload,
+} from './integration-consent.mjs';
+import {
+  buildMockRewardCatalog,
+  claimMockRewardEntitlementUnlocks,
+  challengeProgressionToRewardCatalog,
+  normalizeRewardCatalog,
+} from './reward-catalog.mjs';
 
 const SUPABASE_URL = (import.meta.env.VITE_SUPABASE_URL || '').replace(/\/$/, '');
 const SUPABASE_KEY =
@@ -41,20 +54,26 @@ export function isLocalDemoMode() {
 const MEMBERSHIP_ACCESS_KEY = 'membership_active';
 const MEMBERSHIP_PRODUCT_KEY = 'dominion_membership';
 const PROFILE_PHOTO_BUCKET = 'profile-photos';
-const COMMUNITY_POST_IMAGE_BUCKET = 'community-post-images';
 const MOCK_USER_ID_KEY = 'dominion:mockUserId';
 const MOCK_SUBSCRIPTION_KEY = 'dominion:mockSubscription';
 const MOCK_CREWS_KEY = 'dominion:mockCrews';
 const MOCK_CREW_MEMBERS_KEY = 'dominion:mockCrewMembers';
 const MOCK_INVITES_KEY = 'dominion:mockCrewInvites';
+const MOCK_INVITE_SESSIONS_KEY = 'dominion:mockCrewInviteSessions';
+const MOCK_INVITE_ATTRIBUTIONS_KEY = 'dominion:mockCrewInviteAttributions';
 const MOCK_POSTS_KEY = 'dominion:mockCommunityPosts';
 const MOCK_JOURNAL_KEY = 'dominion:mockJournalEntries';
 const MOCK_CHALLENGE_STATES_KEY = 'dominion:mockChallengeStates';
+const MOCK_REWARD_ENTITLEMENTS_KEY = 'dominion:mockRewardEntitlements';
 const MOCK_CHALLENGE_THRESHOLDS_VERSION_KEY = 'dominion:mockChallengeThresholdsVersion';
+const MOCK_OUTBOUND_CONSENT_KEY = 'dominion:mockOutboundConsent';
+const MOCK_SHARING_REWARD_KEY = 'dominion:mockSharingReward';
+const MOCK_THEME_PREFERENCES_KEY = 'dominion:mockThemePreferences';
 const MOCK_CHALLENGE_THRESHOLDS_VERSION = 2;
 const MOCK_MEDIA_DB_NAME = 'dominion-preview-media';
 const MOCK_MEDIA_STORE_NAME = 'community-post-images';
 const mockCommunityImageUrls = new Map();
+const dailyStandardTimeZoneBootstraps = new Map();
 let mockMediaDatabasePromise;
 
 const readJson = (key, fallback) => {
@@ -67,87 +86,21 @@ const readJson = (key, fallback) => {
 
 const writeJson = (key, value) => localStorage.setItem(key, JSON.stringify(value));
 
-function getMockMediaDatabase() {
-  if (!globalThis.indexedDB) return Promise.resolve(null);
-  if (mockMediaDatabasePromise) return mockMediaDatabasePromise;
-
-  mockMediaDatabasePromise = new Promise((resolve, reject) => {
-    const request = globalThis.indexedDB.open(MOCK_MEDIA_DB_NAME, 1);
-    request.onupgradeneeded = () => {
-      if (!request.result.objectStoreNames.contains(MOCK_MEDIA_STORE_NAME)) {
-        request.result.createObjectStore(MOCK_MEDIA_STORE_NAME);
-      }
-    };
-    request.onsuccess = () => resolve(request.result);
-    request.onerror = () => reject(request.error || new Error('Unable to open preview image storage.'));
-  });
-  return mockMediaDatabasePromise;
-}
-
-async function writeMockCommunityImage(imagePath, file) {
-  const database = await getMockMediaDatabase();
-  if (database) {
-    await new Promise((resolve, reject) => {
-      const transaction = database.transaction(MOCK_MEDIA_STORE_NAME, 'readwrite');
-      transaction.objectStore(MOCK_MEDIA_STORE_NAME).put(file, imagePath);
-      transaction.oncomplete = () => resolve();
-      transaction.onerror = () => reject(transaction.error || new Error('Unable to save the preview image.'));
-      transaction.onabort = () => reject(transaction.error || new Error('Unable to save the preview image.'));
-    });
-  }
-
-  const previousUrl = mockCommunityImageUrls.get(imagePath);
-  if (previousUrl) URL.revokeObjectURL(previousUrl);
-  const imageUrl = URL.createObjectURL(file);
-  mockCommunityImageUrls.set(imagePath, imageUrl);
-  return imageUrl;
-}
-
-async function readMockCommunityImageUrl(imagePath) {
-  if (!imagePath) return '';
-  const cachedUrl = mockCommunityImageUrls.get(imagePath);
-  if (cachedUrl) return cachedUrl;
-
-  const database = await getMockMediaDatabase();
-  if (!database) return '';
-  const image = await new Promise((resolve, reject) => {
-    const transaction = database.transaction(MOCK_MEDIA_STORE_NAME, 'readonly');
-    const request = transaction.objectStore(MOCK_MEDIA_STORE_NAME).get(imagePath);
-    request.onsuccess = () => resolve(request.result || null);
-    request.onerror = () => reject(request.error || new Error('Unable to load the preview image.'));
-  });
-  if (!image) return '';
-
-  const imageUrl = URL.createObjectURL(image);
-  mockCommunityImageUrls.set(imagePath, imageUrl);
-  return imageUrl;
-}
-
-async function deleteMockCommunityImage(imagePath) {
-  if (!imagePath) return;
-  const database = await getMockMediaDatabase();
-  if (database) {
-    await new Promise((resolve, reject) => {
-      const transaction = database.transaction(MOCK_MEDIA_STORE_NAME, 'readwrite');
-      transaction.objectStore(MOCK_MEDIA_STORE_NAME).delete(imagePath);
-      transaction.oncomplete = () => resolve();
-      transaction.onerror = () => reject(transaction.error || new Error('Unable to remove the preview image.'));
-      transaction.onabort = () => reject(transaction.error || new Error('Unable to remove the preview image.'));
-    });
-  }
-  const imageUrl = mockCommunityImageUrls.get(imagePath);
-  if (imageUrl) URL.revokeObjectURL(imageUrl);
-  mockCommunityImageUrls.delete(imagePath);
-}
-
-async function withMockCommunityImageUrls(posts) {
-  return Promise.all(posts.map(async (post) => ({
-    ...post,
-    imageUrl: post.imagePath ? await readMockCommunityImageUrl(post.imagePath) : '',
-  })));
-}
-
 const randomId = (prefix) => `${prefix}_${globalThis.crypto?.randomUUID?.() || Math.random().toString(16).slice(2)}`;
+
+const randomSecret = () => {
+  const bytes = new Uint8Array(32);
+  globalThis.crypto?.getRandomValues?.(bytes);
+  if (bytes.some(Boolean)) return Array.from(bytes, (value) => value.toString(16).padStart(2, '0')).join('');
+  return `${randomId('invite')}${randomId('secret')}`.replace(/[^A-Za-z0-9_-]/g, '');
+};
+
+const sha256Hex = async (value) => {
+  if (!globalThis.crypto?.subtle) return `preview-${String(value)}`;
+  const bytes = new TextEncoder().encode(String(value));
+  const digest = await globalThis.crypto.subtle.digest('SHA-256', bytes);
+  return Array.from(new Uint8Array(digest), (item) => item.toString(16).padStart(2, '0')).join('');
+};
 
 const getMockUserId = () => {
   let userId = localStorage.getItem(MOCK_USER_ID_KEY);
@@ -235,7 +188,7 @@ export function sessionToUser(session, fallbackName = 'Member') {
   const email = user.email || '';
   const name = metadata.name || metadata.full_name || fallbackName || email.split('@')[0] || 'Member';
   const avatarUrl = metadata.avatar_url || metadata.picture || '';
-  return { name, email, avatarUrl, authenticated: Boolean(session?.access_token) };
+  return { userId: user.id || '', name, email, avatarUrl, authenticated: Boolean(session?.access_token) };
 }
 
 export const hasSupabaseAuth = () => Boolean(supabase) && !isLocalDemoMode();
@@ -263,6 +216,9 @@ export function sanitizeReturnTo(returnTo, fallback = './dashboard.html') {
     const resolved = new URL(returnTo, window.location.origin);
     if (resolved.origin !== window.location.origin) return fallback;
     const path = resolved.pathname.split('/').pop() || 'dashboard.html';
+    const fragmentParams = new URLSearchParams(resolved.hash.replace(/^#/, ''));
+    if (resolved.searchParams.has('invite') || fragmentParams.has('invite')) return fallback;
+    if (path === 'invite.html') return './invite.html';
     return `./${path}${resolved.search}${resolved.hash}`;
   } catch {
     return fallback;
@@ -273,6 +229,7 @@ export async function clearAuthSession() {
   if (supabase) await supabase.auth.signOut();
   localStorage.removeItem('dominion:user');
   localStorage.removeItem(MOCK_SUBSCRIPTION_KEY);
+  localStorage.removeItem('dominion:theme');
 }
 
 export function saveLocalUserFromSession(session, fallbackName) {
@@ -283,10 +240,60 @@ export function saveLocalUserFromSession(session, fallbackName) {
 }
 
 export async function getLocalOrSessionUser() {
-  if (isLocalDemoMode()) return readJson('dominion:user', null);
+  if (isLocalDemoMode()) {
+    const user = readJson('dominion:user', null);
+    return user ? { ...user, userId: getMockUserId() } : null;
+  }
   const session = await getAuthSession();
   if (session?.user) return sessionToUser(session);
   return null;
+}
+
+const normalizeThemePreference = (preference = {}) => ({
+  themeKey: typeof (preference.themeKey ?? preference.theme_key) === 'string'
+    ? (preference.themeKey ?? preference.theme_key)
+    : null,
+  updatedAt: preference.updatedAt ?? preference.updated_at ?? null,
+});
+
+export async function getThemePreference() {
+  if (isLocalDemoMode()) {
+    const userId = getMockUserId();
+    return normalizeThemePreference(readJson(MOCK_THEME_PREFERENCES_KEY, {})[userId]);
+  }
+
+  const client = requireSupabase();
+  await requireUser();
+  const { data, error } = await client.rpc('get_theme_preference');
+  if (error) throw error;
+  return normalizeThemePreference(data);
+}
+
+export async function setThemePreference(themeKey) {
+  const normalizedThemeKey = String(themeKey || '').trim().toLowerCase();
+  if (!['dark', 'light', 'dominion-night'].includes(normalizedThemeKey)) {
+    throw new Error('The requested theme is unavailable.');
+  }
+
+  if (isLocalDemoMode()) {
+    const userId = getMockUserId();
+    const preferences = readJson(MOCK_THEME_PREFERENCES_KEY, {});
+    const preference = {
+      themeKey: normalizedThemeKey,
+      updatedAt: new Date().toISOString(),
+    };
+    preferences[userId] = preference;
+    writeJson(MOCK_THEME_PREFERENCES_KEY, preferences);
+    return preference;
+  }
+
+  const client = requireSupabase();
+  await requireUser();
+  const { data, error } = await client.rpc('set_theme_preference', {
+    target_theme_key: normalizedThemeKey,
+  });
+  if (error) throw error;
+  return normalizeThemePreference(data);
 }
 
 export async function upsertProfile({ name, email, avatarUrl, challengeStartDate } = {}) {
@@ -349,12 +356,7 @@ const mapProfile = (profile) => profile ? ({
   updatedAt: profile.updated_at,
 }) : null;
 
-const mapEntry = (entry) => ({
-  date: entry.entry_date,
-  completed: Array.isArray(entry.completed) ? entry.completed : [],
-  scheduledMiss: Boolean(entry.scheduled_miss),
-  updatedAt: entry.updated_at,
-});
+const mapEntry = (entry) => normalizeDailyStandardDraft(entry);
 
 const mapFeedItem = (item) => ({
   id: item.id,
@@ -381,46 +383,6 @@ const mapCrew = (item) => {
     joinedAt: item.joined_at,
   } : null;
 };
-
-const mapPost = (post, engagement = {}, currentUserId = '') => ({
-  id: post.id,
-  authorId: post.author_id,
-  name: engagement.display_name || post.display_name || 'Member',
-  avatarUrl: engagement.avatar_url ?? post.avatar_url ?? '',
-  crewId: post.crew_id,
-  scope: post.scope,
-  body: post.body,
-  imagePath: post.image_path || null,
-  imageUrl: post.image_url || '',
-  imageAlt: post.image_alt || '',
-  postType: post.post_type || 'message',
-  day: post.challenge_day,
-  status: post.status,
-  completedCount: post.completed_count || 0,
-  createdAt: post.created_at,
-  timestamp: post.created_at ? todayLabel(post.created_at) : 'Today',
-  isOwn: post.author_id === currentUserId,
-  likeCount: Number(engagement.like_count ?? 0),
-  likedByMe: Boolean(engagement.liked_by_me),
-  reactions: (engagement.reactions || []).map((reaction) => ({
-    userId: reaction.user_id,
-    name: reaction.display_name || 'Member',
-    avatarUrl: reaction.avatar_url || '',
-    createdAt: reaction.created_at,
-    isOwn: reaction.user_id === currentUserId,
-  })),
-  comments: (engagement.comments || []).map((comment) => ({
-    id: comment.id,
-    postId: comment.post_id,
-    userId: comment.user_id,
-    name: comment.display_name || 'Member',
-    avatarUrl: comment.avatar_url || '',
-    body: comment.body,
-    createdAt: comment.created_at,
-    timestamp: comment.created_at ? todayLabel(comment.created_at) : 'Today',
-    isOwn: comment.user_id === currentUserId,
-  })),
-});
 
 const mapBadge = (badge) => {
   const definition = badge.badge_definitions || badge;
@@ -455,15 +417,6 @@ const mapGameStats = (stats) => stats ? ({
   bestFullDayStreak: 0,
   lastSeenDate: null,
   lastFullDayDate: null,
-};
-
-const queryWorkoutDifficultyPointValues = async (client) => {
-  const { data, error } = await client
-    .from('workout_difficulty_point_values')
-    .select('difficulty, points')
-    .order('points', { ascending: true });
-  if (error) throw error;
-  return Object.fromEntries((data || []).map((item) => [item.difficulty, item.points]));
 };
 
 const mapLeaderboardRow = (row) => ({
@@ -741,6 +694,153 @@ export async function cancelMembership() {
   return invokeSupabaseAction('cancel-membership');
 }
 
+export async function manageGroupIntegration(action, values = {}) {
+  if (isLocalDemoMode()) {
+    if (action === 'list') return { destinations: [], preview: true };
+    throw new Error('Connect Slack or Discord from a signed-in staging or production account.');
+  }
+  return invokeSupabaseAction('group-integrations', { action, ...values });
+}
+
+const mockSharePresentation = (kind) => {
+  const stats = mapGameStats(readJson('dominion:gameStats', {}));
+  const currentDay = Math.min(Math.max(Number(readJson('dominion:previewChallengeSimulation', {})?.day) || 1, 1), 77);
+  if (kind === 'streak') {
+    return {
+      schemaVersion: 1,
+      kind,
+      payload: {
+        schemaVersion: 1,
+        kind,
+        appStreak: stats.currentAppStreak,
+        fullStandardStreak: stats.currentFullDayStreak,
+      },
+      presentation: {
+        eyebrow: 'Consistency in motion',
+        title: `${stats.currentAppStreak}-day Dominion app streak`,
+        description: `A Dominion challenger has shown up ${stats.currentAppStreak} days in a row.`,
+        metric: String(stats.currentAppStreak),
+        metricLabel: 'day app streak',
+      },
+    };
+  }
+  if (kind === 'progress') {
+    return {
+      schemaVersion: 1,
+      kind,
+      payload: {
+        schemaVersion: 1,
+        kind,
+        currentChallengeDay: currentDay,
+        challengeLength: 77,
+        progressPercent: Math.round(currentDay / 77 * 100),
+      },
+      presentation: {
+        eyebrow: 'Challenge progress',
+        title: `Day ${currentDay} of the 77-Day Dominion Challenge`,
+        description: `A Dominion challenger is ${Math.round(currentDay / 77 * 100)}% through a disciplined rhythm of faith, fitness, and follow-through.`,
+        metric: `${currentDay}/77`,
+        metricLabel: 'challenge days',
+      },
+    };
+  }
+  return {
+    schemaVersion: 1,
+    kind: 'general',
+    payload: { schemaVersion: 1, kind: 'general', challengeLength: 77, dailyStandards: 7 },
+    presentation: {
+      eyebrow: 'Build the standard',
+      title: 'Take the 77-Day Dominion Challenge',
+      description: 'Commit to seven daily standards for 77 days and build a disciplined rhythm of faith, fitness, and follow-through.',
+      metric: '77',
+      metricLabel: 'days of dominion',
+    },
+  };
+};
+
+export async function previewShareSnapshot(kind) {
+  if (isLocalDemoMode()) return mockSharePresentation(kind);
+  return invokeSupabaseAction('share-snapshot', { action: 'preview', kind });
+}
+
+export async function createShareSnapshot(kind) {
+  if (isLocalDemoMode()) {
+    const preview = mockSharePresentation(kind);
+    const destination = new URL('./index.html', window.location.href);
+    destination.searchParams.set('shared', kind);
+    return {
+      ...preview,
+      snapshotId: randomId('preview_snapshot'),
+      url: destination.href,
+      expiresAt: new Date(Date.now() + 30 * 86400000).toISOString(),
+      preview: true,
+    };
+  }
+  return invokeSupabaseAction('share-snapshot', { action: 'create', kind });
+}
+
+export async function createSharingRewardIntent(shareKind) {
+  if (isLocalDemoMode()) {
+    const grant = readJson(MOCK_SHARING_REWARD_KEY, null);
+    return grant
+      ? { eligible: false, alreadyGranted: true, shareKind }
+      : {
+          eligible: true,
+          alreadyGranted: false,
+          shareKind,
+          completionToken: randomSecret(),
+          expiresAt: new Date(Date.now() + 15 * 60000).toISOString(),
+        };
+  }
+
+  const client = requireSupabase();
+  await requireUser();
+  const { data, error } = await client.rpc('create_sharing_reward_intent', {
+    target_share_kind: shareKind,
+  });
+  if (error) throw error;
+  return data || {};
+}
+
+export async function completeSharingReward(completionToken) {
+  if (isLocalDemoMode()) {
+    const existing = readJson(MOCK_SHARING_REWARD_KEY, null);
+    if (existing) return { granted: false, alreadyGranted: true, ...existing };
+
+    const grantedAt = new Date().toISOString();
+    const stats = readJson('dominion:gameStats', {});
+    writeJson('dominion:gameStats', {
+      ...stats,
+      totalPoints: Number(stats.totalPoints ?? stats.challengePoints ?? 0) + 14,
+      challengePoints: Number(stats.challengePoints ?? stats.totalPoints ?? 0) + 14,
+    });
+    const badges = readJson('dominion:badges', []);
+    if (!badges.some((badge) => (badge.badge_key || badge.key) === 'sharing')) {
+      badges.unshift({
+        key: 'sharing',
+        name: 'Share the Challenge',
+        description: 'Shared the challenge or brought another person into a private group.',
+        category: 'community',
+        tier: 'bronze',
+        icon: 'share',
+        earnedAt: grantedAt,
+      });
+      writeJson('dominion:badges', badges);
+    }
+    const grant = { points: 14, badgeKey: 'sharing', grantedAt };
+    writeJson(MOCK_SHARING_REWARD_KEY, grant);
+    return { granted: true, alreadyGranted: false, ...grant };
+  }
+
+  const client = requireSupabase();
+  await requireUser();
+  const { data, error } = await client.rpc('complete_sharing_reward', {
+    target_completion_token: completionToken,
+  });
+  if (error) throw error;
+  return data || {};
+}
+
 function getMockChallengeProgression() {
   const gameStats = readJson('dominion:gameStats', {});
   let records = readJson(MOCK_CHALLENGE_STATES_KEY, []);
@@ -767,6 +867,15 @@ function getMockChallengeProgression() {
   return progression;
 }
 
+function getMockRewardCatalog() {
+  const result = buildMockRewardCatalog({
+    progression: getMockChallengeProgression(),
+    ownershipRecords: readJson(MOCK_REWARD_ENTITLEMENTS_KEY, []),
+  });
+  writeJson(MOCK_REWARD_ENTITLEMENTS_KEY, result.ownershipRecords);
+  return result.catalog;
+}
+
 export async function getChallengeProgression() {
   if (isLocalDemoMode()) return getMockChallengeProgression();
 
@@ -775,6 +884,84 @@ export async function getChallengeProgression() {
   const { data, error } = await client.rpc('get_challenge_progression');
   if (error) throw error;
   return normalizeChallengeProgression(data || {});
+}
+
+export async function getRewardCatalog({ limit = 50, cursor = null } = {}) {
+  if (isLocalDemoMode()) {
+    return getMockRewardCatalog();
+  }
+
+  const client = requireSupabase();
+  await requireUser();
+  const { data, error } = await client.rpc('get_reward_catalog', {
+    target_page_size: limit,
+    target_after_sort_order: cursor?.sortOrder ?? null,
+    target_after_reward_key: cursor?.key || null,
+  });
+  if (error) throw error;
+  return normalizeRewardCatalog(data || {});
+}
+
+export async function getAllRewardCatalog({ pageSize = 100 } = {}) {
+  const normalizedPageSize = Math.floor(Math.min(Math.max(Number(pageSize) || 100, 1), 100));
+  const itemsByKey = new Map();
+  const visitedCursors = new Set();
+  let cursor = null;
+  let firstPage = null;
+  let totalItems = 0;
+
+  while (true) {
+    const page = await getRewardCatalog({ limit: normalizedPageSize, cursor });
+    firstPage ||= page;
+    totalItems = Math.max(totalItems, page.page.totalItems);
+    for (const reward of page.items) itemsByKey.set(reward.key, reward);
+
+    if (!page.page.hasMore) break;
+    const nextCursor = page.page.nextCursor;
+    const cursorKey = nextCursor ? `${nextCursor.sortOrder}:${nextCursor.key}` : '';
+    if (!nextCursor?.key || visitedCursors.has(cursorKey)) {
+      throw new Error('Reward catalog pagination did not advance.');
+    }
+    visitedCursors.add(cursorKey);
+    cursor = nextCursor;
+  }
+
+  const items = [...itemsByKey.values()];
+  return normalizeRewardCatalog({
+    ...(firstPage || {}),
+    items,
+    page: {
+      limit: items.length,
+      totalItems: Math.max(totalItems, items.length),
+      hasMore: false,
+      nextCursor: null,
+    },
+  });
+}
+
+export async function claimRewardEntitlementUnlocks() {
+  if (isLocalDemoMode()) {
+    const result = claimMockRewardEntitlementUnlocks({
+      progression: getMockChallengeProgression(),
+      ownershipRecords: readJson(MOCK_REWARD_ENTITLEMENTS_KEY, []),
+    });
+    writeJson(MOCK_REWARD_ENTITLEMENTS_KEY, result.ownershipRecords);
+    return {
+      claimedUnlocks: result.claimedUnlocks,
+      catalog: result.catalog,
+    };
+  }
+
+  const client = requireSupabase();
+  await requireUser();
+  const { data, error } = await client.rpc('claim_reward_entitlement_unlocks');
+  if (error) throw error;
+  const catalog = normalizeRewardCatalog(data?.catalog || {});
+  const claimedKeys = new Set(data?.claimedKeys || data?.claimed_keys || []);
+  return {
+    claimedUnlocks: catalog.items.filter((reward) => claimedKeys.has(reward.key)),
+    catalog,
+  };
 }
 
 export async function claimChallengeUnlocks() {
@@ -835,11 +1022,11 @@ export async function startChallenge(challengeKey) {
 export async function getDashboard() {
   const client = requireSupabase();
   const user = await requireUser();
-  const [profile, entriesResult, checkInsResult, feedResult, statsResult, badgesResult, workoutDifficultyPointValues] = await Promise.all([
+  const [profile, entriesResult, checkInsResult, feedResult, statsResult, badgesResult] = await Promise.all([
     getProfile(),
     client
       .from('challenge_entries')
-      .select('entry_date, completed, scheduled_miss, updated_at')
+      .select('entry_date, completed, workout_difficulty, version, updated_at')
       .eq('user_id', user.id)
       .order('entry_date', { ascending: false })
       .limit(90),
@@ -852,6 +1039,7 @@ export async function getDashboard() {
     client
       .from('community_feed_items')
       .select('id, display_name, challenge_day, status, completed_count, points_awarded, created_at')
+      .neq('status', 'scheduled')
       .order('created_at', { ascending: false })
       .limit(30),
     client
@@ -865,10 +1053,6 @@ export async function getDashboard() {
       .eq('user_id', user.id)
       .order('earned_at', { ascending: false })
       .limit(12),
-    queryWorkoutDifficultyPointValues(client).catch((error) => {
-      console.warn('Using default workout difficulty points', error);
-      return null;
-    }),
   ]);
 
   if (entriesResult.error) throw entriesResult.error;
@@ -887,32 +1071,85 @@ export async function getDashboard() {
     feed: feedResult.data.map(mapFeedItem),
     gameStats: mapGameStats(statsResult.data),
     badges: (badgesResult.data || []).map(mapBadge).filter(Boolean),
-    workoutDifficultyPointValues,
   };
 }
 
-export async function getWorkoutDifficultyPointValues() {
-  const client = requireSupabase();
-  await requireUser();
-  return queryWorkoutDifficultyPointValues(client);
-}
+const browserTimeZone = () => {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+  } catch {
+    return 'UTC';
+  }
+};
 
-export async function saveChallengeEntry(entry) {
+const bootstrapDailyStandardTimeZone = async (client, userId) => {
+  if (!dailyStandardTimeZoneBootstraps.has(userId)) {
+    const bootstrap = (async () => {
+      const { error } = await client.rpc('bootstrap_daily_standard_time_zone', {
+        target_time_zone: browserTimeZone(),
+      });
+      if (error) throw error;
+    })();
+    dailyStandardTimeZoneBootstraps.set(userId, bootstrap);
+  }
+
+  try {
+    await dailyStandardTimeZoneBootstraps.get(userId);
+  } catch (error) {
+    dailyStandardTimeZoneBootstraps.delete(userId);
+    throw error;
+  }
+};
+
+const rpcDraft = async (name, parameters) => {
   const client = requireSupabase();
   const user = await requireUser();
-  const { data, error } = await client
-    .from('challenge_entries')
-    .upsert({
-      user_id: user.id,
-      entry_date: entry.date,
-      completed: entry.completed || [],
-      scheduled_miss: Boolean(entry.scheduledMiss),
-    }, { onConflict: 'user_id,entry_date' })
-    .select('entry_date, completed, scheduled_miss, updated_at')
-    .single();
-
+  await bootstrapDailyStandardTimeZone(client, user.id);
+  const { data, error } = await client.rpc(name, parameters);
   if (error) throw error;
-  return mapEntry(data);
+  return normalizeDailyStandardDraft(data, parameters.target_entry_date);
+};
+
+export async function getDailyStandardDraft(entryDate) {
+  return rpcDraft('get_daily_standard_draft', { target_entry_date: entryDate });
+}
+
+export async function mutateDailyStandardDraft({ date, actionId, completed, expectedVersion = null }) {
+  if (typeof completed !== 'boolean') {
+    throw new TypeError('Daily Standard completion must be true or false.');
+  }
+  return rpcDraft('mutate_daily_standard_draft', {
+    target_entry_date: date,
+    target_action_id: actionId,
+    target_completed: completed,
+    target_expected_version: expectedVersion,
+  });
+}
+
+export async function setDailyStandardWorkoutDifficulty({ date, workoutId, difficulty, expectedVersion = null }) {
+  return rpcDraft('set_daily_standard_workout_difficulty', {
+    target_entry_date: date,
+    target_workout_id: workoutId,
+    target_difficulty: difficulty,
+    target_expected_version: expectedVersion,
+  });
+}
+
+// Compatibility bridge for older completion-only callers. Legacy snapshots may
+// add actions, but cannot remove an action they may simply be too stale to see.
+export async function saveChallengeEntry(entry) {
+  const desired = new Set(normalizeDailyStandardDraft(entry).completed);
+  let current = await getDailyStandardDraft(entry.date);
+  for (const actionId of desired) {
+    if (current.completed.includes(actionId)) continue;
+    current = await mutateDailyStandardDraft({
+      date: entry.date,
+      actionId,
+      completed: true,
+      expectedVersion: current.version,
+    });
+  }
+  return current;
 }
 
 export async function postCheckIn(checkIn) {
@@ -950,6 +1187,7 @@ export async function getCommunityFeed() {
   const { data, error } = await client
     .from('community_feed_items')
     .select('id, display_name, challenge_day, status, completed_count, points_awarded, created_at')
+    .neq('status', 'scheduled')
     .order('created_at', { ascending: false })
     .limit(30);
 
@@ -997,52 +1235,75 @@ export async function getGameSummary() {
   };
 }
 
-async function queryLeaderboard(client, { scope = 'global', crewId = null, window = 'week' } = {}) {
-  const rpcName = scope === 'crew' ? 'get_crew_leaderboard' : 'get_global_leaderboard';
-  const payload = scope === 'crew'
-    ? { target_crew_id: crewId, target_window: window }
-    : { target_window: window };
-  const { data, error } = await client.rpc(rpcName, payload);
+export async function getEarnedBadges({ pageSize = 100 } = {}) {
+  if (isLocalDemoMode()) {
+    return normalizeEarnedBadges(readJson('dominion:badges', []).map(mapBadge).filter(Boolean));
+  }
+
+  const client = requireSupabase();
+  const user = await requireUser();
+  const normalizedPageSize = Math.floor(Math.min(Math.max(Number(pageSize) || 100, 25), 500));
+  const badges = [];
+  let offset = 0;
+
+  while (true) {
+    const { data, error } = await client
+      .from('user_badges')
+      .select('badge_key, earned_at, entry_date, metadata, badge_definitions(name, description, category, tier, icon)')
+      .eq('user_id', user.id)
+      .order('earned_at', { ascending: false })
+      .order('badge_key', { ascending: true })
+      .range(offset, offset + normalizedPageSize - 1);
+    if (error) throw error;
+
+    const rows = data || [];
+    const page = rows.map(mapBadge).filter(Boolean);
+    badges.push(...page);
+    if (rows.length < normalizedPageSize) break;
+    offset += normalizedPageSize;
+  }
+
+  return normalizeEarnedBadges(badges);
+}
+
+async function queryLeaderboard(client, { crewId, window = 'week' } = {}) {
+  if (!crewId) return [];
+  const { data, error } = await client.rpc('get_crew_leaderboard', {
+    target_crew_id: crewId,
+    target_window: window,
+  });
   if (error) throw error;
   return (data || []).map(mapLeaderboardRow);
 }
 
-export async function getLeaderboard({ scope = 'global', crewId = null, window = 'week' } = {}) {
-  if (isLocalDemoMode()) return getMockLeaderboard({ scope, crewId, window });
+export async function getLeaderboard({ crewId = null, window = 'week' } = {}) {
+  if (isLocalDemoMode()) return getMockLeaderboard({ crewId, window });
   const client = requireSupabase();
   await requireUser();
-  return queryLeaderboard(client, { scope, crewId, window });
+  return queryLeaderboard(client, { crewId, window });
 }
 
 export async function getLeaderboardPrestige({ crewId = null, window = 'week' } = {}) {
   const rankingWindow = window === 'challenge' ? 'challenge' : 'week';
   let currentUserId;
   let crews;
-  let globalRows;
 
   if (isLocalDemoMode()) {
     currentUserId = getMockUserId();
-    [crews, globalRows] = await Promise.all([
-      getCrews(),
-      getMockLeaderboard({ scope: 'global', window: rankingWindow }),
-    ]);
+    crews = await getCrews();
   } else {
     const client = requireSupabase();
     const user = await requireUser();
     currentUserId = user.id;
-    [crews, globalRows] = await Promise.all([
-      queryCrewsForUser(client, user.id),
-      queryLeaderboard(client, { scope: 'global', window: rankingWindow }),
-    ]);
+    crews = await queryCrewsForUser(client, user.id);
   }
 
   const selectedCrew = crews.find((crew) => crew.id === crewId) || crews[0] || null;
   let privateRows = [];
   if (selectedCrew) {
     privateRows = isLocalDemoMode()
-      ? getMockLeaderboard({ scope: 'crew', crewId: selectedCrew.id, window: rankingWindow })
+      ? getMockLeaderboard({ crewId: selectedCrew.id, window: rankingWindow })
       : await queryLeaderboard(requireSupabase(), {
-          scope: 'crew',
           crewId: selectedCrew.id,
           window: rankingWindow,
         });
@@ -1052,7 +1313,6 @@ export async function getLeaderboardPrestige({ crewId = null, window = 'week' } 
   );
 
   return {
-    globalRank: rankForCurrentUser(globalRows),
     privateRank: rankForCurrentUser(privateRows),
     crewId: selectedCrew?.id || null,
     window: rankingWindow,
@@ -1071,36 +1331,6 @@ function createMockAvatar(name, background = '#66513a') {
   return `data:image/svg+xml,${encodeURIComponent(svg)}`;
 }
 
-function mockCommunityIdentity(userId) {
-  if (userId === getMockUserId()) {
-    const user = getMockUser();
-    return { name: user.name || 'Preview Member', avatarUrl: user.avatarUrl || '' };
-  }
-  if (userId === 'preview_member_josh') {
-    return { name: 'Josh', avatarUrl: createMockAvatar('Josh', '#45634d') };
-  }
-  if (userId === 'preview_member_sarah') {
-    return { name: 'Sarah', avatarUrl: createMockAvatar('Sarah', '#7a4652') };
-  }
-  if (userId === 'preview_member_micah') {
-    return { name: 'Micah', avatarUrl: createMockAvatar('Micah', '#6b4f82') };
-  }
-  return { name: 'Member', avatarUrl: '' };
-}
-
-function seedMockReactions(post) {
-  if (Array.isArray(post.reactions)) return post.reactions;
-  const seedIds = post.likedByMe
-    ? [getMockUserId(), 'preview_member_josh', 'preview_member_sarah']
-    : ['preview_member_sarah', 'preview_member_josh', 'preview_member_micah'];
-  return seedIds.slice(0, Math.min(Number(post.likeCount || 0), 3)).map((userId) => ({
-    userId,
-    ...mockCommunityIdentity(userId),
-    createdAt: post.createdAt,
-    isOwn: userId === getMockUserId(),
-  }));
-}
-
 function ensureMockCrews() {
   const user = getMockUser();
   const userId = getMockUserId();
@@ -1112,7 +1342,7 @@ function ensureMockCrews() {
     crews = [{
       id: 'preview_crew_alpha',
       name: 'Preview Crew',
-      description: 'A private mock crew for testing invites, posts, comments, and leaderboards.',
+      description: 'A private mock crew for testing invites, members, and leaderboards.',
       challengeStartDate: new Date().toISOString().slice(0, 10),
       createdBy: userId,
       createdAt,
@@ -1120,6 +1350,17 @@ function ensureMockCrews() {
       joinedAt: createdAt,
     }];
     writeJson(MOCK_CREWS_KEY, crews);
+  } else {
+    const retiredPreviewDescription = 'A private mock crew for testing invites, posts, comments, and leaderboards.';
+    const nextCrews = crews.map((crew) => (
+      crew.id === 'preview_crew_alpha' && crew.description === retiredPreviewDescription
+        ? { ...crew, description: 'A private mock crew for testing invites, members, and leaderboards.' }
+        : crew
+    ));
+    if (nextCrews.some((crew, index) => crew !== crews[index])) {
+      crews = nextCrews;
+      writeJson(MOCK_CREWS_KEY, crews);
+    }
   }
 
   if (!members || typeof members !== 'object') {
@@ -1146,101 +1387,6 @@ function ensureMockCrews() {
   return { crews, members };
 }
 
-function ensureMockPosts() {
-  ensureMockCrews();
-  let posts = readJson(MOCK_POSTS_KEY, null);
-  if (Array.isArray(posts)) {
-    const userId = getMockUserId();
-    posts = posts.map((post) => {
-      const postIdentity = post.authorId === userId
-        ? mockCommunityIdentity(userId)
-        : { name: post.name, avatarUrl: post.avatarUrl || createMockAvatar(post.name) };
-      return {
-        ...post,
-        ...postIdentity,
-        imagePath: post.imagePath || null,
-        imageUrl: post.imageUrl || '',
-        imageAlt: post.imageAlt || '',
-        isOwn: post.authorId === userId,
-        reactions: seedMockReactions(post).map((reaction) => ({
-          ...reaction,
-          ...(reaction.userId === userId ? mockCommunityIdentity(userId) : {}),
-          isOwn: reaction.userId === userId,
-        })),
-        comments: (post.comments || []).map((comment) => ({
-          ...comment,
-          ...(comment.userId === userId
-            ? mockCommunityIdentity(userId)
-            : { avatarUrl: comment.avatarUrl || createMockAvatar(comment.name) }),
-          isOwn: comment.userId === userId,
-        })),
-      };
-    });
-    saveMockPosts(posts);
-    return posts;
-  }
-
-  const now = new Date().toISOString();
-  posts = [
-    {
-      id: 'preview_global_post_1',
-      authorId: 'preview_member_josh',
-      name: 'Josh',
-      avatarUrl: createMockAvatar('Josh', '#45634d'),
-      crewId: null,
-      scope: 'global',
-      body: 'Day 12 done. The walk was the action I wanted to skip, so I did it first.',
-      imagePath: null,
-      imageUrl: '',
-      imageAlt: '',
-      postType: 'message',
-      day: 12,
-      status: 'complete',
-      completedCount: 7,
-      createdAt: now,
-      timestamp: 'Today',
-      isOwn: false,
-      likeCount: 4,
-      likedByMe: false,
-      reactions: [
-        { userId: 'preview_member_sarah', ...mockCommunityIdentity('preview_member_sarah'), createdAt: now, isOwn: false },
-        { userId: 'preview_member_josh', ...mockCommunityIdentity('preview_member_josh'), createdAt: now, isOwn: false },
-      ],
-      comments: [
-        { id: 'preview_comment_1', postId: 'preview_global_post_1', userId: 'preview_member_sarah', name: 'Sarah', avatarUrl: createMockAvatar('Sarah', '#7a4652'), body: 'That is the kind of move that builds a streak.', createdAt: now, timestamp: 'Today', isOwn: false },
-      ],
-    },
-    {
-      id: 'preview_crew_post_1',
-      authorId: 'preview_member_sarah',
-      name: 'Sarah',
-      avatarUrl: createMockAvatar('Sarah', '#7a4652'),
-      crewId: 'preview_crew_alpha',
-      scope: 'crew',
-      body: 'Crew check: I am doing Bible reading before lunch today. Hold me to it.',
-      imagePath: null,
-      imageUrl: '',
-      imageAlt: '',
-      postType: 'message',
-      day: 8,
-      status: 'partial',
-      completedCount: 4,
-      createdAt: now,
-      timestamp: 'Today',
-      isOwn: false,
-      likeCount: 2,
-      likedByMe: true,
-      reactions: [
-        { userId: getMockUserId(), ...mockCommunityIdentity(getMockUserId()), createdAt: now, isOwn: true },
-        { userId: 'preview_member_josh', ...mockCommunityIdentity('preview_member_josh'), createdAt: now, isOwn: false },
-      ],
-      comments: [],
-    },
-  ];
-  saveMockPosts(posts);
-  return posts;
-}
-
 function saveMockCrewMembers(members) {
   writeJson(
     MOCK_CREW_MEMBERS_KEY,
@@ -1248,14 +1394,7 @@ function saveMockCrewMembers(members) {
   );
 }
 
-function saveMockPosts(posts) {
-  writeJson(
-    MOCK_POSTS_KEY,
-    prepareMockCommunityPostsForStorage(posts, getMockUserId()),
-  );
-}
-
-function getMockLeaderboard({ scope = 'global', crewId = null } = {}) {
+function getMockLeaderboard({ crewId = null } = {}) {
   const user = getMockUser();
   const stats = readJson('dominion:gameStats', {});
   const badges = readJson('dominion:badges', []);
@@ -1289,7 +1428,7 @@ function getMockLeaderboard({ scope = 'global', crewId = null } = {}) {
     },
   ];
 
-  if (scope === 'crew' && !crewId) return [];
+  if (!crewId) return [];
   return rows
     .sort((left, right) => right.points - left.points)
     .map((row, index) => ({ ...row, rank: index + 1 }));
@@ -1326,6 +1465,94 @@ export async function getCrews() {
   const client = requireSupabase();
   const user = await requireUser();
   return queryCrewsForUser(client, user.id);
+}
+
+export async function getOutboundUpdateConsent(crewId) {
+  if (!crewId) throw new Error('Choose a group to review update privacy.');
+
+  if (isLocalDemoMode()) {
+    const userId = getMockUserId();
+    const user = getMockUser();
+    const { members } = ensureMockCrews();
+    const membershipActive = Boolean(members[crewId]?.some((member) => member.userId === userId));
+    const storedByCrew = readJson(MOCK_OUTBOUND_CONSENT_KEY, {});
+    const stored = storedByCrew[crewId]?.userId === userId ? storedByCrew[crewId] : {};
+    return normalizeOutboundConsent(stored, {
+      userId,
+      crewId,
+      accountActive: Boolean(user.authenticated),
+      membershipActive,
+    });
+  }
+
+  const client = requireSupabase();
+  const user = await requireUser();
+  const { data, error } = await client.rpc('get_current_outbound_consent', {
+    target_user_id: user.id,
+    target_crew_id: crewId,
+    target_event_type: null,
+  });
+  if (error) throw error;
+  return normalizeOutboundConsent(data, { userId: user.id, crewId });
+}
+
+export async function updateOutboundUpdateConsent(crewId, preferences) {
+  if (!crewId) throw new Error('Choose a group before saving update privacy.');
+  const settings = outboundConsentWritePayload(preferences);
+
+  if (isLocalDemoMode()) {
+    const userId = getMockUserId();
+    const user = getMockUser();
+    const { members } = ensureMockCrews();
+    const membershipActive = Boolean(members[crewId]?.some((member) => member.userId === userId));
+    if (!membershipActive) throw new Error('You can only change consent for a group you belong to.');
+
+    const storedByCrew = readJson(MOCK_OUTBOUND_CONSENT_KEY, {});
+    const prior = normalizeOutboundConsent(
+      storedByCrew[crewId]?.userId === userId ? storedByCrew[crewId] : {},
+      { userId, crewId, accountActive: Boolean(user.authenticated), membershipActive },
+    );
+    if (prior.consentRecorded && outboundConsentSettingsEqual(prior, settings)) return prior;
+
+    const next = normalizeOutboundConsent({
+      ...prior,
+      ...settings,
+      userId,
+      crewId,
+      accountActive: Boolean(user.authenticated),
+      membershipActive,
+      consentId: prior.consentId || randomId('preview_consent'),
+      consentRecorded: true,
+      revision: prior.revision + 1,
+      changedAt: new Date().toISOString(),
+      evaluatedAt: new Date().toISOString(),
+    });
+    storedByCrew[crewId] = next;
+    writeJson(MOCK_OUTBOUND_CONSENT_KEY, storedByCrew);
+    return next;
+  }
+
+  const client = requireSupabase();
+  const user = await requireUser();
+  const { data, error } = await client.rpc('set_outbound_update_consent', {
+    target_crew_id: crewId,
+    target_outbound_updates_enabled: settings.outboundUpdatesEnabled,
+    target_presentation_mode: settings.presentationMode,
+    target_share_check_ins: settings.events.checkIns,
+    target_share_streak_milestones: settings.events.streakMilestones,
+    target_share_badges_rewards: settings.events.badgesRewards,
+    target_share_membership_events: settings.events.membership,
+  });
+  if (error) throw error;
+  return normalizeOutboundConsent(data, { userId: user.id, crewId });
+}
+
+export async function getOutboundIntegrationDestinations(crewId) {
+  // FOU-541 owns destination connection storage; FOU-553 owns the provider
+  // apps and delivery runtime. Keeping this adapter table-free lets those
+  // branches plug in without coupling consent to an unavailable schema.
+  if (!crewId) return [];
+  return normalizeConnectedDestinations([]);
 }
 
 export async function createCrew({ name, description = '', challengeStartDate = null }) {
@@ -1411,530 +1638,209 @@ export async function getCrewMembers(crewId) {
 
 export async function getOrCreateCrewInvite(crewId) {
   if (isLocalDemoMode()) {
+    const { crews, members } = ensureMockCrews();
+    const crew = crews.find((item) => item.id === crewId);
+    const currentUserId = getMockUserId();
+    const canManage = crew && (crew.createdBy === currentUserId || (members[crewId] || []).some((member) => member.userId === currentUserId && ['owner', 'admin'].includes(member.role)));
+    if (!canManage) throw new Error('Only a private-group admin can create an invitation.');
+
     const invites = readJson(MOCK_INVITES_KEY, {});
-    if (!invites[crewId]) {
-      invites[crewId] = {
-        id: randomId('preview_invite'),
-        crew_id: crewId,
-        token: `preview-${crewId}`,
-        expires_at: new Date(Date.now() + 14 * 86400000).toISOString(),
-        revoked_at: null,
-        created_at: new Date().toISOString(),
-      };
-      writeJson(MOCK_INVITES_KEY, invites);
+    const previous = invites[crewId];
+    if (previous && Date.now() - new Date(previous.created_at).getTime() < 5000) {
+      throw new Error('Wait a few seconds before rotating this invitation.');
     }
-    return invites[crewId];
+    if (previous && !previous.revoked_at) previous.revoked_at = new Date().toISOString();
+
+    const token = randomSecret();
+    const invite = {
+      id: randomId('preview_invite'),
+      crew_id: crewId,
+      token_hash: await sha256Hex(token),
+      token_hint: token.slice(-6),
+      created_by: currentUserId,
+      expires_at: new Date(Date.now() + 14 * 86400000).toISOString(),
+      revoked_at: null,
+      redeemed_by: null,
+      redeemed_at: null,
+      created_at: new Date().toISOString(),
+    };
+    invites[crewId] = invite;
+    writeJson(MOCK_INVITES_KEY, invites);
+    return { ...invite, token };
   }
 
   const client = requireSupabase();
-  const user = await requireUser();
-  const { data: existing, error: existingError } = await client
-    .from('crew_invites')
-    .select('id, crew_id, token, expires_at, revoked_at, created_at')
-    .eq('crew_id', crewId)
-    .is('revoked_at', null)
-    .gt('expires_at', new Date().toISOString())
-    .order('created_at', { ascending: false })
-    .limit(1);
-
-  if (existingError) throw existingError;
-  if (existing?.[0]) return existing[0];
-
-  const { data, error } = await client
-    .from('crew_invites')
-    .insert({ crew_id: crewId, created_by: user.id })
-    .select('id, crew_id, token, expires_at, revoked_at, created_at')
-    .single();
-
+  await requireUser();
+  const { data, error } = await client.rpc('issue_crew_invite', { target_crew_id: crewId });
   if (error) throw error;
-  return data;
+  if (data?.status !== 'issued' || !data?.token) {
+    throw new Error(data?.status === 'rate_limited'
+      ? 'Wait a few minutes before rotating another invitation.'
+      : 'Unable to create an invitation right now.');
+  }
+  return {
+    id: data.inviteId,
+    crew_id: crewId,
+    token: data.token,
+    token_hint: data.tokenHint,
+    expires_at: data.expiresAt,
+  };
 }
 
-export async function joinCrewByInvite(token) {
+function mockInvitePreview(invite, crew, members) {
+  const inviter = (members[crew.id] || []).find((member) => member.userId === invite.created_by);
+  return {
+    groupName: crew.name || 'Private group',
+    inviterName: String(inviter?.name || 'Dominion member').trim().split(/\s+/)[0],
+    expiresAt: invite.expires_at,
+  };
+}
+
+function mockInviteStatus(invite, crew, members, currentUserId = '') {
+  if (!invite || !crew) return 'invalid';
+  if (invite.revoked_at) return 'revoked';
+  if (new Date(invite.expires_at).getTime() <= Date.now()) return 'expired';
+  const crewMembers = members[crew.id] || [];
+  if (currentUserId && crewMembers.some((member) => member.userId === currentUserId)) return 'already_member';
+  if (invite.redeemed_by) return 'already_used';
+  if (crewMembers.length >= Number(crew.memberLimit || 50)) return 'full';
+  return 'ready';
+}
+
+export async function previewCrewInvite({ token = '', continuationToken = '' } = {}) {
   if (isLocalDemoMode()) {
-    const { crews, members } = ensureMockCrews();
+    const crews = readJson(MOCK_CREWS_KEY, []);
+    const members = readJson(MOCK_CREW_MEMBERS_KEY, {});
     const invites = readJson(MOCK_INVITES_KEY, {});
-    const invite = Object.values(invites).find((item) => item.token === token) ||
-      (String(token).startsWith('preview-') ? { crew_id: String(token).replace('preview-', '') } : null);
+    const sessions = readJson(MOCK_INVITE_SESSIONS_KEY, {});
+    const mockUser = getMockUser();
+    const currentUserId = mockUser.authenticated ? localStorage.getItem(MOCK_USER_ID_KEY) || '' : '';
+    let continuation = continuationToken;
+    let session = null;
+    let invite = null;
+
+    if (token) {
+      const tokenHash = await sha256Hex(token);
+      invite = Object.values(invites).find((item) => item.token_hash === tokenHash || item.token === token) || null;
+      if (invite) {
+        continuation = randomSecret();
+        session = {
+          id: randomId('preview_invite_session'),
+          invite_id: invite.id,
+          continuation_hash: await sha256Hex(continuation),
+          bound_user_id: currentUserId || null,
+          expires_at: new Date(Date.now() + 2 * 60 * 60 * 1000).toISOString(),
+          confirmation_attempts: 0,
+          confirmed_at: null,
+        };
+        sessions[session.id] = session;
+        writeJson(MOCK_INVITE_SESSIONS_KEY, sessions);
+      }
+    } else if (continuation) {
+      const continuationHash = await sha256Hex(continuation);
+      session = Object.values(sessions).find((item) => item.continuation_hash === continuationHash) || null;
+      if (!session) return { status: 'invalid' };
+      if (new Date(session.expires_at).getTime() <= Date.now()) return { status: 'session_expired' };
+      if (currentUserId && session.bound_user_id && session.bound_user_id !== currentUserId) return { status: 'wrong_account' };
+      if (currentUserId && !session.bound_user_id) {
+        session.bound_user_id = currentUserId;
+        writeJson(MOCK_INVITE_SESSIONS_KEY, sessions);
+      }
+      invite = Object.values(invites).find((item) => item.id === session.invite_id) || null;
+    }
+
     const crew = crews.find((item) => item.id === invite?.crew_id);
-    if (!crew) return null;
+    const status = mockInviteStatus(invite, crew, members, currentUserId);
+    const response = { status };
+    if (['ready', 'already_member'].includes(status)) response.preview = mockInvitePreview(invite, crew, members);
+    if (token && continuation && ['ready', 'full'].includes(status)) response.continuationToken = continuation;
+    return response;
+  }
+
+  const client = requireSupabase();
+  const { data, error } = await client.rpc('preview_crew_invite', {
+    invite_token: token || null,
+    continuation_token: continuationToken || null,
+  });
+  if (error) throw error;
+  return data || { status: 'invalid' };
+}
+
+export async function confirmCrewInvite(continuationToken) {
+  if (isLocalDemoMode()) {
+    const mockUser = getMockUser();
+    if (!mockUser.authenticated) return { status: 'authentication_required' };
+    const billing = getMockBillingState();
+    if (!billing.appAccess) return { status: 'subscription_required' };
+
+    const sessions = readJson(MOCK_INVITE_SESSIONS_KEY, {});
+    const sessionHash = await sha256Hex(continuationToken);
+    const session = Object.values(sessions).find((item) => item.continuation_hash === sessionHash) || null;
+    if (!session) return { status: 'invalid' };
+    if (new Date(session.expires_at).getTime() <= Date.now()) return { status: 'session_expired' };
+    const currentUserId = getMockUserId();
+    if (session.bound_user_id && session.bound_user_id !== currentUserId) return { status: 'wrong_account' };
+    session.bound_user_id = currentUserId;
+    session.confirmation_attempts = Number(session.confirmation_attempts || 0) + 1;
+    if (session.confirmation_attempts > 5) return { status: 'rate_limited' };
+
+    const invites = readJson(MOCK_INVITES_KEY, {});
+    const invite = Object.values(invites).find((item) => item.id === session.invite_id) || null;
+    const { crews, members } = ensureMockCrews();
+    const crew = crews.find((item) => item.id === invite?.crew_id);
+    const status = mockInviteStatus(invite, crew, members, currentUserId);
+    if (status !== 'ready') {
+      writeJson(MOCK_INVITE_SESSIONS_KEY, sessions);
+      return {
+        status,
+        ...(status === 'already_member' ? { preview: mockInvitePreview(invite, crew, members) } : {}),
+      };
+    }
 
     const crewMembers = members[crew.id] || [];
-    const userId = getMockUserId();
-    if (!crewMembers.some((member) => member.userId === userId)) {
-      crewMembers.push({
-        crewId: crew.id,
-        userId,
-        name: getMockUser().name || 'Preview Member',
-        avatarUrl: getMockUser().avatarUrl || '',
-        role: 'member',
-        joinedAt: new Date().toISOString(),
-      });
-      members[crew.id] = crewMembers;
-      saveMockCrewMembers(members);
-    }
-    return { ...crew, role: 'member' };
+    crewMembers.push({
+      crewId: crew.id,
+      userId: currentUserId,
+      name: mockUser.name || 'Preview Member',
+      avatarUrl: mockUser.avatarUrl || '',
+      role: 'member',
+      joinedAt: new Date().toISOString(),
+    });
+    members[crew.id] = crewMembers;
+    saveMockCrewMembers(members);
+
+    const attributions = readJson(MOCK_INVITE_ATTRIBUTIONS_KEY, {});
+    const redemptionId = randomId('preview_invite_redemption');
+    attributions[redemptionId] = {
+      id: redemptionId,
+      invite_id: invite.id,
+      crew_id: crew.id,
+      inviter_user_id: invite.created_by,
+      recipient_user_id: currentUserId,
+      created_at: new Date().toISOString(),
+    };
+    writeJson(MOCK_INVITE_ATTRIBUTIONS_KEY, attributions);
+
+    invite.redeemed_by = currentUserId;
+    invite.redeemed_at = new Date().toISOString();
+    session.confirmed_at = new Date().toISOString();
+    writeJson(MOCK_INVITES_KEY, invites);
+    writeJson(MOCK_INVITE_SESSIONS_KEY, sessions);
+    return {
+      status: 'joined',
+      crewId: crew.id,
+      redemptionId,
+      preview: mockInvitePreview(invite, crew, members),
+    };
   }
 
   const client = requireSupabase();
-  const { data, error } = await client.rpc('join_crew_by_invite', { invite_token: token });
-  if (error) throw error;
-  const crew = data?.[0];
-  return crew ? mapCrew({
-    id: crew.crew_id,
-    name: crew.name,
-    description: crew.description,
-    challenge_start_date: crew.challenge_start_date,
-    role: 'member',
-  }) : null;
-}
-
-const COMMUNITY_POST_SELECT = 'id, author_id, display_name, avatar_url, crew_id, scope, body, image_path, image_alt, post_type, challenge_day, status, completed_count, created_at';
-const COMMUNITY_CURSOR_TIMESTAMP_PATTERN = /^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?(?:Z|[+-]\d{2}:\d{2})$/;
-const COMMUNITY_CURSOR_UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
-function normalizeCommunityCursor(before) {
-  if (!before) return null;
-  const value = typeof before === 'string' ? { createdAt: before } : before;
-  const rawCreatedAt = String(value?.createdAt || value?.created_at || '').trim();
-  if (!COMMUNITY_CURSOR_TIMESTAMP_PATTERN.test(rawCreatedAt) || Number.isNaN(Date.parse(rawCreatedAt))) return null;
-  return {
-    // Keep PostgreSQL's full fractional-second precision for stable keyset paging.
-    createdAt: rawCreatedAt,
-    id: value?.id ? String(value.id) : null,
-  };
-}
-
-function isBeforeCommunityCursor(post, cursor) {
-  if (!cursor) return true;
-  const createdAt = post.createdAt || post.created_at;
-  if (createdAt < cursor.createdAt) return true;
-  if (createdAt > cursor.createdAt) return false;
-  return !cursor.id || String(post.id) < cursor.id;
-}
-
-function communityCursorFor(post) {
-  if (!post) return null;
-  return {
-    createdAt: post.created_at || post.createdAt,
-    id: post.id,
-  };
-}
-
-async function withSignedCommunityImageUrls(posts) {
-  const paths = [...new Set(posts.map((post) => post.image_path).filter(Boolean))];
-  if (!paths.length) return posts;
-
-  const client = requireSupabase();
-  const { data, error } = await client.storage
-    .from(COMMUNITY_POST_IMAGE_BUCKET)
-    .createSignedUrls(paths, 3600);
-  if (error) {
-    return posts.map((post) => ({ ...post, image_url: '' }));
-  }
-
-  const signedUrls = new Map();
-  (data || []).forEach((item, index) => {
-    const path = item.path || paths[index];
-    if (path && item.signedUrl) signedUrls.set(path, item.signedUrl);
+  await requireUser();
+  const { data, error } = await client.rpc('confirm_crew_invite', {
+    continuation_token: continuationToken,
   });
-  return posts.map((post) => ({
-    ...post,
-    image_url: post.image_path ? signedUrls.get(post.image_path) || '' : '',
-  }));
-}
-
-export async function getCommunityPostPage({ scope = 'global', crewId = null, limit = 8, before = null } = {}) {
-  const pageSize = Math.min(Math.max(Number.parseInt(limit, 10) || 8, 1), 25);
-  const cursor = normalizeCommunityCursor(before);
-  if (scope === 'crew' && !crewId) throw new Error('Choose a private group before loading its posts.');
-
-  if (isLocalDemoMode()) {
-    const matches = ensureMockPosts()
-      .filter((post) => post.scope === scope && (scope !== 'crew' || post.crewId === crewId))
-      .filter((post) => isBeforeCommunityCursor(post, cursor))
-      .sort((left, right) => {
-        const dateOrder = String(right.createdAt).localeCompare(String(left.createdAt));
-        return dateOrder || String(right.id).localeCompare(String(left.id));
-      });
-    const hasMore = matches.length > pageSize;
-    const posts = await withMockCommunityImageUrls(matches.slice(0, pageSize));
-    return {
-      posts,
-      hasMore,
-      nextCursor: hasMore ? communityCursorFor(posts.at(-1)) : null,
-    };
-  }
-
-  const client = requireSupabase();
-  const user = await requireUser();
-  let query = client
-    .from('community_posts')
-    .select(COMMUNITY_POST_SELECT)
-    .eq('scope', scope)
-    .order('created_at', { ascending: false })
-    .order('id', { ascending: false })
-    .limit(pageSize + 1);
-
-  if (scope === 'crew') query = query.eq('crew_id', crewId);
-  if (cursor?.id && COMMUNITY_CURSOR_UUID_PATTERN.test(cursor.id)) {
-    query = query.or(`created_at.lt.${cursor.createdAt},and(created_at.eq.${cursor.createdAt},id.lt.${cursor.id})`);
-  } else if (cursor) {
-    query = query.lt('created_at', cursor.createdAt);
-  }
-
-  const { data, error } = await query;
   if (error) throw error;
-  const hasMore = (data || []).length > pageSize;
-  const pageRows = (data || []).slice(0, pageSize);
-  if (!pageRows.length) return { posts: [], hasMore: false, nextCursor: null };
-
-  const postIds = pageRows.map((post) => post.id);
-  const [engagementResult, signedPosts] = await Promise.all([
-    client.rpc('get_community_post_engagement', { target_post_ids: postIds }),
-    withSignedCommunityImageUrls(pageRows),
-  ]);
-
-  if (engagementResult.error) throw engagementResult.error;
-  const engagementByPostId = new Map(
-    (engagementResult.data || []).map((engagement) => [engagement.post_id, engagement]),
-  );
-
-  return {
-    posts: signedPosts.map((post) => mapPost(
-      post,
-      engagementByPostId.get(post.id),
-      user.id,
-    )),
-    hasMore,
-    nextCursor: hasMore ? communityCursorFor(pageRows.at(-1)) : null,
-  };
-}
-
-export async function getCommunityPosts({ scope = 'global', crewId = null, limit = 25 } = {}) {
-  const page = await getCommunityPostPage({ scope, crewId, limit });
-  return page.posts;
-}
-
-export async function uploadCommunityPostImage({ crewId, file }) {
-  if (!crewId) throw new Error('Community images must belong to a private group.');
-  if (!file) throw new Error('Choose an image to upload.');
-  if (file.type && !file.type.startsWith('image/')) throw new Error('Choose a supported image file.');
-
-  if (isLocalDemoMode()) {
-    const imagePath = `preview/${crewId}/${randomId('community_image')}/${file.name || 'community-image'}`;
-    return {
-      imagePath,
-      imageUrl: await writeMockCommunityImage(imagePath, file),
-    };
-  }
-
-  const client = requireSupabase();
-  const user = await requireUser();
-  const rawExtension = file.name?.split('.').pop()?.toLowerCase() || 'jpg';
-  const extension = /^[a-z0-9]{1,8}$/.test(rawExtension) ? rawExtension : 'jpg';
-  const safeName = `${Date.now()}-${globalThis.crypto?.randomUUID?.() || Math.random().toString(16).slice(2)}.${extension}`;
-  const imagePath = `${crewId}/${user.id}/${safeName}`;
-  const { error: uploadError } = await client.storage
-    .from(COMMUNITY_POST_IMAGE_BUCKET)
-    .upload(imagePath, file, { cacheControl: '3600', upsert: false });
-  if (uploadError) throw uploadError;
-
-  const { data, error } = await client.storage
-    .from(COMMUNITY_POST_IMAGE_BUCKET)
-    .createSignedUrl(imagePath, 3600);
-  if (error) {
-    await client.storage.from(COMMUNITY_POST_IMAGE_BUCKET).remove([imagePath]);
-    throw error;
-  }
-  return { imagePath, imageUrl: data?.signedUrl || '' };
-}
-
-export async function createCommunityPost({
-  scope,
-  crewId = null,
-  body = '',
-  postType = 'message',
-  imageFile = null,
-  imageAlt = '',
-}) {
-  const normalizedBody = String(body || '').trim();
-  if (!normalizedBody && !imageFile) throw new Error('Write a message or choose an image.');
-  if (imageFile && (scope !== 'crew' || !crewId)) {
-    throw new Error('Community images can only be shared inside a private group.');
-  }
-
-  if (isLocalDemoMode()) {
-    const posts = ensureMockPosts();
-    const user = getMockUser();
-    const now = new Date().toISOString();
-    const uploadedImage = imageFile ? await uploadCommunityPostImage({ crewId, file: imageFile }) : null;
-    const post = {
-      id: randomId('preview_post'),
-      authorId: getMockUserId(),
-      name: user.name || 'Preview Member',
-      avatarUrl: user.avatarUrl || '',
-      crewId: scope === 'crew' ? crewId : null,
-      scope,
-      body: normalizedBody,
-      imagePath: uploadedImage?.imagePath || null,
-      imageUrl: uploadedImage?.imageUrl || '',
-      imageAlt: uploadedImage ? String(imageAlt || '').trim() : '',
-      postType,
-      day: null,
-      status: null,
-      completedCount: 0,
-      createdAt: now,
-      timestamp: 'Today',
-      isOwn: true,
-      likeCount: 0,
-      likedByMe: false,
-      reactions: [],
-      comments: [],
-    };
-    posts.unshift(post);
-    saveMockPosts(posts);
-    return post;
-  }
-
-  const client = requireSupabase();
-  const user = await requireUser();
-  const identity = await getCurrentCommunityIdentity();
-  let uploadedImage = null;
-  try {
-    uploadedImage = imageFile ? await uploadCommunityPostImage({ crewId, file: imageFile }) : null;
-    const { data, error } = await client
-      .from('community_posts')
-      .insert({
-        author_id: user.id,
-        display_name: identity.name,
-        avatar_url: identity.avatarUrl,
-        crew_id: scope === 'crew' ? crewId : null,
-        scope,
-        body: normalizedBody,
-        image_path: uploadedImage?.imagePath || null,
-        image_alt: uploadedImage ? String(imageAlt || '').trim() : '',
-        post_type: postType,
-      })
-      .select(COMMUNITY_POST_SELECT)
-      .single();
-
-    if (error) throw error;
-    return mapPost({ ...data, image_url: uploadedImage?.imageUrl || '' }, {}, user.id);
-  } catch (error) {
-    if (uploadedImage?.imagePath) {
-      await client.storage.from(COMMUNITY_POST_IMAGE_BUCKET).remove([uploadedImage.imagePath]);
-    }
-    throw error;
-  }
-}
-
-function canManageMockPost(post) {
-  if (!post?.crewId) return false;
-  const { members } = ensureMockCrews();
-  const membership = (members[post.crewId] || []).find((member) => member.userId === getMockUserId());
-  return ['owner', 'admin'].includes(membership?.role);
-}
-
-export async function updateCommunityPost(postId, body) {
-  const normalizedBody = String(body || '').trim();
-  if (isLocalDemoMode()) {
-    const posts = ensureMockPosts();
-    const post = posts.find((item) => item.id === postId);
-    if (!post || post.authorId !== getMockUserId()) throw new Error('Only the author can edit this post.');
-    if (!normalizedBody && !post.imagePath) throw new Error('Write a message or keep an image on the post.');
-    post.body = normalizedBody;
-    post.updatedAt = new Date().toISOString();
-    saveMockPosts(posts);
-    return post;
-  }
-
-  const client = requireSupabase();
-  const user = await requireUser();
-  const { data, error } = await client
-    .from('community_posts')
-    .update({ body: normalizedBody })
-    .eq('id', postId)
-    .eq('author_id', user.id)
-    .select(COMMUNITY_POST_SELECT)
-    .maybeSingle();
-  if (error) throw error;
-  if (!data) throw new Error('Only the author can edit this post.');
-  const [signedPost] = await withSignedCommunityImageUrls([data]);
-  return mapPost(signedPost, {}, user.id);
-}
-
-export async function deleteCommunityPost(postId, imagePath = null) {
-  if (isLocalDemoMode()) {
-    const posts = ensureMockPosts();
-    const index = posts.findIndex((item) => item.id === postId);
-    const post = posts[index];
-    if (!post || (post.authorId !== getMockUserId() && !canManageMockPost(post))) {
-      throw new Error('You do not have permission to delete this post.');
-    }
-    await deleteMockCommunityImage(post.imagePath);
-    posts.splice(index, 1);
-    saveMockPosts(posts);
-    return true;
-  }
-
-  const client = requireSupabase();
-  await requireUser();
-  const { data: targetPost, error: targetError } = await client
-    .from('community_posts')
-    .select('id, image_path')
-    .eq('id', postId)
-    .maybeSingle();
-  if (targetError) throw targetError;
-  if (!targetPost) throw new Error('You do not have permission to delete this post.');
-
-  const pathToDelete = targetPost.image_path || imagePath;
-  if (pathToDelete) {
-    const { error: storageError } = await client.storage
-      .from(COMMUNITY_POST_IMAGE_BUCKET)
-      .remove([pathToDelete]);
-    if (storageError) {
-      throw new Error('The post image could not be removed, so the post was kept. Try again.');
-    }
-  }
-
-  const { data, error } = await client
-    .from('community_posts')
-    .delete()
-    .eq('id', postId)
-    .select('id')
-    .maybeSingle();
-  if (error) throw error;
-  if (!data) throw new Error('You do not have permission to delete this post.');
-  return true;
-}
-
-export async function setPostLiked(postId, shouldLike) {
-  if (isLocalDemoMode()) {
-    const posts = ensureMockPosts();
-    const post = posts.find((item) => item.id === postId);
-    if (!post) return null;
-    const userId = getMockUserId();
-    const reaction = {
-      userId,
-      ...mockCommunityIdentity(userId),
-      createdAt: new Date().toISOString(),
-      isOwn: true,
-    };
-    if (shouldLike && !post.likedByMe) {
-      post.likeCount = (post.likeCount || 0) + 1;
-      post.reactions = [reaction, ...(post.reactions || []).filter((item) => item.userId !== userId)].slice(0, 3);
-    }
-    if (!shouldLike && post.likedByMe) {
-      post.likeCount = Math.max((post.likeCount || 0) - 1, 0);
-      post.reactions = (post.reactions || []).filter((item) => item.userId !== userId);
-    }
-    post.likedByMe = Boolean(shouldLike);
-    saveMockPosts(posts);
-    return shouldLike ? reaction : null;
-  }
-
-  const client = requireSupabase();
-  const user = await requireUser();
-  if (shouldLike) {
-    const identity = await getCurrentCommunityIdentity();
-    const { error } = await client
-      .from('post_likes')
-      .insert({ post_id: postId, user_id: user.id });
-    if (error && error.code !== '23505') throw error;
-    return {
-      userId: user.id,
-      name: identity.name,
-      avatarUrl: identity.avatarUrl,
-      createdAt: new Date().toISOString(),
-      isOwn: true,
-    };
-  }
-
-  const { error } = await client
-    .from('post_likes')
-    .delete()
-    .eq('post_id', postId)
-    .eq('user_id', user.id);
-  if (error) throw error;
-  return null;
-}
-
-export async function addPostComment(postId, body) {
-  if (isLocalDemoMode()) {
-    const posts = ensureMockPosts();
-    const post = posts.find((item) => item.id === postId);
-    if (!post) throw new Error('Preview post not found.');
-    const now = new Date().toISOString();
-    const comment = {
-      id: randomId('preview_comment'),
-      postId,
-      userId: getMockUserId(),
-      name: getMockUser().name || 'Preview Member',
-      avatarUrl: getMockUser().avatarUrl || '',
-      body,
-      createdAt: now,
-      timestamp: 'Today',
-      isOwn: true,
-    };
-    post.comments = [...(post.comments || []), comment];
-    saveMockPosts(posts);
-    return comment;
-  }
-
-  const client = requireSupabase();
-  const user = await requireUser();
-  const identity = await getCurrentCommunityIdentity();
-  const { data, error } = await client
-    .from('post_comments')
-    .insert({
-      post_id: postId,
-      user_id: user.id,
-      display_name: identity.name,
-      avatar_url: identity.avatarUrl,
-      body,
-    })
-    .select('id, post_id, user_id, display_name, avatar_url, body, created_at')
-    .single();
-
-  if (error) throw error;
-  return {
-    id: data.id,
-    postId: data.post_id,
-    userId: data.user_id,
-    name: data.display_name || 'Member',
-    avatarUrl: data.avatar_url || '',
-    body: data.body,
-    createdAt: data.created_at,
-    timestamp: data.created_at ? todayLabel(data.created_at) : 'Today',
-    isOwn: data.user_id === user.id,
-  };
-}
-
-export async function deletePostComment(commentId) {
-  if (isLocalDemoMode()) {
-    const posts = ensureMockPosts();
-    const post = posts.find((item) => (item.comments || []).some((comment) => comment.id === commentId));
-    const comment = post?.comments?.find((item) => item.id === commentId);
-    if (!post || !comment || (comment.userId !== getMockUserId() && !canManageMockPost(post))) {
-      throw new Error('You do not have permission to delete this comment.');
-    }
-    post.comments = post.comments.filter((item) => item.id !== commentId);
-    saveMockPosts(posts);
-    return true;
-  }
-
-  const client = requireSupabase();
-  await requireUser();
-  const { data, error } = await client
-    .from('post_comments')
-    .delete()
-    .eq('id', commentId)
-    .select('id')
-    .maybeSingle();
-  if (error) throw error;
-  if (!data) throw new Error('You do not have permission to delete this comment.');
-  return true;
+  return data || { status: 'invalid' };
 }
 
 async function createSignedPhoto(photo) {

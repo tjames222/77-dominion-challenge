@@ -1,0 +1,10 @@
+{
+  "compilerOptions": {
+    "strict": true
+  },
+  "tasks": {
+    "check": "deno check --frozen functions/_shared/billing_test.ts functions/_shared/http_test.ts functions/_shared/integration_delivery_test.ts functions/_shared/integration_event_renderer_test.ts functions/_shared/integration_oauth_callback_test.ts functions/_shared/integration_oauth_test.ts functions/_shared/integration_providers_test.ts functions/_shared/stripe_test.ts functions/_shared/supabase_test.ts functions/cancel-membership/index_test.ts functions/create-checkout-session/index_test.ts functions/create-customer-portal-session/index_test.ts functions/group-integrations/index_test.ts functions/process-integration-outbox/index_test.ts functions/process-retired-community-deletions/index_test.ts functions/retired-community-export/index_test.ts functions/share-snapshot/index_test.ts functions/stripe-webhook/index_test.ts",
+    "test": "deno test --frozen functions",
+    "fmt:check": "deno fmt --check functions deno.json"
+  }
+}

@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#0e1116" />
+    <script vite-ignore src="./theme-bootstrap.js" data-enable-dominion-night="false"></script>
+    <title>Badges &amp; Rewards | Dominion</title>
+    <link rel="stylesheet" href="./src/assets/styles.css" />
+    <link rel="stylesheet" href="./src/assets/product.css" />
+    <link rel="stylesheet" href="./src/assets/badges-rewards.css" />
+    <link rel="stylesheet" href="./src/assets/dialog.css" />
+    <link rel="stylesheet" href="./src/assets/share-composer.css" />
+    <link rel="stylesheet" href="./src/assets/menu.css" />
+    <link rel="stylesheet" href="./src/assets/dominion-night.css" />
+  </head>
+  <body>
+    <main class="app-shell badges-rewards-shell">
+      <header class="topbar">
+        <a class="back-link" href="./dashboard.html">Dashboard</a>
+      </header>
+
+      <section class="badges-rewards-hero reveal is-visible" data-section-surface="plain" aria-labelledby="badgesRewardsTitle">
+        <p class="eyebrow">Your Progress</p>
+        <h1 id="badgesRewardsTitle">Badges &amp; Rewards</h1>
+        <p class="lead">See the proof you have earned, the rewards your points opened, and the next milestone ahead.</p>
+        <button class="share-entry-button" type="button" data-share-composer data-share-kind="progress">
+          Share my progress
+        </button>
+      </section>
+
+      <aside class="reward-unlock-notice" id="rewardUnlockNotice" role="status" aria-live="polite" aria-atomic="true" hidden>
+        <span class="app-icon icon-spark" aria-hidden="true"></span>
+        <div>
+          <p class="eyebrow">New Unlock</p>
+          <strong id="rewardUnlockNoticeTitle">A new reward is open.</strong>
+          <p id="rewardUnlockNoticeCopy">Your progress has been added below.</p>
+        </div>
+      </aside>
+
+      <section class="reward-next-panel reveal" id="rewardNextPanel" data-section-surface="accent" aria-labelledby="rewardNextTitle" aria-busy="true">
+        <div class="reward-next-heading">
+          <div>
+            <p class="eyebrow" id="rewardNextEyebrow">Next unlock</p>
+            <h2 id="rewardNextTitle">Your reward progress is loading.</h2>
+          </div>
+          <strong id="rewardTotalPoints">0 points</strong>
+        </div>
+        <p id="rewardNextCopy">We are checking your point total and permanent unlocks.</p>
+        <div
+          class="reward-next-progress"
+          id="rewardNextProgress"
+          role="progressbar"
+          aria-labelledby="rewardNextTitle"
+          aria-valuemin="0"
+          aria-valuemax="1"
+          aria-valuenow="0"
+          aria-valuetext="Reward progress is loading"
+        >
+          <span id="rewardNextProgressFill"></span>
+        </div>
+      </section>
+
+      <section class="rewards-catalog-section reveal" data-section-surface="plain" aria-labelledby="rewardsCatalogTitle">
+        <div class="badges-rewards-section-heading">
+          <div>
+            <p class="eyebrow">Point Rewards</p>
+            <h2 id="rewardsCatalogTitle">Every path your points can open</h2>
+          </div>
+          <span id="rewardsCatalogSummary">Loading rewards</span>
+        </div>
+        <p class="badges-rewards-feedback" id="rewardsCatalogFeedback" role="status" aria-live="polite" aria-atomic="true"></p>
+        <div class="rewards-list" id="rewardsList" aria-label="Point-based rewards" aria-busy="true">
+          <p class="badges-rewards-empty">Reward progression is loading.</p>
+        </div>
+      </section>
+
+      <section class="badges-gallery-section reveal" data-section-surface="accent" aria-labelledby="badgesGalleryTitle">
+        <div class="badges-rewards-section-heading">
+          <div>
+            <p class="eyebrow">Earned Badges</p>
+            <h2 id="badgesGalleryTitle">Proof of the work</h2>
+          </div>
+          <span id="badgesGallerySummary">Loading badges</span>
+        </div>
+        <div class="badges-gallery" id="badgesGallery" aria-label="All earned badges" aria-busy="true">
+          <p class="badges-rewards-empty">Your badge shelf is loading.</p>
+        </div>
+      </section>
+
+      <div class="badges-rewards-error" id="badgesRewardsError" role="alert" hidden>
+        <strong>Badges &amp; Rewards are temporarily unavailable.</strong>
+        <p id="badgesRewardsErrorCopy">Please try again in a moment.</p>
+        <button class="secondary-button" id="badgesRewardsRetry" type="button">Try again</button>
+      </div>
+    </main>
+
+    <script type="module" src="./src/static/menu.js"></script>
+    <script type="module" src="./src/static/badges-rewards.js"></script>
+    <script type="module" src="./src/static/share-composer.js"></script>
+  </body>
+</html>
