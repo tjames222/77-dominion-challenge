@@ -354,7 +354,8 @@ export async function revokeProviderCredential(
       },
     });
     const body = await responseJson(response);
-    return response.ok && body.ok === true;
+    return response.ok && (body.ok === true || body.error === "token_revoked" ||
+      body.error === "account_inactive");
   }
   const response = await fetcher(
     `https://discord.com/api/v10/users/@me/guilds/${
@@ -362,5 +363,5 @@ export async function revokeProviderCredential(
     }`,
     { method: "DELETE", headers: { Authorization: `Bot ${accessToken}` } },
   );
-  return response.status === 204;
+  return response.status === 204 || response.status === 404;
 }

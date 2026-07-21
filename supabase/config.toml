@@ -71,3 +71,18 @@ verify_jwt = false
 
 [functions.share-snapshot]
 verify_jwt = false
+
+[functions.process-integration-outbox]
+verify_jwt = false
+
+[functions.process-retired-community-deletions]
+verify_jwt = false
+
+[functions.retired-community-export]
+verify_jwt = true
+
+[functions.slack-oauth-callback]
+verify_jwt = false
+
+[functions.discord-oauth-callback]
+verify_jwt = false

@@ -46,6 +46,8 @@ jobs:
       INTEGRATION_WORKER_SECRET: ${{ secrets.INTEGRATION_WORKER_SECRET }}
       INTEGRATION_CREDENTIAL_KEYS: ${{ secrets.INTEGRATION_CREDENTIAL_KEYS }}
       INTEGRATION_OAUTH_STATE_SECRET: ${{ secrets.INTEGRATION_OAUTH_STATE_SECRET }}
+      RETIRED_COMMUNITY_WORKER_SECRET: ${{ secrets.RETIRED_COMMUNITY_WORKER_SECRET }}
+      RETIRED_COMMUNITY_DR_HMAC_SECRET: ${{ secrets.RETIRED_COMMUNITY_DR_HMAC_SECRET }}
       SLACK_CLIENT_ID: ${{ secrets.SLACK_CLIENT_ID }}
       SLACK_CLIENT_SECRET: ${{ secrets.SLACK_CLIENT_SECRET }}
       SLACK_SIGNING_SECRET: ${{ secrets.SLACK_SIGNING_SECRET }}
@@ -142,9 +144,9 @@ jobs:
             function_secrets+=("CLOUDFLARE_PAGES_PROJECT_HOST=${CLOUDFLARE_PAGES_PROJECT_HOST}")
           fi
           integration_runtime_enabled=false
-          if [[ -n "${INTEGRATION_WORKER_SECRET:-}" || -n "${INTEGRATION_CREDENTIAL_KEYS:-}" ]]; then
-            if [[ -z "${INTEGRATION_WORKER_SECRET:-}" || -z "${INTEGRATION_CREDENTIAL_KEYS:-}" ]]; then
-              echo "::error::INTEGRATION_WORKER_SECRET and INTEGRATION_CREDENTIAL_KEYS must be configured together."
+          if [[ -n "${INTEGRATION_WORKER_SECRET:-}" ]]; then
+            if [[ -z "${INTEGRATION_CREDENTIAL_KEYS:-}" ]]; then
+              echo "::error::INTEGRATION_WORKER_SECRET requires INTEGRATION_CREDENTIAL_KEYS."
               exit 1
             fi
             function_secrets+=(
@@ -155,6 +157,42 @@ jobs:
             echo "integration_runtime_enabled=true" >> "$GITHUB_OUTPUT"
           else
             echo "integration_runtime_enabled=false" >> "$GITHUB_OUTPUT"
+          fi
+          retention_values_present=0
+          for name in RETIRED_COMMUNITY_WORKER_SECRET RETIRED_COMMUNITY_DR_HMAC_SECRET; do
+            if [[ -n "${!name:-}" ]]; then
+              retention_values_present=$((retention_values_present + 1))
+            fi
+          done
+          if (( retention_values_present == 1 )); then
+            echo "::error::RETIRED_COMMUNITY_WORKER_SECRET and RETIRED_COMMUNITY_DR_HMAC_SECRET must be configured together."
+            exit 1
+          fi
+          if (( retention_values_present == 2 )); then
+            if (( ${#RETIRED_COMMUNITY_WORKER_SECRET} < 32 || ${#RETIRED_COMMUNITY_DR_HMAC_SECRET} < 32 )); then
+              echo "::error::Retired Community worker and DR secrets must each contain at least 32 characters."
+              exit 1
+            fi
+            if [[ "${RETIRED_COMMUNITY_WORKER_SECRET}" == "${RETIRED_COMMUNITY_DR_HMAC_SECRET}" \
+              || "${RETIRED_COMMUNITY_WORKER_SECRET}" == "${INTEGRATION_WORKER_SECRET:-}" \
+              || "${RETIRED_COMMUNITY_DR_HMAC_SECRET}" == "${INTEGRATION_WORKER_SECRET:-}" ]]; then
+              echo "::error::Retired Community worker, DR, and integration worker secrets must be distinct."
+              exit 1
+            fi
+            if [[ -z "${INTEGRATION_CREDENTIAL_KEYS:-}" ]]; then
+              echo "::error::The retired Community worker requires INTEGRATION_CREDENTIAL_KEYS for provider revocation."
+              exit 1
+            fi
+            function_secrets+=(
+              "RETIRED_COMMUNITY_WORKER_SECRET=${RETIRED_COMMUNITY_WORKER_SECRET}"
+              "RETIRED_COMMUNITY_DR_HMAC_SECRET=${RETIRED_COMMUNITY_DR_HMAC_SECRET}"
+            )
+            if [[ "${integration_runtime_enabled}" == "false" ]]; then
+              function_secrets+=("INTEGRATION_CREDENTIAL_KEYS=${INTEGRATION_CREDENTIAL_KEYS}")
+            fi
+            echo "retention_runtime_enabled=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "retention_runtime_enabled=false" >> "$GITHUB_OUTPUT"
           fi
           provider_connection_values=(
             INTEGRATION_OAUTH_STATE_SECRET
@@ -194,10 +232,23 @@ jobs:
           supabase functions deploy cancel-membership --project-ref "$SUPABASE_PROJECT_REF"
           supabase functions deploy create-checkout-session --project-ref "$SUPABASE_PROJECT_REF"
           supabase functions deploy create-customer-portal-session --project-ref "$SUPABASE_PROJECT_REF"
+          supabase functions deploy retired-community-export --project-ref "$SUPABASE_PROJECT_REF"
       - name: Deploy Stripe webhook
         run: supabase functions deploy stripe-webhook --project-ref "$SUPABASE_PROJECT_REF" --no-verify-jwt
       - name: Deploy public share renderer
         run: supabase functions deploy share-snapshot --project-ref "$SUPABASE_PROJECT_REF" --no-verify-jwt
+      - name: Deploy integration delivery worker
+        if: steps.function-secrets.outputs.integration_runtime_enabled == 'true'
+        run: supabase functions deploy process-integration-outbox --project-ref "$SUPABASE_PROJECT_REF" --no-verify-jwt
+      - name: Deploy retired Community deletion worker
+        if: steps.function-secrets.outputs.retention_runtime_enabled == 'true'
+        run: supabase functions deploy process-retired-community-deletions --project-ref "$SUPABASE_PROJECT_REF" --no-verify-jwt
+      - name: Deploy provider connection functions
+        if: steps.function-secrets.outputs.provider_connections_enabled == 'true'
+        run: |
+          supabase functions deploy group-integrations --project-ref "$SUPABASE_PROJECT_REF"
+          supabase functions deploy slack-oauth-callback --project-ref "$SUPABASE_PROJECT_REF" --no-verify-jwt
+          supabase functions deploy discord-oauth-callback --project-ref "$SUPABASE_PROJECT_REF" --no-verify-jwt
       - name: Verify migrations and deployed functions
         shell: bash
         run: |
@@ -220,6 +271,60 @@ jobs:
           if [[ "$share_status" != "404" ]]; then
             echo "::error::Expected the tokenless public-share smoke test to return 404; received ${share_status}."
             exit 1
+          fi
+
+          export_response="${RUNNER_TEMP}/retired-community-export-response.json"
+          export_status="$(curl --silent --show-error --output "$export_response" --write-out '%{http_code}' \
+            --request POST \
+            --header "apikey: ${VITE_SUPABASE_PUBLISHABLE_KEY}" \
+            --header "Origin: ${PUBLIC_SITE_URL}" \
+            "${VITE_SUPABASE_URL}/functions/v1/retired-community-export")"
+          if [[ "$export_status" != "401" ]]; then
+            echo "::error::Expected the unauthenticated retired Community export smoke test to return 401; received ${export_status}."
+            exit 1
+          fi
+
+          if [[ "${{ steps.function-secrets.outputs.integration_runtime_enabled }}" == "true" ]]; then
+            integration_response="${RUNNER_TEMP}/integration-health-response.json"
+            integration_status="$(curl --silent --show-error --output "$integration_response" --write-out '%{http_code}' \
+              --request POST \
+              --header "Content-Type: application/json" \
+              --header "x-dominion-worker-key: ${INTEGRATION_WORKER_SECRET}" \
+              --data '{"mode":"health"}' \
+              "${VITE_SUPABASE_URL}/functions/v1/process-integration-outbox")"
+            if [[ "$integration_status" != "200" ]]; then
+              echo "::error::Expected the integration worker health check to return 200; received ${integration_status}."
+              exit 1
+            fi
+          fi
+
+          if [[ "${{ steps.function-secrets.outputs.retention_runtime_enabled }}" == "true" ]]; then
+            retention_response="${RUNNER_TEMP}/retired-community-health-response.json"
+            retention_status="$(curl --silent --show-error --output "$retention_response" --write-out '%{http_code}' \
+              --request POST \
+              --header "Content-Type: application/json" \
+              --header "x-dominion-worker-key: ${RETIRED_COMMUNITY_WORKER_SECRET}" \
+              --data '{"mode":"health"}' \
+              "${VITE_SUPABASE_URL}/functions/v1/process-retired-community-deletions")"
+            if [[ "$retention_status" != "200" ]]; then
+              echo "::error::Expected the retired Community worker health check to return 200; received ${retention_status}."
+              exit 1
+            fi
+          fi
+
+          if [[ "${{ steps.function-secrets.outputs.provider_connections_enabled }}" == "true" ]]; then
+            provider_response="${RUNNER_TEMP}/provider-connection-response.json"
+            provider_status="$(curl --silent --show-error --output "$provider_response" --write-out '%{http_code}' \
+              --request POST \
+              --header "apikey: ${VITE_SUPABASE_PUBLISHABLE_KEY}" \
+              --header "Content-Type: application/json" \
+              --header "Origin: ${PUBLIC_SITE_URL}" \
+              --data '{"action":"list","crewId":"00000000-0000-4000-8000-000000000000"}' \
+              "${VITE_SUPABASE_URL}/functions/v1/group-integrations")"
+            if [[ "$provider_status" != "401" ]]; then
+              echo "::error::Expected the unauthenticated provider connection smoke test to return 401; received ${provider_status}."
+              exit 1
+            fi
           fi
       - name: Release backend feature gates
         run: |
