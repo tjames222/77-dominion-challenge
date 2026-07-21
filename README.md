@@ -97,6 +97,10 @@ Stripe powers checkout, payment method updates, and membership cancellation. Sup
    - `customer.subscription.deleted`
 6. Run the updated `supabase/schema.sql` before testing billing flows.
 
+## Data lifecycle decisions
+
+- [Retired Community social-data retention](docs/community-social-data-retention.md)
+
 ## Build
 
 ```bash
