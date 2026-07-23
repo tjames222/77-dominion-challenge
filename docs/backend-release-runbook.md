@@ -57,6 +57,25 @@ The pull-request workflow exposes three required checks so failures are easy to
 route: `Frontend`, `Database`, and `Edge Functions`. The database job owns the
 local Supabase lifecycle and always stops it, including on failure.
 
+### Database test discovery contract
+
+Place pgTAP files below `supabase/tests/database` with a `.sql` or `.pg`
+extension. SQL suites use a numeric ordering prefix and must wrap a positive
+`plan(...)` plus `finish()` in `begin`/`rollback`. Run them only through:
+
+```bash
+pnpm run test:database
+```
+
+The repository wrapper inventories the source tree, stages it in the shared Git
+directory so Docker can read tests from normal checkouts and linked worktrees,
+and invokes the pinned Supabase CLI. It then requires a valid nonzero
+`Files=N, Tests=M` summary, an executed-file count equal to the source inventory,
+and output naming every expected test. A missing summary, `NOTESTS`, omitted
+file, count mismatch, or nonzero CLI exit fails the job. Do not call
+`supabase test db` with repository-relative positional paths; that bypasses the
+guard and can resolve to a host path the pg_prove container cannot read.
+
 ## Environment inventory
 
 Configure repository production values on the GitHub `production` environment,
