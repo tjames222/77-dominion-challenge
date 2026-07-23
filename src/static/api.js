@@ -26,6 +26,7 @@ import {
   replaceProfilePhoto as replacePreparedProfilePhoto,
   syncProfileMetadataBestEffort,
 } from './profile-photo.mjs';
+import { registerProfilePhotoUploadWithRetry } from './profile-photo-registration.mjs';
 import {
   LEGACY_PROFILE_COLUMNS,
   PROFILE_COLUMNS,
@@ -763,10 +764,15 @@ export async function uploadProfilePhoto(preparedPhoto) {
     Date.now(),
     profilePhotoRandomId(),
   );
-  const { data: registrationId, error: registerError } = await client.rpc('register_profile_photo_upload', {
-    target_storage_path: storagePath,
-  });
-  if (registerError) {
+  let registrationId;
+  try {
+    registrationId = await registerProfilePhotoUploadWithRetry({
+      storagePath,
+      register: (targetStoragePath) => client.rpc('register_profile_photo_upload', {
+        target_storage_path: targetStoragePath,
+      }),
+    });
+  } catch (registerError) {
     if (isUnavailableProfilePhotoCleanupRpc(registerError)) {
       throw new Error('Profile pictures are temporarily unavailable while storage is upgraded.');
     }

@@ -249,6 +249,45 @@ select
   to_regclass('private.profile_photo_path_tombstones') is not null as path_tombstones_ready;
 ```
 
+### Profile-photo registration admission controls
+
+The registration RPC serializes admission per account and fails closed at these
+server-enforced limits:
+
+- 3 pending uploads at once;
+- 20 registrations waiting for Storage cleanup;
+- 6 new immutable paths in a rolling hour;
+- 24 new immutable paths in a rolling 24 hours.
+
+A retry of the exact same unexpired pending path returns its original
+registration ID without extending its 15-minute lease or consuming another
+slot. An expired, abandoned, canonical, cleanup, or retired path is never
+reactivated. The browser may retry one ambiguous transport or gateway failure
+with that same path; it does not retry an application, authorization, rate, or
+capacity response.
+
+Use the service role to read aggregate admission health:
+
+```sql
+select public.profile_photo_registration_health();
+```
+
+The result contains thresholds; active-pending, expired-pending, actual-cleanup,
+and effective-cleanup lifecycle and Storage-object counts; oldest timestamps;
+and counts of users at each effective limit. It contains no user IDs, paths, or
+object metadata. Alert immediately when any user reaches the effective cleanup
+cap, when `oldestExpiredPendingCreatedAt` remains non-null across two checks, or
+when the oldest cleanup registration or the difference between effective cleanup
+registrations and objects grows across two checks. Investigate the authenticated
+cleanup flow and the FOU-802 unattended worker before changing any threshold.
+
+For user support, let a pending lease expire, ask the member to revisit Profile
+so the authenticated cleanup queue can drain, or wait for the rolling hourly or
+daily window named by the client error. Never delete `storage.objects` rows,
+registration rows, or path tombstones with SQL, and never reset a user's counters
+by rewriting `created_at`; Storage deletion must use the Storage API and the
+governed claim/confirmation flow.
+
 ## Staged production release
 
 `.github/workflows/deploy.yml` enforces the following order and stops before the

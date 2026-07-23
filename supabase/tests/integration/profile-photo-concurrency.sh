@@ -142,6 +142,227 @@ wait_for_advisory_barrier() {
   fail "Timed out waiting for concurrency barrier $barrier_key."
 }
 
+read -r same_path_user same_path_hash cap_user cap_seed_hash_one \
+  cap_seed_hash_two cap_race_hash_one cap_race_hash_two <<<"$(
+    psql "$database_url" \
+      --set=ON_ERROR_STOP=1 \
+      --tuples-only \
+      --no-align \
+      --field-separator=' ' \
+      --quiet \
+      --command "
+        select
+          gen_random_uuid(),
+          encode(gen_random_bytes(16), 'hex'),
+          gen_random_uuid(),
+          encode(gen_random_bytes(16), 'hex'),
+          encode(gen_random_bytes(16), 'hex'),
+          encode(gen_random_bytes(16), 'hex'),
+          encode(gen_random_bytes(16), 'hex');
+      "
+  )"
+
+same_path="$same_path_user/avatar-1734000000001-$same_path_hash.webp"
+create_profile_fixture "$same_path_user"
+
+same_path_barrier=80000101
+same_path_call_one=$(cat <<SQL
+begin;
+set local statement_timeout = '10s';
+set local lock_timeout = '5s';
+set local role authenticated;
+set local "request.jwt.claim.sub" = '$same_path_user';
+set local "request.jwt.claims" = '{"sub":"$same_path_user","role":"authenticated","email":"profile-photo-race@example.test"}';
+select user_id from public.profiles where user_id = '$same_path_user' for update;
+select pg_advisory_xact_lock($same_path_barrier);
+select pg_sleep(1);
+select public.register_profile_photo_upload('$same_path');
+commit;
+SQL
+)
+same_path_call_two=$(cat <<SQL
+begin;
+set local statement_timeout = '10s';
+set local lock_timeout = '5s';
+set local role authenticated;
+set local "request.jwt.claim.sub" = '$same_path_user';
+set local "request.jwt.claims" = '{"sub":"$same_path_user","role":"authenticated","email":"profile-photo-race@example.test"}';
+select public.register_profile_photo_upload('$same_path');
+commit;
+SQL
+)
+
+psql "$database_url" --set=ON_ERROR_STOP=1 --tuples-only --no-align --quiet \
+  --command "$same_path_call_one" >"$test_directory/register-same-one.log" 2>&1 &
+same_path_one_pid=$!
+wait_for_advisory_barrier "$same_path_barrier"
+psql "$database_url" --set=ON_ERROR_STOP=1 --tuples-only --no-align --quiet \
+  --command "$same_path_call_two" >"$test_directory/register-same-two.log" 2>&1 &
+same_path_two_pid=$!
+
+same_path_one_status=0
+same_path_two_status=0
+wait "$same_path_one_pid" || same_path_one_status=$?
+wait "$same_path_two_pid" || same_path_two_status=$?
+if (( same_path_one_status != 0 || same_path_two_status != 0 )); then
+  cat "$test_directory/register-same-one.log" >&2
+  cat "$test_directory/register-same-two.log" >&2
+  fail "Concurrent same-path registrations did not both complete without a deadlock."
+fi
+
+same_path_id_one="$(tail -n 1 "$test_directory/register-same-one.log" | tr -d '[:space:]')"
+same_path_id_two="$(tail -n 1 "$test_directory/register-same-two.log" | tr -d '[:space:]')"
+[[ "$same_path_id_one" =~ ^[0-9a-f-]{36}$ ]] \
+  || fail "The first same-path registration did not return a UUID."
+[[ "$same_path_id_two" =~ ^[0-9a-f-]{36}$ ]] \
+  || fail "The second same-path registration did not return a UUID."
+expect_equal "$same_path_id_two" "$same_path_id_one" \
+  "Concurrent same-path registration must return one stable lifecycle ID."
+
+read -r same_path_lifecycle_count same_path_tombstone_count <<<"$(
+  psql "$database_url" \
+    --set=ON_ERROR_STOP=1 \
+    --tuples-only \
+    --no-align \
+    --field-separator=' ' \
+    --quiet \
+    --command "
+      select
+        (select count(*) from private.profile_photo_objects
+          where user_id = '$same_path_user'
+            and storage_path = '$same_path'),
+        (select count(*) from private.profile_photo_path_tombstones
+          where path_sha256 = private.profile_photo_path_sha256('$same_path'));
+    "
+)"
+expect_equal "$same_path_lifecycle_count" "1" \
+  "Concurrent same-path registration must create one lifecycle row."
+expect_equal "$same_path_tombstone_count" "1" \
+  "Concurrent same-path registration must create one permanent tombstone."
+
+cap_seed_path_one="$cap_user/avatar-1735000000001-$cap_seed_hash_one.webp"
+cap_seed_path_two="$cap_user/avatar-1735000000002-$cap_seed_hash_two.jpg"
+cap_race_path_one="$cap_user/avatar-1735000000003-$cap_race_hash_one.webp"
+cap_race_path_two="$cap_user/avatar-1735000000004-$cap_race_hash_two.webp"
+create_profile_fixture "$cap_user"
+authenticated_sql "$cap_user" \
+  "select public.register_profile_photo_upload('$cap_seed_path_one');" >/dev/null
+authenticated_sql "$cap_user" \
+  "select public.register_profile_photo_upload('$cap_seed_path_two');" >/dev/null
+
+cap_barrier=80000102
+cap_call_one=$(cat <<SQL
+begin;
+set local statement_timeout = '10s';
+set local lock_timeout = '5s';
+set local role authenticated;
+set local "request.jwt.claim.sub" = '$cap_user';
+set local "request.jwt.claims" = '{"sub":"$cap_user","role":"authenticated","email":"profile-photo-race@example.test"}';
+select user_id from public.profiles where user_id = '$cap_user' for update;
+select pg_advisory_xact_lock($cap_barrier);
+select pg_sleep(1);
+select public.register_profile_photo_upload('$cap_race_path_one');
+commit;
+SQL
+)
+cap_call_two=$(cat <<SQL
+begin;
+set local statement_timeout = '10s';
+set local lock_timeout = '5s';
+set local role authenticated;
+set local "request.jwt.claim.sub" = '$cap_user';
+set local "request.jwt.claims" = '{"sub":"$cap_user","role":"authenticated","email":"profile-photo-race@example.test"}';
+select public.register_profile_photo_upload('$cap_race_path_two');
+commit;
+SQL
+)
+
+psql "$database_url" --set=ON_ERROR_STOP=1 --tuples-only --no-align --quiet \
+  --command "$cap_call_one" >"$test_directory/register-cap-one.log" 2>&1 &
+cap_one_pid=$!
+wait_for_advisory_barrier "$cap_barrier"
+psql "$database_url" --set=ON_ERROR_STOP=1 --tuples-only --no-align --quiet \
+  --command "$cap_call_two" >"$test_directory/register-cap-two.log" 2>&1 &
+cap_two_pid=$!
+
+cap_one_status=0
+cap_two_status=0
+wait "$cap_one_pid" || cap_one_status=$?
+wait "$cap_two_pid" || cap_two_status=$?
+cap_success_count=0
+if (( cap_one_status == 0 )); then
+  cap_success_count=$((cap_success_count + 1))
+fi
+if (( cap_two_status == 0 )); then
+  cap_success_count=$((cap_success_count + 1))
+fi
+if (( cap_success_count != 1 )); then
+  cat "$test_directory/register-cap-one.log" >&2
+  cat "$test_directory/register-cap-two.log" >&2
+  fail "Exactly one of two concurrent new paths must be admitted at the pending boundary."
+fi
+
+if (( cap_one_status == 0 )); then
+  cap_rejected_path="$cap_race_path_two"
+  cap_rejected_log="$test_directory/register-cap-two.log"
+else
+  cap_rejected_path="$cap_race_path_one"
+  cap_rejected_log="$test_directory/register-cap-one.log"
+fi
+if ! grep -q \
+  'Too many profile-photo uploads are pending. Wait for one to expire or finish before retrying.' \
+  "$cap_rejected_log"; then
+  cat "$test_directory/register-cap-one.log" >&2
+  cat "$test_directory/register-cap-two.log" >&2
+  fail "The losing concurrent new path failed for an unexpected reason."
+fi
+
+read -r cap_lifecycle_count cap_pending_count cap_race_admitted_count \
+  cap_rejected_lifecycle_count cap_tombstone_count \
+  cap_rejected_tombstone_count <<<"$(
+    psql "$database_url" \
+      --set=ON_ERROR_STOP=1 \
+      --tuples-only \
+      --no-align \
+      --field-separator=' ' \
+      --quiet \
+      --command "
+        select
+          (select count(*) from private.profile_photo_objects
+            where user_id = '$cap_user'),
+          (select count(*) from private.profile_photo_objects
+            where user_id = '$cap_user' and state = 'pending_upload'),
+          (select count(*) from private.profile_photo_objects
+            where user_id = '$cap_user'
+              and storage_path in ('$cap_race_path_one', '$cap_race_path_two')),
+          (select count(*) from private.profile_photo_objects
+            where user_id = '$cap_user'
+              and storage_path = '$cap_rejected_path'),
+          (select count(*) from private.profile_photo_path_tombstones
+            where path_sha256 in (
+              private.profile_photo_path_sha256('$cap_seed_path_one'),
+              private.profile_photo_path_sha256('$cap_seed_path_two'),
+              private.profile_photo_path_sha256('$cap_race_path_one'),
+              private.profile_photo_path_sha256('$cap_race_path_two')
+            )),
+          (select count(*) from private.profile_photo_path_tombstones
+            where path_sha256 =
+              private.profile_photo_path_sha256('$cap_rejected_path'));
+      "
+  )"
+expect_equal "$cap_lifecycle_count" "3" \
+  "The concurrent pending-boundary race must leave exactly three lifecycle rows."
+expect_equal "$cap_pending_count" "3" \
+  "The concurrent pending-boundary race must leave exactly three pending rows."
+expect_equal "$cap_race_admitted_count" "1" \
+  "Exactly one concurrent new path must have a lifecycle row."
+expect_equal "$cap_rejected_lifecycle_count" "0" \
+  "The rejected concurrent path must create no lifecycle row."
+expect_equal "$cap_tombstone_count" "3" \
+  "The concurrent pending-boundary race must reserve only admitted paths."
+expect_equal "$cap_rejected_tombstone_count" "0" \
+  "The rejected concurrent path must create no tombstone."
+
 read -r commit_user commit_object_one commit_object_two cleanup_reinsert_object \
   commit_hash_one commit_hash_two <<<"$(
     psql "$database_url" \
