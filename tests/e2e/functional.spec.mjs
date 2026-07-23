@@ -114,6 +114,56 @@ test('Dashboard links all seven standards to their dedicated pages', async ({ pa
   );
 });
 
+test('Dashboard places tracking and the scorecard around the countdown in document order', async ({ page, app }) => {
+  await app.open(ROUTE_BY_ID.dashboard);
+  const order = await page.locator('main > section').evaluateAll((sections) => sections.map((section) => ({
+    id: section.id,
+    classes: section.className,
+  })));
+  const position = (marker) => order.findIndex(({ id, classes }) => id === marker || classes.includes(marker));
+
+  expect(position('dashboard-hero')).toBeLessThan(position('dashboard-tracking'));
+  expect(position('dashboard-tracking')).toBeLessThan(position('countdownCard'));
+  expect(position('countdownCard')).toBeLessThan(position('dashboard-scorecard'));
+  expect(position('dashboard-scorecard')).toBeLessThan(position('gameSummaryCard'));
+
+  await page.locator('#countdownCheckInButton').click();
+  await expect(page.locator('#check-in')).toBeFocused();
+  await expect(page.locator('#checklist [data-standard-card]')).toHaveCount(7);
+});
+
+test('Dashboard uses zero-point glass only outside the private-group podium', async ({ page, app }) => {
+  await app.open(ROUTE_BY_ID.dashboard);
+  await page.evaluate(() => {
+    const stats = JSON.parse(localStorage.getItem('dominion:gameStats') || '{}');
+    localStorage.setItem('dominion:gameStats', JSON.stringify({
+      ...stats,
+      totalPoints: 0,
+      challengePoints: 0,
+    }));
+  });
+  await page.reload();
+  await app.stable();
+
+  const emblem = page.locator('#gameLevelEmblem');
+  await expect(emblem).toHaveAttribute('data-prestige', 'private-1');
+  await expect(emblem).not.toHaveAttribute('data-material', 'zero-glass');
+  await expect(page.locator('#gameLevelCrown')).toBeVisible();
+
+  await page.evaluate(() => {
+    localStorage.setItem('dominion:mockCrews', '[]');
+    localStorage.setItem('dominion:mockCrewMembers', '{}');
+    localStorage.removeItem('dominion:activeCrewId');
+  });
+  await page.reload();
+  await app.stable();
+
+  await expect(emblem).toHaveAttribute('data-prestige', 'default');
+  await expect(emblem).toHaveAttribute('data-material', 'zero-glass');
+  await expect(emblem).toHaveAccessibleName(/Zero-point glass coin/);
+  await expect(page.locator('#gameLevelCrown')).toBeHidden();
+});
+
 test('Dashboard streak opens all four current and personal-best metrics', async ({ page, app }) => {
   await app.open(ROUTE_BY_ID.dashboard);
   const trigger = page.locator('#dashboardStreakButton');

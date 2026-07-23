@@ -37,6 +37,7 @@ import {
 } from './check-in.mjs';
 import { syncWorkoutDifficultyControls } from './workout-difficulty-controls.mjs';
 import { resolveLeaderboardPrestige } from './leaderboard-prestige.mjs';
+import { shouldUseZeroPointGlass } from './dashboard-view-model.mjs';
 import {
   STREAK_METRIC_DEFINITIONS,
   buildStreakSummary,
@@ -440,15 +441,22 @@ function renderGameSummary() {
   const appStreak = streakSummary.currentAppStreak;
   const fullDayStreak = streakSummary.currentFullStandardStreak;
   const recentBadges = badges.filter(Boolean).slice(0, 4);
-  const prestige = resolveLeaderboardPrestige(leaderboardPositions);
+  const resolvedPrestige = resolveLeaderboardPrestige(leaderboardPositions);
+  const zeroPointGlass = shouldUseZeroPointGlass({
+    totalPoints: levelProgress.totalPoints,
+    prestigeRank: leaderboardPositions.privateRank,
+  });
+  const prestige = zeroPointGlass ? resolveLeaderboardPrestige({}) : resolvedPrestige;
   const levelLabel = prestige.shortLabel
     ? `Level ${levelProgress.level} · ${prestige.shortLabel}`
     : `Level ${levelProgress.level}`;
-  const emblemLabel = `Level ${levelProgress.level} — ${prestige.accessibleLabel}`;
+  const emblemLabel = `Level ${levelProgress.level} — ${zeroPointGlass ? 'Zero-point glass coin — ' : ''}${prestige.accessibleLabel}`;
 
   if (gamePointsTotal) gamePointsTotal.textContent = levelProgress.totalPoints.toLocaleString();
   if (gameLevelEmblem) {
     gameLevelEmblem.dataset.prestige = prestige.key;
+    if (zeroPointGlass) gameLevelEmblem.dataset.material = 'zero-glass';
+    else delete gameLevelEmblem.dataset.material;
     gameLevelEmblem.setAttribute('aria-label', emblemLabel);
     gameLevelEmblem.title = emblemLabel;
   }
@@ -798,6 +806,7 @@ let renderedDateKey = todayKey();
 let checkInStatusHydratedDate = hasSupabaseAuth() ? '' : renderedDateKey;
 let dashboardHydrationRequestId = 0;
 const $ = (id) => document.getElementById(id);
+const reducedMotionEnabled = () => window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
 const dashboardStreakButton = $('dashboardStreakButton');
 const streakDetailsDialog = dashboardStreakButton ? createDialog({
   id: 'streakDetailsDialog',
@@ -1354,6 +1363,7 @@ const checklist = $('checklist');
 const selectAllActionsButton = $('selectAllActionsButton');
 const checkInButton = $('checkInButton');
 const countdownCheckInButton = $('countdownCheckInButton');
+const scorecardSection = $('check-in');
 const rewardBackdrop = $('rewardBackdrop');
 const rewardToast = $('rewardToast');
 if (rewardBackdrop && rewardToast) {
@@ -1600,9 +1610,9 @@ if (checkInButton) checkInButton.addEventListener('click', async () => {
     render();
   }
 });
-if (countdownCheckInButton && checkInButton) countdownCheckInButton.addEventListener('click', () => {
-  checkInButton.scrollIntoView({ behavior: 'smooth', block: 'center' });
-  checkInButton.focus({ preventScroll: true });
+if (countdownCheckInButton && scorecardSection) countdownCheckInButton.addEventListener('click', () => {
+  scorecardSection.scrollIntoView({ behavior: reducedMotionEnabled() ? 'auto' : 'smooth', block: 'start' });
+  scorecardSection.focus({ preventScroll: true });
 });
 
 async function bootDashboard() {

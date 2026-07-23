@@ -51,6 +51,23 @@
         </button>
       </section>
 
+      <section class="progress dashboard-section dashboard-tracking reveal" data-section-surface="plain" aria-labelledby="trackingTitle">
+        <div class="progress-intro">
+          <div class="section-heading">
+            <p class="eyebrow">Progress</p>
+            <h2 id="trackingTitle">How today is tracking</h2>
+          </div>
+          <label>Challenge start date<input id="startDate" type="date" /></label>
+          <button class="share-entry-button" type="button" data-share-composer data-share-kind="progress">
+            Share my progress
+          </button>
+        </div>
+        <div class="rings">
+          <div class="ring" id="challengeRing"><div class="ring-inner"><strong id="challengePercent">1%</strong><span>Challenge</span><small id="challengeDay">Day 1 of 77</small></div></div>
+          <div class="ring" id="todayRing"><div class="ring-inner"><strong id="todayPercent">0%</strong><span>Today</span><small id="todayCount">0 of 7 done</small></div></div>
+        </div>
+      </section>
+
       <section class="challenge-complete-panel reveal" id="challengeCompletePanel" data-section-surface="plain" hidden>
         <p class="eyebrow">77 Days Complete</p>
         <h2>Your next challenge is ready.</h2>
@@ -77,7 +94,28 @@
           <span id="countdownProgressLabel">0% of the day used</span>
           <span id="countdownActionsLabel">0 of 7 actions complete</span>
         </div>
-        <button class="action-button countdown-action" type="button" id="countdownCheckInButton">Go to check-in</button>
+        <button class="action-button countdown-action" type="button" id="countdownCheckInButton" aria-controls="check-in">Go to check-in</button>
+      </section>
+
+      <section class="progress dashboard-section dashboard-scorecard reveal" id="check-in" tabindex="-1" data-section-surface="plain" aria-labelledby="todaysScorecardTitle">
+        <div class="progress-standard" id="daily-standards">
+          <div class="section-heading"><p class="eyebrow">Today's Scorecard</p><h2 id="todaysScorecardTitle">Mind, Spirit, Body</h2></div>
+          <div class="scorecard-checklist-heading">
+            <div>
+              <p>Daily standards</p>
+              <span id="scorecardSelectionStatus" role="status" aria-live="polite" aria-atomic="true">0 of 7 complete</span>
+            </div>
+            <button class="scorecard-select-all" id="selectAllActionsButton" type="button" aria-controls="checklist">
+              <span class="app-icon icon-check" aria-hidden="true"></span>
+              <span id="selectAllActionsLabel">Mark all complete</span>
+            </button>
+          </div>
+          <div id="checklist"></div>
+          <div class="scorecard-actions">
+            <button class="primary" id="checkInButton" type="button" aria-describedby="checkInStatus" disabled>Post Check-In</button>
+            <p class="check-in-status" id="checkInStatus" role="status" aria-live="polite" aria-atomic="true"></p>
+          </div>
+        </div>
       </section>
 
       <section class="game-summary-card reveal" id="gameSummaryCard" data-section-surface="plain" aria-labelledby="gameSummaryEyebrow gameSummaryTitle">
@@ -156,42 +194,7 @@
         />
       </section>
 
-      <section class="progress dashboard-section reveal" id="check-in" data-section-surface="plain">
-        <div class="progress-intro">
-          <div class="section-heading">
-            <p class="eyebrow">Progress</p>
-            <h2>How today is tracking</h2>
-          </div>
-          <label>Challenge start date<input id="startDate" type="date" /></label>
-          <button class="share-entry-button" type="button" data-share-composer data-share-kind="progress">
-            Share my progress
-          </button>
-        </div>
-        <div class="rings">
-          <div class="ring" id="challengeRing"><div class="ring-inner"><strong id="challengePercent">1%</strong><span>Challenge</span><small id="challengeDay">Day 1 of 77</small></div></div>
-          <div class="ring" id="todayRing"><div class="ring-inner"><strong id="todayPercent">0%</strong><span>Today</span><small id="todayCount">0 of 7 done</small></div></div>
-        </div>
-        <div class="progress-standard" id="daily-standards">
-          <div class="section-heading"><p class="eyebrow">Today's Scorecard</p><h3>Mind, Spirit, Body</h3></div>
-          <div class="scorecard-checklist-heading">
-            <div>
-              <p>Daily standards</p>
-              <span id="scorecardSelectionStatus" role="status" aria-live="polite" aria-atomic="true">0 of 7 complete</span>
-            </div>
-            <button class="scorecard-select-all" id="selectAllActionsButton" type="button" aria-controls="checklist">
-              <span class="app-icon icon-check" aria-hidden="true"></span>
-              <span id="selectAllActionsLabel">Mark all complete</span>
-            </button>
-          </div>
-          <div id="checklist"></div>
-          <div class="scorecard-actions">
-            <button class="primary" id="checkInButton" type="button" aria-describedby="checkInStatus" disabled>Post Check-In</button>
-            <p class="check-in-status" id="checkInStatus" role="status" aria-live="polite" aria-atomic="true"></p>
-          </div>
-        </div>
-      </section>
-
-      <section class="community dashboard-section reveal" data-section-surface="accent">
+      <section class="community dashboard-section reveal" data-section-surface="plain">
         <div class="section-heading"><p class="eyebrow">Accountability</p><h2 id="completedToday">3 people completed today</h2></div>
         <div id="feed"></div>
         <a class="action-button with-icon dashboard-section-link" href="./community.html">
