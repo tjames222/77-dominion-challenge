@@ -3,7 +3,7 @@ begin;
 create extension if not exists pgtap with schema extensions;
 set local search_path = public, extensions;
 
-select plan(103);
+select plan(104);
 
 select ok(exists (
   select 1 from supabase_migrations.schema_migrations where version = '20260720140000'
@@ -24,6 +24,8 @@ select ok(to_regclass('private.retired_community_batch_identity_redactions') is 
   'aggregate batch identity-redaction evidence exists');
 select ok(to_regclass('private.retired_community_dr_quarantined_users') is not null,
   'restored account erasures have a database quarantine');
+select ok(not exists (select 1 from storage.buckets where id = 'journal-progress'),
+  'the active product no longer provisions the journal-progress bucket');
 select ok(not has_table_privilege('service_role',
   'private.retired_community_purge_manifests', 'select'),
   'service role cannot bypass the redacted manifest RPC');
@@ -175,12 +177,24 @@ insert into private.outbound_deliveries (
   'fou-564-account-erasure-pending', '{}'::jsonb, 'queued',
   '10000000-0000-4000-8000-000000000001', 'user:alice-pending'
 );
+insert into private.profile_photo_path_tombstones (path_sha256, reason)
+values (
+  private.profile_photo_path_sha256(
+    '10000000-0000-4000-8000-000000000001/avatar-1720000000030-33333333333333333333333333333333.webp'
+  ),
+  'registered'
+);
+insert into private.profile_photo_objects (
+  user_id, storage_path, state, upload_expires_at
+) values (
+  '10000000-0000-4000-8000-000000000001',
+  '10000000-0000-4000-8000-000000000001/avatar-1720000000030-33333333333333333333333333333333.webp',
+  'pending_upload',
+  clock_timestamp() + interval '15 minutes'
+);
 insert into storage.objects (id, bucket_id, name, owner) values
   ('f6440000-0000-4000-8000-000000000030', 'profile-photos',
-    '10000000-0000-4000-8000-000000000001/avatar.jpg',
-    '10000000-0000-4000-8000-000000000001'),
-  ('f6440000-0000-4000-8000-000000000031', 'journal-progress',
-    '10000000-0000-4000-8000-000000000001/day-1.jpg',
+    '10000000-0000-4000-8000-000000000001/avatar-1720000000030-33333333333333333333333333333333.webp',
     '10000000-0000-4000-8000-000000000001'),
   ('f6440000-0000-4000-8000-000000000032', 'community-post-images',
     'a0000000-0000-4000-8000-000000000001/10000000-0000-4000-8000-000000000001/orphan.jpg',
@@ -200,11 +214,11 @@ select is(
   (select batch_row.object_count from private.retired_community_deletion_batches batch_row
     where batch_row.id = (select batch_id from account_due_soon)),
   'account erasure dry-run object count matches the sealed full-asset inventory');
-select ok((select count(*) = 2
+select ok((select count(*) = 1
   from private.retired_community_storage_work work
   where work.batch_id = (select batch_id from account_due_soon)
-    and work.bucket_id in ('profile-photos', 'journal-progress')),
-  'account erasure seals exact profile and journal Storage work');
+    and work.bucket_id = 'profile-photos'),
+  'account erasure seals exact active personal Storage work');
 select ok(exists (
   select 1 from private.retired_community_storage_work work
   where work.batch_id = (select batch_id from account_due_soon)

@@ -314,6 +314,9 @@
 .journal-form {
   grid-template-columns: 1fr;
 }
+.journal-form > button[type="submit"] {
+  grid-column: 1 / -1;
+}
 .community-form label,
 .journal-form label,
 .crew-toolbar label {
@@ -515,28 +518,6 @@
   font-weight: 950;
   letter-spacing: .08em;
   text-transform: uppercase;
-}
-.journal-photos {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
-  gap: 10px;
-}
-.journal-photos figure {
-  display: grid;
-  gap: 6px;
-  margin: 0;
-}
-.journal-photos img {
-  width: 100%;
-  aspect-ratio: 4 / 3;
-  border-radius: 14px;
-  object-fit: cover;
-  border: 1px solid var(--border);
-}
-.journal-photos figcaption {
-  color: var(--text-muted);
-  font-size: .78rem;
-  line-height: 1.35;
 }
 .group-integrations {
   display: grid;

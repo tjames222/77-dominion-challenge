@@ -210,6 +210,45 @@ Never use `--include-all` to bypass an older missing migration in production. A
 non-empty or incomplete check requires a reviewed forward-fix or a separately
 approved, backed-up bootstrap plan.
 
+### FOU-759 two-stage avatar and journal cutover
+
+FOU-752/753 must not use the normal backend-first order for their first production release. The hardening migration rejects the previous raw/upsert avatar client, and the final cleanup removes journal-photo infrastructure used by the previous client. Use the same reviewed commit for both stages:
+
+1. Confirm the migration-history reconciliation above is genuinely complete. The 2026-07-22 inventory in [`release-evidence/fou-759-production-inventory-2026-07-22.md`](./release-evidence/fou-759-production-inventory-2026-07-22.md) found missing historical profile infrastructure, so those versions must not be marked applied until a structural diff proves their effects exist or an approved bootstrap applies them.
+2. Rerun the aggregate journal inventory from that evidence record. Journal rows, objects, multipart uploads, and nonterminal `journal-progress` retention work must all be zero.
+3. Manually dispatch **Release production** from the exact reviewed release-candidate ref with `release_scope=frontend-only`. This deploys the schema-negotiating, prepared-thumbnail and text-only-journal client while intentionally skipping migrations. The client must treat the missing `profiles.avatar_url` column as the planned compatibility state and must make no profile-photo RPC or Storage request.
+4. Verify normal sign-in, profile text editing, dashboard challenge-date synchronization, and journal create/edit/reload behavior in production. The profile-photo control must remain disabled, and all six journal text fields must work without a journal-photo request. Leave the previous database and empty bucket in place during this verification window.
+5. Rerun the zero-data inventory. Stop on any nonzero result; export or explicitly disposition user data and use the Storage API for object deletion.
+6. Dispatch the exact same reviewed ref with `release_scope=full`. The backend stage now applies the avatar lifecycle registry and policies first and the fail-closed journal cleanup second, then rebuilds the frontend.
+7. Reload the profile after the full release. Verify the photo control is enabled, a selected image becomes a square thumbnail no larger than 256×256 and 150 KiB, replacement removes the predecessor, and profile text edits survive avatar-only saves. Then verify the final state with the queries below. A cached legacy avatar client can no longer upload a timestamp-only path, reactivate a predecessor, or delete the canonical object; rejection is the intended fail-safe.
+
+```sql
+select id, public, file_size_limit, allowed_mime_types
+from storage.buckets
+where id in ('profile-photos', 'community-post-images', 'journal-progress')
+order by id;
+
+-- Exactly profile-photos (153600; JPEG/WebP) and community-post-images remain.
+select policyname, cmd, permissive
+from pg_policies
+where schemaname = 'storage' and tablename = 'objects'
+order by policyname;
+
+-- Exactly seven policies remain:
+-- Canonical profile photos cannot be deleted (DELETE, restrictive)
+-- Pending account erasure blocks personal asset deletes (DELETE, restrictive)
+-- Pending account erasure blocks personal asset uploads (INSERT, restrictive)
+-- Pending account erasure freezes personal asset updates (UPDATE, restrictive)
+-- Users can delete own profile photo objects (DELETE, permissive)
+-- Users can read own profile photo objects (SELECT, permissive)
+-- Users can upload own profile photo objects (INSERT, permissive)
+
+select
+  to_regclass('public.journal_photos') is null as journal_photos_retired,
+  to_regclass('private.profile_photo_objects') is not null as photo_lifecycle_ready,
+  to_regclass('private.profile_photo_path_tombstones') is not null as path_tombstones_ready;
+```
+
 ## Staged production release
 
 `.github/workflows/deploy.yml` enforces the following order and stops before the

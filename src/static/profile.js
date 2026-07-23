@@ -9,11 +9,12 @@ import {
   hasSupabaseAuth,
   isLocalDemoMode,
   redirectToLogin,
+  replaceProfilePhoto,
   setThemePreference,
   updateProfile,
   updateOutboundUpdateConsent,
-  uploadProfilePhoto,
 } from './api';
+import { prepareProfilePhoto } from './profile-photo.mjs';
 import {
   PREVIEW_CHALLENGE_RESET_KEYS,
   PREVIEW_CHALLENGE_STORAGE_KEY,
@@ -174,6 +175,7 @@ const profileForm = document.getElementById('profileForm');
 const profilePhotoField = document.getElementById('profilePhotoField');
 const profilePhotoInput = document.getElementById('profilePhotoInput');
 const profilePhotoFilename = document.getElementById('profilePhotoFilename');
+const profilePhotoHint = document.getElementById('profilePhotoHint');
 const profileNameInput = document.getElementById('profileNameInput');
 const profileEmailInput = document.getElementById('profileEmailInput');
 const profileFeedback = document.getElementById('profileFeedback');
@@ -194,12 +196,15 @@ const integrationShareBadges = document.getElementById('integrationShareBadges')
 const integrationShareMembership = document.getElementById('integrationShareMembership');
 const integrationConsentFeedback = document.getElementById('integrationConsentFeedback');
 const saveIntegrationConsent = document.getElementById('saveIntegrationConsent');
-const MAX_PROFILE_PHOTO_SIZE = 5 * 1024 * 1024;
-let currentProfile = { name: 'Member', email: 'Logged in', avatarUrl: '' };
+let currentProfile = { name: 'Member', email: 'Logged in', avatarUrl: '', updatedAt: '' };
 let selectedPhotoFile = null;
+let selectedPreparedPhoto = null;
 let selectedPreviewUrl = '';
+let photoPreparationSequence = 0;
+let profilePhotoAvailable = localPreviewMode;
 let integrationCrews = [];
 const EMPTY_PHOTO_FILENAME = 'No new photo selected';
+const PROFILE_PHOTO_HINT = 'JPG, PNG, WebP, HEIC or HEIF · 5 MB input max · cropped to a square thumbnail up to 256×256 and 150 KB';
 let previewChallengeState = normalizePreviewChallengeState(
   localPreviewMode ? load(PREVIEW_CHALLENGE_STORAGE_KEY, {}) : {},
   localDateKey(),
@@ -262,12 +267,25 @@ function renderAvatar(profile) {
   }
 }
 
+function syncProfilePhotoAvailability(available) {
+  profilePhotoAvailable = localPreviewMode || available === true;
+  if (profilePhotoInput) profilePhotoInput.disabled = !profilePhotoAvailable;
+  profilePhotoField?.setAttribute('aria-disabled', String(!profilePhotoAvailable));
+  if (profilePhotoHint) {
+    profilePhotoHint.textContent = profilePhotoAvailable
+      ? PROFILE_PHOTO_HINT
+      : 'Profile pictures are temporarily unavailable while secure thumbnail storage is upgraded.';
+  }
+}
+
 function renderProfile(profile) {
   currentProfile = {
     ...currentProfile,
     ...profile,
     avatarUrl: profile?.avatarUrl || '',
+    profilePhotoAvailable: profile?.profilePhotoAvailable ?? currentProfile.profilePhotoAvailable,
   };
+  syncProfilePhotoAvailability(currentProfile.profilePhotoAvailable);
   if (profileNameEl) profileNameEl.textContent = currentProfile.name || 'Member';
   if (profileEmailEl) profileEmailEl.textContent = currentProfile.email || 'Logged in';
   if (profileNameInput) profileNameInput.value = currentProfile.name || '';
@@ -294,13 +312,19 @@ function setProfileFeedback(message, tone = '') {
 
 function setProfileFormBusy(isBusy, label = 'Save profile') {
   const submitButton = profileForm?.querySelector('button[type="submit"]');
-  if (profilePhotoInput) profilePhotoInput.disabled = isBusy;
+  if (profilePhotoInput) profilePhotoInput.disabled = isBusy || !profilePhotoAvailable;
   if (profilePhotoField) profilePhotoField.setAttribute('aria-busy', String(isBusy));
   if (submitButton) {
     submitButton.disabled = isBusy;
     submitButton.textContent = isBusy ? 'Saving...' : label;
   }
 }
+
+profileAvatarImageEl?.addEventListener('error', () => {
+  profileAvatarImageEl.removeAttribute('src');
+  profileAvatarImageEl.hidden = true;
+  if (profileAvatarFallbackEl) profileAvatarFallbackEl.hidden = false;
+});
 
 function updateBillingSummary(state) {
   document.getElementById('profileChallengeStatus').textContent = state.appAccess ? 'Status: Active' : 'Status: Subscription required';
@@ -481,7 +505,9 @@ async function hydrateProfile() {
     const syncedUser = {
       name: profile.name || sessionUser?.name || 'Member',
       email: profile.email || sessionUser?.email || 'Logged in',
-      avatarUrl: profile.avatarUrl || sessionUser?.avatarUrl || '',
+      avatarUrl: profile.avatarUrl || '',
+      updatedAt: profile.updatedAt || '',
+      profilePhotoAvailable: profile.profilePhotoAvailable,
       authenticated: true,
     };
     syncStoredUser(syncedUser);
@@ -495,9 +521,11 @@ async function hydrateProfile() {
   }
 }
 
-profilePhotoInput?.addEventListener('change', () => {
+profilePhotoInput?.addEventListener('change', async () => {
+  const preparationId = ++photoPreparationSequence;
   revokeSelectedPreview();
   selectedPhotoFile = null;
+  selectedPreparedPhoto = null;
   renderPhotoSelection();
 
   const file = profilePhotoInput.files?.[0];
@@ -506,25 +534,28 @@ profilePhotoInput?.addEventListener('change', () => {
     return;
   }
 
-  if (!file.type?.startsWith('image/')) {
-    profilePhotoInput.value = '';
-    setProfileFeedback('Profile picture must be an image file.', 'error');
-    renderAvatar(currentProfile);
-    return;
-  }
-
-  if (file.size > MAX_PROFILE_PHOTO_SIZE) {
-    profilePhotoInput.value = '';
-    setProfileFeedback('Profile picture must be smaller than 5 MB.', 'error');
-    renderAvatar(currentProfile);
-    return;
-  }
-
   selectedPhotoFile = file;
-  selectedPreviewUrl = URL.createObjectURL(file);
   renderPhotoSelection(file);
-  renderAvatar({ ...currentProfile, avatarUrl: selectedPreviewUrl });
-  setProfileFeedback(`“${file.name}” selected. Save profile when ready.`);
+  setProfileFormBusy(true, 'Preparing...');
+  setProfileFeedback(`Preparing “${file.name}” as a secure avatar thumbnail...`);
+  try {
+    const preparedPhoto = await prepareProfilePhoto(file);
+    if (preparationId !== photoPreparationSequence || selectedPhotoFile !== file) return;
+    selectedPreparedPhoto = preparedPhoto;
+    selectedPreviewUrl = URL.createObjectURL(preparedPhoto.blob);
+    renderAvatar({ ...currentProfile, avatarUrl: selectedPreviewUrl });
+    setProfileFeedback(`“${file.name}” is ready as a ${preparedPhoto.width}×${preparedPhoto.height} thumbnail.`);
+  } catch (error) {
+    if (preparationId !== photoPreparationSequence) return;
+    selectedPhotoFile = null;
+    selectedPreparedPhoto = null;
+    profilePhotoInput.value = '';
+    renderPhotoSelection();
+    renderAvatar(currentProfile);
+    setProfileFeedback(error?.message || 'Unable to prepare that profile picture.', 'error');
+  } finally {
+    if (preparationId === photoPreparationSequence) setProfileFormBusy(false);
+  }
 });
 
 profileForm?.addEventListener('submit', async (event) => {
@@ -537,30 +568,61 @@ profileForm?.addEventListener('submit', async (event) => {
     setProfileFeedback('Name and email are required.', 'error');
     return;
   }
+  if (selectedPreparedPhoto && !profilePhotoAvailable) {
+    setProfileFeedback('Profile pictures are temporarily unavailable while storage is upgraded.', 'error');
+    return;
+  }
 
   setProfileFormBusy(true);
-  setProfileFeedback(selectedPhotoFile ? 'Uploading profile picture...' : 'Saving profile...');
+  setProfileFeedback(selectedPreparedPhoto ? 'Uploading profile thumbnail...' : 'Saving profile...');
 
   try {
-    let avatarUrl = currentProfile.avatarUrl || '';
-    if (selectedPhotoFile) avatarUrl = await uploadProfilePhoto(selectedPhotoFile);
-
-    const savedProfile = await updateProfile({ name, email, avatarUrl });
+    const textChanged = name !== (currentProfile.name || '') || email !== (currentProfile.email || '');
+    let savedProfile;
+    let cleanupError = null;
+    if (selectedPreparedPhoto) {
+      const result = await replaceProfilePhoto({
+        preparedPhoto: selectedPreparedPhoto,
+        profile: {
+          ...(textChanged ? { name, email } : {}),
+          avatarOnly: !textChanged,
+          expectedUpdatedAt: currentProfile.updatedAt,
+        },
+      });
+      savedProfile = result.savedProfile;
+      cleanupError = result.cleanupError;
+    } else {
+      savedProfile = await updateProfile({
+        name,
+        email,
+        expectedUpdatedAt: currentProfile.updatedAt,
+      });
+    }
     const nextProfile = {
       name: savedProfile?.name || name,
       email: savedProfile?.email || email,
-      avatarUrl: savedProfile?.avatarUrl || avatarUrl,
+      avatarUrl: savedProfile?.avatarUrl || currentProfile.avatarUrl || '',
+      updatedAt: savedProfile?.updatedAt || currentProfile.updatedAt || '',
+      profilePhotoAvailable: savedProfile?.profilePhotoAvailable
+        ?? currentProfile.profilePhotoAvailable,
     };
 
     selectedPhotoFile = null;
+    selectedPreparedPhoto = null;
     if (profilePhotoInput) profilePhotoInput.value = '';
     revokeSelectedPreview();
     renderPhotoSelection();
     syncStoredUser(nextProfile);
     renderProfile(nextProfile);
-    setProfileFeedback(savedProfile?.emailChangeRequested
-      ? 'Profile saved. Confirm the email change from your inbox.'
-      : 'Profile saved.');
+    if (savedProfile?.emailChangeError) {
+      setProfileFeedback('Profile saved, but the sign-in email could not be updated. Try that email change again.', 'error');
+    } else if (cleanupError) {
+      setProfileFeedback(cleanupError.message, 'error');
+    } else {
+      setProfileFeedback(savedProfile?.emailChangeRequested
+        ? 'Profile saved. Confirm the email change from your inbox.'
+        : 'Profile saved.');
+    }
   } catch (error) {
     renderAvatar(selectedPreviewUrl
       ? { ...currentProfile, avatarUrl: selectedPreviewUrl }
