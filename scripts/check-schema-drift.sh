@@ -221,7 +221,17 @@ with structural_records as (
   from pg_trigger trigger_row
   join pg_class relation_row on relation_row.oid = trigger_row.tgrelid
   join pg_namespace schema_row on schema_row.oid = relation_row.relnamespace
-  where schema_row.nspname in ('public', 'private')
+  where (
+      schema_row.nspname in ('public', 'private')
+      or (
+        schema_row.nspname = 'storage'
+        and trigger_row.tgname in (
+          'guard_profile_photo_storage_insert',
+          'guard_profile_photo_storage_update',
+          'guard_profile_photo_storage_delete'
+        )
+      )
+    )
     and not trigger_row.tgisinternal
 
   union all
@@ -244,9 +254,12 @@ with structural_records as (
        schema_row.nspname = 'storage'
        and policy_row.polname in (
          'Profile photos are publicly readable',
+         'Users can read own profile photo objects',
          'Users can upload own profile photo objects',
          'Users can update own profile photo objects',
          'Users can delete own profile photo objects',
+         'Canonical profile photos cannot be deleted',
+         'Pending account erasure blocks personal asset deletes',
          'Crew members can read community post images',
          'Crew members can upload own community post images',
          'Authors and crew leaders can delete community post images',

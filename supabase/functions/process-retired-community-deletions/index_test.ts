@@ -158,6 +158,33 @@ Deno.test("account erasure deletes an exact profile-photo claim from its own buc
   assert(!buckets.includes("community-post-images"));
 });
 
+Deno.test("restored historical journal work remains processable after product retirement", async () => {
+  const buckets: string[] = [];
+  let present = true;
+  const admin = mockAdmin({
+    buckets,
+    values: {
+      claim_retired_community_storage_work: [storageClaim("journal-progress")],
+      claim_retired_community_credential_work: [],
+      verify_retired_community_storage_work: true,
+      confirm_retired_community_storage_work: {},
+    },
+    list: (_folder, options) =>
+      present && options.search === "photo.jpg"
+        ? [{ id: objectId, name: "photo.jpg" }]
+        : [],
+    remove: () => {
+      present = false;
+      return { error: null };
+    },
+  });
+
+  const result = await workerHandler(admin)(request());
+  assertEquals(result.status, 200);
+  assert(buckets.includes("journal-progress"));
+  assert(!buckets.includes("community-post-images"));
+});
+
 Deno.test("Storage work is reverified, deleted by exact path, checked absent, and confirmed", async () => {
   const calls: RpcCall[] = [];
   const removed: string[][] = [];

@@ -10,7 +10,6 @@ import {
   manageGroupIntegration,
   redirectToLogin,
   saveJournalEntry,
-  uploadJournalPhoto,
 } from './api';
 
 const tabs = Array.from(document.querySelectorAll('.community-tab'));
@@ -521,7 +520,7 @@ function renderJournal() {
   const timeline = $('journalTimeline');
   if (!timeline) return;
   if (!state.journalEntries.length) {
-    timeline.innerHTML = emptyCard('Your private journal is ready. Save a note, add a progress photo, and start building the record.');
+    timeline.innerHTML = emptyCard('Your private journal is ready. Save a note and start building the record.');
     return;
   }
 
@@ -532,16 +531,6 @@ function renderJournal() {
       ${entry.note ? `<p>${escapeHtml(entry.note)}</p>` : ''}
       ${entry.prayer ? `<p>${escapeHtml(entry.prayer)}</p>` : ''}
       ${entry.energy ? `<small>Energy: ${escapeHtml(entry.energy)}</small>` : ''}
-      ${entry.photos.length ? `
-        <div class="journal-photos">
-          ${entry.photos.map((photo) => `
-            <figure>
-              <img src="${escapeHtml(photo.url)}" alt="${escapeHtml(photo.caption || 'Progress photo')}" />
-              ${photo.caption ? `<figcaption>${escapeHtml(photo.caption)}</figcaption>` : ''}
-            </figure>
-          `).join('')}
-        </div>
-      ` : ''}
     </article>
   `).join('');
 }
@@ -788,7 +777,7 @@ $('journalForm')?.addEventListener('submit', async (event) => {
   const release = setButtonBusy(event.submitter, 'Saving...');
   try {
     const crew = activeCrew();
-    const savedEntry = await saveJournalEntry({
+    await saveJournalEntry({
       date: $('journalDate').value,
       day: crew?.challengeStartDate ? Number(dayLabel(crew.challengeStartDate).replace('Day ', '')) : null,
       note: $('journalNote').value.trim(),
@@ -797,17 +786,6 @@ $('journalForm')?.addEventListener('submit', async (event) => {
       mood: $('journalMood').value,
       energy: $('journalEnergy').value,
     });
-
-    const photo = $('journalPhoto').files?.[0];
-    if (photo) {
-      await uploadJournalPhoto({
-        entryId: savedEntry.id,
-        file: photo,
-        caption: $('journalPhotoCaption').value.trim(),
-      });
-      $('journalPhoto').value = '';
-      $('journalPhotoCaption').value = '';
-    }
 
     setFeedback('Private journal entry saved.');
     await refreshJournal();

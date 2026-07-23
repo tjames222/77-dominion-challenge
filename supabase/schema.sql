@@ -13873,3 +13873,7 @@ revoke execute on function public.grant_sharing_reward_after_invite_redemption()
 -- typed-catalog, invitation, sharing, and Community lifecycle definitions.
 \ir migrations/20260720220000_dominion_night_theme_reward.sql
 \ir migrations/20260720240000_user_theme_preferences.sql
+
+-- Final launch-safe avatar hardening and text-only journal state.
+\ir migrations/20260722152851_harden_profile_photo_thumbnails.sql
+\ir migrations/20260722152953_remove_journal_photo_infrastructure.sql

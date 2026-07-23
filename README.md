@@ -63,6 +63,10 @@ Local Vite development automatically uses the preview mock workflow. To exercise
 
 The frontend uses Supabase Auth for login/register and writes directly to Supabase Postgres with Row Level Security policies.
 
+### Storage
+
+Supported profile-photo uploads are browser-normalized, center-cropped, and encoded as square WebP/JPEG thumbnails no larger than 256×256 pixels and 150 KiB; original camera files never reach Storage. Upload paths are immutable, and a durable lifecycle registry retries removal of non-canonical predecessors without allowing the current avatar to be deleted or a retired path to be reused. The Private Journal is text-only and does not require a `journal_photos` table or `journal-progress` bucket.
+
 ### Point economy
 
 Each of the seven Daily Standards awards exactly one point, for a maximum of seven Daily Standard points per active challenge day. The authoritative point sources, reward reachability, and migration contract are documented in [`docs/point-economy.md`](docs/point-economy.md).

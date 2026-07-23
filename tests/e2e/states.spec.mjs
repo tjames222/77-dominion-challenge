@@ -104,7 +104,7 @@ test('profile validation error is visible, announced, and stable', async ({ page
     mimeType: 'text/plain',
     buffer: Buffer.from('deterministic invalid file'),
   });
-  await expect(page.locator('#profileFeedback')).toHaveText('Profile picture must be an image file.');
+  await expect(page.locator('#profileFeedback')).toHaveText('Choose a JPG, PNG, WebP, HEIC, or HEIF image.');
   await expectStableScreenshot(page, app, 'state-profile-error.png');
 
   const results = await analyzeAccessibility(page);

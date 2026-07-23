@@ -55,8 +55,7 @@ select ok(to_regprocedure('public.execute_retired_community_retention(uuid,text,
   'P0/P1 creates no purge RPC');
 
 create temp table journal_counts_before as
-select (select count(*) from public.journal_entries) entries,
-  (select count(*) from public.journal_photos) photos;
+select (select count(*) from public.journal_entries) entries;
 
 insert into public.community_posts (
   id, author_id, display_name, crew_id, scope, body, post_type, created_at, updated_at
@@ -217,8 +216,8 @@ reset role;
 
 select is((select count(*) from public.journal_entries), (select entries from journal_counts_before),
   'the T0 and export workflow preserves private Journal entries');
-select is((select count(*) from public.journal_photos), (select photos from journal_counts_before),
-  'the T0 and export workflow preserves private Journal photos');
+select ok(to_regclass('public.journal_photos') is null,
+  'the independent FOU-753 decision leaves no Journal photo table');
 
 select * from finish();
 rollback;

@@ -17,6 +17,23 @@ import {
 } from './mock-community-storage.mjs';
 import { normalizeLeaderboardRank } from './leaderboard-prestige.mjs';
 import { normalizeEarnedBadges } from './badges-rewards.mjs';
+import { normalizeJournalEntry, sortJournalEntries } from './journal-entry.mjs';
+import {
+  canonicalProfilePhotoUrl,
+  commitProfileUpdateWithCompareAndSwap,
+  createProfilePhotoStoragePath,
+  isPreparedProfilePhoto,
+  replaceProfilePhoto as replacePreparedProfilePhoto,
+  syncProfileMetadataBestEffort,
+} from './profile-photo.mjs';
+import {
+  LEGACY_PROFILE_COLUMNS,
+  PROFILE_COLUMNS,
+  buildProfilePatch,
+  ensureProfileRecord,
+  isMissingProfilePhotoSchemaError,
+  readProfileRecord,
+} from './profile-store.mjs';
 import {
   normalizeConnectedDestinations,
   normalizeOutboundConsent,
@@ -31,6 +48,13 @@ import {
 } from './reward-catalog.mjs';
 
 const SUPABASE_URL = (import.meta.env.VITE_SUPABASE_URL || '').replace(/\/$/, '');
+const SUPABASE_ORIGIN = (() => {
+  try {
+    return new URL(SUPABASE_URL).origin;
+  } catch {
+    return '';
+  }
+})();
 const SUPABASE_KEY =
   import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY ||
   import.meta.env.VITE_SUPABASE_ANON_KEY ||
@@ -85,6 +109,15 @@ const readJson = (key, fallback) => {
 };
 
 const writeJson = (key, value) => localStorage.setItem(key, JSON.stringify(value));
+
+function fileToDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ''));
+    reader.onerror = () => reject(reader.error || new Error('Unable to read preview photo.'));
+    reader.readAsDataURL(file);
+  });
+}
 
 const randomId = (prefix) => `${prefix}_${globalThis.crypto?.randomUUID?.() || Math.random().toString(16).slice(2)}`;
 
@@ -182,13 +215,16 @@ const requireUser = async () => {
   return data.user;
 };
 
+export { isMissingProfilePhotoSchemaError };
+
 export function sessionToUser(session, fallbackName = 'Member') {
   const user = session?.user || {};
   const metadata = user.user_metadata || {};
   const email = user.email || '';
   const name = metadata.name || metadata.full_name || fallbackName || email.split('@')[0] || 'Member';
-  const avatarUrl = metadata.avatar_url || metadata.picture || '';
-  return { userId: user.id || '', name, email, avatarUrl, authenticated: Boolean(session?.access_token) };
+  // public.profiles is the only supported avatar source. Ignoring the Auth
+  // metadata mirror prevents a deleted predecessor from being resurrected.
+  return { userId: user.id || '', name, email, avatarUrl: '', authenticated: Boolean(session?.access_token) };
 }
 
 export const hasSupabaseAuth = () => Boolean(supabase) && !isLocalDemoMode();
@@ -296,28 +332,17 @@ export async function setThemePreference(themeKey) {
   return normalizeThemePreference(data);
 }
 
-export async function upsertProfile({ name, email, avatarUrl, challengeStartDate } = {}) {
+export async function ensureProfile({ name, email } = {}) {
   const client = requireSupabase();
   const user = await requireUser();
   const metadata = user.user_metadata || {};
   const displayName = name || metadata.name || metadata.full_name || user.email?.split('@')[0] || 'Member';
-
-  const payload = {
+  const result = await ensureProfileRecord(client, {
     user_id: user.id,
     name: displayName,
     email: email || user.email || '',
-  };
-  if (avatarUrl !== undefined) payload.avatar_url = avatarUrl || '';
-  if (challengeStartDate !== undefined) payload.challenge_start_date = challengeStartDate || null;
-
-  const { data, error } = await client
-    .from('profiles')
-    .upsert(payload, { onConflict: 'user_id' })
-    .select('user_id, name, email, avatar_url, challenge_start_date, time_zone, created_at, updated_at')
-    .single();
-
-  if (error) throw error;
-  return mapProfile(data);
+  });
+  return mapProfile(result.data);
 }
 
 export async function signUpWithPassword({ name, email, password }) {
@@ -328,7 +353,7 @@ export async function signUpWithPassword({ name, email, password }) {
     options: { data: { name } },
   });
   if (error) throw error;
-  if (data.session?.access_token) await upsertProfile({ name });
+  if (data.session?.access_token) await ensureProfile({ name });
 
   return { session: data.session, user: data.user };
 }
@@ -340,7 +365,7 @@ export async function signInWithPassword({ email, password }) {
     password,
   });
   if (error) throw error;
-  if (data.session?.access_token) await upsertProfile();
+  if (data.session?.access_token) await ensureProfile();
 
   return { session: data.session, user: data.user };
 }
@@ -349,11 +374,17 @@ const mapProfile = (profile) => profile ? ({
   userId: profile.user_id,
   name: profile.name,
   email: profile.email,
-  avatarUrl: profile.avatar_url || '',
+  avatarUrl: canonicalProfilePhotoUrl(
+    profile.avatar_url,
+    profile.user_id,
+    SUPABASE_ORIGIN,
+    PROFILE_PHOTO_BUCKET,
+  ),
   challengeStartDate: profile.challenge_start_date,
   timeZone: profile.time_zone || '',
   createdAt: profile.created_at,
   updatedAt: profile.updated_at,
+  profilePhotoAvailable: profile.profile_photo_available !== false,
 }) : null;
 
 const mapEntry = (entry) => normalizeDailyStandardDraft(entry);
@@ -423,25 +454,16 @@ const mapLeaderboardRow = (row) => ({
   rank: row.rank_position || row.rank || 0,
   userId: row.user_id || row.userId,
   name: row.display_name || row.name || 'Member',
-  avatarUrl: row.avatar_url || row.avatarUrl || '',
+  avatarUrl: canonicalProfilePhotoUrl(
+    row.avatar_url || row.avatarUrl,
+    row.user_id || row.userId,
+    SUPABASE_ORIGIN,
+    PROFILE_PHOTO_BUCKET,
+  ),
   points: row.points || 0,
   currentAppStreak: row.current_app_streak || row.currentAppStreak || 0,
   latestChallengeDay: row.latest_challenge_day || row.latestChallengeDay || 0,
   badges: Array.isArray(row.badges) ? row.badges.map(mapBadge).filter(Boolean) : [],
-});
-
-const mapJournalEntry = (entry, photos = []) => ({
-  id: entry.id,
-  date: entry.entry_date,
-  day: entry.challenge_day,
-  note: entry.note || '',
-  win: entry.win || '',
-  prayer: entry.prayer || '',
-  mood: entry.mood || '',
-  energy: entry.energy || '',
-  createdAt: entry.created_at,
-  updatedAt: entry.updated_at,
-  photos,
 });
 
 const mapSubscription = (subscription) => subscription ? ({
@@ -495,14 +517,14 @@ export function formatDateLabel(value) {
 export async function getProfile() {
   const client = requireSupabase();
   const user = await requireUser();
-  const { data, error } = await client
-    .from('profiles')
-    .select('user_id, name, email, avatar_url, challenge_start_date, time_zone, created_at, updated_at')
-    .eq('user_id', user.id)
-    .maybeSingle();
-
-  if (error) throw error;
-  return data ? mapProfile(data) : upsertProfile();
+  const result = await readProfileRecord(client, user.id);
+  const profile = result.data ? mapProfile(result.data) : await ensureProfile();
+  if (profile.profilePhotoAvailable) {
+    void drainProfilePhotoCleanupQueue().catch((cleanupError) => {
+      console.warn('Profile-photo cleanup will retry later', cleanupError);
+    });
+  }
+  return profile;
 }
 
 export async function updateProfile(profile) {
@@ -510,10 +532,11 @@ export async function updateProfile(profile) {
     const existing = getMockUser();
     const nextUser = {
       ...existing,
-      name: profile.name || existing.name || 'Member',
-      email: profile.email || existing.email || '',
+      name: profile.name ?? existing.name ?? 'Member',
+      email: profile.email ?? existing.email ?? '',
       avatarUrl: profile.avatarUrl ?? existing.avatarUrl ?? '',
       authenticated: true,
+      updatedAt: new Date().toISOString(),
     };
     writeJson('dominion:user', nextUser);
     if (nextUser.name) writeJson('dominion:memberName', nextUser.name);
@@ -523,67 +546,280 @@ export async function updateProfile(profile) {
   const client = requireSupabase();
   const user = await requireUser();
   const metadata = user.user_metadata || {};
-  const authUpdates = {};
-  const dataUpdates = {};
   const nextName = profile.name || metadata.name || metadata.full_name || user.email?.split('@')[0] || 'Member';
   const nextEmail = profile.email || user.email || '';
-
-  if (profile.name !== undefined) {
-    dataUpdates.name = nextName;
-    dataUpdates.full_name = nextName;
+  const avatarOnly = Boolean(profile.avatarOnly);
+  const profilePhotoStoragePath = String(profile.profilePhotoStoragePath || '');
+  let currentResult = await readProfileRecord(client, user.id);
+  if (!currentResult.data) {
+    await ensureProfile();
+    currentResult = await readProfileRecord(client, user.id);
   }
-  if (profile.avatarUrl !== undefined) {
-    dataUpdates.avatar_url = profile.avatarUrl || '';
-    dataUpdates.picture = profile.avatarUrl || '';
-  }
-  if (Object.keys(dataUpdates).length) authUpdates.data = dataUpdates;
-  if (profile.email && profile.email !== user.email) authUpdates.email = profile.email;
+  const initialProfile = currentResult.data ? mapProfile(currentResult.data) : null;
+  if (!initialProfile) throw new Error('Unable to load your profile.');
 
-  let emailChangeRequested = false;
-  if (Object.keys(authUpdates).length) {
-    const { data, error } = await client.auth.updateUser(authUpdates);
-    if (error) throw error;
-    emailChangeRequested = Boolean(profile.email && profile.email !== user.email && data?.user?.email !== profile.email);
+  const patch = buildProfilePatch(profile, { nextName, nextEmail });
+  if (profile.avatarUrl !== undefined && !profilePhotoStoragePath) {
+    throw new Error('Profile pictures must be committed from a registered upload.');
+  }
+  if (profilePhotoStoragePath && profile.challengeStartDate !== undefined) {
+    throw new Error('Save the challenge start date separately from a profile picture.');
   }
 
-  const savedProfile = await upsertProfile({
-    name: nextName,
-    email: nextEmail,
-    avatarUrl: profile.avatarUrl,
-    challengeStartDate: profile.challengeStartDate,
+  const selectColumns = currentResult.profilePhotoAvailable
+    ? PROFILE_COLUMNS
+    : LEGACY_PROFILE_COLUMNS;
+  const readCurrentProfile = async () => {
+    const result = await readProfileRecord(client, user.id);
+    return result.data ? mapProfile(result.data) : null;
+  };
+  const isCommitted = (current) => Boolean(current) && Object.entries(patch).every(([key, value]) => {
+    if (key === 'challenge_start_date') return (current.challengeStartDate || null) === value;
+    return current[key] === value;
   });
 
-  return {
-    ...savedProfile,
-    emailChangeRequested,
-  };
+  let savedProfile;
+  if (profilePhotoStoragePath) {
+    if (!currentResult.profilePhotoAvailable) {
+      throw new Error('Profile pictures are temporarily unavailable while storage is upgraded.');
+    }
+    const updateText = !avatarOnly
+      && (profile.name !== undefined || profile.email !== undefined);
+    const expectedAvatarUrl = canonicalProfilePhotoUrl(
+      profilePhotoStoragePath,
+      user.id,
+      SUPABASE_ORIGIN,
+      PROFILE_PHOTO_BUCKET,
+    );
+    savedProfile = await commitProfileUpdateWithCompareAndSwap({
+      expectedUpdatedAt: profile.expectedUpdatedAt,
+      avatarOnly,
+      tryCommit: async (expectedUpdatedAt) => {
+        const { data, error } = await client.rpc('commit_profile_photo_upload', {
+          target_storage_path: profilePhotoStoragePath,
+          target_expected_updated_at: expectedUpdatedAt,
+          target_update_text: updateText,
+          target_name: updateText ? (profile.name ?? initialProfile.name) : null,
+          target_email: updateText ? (profile.email ?? initialProfile.email) : null,
+        });
+        if (error) throw error;
+        return data?.committed && data.profile
+          ? mapProfile({ ...data.profile, profile_photo_available: true })
+          : null;
+      },
+      readCurrentProfile,
+      isCommitted: (current) => current?.avatarUrl === expectedAvatarUrl
+        && isCommitted(current),
+    });
+  } else if (profile.expectedUpdatedAt) {
+    savedProfile = await commitProfileUpdateWithCompareAndSwap({
+      expectedUpdatedAt: profile.expectedUpdatedAt,
+      avatarOnly: false,
+      tryCommit: async (expectedUpdatedAt) => {
+        const { data, error } = await client
+          .from('profiles')
+          .update(patch)
+          .eq('user_id', user.id)
+          .eq('updated_at', expectedUpdatedAt)
+          .select(selectColumns)
+          .maybeSingle();
+        if (error) throw error;
+        return data
+          ? mapProfile({
+              ...data,
+              avatar_url: data.avatar_url || '',
+              profile_photo_available: currentResult.profilePhotoAvailable,
+            })
+          : null;
+      },
+      readCurrentProfile,
+      isCommitted,
+    });
+  } else {
+    if (!Object.keys(patch).length) {
+      savedProfile = initialProfile;
+    } else {
+      const { data, error } = await client
+        .from('profiles')
+        .update(patch)
+        .eq('user_id', user.id)
+        .select(selectColumns)
+        .maybeSingle();
+      if (error) throw error;
+      savedProfile = data
+        ? mapProfile({
+            ...data,
+            avatar_url: data.avatar_url || '',
+            profile_photo_available: currentResult.profilePhotoAvailable,
+          })
+        : await readCurrentProfile();
+    }
+  }
+
+  const metadataUpdates = {};
+  if (!avatarOnly && profile.name !== undefined) {
+    metadataUpdates.name = savedProfile.name;
+    metadataUpdates.full_name = savedProfile.name;
+  }
+  if (profilePhotoStoragePath) {
+    metadataUpdates.avatar_url = null;
+    metadataUpdates.picture = null;
+  }
+  const metadataSyncError = Object.keys(metadataUpdates).length
+    ? await syncProfileMetadataBestEffort(
+        (data) => client.auth.updateUser({ data }),
+        metadataUpdates,
+      )
+    : null;
+
+  let emailChangeRequested = false;
+  let emailChangeError = null;
+  if (!avatarOnly && profile.email && profile.email !== user.email) {
+    try {
+      const { data, error } = await client.auth.updateUser({ email: profile.email });
+      if (error) throw error;
+      emailChangeRequested = data?.user?.email !== profile.email;
+    } catch (error) {
+      emailChangeError = error;
+    }
+  }
+
+  return { ...savedProfile, emailChangeRequested, emailChangeError, metadataSyncError };
 }
 
-export async function uploadProfilePhoto(file) {
-  if (!file) throw new Error('Choose a profile picture first.');
-  if (!file.type?.startsWith('image/')) throw new Error('Profile picture must be an image file.');
-  if (file.size > 5 * 1024 * 1024) throw new Error('Profile picture must be smaller than 5 MB.');
+function profilePhotoRandomId() {
+  if (globalThis.crypto?.randomUUID) return globalThis.crypto.randomUUID().replaceAll('-', '');
+  const bytes = new Uint8Array(16);
+  globalThis.crypto?.getRandomValues?.(bytes);
+  if (bytes.some(Boolean)) return Array.from(bytes, (value) => value.toString(16).padStart(2, '0')).join('');
+  return `${Math.random().toString(16).slice(2).padEnd(16, '0')}${Math.random().toString(16).slice(2).padEnd(16, '0')}`.slice(0, 32);
+}
 
-  if (isLocalDemoMode()) return fileToDataUrl(file);
+function isUnavailableProfilePhotoCleanupRpc(error) {
+  const message = `${error?.code || ''} ${error?.message || ''}`;
+  return /PGRST202|register_profile_photo_upload|commit_profile_photo_upload|abandon_profile_photo_upload|claim_profile_photo_cleanup/.test(message)
+    && /not find|not found|schema cache|PGRST202/i.test(message);
+}
+
+export async function drainProfilePhotoCleanupQueue({ maxBatches = 8 } = {}) {
+  if (isLocalDemoMode()) return { removed: 0 };
+  const client = requireSupabase();
+  await requireUser();
+  let removed = 0;
+  const failures = [];
+
+  for (let batch = 0; batch < maxBatches; batch += 1) {
+    const { data: jobs, error: claimError } = await client.rpc('claim_profile_photo_cleanup', {
+      target_limit: 20,
+    });
+    if (claimError) {
+      // The frontend-only rollout intentionally precedes the hardening migration.
+      if (isUnavailableProfilePhotoCleanupRpc(claimError)) return { removed, available: false };
+      throw claimError;
+    }
+    if (!jobs?.length) break;
+
+    for (const job of jobs) {
+      const { error: removeError } = await client.storage
+        .from(PROFILE_PHOTO_BUCKET)
+        .remove([job.storage_path]);
+      if (removeError) {
+        failures.push(removeError);
+        continue;
+      }
+      const { data: confirmed, error: confirmError } = await client.rpc('confirm_profile_photo_cleanup', {
+        target_job_id: job.job_id,
+        target_claim_token: job.claim_token,
+      });
+      if (confirmError) failures.push(confirmError);
+      else if (confirmed !== true) {
+        failures.push(new Error('The profile-photo cleanup claim expired before confirmation.'));
+      } else removed += 1;
+    }
+    if (failures.length) break;
+  }
+
+  if (failures.length) {
+    const error = new Error('The profile saved, but old picture cleanup will retry on your next profile visit.');
+    error.cause = failures[0];
+    throw error;
+  }
+  return { removed, available: true };
+}
+
+export async function uploadProfilePhoto(preparedPhoto) {
+  if (!isPreparedProfilePhoto(preparedPhoto)) {
+    throw new Error('Prepare the profile picture before uploading it.');
+  }
+  if (isLocalDemoMode()) {
+    return { avatarUrl: await fileToDataUrl(preparedPhoto.blob), storagePath: '' };
+  }
 
   const client = requireSupabase();
   const user = await requireUser();
-  const extensionFromType = file.type.split('/')[1]?.replace('jpeg', 'jpg') || '';
-  const extensionFromName = file.name?.split('.').pop()?.toLowerCase() || '';
-  const extension = extensionFromType || extensionFromName || 'jpg';
-  const safeExtension = ['jpg', 'png', 'webp', 'heic', 'heif'].includes(extension) ? extension : 'jpg';
-  const storagePath = `${user.id}/avatar-${Date.now()}.${safeExtension}`;
-  const { error } = await client.storage
+  const storagePath = createProfilePhotoStoragePath(
+    user.id,
+    preparedPhoto.extension,
+    Date.now(),
+    profilePhotoRandomId(),
+  );
+  const { data: registrationId, error: registerError } = await client.rpc('register_profile_photo_upload', {
+    target_storage_path: storagePath,
+  });
+  if (registerError) {
+    if (isUnavailableProfilePhotoCleanupRpc(registerError)) {
+      throw new Error('Profile pictures are temporarily unavailable while storage is upgraded.');
+    }
+    throw registerError;
+  }
+
+  const abandonUpload = async () => {
+    const { error } = await client.rpc('abandon_profile_photo_upload', {
+      target_storage_path: storagePath,
+    });
+    if (error) throw error;
+  };
+
+  const { error: uploadError } = await client.storage
     .from(PROFILE_PHOTO_BUCKET)
-    .upload(storagePath, file, { cacheControl: '3600', upsert: true });
+    .upload(storagePath, preparedPhoto.blob, {
+      cacheControl: '31536000',
+      contentType: preparedPhoto.contentType,
+      upsert: false,
+    });
+  if (uploadError) {
+    try {
+      await abandonUpload();
+      await drainProfilePhotoCleanupQueue();
+    } catch (cleanupError) {
+      uploadError.profilePhotoCleanupError = cleanupError;
+    }
+    throw uploadError;
+  }
 
-  if (error) throw error;
+  return {
+    avatarUrl: storagePath,
+    storagePath,
+    registrationId,
+  };
+}
 
-  const { data } = client.storage
-    .from(PROFILE_PHOTO_BUCKET)
-    .getPublicUrl(storagePath);
-
-  return data?.publicUrl || '';
+export async function replaceProfilePhoto({ preparedPhoto, profile }) {
+  return replacePreparedProfilePhoto({
+    preparedPhoto,
+    profile,
+    uploadPhoto: uploadProfilePhoto,
+    saveProfile: updateProfile,
+    abandonUploadedPhoto: async (uploadedPhoto) => {
+      const client = requireSupabase();
+      const { data, error } = await client.rpc('abandon_profile_photo_upload', {
+        target_storage_path: uploadedPhoto.storagePath,
+      });
+      if (error) throw error;
+      return data === true;
+    },
+    cleanupQueuedPhotos: drainProfilePhotoCleanupQueue,
+  });
 }
 
 export async function getBillingState() {
@@ -1630,7 +1866,12 @@ export async function getCrewMembers(crewId) {
     crewId: member.crew_id,
     userId: member.user_id,
     name: member.display_name || 'Member',
-    avatarUrl: member.avatar_url || '',
+    avatarUrl: canonicalProfilePhotoUrl(
+      member.avatar_url,
+      member.user_id,
+      SUPABASE_ORIGIN,
+      PROFILE_PHOTO_BUCKET,
+    ),
     role: member.role,
     joinedAt: member.joined_at,
   }));
@@ -1843,38 +2084,12 @@ export async function confirmCrewInvite(continuationToken) {
   return data || { status: 'invalid' };
 }
 
-async function createSignedPhoto(photo) {
-  if (!photo?.storage_path) return null;
-  const client = requireSupabase();
-  const { data } = await client.storage
-    .from('journal-progress')
-    .createSignedUrl(photo.storage_path, 3600);
-
-  return {
-    id: photo.id,
-    entryId: photo.journal_entry_id,
-    storagePath: photo.storage_path,
-    caption: photo.caption || '',
-    createdAt: photo.created_at,
-    url: data?.signedUrl || '',
-  };
-}
-
-function sortJournalEntries(entries) {
-  return [...entries].sort((left, right) => new Date(right.date || right.entry_date) - new Date(left.date || left.entry_date));
-}
-
-function fileToDataUrl(file) {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(String(reader.result || ''));
-    reader.onerror = () => reject(reader.error || new Error('Unable to read preview photo.'));
-    reader.readAsDataURL(file);
-  });
-}
-
 export async function getJournalEntries() {
-  if (isLocalDemoMode()) return sortJournalEntries(readJson(MOCK_JOURNAL_KEY, []));
+  if (isLocalDemoMode()) {
+    const entries = sortJournalEntries(readJson(MOCK_JOURNAL_KEY, []).map(normalizeJournalEntry));
+    writeJson(MOCK_JOURNAL_KEY, entries);
+    return entries;
+  }
 
   const client = requireSupabase();
   await requireUser();
@@ -1885,26 +2100,12 @@ export async function getJournalEntries() {
     .limit(30);
 
   if (error) throw error;
-  if (!entries?.length) return [];
-
-  const entryIds = entries.map((entry) => entry.id);
-  const { data: photos, error: photosError } = await client
-    .from('journal_photos')
-    .select('id, journal_entry_id, storage_path, caption, created_at')
-    .in('journal_entry_id', entryIds)
-    .order('created_at', { ascending: false });
-
-  if (photosError) throw photosError;
-  const signedPhotos = (await Promise.all((photos || []).map(createSignedPhoto))).filter(Boolean);
-  return entries.map((entry) => mapJournalEntry(
-    entry,
-    signedPhotos.filter((photo) => photo.entryId === entry.id),
-  ));
+  return (entries || []).map(normalizeJournalEntry);
 }
 
 export async function saveJournalEntry(entry) {
   if (isLocalDemoMode()) {
-    const entries = readJson(MOCK_JOURNAL_KEY, []);
+    const entries = readJson(MOCK_JOURNAL_KEY, []).map(normalizeJournalEntry);
     const existingIndex = entries.findIndex((item) => item.date === entry.date);
     const existing = existingIndex >= 0 ? entries[existingIndex] : {};
     const now = new Date().toISOString();
@@ -1917,7 +2118,6 @@ export async function saveJournalEntry(entry) {
       prayer: entry.prayer || '',
       mood: entry.mood || '',
       energy: entry.energy || '',
-      photos: existing.photos || [],
       createdAt: existing.createdAt || now,
       updatedAt: now,
     };
@@ -1945,51 +2145,5 @@ export async function saveJournalEntry(entry) {
     .single();
 
   if (error) throw error;
-  return mapJournalEntry(data, []);
-}
-
-export async function uploadJournalPhoto({ entryId, file, caption = '' }) {
-  if (isLocalDemoMode()) {
-    const entries = readJson(MOCK_JOURNAL_KEY, []);
-    const entry = entries.find((item) => item.id === entryId);
-    if (!entry) throw new Error('Save the preview journal entry before adding a photo.');
-    const now = new Date().toISOString();
-    const photo = {
-      id: randomId('preview_photo'),
-      entryId,
-      storagePath: `preview/${entryId}/${file.name || 'progress-photo'}`,
-      caption,
-      createdAt: now,
-      url: await fileToDataUrl(file),
-    };
-    entry.photos = [photo, ...(entry.photos || [])];
-    entry.updatedAt = now;
-    writeJson(MOCK_JOURNAL_KEY, sortJournalEntries(entries));
-    return photo;
-  }
-
-  const client = requireSupabase();
-  const user = await requireUser();
-  const extension = file.name?.split('.').pop()?.toLowerCase() || 'jpg';
-  const safeName = `${Date.now()}-${globalThis.crypto?.randomUUID?.() || Math.random().toString(16).slice(2)}.${extension}`;
-  const storagePath = `${user.id}/${entryId}/${safeName}`;
-  const { error: uploadError } = await client.storage
-    .from('journal-progress')
-    .upload(storagePath, file, { cacheControl: '3600', upsert: false });
-
-  if (uploadError) throw uploadError;
-
-  const { data, error } = await client
-    .from('journal_photos')
-    .insert({
-      user_id: user.id,
-      journal_entry_id: entryId,
-      storage_path: storagePath,
-      caption,
-    })
-    .select('id, journal_entry_id, storage_path, caption, created_at')
-    .single();
-
-  if (error) throw error;
-  return createSignedPhoto(data);
+  return normalizeJournalEntry(data);
 }

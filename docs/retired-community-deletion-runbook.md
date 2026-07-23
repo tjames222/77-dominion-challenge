@@ -31,8 +31,11 @@ The worker supports these private modes:
 - `process`: claims one approved batch, rechecks exact Storage metadata, removes
   only the claimed path through the Storage API, confirms absence, and revokes
   provider credentials before clearing local encrypted material. Account erasure
-  work spans `community-post-images`, `profile-photos`, and `journal-progress`;
-  each claim carries its bucket and path explicitly.
+  work spans the active `community-post-images` and `profile-photos` buckets.
+  `journal-progress` remains in the worker allowlist and historical work
+  constraint solely so a restored pre-FOU-753 snapshot can finish a previously
+  sealed claim; the active product no longer provisions that bucket. Each claim
+  carries its bucket and path explicitly.
 - `verify-backup`: records the independent purge-plus-30-day backup check.
 - `maintenance`: after exact 180-day retention, removes the redacted manifest,
   linked verification, exact relational items, Storage path work, credential
@@ -60,8 +63,9 @@ nonces, tokens, provider response bodies, or signing secrets.
 - Aged retention cannot begin or execute before T0 + 91 days and remains bound
   to the exact T0 inventory.
 - Account erasure derives the authenticated subject, has an exact 24-hour
-  deadline, includes authored engagement, unavoidable post cascades, profile and
-  journal objects, and subject-owned unreferenced Community uploads, and does not
+  deadline, includes authored engagement, unavoidable post cascades, active
+  profile objects, any journal objects present only in a restored historical
+  snapshot, and subject-owned unreferenced Community uploads, and does not
   erase groups merely because the member created them. Every exact Storage item
   must be confirmed absent before `auth.users` is deleted.
 - Group deletion has an exact 30-day cancellation window and cannot claim either

@@ -12,4 +12,4 @@ FOU-543 removes Dominion's private-group conversation surface. Group creation, i
 
 The migration deliberately does not delete rows, objects, or the private bucket. Historical data remains service-only. FOU-564 captures an immutable retirement census, offers each authenticated member a time-limited export of only content they authored, and seals deletion work behind backup, independent approval, and worker confirmation. Deployment does not authorize a production purge. See [Retired Community deletion controls](./retired-community-deletion-runbook.md).
 
-The Private Journal uses its own tables and `journal-progress` bucket and is unaffected by this cutover.
+The Private Journal's text entries are unaffected by this cutover and remain supported. FOU-753 is the separate, audited decision that retires only its unused photo table and `journal-progress` bucket.

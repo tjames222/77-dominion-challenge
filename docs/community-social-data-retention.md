@@ -35,7 +35,7 @@ This 90-day primary retention period is the default maximum, not a reason to del
 | OAuth/admin security events introduced by later tickets | Integration audit store | Operators only | 180 days | Retain actor ID, action, provider, and result; exclude tokens and conversation content |
 | OAuth credentials | Encrypted secrets store | Runtime only | Until disconnect, group deletion, account deletion, or revocation | Revoke provider grant and delete encrypted secret within 24 hours |
 
-`community_feed_items` is not retired conversation data. It is a server-derived check-in/progress projection still used by the Dashboard and prospective outbound group updates. Its lifecycle remains tied to the underlying check-in policy. Private journal rows and `journal-progress` objects are also outside this decision.
+`community_feed_items` is not retired conversation data. It is a server-derived check-in/progress projection still used by the Dashboard and prospective outbound group updates. Its lifecycle remains tied to the underlying check-in policy. Private journal rows are also outside this decision and remain supported. FOU-753 separately retired journal-photo collection only after a fresh production inventory proved that no journal-photo rows, objects, or multipart uploads existed.
 
 ## User, account, and group expectations
 
