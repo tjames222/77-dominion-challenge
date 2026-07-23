@@ -5,43 +5,54 @@ html {
   scroll-padding-top: calc(88px + env(safe-area-inset-top));
   overflow-x: clip;
 }
+body {
+  overflow-x: clip;
+}
 .topbar {
   position: sticky;
   top: 0;
   z-index: 140;
+  isolation: isolate;
   min-height: 72px;
   margin-inline: calc(-1 * var(--shell-pad, clamp(18px, 4vw, 34px)));
   padding: calc(12px + env(safe-area-inset-top)) var(--shell-pad, clamp(18px, 4vw, 34px)) 12px;
+  background: transparent;
+  border-bottom: 0;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+.topbar::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  box-sizing: border-box;
+  pointer-events: none;
   background: color-mix(in srgb, var(--background) 94%, transparent);
   border-bottom: 1px solid transparent;
   backdrop-filter: blur(20px) saturate(130%);
   -webkit-backdrop-filter: blur(20px) saturate(130%);
-  transition: min-height 240ms cubic-bezier(.16, 1, .3, 1), padding 240ms cubic-bezier(.16, 1, .3, 1), background 240ms ease, border-color 240ms ease, box-shadow 240ms ease;
-  will-change: min-height, padding, background;
+  transform: scaleY(1);
+  transform-origin: top center;
+  transition: transform 240ms cubic-bezier(.16, 1, .3, 1), opacity 240ms ease, background 240ms ease, border-color 240ms ease, box-shadow 240ms ease;
+  will-change: transform;
 }
-.topbar.topbar-scrolled {
+.topbar.topbar-scrolled::before {
   border-bottom-color: color-mix(in srgb, var(--accent) 18%, var(--border));
   box-shadow: 0 12px 34px color-mix(in srgb, var(--shadow-color) 18%, transparent);
 }
-.topbar.topbar-collapsed {
-  min-height: 54px;
-  padding-top: calc(6px + env(safe-area-inset-top));
-  padding-bottom: 6px;
+.topbar.topbar-collapsed::before {
+  opacity: .96;
   background: color-mix(in srgb, var(--background) 78%, transparent);
+  transform: scaleY(.9);
 }
 .topbar > * {
-  transition: transform 240ms cubic-bezier(.16, 1, .3, 1), opacity 200ms ease;
+  position: relative;
+  z-index: 1;
+  transition: opacity 200ms ease;
 }
-.topbar.topbar-collapsed .brand-name,
-.topbar.topbar-collapsed .topbar-login,
-.topbar.topbar-collapsed .theme-toggle {
-  opacity: .78;
-  transform: scale(.94);
-}
-.topbar.topbar-collapsed .brand-mark,
-.topbar.topbar-collapsed .back-link,
-.topbar.topbar-collapsed .global-menu-button {
-  transform: scale(.9);
+.topbar.topbar-collapsed > * {
+  opacity: .84;
 }
 .global-menu-button {
   position: relative;
@@ -80,6 +91,10 @@ html {
 .global-menu-button span:nth-child(1) { width: 20px; transform: translateY(-7px); }
 .global-menu-button span:nth-child(2) { width: 13px; transform: translateX(3px); opacity: .8; }
 .global-menu-button span:nth-child(3) { width: 20px; transform: translateY(7px); }
+.topbar.topbar-collapsed .global-menu-button::before { transform: scale(.9); }
+.topbar.topbar-collapsed .global-menu-button span:nth-child(1) { width: 18px; transform: translateY(-6px); }
+.topbar.topbar-collapsed .global-menu-button span:nth-child(2) { width: 12px; }
+.topbar.topbar-collapsed .global-menu-button span:nth-child(3) { width: 18px; transform: translateY(6px); }
 .global-menu-button:hover {
   transform: translateY(-1px) scale(1.02);
   border-color: color-mix(in srgb, var(--accent) 58%, var(--border));
@@ -87,8 +102,8 @@ html {
 }
 .menu-open .global-menu-button {
   position: fixed;
-  top: 14px;
-  right: 16px;
+  top: calc(14px + env(safe-area-inset-top));
+  right: max(16px, env(safe-area-inset-right));
   z-index: 180;
   margin-left: 0;
   transform: rotate(90deg) scale(1.03);
@@ -121,7 +136,7 @@ html {
   gap: 20px;
   width: min(88vw, 380px);
   height: 100dvh;
-  padding: 72px 18px 18px;
+  padding: calc(72px + env(safe-area-inset-top)) max(18px, env(safe-area-inset-right)) max(18px, env(safe-area-inset-bottom)) max(18px, env(safe-area-inset-left));
   border-left: 1px solid color-mix(in srgb, var(--accent) 28%, var(--border));
   background: radial-gradient(circle at top right, color-mix(in srgb, var(--accent) 18%, transparent), transparent 44%), var(--background);
   box-shadow: -24px 0 80px color-mix(in srgb, var(--shadow-color) 58%, transparent);
@@ -181,16 +196,21 @@ html {
 @media (max-width: 420px) {
   html { scroll-padding-top: calc(76px + env(safe-area-inset-top)); }
   .topbar { min-height: 64px; gap: 8px; }
-  .topbar.topbar-collapsed { min-height: 50px; }
   .global-menu-button { width: 44px; height: 44px; margin-left: 4px; }
-  .menu-open .global-menu-button { top: 12px; right: 12px; }
+  .menu-open .global-menu-button {
+    top: calc(12px + env(safe-area-inset-top));
+    right: max(12px, env(safe-area-inset-right));
+  }
 }
 @media (prefers-reduced-motion: reduce) {
   .topbar,
+  .topbar::before,
   .topbar > *,
   .global-menu-button,
   .global-menu-button::before,
-  .global-menu-button span {
+  .global-menu-button span,
+  .global-menu-backdrop,
+  .global-menu {
     transition: none !important;
   }
 }

@@ -747,6 +747,9 @@ body.challenge-finished .confetti-layer {
   outline-offset: 3px;
 }
 .topbar.topbar-collapsed .dashboard-streak-button {
+  transform: none;
+}
+.topbar.topbar-collapsed .dashboard-streak-button > * {
   transform: scale(.9);
 }
 .menu-open .dashboard-streak-button {
