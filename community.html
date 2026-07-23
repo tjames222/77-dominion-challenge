@@ -86,13 +86,14 @@
                 <strong id="activeCrewName"></strong>
               </div>
               <button
-                class="secondary"
+                class="invite-people-button"
                 id="copyInviteButton"
                 type="button"
                 data-share-composer
                 data-share-kind="invite"
               >
-                Invite people
+                <span class="invite-people-icon" aria-hidden="true">+</span>
+                <span>Invite People</span>
               </button>
             </div>
           </section>
@@ -114,8 +115,27 @@
           </p>
           <div class="integration-destination-list" id="integrationDestinationList" aria-live="polite"></div>
           <div class="integration-connect-actions" id="integrationConnectActions" hidden>
-            <button class="secondary" type="button" data-connect-provider="slack">Connect Slack</button>
-            <button class="secondary" type="button" data-connect-provider="discord">Connect Discord</button>
+            <button class="provider-button provider-slack" type="button" data-connect-provider="slack">
+              <span class="provider-mark provider-mark-slack" aria-hidden="true">
+                <svg viewBox="0 0 24 24" focusable="false">
+                  <rect x="9" y="1" width="5" height="11" rx="2.5" fill="#36c5f0"></rect>
+                  <rect x="12" y="9" width="11" height="5" rx="2.5" fill="#2eb67d"></rect>
+                  <rect x="10" y="12" width="5" height="11" rx="2.5" fill="#ecb22e"></rect>
+                  <rect x="1" y="10" width="11" height="5" rx="2.5" fill="#e01e5a"></rect>
+                </svg>
+              </span>
+              <span>Connect Slack</span>
+            </button>
+            <button class="provider-button provider-discord" type="button" data-connect-provider="discord">
+              <span class="provider-mark provider-mark-discord" aria-hidden="true">
+                <svg viewBox="0 0 28 24" focusable="false">
+                  <path d="M6.2 4.5c4.7-2.1 10.9-2.1 15.6 0 2.5 3.5 4 7.4 4.2 11.6-2.3 2.2-4.3 3.5-6.2 4.4l-1.5-2.1c.9-.4 1.8-.9 2.6-1.5-4.5 2.1-9.3 2.1-13.8 0 .8.6 1.7 1.1 2.6 1.5l-1.5 2.1c-1.9-.9-3.9-2.2-6.2-4.4.2-4.2 1.7-8.1 4.2-11.6Z" fill="#5865f2"></path>
+                  <circle cx="10.4" cy="12.3" r="1.8" fill="#fff"></circle>
+                  <circle cx="17.6" cy="12.3" r="1.8" fill="#fff"></circle>
+                </svg>
+              </span>
+              <span>Connect Discord</span>
+            </button>
           </div>
           <form class="integration-confirm" id="integrationConfirmForm" hidden>
             <div>

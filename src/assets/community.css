@@ -431,6 +431,73 @@
   gap: 12px;
   align-items: end;
 }
+.invite-people-button,
+.provider-button {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  min-height: 48px;
+  border-radius: 8px;
+  padding: 0 18px;
+  font: inherit;
+  font-weight: 950;
+  letter-spacing: .015em;
+  text-align: center;
+  transition: transform 150ms ease, box-shadow 150ms ease, border-color 150ms ease, background 150ms ease;
+}
+.invite-people-button {
+  min-height: 54px;
+  border: 1px solid color-mix(in srgb, var(--accent-strong) 72%, var(--border));
+  padding-inline: 20px;
+  background:
+    linear-gradient(145deg, color-mix(in srgb, var(--highlight-color) 18%, transparent), transparent 58%),
+    linear-gradient(135deg, var(--button-primary-background), var(--accent-strong));
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, var(--highlight-color) 36%, transparent),
+    0 10px 24px color-mix(in srgb, var(--accent) 22%, transparent);
+  color: var(--button-primary-text);
+  letter-spacing: .07em;
+  text-transform: uppercase;
+}
+.invite-people-icon {
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border: 1px solid currentColor;
+  border-radius: 999px;
+  font-size: 1.2rem;
+  line-height: 1;
+}
+.invite-people-button:hover:not(:disabled),
+.provider-button:hover:not(:disabled) {
+  transform: translateY(-1px);
+}
+.invite-people-button:hover:not(:disabled) {
+  border-color: var(--accent-strong);
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, var(--highlight-color) 42%, transparent),
+    0 13px 30px color-mix(in srgb, var(--accent) 30%, transparent);
+}
+.invite-people-button:active:not(:disabled),
+.provider-button:active:not(:disabled) {
+  transform: translateY(1px) scale(.99);
+}
+.invite-people-button:focus-visible,
+.provider-button:focus-visible {
+  outline: 3px solid color-mix(in srgb, var(--focus-ring) 72%, transparent);
+  outline-offset: 3px;
+}
+.invite-people-button:disabled,
+.invite-people-button[aria-busy="true"],
+.provider-button:disabled,
+.provider-button[aria-busy="true"] {
+  cursor: wait;
+  opacity: .56;
+  transform: none;
+}
 .invite-link {
   overflow-wrap: anywhere;
   margin: 0;
@@ -601,6 +668,53 @@
   display: grid;
   gap: 10px;
 }
+.integration-connect-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+.provider-button {
+  --provider-accent: var(--accent);
+  border: 1px solid color-mix(in srgb, var(--provider-accent) 55%, var(--border));
+  background:
+    linear-gradient(145deg, color-mix(in srgb, var(--provider-accent) 14%, transparent), transparent 62%),
+    var(--button-secondary-background);
+  color: var(--button-secondary-text);
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--highlight-color) 10%, transparent);
+}
+.provider-slack { --provider-accent: #36c5f0; }
+.provider-discord { --provider-accent: #5865f2; }
+.provider-button:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--provider-accent) 82%, var(--border));
+  box-shadow: 0 10px 24px color-mix(in srgb, var(--provider-accent) 16%, transparent);
+}
+.provider-button:focus-visible {
+  outline-color: color-mix(in srgb, var(--provider-accent) 66%, transparent);
+}
+.provider-mark {
+  display: grid;
+  flex: 0 0 auto;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--provider-accent) 12%, var(--surface));
+}
+.provider-mark svg {
+  display: block;
+  width: 22px;
+  height: 22px;
+}
+.provider-mark-discord svg { width: 24px; }
+.provider-button.provider-secondary {
+  min-height: 44px;
+  padding-inline: 14px;
+  font-size: .78rem;
+}
+.provider-button.provider-disconnect {
+  --provider-accent: var(--danger);
+  background: var(--button-danger-background);
+  color: var(--button-danger-text);
+}
 .integration-destination {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
@@ -681,6 +795,16 @@
   border-radius: 14px;
   background: color-mix(in srgb, var(--surface-raised, var(--surface)) 86%, transparent);
 }
+.integration-destination[data-integration-status="active"] {
+  border-block-start-color: color-mix(in srgb, var(--success) 42%, var(--border));
+  background: color-mix(in srgb, var(--success) 5%, transparent);
+  box-shadow: inset 3px 0 color-mix(in srgb, var(--success) 64%, transparent);
+}
+.integration-destination[data-integration-status="reconnect_required"] {
+  border-block-start-color: color-mix(in srgb, var(--danger) 52%, var(--border));
+  background: color-mix(in srgb, var(--danger) 6%, transparent);
+  box-shadow: inset 3px 0 color-mix(in srgb, var(--danger) 68%, transparent);
+}
 .integration-settings fieldset {
   display: flex;
   flex-wrap: wrap;
@@ -741,12 +865,12 @@
   color: var(--danger, #ff8a80);
 }
 .integration-destination-actions,
-.integration-connect-actions,
 .integration-confirm-actions {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
 }
+.integration-connect-actions { gap: 8px; }
 .integration-destination-actions button,
 .integration-connect-actions button,
 .integration-confirm-actions button { min-height: 44px; }
@@ -783,6 +907,7 @@
   }
   .section-heading-row { align-items: flex-start; }
   .integration-destination { grid-template-columns: 1fr; }
+  .integration-connect-actions { grid-template-columns: 1fr; }
   .integration-destination-actions,
   .integration-connect-actions,
   .integration-confirm-actions { align-items: stretch; flex-direction: column; }
@@ -815,7 +940,12 @@
   }
 }
 @media (prefers-reduced-motion: reduce) {
-  .skeleton {
-    animation: none;
-  }
+  .skeleton { animation: none; }
+  .invite-people-button,
+  .provider-button { transition: none; }
+}
+@media (forced-colors: active) {
+  .invite-people-button,
+  .provider-button,
+  .provider-mark { forced-color-adjust: auto; }
 }

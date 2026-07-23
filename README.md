@@ -46,6 +46,8 @@ pnpm dev
 
 Local Vite development automatically uses the preview mock workflow. To exercise the explicit preview behavior in another environment, set `VITE_ENABLE_MOCKS=true`.
 
+Slack and Discord connection controls fail closed unless `VITE_ENABLE_GROUP_INTEGRATIONS=true`. Keep the flag false until the complete provider rollout in FOU-764 is approved; when it is false, the browser does not expose provider controls or call provider-management functions.
+
 ## Supabase setup
 
 1. Create a Supabase project.

@@ -19,6 +19,11 @@ import {
   crewViewState,
   newCrewLifecycleRequestId,
 } from './crew-experience.mjs';
+import { groupIntegrationsEnabled } from './group-integration-launch.mjs';
+
+const GROUP_INTEGRATIONS_ENABLED = groupIntegrationsEnabled(
+  import.meta.env.VITE_ENABLE_GROUP_INTEGRATIONS,
+);
 
 const tabs = Array.from(document.querySelectorAll('.community-tab'));
 const panels = Array.from(document.querySelectorAll('.community-panel'));
@@ -88,12 +93,14 @@ function setFeedback(message = '') {
 
 function setButtonBusy(button, label) {
   if (!button) return () => {};
-  const original = button.textContent;
+  const original = button.innerHTML;
   button.disabled = true;
+  button.setAttribute('aria-busy', 'true');
   button.textContent = label;
   return () => {
     button.disabled = false;
-    button.textContent = original;
+    button.removeAttribute('aria-busy');
+    button.innerHTML = original;
   };
 }
 
@@ -259,7 +266,7 @@ function renderCrewShell() {
   if (createForm) createForm.hidden = !view.showCreateForm;
   if (manageCard) manageCard.hidden = !view.showActiveCrew;
   if (membersCard) membersCard.hidden = !crew;
-  if (integrationsCard) integrationsCard.hidden = !crew;
+  if (integrationsCard) integrationsCard.hidden = !crew || !GROUP_INTEGRATIONS_ENABLED;
   if (lifecycleCard) lifecycleCard.hidden = !crew;
 
   if (!crew) {
@@ -321,6 +328,30 @@ function integrationHealthLabel(destination = {}) {
   return 'Connect or reconnect this destination to deliver updates.';
 }
 
+function providerMark(provider = '') {
+  if (provider === 'discord') {
+    return `
+      <span class="provider-mark provider-mark-discord" aria-hidden="true">
+        <svg viewBox="0 0 28 24" focusable="false">
+          <path d="M6.2 4.5c4.7-2.1 10.9-2.1 15.6 0 2.5 3.5 4 7.4 4.2 11.6-2.3 2.2-4.3 3.5-6.2 4.4l-1.5-2.1c.9-.4 1.8-.9 2.6-1.5-4.5 2.1-9.3 2.1-13.8 0 .8.6 1.7 1.1 2.6 1.5l-1.5 2.1c-1.9-.9-3.9-2.2-6.2-4.4.2-4.2 1.7-8.1 4.2-11.6Z" fill="#5865f2"></path>
+          <circle cx="10.4" cy="12.3" r="1.8" fill="#fff"></circle>
+          <circle cx="17.6" cy="12.3" r="1.8" fill="#fff"></circle>
+        </svg>
+      </span>
+    `;
+  }
+  return `
+    <span class="provider-mark provider-mark-slack" aria-hidden="true">
+      <svg viewBox="0 0 24 24" focusable="false">
+        <rect x="9" y="1" width="5" height="11" rx="2.5" fill="#36c5f0"></rect>
+        <rect x="12" y="9" width="11" height="5" rx="2.5" fill="#2eb67d"></rect>
+        <rect x="10" y="12" width="5" height="11" rx="2.5" fill="#ecb22e"></rect>
+        <rect x="1" y="10" width="11" height="5" rx="2.5" fill="#e01e5a"></rect>
+      </svg>
+    </span>
+  `;
+}
+
 function integrationEventSummary(destination = {}) {
   const events = [
     ['Daily Check-Ins', destination.checkInsEnabled],
@@ -374,7 +405,7 @@ function renderIntegrations({ loading = false, error = '' } = {}) {
   const crew = activeCrew();
   if (!container || !actions) return;
 
-  if (!crew) {
+  if (!GROUP_INTEGRATIONS_ENABLED || !crew) {
     container.innerHTML = '';
     actions.hidden = true;
     return;
@@ -396,18 +427,21 @@ function renderIntegrations({ loading = false, error = '' } = {}) {
   } else {
     container.innerHTML = state.integrations.map((destination) => {
       const status = destination.status || 'disconnected';
+      const provider = destination.provider === 'discord' ? 'discord' : 'slack';
+      const providerName = provider === 'discord' ? 'Discord' : 'Slack';
       const actionMarkup = canManage && destination.canManage ? `
         <div class="integration-destination-actions">
-          ${status === 'active' ? `<button class="secondary compact" type="button" data-test-integration="${escapeHtml(destination.id)}">Test</button>` : ''}
-          <button class="secondary compact" type="button" data-reconnect-provider="${escapeHtml(destination.provider)}">Reconnect</button>
-          ${status !== 'disconnected' ? `<button class="secondary compact" type="button" data-disconnect-integration="${escapeHtml(destination.id)}">Disconnect</button>` : ''}
+          ${status === 'active' ? `<button class="provider-button provider-${provider} provider-secondary" type="button" data-test-integration="${escapeHtml(destination.id)}">Test ${providerName}</button>` : ''}
+          <button class="provider-button provider-${provider} provider-secondary" type="button" data-reconnect-provider="${provider}">Reconnect ${providerName}</button>
+          ${status !== 'disconnected' ? `<button class="provider-button provider-disconnect provider-secondary" type="button" data-disconnect-integration="${escapeHtml(destination.id)}">Disconnect</button>` : ''}
         </div>
       ` : '';
       return `
-        <article class="integration-destination">
+        <article class="integration-destination" data-integration-status="${escapeHtml(status)}">
           <div class="integration-destination-copy">
             <div class="integration-destination-title">
-              <strong>${escapeHtml(destination.provider)}</strong>
+              ${providerMark(provider)}
+              <strong>${providerName}</strong>
               <span class="integration-status ${escapeHtml(status)}">${escapeHtml(integrationStatusLabel(status))}</span>
             </div>
             <span>${escapeHtml(destination.workspaceName || destination.workspaceId || 'Workspace')} · #${escapeHtml(destination.channelName || destination.channelId || 'channel')}</span>
@@ -431,7 +465,7 @@ function renderIntegrations({ loading = false, error = '' } = {}) {
 
 async function loadCrewIntegrations() {
   const crew = activeCrew();
-  if (!crew) {
+  if (!GROUP_INTEGRATIONS_ENABLED || !crew) {
     state.integrations = [];
     renderIntegrations();
     return;
@@ -455,8 +489,8 @@ function renderIntegrationSetup() {
   const select = $('integrationChannelSelect');
   const setup = state.integrationSetup;
   if (!form || !select) return;
-  form.hidden = !setup;
-  if (!setup) return;
+  form.hidden = !GROUP_INTEGRATIONS_ENABLED || !setup;
+  if (!GROUP_INTEGRATIONS_ENABLED || !setup) return;
   $('integrationConfirmTitle').textContent = `Choose a ${setup.provider === 'slack' ? 'Slack' : 'Discord'} channel`;
   $('integrationConfirmWorkspace').textContent = setup.workspace?.name || 'Authorized workspace';
   select.innerHTML = (setup.channels || []).map((item) => (
@@ -476,6 +510,12 @@ function takeIntegrationCallbackFragment() {
   const integrationError = params.get('integration-error');
   if (!setupToken && !integrationError) return;
   window.history.replaceState({}, '', `${window.location.pathname}${window.location.search}`);
+  if (!GROUP_INTEGRATIONS_ENABLED) {
+    state.integrationSetupToken = '';
+    state.integrationSetup = null;
+    setFeedback('Slack and Discord connections are currently unavailable. Nothing was connected.');
+    return;
+  }
   if (setupToken) state.integrationSetupToken = setupToken;
   if (integrationError) {
     setFeedback(integrationError === 'authorization_denied'
@@ -485,7 +525,7 @@ function takeIntegrationCallbackFragment() {
 }
 
 async function loadIntegrationSetup() {
-  if (!state.integrationSetupToken) return;
+  if (!GROUP_INTEGRATIONS_ENABLED || !state.integrationSetupToken) return;
   try {
     const setup = await manageGroupIntegration('channels', {
       setupToken: state.integrationSetupToken,
@@ -507,7 +547,7 @@ async function loadIntegrationSetup() {
 
 async function beginIntegrationAuthorization(selectedProvider, button) {
   const crew = activeCrew();
-  if (!crew || !isCrewLeader()) return;
+  if (!GROUP_INTEGRATIONS_ENABLED || !crew || !isCrewLeader()) return;
   const release = setButtonBusy(button, 'Opening…');
   try {
     const result = await manageGroupIntegration('begin', {
@@ -655,7 +695,11 @@ async function bootCommunity() {
   }
 
   takeIntegrationCallbackFragment();
-  if (isLocalDemoMode()) setFeedback('Preview mode: groups, leaderboards, integrations, and journal entries use local mock data.');
+  if (isLocalDemoMode()) {
+    setFeedback(GROUP_INTEGRATIONS_ENABLED
+      ? 'Preview mode: groups, leaderboards, integrations, and journal entries use local mock data.'
+      : 'Preview mode: groups, leaderboards, and journal entries use local mock data. External channel connections are safely off.');
+  }
   await Promise.all([refreshCrews(), refreshJournal()]);
   await loadIntegrationSetup();
 }
@@ -709,6 +753,7 @@ $('crewLifecycleButton')?.addEventListener('click', (event) => {
 });
 
 $('crewIntegrationsCard')?.addEventListener('click', async (event) => {
+  if (!GROUP_INTEGRATIONS_ENABLED) return;
   const connectButton = event.target.closest('[data-connect-provider]');
   const reconnectButton = event.target.closest('[data-reconnect-provider]');
   if (connectButton || reconnectButton) {
@@ -755,6 +800,7 @@ $('crewIntegrationsCard')?.addEventListener('click', async (event) => {
 });
 
 $('crewIntegrationsCard')?.addEventListener('submit', async (event) => {
+  if (!GROUP_INTEGRATIONS_ENABLED) return;
   const form = event.target.closest('[data-integration-settings]');
   if (!form) return;
   event.preventDefault();
@@ -784,7 +830,7 @@ $('crewIntegrationsCard')?.addEventListener('submit', async (event) => {
 
 $('integrationConfirmForm')?.addEventListener('submit', async (event) => {
   event.preventDefault();
-  if (!state.integrationSetupToken || !state.integrationSetup) return;
+  if (!GROUP_INTEGRATIONS_ENABLED || !state.integrationSetupToken || !state.integrationSetup) return;
   const submitButton = event.currentTarget.querySelector('button[type="submit"]');
   const release = setButtonBusy(submitButton, 'Confirming…');
   try {
