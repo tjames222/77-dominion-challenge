@@ -113,7 +113,7 @@
           <div id="checklist"></div>
           <div class="scorecard-actions">
             <button class="primary" id="checkInButton" type="button" aria-describedby="checkInStatus" disabled>Post Check-In</button>
-            <p class="check-in-status" id="checkInStatus" role="status" aria-live="polite" aria-atomic="true"></p>
+            <p class="check-in-status" id="checkInStatus" role="status" aria-live="polite" aria-atomic="true" tabindex="-1"></p>
           </div>
         </div>
       </section>
@@ -169,12 +169,12 @@
         <div class="progression-badges">
           <div class="progression-badges-heading">
             <div>
-              <p class="eyebrow">Recent Badges</p>
+              <p class="eyebrow">Latest Badge</p>
               <h3>Proof of the work</h3>
             </div>
             <span id="recentBadgeSummary">No badges yet</span>
           </div>
-          <div class="progression-badge-grid" id="badgeShelf" aria-label="Recent badges"></div>
+          <div class="progression-badge-grid" id="badgeShelf" aria-label="Latest earned badge"></div>
         </div>
         <a class="game-summary-rewards-link" href="./badges-rewards.html">
           <span class="app-icon icon-crown" aria-hidden="true"></span>
@@ -207,24 +207,27 @@
     </main>
     <div class="confetti-layer" id="confettiLayer" aria-hidden="true"></div>
     <div class="reward-backdrop" id="rewardBackdrop" aria-hidden="true" hidden></div>
-    <div class="reward-toast" id="rewardToast" role="status" aria-live="polite" hidden>
+    <div class="reward-toast" id="rewardToast" role="dialog" aria-modal="true" aria-live="polite" aria-atomic="true" aria-labelledby="rewardTitle" aria-describedby="rewardCopy" hidden>
+      <button class="celebration-close" type="button" data-dismiss-celebration aria-label="Dismiss day complete celebration"><span aria-hidden="true">×</span></button>
       <p class="eyebrow">Day Complete</p>
       <h2 id="rewardTitle">Dominion earned.</h2>
       <p id="rewardCopy">Points and badges are being tallied.</p>
       <div class="badge-shelf" id="rewardBadges"></div>
     </div>
-    <div class="badge-celebration" id="badgeCelebration" role="status" aria-live="polite" hidden>
+    <div class="badge-celebration" id="badgeCelebration" role="dialog" aria-modal="true" aria-live="polite" aria-atomic="true" aria-labelledby="badgeCelebrationTitle" aria-describedby="badgeCelebrationCopy" hidden>
       <div class="badge-rays" aria-hidden="true"></div>
       <article class="badge-medal">
+        <button class="celebration-close" type="button" data-dismiss-celebration aria-label="Dismiss badge celebration"><span aria-hidden="true">×</span></button>
         <span class="badge-medal-icon app-icon icon-shield" id="badgeCelebrationIcon" aria-hidden="true"></span>
-        <p class="eyebrow">Badge Earned</p>
+        <p class="eyebrow" id="badgeCelebrationEyebrow">Bronze Badge Earned</p>
         <h2 id="badgeCelebrationTitle">Faithful Start</h2>
         <p id="badgeCelebrationCopy">A new badge has been added to your shelf.</p>
       </article>
     </div>
-    <div class="badge-celebration challenge-unlock-celebration" id="challengeUnlockCelebration" role="status" aria-live="polite" aria-atomic="true" hidden>
+    <div class="badge-celebration challenge-unlock-celebration" id="challengeUnlockCelebration" role="dialog" aria-modal="true" aria-live="polite" aria-atomic="true" aria-labelledby="challengeUnlockTitle" aria-describedby="challengeUnlockCopy" hidden>
       <div class="badge-rays" aria-hidden="true"></div>
       <article class="badge-medal">
+        <button class="celebration-close" type="button" data-dismiss-celebration aria-label="Dismiss challenge unlock celebration"><span aria-hidden="true">×</span></button>
         <span class="badge-medal-icon app-icon icon-spark" id="challengeUnlockIcon" aria-hidden="true"></span>
         <p class="eyebrow">Challenge Unlocked</p>
         <h2 id="challengeUnlockTitle">A new path is open.</h2>

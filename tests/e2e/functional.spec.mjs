@@ -179,6 +179,66 @@ test('Dashboard streak opens all four current and personal-best metrics', async 
   await expect(dialog).toContainText('Best app streak');
 });
 
+test('Dashboard reward queue dismisses safely and advances to the earned tier', async ({ page, app }) => {
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  await app.open(ROUTE_BY_ID.dashboard);
+
+  await expect(page.getByText('Latest Badge', { exact: true })).toBeVisible();
+  await expect(page.locator('#badgeShelf .progression-badge-card')).toHaveCount(1);
+  await expect(page.locator('#badgeShelf')).toContainText('First Sweat');
+
+  await page.locator('#selectAllActionsButton').click();
+  const postButton = page.locator('#checkInButton');
+  await expect(postButton).toBeEnabled();
+  await postButton.click();
+
+  const dayComplete = page.locator('#rewardToast');
+  await expect(dayComplete).toBeVisible();
+  await expect(dayComplete.getByRole('button', { name: 'Dismiss day complete celebration' })).toBeFocused();
+  await page.locator('#rewardBackdrop').click({ position: { x: 8, y: 8 } });
+
+  const badge = page.locator('#badgeCelebration');
+  await expect(dayComplete).toBeHidden();
+  await expect(badge).toBeVisible();
+  await expect(badge).toHaveAttribute('data-tier', 'silver');
+  await expect(badge).toContainText('Silver Badge Earned');
+
+  await badge.getByRole('heading', { name: 'Two-Week Guard' }).click();
+  await expect(badge).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(badge).toBeHidden();
+  await expect(page.locator('#checkInStatus')).toBeFocused();
+});
+
+test('Dashboard accountability keeps the newest three while counting the full feed', async ({ page, app }) => {
+  await app.open(ROUTE_BY_ID.dashboard);
+  await page.evaluate(() => {
+    const feed = Array.from({ length: 35 }, (_, index) => ({
+      id: `feed-${index + 1}`,
+      name: `Member ${index + 1}`,
+      day: 14,
+      status: 'complete',
+      completedCount: 7,
+      pointsAwarded: 7,
+      timestamp: 'Today',
+      createdAt: new Date(Date.UTC(2026, 1, 14, 16, index)).toISOString(),
+    }));
+    localStorage.setItem('dominion:feed', JSON.stringify(feed));
+  });
+  await page.reload({ waitUntil: 'networkidle' });
+
+  await expect(page.locator('#feed .feed-item')).toHaveCount(3);
+  await expect(page.locator('#feed .feed-item').nth(0)).toContainText('Member 35');
+  await expect(page.locator('#feed .feed-item').nth(1)).toContainText('Member 34');
+  await expect(page.locator('#feed .feed-item').nth(2)).toContainText('Member 33');
+  await expect(page.locator('#completedToday')).toHaveText('35 people completed today');
+
+  await page.evaluate(() => localStorage.setItem('dominion:feed', '[]'));
+  await page.reload({ waitUntil: 'networkidle' });
+  await expect(page.locator('#feed .feed-item')).toHaveCount(0);
+  await expect(page.locator('#completedToday')).toHaveText('0 people completed today');
+});
+
 test('a completed share grants +14 and the Sharing badge only once', async ({ page, app }) => {
   await page.addInitScript(() => {
     Object.defineProperty(navigator, 'share', {
