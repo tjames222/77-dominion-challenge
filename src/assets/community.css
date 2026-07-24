@@ -431,6 +431,19 @@
   gap: 12px;
   align-items: end;
 }
+.crew-toolbar-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: stretch;
+}
+.crew-toolbar-actions > button {
+  min-height: 48px;
+}
+.crew-training-launch {
+  border-color: color-mix(in srgb, var(--accent) 48%, var(--border));
+  background: color-mix(in srgb, var(--accent) 9%, var(--button-secondary-background));
+}
 .invite-people-button,
 .provider-button {
   position: relative;
@@ -890,6 +903,126 @@
   gap: 7px;
   font-weight: 850;
 }
+.crew-training-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  pointer-events: none;
+}
+.crew-training-layer[hidden] {
+  display: none !important;
+}
+.crew-training-layer.is-modal {
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  pointer-events: auto;
+}
+.crew-training-backdrop {
+  position: absolute;
+  inset: 0;
+  display: none;
+  background: color-mix(in srgb, #050608 66%, transparent);
+  backdrop-filter: blur(3px);
+}
+.crew-training-layer.is-modal .crew-training-backdrop {
+  display: block;
+}
+.crew-training-coachmark {
+  position: fixed;
+  left: var(--crew-training-left, 50%);
+  top: var(--crew-training-top, 50%);
+  z-index: 81;
+  display: grid;
+  width: min(390px, calc(100vw - 32px));
+  max-height: min(560px, calc(100dvh - 32px));
+  gap: 12px;
+  overflow: auto;
+  border: 1px solid color-mix(in srgb, var(--accent) 46%, var(--border));
+  border-radius: 16px;
+  padding: 20px;
+  background:
+    radial-gradient(circle at top right, color-mix(in srgb, var(--accent) 13%, transparent), transparent 46%),
+    var(--surface);
+  box-shadow:
+    0 22px 56px color-mix(in srgb, #050608 36%, transparent),
+    inset 0 1px 0 color-mix(in srgb, var(--highlight-color) 16%, transparent);
+  color: var(--text);
+  pointer-events: auto;
+  transform: translate(0, 0);
+}
+.crew-training-layer.is-modal .crew-training-coachmark {
+  position: relative;
+  left: auto;
+  top: auto;
+}
+.crew-training-coachmark:focus-visible {
+  outline: 3px solid color-mix(in srgb, var(--focus-ring, var(--accent)) 72%, transparent);
+  outline-offset: 3px;
+}
+.crew-training-coachmark h2,
+.crew-training-coachmark p {
+  margin: 0;
+}
+.crew-training-coachmark > p:not(.eyebrow) {
+  color: var(--text-muted);
+  line-height: 1.55;
+}
+.crew-training-header {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  justify-content: space-between;
+}
+.crew-training-header .eyebrow {
+  color: var(--accent-strong);
+}
+.crew-training-close {
+  display: grid;
+  flex: 0 0 auto;
+  place-items: center;
+  width: 44px;
+  min-height: 44px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 0;
+  background: var(--button-secondary-background);
+  color: var(--button-secondary-text);
+  font-size: 1.4rem;
+  line-height: 1;
+}
+.crew-training-target-note {
+  border-inline-start: 3px solid var(--accent);
+  padding-inline-start: 11px;
+  font-size: .82rem;
+  font-weight: 800;
+}
+.crew-training-error {
+  border: 1px solid color-mix(in srgb, var(--danger, #d85c54) 48%, var(--border));
+  border-radius: 10px;
+  padding: 10px 12px;
+  background: color-mix(in srgb, var(--danger, #d85c54) 9%, var(--surface));
+  color: var(--text) !important;
+  font-size: .82rem;
+  font-weight: 850;
+}
+.crew-training-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  justify-content: flex-end;
+  padding-block-start: 3px;
+}
+.crew-training-actions button {
+  min-height: 44px;
+}
+.crew-training-target {
+  outline: 4px solid color-mix(in srgb, var(--accent) 78%, transparent);
+  outline-offset: 6px;
+  border-radius: 10px;
+  scroll-margin: 92px 16px;
+}
 @media (max-width: 520px) {
   .community-tabs { border-radius: 22px; }
   .community-tab { border-radius: 16px; padding-inline: 5px; font-size: .7rem; }
@@ -922,6 +1055,25 @@
   .crew-create-heading button,
   .crew-form-actions button,
   .crew-lifecycle-card button { width: 100%; }
+  .crew-toolbar-actions,
+  .crew-toolbar-actions > button { width: 100%; }
+  .crew-training-layer:not(.is-modal) .crew-training-coachmark {
+    inset: auto 12px 12px;
+    width: auto;
+    max-height: min(72dvh, 560px);
+  }
+  .crew-training-layer.is-modal { padding: 12px; }
+  .crew-training-coachmark {
+    width: min(100%, 390px);
+    max-height: calc(100dvh - 24px);
+    border-radius: 14px;
+    padding: 16px;
+  }
+  .crew-training-actions {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .crew-training-actions #crewTrainingNext { grid-column: 1 / -1; grid-row: 1; }
 }
 @media (min-width: 720px) {
   .community-form,
@@ -942,10 +1094,14 @@
 @media (prefers-reduced-motion: reduce) {
   .skeleton { animation: none; }
   .invite-people-button,
-  .provider-button { transition: none; }
+  .provider-button,
+  .crew-training-coachmark { transition: none; }
 }
 @media (forced-colors: active) {
   .invite-people-button,
   .provider-button,
-  .provider-mark { forced-color-adjust: auto; }
+  .provider-mark,
+  .crew-training-coachmark,
+  .crew-training-target { forced-color-adjust: auto; }
+  .crew-training-target { outline: 4px solid Highlight; }
 }

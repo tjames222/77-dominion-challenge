@@ -35,7 +35,7 @@
       <div class="community-feedback" id="communityFeedback" role="status" aria-live="polite"></div>
 
       <section class="community-panel active" id="crew" data-section-surface="plain" data-section-cadence role="tabpanel" aria-labelledby="crew-tab">
-        <div class="community-summary" data-section-surface="plain">
+        <div class="community-summary" id="crewSummary" data-section-surface="plain">
           <span class="app-icon icon-users" aria-hidden="true"></span>
           <div>
             <p class="eyebrow">Private Group</p>
@@ -85,16 +85,21 @@
                 <span>Active crew</span>
                 <strong id="activeCrewName"></strong>
               </div>
-              <button
-                class="invite-people-button"
-                id="copyInviteButton"
-                type="button"
-                data-share-composer
-                data-share-kind="invite"
-              >
-                <span class="invite-people-icon" aria-hidden="true">+</span>
-                <span>Invite People</span>
-              </button>
+              <div class="crew-toolbar-actions">
+                <button class="secondary crew-training-launch" id="crewTrainingButton" type="button" hidden>
+                  Start Crew Training
+                </button>
+                <button
+                  class="invite-people-button"
+                  id="copyInviteButton"
+                  type="button"
+                  data-share-composer
+                  data-share-kind="invite"
+                >
+                  <span class="invite-people-icon" aria-hidden="true">+</span>
+                  <span>Invite People</span>
+                </button>
+              </div>
             </div>
           </section>
         </div>
@@ -170,7 +175,7 @@
           <div class="member-list" id="crewMemberList" tabindex="0" aria-label="Private group members" aria-live="polite"></div>
         </section>
 
-        <section class="leaderboard-card card" data-section-surface="accent">
+        <section class="leaderboard-card card" data-section-surface="accent" id="crewLeaderboardCard">
           <div class="leaderboard-header">
             <div>
               <p class="eyebrow">Crew Leaderboard</p>
@@ -251,6 +256,34 @@
         <div class="journey-timeline" id="journalTimeline" data-section-surface="plain"></div>
       </section>
     </main>
+
+    <div class="crew-training-layer" id="crewTrainingLayer" hidden>
+      <div class="crew-training-backdrop" aria-hidden="true"></div>
+      <section
+        class="crew-training-coachmark"
+        id="crewTrainingCoachmark"
+        role="dialog"
+        tabindex="-1"
+        aria-labelledby="crewTrainingTitle"
+        aria-describedby="crewTrainingDescription"
+      >
+        <header class="crew-training-header">
+          <p class="eyebrow" id="crewTrainingProgress" role="status" aria-live="polite">Step 1 of 7</p>
+          <button class="crew-training-close" id="crewTrainingClose" type="button" aria-label="Close crew training">×</button>
+        </header>
+        <h2 id="crewTrainingTitle" tabindex="-1">Your crew is ready</h2>
+        <p id="crewTrainingDescription"></p>
+        <p class="crew-training-target-note" id="crewTrainingTargetNote" hidden>
+          This step is informational because its on-page target is not currently available.
+        </p>
+        <p class="crew-training-error" id="crewTrainingError" role="alert" hidden></p>
+        <div class="crew-training-actions">
+          <button class="secondary" id="crewTrainingBack" type="button">Back</button>
+          <button class="secondary" id="crewTrainingSkip" type="button">Skip for now</button>
+          <button class="primary" id="crewTrainingNext" type="button">Next</button>
+        </div>
+      </section>
+    </div>
 
     <script type="module" src="./src/static/menu.js"></script>
     <script type="module" src="./src/static/community.js"></script>

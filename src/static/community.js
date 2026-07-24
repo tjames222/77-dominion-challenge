@@ -1,9 +1,12 @@
 import {
+  advanceCrewTraining,
+  claimCrewTraining,
   createCrew,
   deleteCrew,
   getBillingState,
   getCrews,
   getCrewMembers,
+  getCrewTrainingProgress,
   getJournalEntries,
   getLeaderboard,
   hasSupabaseAuth,
@@ -13,13 +16,19 @@ import {
   redirectToLogin,
   saveJournalEntry,
 } from './api';
-import { createConfirmationDialog } from './dialog.mjs';
+import { acquireDialogLayer, createConfirmationDialog } from './dialog.mjs';
 import {
   crewLifecycleAction,
   crewViewState,
   newCrewLifecycleRequestId,
 } from './crew-experience.mjs';
 import { groupIntegrationsEnabled } from './group-integration-launch.mjs';
+import {
+  CREW_TRAINING_STEP_COUNT,
+  CREW_TRAINING_VERSION,
+  buildCrewTrainingSteps,
+  crewTrainingActionLabel,
+} from './crew-training.mjs';
 
 const GROUP_INTEGRATIONS_ENABLED = groupIntegrationsEnabled(
   import.meta.env.VITE_ENABLE_GROUP_INTEGRATIONS,
@@ -50,11 +59,25 @@ const state = {
   integrations: [],
   integrationSetupToken: '',
   integrationSetup: null,
+  trainingCrewId: '',
+  trainingProgress: null,
+  trainingOpen: false,
+  trainingMode: 'live',
+  trainingStep: 0,
+  trainingTrigger: null,
+  trainingTarget: null,
+  trainingDialogOwner: null,
+  trainingRequestId: 0,
+  trainingBusy: false,
+  trainingPositionFrame: 0,
 };
 
 function activateTab(tab, { focus = false } = {}) {
   if (!tab) return;
   const target = tab.dataset.tab;
+  if (target !== 'crew' && state.trainingOpen) {
+    closeCrewTraining({ restoreFocus: false, force: true });
+  }
   tabs.forEach((item) => {
     const selected = item === tab;
     item.classList.toggle('active', selected);
@@ -156,6 +179,383 @@ function dayLabel(startDate) {
 
 function activeCrew() {
   return state.crews.find((crew) => crew.id === state.activeCrewId) || null;
+}
+
+function crewTrainingSteps() {
+  return buildCrewTrainingSteps({
+    integrationsEnabled: GROUP_INTEGRATIONS_ENABLED,
+    crewName: activeCrew()?.name || 'Your crew',
+  });
+}
+
+function isCrewTrainingTargetAvailable(element) {
+  if (!element || element.hidden || element.closest?.('[hidden]')) return false;
+  const styles = window.getComputedStyle?.(element);
+  if (styles && (styles.display === 'none' || styles.visibility === 'hidden')) return false;
+  return Boolean(element.getClientRects?.().length);
+}
+
+function boundedCrewTrainingStep(value) {
+  const numericValue = Number(value);
+  const step = Number.isFinite(numericValue) ? Math.trunc(numericValue) : 0;
+  return Math.max(0, Math.min(CREW_TRAINING_STEP_COUNT - 1, step));
+}
+
+function renderCrewTrainingLaunch() {
+  const button = $('crewTrainingButton');
+  if (!button) return;
+  const crew = activeCrew();
+  const available = Boolean(
+    crew
+      && isCrewLeader()
+      && state.trainingCrewId === crew.id
+      && state.trainingProgress,
+  );
+  button.hidden = !available;
+  if (!available) return;
+  button.textContent = crewTrainingActionLabel(state.trainingProgress);
+}
+
+function clearCrewTrainingTarget() {
+  state.trainingTarget?.classList.remove('crew-training-target');
+  state.trainingTarget = null;
+}
+
+function setCrewTrainingError(message = '') {
+  const error = $('crewTrainingError');
+  if (!error) return;
+  error.textContent = message;
+  error.hidden = !message;
+}
+
+function setCrewTrainingBusy(busy) {
+  state.trainingBusy = Boolean(busy);
+  const coachmark = $('crewTrainingCoachmark');
+  if (coachmark) {
+    if (busy) coachmark.setAttribute('aria-busy', 'true');
+    else coachmark.removeAttribute('aria-busy');
+  }
+  ['crewTrainingBack', 'crewTrainingSkip', 'crewTrainingNext', 'crewTrainingClose']
+    .forEach((id) => {
+      const button = $(id);
+      if (button) button.disabled = Boolean(busy);
+    });
+}
+
+function releaseCrewTrainingDialog() {
+  const owner = state.trainingDialogOwner;
+  state.trainingDialogOwner = null;
+  owner?.release();
+}
+
+function closeCrewTraining({ restoreFocus = true, force = false } = {}) {
+  if (state.trainingBusy && !force) return false;
+  const trigger = state.trainingTrigger;
+  state.trainingRequestId += 1;
+  state.trainingOpen = false;
+  state.trainingTrigger = null;
+  clearCrewTrainingTarget();
+  releaseCrewTrainingDialog();
+  setCrewTrainingError('');
+  const layer = $('crewTrainingLayer');
+  if (layer) {
+    layer.hidden = true;
+    layer.classList.remove('is-modal');
+    layer.setAttribute('aria-hidden', 'true');
+  }
+  if (restoreFocus) {
+    const fallback = $('crewTrainingButton');
+    const focusTarget = trigger?.isConnected && !trigger.hidden ? trigger : fallback;
+    focusTarget?.focus?.({ preventScroll: true });
+  }
+  return true;
+}
+
+function crewTrainingTargetForStep(step, index) {
+  if (index === 0 || !step?.targetId) return null;
+  const target = document.getElementById(step.targetId);
+  return isCrewTrainingTargetAvailable(target) ? target : null;
+}
+
+function positionCrewTrainingCoachmark() {
+  if (!state.trainingOpen || !state.trainingTarget) return;
+  const layer = $('crewTrainingLayer');
+  const coachmark = $('crewTrainingCoachmark');
+  if (!layer || !coachmark || layer.classList.contains('is-modal')) return;
+  if (window.matchMedia?.('(max-width: 520px)').matches) {
+    coachmark.style.removeProperty('--crew-training-left');
+    coachmark.style.removeProperty('--crew-training-top');
+    return;
+  }
+
+  const targetBounds = state.trainingTarget.getBoundingClientRect();
+  const coachmarkBounds = coachmark.getBoundingClientRect();
+  const margin = 16;
+  const gap = 14;
+  const maxLeft = Math.max(margin, window.innerWidth - coachmarkBounds.width - margin);
+  const left = Math.min(Math.max(targetBounds.left, margin), maxLeft);
+  let top = targetBounds.bottom + gap;
+  if (top + coachmarkBounds.height > window.innerHeight - margin) {
+    top = targetBounds.top - coachmarkBounds.height - gap;
+  }
+  top = Math.min(
+    Math.max(top, margin),
+    Math.max(margin, window.innerHeight - coachmarkBounds.height - margin),
+  );
+  coachmark.style.setProperty('--crew-training-left', `${Math.round(left)}px`);
+  coachmark.style.setProperty('--crew-training-top', `${Math.round(top)}px`);
+}
+
+function queueCrewTrainingPosition() {
+  if (!state.trainingOpen || !state.trainingTarget || state.trainingPositionFrame) return;
+  state.trainingPositionFrame = window.requestAnimationFrame?.(() => {
+    state.trainingPositionFrame = 0;
+    positionCrewTrainingCoachmark();
+  }) || 0;
+}
+
+function revealCrewTrainingTarget(target) {
+  if (!target) return;
+  const bounds = target.getBoundingClientRect();
+  const outsideViewport = bounds.top < 16 || bounds.bottom > window.innerHeight - 16;
+  if (outsideViewport) {
+    const reduceMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+    target.scrollIntoView?.({
+      block: 'center',
+      behavior: reduceMotion ? 'auto' : 'smooth',
+    });
+  }
+  queueCrewTrainingPosition();
+}
+
+function renderCrewTrainingStep({ focus = false } = {}) {
+  if (!state.trainingOpen) return;
+  const steps = crewTrainingSteps();
+  const stepIndex = boundedCrewTrainingStep(state.trainingStep);
+  const step = steps[stepIndex];
+  if (!step) {
+    closeCrewTraining({ restoreFocus: true, force: true });
+    return;
+  }
+  state.trainingStep = stepIndex;
+
+  const layer = $('crewTrainingLayer');
+  const coachmark = $('crewTrainingCoachmark');
+  if (!layer || !coachmark) return;
+  clearCrewTrainingTarget();
+  coachmark.style.removeProperty('--crew-training-left');
+  coachmark.style.removeProperty('--crew-training-top');
+
+  const expectedTarget = step.targetId ? document.getElementById(step.targetId) : null;
+  const target = crewTrainingTargetForStep(step, stepIndex);
+  const modal = !target;
+  if (target) {
+    state.trainingTarget = target;
+    target.classList.add('crew-training-target');
+  }
+
+  layer.hidden = false;
+  layer.setAttribute('aria-hidden', 'false');
+  layer.classList.toggle('is-modal', modal);
+  if (modal) coachmark.setAttribute('aria-modal', 'true');
+  else coachmark.removeAttribute('aria-modal');
+
+  $('crewTrainingProgress').textContent = `${state.trainingMode === 'replay' ? 'Replay · ' : ''}Step ${stepIndex + 1} of ${steps.length}`;
+  $('crewTrainingTitle').textContent = step.title;
+  $('crewTrainingDescription').textContent = step.description;
+  const targetNote = $('crewTrainingTargetNote');
+  const unavailable = Boolean(
+    stepIndex !== 0 && step.targetId && (!expectedTarget || !target),
+  );
+  if (targetNote) {
+    targetNote.textContent = step.targetUnavailableDescription
+      || 'This step is informational because its on-page target is not currently available.';
+    targetNote.hidden = !unavailable;
+  }
+  coachmark.setAttribute(
+    'aria-describedby',
+    unavailable
+      ? 'crewTrainingDescription crewTrainingTargetNote'
+      : 'crewTrainingDescription',
+  );
+  $('crewTrainingBack').hidden = stepIndex === 0;
+  $('crewTrainingSkip').hidden = state.trainingMode === 'replay';
+  $('crewTrainingNext').textContent = stepIndex === steps.length - 1 ? 'Finish' : 'Next';
+  setCrewTrainingError('');
+
+  if (modal && !state.trainingDialogOwner) {
+    state.trainingDialogOwner = acquireDialogLayer({
+      document,
+      layer,
+      panel: coachmark,
+      onEscape: () => closeCrewTraining(),
+      onReplace: () => closeCrewTraining({ restoreFocus: false, force: true }),
+    });
+  } else if (!modal) {
+    releaseCrewTrainingDialog();
+  }
+
+  if (target) revealCrewTrainingTarget(target);
+  if (focus) {
+    window.requestAnimationFrame?.(() => {
+      if (!state.trainingOpen) return;
+      const title = $('crewTrainingTitle');
+      title?.focus?.({ preventScroll: true });
+    });
+  }
+}
+
+async function loadCrewTrainingProgress() {
+  const crew = activeCrew();
+  const requestId = state.trainingRequestId + 1;
+  state.trainingRequestId = requestId;
+  state.trainingCrewId = crew?.id || '';
+  state.trainingProgress = null;
+  renderCrewTrainingLaunch();
+
+  if (!crew || !isCrewLeader()) {
+    if (state.trainingOpen) closeCrewTraining({ restoreFocus: false, force: true });
+    return null;
+  }
+
+  try {
+    const progress = await getCrewTrainingProgress(crew.id, CREW_TRAINING_VERSION);
+    if (state.trainingRequestId !== requestId || activeCrew()?.id !== crew.id) return null;
+    state.trainingProgress = progress;
+    renderCrewTrainingLaunch();
+    return progress;
+  } catch (error) {
+    if (state.trainingRequestId !== requestId || activeCrew()?.id !== crew.id) return null;
+    console.warn('Crew training is unavailable for this member', error);
+    state.trainingProgress = null;
+    renderCrewTrainingLaunch();
+    return null;
+  }
+}
+
+async function openCrewTraining({ trigger = $('crewTrainingButton'), progress = null } = {}) {
+  const crew = activeCrew();
+  if (!crew || !isCrewLeader()) return false;
+  const requestId = state.trainingRequestId + 1;
+  state.trainingRequestId = requestId;
+  const release = trigger ? setButtonBusy(trigger, 'Opening…') : () => {};
+
+  try {
+    let nextProgress = progress;
+    if (!nextProgress) {
+      nextProgress = await getCrewTrainingProgress(crew.id, CREW_TRAINING_VERSION);
+    }
+    if (!nextProgress) return false;
+    if (nextProgress.status === 'not_started') {
+      nextProgress = await claimCrewTraining(crew.id, CREW_TRAINING_VERSION);
+    } else if (nextProgress.status === 'skipped') {
+      nextProgress = await advanceCrewTraining({
+        crewId: crew.id,
+        contentVersion: CREW_TRAINING_VERSION,
+        action: 'resume',
+        targetStep: boundedCrewTrainingStep(nextProgress.furthestStep),
+      });
+    }
+    if (state.trainingRequestId !== requestId || activeCrew()?.id !== crew.id) return false;
+
+    state.trainingCrewId = crew.id;
+    state.trainingProgress = nextProgress;
+    state.trainingMode = nextProgress.status === 'completed' ? 'replay' : 'live';
+    state.trainingStep = state.trainingMode === 'replay'
+      ? 0
+      : boundedCrewTrainingStep(Math.max(nextProgress.currentStep, nextProgress.furthestStep));
+    state.trainingTrigger = trigger;
+    state.trainingOpen = true;
+    renderCrewTrainingLaunch();
+    renderCrewTrainingStep({ focus: true });
+    return true;
+  } catch (error) {
+    setFeedback(error?.message || 'Crew training is unavailable right now.');
+    return false;
+  } finally {
+    release();
+    renderCrewTrainingLaunch();
+  }
+}
+
+async function moveCrewTrainingForward() {
+  if (!state.trainingOpen || state.trainingBusy) return;
+  const crew = activeCrew();
+  const steps = crewTrainingSteps();
+  if (!crew || !steps.length) return;
+  const currentStep = boundedCrewTrainingStep(state.trainingStep);
+  const finalStep = currentStep === steps.length - 1;
+
+  if (state.trainingMode === 'replay') {
+    if (finalStep) closeCrewTraining();
+    else {
+      state.trainingStep = currentStep + 1;
+      renderCrewTrainingStep({ focus: true });
+    }
+    return;
+  }
+
+  setCrewTrainingBusy(true);
+  setCrewTrainingError('');
+  try {
+    const nextStep = finalStep ? currentStep : currentStep + 1;
+    const progress = await advanceCrewTraining({
+      crewId: crew.id,
+      contentVersion: CREW_TRAINING_VERSION,
+      action: finalStep ? 'complete' : 'advance',
+      targetStep: nextStep,
+    });
+    if (!state.trainingOpen || activeCrew()?.id !== crew.id) return;
+    state.trainingProgress = progress;
+    renderCrewTrainingLaunch();
+    if (progress.status === 'completed' || finalStep) {
+      closeCrewTraining({ force: true });
+      return;
+    }
+    const authoritativeStep = boundedCrewTrainingStep(Math.max(
+      progress.currentStep,
+      progress.furthestStep,
+    ));
+    state.trainingStep = Math.max(nextStep, authoritativeStep);
+    renderCrewTrainingStep({ focus: true });
+  } catch (error) {
+    setCrewTrainingError(error?.message || 'Progress could not be saved. Try again.');
+  } finally {
+    setCrewTrainingBusy(false);
+  }
+}
+
+async function skipCrewTraining() {
+  if (!state.trainingOpen || state.trainingBusy) return;
+  if (state.trainingMode === 'replay') {
+    closeCrewTraining();
+    return;
+  }
+  const crew = activeCrew();
+  if (!crew) return;
+  setCrewTrainingBusy(true);
+  setCrewTrainingError('');
+  try {
+    const authoritativeStep = boundedCrewTrainingStep(Math.max(
+      state.trainingStep,
+      state.trainingProgress?.currentStep ?? 0,
+      state.trainingProgress?.furthestStep ?? 0,
+    ));
+    const progress = await advanceCrewTraining({
+      crewId: crew.id,
+      contentVersion: CREW_TRAINING_VERSION,
+      action: 'skip',
+      targetStep: authoritativeStep,
+    });
+    if (!state.trainingOpen || activeCrew()?.id !== crew.id) return;
+    state.trainingProgress = progress;
+    renderCrewTrainingLaunch();
+    closeCrewTraining({ force: true });
+  } catch (error) {
+    setCrewTrainingError(error?.message || 'Progress could not be saved. Try again.');
+  } finally {
+    setCrewTrainingBusy(false);
+  }
 }
 
 function emptyCard(message) {
@@ -270,6 +670,10 @@ function renderCrewShell() {
   if (lifecycleCard) lifecycleCard.hidden = !crew;
 
   if (!crew) {
+    state.trainingCrewId = '';
+    state.trainingProgress = null;
+    if (state.trainingOpen) closeCrewTraining({ restoreFocus: false, force: true });
+    renderCrewTrainingLaunch();
     if (title) title.textContent = 'Create or join a crew.';
     if (description) description.textContent = 'Private crews keep accountability close: one start date, one channel, and people you actually know.';
     $('crewMemberCount').textContent = '0';
@@ -302,6 +706,7 @@ function renderCrewShell() {
     $('crewLifecycleButton').textContent = lifecycleAction === 'delete' ? 'Delete Crew' : 'Leave Group';
     $('crewLifecycleButton').dataset.lifecycleAction = lifecycleAction;
   }
+  renderCrewTrainingLaunch();
 }
 
 function integrationStatusLabel(status = '') {
@@ -625,7 +1030,10 @@ function fillJournalFormForDate() {
 async function refreshCrew() {
   renderCrewShell();
   const crew = activeCrew();
-  if (!crew) return;
+  if (!crew) {
+    await loadCrewTrainingProgress();
+    return;
+  }
   const requestedCrewId = crew.id;
   state.crewMembers = [];
   renderMembers({ loading: true });
@@ -645,6 +1053,7 @@ async function refreshCrew() {
     membersPromise,
     refreshLeaderboard(),
     loadCrewIntegrations(),
+    loadCrewTrainingProgress(),
   ]);
 }
 
@@ -719,6 +1128,40 @@ $('cancelCrewFormButton')?.addEventListener('click', () => {
   state.createRequestId = '';
   setCrewFormOpen(false);
 });
+
+$('crewTrainingButton')?.addEventListener('click', (event) => {
+  void openCrewTraining({ trigger: event.currentTarget });
+});
+$('crewTrainingBack')?.addEventListener('click', () => {
+  if (!state.trainingOpen || state.trainingBusy || state.trainingStep <= 0) return;
+  state.trainingStep -= 1;
+  renderCrewTrainingStep({ focus: true });
+});
+$('crewTrainingNext')?.addEventListener('click', () => {
+  void moveCrewTrainingForward();
+});
+$('crewTrainingSkip')?.addEventListener('click', () => {
+  void skipCrewTraining();
+});
+$('crewTrainingClose')?.addEventListener('click', () => closeCrewTraining());
+$('crewTrainingLayer')?.addEventListener('click', (event) => {
+  if (event.target.classList.contains('crew-training-backdrop')) closeCrewTraining();
+});
+document.addEventListener('keydown', (event) => {
+  if (event.key !== 'Escape' || !state.trainingOpen || state.trainingDialogOwner) return;
+  event.preventDefault();
+  closeCrewTraining();
+});
+document.addEventListener('click', (event) => {
+  if (!state.trainingOpen || !state.trainingTarget?.contains(event.target)) return;
+  const interactiveTarget = event.target.closest?.(
+    'a[href], button, input, select, textarea, summary, [contenteditable="true"], [tabindex]:not([tabindex="-1"])',
+  );
+  if (!interactiveTarget || !state.trainingTarget.contains(interactiveTarget)) return;
+  closeCrewTraining({ restoreFocus: false, force: true });
+}, { capture: true });
+window.addEventListener('resize', queueCrewTrainingPosition, { passive: true });
+window.addEventListener('scroll', queueCrewTrainingPosition, { passive: true });
 
 $('crewLifecycleButton')?.addEventListener('click', (event) => {
   const crew = activeCrew();
@@ -893,6 +1336,26 @@ $('crewForm')?.addEventListener('submit', async (event) => {
     state.createFormOpen = false;
     setFeedback(`${crew.name} is ready. Copy the invite link when you want to bring people in.`);
     await refreshCrews();
+    const authoritativeCrew = activeCrew();
+    if (crew.createdNew && authoritativeCrew?.id === crew.id && isCrewLeader()) {
+      try {
+        const trainingProgress = await claimCrewTraining(
+          authoritativeCrew.id,
+          CREW_TRAINING_VERSION,
+        );
+        state.trainingCrewId = authoritativeCrew.id;
+        state.trainingProgress = trainingProgress;
+        renderCrewTrainingLaunch();
+        if (trainingProgress.claimedNow) {
+          await openCrewTraining({
+            trigger: $('crewTrainingButton'),
+            progress: trainingProgress,
+          });
+        }
+      } catch (trainingError) {
+        console.warn('The crew was created, but its training walkthrough could not start', trainingError);
+      }
+    }
   } catch (error) {
     window.alert(error?.message || 'Unable to create that crew right now.');
   } finally {

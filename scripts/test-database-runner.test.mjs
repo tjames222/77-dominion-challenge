@@ -58,7 +58,7 @@ emit_files() {
 case "\${FAKE_PGTAP_MODE:-pass}" in
   pass)
     emit_files
-    echo "Files=\${#files[@]}, Tests=909, 1 wallclock secs"
+    echo "Files=\${#files[@]}, Tests=957, 1 wallclock secs"
     echo "Result: PASS"
     ;;
   notests)
@@ -72,12 +72,12 @@ case "\${FAKE_PGTAP_MODE:-pass}" in
     ;;
   count-mismatch)
     emit_files
-    echo "Files=$((\${#files[@]} - 1)), Tests=908, 1 wallclock secs"
+    echo "Files=$((\${#files[@]} - 1)), Tests=956, 1 wallclock secs"
     echo "Result: PASS"
     ;;
   omit-profile-limit)
     emit_files
-    echo "Files=\${#files[@]}, Tests=909, 1 wallclock secs"
+    echo "Files=\${#files[@]}, Tests=957, 1 wallclock secs"
     echo "Result: PASS"
     ;;
   malformed-summary)
@@ -86,7 +86,7 @@ case "\${FAKE_PGTAP_MODE:-pass}" in
     ;;
   nonzero)
     emit_files
-    echo "Files=\${#files[@]}, Tests=909, 1 wallclock secs"
+    echo "Files=\${#files[@]}, Tests=957, 1 wallclock secs"
     echo "Result: FAIL"
     exit 2
     ;;
@@ -138,11 +138,12 @@ async function runFixture(mode) {
   };
 }
 
-test("the current database inventory contains all 20 files and 909 planned assertions", async () => {
+test("the current database inventory contains all 21 files and 957 planned assertions", async () => {
   const inventory = await currentDatabaseInventory();
-  assert.equal(inventory.length, 20);
+  assert.equal(inventory.length, 21);
   assert.ok(inventory.includes("095_profile_photo_registration_limits.sql"));
   assert.ok(inventory.includes("100_single_crew_lifecycle.sql"));
+  assert.ok(inventory.includes("110_crew_training.sql"));
 
   let plannedAssertions = 0;
   for (const filename of inventory) {
@@ -152,7 +153,7 @@ test("the current database inventory contains all 20 files and 909 planned asser
     plannedAssertions += Number.parseInt(plan[1], 10);
   }
 
-  assert.equal(plannedAssertions, 909);
+  assert.equal(plannedAssertions, 957);
 });
 
 test("the runner succeeds from an unrelated directory and reports every file", async () => {
@@ -164,9 +165,9 @@ test("the runner succeeds from an unrelated directory and reports every file", a
   assert.match(result.args[2], /\/pgtap-tests\.[^/]+$/);
   assert.match(
     result.stdout,
-    /Database pgTAP summary: source_files=20 files=20 assertions=909/,
+    /Database pgTAP summary: source_files=21 files=21 assertions=957/,
   );
-  assert.match(result.stdout, /all 20 files and 909 assertions executed/);
+  assert.match(result.stdout, /all 21 files and 957 assertions executed/);
 });
 
 test("an exit-zero NOTESTS result fails closed", async () => {
@@ -187,7 +188,7 @@ test("a source and executed-file count mismatch fails closed", async () => {
   const result = await runFixture("count-mismatch");
 
   assert.notEqual(result.status, 0);
-  assert.match(result.stderr, /source inventory has 20 file\(s\), but Supabase executed 19/);
+  assert.match(result.stderr, /source inventory has 21 file\(s\), but Supabase executed 20/);
 });
 
 test("omitting the FOU-800 pgTAP file fails even when counts look valid", async () => {

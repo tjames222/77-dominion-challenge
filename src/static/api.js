@@ -48,6 +48,11 @@ import {
   normalizeRewardCatalog,
 } from './reward-catalog.mjs';
 import { assertSingleCrew, newCrewLifecycleRequestId } from './crew-experience.mjs';
+import {
+  CREW_TRAINING_STEP_COUNT,
+  CREW_TRAINING_VERSION,
+  normalizeCrewTrainingProgress,
+} from './crew-training.mjs';
 
 const SUPABASE_URL = (import.meta.env.VITE_SUPABASE_URL || '').replace(/\/$/, '');
 const SUPABASE_ORIGIN = (() => {
@@ -87,6 +92,7 @@ const MOCK_CREW_MEMBERS_KEY = 'dominion:mockCrewMembers';
 const MOCK_INVITES_KEY = 'dominion:mockCrewInvites';
 const MOCK_INVITE_SESSIONS_KEY = 'dominion:mockCrewInviteSessions';
 const MOCK_INVITE_ATTRIBUTIONS_KEY = 'dominion:mockCrewInviteAttributions';
+const MOCK_CREW_TRAINING_KEY = 'dominion:crewTraining';
 const MOCK_POSTS_KEY = 'dominion:mockCommunityPosts';
 const MOCK_JOURNAL_KEY = 'dominion:mockJournalEntries';
 const MOCK_CHALLENGE_STATES_KEY = 'dominion:mockChallengeStates';
@@ -1645,6 +1651,39 @@ function saveMockCrewMembers(members) {
   );
 }
 
+function requireMockCrewTrainingAccess(crewId) {
+  const userId = getMockUserId();
+  const { crews } = ensureMockCrews();
+  const crew = crews.find((item) => item.id === crewId);
+  if (!crew
+    || crew.createdBy !== userId
+    || !['owner', 'admin'].includes(crew.role)) {
+    throw new Error('Crew training is available only to the active crew creator.');
+  }
+  return { crew, userId };
+}
+
+function requireMockCrewTrainingVersion(contentVersion) {
+  const version = Number(contentVersion);
+  if (!Number.isInteger(version) || version !== CREW_TRAINING_VERSION) {
+    throw new Error('A valid crew and training version are required.');
+  }
+  return version;
+}
+
+function mockCrewTrainingKey(crewId, userId, contentVersion) {
+  return `${userId}:${crewId}:${contentVersion}`;
+}
+
+function clearMockCrewTraining(crewId, userId = getMockUserId()) {
+  const rows = readJson(MOCK_CREW_TRAINING_KEY, {});
+  const prefix = `${userId}:${crewId}:`;
+  const next = Object.fromEntries(
+    Object.entries(rows).filter(([key]) => !key.startsWith(prefix)),
+  );
+  writeJson(MOCK_CREW_TRAINING_KEY, next);
+}
+
 function getMockLeaderboard({ crewId = null } = {}) {
   const user = getMockUser();
   const stats = readJson('dominion:gameStats', {});
@@ -1839,7 +1878,7 @@ export async function createCrew({
     }];
     writeJson(MOCK_CREWS_KEY, crews);
     saveMockCrewMembers(members);
-    return crew;
+    return { ...crew, createdNew: true };
   }
 
   const client = requireSupabase();
@@ -1857,6 +1896,172 @@ export async function createCrew({
   };
 }
 
+function defaultCrewTrainingProgress(crewId, userId, contentVersion) {
+  return normalizeCrewTrainingProgress({
+    crewId,
+    userId,
+    contentVersion,
+    status: 'not_started',
+    currentStep: 0,
+    furthestStep: 0,
+    stepCount: CREW_TRAINING_STEP_COUNT,
+  });
+}
+
+function normalizeCrewTrainingResponse(value) {
+  const progress = normalizeCrewTrainingProgress(value);
+  return {
+    ...progress,
+    ...(value && ('claimedNow' in value || 'claimed_now' in value)
+      ? { claimedNow: Boolean(value.claimedNow ?? value.claimed_now) }
+      : {}),
+  };
+}
+
+export async function getCrewTrainingProgress(
+  crewId,
+  contentVersion = CREW_TRAINING_VERSION,
+) {
+  if (isLocalDemoMode()) {
+    contentVersion = requireMockCrewTrainingVersion(contentVersion);
+    const { userId } = requireMockCrewTrainingAccess(crewId);
+    const rows = readJson(MOCK_CREW_TRAINING_KEY, {});
+    return normalizeCrewTrainingResponse(
+      rows[mockCrewTrainingKey(crewId, userId, contentVersion)]
+        || defaultCrewTrainingProgress(crewId, userId, contentVersion),
+    );
+  }
+
+  const client = requireSupabase();
+  await requireUser();
+  const { data, error } = await client.rpc('get_crew_training_progress', {
+    target_crew_id: crewId,
+    target_content_version: contentVersion,
+  });
+  if (error) throw error;
+  return data ? normalizeCrewTrainingResponse(data) : null;
+}
+
+export async function claimCrewTraining(
+  crewId,
+  contentVersion = CREW_TRAINING_VERSION,
+) {
+  if (isLocalDemoMode()) {
+    contentVersion = requireMockCrewTrainingVersion(contentVersion);
+    const { userId } = requireMockCrewTrainingAccess(crewId);
+    const rows = readJson(MOCK_CREW_TRAINING_KEY, {});
+    const key = mockCrewTrainingKey(crewId, userId, contentVersion);
+    const existing = normalizeCrewTrainingResponse(
+      rows[key] || defaultCrewTrainingProgress(crewId, userId, contentVersion),
+    );
+    const claimedNow = existing.status === 'not_started';
+    if (claimedNow) {
+      const now = new Date().toISOString();
+      rows[key] = {
+        ...existing,
+        status: 'in_progress',
+        startedAt: existing.startedAt || now,
+        updatedAt: now,
+      };
+      writeJson(MOCK_CREW_TRAINING_KEY, rows);
+    }
+    return { ...normalizeCrewTrainingResponse(rows[key] || existing), claimedNow };
+  }
+
+  const client = requireSupabase();
+  await requireUser();
+  const { data, error } = await client.rpc('claim_crew_training', {
+    target_crew_id: crewId,
+    target_content_version: contentVersion,
+  });
+  if (error) throw error;
+  return normalizeCrewTrainingResponse(data);
+}
+
+export async function advanceCrewTraining({
+  crewId,
+  contentVersion = CREW_TRAINING_VERSION,
+  action,
+  targetStep = 0,
+}) {
+  if (isLocalDemoMode()) {
+    contentVersion = requireMockCrewTrainingVersion(contentVersion);
+    const { userId } = requireMockCrewTrainingAccess(crewId);
+    const rows = readJson(MOCK_CREW_TRAINING_KEY, {});
+    const key = mockCrewTrainingKey(crewId, userId, contentVersion);
+    if (!rows[key]) throw new Error('Start crew training before updating its progress.');
+    const existing = normalizeCrewTrainingResponse(rows[key]);
+    if (existing.status === 'completed') return existing;
+
+    const normalizedAction = String(action || '').trim().toLowerCase();
+    const step = Number(targetStep);
+    if (!Number.isInteger(step) || step < 0 || step >= CREW_TRAINING_STEP_COUNT) {
+      throw new Error('A valid crew, training version, and step are required.');
+    }
+    const now = new Date().toISOString();
+    const next = { ...existing };
+
+    if (normalizedAction === 'advance') {
+      if (existing.status !== 'in_progress') throw new Error('Resume crew training before advancing.');
+      if (step > existing.furthestStep + 1) {
+        throw new Error('Crew training steps must be completed in order.');
+      }
+      if (step <= existing.furthestStep) return existing;
+      next.currentStep = step;
+      next.furthestStep = step;
+    } else if (normalizedAction === 'skip') {
+      if (existing.status !== 'in_progress' && existing.status !== 'skipped') {
+        throw new Error('Start crew training before skipping it.');
+      }
+      if (step > existing.furthestStep) {
+        throw new Error('Only the current crew training step can be skipped.');
+      }
+      if (step < existing.currentStep || existing.status === 'skipped') return existing;
+      next.status = 'skipped';
+      next.skippedAt ||= now;
+    } else if (normalizedAction === 'resume') {
+      if (!['skipped', 'in_progress'].includes(existing.status)) {
+        throw new Error('This crew training cannot be resumed.');
+      }
+      if (step > existing.furthestStep) {
+        throw new Error('Crew training cannot resume beyond saved progress.');
+      }
+      if (existing.status === 'in_progress') return existing;
+      next.status = 'in_progress';
+      next.currentStep = existing.furthestStep;
+    } else if (normalizedAction === 'complete') {
+      if (!['in_progress', 'skipped'].includes(existing.status)
+        || step !== CREW_TRAINING_STEP_COUNT - 1
+        || existing.currentStep !== CREW_TRAINING_STEP_COUNT - 1
+        || existing.furthestStep !== CREW_TRAINING_STEP_COUNT - 1) {
+        throw new Error('Finish the final crew training step before completing it.');
+      }
+      next.status = 'completed';
+      next.currentStep = step;
+      next.furthestStep = step;
+      next.completedAt = existing.completedAt || now;
+    } else {
+      throw new Error('Unsupported crew training action.');
+    }
+
+    next.updatedAt = now;
+    rows[key] = next;
+    writeJson(MOCK_CREW_TRAINING_KEY, rows);
+    return normalizeCrewTrainingResponse(next);
+  }
+
+  const client = requireSupabase();
+  await requireUser();
+  const { data, error } = await client.rpc('advance_crew_training', {
+    target_crew_id: crewId,
+    target_content_version: contentVersion,
+    target_action: action,
+    target_step: targetStep,
+  });
+  if (error) throw error;
+  return normalizeCrewTrainingResponse(data);
+}
+
 export async function deleteCrew({ crewId, requestId = newCrewLifecycleRequestId() }) {
   if (isLocalDemoMode()) {
     const { crews, members } = ensureMockCrews();
@@ -1872,6 +2077,7 @@ export async function deleteCrew({ crewId, requestId = newCrewLifecycleRequestId
       if (invite.crew_id === crewId && !invite.revoked_at) invite.revoked_at = new Date().toISOString();
     });
     writeJson(MOCK_INVITES_KEY, invites);
+    clearMockCrewTraining(crewId);
     return { status: 'deleted', crewId, requestId };
   }
 
@@ -1895,6 +2101,7 @@ export async function leaveCrew({ crewId, requestId = newCrewLifecycleRequestId(
     writeJson(MOCK_CREWS_KEY, crews.filter((item) => item.id !== crewId));
     members[crewId] = (members[crewId] || []).filter((item) => item.userId !== getMockUserId());
     saveMockCrewMembers(members);
+    clearMockCrewTraining(crewId);
     return { status: 'left', crewId, requestId };
   }
 
