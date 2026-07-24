@@ -316,16 +316,27 @@ function queueCrewTrainingPosition() {
 
 function revealCrewTrainingTarget(target) {
   if (!target) return;
-  const bounds = target.getBoundingClientRect();
-  const outsideViewport = bounds.top < 16 || bounds.bottom > window.innerHeight - 16;
-  if (outsideViewport) {
-    const reduceMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
-    target.scrollIntoView?.({
-      block: 'center',
-      behavior: reduceMotion ? 'auto' : 'smooth',
-    });
-  }
-  queueCrewTrainingPosition();
+  const mobile = window.matchMedia?.('(max-width: 520px)').matches;
+  const reveal = () => {
+    if (!state.trainingOpen || state.trainingTarget !== target) return;
+    const bounds = target.getBoundingClientRect();
+    const coachmarkBounds = $('crewTrainingCoachmark')?.getBoundingClientRect();
+    const safeTop = mobile ? 92 : 16;
+    const safeBottom = mobile && coachmarkBounds
+      ? coachmarkBounds.top - 48
+      : window.innerHeight - 16;
+    const outsideVisibleContext = bounds.top < safeTop || bounds.bottom > safeBottom;
+    if (outsideVisibleContext) {
+      const reduceMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+      target.scrollIntoView?.({
+        block: mobile ? 'start' : 'center',
+        behavior: reduceMotion ? 'auto' : 'smooth',
+      });
+    }
+    queueCrewTrainingPosition();
+  };
+  reveal();
+  if (mobile) window.requestAnimationFrame?.(reveal);
 }
 
 function renderCrewTrainingStep({ focus = false } = {}) {
@@ -1153,11 +1164,11 @@ document.addEventListener('keydown', (event) => {
   closeCrewTraining();
 });
 document.addEventListener('click', (event) => {
-  if (!state.trainingOpen || !state.trainingTarget?.contains(event.target)) return;
+  if (!state.trainingOpen || state.trainingDialogOwner) return;
   const interactiveTarget = event.target.closest?.(
     'a[href], button, input, select, textarea, summary, [contenteditable="true"], [tabindex]:not([tabindex="-1"])',
   );
-  if (!interactiveTarget || !state.trainingTarget.contains(interactiveTarget)) return;
+  if (!interactiveTarget || $('crewTrainingCoachmark')?.contains(interactiveTarget)) return;
   closeCrewTraining({ restoreFocus: false, force: true });
 }, { capture: true });
 window.addEventListener('resize', queueCrewTrainingPosition, { passive: true });
@@ -1174,7 +1185,7 @@ $('crewLifecycleButton')?.addEventListener('click', (event) => {
     title: 'Are you sure?',
     description: isDelete
       ? `Deleting ${crew.name} removes access for every member, revokes invitations, stops external delivery, and begins the retained deletion process. Personal profiles, progress, points, badges, and journals are not deleted.`
-      : `Leaving ${crew.name} removes only your membership. Your profile, progress, points, badges, and journal remain yours.`,
+      : `Leaving ${crew.name} removes only your membership. You will lose access to its roster, leaderboard, invitations, and integrations. Your profile, progress, points, badges, and journal remain yours.`,
     cancelLabel: 'Cancel',
     confirmLabel: isDelete ? 'Delete Crew' : 'Leave Group',
     pendingLabel: isDelete ? 'Deleting…' : 'Leaving…',

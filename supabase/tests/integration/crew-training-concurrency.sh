@@ -95,12 +95,80 @@ if [[ "$claimed_true $claimed_false $progress_rows" != "1 1 1" ]]; then
   exit 1
 fi
 
+delayed_advance_two() {
+  psql "$database_url" --set=ON_ERROR_STOP=1 --quiet --tuples-only --no-align --command "
+    begin;
+    set local statement_timeout = '10s';
+    set local role authenticated;
+    set local \"request.jwt.claim.sub\" = '$owner_id';
+    select pg_catalog.pg_advisory_xact_lock(
+      pg_catalog.hashtextextended('crew-training-timestamp-race-started', 822)
+    );
+    select pg_catalog.pg_sleep(1);
+    select public.advance_crew_training('$crew_id', 1, 'advance', 2) ->> 'updatedAt';
+    commit;
+  " >"$test_directory/delayed-advance.log" 2>&1
+}
+
+# Start the step-two transaction first, but make it mutate after a newer
+# transaction completes step one. Transaction-scoped now() would regress the
+# final timestamp; the post-lock clock must remain monotonic.
+delayed_advance_two &
+delayed_advance_pid=$!
+older_transaction_started=0
+for _attempt in {1..40}; do
+  older_transaction_started="$(
+    psql "$database_url" --set=ON_ERROR_STOP=1 --quiet --tuples-only --no-align --command "
+      select case when not pg_catalog.pg_try_advisory_lock(
+        pg_catalog.hashtextextended('crew-training-timestamp-race-started', 822)
+      ) then 1 else 0 end;
+    "
+  )"
+  [[ "$older_transaction_started" == "1" ]] && break
+  sleep 0.05
+done
+if [[ "$older_transaction_started" != "1" ]]; then
+  echo "The deliberately older training transaction did not start in time." >&2
+  exit 1
+fi
+
+step_one_updated_at="$(
+  psql "$database_url" --set=ON_ERROR_STOP=1 --quiet --tuples-only --no-align --command "
+    begin;
+    set local role authenticated;
+    set local \"request.jwt.claim.sub\" = '$owner_id';
+    select public.advance_crew_training('$crew_id', 1, 'advance', 1) ->> 'updatedAt';
+    commit;
+  "
+)"
+delayed_advance_status=0
+wait "$delayed_advance_pid" || delayed_advance_status=$?
+if (( delayed_advance_status != 0 )); then
+  cat "$test_directory/delayed-advance.log" >&2
+  echo "The deliberately older training transaction failed to advance step two." >&2
+  exit 1
+fi
+
+read -r ordered_step timestamp_monotonic <<<"$(
+  psql "$database_url" --set=ON_ERROR_STOP=1 --quiet --tuples-only --no-align \
+    --field-separator=' ' --command "
+      select current_step, (updated_at >= '$step_one_updated_at'::timestamptz)::integer
+      from private.crew_training_progress
+      where crew_id = '$crew_id' and user_id = '$owner_id' and content_version = 1;
+    "
+)"
+if [[ "$ordered_step $timestamp_monotonic" != "2 1" ]]; then
+  cat "$test_directory/delayed-advance.log" >&2
+  echo "An older transaction regressed ordered training time ($ordered_step/$timestamp_monotonic)." >&2
+  exit 1
+fi
+
 psql "$database_url" --set=ON_ERROR_STOP=1 --quiet --command "
   begin;
   set local role authenticated;
   set local \"request.jwt.claim.sub\" = '$owner_id';
   select public.advance_crew_training('$crew_id', 1, 'advance', step_number)
-  from generate_series(1, 6) step_number;
+  from generate_series(3, 6) step_number;
   commit;
 " >/dev/null
 
@@ -134,19 +202,21 @@ if (( complete_status != 0 || skip_status != 0 )); then
   exit 1
 fi
 
-read -r final_status final_current final_furthest completed_rows <<<"$(
+read -r final_status final_current final_furthest completed_rows timestamps_ordered <<<"$(
   psql "$database_url" --set=ON_ERROR_STOP=1 --quiet --tuples-only --no-align \
     --field-separator=' ' --command "
       select status, current_step, furthest_step,
-        case when completed_at is null then 0 else 1 end
+        case when completed_at is null then 0 else 1 end,
+        case when completed_at >= coalesce(skipped_at, completed_at)
+               and updated_at >= completed_at then 1 else 0 end
       from private.crew_training_progress
       where crew_id = '$crew_id' and user_id = '$owner_id' and content_version = 1;
     "
 )"
 
-if [[ "$final_status $final_current $final_furthest $completed_rows" != "completed 6 6 1" ]]; then
+if [[ "$final_status $final_current $final_furthest $completed_rows $timestamps_ordered" != "completed 6 6 1 1" ]]; then
   cat "$test_directory/complete.log" "$test_directory/stale-skip.log" >&2
-  echo "Finish did not remain terminal after the stale-tab race ($final_status/$final_current/$final_furthest/$completed_rows)." >&2
+  echo "Finish did not remain terminal and timestamp-ordered after the stale-tab race ($final_status/$final_current/$final_furthest/$completed_rows/$timestamps_ordered)." >&2
   exit 1
 fi
 

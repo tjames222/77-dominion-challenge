@@ -161,6 +161,7 @@ declare
   caller_id uuid := (select auth.uid());
   progress_row private.crew_training_progress%rowtype;
   claimed_now boolean := false;
+  mutation_time timestamptz;
 begin
   if caller_id is null then
     raise exception 'You need to log in to start crew training.' using errcode = '28000';
@@ -192,20 +193,26 @@ begin
     and source_row.content_version = target_content_version
   for update;
 
+  mutation_time := greatest(
+    coalesce(progress_row.updated_at, '-infinity'::timestamptz),
+    pg_catalog.clock_timestamp()
+  );
+
   if not found then
     insert into private.crew_training_progress (
-      crew_id, user_id, content_version, status, current_step, furthest_step, started_at
+      crew_id, user_id, content_version, status, current_step, furthest_step,
+      started_at, updated_at
     ) values (
       target_crew_id, caller_id, target_content_version,
-      'in_progress', 0, 0, pg_catalog.now()
+      'in_progress', 0, 0, mutation_time, mutation_time
     )
     returning * into progress_row;
     claimed_now := true;
   elsif progress_row.status = 'not_started' then
     update private.crew_training_progress
     set status = 'in_progress',
-        started_at = pg_catalog.now(),
-        updated_at = pg_catalog.now()
+        started_at = mutation_time,
+        updated_at = mutation_time
     where user_id = caller_id
       and crew_id = target_crew_id
       and content_version = target_content_version
@@ -232,6 +239,7 @@ declare
   caller_id uuid := (select auth.uid());
   normalized_action text := pg_catalog.lower(pg_catalog.btrim(coalesce(target_action, '')));
   progress_row private.crew_training_progress%rowtype;
+  mutation_time timestamptz;
 begin
   if caller_id is null then
     raise exception 'You need to log in to update crew training.' using errcode = '28000';
@@ -277,6 +285,10 @@ begin
     return private.crew_training_progress_payload(progress_row, null);
   end if;
 
+  -- clock_timestamp() is captured after both locks. Unlike now(), it cannot
+  -- regress when an older transaction waits behind a newer tab or device.
+  mutation_time := greatest(progress_row.updated_at, pg_catalog.clock_timestamp());
+
   if normalized_action = 'advance' then
     if progress_row.status <> 'in_progress' then
       raise exception 'Resume crew training before advancing.' using errcode = '55000';
@@ -290,7 +302,7 @@ begin
     update private.crew_training_progress
     set current_step = target_step,
         furthest_step = target_step,
-        updated_at = pg_catalog.now()
+        updated_at = mutation_time
     where user_id = caller_id
       and crew_id = target_crew_id
       and content_version = target_content_version
@@ -311,8 +323,8 @@ begin
     end if;
     update private.crew_training_progress
     set status = 'skipped',
-        skipped_at = coalesce(skipped_at, pg_catalog.now()),
-        updated_at = pg_catalog.now()
+        skipped_at = coalesce(skipped_at, mutation_time),
+        updated_at = mutation_time
     where user_id = caller_id
       and crew_id = target_crew_id
       and content_version = target_content_version
@@ -331,7 +343,7 @@ begin
     update private.crew_training_progress
     set status = 'in_progress',
         current_step = furthest_step,
-        updated_at = pg_catalog.now()
+        updated_at = mutation_time
     where user_id = caller_id
       and crew_id = target_crew_id
       and content_version = target_content_version
@@ -346,8 +358,8 @@ begin
     end if;
     update private.crew_training_progress
     set status = 'completed',
-        completed_at = pg_catalog.now(),
-        updated_at = pg_catalog.now()
+        completed_at = mutation_time,
+        updated_at = mutation_time
     where user_id = caller_id
       and crew_id = target_crew_id
       and content_version = target_content_version
