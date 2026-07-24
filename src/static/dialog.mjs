@@ -177,6 +177,81 @@ export function isolateDialogPage(ownerDocument, layer) {
   };
 }
 
+/**
+ * Gives an existing DOM layer the same modal ownership, page isolation, and
+ * keyboard behavior as dialogs created by createDialog(). This keeps bespoke
+ * presentations (for example reward celebrations) in the single active-modal
+ * stack without forcing them into the shared dialog markup.
+ */
+export function acquireDialogLayer({
+  document: ownerDocument = globalThis.document,
+  layer,
+  panel = layer,
+  onEscape = () => {},
+  onReplace = () => {},
+} = {}) {
+  if (!ownerDocument?.body || !layer || !panel) {
+    throw new TypeError('acquireDialogLayer requires a document, layer, and panel.');
+  }
+
+  let released = false;
+  let restorePage = null;
+  let owner;
+
+  const release = () => {
+    if (released) return false;
+    released = true;
+    ownerDocument.removeEventListener('keydown', onKeydown, true);
+    restorePage?.();
+    restorePage = null;
+    if (activeDialogs.get(ownerDocument) === owner) activeDialogs.delete(ownerDocument);
+    return true;
+  };
+
+  const onKeydown = (event) => {
+    if (released) return;
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      event.stopImmediatePropagation?.();
+      event.stopPropagation();
+      onEscape(event);
+      return;
+    }
+    trapDialogFocus(event, panel, ownerDocument);
+  };
+
+  owner = {
+    __closeForReplacement() {
+      if (released) return false;
+      try {
+        onReplace();
+      } finally {
+        release();
+      }
+      return true;
+    },
+  };
+
+  const active = activeDialogs.get(ownerDocument);
+  if (active && active !== owner) active.__closeForReplacement?.();
+
+  restorePage = isolateDialogPage(ownerDocument, layer);
+  activeDialogs.set(ownerDocument, owner);
+  ownerDocument.addEventListener('keydown', onKeydown, true);
+
+  return {
+    get isActive() {
+      return !released && activeDialogs.get(ownerDocument) === owner;
+    },
+    focus(target) {
+      const focusTarget = resolveDialogInitialFocus(panel, target);
+      focusTarget?.focus?.({ preventScroll: true });
+      return focusTarget;
+    },
+    release,
+  };
+}
+
 export async function executeDialogAction(action, dialog, event) {
   if (!action || action.disabled || dialog?.isBusy) return false;
 

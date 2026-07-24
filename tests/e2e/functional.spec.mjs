@@ -165,6 +165,56 @@ test('Dashboard links all seven standards to their dedicated pages', async ({ pa
   );
 });
 
+test('Dashboard places tracking and the scorecard around the countdown in document order', async ({ page, app }) => {
+  await app.open(ROUTE_BY_ID.dashboard);
+  const order = await page.locator('main > section').evaluateAll((sections) => sections.map((section) => ({
+    id: section.id,
+    classes: section.className,
+  })));
+  const position = (marker) => order.findIndex(({ id, classes }) => id === marker || classes.includes(marker));
+
+  expect(position('dashboard-hero')).toBeLessThan(position('dashboard-tracking'));
+  expect(position('dashboard-tracking')).toBeLessThan(position('countdownCard'));
+  expect(position('countdownCard')).toBeLessThan(position('dashboard-scorecard'));
+  expect(position('dashboard-scorecard')).toBeLessThan(position('gameSummaryCard'));
+
+  await page.locator('#countdownCheckInButton').click();
+  await expect(page.locator('#check-in')).toBeFocused();
+  await expect(page.locator('#checklist [data-standard-card]')).toHaveCount(7);
+});
+
+test('Dashboard uses zero-point glass only outside the private-group podium', async ({ page, app }) => {
+  await app.open(ROUTE_BY_ID.dashboard);
+  await page.evaluate(() => {
+    const stats = JSON.parse(localStorage.getItem('dominion:gameStats') || '{}');
+    localStorage.setItem('dominion:gameStats', JSON.stringify({
+      ...stats,
+      totalPoints: 0,
+      challengePoints: 0,
+    }));
+  });
+  await page.reload();
+  await app.stable();
+
+  const emblem = page.locator('#gameLevelEmblem');
+  await expect(emblem).toHaveAttribute('data-prestige', 'private-1');
+  await expect(emblem).not.toHaveAttribute('data-material', 'zero-glass');
+  await expect(page.locator('#gameLevelCrown')).toBeVisible();
+
+  await page.evaluate(() => {
+    localStorage.setItem('dominion:mockCrews', '[]');
+    localStorage.setItem('dominion:mockCrewMembers', '{}');
+    localStorage.removeItem('dominion:activeCrewId');
+  });
+  await page.reload();
+  await app.stable();
+
+  await expect(emblem).toHaveAttribute('data-prestige', 'default');
+  await expect(emblem).toHaveAttribute('data-material', 'zero-glass');
+  await expect(emblem).toHaveAccessibleName(/Zero-point glass coin/);
+  await expect(page.locator('#gameLevelCrown')).toBeHidden();
+});
+
 test('Dashboard streak opens all four current and personal-best metrics', async ({ page, app }) => {
   await app.open(ROUTE_BY_ID.dashboard);
   const trigger = page.locator('#dashboardStreakButton');
@@ -178,6 +228,92 @@ test('Dashboard streak opens all four current and personal-best metrics', async 
   await expect(dialog).toContainText('Best full standard streak');
   await expect(dialog).toContainText('App streak');
   await expect(dialog).toContainText('Best app streak');
+});
+
+test('Dashboard reward queue dismisses safely and advances to the earned tier', async ({ page, app }) => {
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  await app.open(ROUTE_BY_ID.dashboard);
+
+  await expect(page.getByText('Latest Badge', { exact: true })).toBeVisible();
+  await expect(page.locator('#badgeShelf .progression-badge-card')).toHaveCount(1);
+  await expect(page.locator('#badgeShelf')).toContainText('First Sweat');
+
+  await page.locator('#selectAllActionsButton').click();
+  const postButton = page.locator('#checkInButton');
+  await expect(postButton).toBeEnabled();
+  await postButton.click();
+
+  const dayComplete = page.locator('#rewardToast');
+  await expect(dayComplete).toBeVisible();
+  await expect(dayComplete.getByRole('button', { name: 'Dismiss day complete celebration' })).toBeFocused();
+  await page.locator('#rewardBackdrop').click({ position: { x: 8, y: 8 } });
+
+  const badge = page.locator('#badgeCelebration');
+  await expect(dayComplete).toBeHidden();
+  await expect(badge).toBeVisible();
+  await expect(badge).toHaveAttribute('data-tier', 'silver');
+  await expect(badge).toContainText('Silver Badge Earned');
+
+  await badge.getByRole('heading', { name: 'Two-Week Guard' }).click();
+  await expect(badge).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(badge).toBeHidden();
+  await expect(page.locator('#checkInStatus')).toBeFocused();
+});
+
+test('Dashboard celebration replaces an open dialog and exclusively owns modal focus', async ({ page, app }) => {
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  await app.open(ROUTE_BY_ID.dashboard);
+
+  await page.locator('#selectAllActionsButton').click();
+  await page.locator('#dashboardStreakButton').click();
+  const streakDialog = page.getByRole('dialog', { name: 'Streak details' });
+  await expect(streakDialog).toBeVisible();
+
+  await page.locator('#checkInButton').evaluate((button) => button.click());
+
+  const dayComplete = page.locator('#rewardToast');
+  const closeButton = dayComplete.getByRole('button', { name: 'Dismiss day complete celebration' });
+  await expect(dayComplete).toBeVisible();
+  await expect(streakDialog).toBeHidden();
+  await expect(closeButton).toBeFocused();
+  await expect(page.locator('main')).toHaveAttribute('inert', '');
+  await expect(page.locator('body')).toHaveAttribute('data-dialog-open', '');
+
+  await page.keyboard.press('Escape');
+  await expect(dayComplete).toBeHidden();
+  await expect(streakDialog).toBeHidden();
+  await expect(page.locator('body')).not.toHaveAttribute('data-dialog-open', '');
+  await expect(page.locator('#checkInStatus')).toBeFocused();
+});
+
+test('Dashboard accountability keeps the newest three while counting the full feed', async ({ page, app }) => {
+  await app.open(ROUTE_BY_ID.dashboard);
+  await page.evaluate(() => {
+    const feed = Array.from({ length: 35 }, (_, index) => ({
+      id: `feed-${index + 1}`,
+      name: `Member ${index + 1}`,
+      day: 14,
+      status: 'complete',
+      completedCount: 7,
+      pointsAwarded: 7,
+      timestamp: 'Today',
+      createdAt: new Date(Date.UTC(2026, 1, 14, 16, index)).toISOString(),
+    }));
+    localStorage.setItem('dominion:feed', JSON.stringify(feed));
+  });
+  await page.reload({ waitUntil: 'networkidle' });
+
+  await expect(page.locator('#feed .feed-item')).toHaveCount(3);
+  await expect(page.locator('#feed .feed-item').nth(0)).toContainText('Member 35');
+  await expect(page.locator('#feed .feed-item').nth(1)).toContainText('Member 34');
+  await expect(page.locator('#feed .feed-item').nth(2)).toContainText('Member 33');
+  await expect(page.locator('#completedToday')).toHaveText('35 people completed today');
+
+  await page.evaluate(() => localStorage.setItem('dominion:feed', '[]'));
+  await page.reload({ waitUntil: 'networkidle' });
+  await expect(page.locator('#feed .feed-item')).toHaveCount(0);
+  await expect(page.locator('#completedToday')).toHaveText('0 people completed today');
 });
 
 test('a completed share grants +14 and the Sharing badge only once', async ({ page, app }) => {
