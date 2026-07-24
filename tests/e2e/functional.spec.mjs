@@ -51,6 +51,57 @@ test('global navigation is keyboard operable and Escape closes it', async ({ pag
   await expect(page.locator('body')).not.toHaveClass(/menu-open/);
 });
 
+test('global navigation stays compact away from the top without shifting layout', async ({ page, app }) => {
+  await app.open(ROUTE_BY_ID.dashboard);
+  const topbar = page.locator('.topbar');
+  const menuButton = page.getByRole('button', { name: 'Open menu' });
+  const initialBox = await topbar.boundingBox();
+
+  await page.evaluate(() => window.scrollTo(0, 640));
+  await expect(topbar).toHaveClass(/topbar-collapsed/);
+  await expect(topbar).toHaveClass(/topbar-scrolled/);
+
+  const compactBox = await topbar.boundingBox();
+  expect(compactBox?.y).toBe(0);
+  expect(compactBox?.height).toBe(initialBox?.height);
+  await expect(menuButton).toBeVisible();
+
+  await page.evaluate(() => window.scrollTo(0, 320));
+  await expect(topbar).toHaveClass(/topbar-collapsed/);
+
+  await menuButton.evaluate((button) => button.focus({ preventScroll: true }));
+  await page.keyboard.press('Enter');
+  await expect(topbar).not.toHaveClass(/topbar-collapsed/);
+  await expect(page.getByRole('navigation', { name: 'Global navigation' })).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(topbar).toHaveClass(/topbar-collapsed/);
+
+  await page.evaluate(() => window.scrollTo(0, 0));
+  await expect(topbar).not.toHaveClass(/topbar-collapsed|topbar-scrolled/);
+});
+
+test('global navigation applies the real compact visual styles without screenshot normalization', async ({ page, app }) => {
+  await page.emulateMedia({ reducedMotion: 'no-preference' });
+  await app.open(ROUTE_BY_ID.dashboard);
+  await page.locator('style[data-dominion-e2e-screenshot-style]').evaluate((style) => style.remove());
+
+  const topbar = page.locator('.topbar');
+  const initialHeight = await topbar.evaluate((element) => element.getBoundingClientRect().height);
+  await expect(topbar).toHaveCSS('border-bottom-width', '1px');
+
+  await page.evaluate(() => window.scrollTo(0, 640));
+  await expect(topbar).toHaveClass(/topbar-collapsed/);
+  await expect.poll(() => topbar.evaluate((element) => getComputedStyle(element, '::before').transform)).not.toBe('none');
+
+  const compactStyles = await page.locator('#dashboardStreakButton > strong').evaluate((element) => {
+    const styles = getComputedStyle(element);
+    return { transform: styles.transform, transitionProperty: styles.transitionProperty };
+  });
+  expect(compactStyles.transform).not.toBe('none');
+  expect(compactStyles.transitionProperty).toContain('transform');
+  expect(await topbar.evaluate((element) => element.getBoundingClientRect().height)).toBe(initialHeight);
+});
+
 test('community tablist follows arrow-key navigation', async ({ page, app }) => {
   await app.open(ROUTE_BY_ID.community);
   const crewTab = page.getByRole('tab', { name: 'Private Group' });

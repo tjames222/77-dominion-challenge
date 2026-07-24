@@ -56,17 +56,21 @@ test('visual comparisons use the pinned open-source Inter font', () => {
   assert.match(screenshotFontLicense, /SIL OPEN FONT LICENSE Version 1\.1/);
 });
 
-test('full-page screenshots neutralize directional topbar geometry', () => {
+test('full-page screenshots neutralize scroll-responsive topbar visuals', () => {
   assert.match(
     screenshotCss,
-    /\.topbar\.topbar-scrolled \{[\s\S]*?box-shadow: none !important/,
+    /\.topbar\.topbar-scrolled::before \{[\s\S]*?box-shadow: none !important/,
   );
   assert.match(
     screenshotCss,
-    /\.topbar\.topbar-collapsed \{[\s\S]*?min-height: 72px !important[\s\S]*?padding-bottom: 12px !important/,
+    /\.topbar\.topbar-collapsed::before \{[\s\S]*?background:[\s\S]*?transform: none !important/,
   );
   assert.match(
     screenshotCss,
-    /\.topbar\.topbar-collapsed \.global-menu-button \{[\s\S]*?transform: none !important/,
+    /\.topbar\.topbar-collapsed > \* \{[\s\S]*?transform: none !important/,
+  );
+  assert.match(
+    screenshotCss,
+    /\.topbar\.topbar-collapsed \.global-menu-button span:nth-child\(1\) \{[\s\S]*?width: 20px !important/,
   );
 });
