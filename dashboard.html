@@ -206,13 +206,15 @@
 
     </main>
     <div class="confetti-layer" id="confettiLayer" aria-hidden="true"></div>
-    <div class="reward-backdrop" id="rewardBackdrop" aria-hidden="true" hidden></div>
-    <div class="reward-toast" id="rewardToast" role="dialog" aria-modal="true" aria-live="polite" aria-atomic="true" aria-labelledby="rewardTitle" aria-describedby="rewardCopy" hidden>
-      <button class="celebration-close" type="button" data-dismiss-celebration aria-label="Dismiss day complete celebration"><span aria-hidden="true">×</span></button>
-      <p class="eyebrow">Day Complete</p>
-      <h2 id="rewardTitle">Dominion earned.</h2>
-      <p id="rewardCopy">Points and badges are being tallied.</p>
-      <div class="badge-shelf" id="rewardBadges"></div>
+    <div id="rewardCelebrationLayer">
+      <div class="reward-backdrop" id="rewardBackdrop" aria-hidden="true" hidden></div>
+      <div class="reward-toast" id="rewardToast" role="dialog" aria-modal="true" aria-live="polite" aria-atomic="true" aria-labelledby="rewardTitle" aria-describedby="rewardCopy" hidden>
+        <button class="celebration-close" type="button" data-dismiss-celebration aria-label="Dismiss day complete celebration"><span aria-hidden="true">×</span></button>
+        <p class="eyebrow">Day Complete</p>
+        <h2 id="rewardTitle">Dominion earned.</h2>
+        <p id="rewardCopy">Points and badges are being tallied.</p>
+        <div class="badge-shelf" id="rewardBadges"></div>
+      </div>
     </div>
     <div class="badge-celebration" id="badgeCelebration" role="dialog" aria-modal="true" aria-live="polite" aria-atomic="true" aria-labelledby="badgeCelebrationTitle" aria-describedby="badgeCelebrationCopy" hidden>
       <div class="badge-rays" aria-hidden="true"></div>

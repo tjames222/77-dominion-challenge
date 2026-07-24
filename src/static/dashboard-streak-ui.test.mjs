@@ -58,7 +58,7 @@ describe('Dashboard streak header experience', () => {
   });
 
   test('opens the shared accessible dialog and restores state through its trigger', () => {
-    assert.match(dashboardJs, /import \{ createDialog \} from '\.\/dialog\.mjs'/);
+    assert.match(dashboardJs, /import \{ acquireDialogLayer, createDialog \} from '\.\/dialog\.mjs'/);
     assert.match(dashboardJs, /id: 'streakDetailsDialog'/);
     assert.match(dashboardJs, /streakDetailsDialog\?\.open\(dashboardStreakButton\)/);
     assert.match(dashboardJs, /dashboardStreakButton\.setAttribute\('aria-expanded', 'true'\)/);

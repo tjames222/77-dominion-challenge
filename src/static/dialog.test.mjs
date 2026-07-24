@@ -5,6 +5,7 @@ import { describe, test } from 'node:test';
 import {
   DIALOG_FOCUSABLE_SELECTOR,
   DIALOG_MOBILE_BREAKPOINT,
+  acquireDialogLayer,
   canDismissDialog,
   createActionListDialog,
   createConfirmationDialog,
@@ -429,6 +430,58 @@ describe('dialog responsive and page-isolation behavior', () => {
     assert.equal(preserved.getAttribute('aria-hidden'), 'false');
     assert.equal(document.body.style.position, 'relative');
     assert.deepEqual(document.scrollCalls, [[8, 144]]);
+  });
+
+  test('lets an existing modal layer replace a dialog and own Escape exclusively', () => {
+    const { document, page, trigger } = createPage();
+    const dialog = createDialog({ document, title: 'Streak details' });
+    dialog.open(trigger);
+
+    const celebrationLayer = document.createElement('div');
+    const celebrationPanel = document.createElement('section');
+    const celebrationClose = document.createElement('button');
+    celebrationPanel.append(celebrationClose);
+    celebrationLayer.append(celebrationPanel);
+    document.body.append(celebrationLayer);
+
+    let escapeCount = 0;
+    let replacementCount = 0;
+    let modal;
+    modal = acquireDialogLayer({
+      document,
+      layer: celebrationLayer,
+      panel: celebrationPanel,
+      onEscape: () => {
+        escapeCount += 1;
+        modal.release();
+      },
+      onReplace: () => { replacementCount += 1; },
+    });
+    modal.focus(celebrationClose);
+
+    assert.equal(dialog.isOpen, false);
+    assert.equal(document.activeElement, celebrationClose);
+    assert.equal(page.hasAttribute('inert'), true);
+    assert.equal(celebrationLayer.hasAttribute('inert'), false);
+    assert.equal(modal.isActive, true);
+
+    const escape = document.keydown('Escape');
+    assert.equal(escape.prevented, true);
+    assert.equal(escapeCount, 1);
+    assert.equal(modal.isActive, false);
+    assert.equal(page.hasAttribute('inert'), false);
+
+    const secondModal = acquireDialogLayer({
+      document,
+      layer: celebrationLayer,
+      panel: celebrationPanel,
+      onReplace: () => { replacementCount += 1; },
+    });
+    const replacement = createDialog({ document, title: 'Share progress' });
+    replacement.open(trigger);
+    assert.equal(secondModal.isActive, false);
+    assert.equal(replacement.isOpen, true);
+    assert.equal(replacementCount, 1);
   });
 
   test('codifies dismissal policy for keyboard, backdrop, and async states', () => {

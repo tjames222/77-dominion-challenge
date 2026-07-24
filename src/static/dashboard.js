@@ -1,5 +1,5 @@
 import { initReveal } from './reveal';
-import { createDialog } from './dialog.mjs';
+import { acquireDialogLayer, createDialog } from './dialog.mjs';
 import {
   claimChallengeUnlocks,
   getBillingState,
@@ -642,6 +642,15 @@ function focusCelebrationClose(stage) {
     stage.querySelector('[data-dismiss-celebration]')?.focus({ preventScroll: true });
   });
 }
+function activateCelebrationModal(layer, panel = layer) {
+  return acquireDialogLayer({
+    document,
+    layer,
+    panel,
+    onEscape: () => celebrationSequence.dismissCurrent('escape'),
+    onReplace: () => celebrationSequence.dismissCurrent('replaced'),
+  });
+}
 function waitForOverlayExit(stage, animationName, fallbackMs, finish) {
   return new Promise((resolve) => {
     let settled = false;
@@ -665,6 +674,10 @@ function dismissRewardToast(rewardToast, rewardBackdrop, reason = 'dismissed') {
   if (!rewardToast || rewardToast.hidden) return Promise.resolve();
   rewardToast.presentationRunId = (rewardToast.presentationRunId || 0) + 1;
   if (reason !== 'auto') stopCelebrationConfetti();
+  if (reason === 'replaced' || reason === 'cleared') {
+    finishRewardToastDismiss(rewardToast, rewardBackdrop);
+    return Promise.resolve();
+  }
   rewardToast.classList.remove('active');
   rewardToast.classList.add('exiting');
   rewardBackdrop?.classList.remove('active');
@@ -682,6 +695,7 @@ function showRewardToast({ points = 0, earnedBadges = [], status = 'complete' })
   const rewardTitle = $('rewardTitle');
   const rewardCopy = $('rewardCopy');
   const rewardBadges = $('rewardBadges');
+  const rewardLayer = $('rewardCelebrationLayer') || rewardToast;
   if (!rewardToast || !rewardTitle || !rewardCopy) return {};
   const displayBadges = oneBadgeForDisplay(earnedBadges);
 
@@ -705,6 +719,7 @@ function showRewardToast({ points = 0, earnedBadges = [], status = 'complete' })
   rewardBackdrop?.classList.remove('active', 'exiting');
   rewardToast.getAnimations?.().forEach((animation) => animation.cancel());
   rewardBackdrop?.getAnimations?.().forEach((animation) => animation.cancel());
+  const modal = activateCelebrationModal(rewardLayer, rewardToast);
   void rewardToast.offsetWidth;
   requestAnimationFrame(() => {
     requestAnimationFrame(() => {
@@ -714,7 +729,13 @@ function showRewardToast({ points = 0, earnedBadges = [], status = 'complete' })
     });
   });
   focusCelebrationClose(rewardToast);
-  return { dismiss: (reason) => dismissRewardToast(rewardToast, rewardBackdrop, reason) };
+  return {
+    dismiss: (reason) => dismissRewardToast(rewardToast, rewardBackdrop, reason),
+    cleanup: (reason) => {
+      if (!rewardToast.hidden) dismissRewardToast(rewardToast, rewardBackdrop, reason === 'cleared' ? 'cleared' : 'replaced');
+      modal.release();
+    },
+  };
 }
 function showBadgeCelebration(badge) {
   const stage = $('badgeCelebration');
@@ -745,10 +766,17 @@ function showBadgeCelebration(badge) {
   stage.classList.remove('active', 'exiting', 'milestone', 'finale');
   stage.classList.toggle('milestone', isSpecial);
   stage.classList.toggle('finale', isFinale);
+  const modal = activateCelebrationModal(stage);
   void stage.offsetWidth;
   stage.classList.add('active');
   focusCelebrationClose(stage);
-  return { dismiss: () => dismissBadgeCelebration(stage) };
+  return {
+    dismiss: (reason) => dismissBadgeCelebration(stage, reason),
+    cleanup: (reason) => {
+      if (!stage.hidden) dismissBadgeCelebration(stage, reason === 'cleared' ? 'cleared' : 'replaced');
+      modal.release();
+    },
+  };
 }
 function finishBadgeCelebrationDismiss(stage) {
   stage.presentationRunId = (stage.presentationRunId || 0) + 1;
@@ -756,9 +784,13 @@ function finishBadgeCelebrationDismiss(stage) {
   stage.hidden = true;
   delete stage.dataset.tier;
 }
-function dismissBadgeCelebration(stage) {
+function dismissBadgeCelebration(stage, reason = 'dismissed') {
   if (!stage || stage.hidden) return Promise.resolve();
   stage.presentationRunId = (stage.presentationRunId || 0) + 1;
+  if (reason === 'replaced' || reason === 'cleared') {
+    finishBadgeCelebrationDismiss(stage);
+    return Promise.resolve();
+  }
   stage.classList.remove('active');
   stage.classList.add('exiting');
   return waitForOverlayExit(stage, 'badge-stage-out', 420, () => finishBadgeCelebrationDismiss(stage));
@@ -781,10 +813,17 @@ function showChallengeUnlockCelebration(challenges = []) {
   delete stage.dataset.tier;
   stage.hidden = false;
   stage.classList.remove('active', 'exiting');
+  const modal = activateCelebrationModal(stage);
   void stage.offsetWidth;
   stage.classList.add('active');
   focusCelebrationClose(stage);
-  return { dismiss: () => dismissBadgeCelebration(stage) };
+  return {
+    dismiss: (reason) => dismissBadgeCelebration(stage, reason),
+    cleanup: (reason) => {
+      if (!stage.hidden) dismissBadgeCelebration(stage, reason === 'cleared' ? 'cleared' : 'replaced');
+      modal.release();
+    },
+  };
 }
 function queueChallengeUnlockCelebration(challenges = [], delay = 0) {
   if (!challenges.length) return;
@@ -843,6 +882,7 @@ const restoreCelebrationFocus = () => {
   const target = celebrationReturnFocus;
   celebrationReturnFocus = null;
   window.setTimeout(() => {
+    if (document.body.hasAttribute('data-dialog-open')) return;
     if (
       target?.isConnected
       && target !== document.body
@@ -1479,32 +1519,6 @@ document.querySelectorAll('[data-dismiss-celebration]').forEach((button) => {
     event.stopPropagation();
     celebrationSequence.dismissCurrent('close');
   });
-});
-document.addEventListener('keydown', (event) => {
-  const state = celebrationSequence.state();
-  if (!state.active) return;
-  if (event.key === 'Escape') {
-    event.preventDefault();
-    event.stopPropagation();
-    celebrationSequence.dismissCurrent('escape');
-    return;
-  }
-  if (event.key !== 'Tab') return;
-  const visibleOverlay = document.querySelector('.reward-toast:not([hidden]), .badge-celebration:not([hidden])');
-  const focusable = [...(visibleOverlay?.querySelectorAll('button:not([disabled]), a[href], input:not([disabled]), [tabindex]:not([tabindex="-1"])') || [])];
-  if (!focusable.length) return;
-  const first = focusable[0];
-  const last = focusable.at(-1);
-  if (!visibleOverlay.contains(document.activeElement)) {
-    event.preventDefault();
-    (event.shiftKey ? last : first).focus();
-  } else if (event.shiftKey && document.activeElement === first) {
-    event.preventDefault();
-    last.focus();
-  } else if (!event.shiftKey && document.activeElement === last) {
-    event.preventDefault();
-    first.focus();
-  }
 });
 if (startDateInput) startDateInput.addEventListener('input', event => {
   if (previewChallengeMode() || !isCheckInStatusReady() || submittedCheckInDates.size > 0 || submittedChallengeDays.size > 0) {

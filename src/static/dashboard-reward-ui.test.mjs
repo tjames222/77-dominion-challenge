@@ -9,11 +9,15 @@ const productCss = readFileSync(new URL('../assets/product.css', import.meta.url
 describe('dashboard reward presentation', () => {
   it('provides equivalent close, backdrop, and Escape dismissal without dismissing card clicks', () => {
     assert.match(dashboardHtml, /id="badgeCelebration"[^>]*role="dialog"[^>]*aria-modal="true"/);
+    assert.match(dashboardHtml, /id="rewardCelebrationLayer"[\s\S]*?id="rewardBackdrop"[\s\S]*?id="rewardToast"/);
     assert.match(dashboardHtml, /data-dismiss-celebration aria-label="Dismiss badge celebration"/);
     assert.match(dashboardJs, /event\.target\.closest\('\.badge-medal'\)/);
+    assert.match(dashboardJs, /acquireDialogLayer\(\{[\s\S]*?onEscape:[\s\S]*?dismissCurrent\('escape'\)/);
+    assert.match(dashboardJs, /onReplace:[\s\S]*?dismissCurrent\('replaced'\)/);
     assert.match(dashboardJs, /celebrationSequence\.dismissCurrent\('backdrop'\)/);
     assert.match(dashboardJs, /celebrationSequence\.dismissCurrent\('escape'\)/);
     assert.match(dashboardJs, /event\.stopPropagation\(\)/);
+    assert.doesNotMatch(dashboardJs, /document\.addEventListener\('keydown'/);
     assert.match(productCss, /\.celebration-close[\s\S]*?width:\s*44px[\s\S]*?height:\s*44px/);
   });
 

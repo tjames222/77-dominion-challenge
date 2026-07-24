@@ -261,6 +261,32 @@ test('Dashboard reward queue dismisses safely and advances to the earned tier', 
   await expect(page.locator('#checkInStatus')).toBeFocused();
 });
 
+test('Dashboard celebration replaces an open dialog and exclusively owns modal focus', async ({ page, app }) => {
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  await app.open(ROUTE_BY_ID.dashboard);
+
+  await page.locator('#selectAllActionsButton').click();
+  await page.locator('#dashboardStreakButton').click();
+  const streakDialog = page.getByRole('dialog', { name: 'Streak details' });
+  await expect(streakDialog).toBeVisible();
+
+  await page.locator('#checkInButton').evaluate((button) => button.click());
+
+  const dayComplete = page.locator('#rewardToast');
+  const closeButton = dayComplete.getByRole('button', { name: 'Dismiss day complete celebration' });
+  await expect(dayComplete).toBeVisible();
+  await expect(streakDialog).toBeHidden();
+  await expect(closeButton).toBeFocused();
+  await expect(page.locator('main')).toHaveAttribute('inert', '');
+  await expect(page.locator('body')).toHaveAttribute('data-dialog-open', '');
+
+  await page.keyboard.press('Escape');
+  await expect(dayComplete).toBeHidden();
+  await expect(streakDialog).toBeHidden();
+  await expect(page.locator('body')).not.toHaveAttribute('data-dialog-open', '');
+  await expect(page.locator('#checkInStatus')).toBeFocused();
+});
+
 test('Dashboard accountability keeps the newest three while counting the full feed', async ({ page, app }) => {
   await app.open(ROUTE_BY_ID.dashboard);
   await page.evaluate(() => {
