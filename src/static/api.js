@@ -47,6 +47,7 @@ import {
   challengeProgressionToRewardCatalog,
   normalizeRewardCatalog,
 } from './reward-catalog.mjs';
+import { assertSingleCrew, newCrewLifecycleRequestId } from './crew-experience.mjs';
 
 const SUPABASE_URL = (import.meta.env.VITE_SUPABASE_URL || '').replace(/\/$/, '');
 const SUPABASE_ORIGIN = (() => {
@@ -1580,17 +1581,7 @@ function ensureMockCrews() {
   let members = readJson(MOCK_CREW_MEMBERS_KEY, null);
 
   if (!Array.isArray(crews)) {
-    const createdAt = new Date().toISOString();
-    crews = [{
-      id: 'preview_crew_alpha',
-      name: 'Preview Crew',
-      description: 'A private mock crew for testing invites, members, and leaderboards.',
-      challengeStartDate: new Date().toISOString().slice(0, 10),
-      createdBy: userId,
-      createdAt,
-      role: 'owner',
-      joinedAt: createdAt,
-    }];
+    crews = [];
     writeJson(MOCK_CREWS_KEY, crews);
   } else {
     const retiredPreviewDescription = 'A private mock crew for testing invites, posts, comments, and leaderboards.';
@@ -1626,7 +1617,7 @@ function ensureMockCrews() {
   });
 
   saveMockCrewMembers(members);
-  return { crews, members };
+  return { crews: assertSingleCrew(crews), members };
 }
 
 function saveMockCrewMembers(members) {
@@ -1699,7 +1690,7 @@ async function queryCrewsForUser(client, userId) {
     .order('joined_at', { ascending: false });
 
   if (error) throw error;
-  return (data || []).map(mapCrew).filter(Boolean);
+  return assertSingleCrew((data || []).map(mapCrew).filter(Boolean));
 }
 
 export async function getCrews() {
@@ -1797,9 +1788,17 @@ export async function getOutboundIntegrationDestinations(crewId) {
   return normalizeConnectedDestinations([]);
 }
 
-export async function createCrew({ name, description = '', challengeStartDate = null }) {
+export async function createCrew({
+  name,
+  description = '',
+  challengeStartDate = null,
+  requestId = newCrewLifecycleRequestId(),
+}) {
   if (isLocalDemoMode()) {
     const { crews, members } = ensureMockCrews();
+    if (crews.length) {
+      throw new Error('Leave or delete your current crew before creating another.');
+    }
     const now = new Date().toISOString();
     const crew = {
       id: randomId('preview_crew'),
@@ -1826,33 +1825,69 @@ export async function createCrew({ name, description = '', challengeStartDate = 
   }
 
   const client = requireSupabase();
-  const user = await requireUser();
-  const identity = await getCurrentCommunityIdentity();
-  const { data: crew, error: crewError } = await client
-    .from('crews')
-    .insert({
-      name,
-      description,
-      challenge_start_date: challengeStartDate || null,
-      created_by: user.id,
-    })
-    .select('id, name, description, challenge_start_date, created_by, created_at')
-    .single();
+  await requireUser();
+  const { data, error } = await client.rpc('create_crew', {
+    target_request_id: requestId,
+    target_name: name,
+    target_description: description,
+    target_challenge_start_date: challengeStartDate || null,
+  }).single();
+  if (error) throw error;
+  return {
+    ...mapCrew({ ...data, id: data?.crew_id }),
+    createdNew: Boolean(data?.created_new),
+  };
+}
 
-  if (crewError) throw crewError;
-
-  const { error: memberError } = await client
-    .from('crew_members')
-    .insert({
-      crew_id: crew.id,
-      user_id: user.id,
-      display_name: identity.name,
-      avatar_url: identity.avatarUrl,
-      role: 'owner',
+export async function deleteCrew({ crewId, requestId = newCrewLifecycleRequestId() }) {
+  if (isLocalDemoMode()) {
+    const { crews, members } = ensureMockCrews();
+    const crew = crews.find((item) => item.id === crewId);
+    if (!crew || !['owner', 'admin'].includes(crew.role)) {
+      throw new Error('Only a crew owner or admin can delete this crew.');
+    }
+    writeJson(MOCK_CREWS_KEY, crews.filter((item) => item.id !== crewId));
+    delete members[crewId];
+    saveMockCrewMembers(members);
+    const invites = readJson(MOCK_INVITES_KEY, {});
+    Object.values(invites).forEach((invite) => {
+      if (invite.crew_id === crewId && !invite.revoked_at) invite.revoked_at = new Date().toISOString();
     });
+    writeJson(MOCK_INVITES_KEY, invites);
+    return { status: 'deleted', crewId, requestId };
+  }
 
-  if (memberError) throw memberError;
-  return mapCrew({ ...crew, role: 'owner' });
+  const client = requireSupabase();
+  await requireUser();
+  const { data, error } = await client.rpc('delete_crew', {
+    target_crew_id: crewId,
+    target_request_id: requestId,
+  });
+  if (error) throw error;
+  return data;
+}
+
+export async function leaveCrew({ crewId, requestId = newCrewLifecycleRequestId() }) {
+  if (isLocalDemoMode()) {
+    const { crews, members } = ensureMockCrews();
+    const crew = crews.find((item) => item.id === crewId);
+    if (!crew || ['owner', 'admin'].includes(crew.role)) {
+      throw new Error('Crew owners and admins must delete the crew instead of leaving it.');
+    }
+    writeJson(MOCK_CREWS_KEY, crews.filter((item) => item.id !== crewId));
+    members[crewId] = (members[crewId] || []).filter((item) => item.userId !== getMockUserId());
+    saveMockCrewMembers(members);
+    return { status: 'left', crewId, requestId };
+  }
+
+  const client = requireSupabase();
+  await requireUser();
+  const { data, error } = await client.rpc('leave_crew', {
+    target_crew_id: crewId,
+    target_request_id: requestId,
+  });
+  if (error) throw error;
+  return data;
 }
 
 export async function getCrewMembers(crewId) {
@@ -1951,6 +1986,9 @@ function mockInviteStatus(invite, crew, members, currentUserId = '') {
   if (currentUserId && crewMembers.some((member) => member.userId === currentUserId)) return 'already_member';
   if (invite.redeemed_by) return 'already_used';
   if (crewMembers.length >= Number(crew.memberLimit || 50)) return 'full';
+  if (currentUserId && Object.entries(members).some(([crewId, crewRoster]) => (
+    crewId !== crew.id && crewRoster.some((member) => member.userId === currentUserId)
+  ))) return 'current_crew_conflict';
   return 'ready';
 }
 
@@ -1999,7 +2037,9 @@ export async function previewCrewInvite({ token = '', continuationToken = '' } =
     const crew = crews.find((item) => item.id === invite?.crew_id);
     const status = mockInviteStatus(invite, crew, members, currentUserId);
     const response = { status };
-    if (['ready', 'already_member'].includes(status)) response.preview = mockInvitePreview(invite, crew, members);
+    if (['ready', 'already_member', 'current_crew_conflict'].includes(status)) {
+      response.preview = mockInvitePreview(invite, crew, members);
+    }
     if (token && continuation && ['ready', 'full'].includes(status)) response.continuationToken = continuation;
     return response;
   }
@@ -2040,7 +2080,9 @@ export async function confirmCrewInvite(continuationToken) {
       writeJson(MOCK_INVITE_SESSIONS_KEY, sessions);
       return {
         status,
-        ...(status === 'already_member' ? { preview: mockInvitePreview(invite, crew, members) } : {}),
+        ...(['already_member', 'current_crew_conflict'].includes(status)
+          ? { preview: mockInvitePreview(invite, crew, members) }
+          : {}),
       };
     }
 

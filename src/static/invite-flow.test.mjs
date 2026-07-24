@@ -96,3 +96,11 @@ test('ready and joined states name only the privacy-safe preview fields', () => 
   const joined = inviteStatusContent('joined', { groupName: 'Morning Crew' });
   assert.match(joined.title, /Morning Crew/);
 });
+
+test('a second-crew conflict explains the safe recovery without changing membership', () => {
+  const content = inviteStatusContent('current_crew_conflict', { groupName: 'Morning Crew' });
+  assert.match(content.title, /already belong/i);
+  assert.match(content.message, /Leave your current group/i);
+  assert.match(content.message, /No membership change was made/i);
+  assert.equal(content.recoverable, true);
+});

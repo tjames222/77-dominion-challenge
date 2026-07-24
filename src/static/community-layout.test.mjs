@@ -43,7 +43,7 @@ describe('simplified private groups', () => {
   test('keeps group access, members, leaderboard, integrations, and the Private Journal', () => {
     for (const id of [
       'crewForm',
-      'crewSelect',
+      'activeCrewName',
       'copyInviteButton',
       'crewMemberList',
       'crewLeaderboard',
@@ -53,6 +53,7 @@ describe('simplified private groups', () => {
     ]) {
       assert.match(communityHtml, new RegExp(`id=["']${id}["']`));
     }
+    assert.doesNotMatch(communityHtml, /id=["']crewSelect["']/);
     assert.match(communityHtml, /Use the connected Slack or Discord channel for conversation/);
   });
 

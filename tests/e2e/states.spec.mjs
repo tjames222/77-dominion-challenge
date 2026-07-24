@@ -48,6 +48,8 @@ test('community empty state is stable and accessible', async ({ page, app }) => 
   await app.open(ROUTE_BY_ID.community, { state: 'communityEmpty' });
   await expect(page.locator('#crewCreateCard')).toBeVisible();
   await expect(page.locator('#crewManageCard')).toBeHidden();
+  await expect(page.locator('#crewForm')).toBeHidden();
+  await expect(page.getByRole('button', { name: 'Create a Crew' })).toBeVisible();
   await expectStableScreenshot(page, app, 'state-community-empty.png');
 
   const results = await analyzeAccessibility(page);

@@ -62,7 +62,7 @@ function render(serverStatus, preview = {}) {
   $('inviteTitle').textContent = content.title;
   $('inviteMessage').textContent = content.message;
 
-  const canRevealPreview = ['ready', 'authentication_required', 'subscription_required', 'already_member', 'joined'].includes(status)
+  const canRevealPreview = ['ready', 'authentication_required', 'subscription_required', 'already_member', 'current_crew_conflict', 'joined'].includes(status)
     && Boolean(preview.groupName);
   $('invitePreview').hidden = !canRevealPreview;
   if (canRevealPreview) {
@@ -80,7 +80,7 @@ function render(serverStatus, preview = {}) {
   }
   if (status === 'subscription_required') $('billingInviteLink').hidden = false;
   if (['full', 'rate_limited'].includes(status)) $('retryInviteButton').hidden = false;
-  if (['already_member', 'joined'].includes(status)) $('openGroupLink').hidden = false;
+  if (['already_member', 'current_crew_conflict', 'joined'].includes(status)) $('openGroupLink').hidden = false;
   if (status === 'joined') $('leaveInviteLink').hidden = true;
 }
 

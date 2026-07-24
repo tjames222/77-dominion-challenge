@@ -300,6 +300,8 @@ carol_user="30000000-0000-4000-8000-000000000003"
 
 psql "$database_url" --set=ON_ERROR_STOP=1 --quiet <<SQL
 delete from public.crews where id = '$invite_crew';
+delete from public.crew_members
+where user_id in ('$alice_user', '$bob_user', '$carol_user');
 insert into public.crews (id, name, created_by)
 values ('$invite_crew', 'Concurrent Invite Crew', '$alice_user');
 insert into public.crew_members (crew_id, user_id, display_name, role)
@@ -411,6 +413,13 @@ if [[ "$joined_results" != "1" || "$used_results" != "1" ]]; then
   exit 1
 fi
 
-psql "$database_url" --set=ON_ERROR_STOP=1 --quiet --command "delete from public.crews where id = '$invite_crew';"
+psql "$database_url" --set=ON_ERROR_STOP=1 --quiet <<SQL
+delete from public.crews where id = '$invite_crew';
+insert into public.crew_members (crew_id, user_id, display_name, role, joined_at)
+values
+  ('a0000000-0000-4000-8000-000000000001', '$alice_user', 'Alice Example', 'owner', '2026-07-01 12:00:00+00'),
+  ('a0000000-0000-4000-8000-000000000001', '$carol_user', 'Carol Example', 'member', '2026-07-01 12:01:00+00'),
+  ('b0000000-0000-4000-8000-000000000002', '$bob_user', 'Bob Example', 'owner', '2026-07-01 12:00:00+00');
+SQL
 
 echo "Concurrent invite confirmation created one membership and one immutable attribution."

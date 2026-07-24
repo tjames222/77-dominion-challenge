@@ -1,5 +1,6 @@
 import {
   createCrew,
+  deleteCrew,
   getBillingState,
   getCrews,
   getCrewMembers,
@@ -7,10 +8,17 @@ import {
   getLeaderboard,
   hasSupabaseAuth,
   isLocalDemoMode,
+  leaveCrew,
   manageGroupIntegration,
   redirectToLogin,
   saveJournalEntry,
 } from './api';
+import { createConfirmationDialog } from './dialog.mjs';
+import {
+  crewLifecycleAction,
+  crewViewState,
+  newCrewLifecycleRequestId,
+} from './crew-experience.mjs';
 
 const tabs = Array.from(document.querySelectorAll('.community-tab'));
 const panels = Array.from(document.querySelectorAll('.community-panel'));
@@ -27,6 +35,9 @@ const escapeHtml = (value = '') => String(value).replace(/[&<>"']/g, (char) => (
 const state = {
   billing: null,
   crews: [],
+  crewsLoaded: false,
+  createFormOpen: false,
+  createRequestId: '',
   activeCrewId: localStorage.getItem('dominion:activeCrewId') || '',
   crewMembers: [],
   leaderboard: { window: 'week', rows: [], requestId: 0 },
@@ -225,22 +236,31 @@ async function refreshLeaderboard() {
 
 function renderCrewShell() {
   const crew = activeCrew();
-  const select = $('crewSelect');
+  const view = crewViewState({
+    loaded: state.crewsLoaded,
+    crew,
+    createFormOpen: state.createFormOpen,
+  });
+  const createCard = $('crewCreateCard');
+  const openCreateButton = $('openCrewFormButton');
+  const createForm = $('crewForm');
   const manageCard = $('crewManageCard');
   const membersCard = $('crewMembersCard');
   const integrationsCard = $('crewIntegrationsCard');
+  const lifecycleCard = $('crewLifecycleCard');
   const title = $('crewTitle');
   const description = $('crewDescription');
 
-  if (select) {
-    select.innerHTML = state.crews.map((item) => (
-      `<option value="${item.id}" ${item.id === state.activeCrewId ? 'selected' : ''}>${escapeHtml(item.name)}</option>`
-    )).join('');
+  if (createCard) createCard.hidden = !view.showCreateCard;
+  if (openCreateButton) {
+    openCreateButton.hidden = !view.showCreateButton;
+    openCreateButton.setAttribute('aria-expanded', String(view.showCreateForm));
   }
-
-  if (manageCard) manageCard.hidden = !state.crews.length;
+  if (createForm) createForm.hidden = !view.showCreateForm;
+  if (manageCard) manageCard.hidden = !view.showActiveCrew;
   if (membersCard) membersCard.hidden = !crew;
   if (integrationsCard) integrationsCard.hidden = !crew;
+  if (lifecycleCard) lifecycleCard.hidden = !crew;
 
   if (!crew) {
     if (title) title.textContent = 'Create or join a crew.';
@@ -255,9 +275,26 @@ function renderCrewShell() {
     return;
   }
 
+  if ($('activeCrewName')) $('activeCrewName').textContent = crew.name;
   if (title) title.textContent = crew.name;
   if (description) description.textContent = crew.description || 'A private accountability group for this 77-day challenge.';
   $('crewDayCount').textContent = dayLabel(crew.challengeStartDate);
+
+  const lifecycleAction = crewLifecycleAction(crew.role);
+  if ($('crewLifecycleTitle')) {
+    $('crewLifecycleTitle').textContent = lifecycleAction === 'delete'
+      ? 'Delete this group'
+      : 'Leave this group';
+  }
+  if ($('crewLifecycleDescription')) {
+    $('crewLifecycleDescription').textContent = lifecycleAction === 'delete'
+      ? 'Remove access for every member and begin the retained deletion process.'
+      : 'Remove only your membership. Your profile, progress, points, badges, and journal stay yours.';
+  }
+  if ($('crewLifecycleButton')) {
+    $('crewLifecycleButton').textContent = lifecycleAction === 'delete' ? 'Delete Crew' : 'Leave Group';
+    $('crewLifecycleButton').dataset.lifecycleAction = lifecycleAction;
+  }
 }
 
 function integrationStatusLabel(status = '') {
@@ -579,9 +616,12 @@ async function refreshJournal() {
 
 async function refreshCrews() {
   state.crews = await getCrews();
-  if (!state.crews.some((crew) => crew.id === state.activeCrewId)) {
-    state.activeCrewId = state.crews[0]?.id || '';
+  state.crewsLoaded = true;
+  state.activeCrewId = state.crews[0]?.id || '';
+  if (state.activeCrewId) {
     localStorage.setItem('dominion:activeCrewId', state.activeCrewId);
+  } else {
+    localStorage.removeItem('dominion:activeCrewId');
   }
   await refreshCrew();
 }
@@ -620,11 +660,52 @@ async function bootCommunity() {
   await loadIntegrationSetup();
 }
 
-$('crewSelect')?.addEventListener('change', async (event) => {
-  state.activeCrewId = event.target.value;
-  localStorage.setItem('dominion:activeCrewId', state.activeCrewId);
-  setFeedback('');
-  await refreshCrew();
+function setCrewFormOpen(open, { focus = true } = {}) {
+  state.createFormOpen = Boolean(open);
+  renderCrewShell();
+  if (!focus) return;
+  const target = state.createFormOpen ? $('crewNameInput') : $('openCrewFormButton');
+  target?.focus();
+}
+
+$('openCrewFormButton')?.addEventListener('click', () => setCrewFormOpen(true));
+$('cancelCrewFormButton')?.addEventListener('click', () => {
+  $('crewForm')?.reset();
+  $('crewStartDateInput').value = todayKey();
+  state.createRequestId = '';
+  setCrewFormOpen(false);
+});
+
+$('crewLifecycleButton')?.addEventListener('click', (event) => {
+  const crew = activeCrew();
+  if (!crew) return;
+  const action = crewLifecycleAction(crew.role);
+  const requestId = newCrewLifecycleRequestId();
+  const isDelete = action === 'delete';
+  const dialog = createConfirmationDialog({
+    id: 'crew-lifecycle-confirmation',
+    title: 'Are you sure?',
+    description: isDelete
+      ? `Deleting ${crew.name} removes access for every member, revokes invitations, stops external delivery, and begins the retained deletion process. Personal profiles, progress, points, badges, and journals are not deleted.`
+      : `Leaving ${crew.name} removes only your membership. Your profile, progress, points, badges, and journal remain yours.`,
+    cancelLabel: 'Cancel',
+    confirmLabel: isDelete ? 'Delete Crew' : 'Leave Group',
+    pendingLabel: isDelete ? 'Deleting…' : 'Leaving…',
+    destructive: true,
+    alert: true,
+    closeOnBackdrop: false,
+    onConfirm: async () => {
+      if (isDelete) await deleteCrew({ crewId: crew.id, requestId });
+      else await leaveCrew({ crewId: crew.id, requestId });
+      state.createFormOpen = false;
+      await refreshCrews();
+      setFeedback(isDelete
+        ? `${crew.name} was deleted. Member access and external delivery stopped immediately.`
+        : `You left ${crew.name}. Your personal Dominion data was preserved.`);
+    },
+    onClose: () => dialog.destroy(),
+  });
+  dialog.open(event.currentTarget);
 });
 
 $('crewIntegrationsCard')?.addEventListener('click', async (event) => {
@@ -751,15 +832,19 @@ $('crewForm')?.addEventListener('submit', async (event) => {
   const button = event.submitter;
   const release = setButtonBusy(button, 'Creating...');
   try {
+    state.createRequestId ||= newCrewLifecycleRequestId();
     const crew = await createCrew({
       name: $('crewNameInput').value.trim(),
       description: $('crewDescriptionInput').value.trim(),
       challengeStartDate: $('crewStartDateInput').value,
+      requestId: state.createRequestId,
     });
     state.activeCrewId = crew.id;
     localStorage.setItem('dominion:activeCrewId', crew.id);
     event.target.reset();
     $('crewStartDateInput').value = todayKey();
+    state.createRequestId = '';
+    state.createFormOpen = false;
     setFeedback(`${crew.name} is ready. Copy the invite link when you want to bring people in.`);
     await refreshCrews();
   } catch (error) {

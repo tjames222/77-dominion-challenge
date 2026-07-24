@@ -310,6 +310,62 @@
 .community-tools h2 {
   margin: 2px 0 0;
 }
+.crew-create-heading,
+.crew-form-actions,
+.crew-lifecycle-card {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: center;
+  justify-content: space-between;
+}
+.crew-create-heading > div,
+.crew-lifecycle-card > div {
+  min-width: min(100%, 260px);
+}
+.crew-create-heading button,
+.crew-form-actions button,
+.crew-lifecycle-card button {
+  min-height: 44px;
+}
+.active-crew-identity {
+  display: grid;
+  gap: 5px;
+}
+.active-crew-identity span {
+  color: var(--text-muted);
+  font-size: .72rem;
+  font-weight: 950;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+.active-crew-identity strong {
+  color: var(--text);
+  font-size: 1.08rem;
+}
+.crew-lifecycle-card {
+  margin-block-start: 12px;
+  padding-block: 24px;
+  border-block-start: 1px solid color-mix(in srgb, var(--danger, #d85c54) 46%, var(--border));
+}
+.crew-lifecycle-card h2,
+.crew-lifecycle-card p {
+  margin: 0;
+}
+.crew-lifecycle-card p:not(.eyebrow) {
+  max-width: 66ch;
+  margin-block-start: 7px;
+  color: var(--text-muted);
+  line-height: 1.5;
+}
+.community-shell button.destructive {
+  border-color: color-mix(in srgb, var(--danger, #d85c54) 64%, var(--border));
+  background: color-mix(in srgb, var(--danger, #d85c54) 13%, var(--surface));
+  color: color-mix(in srgb, var(--danger, #d85c54) 84%, var(--text));
+}
+.community-shell button.destructive:hover {
+  background: color-mix(in srgb, var(--danger, #d85c54) 22%, var(--surface));
+}
 .community-form,
 .journal-form {
   grid-template-columns: 1fr;
@@ -735,6 +791,12 @@
   .integration-confirm-actions button { width: 100%; }
   .integration-settings { grid-template-columns: 1fr; align-items: stretch; }
   .integration-settings button { width: 100%; }
+  .crew-create-heading,
+  .crew-form-actions,
+  .crew-lifecycle-card { align-items: stretch; flex-direction: column; }
+  .crew-create-heading button,
+  .crew-form-actions button,
+  .crew-lifecycle-card button { width: 100%; }
 }
 @media (min-width: 720px) {
   .community-form,

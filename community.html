@@ -45,12 +45,21 @@
         </div>
 
         <div class="community-tools-slot card" data-section-surface="accent">
-          <section class="community-tools" id="crewCreateCard">
-            <div>
+          <section class="community-tools crew-create-empty" id="crewCreateCard" hidden>
+            <div class="crew-create-heading">
+              <div>
               <p class="eyebrow">Start a Crew</p>
               <h2>Build your accountability group.</h2>
+              </div>
+              <button
+                class="primary"
+                id="openCrewFormButton"
+                type="button"
+                aria-expanded="false"
+                aria-controls="crewForm"
+              >Create a Crew</button>
             </div>
-            <form class="community-form" id="crewForm">
+            <form class="community-form" id="crewForm" hidden>
               <label>
                 <span>Crew name</span>
                 <input id="crewNameInput" name="name" type="text" maxlength="80" placeholder="San Marcos Men" required />
@@ -63,16 +72,19 @@
                 <span>Description</span>
                 <textarea id="crewDescriptionInput" name="description" rows="3" placeholder="Who is this crew for?"></textarea>
               </label>
-              <button class="primary" type="submit">Create Crew</button>
+              <div class="crew-form-actions full-span">
+                <button class="primary" type="submit">Create Crew</button>
+                <button class="secondary" id="cancelCrewFormButton" type="button">Cancel</button>
+              </div>
             </form>
           </section>
 
           <section class="community-tools" id="crewManageCard" hidden>
             <div class="crew-toolbar">
-              <label>
+              <div class="active-crew-identity">
                 <span>Active crew</span>
-                <select id="crewSelect"></select>
-              </label>
+                <strong id="activeCrewName"></strong>
+              </div>
               <button
                 class="secondary"
                 id="copyInviteButton"
@@ -150,6 +162,15 @@
             </div>
           </div>
           <div class="leaderboard-list" id="crewLeaderboard"></div>
+        </section>
+
+        <section class="crew-lifecycle-card" id="crewLifecycleCard" data-section-surface="plain" hidden>
+          <div>
+            <p class="eyebrow">Group Access</p>
+            <h2 id="crewLifecycleTitle">Manage this group</h2>
+            <p id="crewLifecycleDescription"></p>
+          </div>
+          <button class="secondary destructive" id="crewLifecycleButton" type="button"></button>
         </section>
 
       </section>

@@ -67,6 +67,55 @@ test('community tablist follows arrow-key navigation', async ({ page, app }) => 
   await expect(page.getByPlaceholder('Write a comment…')).toHaveCount(0);
 });
 
+test('single-crew setup expands, focuses, and safely cancels', async ({ page, app }) => {
+  await app.open(ROUTE_BY_ID.community, { state: 'communityEmpty' });
+  const openButton = page.locator('#openCrewFormButton');
+  const form = page.locator('#crewForm');
+  await expect(form).toBeHidden();
+  await openButton.click();
+  await expect(openButton).toHaveAttribute('aria-expanded', 'true');
+  await expect(form).toBeVisible();
+  await expect(page.getByLabel('Crew name')).toBeFocused();
+
+  await page.getByRole('button', { name: 'Cancel' }).click();
+  await expect(form).toBeHidden();
+  await expect(openButton).toHaveAttribute('aria-expanded', 'false');
+  await expect(openButton).toBeFocused();
+});
+
+test('crew deletion requires an accessible confirmation and restores focus on Escape', async ({ page, app }) => {
+  await app.open(ROUTE_BY_ID.community);
+  const trigger = page.getByRole('button', { name: 'Delete Crew' });
+  await trigger.scrollIntoViewIfNeeded();
+  await trigger.click();
+
+  const dialog = page.getByRole('alertdialog', { name: 'Are you sure?' });
+  await expect(dialog).toBeVisible();
+  await expect(dialog).toContainText('removes access for every member');
+  await expect(dialog.getByRole('button', { name: 'Cancel' })).toBeFocused();
+  await page.keyboard.press('Escape');
+  await expect(dialog).toBeHidden();
+  await expect(trigger).toBeFocused();
+});
+
+test('non-admin members see Leave Group and retain personal data after confirmation', async ({ page, app }) => {
+  await app.open(ROUTE_BY_ID.community, { state: 'communityMember' });
+  const trigger = page.getByRole('button', { name: 'Leave Group' });
+  await trigger.scrollIntoViewIfNeeded();
+  await trigger.click();
+  const dialog = page.getByRole('alertdialog', { name: 'Are you sure?' });
+  await expect(dialog).toContainText('removes only your membership');
+  await dialog.getByRole('button', { name: 'Leave Group' }).click();
+  await expect(page.getByRole('button', { name: 'Create a Crew' })).toBeVisible();
+  await expect(page.locator('#communityFeedback')).toContainText('personal Dominion data was preserved');
+  const personal = await page.evaluate(() => ({
+    user: JSON.parse(localStorage.getItem('dominion:user') || 'null'),
+    stats: JSON.parse(localStorage.getItem('dominion:gameStats') || 'null'),
+  }));
+  expect(personal.user.email).toBe('qa.member@example.test');
+  expect(personal.stats.totalPoints).toBe(750);
+});
+
 test('login form submits with the keyboard and honors a safe return path', async ({ page, app }) => {
   await app.seed('guest');
   await page.goto('/login.html?returnTo=./profile.html');

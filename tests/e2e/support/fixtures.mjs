@@ -175,6 +175,18 @@ export const APP_STATES = Object.freeze({
       'dominion:activeCrewId': null,
     },
   },
+  communityMember: {
+    json: {
+      ...baseMemberJson(),
+      'dominion:mockCrews': [{ ...json(BASE_CREWS[0]), role: 'member' }],
+      'dominion:mockCrewMembers': {
+        crew_e2e_alpha: BASE_CREW_MEMBERS.crew_e2e_alpha.map((member) => (
+          member.userId === FIXED_USER_ID ? { ...json(member), role: 'member' } : json(member)
+        )),
+      },
+    },
+    raw: baseMemberRaw(),
+  },
   rewardsLocked: {
     json: {
       ...baseMemberJson(),

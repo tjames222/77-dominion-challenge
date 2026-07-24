@@ -70,7 +70,7 @@ export function clearInviteContinuation(storage) {
 }
 
 export function inviteNeedsContinuation(status) {
-  return ['ready', 'full', 'subscription_required'].includes(status);
+  return ['ready', 'full', 'subscription_required', 'current_crew_conflict'].includes(status);
 }
 
 export const TERMINAL_INVITE_STATUSES = new Set([
@@ -108,6 +108,12 @@ export function inviteStatusContent(status, preview = {}) {
       eyebrow: 'Already joined',
       title: `You are already in ${group}.`,
       message: 'Open the private group to see its leaderboard and members.',
+      recoverable: true,
+    },
+    current_crew_conflict: {
+      eyebrow: 'One active group',
+      title: `You already belong to another group.`,
+      message: `Leave your current group, or delete it if you are an owner or admin, before joining ${group}. No membership change was made.`,
       recoverable: true,
     },
     full: {

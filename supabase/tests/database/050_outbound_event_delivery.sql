@@ -133,32 +133,6 @@ select is(
   'all event categories fail closed while safe Dominion links default on'
 );
 
-insert into public.crew_members (crew_id, user_id, display_name, role)
-values (
-  'b0000000-0000-4000-8000-000000000002',
-  '10000000-0000-4000-8000-000000000001',
-  'Alice Example',
-  'member'
-);
-insert into public.outbound_update_preferences (
-  crew_id,
-  user_id,
-  outbound_updates_enabled,
-  presentation_mode,
-  share_check_ins,
-  share_streak_milestones,
-  share_badges_rewards,
-  share_membership_events
-) values (
-  'b0000000-0000-4000-8000-000000000002',
-  '10000000-0000-4000-8000-000000000001',
-  true,
-  'anonymous',
-  false,
-  false,
-  false,
-  true
-);
 select ok(
   public.update_integration_destination_settings(
     'd0000000-0000-4000-8000-000000000002',

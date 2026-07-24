@@ -13878,3 +13878,4 @@ revoke execute on function public.grant_sharing_reward_after_invite_redemption()
 \ir migrations/20260722152851_harden_profile_photo_thumbnails.sql
 \ir migrations/20260722152953_remove_journal_photo_infrastructure.sql
 \ir migrations/20260723162027_rate_limit_profile_photo_registrations.sql
+\ir migrations/20260723211554_streamline_single_crew_lifecycle.sql
