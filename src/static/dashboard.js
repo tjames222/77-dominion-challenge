@@ -839,7 +839,6 @@ let checkInStatusHydratedDate = hasSupabaseAuth() ? '' : renderedDateKey;
 let dashboardHydrationRequestId = 0;
 let celebrationReturnFocus = null;
 const $ = (id) => document.getElementById(id);
-const reducedMotionEnabled = () => window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
 const restoreCelebrationFocus = () => {
   const target = celebrationReturnFocus;
   celebrationReturnFocus = null;

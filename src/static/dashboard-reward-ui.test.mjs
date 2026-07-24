@@ -22,6 +22,7 @@ describe('dashboard reward presentation', () => {
     assert.match(dashboardJs, /handoffMs:\s*reducedMotionEnabled\(\) \? 40 : 240/);
     assert.doesNotMatch(dashboardJs, /function\s+queueBadgeCelebrations/);
     assert.doesNotMatch(dashboardJs, /rewardDelay\s*=|unlockDelay\s*=/);
+    assert.equal((dashboardJs.match(/const reducedMotionEnabled/g) || []).length, 1);
   });
 
   it('sets the authoritative tier before showing each badge and resets challenge styling', () => {
