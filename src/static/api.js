@@ -191,6 +191,14 @@ const todayLabel = (createdAt) => {
   return `${days} days ago`;
 };
 
+const localDayBounds = (now = new Date()) => {
+  const start = new Date(now);
+  start.setHours(0, 0, 0, 0);
+  const end = new Date(start);
+  end.setDate(end.getDate() + 1);
+  return { start: start.toISOString(), end: end.toISOString() };
+};
+
 const requireSupabase = () => {
   if (isLocalDemoMode()) throw new Error('Supabase is disabled in preview mock mode.');
   if (!supabase) throw new Error('Supabase is not configured.');
@@ -1265,7 +1273,8 @@ export async function startChallenge(challengeKey) {
 export async function getDashboard() {
   const client = requireSupabase();
   const user = await requireUser();
-  const [profile, entriesResult, checkInsResult, feedResult, statsResult, badgesResult] = await Promise.all([
+  const todayBounds = localDayBounds();
+  const [profile, entriesResult, checkInsResult, feedResult, completedTodayResult, statsResult, badgesResult] = await Promise.all([
     getProfile(),
     client
       .from('challenge_entries')
@@ -1284,7 +1293,14 @@ export async function getDashboard() {
       .select('id, display_name, challenge_day, status, completed_count, points_awarded, created_at')
       .neq('status', 'scheduled')
       .order('created_at', { ascending: false })
-      .limit(30),
+      .order('id', { ascending: false })
+      .limit(3),
+    client
+      .from('community_feed_items')
+      .select('id', { count: 'exact', head: true })
+      .eq('status', 'complete')
+      .gte('created_at', todayBounds.start)
+      .lt('created_at', todayBounds.end),
     client
       .from('user_game_stats')
       .select('total_points, challenge_points, current_app_streak, best_app_streak, current_full_day_streak, best_full_day_streak, last_seen_date, last_full_day_date')
@@ -1301,6 +1317,7 @@ export async function getDashboard() {
   if (entriesResult.error) throw entriesResult.error;
   if (checkInsResult.error) throw checkInsResult.error;
   if (feedResult.error) throw feedResult.error;
+  if (completedTodayResult.error) throw completedTodayResult.error;
   if (statsResult.error) throw statsResult.error;
   if (badgesResult.error) throw badgesResult.error;
 
@@ -1311,7 +1328,8 @@ export async function getDashboard() {
       date: checkIn.entry_date,
       challengeDay: checkIn.challenge_day,
     })),
-    feed: feedResult.data.map(mapFeedItem),
+    feed: (feedResult.data || []).map(mapFeedItem),
+    completedTodayCount: Math.max(0, Number(completedTodayResult.count) || 0),
     gameStats: mapGameStats(statsResult.data),
     badges: (badgesResult.data || []).map(mapBadge).filter(Boolean),
   };

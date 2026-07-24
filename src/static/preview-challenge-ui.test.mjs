@@ -33,16 +33,17 @@ describe('preview challenge controls', () => {
   });
 
   it('uses the full production celebration pipeline after preview check-ins', () => {
-    const celebrationStart = dashboardJs.indexOf('const confettiDuration =');
+    const celebrationStart = dashboardJs.indexOf("if (status === 'complete') launchConfetti();");
     const celebrationEnd = dashboardJs.indexOf('  } catch (error) {', celebrationStart);
     const celebrationBlock = dashboardJs.slice(celebrationStart, celebrationEnd);
 
     assert.ok(celebrationStart >= 0 && celebrationEnd > celebrationStart);
     assert.doesNotMatch(celebrationBlock, /simulatedPreviewPost|suppressCelebration/);
-    assert.match(celebrationBlock, /status === 'complete' \? launchConfetti\(\)/);
-    assert.match(celebrationBlock, /showRewardToast\(/);
-    assert.match(celebrationBlock, /queueBadgeCelebrations\(/);
+    assert.match(celebrationBlock, /status === 'complete'\) launchConfetti\(\)/);
+    assert.match(celebrationBlock, /queueCheckInCelebrations\(/);
     assert.match(celebrationBlock, /refreshChallengeProgression\(/);
+    assert.match(dashboardJs, /item\.kind === 'reward'\) return showRewardToast\(item\.reward\)/);
+    assert.match(dashboardJs, /item\.kind === 'badge'\) return showBadgeCelebration\(item\.badge\)/);
     assert.match(dashboardJs, /queueChallengeUnlockCelebration\(result\.claimedUnlocks, celebrationDelay\)/);
   });
 });

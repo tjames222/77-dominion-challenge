@@ -7,6 +7,10 @@ import { initThemeState } from './theme-state';
 import { initThemeAssets } from './theme-assets';
 
 const topbar = document.querySelector('.topbar');
+const TOPBAR_COMPACT_SCROLL_Y = 12;
+const TOPBAR_TOP_SCROLL_Y = 2;
+
+let syncTopbarScrollState = null;
 
 const loggedInLinks = [
   ['Dashboard', './dashboard.html'],
@@ -27,51 +31,35 @@ const publicLinks = [
 function closeMenu() {
   document.body.classList.remove('menu-open');
   document.querySelector('.global-menu-button')?.setAttribute('aria-expanded', 'false');
+  syncTopbarScrollState?.();
 }
 
 function openMenu() {
   document.body.classList.add('menu-open');
   document.querySelector('.global-menu-button')?.setAttribute('aria-expanded', 'true');
+  topbar?.classList.remove('topbar-collapsed');
 }
 
-function initDirectionalTopbar() {
+function initScrollResponsiveTopbar() {
   if (!topbar) return;
 
-  const collapseAfter = 96;
-  const directionThreshold = 10;
-  let lastScrollY = Math.max(window.scrollY, 0);
-  let accumulatedDelta = 0;
   let ticking = false;
 
   const update = () => {
-    const currentScrollY = Math.max(window.scrollY, 0);
-    const delta = currentScrollY - lastScrollY;
+    const currentScrollY = Math.max(window.scrollY || 0, 0);
+    const menuIsOpen = document.body.classList.contains('menu-open');
 
-    if (currentScrollY <= 16) {
+    if (menuIsOpen || currentScrollY <= TOPBAR_TOP_SCROLL_Y) {
       topbar.classList.remove('topbar-collapsed');
-      accumulatedDelta = 0;
-    } else if (Math.sign(delta) !== Math.sign(accumulatedDelta)) {
-      accumulatedDelta = delta;
-    } else {
-      accumulatedDelta += delta;
+    } else if (currentScrollY > TOPBAR_COMPACT_SCROLL_Y) {
+      topbar.classList.add('topbar-collapsed');
     }
 
-    if (!document.body.classList.contains('menu-open')) {
-      if (currentScrollY > collapseAfter && accumulatedDelta > directionThreshold) {
-        topbar.classList.add('topbar-collapsed');
-        accumulatedDelta = 0;
-      } else if (accumulatedDelta < -directionThreshold) {
-        topbar.classList.remove('topbar-collapsed');
-        accumulatedDelta = 0;
-      }
-    } else {
-      topbar.classList.remove('topbar-collapsed');
-    }
-
-    topbar.classList.toggle('topbar-scrolled', currentScrollY > 8);
-    lastScrollY = currentScrollY;
+    topbar.classList.toggle('topbar-scrolled', currentScrollY > TOPBAR_TOP_SCROLL_Y);
     ticking = false;
   };
+
+  syncTopbarScrollState = update;
 
   window.addEventListener('scroll', () => {
     if (!ticking) {
@@ -171,6 +159,6 @@ initThemeAssets();
 hydrateThemeEntitlementState().then(({ error }) => {
   if (error) console.warn('Unable to verify theme reward ownership', error);
 });
-initDirectionalTopbar();
+initScrollResponsiveTopbar();
 initTopbarStickyOffset();
 buildMenu();

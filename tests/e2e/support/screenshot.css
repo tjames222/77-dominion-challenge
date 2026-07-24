@@ -37,35 +37,43 @@ body {
 
 /*
  * Chromium scrolls the document while stitching a full-page screenshot. The
- * production header reacts to those synthetic scroll events by collapsing,
+ * scroll-responsive header reacts to those synthetic scroll events by compacting,
  * which changes the document height partway through capture. Keep the visual
  * fixture at its top-of-page geometry while leaving the production behavior
  * untouched.
  */
-.topbar.topbar-scrolled {
+.topbar.topbar-scrolled::before {
   border-bottom-color: transparent !important;
   box-shadow: none !important;
 }
 
-.topbar.topbar-collapsed {
-  min-height: 72px !important;
-  padding-top: calc(12px + env(safe-area-inset-top)) !important;
-  padding-bottom: 12px !important;
+.topbar.topbar-collapsed::before {
+  opacity: 1 !important;
   background: color-mix(in srgb, var(--background) 94%, transparent) !important;
+  transform: none !important;
 }
 
-.topbar.topbar-collapsed .brand-name,
-.topbar.topbar-collapsed .topbar-login,
-.topbar.topbar-collapsed .theme-toggle,
-.topbar.topbar-collapsed .brand-mark,
-.topbar.topbar-collapsed .back-link,
-.topbar.topbar-collapsed .global-menu-button {
+.topbar.topbar-collapsed > * {
   opacity: 1 !important;
   transform: none !important;
 }
 
-@media (max-width: 420px) {
-  .topbar.topbar-collapsed {
-    min-height: 64px !important;
-  }
+.topbar.topbar-collapsed .dashboard-streak-button > *,
+.topbar.topbar-collapsed .global-menu-button::before {
+  transform: none !important;
+}
+
+.topbar.topbar-collapsed .global-menu-button span:nth-child(1) {
+  width: 20px !important;
+  transform: translateY(-7px) !important;
+}
+
+.topbar.topbar-collapsed .global-menu-button span:nth-child(2) {
+  width: 13px !important;
+  transform: translateX(3px) !important;
+}
+
+.topbar.topbar-collapsed .global-menu-button span:nth-child(3) {
+  width: 20px !important;
+  transform: translateY(7px) !important;
 }

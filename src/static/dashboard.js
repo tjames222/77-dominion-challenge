@@ -1,5 +1,5 @@
 import { initReveal } from './reveal';
-import { createDialog } from './dialog.mjs';
+import { acquireDialogLayer, createDialog } from './dialog.mjs';
 import {
   claimChallengeUnlocks,
   getBillingState,
@@ -37,6 +37,15 @@ import {
 } from './check-in.mjs';
 import { syncWorkoutDifficultyControls } from './workout-difficulty-controls.mjs';
 import { resolveLeaderboardPrestige } from './leaderboard-prestige.mjs';
+import { shouldUseZeroPointGlass } from './dashboard-view-model.mjs';
+import { createCelebrationQueue } from './celebration-queue.mjs';
+import {
+  compareBadgesNewestFirst,
+  completedTodayLabel,
+  normalizeBadgeTier,
+  selectLatestAccountabilityPosts,
+  selectLatestBadge,
+} from './dashboard-rewards.mjs';
 import {
   STREAK_METRIC_DEFINITIONS,
   buildStreakSummary,
@@ -255,8 +264,12 @@ const badgeIconClass = (badge) => {
 const badgeRank = (badge) => badgePriorityRank.get(badge?.key) ?? 999;
 const oneBadgeForDisplay = (earnedBadges = []) => earnedBadges
   .filter(Boolean)
+  .slice()
   .sort((left, right) => badgeRank(left) - badgeRank(right) || String(right.earnedAt || '').localeCompare(String(left.earnedAt || '')))
   .slice(0, 1);
+const badgesForCelebration = (earnedBadges = []) => [...earnedBadges]
+  .filter(Boolean)
+  .sort((left, right) => badgeRank(left) - badgeRank(right) || compareBadgesNewestFirst(left, right));
 const calculateLocalPoints = (entry, status) => {
   return calculateCheckInScore({
     completed: entry.completed,
@@ -266,10 +279,7 @@ const calculateLocalPoints = (entry, status) => {
 };
 const badgeEarnedDate = (badge) => badge.entryDate || badge.earnedDate || badge.metadata?.entryDate || String(badge.earnedAt || '').slice(0, 10);
 const badgeDateFormatter = new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric' });
-const safeBadgeTier = (badge) => {
-  const tier = String(badge?.tier || '').toLowerCase();
-  return ['bronze', 'silver', 'gold'].includes(tier) ? tier : 'bronze';
-};
+const safeBadgeTier = normalizeBadgeTier;
 const badgeEarnedDisplay = (badge) => {
   const earnedDate = badgeEarnedDate(badge);
   if (!earnedDate) return { dateTime: '', label: 'Recently earned' };
@@ -439,16 +449,24 @@ function renderGameSummary() {
   const streakSummary = buildStreakSummary(gameStats, todayKey());
   const appStreak = streakSummary.currentAppStreak;
   const fullDayStreak = streakSummary.currentFullStandardStreak;
-  const recentBadges = badges.filter(Boolean).slice(0, 4);
-  const prestige = resolveLeaderboardPrestige(leaderboardPositions);
+  const latestBadge = selectLatestBadge(badges);
+  const recentBadges = latestBadge ? [latestBadge] : [];
+  const resolvedPrestige = resolveLeaderboardPrestige(leaderboardPositions);
+  const zeroPointGlass = shouldUseZeroPointGlass({
+    totalPoints: levelProgress.totalPoints,
+    prestigeRank: leaderboardPositions.privateRank,
+  });
+  const prestige = zeroPointGlass ? resolveLeaderboardPrestige({}) : resolvedPrestige;
   const levelLabel = prestige.shortLabel
     ? `Level ${levelProgress.level} · ${prestige.shortLabel}`
     : `Level ${levelProgress.level}`;
-  const emblemLabel = `Level ${levelProgress.level} — ${prestige.accessibleLabel}`;
+  const emblemLabel = `Level ${levelProgress.level} — ${zeroPointGlass ? 'Zero-point glass coin — ' : ''}${prestige.accessibleLabel}`;
 
   if (gamePointsTotal) gamePointsTotal.textContent = levelProgress.totalPoints.toLocaleString();
   if (gameLevelEmblem) {
     gameLevelEmblem.dataset.prestige = prestige.key;
+    if (zeroPointGlass) gameLevelEmblem.dataset.material = 'zero-glass';
+    else delete gameLevelEmblem.dataset.material;
     gameLevelEmblem.setAttribute('aria-label', emblemLabel);
     gameLevelEmblem.title = emblemLabel;
   }
@@ -479,10 +497,12 @@ function renderGameSummary() {
     if (gameMomentumMessage.textContent !== momentumMessage) gameMomentumMessage.textContent = momentumMessage;
   }
   renderStreakExperience(streakSummary);
-  if (recentBadgeSummary) recentBadgeSummary.textContent = recentBadges.length ? `${recentBadges.length} recent` : 'No badges yet';
+  if (recentBadgeSummary) recentBadgeSummary.textContent = latestBadge
+    ? badgeEarnedDisplay(latestBadge).label
+    : 'No badges yet';
   if (badgeShelf) {
-    badgeShelf.innerHTML = recentBadges.length
-      ? recentBadges.map(progressionBadgeCard).join('')
+    badgeShelf.innerHTML = latestBadge
+      ? progressionBadgeCard(latestBadge)
       : '<article class="progression-badge-empty"><span class="app-icon icon-shield" aria-hidden="true"></span><div><strong>Your first badge is waiting.</strong><p>Complete an honest check-in to put proof of the work on your shelf.</p></div></article>';
   }
 }
@@ -594,15 +614,19 @@ function stopEndlessConfetti() {
   layer.innerHTML = '';
   layer.classList.remove('active', 'endless');
 }
+function stopCelebrationConfetti() {
+  const layer = $('confettiLayer');
+  confettiRunId += 1;
+  if (confettiTimer) {
+    window.clearTimeout(confettiTimer);
+    confettiTimer = null;
+  }
+  layer?.replaceChildren();
+  layer?.classList.remove('active', 'endless');
+  document.querySelector('.dashboard-shell')?.classList.remove('celebration-shake');
+}
 function finishRewardToastDismiss(rewardToast, rewardBackdrop) {
-  if (rewardToast.exitTimer) {
-    window.clearTimeout(rewardToast.exitTimer);
-    rewardToast.exitTimer = null;
-  }
-  if (rewardToast.exitAnimationListener) {
-    rewardToast.removeEventListener('animationend', rewardToast.exitAnimationListener);
-    rewardToast.exitAnimationListener = null;
-  }
+  rewardToast.presentationRunId = (rewardToast.presentationRunId || 0) + 1;
   rewardToast.classList.remove('active', 'exiting');
   rewardToast.hidden = true;
   if (rewardBackdrop) {
@@ -610,26 +634,60 @@ function finishRewardToastDismiss(rewardToast, rewardBackdrop) {
     rewardBackdrop.hidden = true;
   }
 }
-function dismissRewardToast(rewardToast, rewardBackdrop) {
-  if (rewardToast.hidden || rewardToast.classList.contains('exiting')) return;
-  if (rewardToast.hideTimer) {
-    window.clearTimeout(rewardToast.hideTimer);
-    rewardToast.hideTimer = null;
+const reducedMotionEnabled = () => window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+function focusCelebrationClose(stage) {
+  const runId = stage.presentationRunId;
+  requestAnimationFrame(() => {
+    if (stage.hidden || stage.presentationRunId !== runId) return;
+    stage.querySelector('[data-dismiss-celebration]')?.focus({ preventScroll: true });
+  });
+}
+function activateCelebrationModal(layer, panel = layer) {
+  return acquireDialogLayer({
+    document,
+    layer,
+    panel,
+    onEscape: () => celebrationSequence.dismissCurrent('escape'),
+    onReplace: () => celebrationSequence.dismissCurrent('replaced'),
+  });
+}
+function waitForOverlayExit(stage, animationName, fallbackMs, finish) {
+  return new Promise((resolve) => {
+    let settled = false;
+    let fallbackTimer = null;
+    const complete = () => {
+      if (settled) return;
+      settled = true;
+      stage.removeEventListener('animationend', onAnimationEnd);
+      if (fallbackTimer !== null) window.clearTimeout(fallbackTimer);
+      finish();
+      resolve();
+    };
+    const onAnimationEnd = (event) => {
+      if (event.target === stage && event.animationName === animationName) complete();
+    };
+    fallbackTimer = window.setTimeout(complete, reducedMotionEnabled() ? 20 : fallbackMs);
+    stage.addEventListener('animationend', onAnimationEnd);
+  });
+}
+function dismissRewardToast(rewardToast, rewardBackdrop, reason = 'dismissed') {
+  if (!rewardToast || rewardToast.hidden) return Promise.resolve();
+  rewardToast.presentationRunId = (rewardToast.presentationRunId || 0) + 1;
+  if (reason !== 'auto') stopCelebrationConfetti();
+  if (reason === 'replaced' || reason === 'cleared') {
+    finishRewardToastDismiss(rewardToast, rewardBackdrop);
+    return Promise.resolve();
   }
-  const finishDismissal = () => finishRewardToastDismiss(rewardToast, rewardBackdrop);
-  const onAnimationEnd = (event) => {
-    if (event.target === rewardToast && event.animationName === 'reward-toast-dissolve-out') {
-      finishDismissal();
-    }
-  };
-
-  rewardToast.exitAnimationListener = onAnimationEnd;
-  rewardToast.addEventListener('animationend', onAnimationEnd);
   rewardToast.classList.remove('active');
   rewardToast.classList.add('exiting');
   rewardBackdrop?.classList.remove('active');
   rewardBackdrop?.classList.add('exiting');
-  rewardToast.exitTimer = window.setTimeout(finishDismissal, REWARD_TOAST_EXIT_MS + 80);
+  return waitForOverlayExit(
+    rewardToast,
+    'reward-toast-dissolve-out',
+    REWARD_TOAST_EXIT_MS + 80,
+    () => finishRewardToastDismiss(rewardToast, rewardBackdrop),
+  );
 }
 function showRewardToast({ points = 0, earnedBadges = [], status = 'complete' }) {
   const rewardToast = $('rewardToast');
@@ -637,7 +695,8 @@ function showRewardToast({ points = 0, earnedBadges = [], status = 'complete' })
   const rewardTitle = $('rewardTitle');
   const rewardCopy = $('rewardCopy');
   const rewardBadges = $('rewardBadges');
-  if (!rewardToast || !rewardTitle || !rewardCopy) return;
+  const rewardLayer = $('rewardCelebrationLayer') || rewardToast;
+  if (!rewardToast || !rewardTitle || !rewardCopy) return {};
   const displayBadges = oneBadgeForDisplay(earnedBadges);
 
   if (status === 'visit') rewardTitle.textContent = 'Streak updated.';
@@ -652,87 +711,96 @@ function showRewardToast({ points = 0, earnedBadges = [], status = 'complete' })
       ? displayBadges.map(badgeChip).join('')
       : '<span class="badge-empty">Badges update as streaks grow.</span>';
   }
-  if (rewardToast.hideTimer) {
-    window.clearTimeout(rewardToast.hideTimer);
-    rewardToast.hideTimer = null;
-  }
-  if (rewardToast.exitTimer) {
-    window.clearTimeout(rewardToast.exitTimer);
-    rewardToast.exitTimer = null;
-  }
-  if (rewardToast.exitAnimationListener) {
-    rewardToast.removeEventListener('animationend', rewardToast.exitAnimationListener);
-    rewardToast.exitAnimationListener = null;
-  }
+  rewardToast.presentationRunId = (rewardToast.presentationRunId || 0) + 1;
+  const runId = rewardToast.presentationRunId;
   rewardToast.hidden = false;
   if (rewardBackdrop) rewardBackdrop.hidden = false;
   rewardToast.classList.remove('active', 'exiting');
   rewardBackdrop?.classList.remove('active', 'exiting');
   rewardToast.getAnimations?.().forEach((animation) => animation.cancel());
   rewardBackdrop?.getAnimations?.().forEach((animation) => animation.cancel());
+  const modal = activateCelebrationModal(rewardLayer, rewardToast);
   void rewardToast.offsetWidth;
   requestAnimationFrame(() => {
     requestAnimationFrame(() => {
+      if (rewardToast.hidden || rewardToast.presentationRunId !== runId) return;
       rewardBackdrop?.classList.add('active');
       rewardToast.classList.add('active');
     });
   });
-  const toastDuration = status === 'complete' ? DAY_COMPLETE_TOAST_DURATION_MS : REWARD_TOAST_DURATION_MS;
-  rewardToast.hideTimer = window.setTimeout(() => {
-    rewardToast.hideTimer = null;
-    dismissRewardToast(rewardToast, rewardBackdrop);
-  }, toastDuration);
-  return toastDuration + REWARD_TOAST_EXIT_MS;
+  focusCelebrationClose(rewardToast);
+  return {
+    dismiss: (reason) => dismissRewardToast(rewardToast, rewardBackdrop, reason),
+    cleanup: (reason) => {
+      if (!rewardToast.hidden) dismissRewardToast(rewardToast, rewardBackdrop, reason === 'cleared' ? 'cleared' : 'replaced');
+      modal.release();
+    },
+  };
 }
 function showBadgeCelebration(badge) {
   const stage = $('badgeCelebration');
   const icon = $('badgeCelebrationIcon');
+  const eyebrow = $('badgeCelebrationEyebrow');
   const title = $('badgeCelebrationTitle');
   const copy = $('badgeCelebrationCopy');
-  if (!stage || !badge) return;
+  if (!stage || !badge) return {};
   const isFinale = badge.key === finaleBadgeKey;
   const isSpecial = specialCelebrationBadges.has(badge.key);
+  const tier = safeBadgeTier(badge);
+  const tierLabel = `${tier.charAt(0).toUpperCase()}${tier.slice(1)}`;
 
   if (title) title.textContent = badge.name || 'Badge Earned';
+  if (eyebrow) eyebrow.textContent = `${tierLabel} Badge Earned`;
   if (copy) {
-    const tier = badge.tier ? `${badge.tier} badge` : 'badge';
     if (isFinale) copy.textContent = 'You completed all 77 days. Dominion finished strong.';
-    else if (isSpecial) copy.textContent = `Milestone reached. You unlocked a ${tier} for crossing a major line.`;
-    else copy.textContent = `You unlocked a ${tier}. Keep stacking faithful days.`;
+    else if (isSpecial) copy.textContent = `Milestone reached. You unlocked a ${tier} badge for crossing a major line.`;
+    else copy.textContent = `You unlocked a ${tier} badge. Keep stacking faithful days.`;
   }
   if (icon) {
     icon.className = `badge-medal-icon app-icon ${badgeIconClass(badge)}`;
   }
 
-  if (stage.hideTimer) window.clearTimeout(stage.hideTimer);
-  if (stage.exitTimer) window.clearTimeout(stage.exitTimer);
+  stage.presentationRunId = (stage.presentationRunId || 0) + 1;
+  stage.dataset.tier = tier;
   stage.hidden = false;
   stage.classList.remove('active', 'exiting', 'milestone', 'finale');
   stage.classList.toggle('milestone', isSpecial);
   stage.classList.toggle('finale', isFinale);
+  const modal = activateCelebrationModal(stage);
   void stage.offsetWidth;
   stage.classList.add('active');
-  stage.exitTimer = window.setTimeout(() => {
-    stage.classList.add('exiting');
-  }, BADGE_REVEAL_DURATION_MS);
-  stage.hideTimer = window.setTimeout(() => {
-    stage.classList.remove('active', 'exiting');
-    stage.hidden = true;
-    stage.exitTimer = null;
-    stage.hideTimer = null;
-  }, BADGE_REVEAL_DURATION_MS + 420);
+  focusCelebrationClose(stage);
+  return {
+    dismiss: (reason) => dismissBadgeCelebration(stage, reason),
+    cleanup: (reason) => {
+      if (!stage.hidden) dismissBadgeCelebration(stage, reason === 'cleared' ? 'cleared' : 'replaced');
+      modal.release();
+    },
+  };
 }
-function queueBadgeCelebrations(earnedBadges = [], delay = 0) {
-  oneBadgeForDisplay(earnedBadges).forEach((badge, index) => {
-    window.setTimeout(() => showBadgeCelebration(badge), delay + index * (BADGE_REVEAL_DURATION_MS + 900));
-  });
+function finishBadgeCelebrationDismiss(stage) {
+  stage.presentationRunId = (stage.presentationRunId || 0) + 1;
+  stage.classList.remove('active', 'exiting', 'milestone', 'finale');
+  stage.hidden = true;
+  delete stage.dataset.tier;
+}
+function dismissBadgeCelebration(stage, reason = 'dismissed') {
+  if (!stage || stage.hidden) return Promise.resolve();
+  stage.presentationRunId = (stage.presentationRunId || 0) + 1;
+  if (reason === 'replaced' || reason === 'cleared') {
+    finishBadgeCelebrationDismiss(stage);
+    return Promise.resolve();
+  }
+  stage.classList.remove('active');
+  stage.classList.add('exiting');
+  return waitForOverlayExit(stage, 'badge-stage-out', 420, () => finishBadgeCelebrationDismiss(stage));
 }
 function showChallengeUnlockCelebration(challenges = []) {
   const stage = $('challengeUnlockCelebration');
   const icon = $('challengeUnlockIcon');
   const title = $('challengeUnlockTitle');
   const copy = $('challengeUnlockCopy');
-  if (!stage || !challenges.length) return;
+  if (!stage || !challenges.length) return {};
   const [first] = challenges;
   const challengeNames = challenges.map((challenge) => challenge.title).filter(Boolean);
 
@@ -741,23 +809,33 @@ function showChallengeUnlockCelebration(challenges = []) {
   if (copy) copy.textContent = challenges.length === 1
     ? 'Your points opened a new path. It is ready in Badges & Rewards.'
     : `${challengeNames.join(', ')} are now ready in Badges & Rewards.`;
-  if (stage.hideTimer) window.clearTimeout(stage.hideTimer);
-  if (stage.exitTimer) window.clearTimeout(stage.exitTimer);
+  stage.presentationRunId = (stage.presentationRunId || 0) + 1;
+  delete stage.dataset.tier;
   stage.hidden = false;
   stage.classList.remove('active', 'exiting');
+  const modal = activateCelebrationModal(stage);
   void stage.offsetWidth;
   stage.classList.add('active');
-  stage.exitTimer = window.setTimeout(() => stage.classList.add('exiting'), BADGE_REVEAL_DURATION_MS);
-  stage.hideTimer = window.setTimeout(() => {
-    stage.classList.remove('active', 'exiting');
-    stage.hidden = true;
-    stage.exitTimer = null;
-    stage.hideTimer = null;
-  }, BADGE_REVEAL_DURATION_MS + 420);
+  focusCelebrationClose(stage);
+  return {
+    dismiss: (reason) => dismissBadgeCelebration(stage, reason),
+    cleanup: (reason) => {
+      if (!stage.hidden) dismissBadgeCelebration(stage, reason === 'cleared' ? 'cleared' : 'replaced');
+      modal.release();
+    },
+  };
 }
 function queueChallengeUnlockCelebration(challenges = [], delay = 0) {
   if (!challenges.length) return;
-  window.setTimeout(() => showChallengeUnlockCelebration(challenges), delay);
+  const challengeKey = challenges.map((challenge) => challenge.key || challenge.id || challenge.title).sort().join(':');
+  const enqueue = () => enqueueCelebrationItems({
+    id: `challenge:${challengeKey}`,
+    kind: 'challenge',
+    challenges,
+    durationMs: BADGE_REVEAL_DURATION_MS,
+  });
+  if (delay > 0) window.setTimeout(enqueue, delay);
+  else enqueue();
 }
 let startDate = localDemoMode ? load('dominion:startDate', todayKey()) : todayKey();
 let entries = load(ENTRY_STORAGE_KEY, []);
@@ -768,6 +846,7 @@ let initialCheckInCache = checkInCacheForOwner(load(checkInDatesStorageKey(), {}
 let submittedCheckInDates = new Set(initialCheckInCache.dates);
 let submittedChallengeDays = new Set(initialCheckInCache.challengeDays);
 let feed = localDemoMode ? load('dominion:feed', starterFeed) : starterFeed;
+let completedTodayCount = null;
 let workoutDifficulty = normalizeWorkoutDifficulty(load(WORKOUT_DIFFICULTY_STORAGE_KEY, DEFAULT_WORKOUT_DIFFICULTY));
 let gameStats = preserveBestStreaks(
   localDemoMode ? load('dominion:gameStats', DEFAULT_DEMO_GAME_STATS) : {},
@@ -797,7 +876,66 @@ let checkInNoticeDate = '';
 let renderedDateKey = todayKey();
 let checkInStatusHydratedDate = hasSupabaseAuth() ? '' : renderedDateKey;
 let dashboardHydrationRequestId = 0;
+let celebrationReturnFocus = null;
 const $ = (id) => document.getElementById(id);
+const restoreCelebrationFocus = () => {
+  const target = celebrationReturnFocus;
+  celebrationReturnFocus = null;
+  window.setTimeout(() => {
+    if (document.body.hasAttribute('data-dialog-open')) return;
+    if (
+      target?.isConnected
+      && target !== document.body
+      && target !== document.documentElement
+      && !target.matches?.(':disabled, [aria-hidden="true"]')
+      && typeof target.focus === 'function'
+    ) {
+      target.focus({ preventScroll: true });
+      if (document.activeElement === target) return;
+    }
+    const fallback = $('checkInStatus') || $('dashboardTitle');
+    if (fallback) {
+      fallback.focus({ preventScroll: true });
+    }
+  }, 0);
+};
+const presentCelebrationItem = (item) => {
+  if (item.kind === 'reward') return showRewardToast(item.reward);
+  if (item.kind === 'badge') return showBadgeCelebration(item.badge);
+  if (item.kind === 'challenge') return showChallengeUnlockCelebration(item.challenges);
+  return {};
+};
+const celebrationSequence = createCelebrationQueue({
+  present: presentCelebrationItem,
+  handoffMs: reducedMotionEnabled() ? 40 : 240,
+  onIdle: restoreCelebrationFocus,
+});
+function enqueueCelebrationItems(items) {
+  const candidates = (Array.isArray(items) ? items : [items]).filter(Boolean);
+  if (!candidates.length) return;
+  const state = celebrationSequence.state();
+  if (!state.active && !state.pending.length && !celebrationReturnFocus) {
+    celebrationReturnFocus = document.activeElement;
+  }
+  celebrationSequence.enqueue(candidates);
+}
+function queueCheckInCelebrations({ id, points = 0, earnedBadges = [], status = 'complete' }) {
+  const items = [{
+    id: `reward:${id}`,
+    kind: 'reward',
+    reward: { points, earnedBadges, status },
+    durationMs: status === 'complete' ? DAY_COMPLETE_TOAST_DURATION_MS : REWARD_TOAST_DURATION_MS,
+  }];
+  badgesForCelebration(earnedBadges).forEach((badge) => {
+    items.push({
+      id: `badge:${badge.key || badge.name || 'earned'}:${badge.earnedAt || badgeEarnedDate(badge) || 'unknown'}`,
+      kind: 'badge',
+      badge,
+      durationMs: BADGE_REVEAL_DURATION_MS,
+    });
+  });
+  enqueueCelebrationItems(items);
+}
 const dashboardStreakButton = $('dashboardStreakButton');
 const streakDetailsDialog = dashboardStreakButton ? createDialog({
   id: 'streakDetailsDialog',
@@ -1189,12 +1327,12 @@ function render() {
   }
   if (checklist) renderChecklist(entry);
   if (feedEl) {
-    feedEl.innerHTML = feed.slice(0, 6).map((item) => {
+    feedEl.innerHTML = selectLatestAccountabilityPosts(feed, 3).map((item) => {
       const points = item.pointsAwarded ? ` · +${item.pointsAwarded} pts` : '';
       return `<article class="feed-item"><div><strong>${escapeHtml(item.name)}</strong><p>Day ${item.day} ${statusLabel(item)}${points}</p></div><span class="feed-status"><span class="app-icon icon-sm ${item.status === 'complete' ? 'icon-check' : 'icon-repeat'}" aria-hidden="true"></span></span></article>`;
     }).join('');
   }
-  if (completedToday) completedToday.textContent = `${feed.filter(item => item.status === 'complete' && item.timestamp === 'Today').length} people completed today`;
+  if (completedToday) completedToday.textContent = completedTodayLabel(feed, completedTodayCount);
   renderGameSummary();
   updateCountdownCard();
   if (finished && !finishCelebrated) {
@@ -1255,9 +1393,12 @@ async function hydrateDashboardFromApi() {
     }
     const hydratedDate = dateKeyForTimeZone(requestStartedAt, userTimeZone);
     if (todayKey() === hydratedDate) checkInStatusHydratedDate = hydratedDate;
-    if (Array.isArray(dashboard?.feed) && dashboard.feed.length) {
+    if (Array.isArray(dashboard?.feed)) {
       feed = dashboard.feed;
       save('dominion:feed', feed);
+    }
+    if (Number.isInteger(dashboard?.completedTodayCount) && dashboard.completedTodayCount >= 0) {
+      completedTodayCount = dashboard.completedTodayCount;
     }
     if (dashboard?.gameStats) {
       gameStats = preserveBestStreaks(dashboard.gameStats, gameStats);
@@ -1354,11 +1495,31 @@ const checklist = $('checklist');
 const selectAllActionsButton = $('selectAllActionsButton');
 const checkInButton = $('checkInButton');
 const countdownCheckInButton = $('countdownCheckInButton');
+const scorecardSection = $('check-in');
 const rewardBackdrop = $('rewardBackdrop');
 const rewardToast = $('rewardToast');
 if (rewardBackdrop && rewardToast) {
-  rewardBackdrop.addEventListener('click', () => dismissRewardToast(rewardToast, rewardBackdrop));
+  rewardBackdrop.addEventListener('click', (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    celebrationSequence.dismissCurrent('backdrop');
+  });
 }
+document.querySelectorAll('.badge-celebration').forEach((stage) => {
+  stage.addEventListener('click', (event) => {
+    if (event.target.closest('.badge-medal')) return;
+    event.preventDefault();
+    event.stopPropagation();
+    celebrationSequence.dismissCurrent('backdrop');
+  });
+});
+document.querySelectorAll('[data-dismiss-celebration]').forEach((button) => {
+  button.addEventListener('click', (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    celebrationSequence.dismissCurrent('close');
+  });
+});
 if (startDateInput) startDateInput.addEventListener('input', event => {
   if (previewChallengeMode() || !isCheckInStatusReady() || submittedCheckInDates.size > 0 || submittedChallengeDays.size > 0) {
     event.target.value = previewChallengeMode() ? previewChallengeState.anchorDate : startDate;
@@ -1501,6 +1662,7 @@ if (checkInButton) checkInButton.addEventListener('click', async () => {
   let status = entry.completed.length === standards.length ? 'complete' : 'partial';
   const previousBadgeKeys = new Set(badges.map((badge) => badge.key));
   let feedItem = {
+    id: `local:${entry.date}:${submissionStartedAt}`,
     date: entry.date,
     name: 'You',
     day: submissionDay,
@@ -1508,6 +1670,7 @@ if (checkInButton) checkInButton.addEventListener('click', async () => {
     completedCount: entry.completed.length,
     pointsAwarded: 0,
     timestamp: 'Today',
+    createdAt: new Date(submissionStartedAt).toISOString(),
   };
   let earnedBadges = [];
   let submissionCommitted = false;
@@ -1542,8 +1705,8 @@ if (checkInButton) checkInButton.addEventListener('click', async () => {
       };
       markCheckInSubmitted(entry.date, submissionDay);
       setCheckInNotice(entry.date, 'Today’s check-in is posted. Come back tomorrow for the next challenge day.');
-      earnedBadges = oneBadgeForDisplay((await refreshGameSummary(previousBadgeKeys))
-        .filter((badge) => badgeEarnedDate(badge) === entry.date));
+      earnedBadges = (await refreshGameSummary(previousBadgeKeys))
+        .filter((badge) => badgeEarnedDate(badge) === entry.date);
     } else {
       if (!markCheckInSubmitted(entry.date, submissionDay)) throw createCheckInAlreadyCompleteError();
       submissionCommitted = true;
@@ -1569,16 +1732,21 @@ if (checkInButton) checkInButton.addEventListener('click', async () => {
     }
 
     feedItem.timestamp = entry.date === todayKey() ? 'Today' : entry.date;
-    feed = [feedItem, ...feed].slice(0, 30);
+    feed = [feedItem, ...feed];
+    if (status === 'complete' && feedItem.timestamp === 'Today' && Number.isInteger(completedTodayCount)) {
+      completedTodayCount += 1;
+    }
     if (localDemoMode) save('dominion:feed', feed);
-    const confettiDuration = status === 'complete' ? launchConfetti() || 0 : 0;
-    const toastDuration = showRewardToast({ points: feedItem.pointsAwarded, earnedBadges, status }) || 0;
-    const rewardDelay = Math.max(confettiDuration, toastDuration) + 350;
-    queueBadgeCelebrations(earnedBadges, rewardDelay);
-    const unlockDelay = rewardDelay + (earnedBadges.length ? BADGE_REVEAL_DURATION_MS + 900 : 0);
+    if (status === 'complete') launchConfetti();
+    queueCheckInCelebrations({
+      id: entry.date,
+      points: feedItem.pointsAwarded,
+      earnedBadges,
+      status,
+    });
     await refreshChallengeProgression({
       claimCelebrations: true,
-      celebrationDelay: unlockDelay,
+      celebrationDelay: 0,
     });
   } catch (error) {
     console.warn('Unable to sync check-in', error);
@@ -1600,9 +1768,9 @@ if (checkInButton) checkInButton.addEventListener('click', async () => {
     render();
   }
 });
-if (countdownCheckInButton && checkInButton) countdownCheckInButton.addEventListener('click', () => {
-  checkInButton.scrollIntoView({ behavior: 'smooth', block: 'center' });
-  checkInButton.focus({ preventScroll: true });
+if (countdownCheckInButton && scorecardSection) countdownCheckInButton.addEventListener('click', () => {
+  scorecardSection.scrollIntoView({ behavior: reducedMotionEnabled() ? 'auto' : 'smooth', block: 'start' });
+  scorecardSection.focus({ preventScroll: true });
 });
 
 async function bootDashboard() {
