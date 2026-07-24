@@ -51,6 +51,11 @@ select is(
   'preview creates no membership row before explicit confirmation'
 );
 
+-- FOU-821 permits only one current crew. Free Bob for the successful invite
+-- case, then restore his seeded owner membership after the replay assertion.
+delete from public.crew_members
+where user_id = '20000000-0000-4000-8000-000000000002';
+
 set local role authenticated;
 set local "request.jwt.claim.sub" = '20000000-0000-4000-8000-000000000002';
 set local "request.jwt.claims" = '{"sub":"20000000-0000-4000-8000-000000000002","role":"authenticated","email":"bob@example.test"}';
@@ -130,6 +135,15 @@ select is(
 );
 
 reset role;
+delete from public.crew_members
+where user_id = '20000000-0000-4000-8000-000000000002';
+insert into public.crew_members (crew_id, user_id, display_name, role)
+values (
+  'b0000000-0000-4000-8000-000000000002',
+  '20000000-0000-4000-8000-000000000002',
+  'Bob Example',
+  'owner'
+);
 insert into public.crew_invites (id, crew_id, token_hash, token_hint, created_by, expires_at, created_at)
 values (
   'c1000000-0000-4000-8000-000000000003',
@@ -202,6 +216,8 @@ select ok(
 );
 
 reset role;
+delete from public.crew_members
+where user_id = '30000000-0000-4000-8000-000000000003';
 insert into public.crew_members (crew_id, user_id, display_name, role)
 values (
   'b0000000-0000-4000-8000-000000000002',

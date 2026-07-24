@@ -91,6 +91,7 @@ export default defineConfig({
         env: {
           VITE_ENABLE_MOCKS: 'true',
           VITE_ENABLE_E2E_FIXTURES: 'true',
+          VITE_ENABLE_GROUP_INTEGRATIONS: 'true',
           VITE_ENABLE_DOMINION_NIGHT_THEME: 'true',
         },
       },

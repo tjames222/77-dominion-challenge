@@ -47,6 +47,12 @@ import {
   challengeProgressionToRewardCatalog,
   normalizeRewardCatalog,
 } from './reward-catalog.mjs';
+import { assertSingleCrew, newCrewLifecycleRequestId } from './crew-experience.mjs';
+import {
+  CREW_TRAINING_STEP_COUNT,
+  CREW_TRAINING_VERSION,
+  normalizeCrewTrainingProgress,
+} from './crew-training.mjs';
 
 const SUPABASE_URL = (import.meta.env.VITE_SUPABASE_URL || '').replace(/\/$/, '');
 const SUPABASE_ORIGIN = (() => {
@@ -86,6 +92,7 @@ const MOCK_CREW_MEMBERS_KEY = 'dominion:mockCrewMembers';
 const MOCK_INVITES_KEY = 'dominion:mockCrewInvites';
 const MOCK_INVITE_SESSIONS_KEY = 'dominion:mockCrewInviteSessions';
 const MOCK_INVITE_ATTRIBUTIONS_KEY = 'dominion:mockCrewInviteAttributions';
+const MOCK_CREW_TRAINING_KEY = 'dominion:crewTraining';
 const MOCK_POSTS_KEY = 'dominion:mockCommunityPosts';
 const MOCK_JOURNAL_KEY = 'dominion:mockJournalEntries';
 const MOCK_CHALLENGE_STATES_KEY = 'dominion:mockChallengeStates';
@@ -1598,17 +1605,7 @@ function ensureMockCrews() {
   let members = readJson(MOCK_CREW_MEMBERS_KEY, null);
 
   if (!Array.isArray(crews)) {
-    const createdAt = new Date().toISOString();
-    crews = [{
-      id: 'preview_crew_alpha',
-      name: 'Preview Crew',
-      description: 'A private mock crew for testing invites, members, and leaderboards.',
-      challengeStartDate: new Date().toISOString().slice(0, 10),
-      createdBy: userId,
-      createdAt,
-      role: 'owner',
-      joinedAt: createdAt,
-    }];
+    crews = [];
     writeJson(MOCK_CREWS_KEY, crews);
   } else {
     const retiredPreviewDescription = 'A private mock crew for testing invites, posts, comments, and leaderboards.';
@@ -1644,7 +1641,7 @@ function ensureMockCrews() {
   });
 
   saveMockCrewMembers(members);
-  return { crews, members };
+  return { crews: assertSingleCrew(crews), members };
 }
 
 function saveMockCrewMembers(members) {
@@ -1652,6 +1649,39 @@ function saveMockCrewMembers(members) {
     MOCK_CREW_MEMBERS_KEY,
     prepareMockCrewMembersForStorage(members, getMockUserId()),
   );
+}
+
+function requireMockCrewTrainingAccess(crewId) {
+  const userId = getMockUserId();
+  const { crews } = ensureMockCrews();
+  const crew = crews.find((item) => item.id === crewId);
+  if (!crew
+    || crew.createdBy !== userId
+    || !['owner', 'admin'].includes(crew.role)) {
+    throw new Error('Crew training is available only to the active crew creator.');
+  }
+  return { crew, userId };
+}
+
+function requireMockCrewTrainingVersion(contentVersion) {
+  const version = Number(contentVersion);
+  if (!Number.isInteger(version) || version !== CREW_TRAINING_VERSION) {
+    throw new Error('A valid crew and training version are required.');
+  }
+  return version;
+}
+
+function mockCrewTrainingKey(crewId, userId, contentVersion) {
+  return `${userId}:${crewId}:${contentVersion}`;
+}
+
+function clearMockCrewTraining(crewId, userId = getMockUserId()) {
+  const rows = readJson(MOCK_CREW_TRAINING_KEY, {});
+  const prefix = `${userId}:${crewId}:`;
+  const next = Object.fromEntries(
+    Object.entries(rows).filter(([key]) => !key.startsWith(prefix)),
+  );
+  writeJson(MOCK_CREW_TRAINING_KEY, next);
 }
 
 function getMockLeaderboard({ crewId = null } = {}) {
@@ -1717,7 +1747,7 @@ async function queryCrewsForUser(client, userId) {
     .order('joined_at', { ascending: false });
 
   if (error) throw error;
-  return (data || []).map(mapCrew).filter(Boolean);
+  return assertSingleCrew((data || []).map(mapCrew).filter(Boolean));
 }
 
 export async function getCrews() {
@@ -1815,9 +1845,17 @@ export async function getOutboundIntegrationDestinations(crewId) {
   return normalizeConnectedDestinations([]);
 }
 
-export async function createCrew({ name, description = '', challengeStartDate = null }) {
+export async function createCrew({
+  name,
+  description = '',
+  challengeStartDate = null,
+  requestId = newCrewLifecycleRequestId(),
+}) {
   if (isLocalDemoMode()) {
     const { crews, members } = ensureMockCrews();
+    if (crews.length) {
+      throw new Error('Leave or delete your current crew before creating another.');
+    }
     const now = new Date().toISOString();
     const crew = {
       id: randomId('preview_crew'),
@@ -1840,37 +1878,241 @@ export async function createCrew({ name, description = '', challengeStartDate = 
     }];
     writeJson(MOCK_CREWS_KEY, crews);
     saveMockCrewMembers(members);
-    return crew;
+    return { ...crew, createdNew: true };
   }
 
   const client = requireSupabase();
-  const user = await requireUser();
-  const identity = await getCurrentCommunityIdentity();
-  const { data: crew, error: crewError } = await client
-    .from('crews')
-    .insert({
-      name,
-      description,
-      challenge_start_date: challengeStartDate || null,
-      created_by: user.id,
-    })
-    .select('id, name, description, challenge_start_date, created_by, created_at')
-    .single();
+  await requireUser();
+  const { data, error } = await client.rpc('create_crew', {
+    target_request_id: requestId,
+    target_name: name,
+    target_description: description,
+    target_challenge_start_date: challengeStartDate || null,
+  }).single();
+  if (error) throw error;
+  return {
+    ...mapCrew({ ...data, id: data?.crew_id }),
+    createdNew: Boolean(data?.created_new),
+  };
+}
 
-  if (crewError) throw crewError;
+function defaultCrewTrainingProgress(crewId, userId, contentVersion) {
+  return normalizeCrewTrainingProgress({
+    crewId,
+    userId,
+    contentVersion,
+    status: 'not_started',
+    currentStep: 0,
+    furthestStep: 0,
+    stepCount: CREW_TRAINING_STEP_COUNT,
+  });
+}
 
-  const { error: memberError } = await client
-    .from('crew_members')
-    .insert({
-      crew_id: crew.id,
-      user_id: user.id,
-      display_name: identity.name,
-      avatar_url: identity.avatarUrl,
-      role: 'owner',
+function normalizeCrewTrainingResponse(value) {
+  const progress = normalizeCrewTrainingProgress(value);
+  return {
+    ...progress,
+    ...(value && ('claimedNow' in value || 'claimed_now' in value)
+      ? { claimedNow: Boolean(value.claimedNow ?? value.claimed_now) }
+      : {}),
+  };
+}
+
+export async function getCrewTrainingProgress(
+  crewId,
+  contentVersion = CREW_TRAINING_VERSION,
+) {
+  if (isLocalDemoMode()) {
+    contentVersion = requireMockCrewTrainingVersion(contentVersion);
+    const { userId } = requireMockCrewTrainingAccess(crewId);
+    const rows = readJson(MOCK_CREW_TRAINING_KEY, {});
+    return normalizeCrewTrainingResponse(
+      rows[mockCrewTrainingKey(crewId, userId, contentVersion)]
+        || defaultCrewTrainingProgress(crewId, userId, contentVersion),
+    );
+  }
+
+  const client = requireSupabase();
+  await requireUser();
+  const { data, error } = await client.rpc('get_crew_training_progress', {
+    target_crew_id: crewId,
+    target_content_version: contentVersion,
+  });
+  if (error) throw error;
+  return data ? normalizeCrewTrainingResponse(data) : null;
+}
+
+export async function claimCrewTraining(
+  crewId,
+  contentVersion = CREW_TRAINING_VERSION,
+) {
+  if (isLocalDemoMode()) {
+    contentVersion = requireMockCrewTrainingVersion(contentVersion);
+    const { userId } = requireMockCrewTrainingAccess(crewId);
+    const rows = readJson(MOCK_CREW_TRAINING_KEY, {});
+    const key = mockCrewTrainingKey(crewId, userId, contentVersion);
+    const existing = normalizeCrewTrainingResponse(
+      rows[key] || defaultCrewTrainingProgress(crewId, userId, contentVersion),
+    );
+    const claimedNow = existing.status === 'not_started';
+    if (claimedNow) {
+      const now = new Date().toISOString();
+      rows[key] = {
+        ...existing,
+        status: 'in_progress',
+        startedAt: existing.startedAt || now,
+        updatedAt: now,
+      };
+      writeJson(MOCK_CREW_TRAINING_KEY, rows);
+    }
+    return { ...normalizeCrewTrainingResponse(rows[key] || existing), claimedNow };
+  }
+
+  const client = requireSupabase();
+  await requireUser();
+  const { data, error } = await client.rpc('claim_crew_training', {
+    target_crew_id: crewId,
+    target_content_version: contentVersion,
+  });
+  if (error) throw error;
+  return normalizeCrewTrainingResponse(data);
+}
+
+export async function advanceCrewTraining({
+  crewId,
+  contentVersion = CREW_TRAINING_VERSION,
+  action,
+  targetStep = 0,
+}) {
+  if (isLocalDemoMode()) {
+    contentVersion = requireMockCrewTrainingVersion(contentVersion);
+    const { userId } = requireMockCrewTrainingAccess(crewId);
+    const rows = readJson(MOCK_CREW_TRAINING_KEY, {});
+    const key = mockCrewTrainingKey(crewId, userId, contentVersion);
+    if (!rows[key]) throw new Error('Start crew training before updating its progress.');
+    const existing = normalizeCrewTrainingResponse(rows[key]);
+    if (existing.status === 'completed') return existing;
+
+    const normalizedAction = String(action || '').trim().toLowerCase();
+    const step = Number(targetStep);
+    if (!Number.isInteger(step) || step < 0 || step >= CREW_TRAINING_STEP_COUNT) {
+      throw new Error('A valid crew, training version, and step are required.');
+    }
+    const now = new Date().toISOString();
+    const next = { ...existing };
+
+    if (normalizedAction === 'advance') {
+      if (existing.status !== 'in_progress') throw new Error('Resume crew training before advancing.');
+      if (step > existing.furthestStep + 1) {
+        throw new Error('Crew training steps must be completed in order.');
+      }
+      if (step <= existing.furthestStep) return existing;
+      next.currentStep = step;
+      next.furthestStep = step;
+    } else if (normalizedAction === 'skip') {
+      if (existing.status !== 'in_progress' && existing.status !== 'skipped') {
+        throw new Error('Start crew training before skipping it.');
+      }
+      if (step > existing.furthestStep) {
+        throw new Error('Only the current crew training step can be skipped.');
+      }
+      if (step < existing.currentStep || existing.status === 'skipped') return existing;
+      next.status = 'skipped';
+      next.skippedAt ||= now;
+    } else if (normalizedAction === 'resume') {
+      if (!['skipped', 'in_progress'].includes(existing.status)) {
+        throw new Error('This crew training cannot be resumed.');
+      }
+      if (step > existing.furthestStep) {
+        throw new Error('Crew training cannot resume beyond saved progress.');
+      }
+      if (existing.status === 'in_progress') return existing;
+      next.status = 'in_progress';
+      next.currentStep = existing.furthestStep;
+    } else if (normalizedAction === 'complete') {
+      if (!['in_progress', 'skipped'].includes(existing.status)
+        || step !== CREW_TRAINING_STEP_COUNT - 1
+        || existing.currentStep !== CREW_TRAINING_STEP_COUNT - 1
+        || existing.furthestStep !== CREW_TRAINING_STEP_COUNT - 1) {
+        throw new Error('Finish the final crew training step before completing it.');
+      }
+      next.status = 'completed';
+      next.currentStep = step;
+      next.furthestStep = step;
+      next.completedAt = existing.completedAt || now;
+    } else {
+      throw new Error('Unsupported crew training action.');
+    }
+
+    next.updatedAt = now;
+    rows[key] = next;
+    writeJson(MOCK_CREW_TRAINING_KEY, rows);
+    return normalizeCrewTrainingResponse(next);
+  }
+
+  const client = requireSupabase();
+  await requireUser();
+  const { data, error } = await client.rpc('advance_crew_training', {
+    target_crew_id: crewId,
+    target_content_version: contentVersion,
+    target_action: action,
+    target_step: targetStep,
+  });
+  if (error) throw error;
+  return normalizeCrewTrainingResponse(data);
+}
+
+export async function deleteCrew({ crewId, requestId = newCrewLifecycleRequestId() }) {
+  if (isLocalDemoMode()) {
+    const { crews, members } = ensureMockCrews();
+    const crew = crews.find((item) => item.id === crewId);
+    if (!crew || !['owner', 'admin'].includes(crew.role)) {
+      throw new Error('Only a crew owner or admin can delete this crew.');
+    }
+    writeJson(MOCK_CREWS_KEY, crews.filter((item) => item.id !== crewId));
+    delete members[crewId];
+    saveMockCrewMembers(members);
+    const invites = readJson(MOCK_INVITES_KEY, {});
+    Object.values(invites).forEach((invite) => {
+      if (invite.crew_id === crewId && !invite.revoked_at) invite.revoked_at = new Date().toISOString();
     });
+    writeJson(MOCK_INVITES_KEY, invites);
+    clearMockCrewTraining(crewId);
+    return { status: 'deleted', crewId, requestId };
+  }
 
-  if (memberError) throw memberError;
-  return mapCrew({ ...crew, role: 'owner' });
+  const client = requireSupabase();
+  await requireUser();
+  const { data, error } = await client.rpc('delete_crew', {
+    target_crew_id: crewId,
+    target_request_id: requestId,
+  });
+  if (error) throw error;
+  return data;
+}
+
+export async function leaveCrew({ crewId, requestId = newCrewLifecycleRequestId() }) {
+  if (isLocalDemoMode()) {
+    const { crews, members } = ensureMockCrews();
+    const crew = crews.find((item) => item.id === crewId);
+    if (!crew || ['owner', 'admin'].includes(crew.role)) {
+      throw new Error('Crew owners and admins must delete the crew instead of leaving it.');
+    }
+    writeJson(MOCK_CREWS_KEY, crews.filter((item) => item.id !== crewId));
+    members[crewId] = (members[crewId] || []).filter((item) => item.userId !== getMockUserId());
+    saveMockCrewMembers(members);
+    clearMockCrewTraining(crewId);
+    return { status: 'left', crewId, requestId };
+  }
+
+  const client = requireSupabase();
+  await requireUser();
+  const { data, error } = await client.rpc('leave_crew', {
+    target_crew_id: crewId,
+    target_request_id: requestId,
+  });
+  if (error) throw error;
+  return data;
 }
 
 export async function getCrewMembers(crewId) {
@@ -1969,6 +2211,9 @@ function mockInviteStatus(invite, crew, members, currentUserId = '') {
   if (currentUserId && crewMembers.some((member) => member.userId === currentUserId)) return 'already_member';
   if (invite.redeemed_by) return 'already_used';
   if (crewMembers.length >= Number(crew.memberLimit || 50)) return 'full';
+  if (currentUserId && Object.entries(members).some(([crewId, crewRoster]) => (
+    crewId !== crew.id && crewRoster.some((member) => member.userId === currentUserId)
+  ))) return 'current_crew_conflict';
   return 'ready';
 }
 
@@ -2017,7 +2262,9 @@ export async function previewCrewInvite({ token = '', continuationToken = '' } =
     const crew = crews.find((item) => item.id === invite?.crew_id);
     const status = mockInviteStatus(invite, crew, members, currentUserId);
     const response = { status };
-    if (['ready', 'already_member'].includes(status)) response.preview = mockInvitePreview(invite, crew, members);
+    if (['ready', 'already_member', 'current_crew_conflict'].includes(status)) {
+      response.preview = mockInvitePreview(invite, crew, members);
+    }
     if (token && continuation && ['ready', 'full'].includes(status)) response.continuationToken = continuation;
     return response;
   }
@@ -2058,7 +2305,9 @@ export async function confirmCrewInvite(continuationToken) {
       writeJson(MOCK_INVITE_SESSIONS_KEY, sessions);
       return {
         status,
-        ...(status === 'already_member' ? { preview: mockInvitePreview(invite, crew, members) } : {}),
+        ...(['already_member', 'current_crew_conflict'].includes(status)
+          ? { preview: mockInvitePreview(invite, crew, members) }
+          : {}),
       };
     }
 
