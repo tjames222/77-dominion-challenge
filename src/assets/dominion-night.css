@@ -114,11 +114,16 @@
 }
 
 :root[data-theme="dominion-night"] .topbar {
+  background: transparent;
+  border-bottom-color: transparent;
+}
+
+:root[data-theme="dominion-night"] .topbar::before {
   background: color-mix(in srgb, var(--background) 88%, transparent);
   border-bottom-color: color-mix(in srgb, var(--divider) 76%, transparent);
 }
 
-:root[data-theme="dominion-night"] .topbar.topbar-collapsed {
+:root[data-theme="dominion-night"] .topbar.topbar-collapsed::before {
   background: color-mix(in srgb, var(--background-soft) 82%, transparent);
 }
 
