@@ -80,6 +80,28 @@ test('global navigation stays compact away from the top without shifting layout'
   await expect(topbar).not.toHaveClass(/topbar-collapsed|topbar-scrolled/);
 });
 
+test('global navigation applies the real compact visual styles without screenshot normalization', async ({ page, app }) => {
+  await page.emulateMedia({ reducedMotion: 'no-preference' });
+  await app.open(ROUTE_BY_ID.dashboard);
+  await page.locator('style[data-dominion-e2e-screenshot-style]').evaluate((style) => style.remove());
+
+  const topbar = page.locator('.topbar');
+  const initialHeight = await topbar.evaluate((element) => element.getBoundingClientRect().height);
+  await expect(topbar).toHaveCSS('border-bottom-width', '1px');
+
+  await page.evaluate(() => window.scrollTo(0, 640));
+  await expect(topbar).toHaveClass(/topbar-collapsed/);
+  await expect.poll(() => topbar.evaluate((element) => getComputedStyle(element, '::before').transform)).not.toBe('none');
+
+  const compactStyles = await page.locator('#dashboardStreakButton > strong').evaluate((element) => {
+    const styles = getComputedStyle(element);
+    return { transform: styles.transform, transitionProperty: styles.transitionProperty };
+  });
+  expect(compactStyles.transform).not.toBe('none');
+  expect(compactStyles.transitionProperty).toContain('transform');
+  expect(await topbar.evaluate((element) => element.getBoundingClientRect().height)).toBe(initialHeight);
+});
+
 test('community tablist follows arrow-key navigation', async ({ page, app }) => {
   await app.open(ROUTE_BY_ID.community);
   const crewTab = page.getByRole('tab', { name: 'Private Group' });

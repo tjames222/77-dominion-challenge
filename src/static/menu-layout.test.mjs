@@ -112,6 +112,7 @@ describe('shared sticky menu', () => {
     assert.doesNotMatch(body, /overflow-y\s*:/);
     assert.match(topbarDeclarations, /position:\s*sticky/);
     assert.match(topbarDeclarations, /top:\s*0/);
+    assert.match(topbarDeclarations, /border-bottom:\s*1px solid transparent/);
     assert.match(compactSurface, /transform:\s*scaleY\(\.9\)/);
     assert.match(compactSurface, /background:\s*color-mix\([^;]*78%/);
     assert.doesNotMatch(compactSurface, /(?:min-)?height\s*:|padding\s*:|margin\s*:/);
@@ -130,6 +131,8 @@ describe('shared sticky menu', () => {
     assert.doesNotMatch(menuCss, /\.topbar\.topbar-collapsed > \*\s*\{[^}]*transform\s*:/s);
     assert.match(productCss, /\.topbar\.topbar-collapsed \.dashboard-streak-button\s*\{[^}]*transform:\s*none/s);
     assert.match(productCss, /\.topbar\.topbar-collapsed \.dashboard-streak-button > \*\s*\{[^}]*transform:\s*scale\(\.9\)/s);
+    assert.match(productCss, /\.dashboard-streak-button > \*\s*\{[^}]*transition:\s*transform/s);
+    assert.match(productCss, /@media \(prefers-reduced-motion: reduce\)[\s\S]*\.dashboard-streak-button > \*\s*\{[^}]*transition:\s*none/s);
     assert.match(menuCss, /env\(safe-area-inset-top\)/);
     assert.match(menuCss, /env\(safe-area-inset-right\)/);
     assert.match(reducedMotion, /\.topbar::before/);

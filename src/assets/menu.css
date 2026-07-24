@@ -17,7 +17,7 @@ body {
   margin-inline: calc(-1 * var(--shell-pad, clamp(18px, 4vw, 34px)));
   padding: calc(12px + env(safe-area-inset-top)) var(--shell-pad, clamp(18px, 4vw, 34px)) 12px;
   background: transparent;
-  border-bottom: 0;
+  border-bottom: 1px solid transparent;
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
 }
