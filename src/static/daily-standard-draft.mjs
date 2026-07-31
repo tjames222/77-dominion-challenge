@@ -23,6 +23,10 @@ export function normalizeDailyStandardDraft(draft = {}, fallbackDate = '') {
   const completed = [...new Set(Array.isArray(draft.completed) ? draft.completed : [])]
     .filter(isDailyStandardActionId);
   const workoutDifficulty = draft.workoutDifficulty || draft.workout_difficulty || {};
+  const explicitWorkoutDifficulty = draft.workoutDifficultySelections
+    ?? draft.workoutDifficulty
+    ?? draft.workout_difficulty
+    ?? {};
 
   return {
     date: draft.date || draft.entry_date || fallbackDate,
@@ -30,6 +34,10 @@ export function normalizeDailyStandardDraft(draft = {}, fallbackDate = '') {
     workoutDifficulty: {
       one: validDifficulties.has(workoutDifficulty.one) ? workoutDifficulty.one : 'medium',
       two: validDifficulties.has(workoutDifficulty.two) ? workoutDifficulty.two : 'medium',
+    },
+    workoutDifficultySelections: {
+      one: validDifficulties.has(explicitWorkoutDifficulty.one) ? explicitWorkoutDifficulty.one : '',
+      two: validDifficulties.has(explicitWorkoutDifficulty.two) ? explicitWorkoutDifficulty.two : '',
     },
     version: Math.max(Number.parseInt(draft.version, 10) || 0, 0),
     updatedAt: draft.updatedAt || draft.updated_at || null,
@@ -61,6 +69,7 @@ export function applyWorkoutDifficultyMutation(draft, workoutId, difficulty) {
   return normalizeDailyStandardDraft({
     ...normalized,
     workoutDifficulty: { ...normalized.workoutDifficulty, [workoutId]: difficulty },
+    workoutDifficultySelections: { ...normalized.workoutDifficultySelections, [workoutId]: difficulty },
     version: normalized.version + 1,
   });
 }

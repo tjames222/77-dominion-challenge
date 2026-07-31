@@ -1,6 +1,7 @@
 # Dominion point economy contract
 
-Status: approved target model for FOU-549. The database and user-interface cutover is implemented by the dependent scoring and rewards tickets.
+Status: launch contract after the FOU-846 progression rebalance. The database,
+reward catalog, and user interface use the same thresholds.
 
 ## Principles
 
@@ -10,6 +11,7 @@ Status: approved target model for FOU-549. The database and user-interface cutov
 4. App visits and streak milestones are engagement and achievement signals, not point sources.
 5. The Sharing Bonus is a one-time lifetime bonus. It is deliberately outside the seven-point Daily Standards cap.
 6. Earned lifetime points and permanent entitlements are never reduced by a later catalog or threshold change.
+7. Levels are a display-only rhythm: a member enters a new level every 14 lifetime points. Reward ownership remains point-based and independent from the level number.
 
 ## Authoritative point sources
 
@@ -31,18 +33,24 @@ The original Dominion challenge is one 77-day challenge instance. A perfect inst
 
 After a challenge instance is completed, the user may start any available challenge definition. A completed definition may be started again as a new challenge instance. Each instance has its own dates, drafts, Check-Ins, completion state, and streak context; lifetime points and permanent rewards carry forward. Only one challenge instance may be active for a user at a time.
 
-Repeatable challenge instances are the long-term earning path. Existing challenge thresholds remain reachable without inflating a single day's award:
+Levels and rewards intentionally move at different speeds. A perfect participant
+levels up every two days, while reward gaps expand through the challenge. Every
+reward threshold lands exactly on a level boundary, but eligibility is evaluated
+from lifetime points rather than from the displayed level:
 
-| Lifetime threshold | Perfect 77-day instances required without sharing |
-| ---: | ---: |
-| Dominion Night theme — 500 | 1 |
-| 7-Day Reset — 1,000 | 2 |
-| 21-Day Prayer Track — 3,000 | 6 |
-| 30-Day Strength Intensive — 4,500 | 9 |
-| 40-Day Fasting & Prayer Track — 6,000 | 12 |
-| Bible in a Year — 10,000 | 19 |
+| Reward | Lifetime points | Level entered | Perfect day without Sharing | Perfect day with the one-time Sharing Bonus |
+| --- | ---: | ---: | ---: | ---: |
+| Dominion Night theme | 56 | 5 | 8 | 6 |
+| 7-Day Reset | 126 | 10 | 18 | 16 |
+| 21-Day Prayer Track | 210 | 16 | 30 | 28 |
+| 30-Day Strength Intensive | 308 | 23 | 44 | 42 |
+| 40-Day Fasting & Prayer Track | 420 | 31 | 60 | 58 |
+| Bible in a Year | 532 | 39 | 76 | 74 |
 
-The Dominion Night theme is intentionally the least-expensive point reward. Catalog code must reject a new active reward below 500 points unless the product contract is deliberately revised.
+The Sharing Bonus accelerates these dates but is never required. A consistent
+four-standard day reaches the first reward on day 14 and four rewards by day 77;
+sharing alone unlocks nothing. Repeatable challenge instances remain the
+long-term earning path after launch rewards have been earned.
 
 ## Totals and consumers
 
@@ -66,7 +74,8 @@ Group leaderboards use lifetime points by default. A future time-boxed leaderboa
 * A share can grant at most one 14-point bonus per user.
 * App visits, streaks, statuses, and workout difficulty cannot add points.
 * Every active point reward is reachable through repeatable challenge instances.
-* No active point reward is cheaper than the 500-point Dominion Night theme.
+* Every active point reward requires at least 56 points and aligns to a 14-point level boundary.
+* The launch reward thresholds are 56, 126, 210, 308, 420, and 532 points.
 
 The server/client shape that exposes these thresholds, lifecycle states, and
 permanent ownership is documented in [reward-catalog-contract.md](reward-catalog-contract.md).

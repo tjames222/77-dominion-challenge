@@ -58,7 +58,7 @@ body {
   transform: none !important;
 }
 
-.topbar.topbar-collapsed .dashboard-streak-button > *,
+.topbar.topbar-collapsed .shared-header-action > *,
 .topbar.topbar-collapsed .global-menu-button::before {
   transform: none !important;
 }

@@ -58,7 +58,7 @@ emit_files() {
 case "\${FAKE_PGTAP_MODE:-pass}" in
   pass)
     emit_files
-    echo "Files=\${#files[@]}, Tests=957, 1 wallclock secs"
+    echo "Files=\${#files[@]}, Tests=962, 1 wallclock secs"
     echo "Result: PASS"
     ;;
   notests)
@@ -77,7 +77,7 @@ case "\${FAKE_PGTAP_MODE:-pass}" in
     ;;
   omit-profile-limit)
     emit_files
-    echo "Files=\${#files[@]}, Tests=957, 1 wallclock secs"
+    echo "Files=\${#files[@]}, Tests=962, 1 wallclock secs"
     echo "Result: PASS"
     ;;
   malformed-summary)
@@ -86,7 +86,7 @@ case "\${FAKE_PGTAP_MODE:-pass}" in
     ;;
   nonzero)
     emit_files
-    echo "Files=\${#files[@]}, Tests=957, 1 wallclock secs"
+    echo "Files=\${#files[@]}, Tests=962, 1 wallclock secs"
     echo "Result: FAIL"
     exit 2
     ;;
@@ -138,7 +138,7 @@ async function runFixture(mode) {
   };
 }
 
-test("the current database inventory contains all 21 files and 957 planned assertions", async () => {
+test("the current database inventory contains all 21 files and 962 planned assertions", async () => {
   const inventory = await currentDatabaseInventory();
   assert.equal(inventory.length, 21);
   assert.ok(inventory.includes("095_profile_photo_registration_limits.sql"));
@@ -153,7 +153,7 @@ test("the current database inventory contains all 21 files and 957 planned asser
     plannedAssertions += Number.parseInt(plan[1], 10);
   }
 
-  assert.equal(plannedAssertions, 957);
+  assert.equal(plannedAssertions, 962);
 });
 
 test("the runner succeeds from an unrelated directory and reports every file", async () => {
@@ -165,9 +165,9 @@ test("the runner succeeds from an unrelated directory and reports every file", a
   assert.match(result.args[2], /\/pgtap-tests\.[^/]+$/);
   assert.match(
     result.stdout,
-    /Database pgTAP summary: source_files=21 files=21 assertions=957/,
+    /Database pgTAP summary: source_files=21 files=21 assertions=962/,
   );
-  assert.match(result.stdout, /all 21 files and 957 assertions executed/);
+  assert.match(result.stdout, /all 21 files and 962 assertions executed/);
 });
 
 test("an exit-zero NOTESTS result fails closed", async () => {

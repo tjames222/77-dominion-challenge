@@ -125,7 +125,7 @@ function baseMemberJson() {
       dates: [],
       challengeDays: [],
     },
-    'dominion:workoutDifficulty': { one: 'medium', two: 'medium' },
+    'dominion:workoutDifficulty': {},
     'dominion:feed': json(BASE_FEED),
     'dominion:gameStats': json(BASE_GAME_STATS),
     'dominion:badges': json(BASE_BADGES),
@@ -192,8 +192,8 @@ export const APP_STATES = Object.freeze({
       ...baseMemberJson(),
       'dominion:gameStats': {
         ...json(BASE_GAME_STATS),
-        totalPoints: 250,
-        challengePoints: 250,
+        totalPoints: 28,
+        challengePoints: 28,
       },
       'dominion:mockChallengeStates': [],
       'dominion:mockRewardEntitlements': [],
@@ -212,7 +212,7 @@ export const APP_STATES = Object.freeze({
         {
           key: 'seven_day_reset',
           status: 'available',
-          unlockPoints: 1000,
+          unlockPoints: 126,
           unlockedAt: '2026-02-10T18:00:00.000Z',
           startedAt: null,
           completedAt: null,

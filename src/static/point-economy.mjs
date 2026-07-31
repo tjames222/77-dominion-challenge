@@ -4,7 +4,16 @@ export const MAX_DAILY_STANDARD_POINTS = DAILY_STANDARD_COUNT * POINTS_PER_DAILY
 export const DEFAULT_CHALLENGE_DURATION_DAYS = 77;
 export const PERFECT_CHALLENGE_POINTS = MAX_DAILY_STANDARD_POINTS * DEFAULT_CHALLENGE_DURATION_DAYS;
 export const SHARING_BONUS_POINTS = 14;
-export const LOWEST_REWARD_THRESHOLD = 500;
+export const POINTS_PER_LEVEL = 14;
+export const REWARD_POINT_THRESHOLDS = Object.freeze({
+  dominion_night_theme: 56,
+  seven_day_reset: 126,
+  twenty_one_day_prayer: 210,
+  thirty_day_strength: 308,
+  forty_day_fast: 420,
+  bible_in_a_year: 532,
+});
+export const LOWEST_REWARD_THRESHOLD = REWARD_POINT_THRESHOLDS.dominion_night_theme;
 
 export const POINT_SOURCE_POLICY = Object.freeze({
   daily_standard: Object.freeze({
@@ -54,6 +63,22 @@ export function calculateDailyStandardsPoints(completedCount) {
   return Math.min(safeWholeNumber(completedCount), DAILY_STANDARD_COUNT) * POINTS_PER_DAILY_STANDARD;
 }
 
+export function calculateLevelProgress(rawTotalPoints) {
+  const totalPoints = safeWholeNumber(rawTotalPoints);
+  const level = Math.floor(totalPoints / POINTS_PER_LEVEL) + 1;
+  const pointsIntoLevel = totalPoints % POINTS_PER_LEVEL;
+  const pointsToNext = POINTS_PER_LEVEL - pointsIntoLevel;
+
+  return {
+    totalPoints,
+    level,
+    nextLevel: level + 1,
+    pointsIntoLevel,
+    pointsToNext,
+    progressPercent: pointsIntoLevel / POINTS_PER_LEVEL * 100,
+  };
+}
+
 export function calculateLifetimePoints({
   completedStandards = 0,
   sharingBonusGranted = false,
@@ -92,7 +117,9 @@ export function validateRewardThresholds(rewards = []) {
       pointsRequired: safeWholeNumber(reward?.pointsRequired ?? reward?.points_required),
     }));
   const invalid = normalized.filter((reward) => (
-    !reward.key || reward.pointsRequired < LOWEST_REWARD_THRESHOLD
+    !reward.key
+    || reward.pointsRequired < LOWEST_REWARD_THRESHOLD
+    || reward.pointsRequired % POINTS_PER_LEVEL !== 0
   ));
 
   return {

@@ -29,10 +29,10 @@ and Start behavior remain authoritative. Ownership definitions are evaluated
 against `user_game_stats.total_points`, which is the cached total of the
 idempotent point ledger.
 
-The first ownership definition is `dominion_night_theme`. It unlocks at 500
+The first ownership definition is `dominion_night_theme`. It unlocks at 56
 total points and fulfills the stable `dominion-night` theme key. It is a
-`cosmetic` with the `ownership` state model, sorts before every 1,000-point
-challenge, and remains owned after point corrections or membership changes.
+`cosmetic` with the `ownership` state model, sorts before every challenge, and
+remains owned after point corrections or membership changes.
 Its display metadata links the customer to `profile.html#appearance`; theme
 selection still must verify the trusted entitlement and active theme registry.
 

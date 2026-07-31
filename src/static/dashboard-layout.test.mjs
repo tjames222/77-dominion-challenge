@@ -24,9 +24,23 @@ describe('dashboard progress document order', () => {
     const ids = [...dashboardHtml.matchAll(/\sid="([^"]+)"/g)].map((match) => match[1]);
     const duplicates = ids.filter((id, index) => ids.indexOf(id) !== index);
     assert.deepEqual(duplicates, []);
-    for (const id of ['startDate', 'challengeRing', 'todayRing', 'daily-standards', 'checklist', 'checkInButton']) {
+    for (const id of ['trackingTitle', 'challengeRing', 'todayRing', 'daily-standards', 'checklist', 'checkInButton']) {
       assert.equal(ids.filter((candidate) => candidate === id).length, 1);
     }
+  });
+
+  it('removes requested Dashboard clutter while retaining an accessible gauge name', () => {
+    assert.doesNotMatch(dashboardHtml, /data-share-kind="general"|Share the challenge/);
+    assert.doesNotMatch(dashboardHtml, /How today is tracking|Challenge start date|id="startDate"/);
+    assert.match(dashboardHtml, /<h2 class="sr-only" id="trackingTitle">Challenge and daily progress<\/h2>/);
+    assert.match(dashboardHtml, /class="rings" role="group" aria-labelledby="trackingTitle"/);
+    assert.match(dashboardHtml, /data-share-kind="progress"/);
+  });
+
+  it('refreshes gauge calculations when the shared streak dialog changes the start date', () => {
+    assert.match(dashboardJs, /window\.addEventListener\('dominion:challenge-start-date-updated'/);
+    assert.match(dashboardJs, /startDate = event\.detail\?\.challengeStartDate \|\| startDate/);
+    assert.doesNotMatch(dashboardJs, /startDateInput|updateProfile\(\{ challengeStartDate/);
   });
 
   it('keeps the countdown action connected to the focusable scorecard section', () => {
@@ -41,6 +55,19 @@ describe('dashboard progress document order', () => {
 });
 
 describe('dashboard zero-point level coin integration', () => {
+  it('renders the shared fourteen-point level contract without a Dashboard-only formula', () => {
+    assert.match(
+      dashboardJs,
+      /import \{ POINTS_PER_LEVEL, calculateLevelProgress \} from '\.\/point-economy\.mjs'/,
+    );
+    assert.match(dashboardJs, /calculateLevelProgress\(gameStats\.totalPoints \?\? gameStats\.challengePoints \?\? 0\)/);
+    assert.match(dashboardJs, /setAttribute\('aria-valuemax', String\(POINTS_PER_LEVEL\)\)/);
+    assert.doesNotMatch(dashboardJs, /const POINTS_PER_LEVEL\s*=|getLevelProgress/);
+    assert.match(dashboardHtml, /id="gamePointsToNext">14 points to Level 2</);
+    assert.match(dashboardHtml, /aria-valuemax="14"/);
+    assert.doesNotMatch(dashboardHtml, /500 points to Level 2|aria-valuemax="500"/);
+  });
+
   it('uses the private-group rank to preserve podium prestige', () => {
     assert.match(dashboardJs, /prestigeRank:\s*leaderboardPositions\.privateRank/);
     assert.match(dashboardJs, /zeroPointGlass\s*\?\s*resolveLeaderboardPrestige\(\{\}\)\s*:\s*resolvedPrestige/);

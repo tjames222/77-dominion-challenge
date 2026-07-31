@@ -1,16 +1,27 @@
-import { clearAuthSession, getLocalOrSessionUser } from './api';
+import {
+  clearAuthSession,
+  getLocalOrSessionUser,
+  subscribeToAuthStateChanges,
+} from './api';
 import {
   clearThemeEntitlementState,
   hydrateThemeEntitlementState,
 } from './theme-entitlement-state';
 import { initThemeState } from './theme-state';
 import { initThemeAssets } from './theme-assets';
+import { createAuthenticatedHeaderActions } from './shared-header-actions.js';
+import { shouldShowAuthenticatedHeaderActions } from './shared-header-state.mjs';
+import { closeShareComposer } from './share-composer.js';
 
 const topbar = document.querySelector('.topbar');
 const TOPBAR_COMPACT_SCROLL_Y = 12;
 const TOPBAR_TOP_SCROLL_Y = 2;
 
 let syncTopbarScrollState = null;
+let sharedHeaderActions = null;
+let currentMenuOwner = '';
+let menuHydrationRequest = 0;
+let globalMenuListenersBound = false;
 
 const loggedInLinks = [
   ['Dashboard', './dashboard.html'],
@@ -95,24 +106,50 @@ function initTopbarStickyOffset() {
 }
 
 async function buildMenu() {
-  if (!topbar || document.querySelector('.global-menu')) return;
+  if (!topbar) return;
 
-  const user = await getLocalOrSessionUser();
+  const requestId = ++menuHydrationRequest;
+  let user = null;
+  try {
+    user = await getLocalOrSessionUser();
+  } catch (error) {
+    console.warn('Unable to hydrate the application menu', error);
+  }
+  if (requestId !== menuHydrationRequest) return;
+
   const isLoggedIn = Boolean(user?.authenticated);
+  const nextOwner = isLoggedIn ? String(user?.userId || user?.email || '') : '';
 
-  const button = document.createElement('button');
-  button.className = 'global-menu-button';
-  button.type = 'button';
-  button.setAttribute('aria-label', 'Open menu');
-  button.setAttribute('aria-expanded', 'false');
-  button.innerHTML = '<span></span><span></span><span></span>';
+  let button = document.querySelector('.global-menu-button');
+  let overlay = document.querySelector('.global-menu-backdrop');
+  let menu = document.querySelector('.global-menu');
+  if (menu && typeof menu.querySelector !== 'function') return;
 
-  const overlay = document.createElement('div');
-  overlay.className = 'global-menu-backdrop';
+  if (!button) {
+    button = document.createElement('button');
+    button.className = 'global-menu-button';
+    button.type = 'button';
+    button.setAttribute('aria-label', 'Open menu');
+    button.setAttribute('aria-expanded', 'false');
+    button.innerHTML = '<span></span><span></span><span></span>';
+    button.addEventListener('click', () => {
+      document.body.classList.contains('menu-open') ? closeMenu() : openMenu();
+    });
+  }
 
-  const menu = document.createElement('aside');
-  menu.className = 'global-menu';
-  menu.setAttribute('aria-label', 'Application menu');
+  if (!overlay) {
+    overlay = document.createElement('div');
+    overlay.className = 'global-menu-backdrop';
+    overlay.addEventListener('click', closeMenu);
+    document.body.appendChild(overlay);
+  }
+
+  if (!menu) {
+    menu = document.createElement('aside');
+    menu.className = 'global-menu';
+    menu.setAttribute('aria-label', 'Application menu');
+    document.body.appendChild(menu);
+  }
 
   const links = isLoggedIn ? loggedInLinks : publicLinks;
   const profileLabel = isLoggedIn ? (user?.name || 'Member') : 'Visitor';
@@ -135,23 +172,40 @@ async function buildMenu() {
 
   const trailingActions = topbar.querySelector('.topbar-trailing-actions');
   (trailingActions || topbar).appendChild(button);
-  document.body.appendChild(overlay);
-  document.body.appendChild(menu);
-
-  button.addEventListener('click', () => {
-    document.body.classList.contains('menu-open') ? closeMenu() : openMenu();
-  });
-  overlay.addEventListener('click', closeMenu);
   menu.querySelector('.global-menu-close')?.addEventListener('click', closeMenu);
   menu.querySelector('.global-menu-logout')?.addEventListener('click', async () => {
+    closeShareComposer('logout');
+    sharedHeaderActions?.destroy();
+    sharedHeaderActions = null;
+    currentMenuOwner = '';
     clearThemeEntitlementState();
     await clearAuthSession();
     closeMenu();
     window.location.href = './index.html';
   });
-  document.addEventListener('keydown', (event) => {
-    if (event.key === 'Escape') closeMenu();
+
+  if (!globalMenuListenersBound) {
+    globalMenuListenersBound = true;
+    document.addEventListener('keydown', (event) => {
+      if (event.key === 'Escape') closeMenu();
+    });
+  }
+
+  const showMemberActions = shouldShowAuthenticatedHeaderActions({
+    user,
+    pathname: window.location?.pathname || '',
   });
+  if (currentMenuOwner && currentMenuOwner !== nextOwner) closeShareComposer('account-change');
+
+  if (showMemberActions) {
+    if (sharedHeaderActions) sharedHeaderActions.setUser(user);
+    else sharedHeaderActions = createAuthenticatedHeaderActions({ topbar, user });
+  } else if (sharedHeaderActions) {
+    closeShareComposer('auth-change');
+    sharedHeaderActions.destroy();
+    sharedHeaderActions = null;
+  }
+  currentMenuOwner = nextOwner;
 }
 
 initThemeState();
@@ -162,3 +216,48 @@ hydrateThemeEntitlementState().then(({ error }) => {
 initScrollResponsiveTopbar();
 initTopbarStickyOffset();
 buildMenu();
+
+subscribeToAuthStateChanges(({ event, user }) => {
+  const nextOwner = user?.authenticated ? String(user?.userId || user?.email || '') : '';
+  const ownerChanged = event === 'SIGNED_OUT' || nextOwner !== currentMenuOwner;
+  menuHydrationRequest += 1;
+  if (ownerChanged) {
+    closeShareComposer('auth-state-change');
+    sharedHeaderActions?.destroy();
+    sharedHeaderActions = null;
+    currentMenuOwner = '';
+    clearThemeEntitlementState();
+    closeMenu();
+  }
+
+  window.setTimeout(() => {
+    void buildMenu();
+    if (ownerChanged || event === 'USER_UPDATED') {
+      void hydrateThemeEntitlementState().then(({ error }) => {
+        if (error) console.warn('Unable to verify theme reward ownership', error);
+      });
+    }
+  }, 0);
+});
+
+window.addEventListener('storage', (event) => {
+  if (event.key === 'dominion:user') {
+    void buildMenu();
+    return;
+  }
+  if ([
+    'dominion:gameStats',
+    'dominion:startDate',
+    'dominion:checkInDates',
+    'dominion:previewCheckInDates',
+    'dominion:previewChallengeSimulation',
+  ].includes(event.key)) void sharedHeaderActions?.refresh({ includeLockState: true });
+});
+
+window.addEventListener('focus', () => {
+  void buildMenu();
+});
+
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden) void buildMenu();
+});

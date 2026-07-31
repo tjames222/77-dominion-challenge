@@ -3,6 +3,7 @@ import {
   createShareSnapshot,
   createSharingRewardIntent,
   getCrews,
+  getLocalOrSessionUser,
   getOrCreateCrewInvite,
   previewShareSnapshot,
 } from './api';
@@ -14,10 +15,11 @@ import {
   normalizeShareKind,
 } from './share-composer.mjs';
 
-const triggers = [...document.querySelectorAll('[data-share-composer]')];
+let shareComposerInstance = null;
+const boundShareTriggers = new WeakSet();
 
-function element(tag, className, text = '') {
-  const node = document.createElement(tag);
+function element(ownerDocument, tag, className, text = '') {
+  const node = ownerDocument.createElement(tag);
   if (className) node.className = className;
   if (text) node.textContent = text;
   return node;
@@ -35,39 +37,57 @@ async function writeClipboard(value) {
   await navigator.clipboard.writeText(value);
 }
 
-if (triggers.length) {
+export function closeShareComposer(reason = 'auth-change') {
+  shareComposerInstance?.reset?.(reason);
+}
+
+export function initShareComposer(ownerDocument = globalThis.document) {
+  if (!ownerDocument?.querySelectorAll) return null;
+  const triggers = [...ownerDocument.querySelectorAll('[data-share-composer]')];
+  if (!triggers.length) return shareComposerInstance;
+
+  if (shareComposerInstance) {
+    shareComposerInstance.bindTriggers(triggers);
+    return shareComposerInstance;
+  }
+
   let currentKind = 'progress';
   let managedCrews = [];
   let previewRequest = 0;
+  let actionRequest = 0;
   let working = false;
 
-  const content = element('div', 'share-composer');
-  const choices = element('fieldset', 'share-flow-options');
-  const legend = element('legend', '', 'Choose what to share');
+  const content = element(ownerDocument, 'div', 'share-composer');
+  const choices = element(ownerDocument, 'fieldset', 'share-flow-options');
+  const legend = element(ownerDocument, 'legend', '', 'Choose what to share');
   choices.append(legend);
 
   Object.values(SHARE_FLOWS).forEach((flow) => {
-    const label = element('label', 'share-flow-option');
-    const input = document.createElement('input');
+    const label = element(ownerDocument, 'label', 'share-flow-option');
+    const input = ownerDocument.createElement('input');
     input.type = 'radio';
     input.name = 'share-flow';
     input.value = flow.kind;
     input.dataset.shareFlow = flow.kind;
-    const copy = element('span', '');
-    copy.append(element('strong', '', flow.label), element('small', '', flow.description));
+    const copy = element(ownerDocument, 'span', '');
+    copy.append(
+      element(ownerDocument, 'strong', '', flow.label),
+      element(ownerDocument, 'small', '', flow.description),
+    );
     label.append(input, copy);
     choices.append(label);
   });
 
-  const preview = element('article', 'share-composer-preview');
+  const preview = element(ownerDocument, 'article', 'share-composer-preview');
   preview.setAttribute('aria-live', 'polite');
   preview.setAttribute('aria-atomic', 'true');
-  const previewEyebrow = element('p', 'eyebrow', 'Share preview');
-  const previewMetric = element('strong', 'share-preview-metric', '—');
-  const previewMetricLabel = element('span', 'share-preview-metric-label', '');
-  const previewTitle = element('h3', '', 'Choose something to share.');
-  const previewDescription = element('p', '', 'A privacy-safe preview will appear here.');
+  const previewEyebrow = element(ownerDocument, 'p', 'eyebrow', 'Share preview');
+  const previewMetric = element(ownerDocument, 'strong', 'share-preview-metric', '—');
+  const previewMetricLabel = element(ownerDocument, 'span', 'share-preview-metric-label', '');
+  const previewTitle = element(ownerDocument, 'h3', '', 'Choose something to share.');
+  const previewDescription = element(ownerDocument, 'p', '', 'A privacy-safe preview will appear here.');
   const privacyNote = element(
+    ownerDocument,
     'p',
     'share-privacy-note',
     'Public progress links never include your name, email, group, journal, action history, or exact activity dates.',
@@ -81,25 +101,25 @@ if (triggers.length) {
     privacyNote,
   );
 
-  const crewField = element('label', 'share-crew-field');
+  const crewField = element(ownerDocument, 'label', 'share-crew-field');
   crewField.hidden = true;
-  crewField.append(element('span', '', 'Private group'));
-  const crewSelect = document.createElement('select');
+  crewField.append(element(ownerDocument, 'span', '', 'Private group'));
+  const crewSelect = ownerDocument.createElement('select');
   crewSelect.id = 'shareCrewSelect';
   crewField.append(crewSelect);
 
-  const rewardNote = element('p', 'share-reward-note');
-  const actionRow = element('div', 'share-composer-actions');
-  const nativeButton = element('button', 'primary', 'Share from this device');
+  const rewardNote = element(ownerDocument, 'p', 'share-reward-note');
+  const actionRow = element(ownerDocument, 'div', 'share-composer-actions');
+  const nativeButton = element(ownerDocument, 'button', 'primary', 'Share from this device');
   nativeButton.type = 'button';
   nativeButton.dataset.shareMethod = 'native_share';
   nativeButton.hidden = typeof navigator.share !== 'function';
-  const copyButton = element('button', 'secondary', 'Copy share link');
+  const copyButton = element(ownerDocument, 'button', 'secondary', 'Copy share link');
   copyButton.type = 'button';
   copyButton.dataset.shareMethod = 'copy_link';
   actionRow.append(nativeButton, copyButton);
 
-  const status = element('p', 'share-composer-status');
+  const status = element(ownerDocument, 'p', 'share-composer-status');
   status.setAttribute('role', 'status');
   status.setAttribute('aria-live', 'polite');
   status.setAttribute('aria-atomic', 'true');
@@ -130,7 +150,7 @@ if (triggers.length) {
     const rememberedId = localStorage.getItem('dominion:activeCrewId') || '';
     crewSelect.replaceChildren();
     managedCrews.forEach((crew) => {
-      const option = document.createElement('option');
+      const option = ownerDocument.createElement('option');
       option.value = crew.id;
       option.textContent = crew.name;
       option.selected = crew.id === rememberedId;
@@ -153,8 +173,9 @@ if (triggers.length) {
     try {
       if (currentKind === 'invite') {
         const crews = await getCrews();
-        managedCrews = (crews || []).filter((crew) => ['owner', 'admin'].includes(crew.role));
+        const nextManagedCrews = (crews || []).filter((crew) => ['owner', 'admin'].includes(crew.role));
         if (requestId !== previewRequest) return;
+        managedCrews = nextManagedCrews;
         renderManagedCrews();
         const crew = selectedManagedCrew(managedCrews, crewSelect);
         previewEyebrow.textContent = 'Private invitation';
@@ -213,38 +234,56 @@ if (triggers.length) {
   actionRow.addEventListener('click', async (event) => {
     const button = event.target.closest('[data-share-method]');
     if (!button || working) return;
+    const requestId = ++actionRequest;
     const method = button.dataset.shareMethod;
+    const actionKind = currentKind;
+    const actionCrew = actionKind === 'invite'
+      ? selectedManagedCrew(managedCrews, crewSelect)
+      : null;
     working = true;
     status.textContent = '';
     dialog.clearError();
     dialog.setBusy(true, method === 'native_share' ? 'Opening your share sheet…' : 'Creating and copying your link…');
     setActionsDisabled(true);
+    choices.disabled = true;
+    crewSelect.disabled = true;
 
     try {
+      const actionOwner = await getLocalOrSessionUser();
+      const expectedUserId = actionOwner?.userId || '';
+      if (!actionOwner?.authenticated || !expectedUserId || requestId !== actionRequest) {
+        const error = new Error('The signed-in account changed before sharing started.');
+        error.name = 'AbortError';
+        throw error;
+      }
+      const shouldContinue = () => requestId === actionRequest;
       let result;
-      if (currentKind === 'invite') {
-        const crew = selectedManagedCrew(managedCrews, crewSelect);
+      if (actionKind === 'invite') {
         result = await executeInviteShare({
-          crew,
+          crew: actionCrew,
           method,
-          createInvite: getOrCreateCrewInvite,
+          createInvite: (crewId) => getOrCreateCrewInvite(crewId, { expectedUserId }),
           baseUrl: window.location.href,
           nativeShare: navigator.share?.bind(navigator),
           copyText: writeClipboard,
+          shouldContinue,
         });
+        if (requestId !== actionRequest) return;
         status.textContent = method === 'native_share'
           ? 'Invitation shared. Your Sharing reward unlocks after another person joins.'
           : 'Invitation copied. Your Sharing reward unlocks after another person joins.';
       } else {
         result = await executeSnapshotShare({
-          kind: currentKind,
+          kind: actionKind,
           method,
-          createSnapshot: createShareSnapshot,
-          createRewardIntent: createSharingRewardIntent,
-          completeReward: completeSharingReward,
+          createSnapshot: (kind) => createShareSnapshot(kind, { expectedUserId }),
+          createRewardIntent: (shareKind) => createSharingRewardIntent(shareKind, { expectedUserId }),
+          completeReward: (completionToken) => completeSharingReward(completionToken, { expectedUserId }),
           nativeShare: navigator.share?.bind(navigator),
           copyText: writeClipboard,
+          shouldContinue,
         });
+        if (requestId !== actionRequest) return;
         if (result.reward?.granted) {
           status.textContent = `Shared successfully. You earned +${result.reward.points || 14} points and the Sharing badge.`;
         } else if (result.reward?.alreadyGranted) {
@@ -254,26 +293,67 @@ if (triggers.length) {
         }
       }
     } catch (error) {
+      if (requestId !== actionRequest) return;
       if (error?.name === 'AbortError') {
         status.textContent = 'Share canceled. No Sharing reward was granted.';
       } else {
         dialog.setError(error?.message || 'Unable to share right now.');
       }
     } finally {
-      working = false;
-      dialog.setBusy(false);
-      setActionsDisabled(currentKind === 'invite' && !selectedManagedCrew(managedCrews, crewSelect));
+      if (requestId === actionRequest) {
+        working = false;
+        dialog.setBusy(false);
+        choices.disabled = false;
+        crewSelect.disabled = false;
+        setActionsDisabled(currentKind === 'invite' && !selectedManagedCrew(managedCrews, crewSelect));
+      }
     }
   });
 
-  triggers.forEach((trigger) => {
-    trigger.setAttribute('aria-haspopup', 'dialog');
-    trigger.setAttribute('aria-controls', 'shareComposerDialog');
-    trigger.addEventListener('click', () => {
-      dialog.open(trigger);
-      chooseKind(trigger.dataset.shareKind);
+  const reset = () => {
+    previewRequest += 1;
+    actionRequest += 1;
+    working = false;
+    managedCrews = [];
+    currentKind = 'progress';
+    dialog.close('replaced');
+    dialog.setBusy(false);
+    dialog.clearError();
+    choices.disabled = false;
+    crewSelect.disabled = false;
+    choices.querySelectorAll('[data-share-flow]').forEach((input) => {
+      input.checked = input.value === currentKind;
     });
-  });
+    crewSelect.replaceChildren();
+    crewField.hidden = true;
+    previewEyebrow.textContent = 'Share preview';
+    previewMetric.textContent = '—';
+    previewMetricLabel.textContent = '';
+    previewTitle.textContent = 'Choose something to share.';
+    previewDescription.textContent = 'A privacy-safe preview will appear here.';
+    privacyNote.textContent = 'Public progress links never include your name, email, group, journal, action history, or exact activity dates.';
+    rewardNote.textContent = '';
+    status.textContent = '';
+    setActionsDisabled(true);
+  };
 
-  document.documentElement.dataset.shareComposerReady = 'true';
+  const bindTriggers = (nextTriggers = []) => {
+    nextTriggers.forEach((trigger) => {
+      if (boundShareTriggers.has(trigger)) return;
+      boundShareTriggers.add(trigger);
+      trigger.setAttribute('aria-haspopup', 'dialog');
+      trigger.setAttribute('aria-controls', 'shareComposerDialog');
+      trigger.addEventListener('click', () => {
+        dialog.open(trigger);
+        chooseKind(trigger.dataset.shareKind);
+      });
+    });
+  };
+
+  shareComposerInstance = { dialog, bindTriggers, reset };
+  bindTriggers(triggers);
+  ownerDocument.documentElement.dataset.shareComposerReady = 'true';
+  return shareComposerInstance;
 }
+
+initShareComposer();

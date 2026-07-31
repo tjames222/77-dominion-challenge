@@ -87,6 +87,13 @@ async function deliverShare({ method, payload, nativeShare, copyText }) {
   await copyText(payload.url);
 }
 
+function assertShareContinuation(shouldContinue) {
+  if (typeof shouldContinue !== 'function' || shouldContinue()) return;
+  const error = new Error('The signed-in account changed before sharing finished.');
+  error.name = 'AbortError';
+  throw error;
+}
+
 export async function executeSnapshotShare({
   kind,
   method,
@@ -95,6 +102,7 @@ export async function executeSnapshotShare({
   completeReward,
   nativeShare,
   copyText,
+  shouldContinue,
 } = {}) {
   const normalizedKind = normalizeShareKind(kind);
   const normalizedMethod = normalizeShareMethod(method);
@@ -106,6 +114,7 @@ export async function executeSnapshotShare({
   }
 
   const snapshot = await createSnapshot(normalizedKind);
+  assertShareContinuation(shouldContinue);
   if (!snapshot?.url) throw new Error('The share link could not be created.');
 
   // The short-lived intent is issued only after the user chose a concrete
@@ -113,6 +122,7 @@ export async function executeSnapshotShare({
   const intent = typeof createRewardIntent === 'function'
     ? await createRewardIntent(normalizedMethod)
     : null;
+  assertShareContinuation(shouldContinue);
   const payload = shareCopy({
     presentation: snapshot.presentation,
     url: snapshot.url,
@@ -125,12 +135,14 @@ export async function executeSnapshotShare({
     nativeShare,
     copyText,
   });
+  assertShareContinuation(shouldContinue);
 
   const reward = intent?.completionToken && typeof completeReward === 'function'
     ? await completeReward(intent.completionToken)
     : intent?.alreadyGranted
       ? { granted: false, alreadyGranted: true }
       : null;
+  assertShareContinuation(shouldContinue);
   return { snapshot, payload, reward, method: normalizedMethod };
 }
 
@@ -141,6 +153,7 @@ export async function executeInviteShare({
   baseUrl,
   nativeShare,
   copyText,
+  shouldContinue,
 } = {}) {
   const normalizedMethod = normalizeShareMethod(method);
   if (!crew?.id || typeof createInvite !== 'function') {
@@ -148,6 +161,7 @@ export async function executeInviteShare({
   }
 
   const invite = await createInvite(crew.id);
+  assertShareContinuation(shouldContinue);
   const url = inviteUrlFromToken(invite?.token, baseUrl);
   const payload = shareCopy({
     kind: 'invite',
@@ -160,6 +174,7 @@ export async function executeInviteShare({
     nativeShare,
     copyText,
   });
+  assertShareContinuation(shouldContinue);
 
   return {
     invite: { id: invite?.id || '', expiresAt: invite?.expires_at || invite?.expiresAt || null },

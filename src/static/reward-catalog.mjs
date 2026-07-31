@@ -1,3 +1,5 @@
+import { REWARD_POINT_THRESHOLDS } from './point-economy.mjs';
+
 const CHALLENGE_STATES = new Set(['locked', 'available', 'active', 'completed']);
 const OWNERSHIP_STATES = new Set(['locked', 'owned']);
 const STATE_MODELS = new Set(['challenge_lifecycle', 'ownership']);
@@ -8,7 +10,7 @@ export const DOMINION_NIGHT_THEME_REWARD = Object.freeze({
   stateModel: 'ownership',
   title: 'Dominion Night',
   description: 'Unlock a distinct dark app theme, then select it from Profile.',
-  pointsRequired: 500,
+  pointsRequired: REWARD_POINT_THRESHOLDS.dominion_night_theme,
   fulfillmentKey: 'dominion-night',
   icon: 'palette',
   sortOrder: 5,
@@ -244,6 +246,28 @@ export function buildMockRewardCatalog({
     catalog,
     ownershipRecords: [...recordsByKey.values()],
   };
+}
+
+export function backfillMockRewardEntitlements({
+  progression = {},
+  ownershipRecords = [],
+  rewardDefinitions = [DOMINION_NIGHT_THEME_REWARD],
+  now,
+} = {}) {
+  const timestamp = resolveTimestamp(now);
+  const existingKeys = new Set(normalizeOwnershipRecords(ownershipRecords).keys());
+  const backfill = buildMockRewardCatalog({
+    progression,
+    ownershipRecords,
+    rewardDefinitions,
+    now: timestamp,
+  });
+
+  return backfill.ownershipRecords.map((record) => (
+    existingKeys.has(record.key)
+      ? record
+      : { ...record, celebrationSeenAt: timestamp }
+  ));
 }
 
 export function claimMockRewardEntitlementUnlocks({

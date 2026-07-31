@@ -5,7 +5,7 @@ Dominion Night is selectable only when both controls agree:
 - the `VITE_ENABLE_DOMINION_NIGHT_THEME` release flag enables the registered theme; and
 - the authenticated reward catalog returns an active `ownership` reward with `status: owned` whose fulfillment key is `dominion-night`.
 
-The point threshold and progress copy come from the typed reward catalog. The UI does not duplicate the 500-point threshold. Dark and Light remain public choices.
+The point threshold and progress copy come from the typed reward catalog. The UI does not duplicate the 56-point threshold. Dark and Light remain public choices.
 
 ## Fail-closed behavior
 

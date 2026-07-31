@@ -3,7 +3,7 @@ begin;
 create extension if not exists pgtap with schema extensions;
 set local search_path = public, extensions;
 
-select plan(68);
+select plan(69);
 
 select is(
   has_function_privilege(
@@ -417,6 +417,10 @@ select is(
   'an earned badge emits the definition name instead of private metadata'
 );
 
+delete from public.user_challenge_states
+where user_id = '10000000-0000-4000-8000-000000000001'
+  and challenge_key = 'twenty_one_day_prayer';
+
 insert into public.user_challenge_states (
   user_id,
   challenge_key,
@@ -427,7 +431,7 @@ insert into public.user_challenge_states (
   '10000000-0000-4000-8000-000000000001',
   'twenty_one_day_prayer',
   'available',
-  3000,
+  210,
   now()
 );
 select is(
@@ -438,6 +442,34 @@ select is(
   ),
   '{"rewardKind":"challenge","rewardName":"21-Day Prayer Track"}'::jsonb,
   'an unlocked challenge emits only its public reward kind and title'
+);
+
+delete from public.user_challenge_states
+where user_id = '10000000-0000-4000-8000-000000000001'
+  and challenge_key = 'thirty_day_strength';
+insert into public.user_challenge_states (
+  user_id,
+  challenge_key,
+  status,
+  unlock_points,
+  unlocked_at,
+  celebration_seen_at
+) values (
+  '10000000-0000-4000-8000-000000000001',
+  'thirty_day_strength',
+  'available',
+  308,
+  now(),
+  now()
+);
+select is(
+  (
+    select count(*)::integer
+    from private.outbound_deliveries
+    where source_reference = 'challenge:10000000-0000-4000-8000-000000000001:thirty_day_strength'
+  ),
+  0,
+  'an acknowledged migration backfill does not emit an unlock notification'
 );
 
 update public.user_game_stats

@@ -3,7 +3,7 @@ begin;
 create extension if not exists pgtap with schema extensions;
 set local search_path = public, extensions;
 
-select plan(54);
+select plan(56);
 
 select ok(
   exists (
@@ -57,6 +57,24 @@ select ok(
     where version = '20260720220000'
   ),
   'the Dominion Night theme reward migration was replayed'
+);
+
+select ok(
+  exists (
+    select 1
+    from supabase_migrations.schema_migrations
+    where version = '20260730074130'
+  ),
+  'the launch point progression rebalance migration was replayed'
+);
+
+select ok(
+  exists (
+    select 1
+    from supabase_migrations.schema_migrations
+    where version = '20260731193250'
+  ),
+  'the explicit workout difficulty persistence migration was replayed'
 );
 
 select ok(
@@ -131,8 +149,8 @@ select is(
     from public.reward_definitions
     where reward_key = 'dominion_night_theme'
   ),
-  500,
-  'the Dominion Night theme reward starts at exactly 500 points'
+  56,
+  'the Dominion Night theme reward starts at exactly 56 points'
 );
 select is(
   (

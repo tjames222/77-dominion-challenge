@@ -93,7 +93,7 @@ test('global navigation applies the real compact visual styles without screensho
   await expect(topbar).toHaveClass(/topbar-collapsed/);
   await expect.poll(() => topbar.evaluate((element) => getComputedStyle(element, '::before').transform)).not.toBe('none');
 
-  const compactStyles = await page.locator('#dashboardStreakButton > strong').evaluate((element) => {
+  const compactStyles = await page.locator('.shared-header-streak > .shared-header-streak-count').evaluate((element) => {
     const styles = getComputedStyle(element);
     return { transform: styles.transform, transitionProperty: styles.transitionProperty };
   });
@@ -291,12 +291,13 @@ test('Dashboard uses zero-point glass only outside the private-group podium', as
 
 test('Dashboard streak opens all four current and personal-best metrics', async ({ page, app }) => {
   await app.open(ROUTE_BY_ID.dashboard);
-  const trigger = page.locator('#dashboardStreakButton');
+  const trigger = page.locator('.shared-header-streak');
   await expect(trigger).toContainText('6');
+  await expect(trigger).toContainText('App Streak');
   await expect(trigger.locator('.icon-lightning')).toHaveCount(1);
   await trigger.click();
 
-  const dialog = page.getByRole('dialog', { name: 'Streak details' });
+  const dialog = page.getByRole('dialog', { name: 'App Streak' });
   await expect(dialog).toBeVisible();
   await expect(dialog).toContainText('Full standard streak');
   await expect(dialog).toContainText('Best full standard streak');
@@ -340,8 +341,8 @@ test('Dashboard celebration replaces an open dialog and exclusively owns modal f
   await app.open(ROUTE_BY_ID.dashboard);
 
   await page.locator('#selectAllActionsButton').click();
-  await page.locator('#dashboardStreakButton').click();
-  const streakDialog = page.getByRole('dialog', { name: 'Streak details' });
+  await page.locator('.shared-header-streak').click();
+  const streakDialog = page.getByRole('dialog', { name: 'App Streak' });
   await expect(streakDialog).toBeVisible();
 
   await page.locator('#checkInButton').evaluate((button) => button.click());
@@ -441,13 +442,13 @@ test('profile form saves through Enter and announces success', async ({ page, ap
   await expect(page.locator('#profileName')).toHaveText('Jordan Keyboard');
 });
 
-test('Profile locks Dominion Night below 500 points and persists it after unlock', async ({ page, app }) => {
+test('Profile locks Dominion Night below 56 points and persists it after unlock', async ({ page, app }) => {
   await app.open(ROUTE_BY_ID.profile, { state: 'rewardsLocked' });
   const nightOption = page.locator('[data-theme-mode="dominion-night"]');
   await expect(nightOption).toHaveAttribute('aria-disabled', 'true');
-  await expect(page.locator('#dominionNightStatus')).toContainText('250 of 500 points');
+  await expect(page.locator('#dominionNightStatus')).toContainText('28 of 56 points');
   await expect(page.locator('#dominionNightProgressLabel')).toHaveText(
-    '50% complete. 250 points to unlock.',
+    '50% complete. 28 points to unlock.',
   );
 });
 

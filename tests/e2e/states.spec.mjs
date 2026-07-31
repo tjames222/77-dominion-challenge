@@ -61,10 +61,10 @@ test('locked challenge progression has a deterministic visual contract', async (
   const nightReward = page.locator('[data-reward-key="dominion_night_theme"]');
   await expect(nightReward).toContainText('Dominion Night');
   await expect(nightReward).toContainText('Locked');
-  await expect(nightReward).toContainText('250 points remaining');
+  await expect(nightReward).toContainText('28 points remaining');
   await expect(nightReward.getByRole('progressbar')).toHaveAttribute(
     'aria-valuetext',
-    '250 of 500 points',
+    '28 of 56 points',
   );
   await expectStableScreenshot(page, app, 'state-rewards-locked.png');
 });

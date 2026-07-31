@@ -25,7 +25,18 @@ describe('atomic Daily Standard drafts', () => {
   it('keeps workout difficulty date-draft context separate from points', () => {
     const draft = applyWorkoutDifficultyMutation({ completed: ['workoutOne'] }, 'one', 'extreme');
     assert.deepEqual(draft.workoutDifficulty, { one: 'extreme', two: 'medium' });
+    assert.deepEqual(draft.workoutDifficultySelections, { one: 'extreme', two: '' });
     assert.deepEqual(draft.completed, ['workoutOne']);
+  });
+
+  it('preserves an unselected difficulty while retaining Medium as the scoring fallback', () => {
+    const unselected = normalizeDailyStandardDraft({ workout_difficulty: {} });
+    assert.deepEqual(unselected.workoutDifficulty, { one: 'medium', two: 'medium' });
+    assert.deepEqual(unselected.workoutDifficultySelections, { one: '', two: '' });
+    assert.deepEqual(normalizeDailyStandardDraft(unselected).workoutDifficultySelections, { one: '', two: '' });
+
+    const selected = normalizeDailyStandardDraft({ workout_difficulty: { one: 'hard', two: 'easy' } });
+    assert.deepEqual(selected.workoutDifficultySelections, { one: 'hard', two: 'easy' });
   });
 
   it('normalizes trusted payload names and rejects edits after submission', () => {

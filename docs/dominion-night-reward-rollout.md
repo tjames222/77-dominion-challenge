@@ -2,15 +2,15 @@
 
 `dominion_night_theme` is the permanent cosmetic entitlement for the
 `dominion-night` theme registry entry. The rollout definition is active at
-exactly 500 total points, uses sort order 5, and does not require an active
-membership entitlement. Existing challenge definitions remain unchanged at
-1,000 points and above.
+exactly 56 total points, uses sort order 5, and does not require an active
+membership entitlement. The launch progression migration also aligns challenge
+rewards to 126, 210, 308, 420, and 532 points.
 
 ## Grant path
 
 All accepted point awards update `user_game_stats.total_points`. Its existing
 database trigger reconciles ownership definitions in the same transaction, so
-the first total at or above 500 inserts one `(user_id, reward_key)` row. This
+the first total at or above 56 inserts one `(user_id, reward_key)` row. This
 includes server-derived Daily Standards points and the Sharing Bonus event when
 that source is introduced. Corrections only update the point total; they never
 delete ownership.
@@ -33,9 +33,9 @@ safe. Do not call this RPC from a browser or expose service credentials.
 
 ## Verification and rollback behavior
 
-- Confirm the definition has `points_required = 500`, `state_model =
+- Confirm the definition has `points_required = 56`, `state_model =
   'ownership'`, and `fulfillment_key = 'dominion-night'`.
-- Confirm every user at or above 500 has one ownership row and one grant audit
+- Confirm every user at or above 56 has one ownership row and one grant audit
   event.
 - Confirm `claim_reward_entitlement_unlocks()` returns each pending ownership
   celebration once.
