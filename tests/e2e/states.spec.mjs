@@ -82,6 +82,21 @@ test('unlocked challenge progression has a deterministic visual contract', async
   await expectStableScreenshot(page, app, 'state-rewards-unlocked.png');
 });
 
+test('selected Badges tab has a deterministic visual and accessibility contract', async ({ page, app }) => {
+  await app.open(ROUTE_BY_ID.badgesRewards, { state: 'rewardsUnlocked' });
+  const badgesTab = page.getByRole('tab', { name: 'Badges' });
+  await badgesTab.click();
+  await expect(badgesTab).toHaveAttribute('aria-selected', 'true');
+  await expect(page.getByRole('tabpanel', { name: 'Badges' })).toBeVisible();
+  for (const badge of BASE_BADGES) {
+    await expect(page.locator(`[data-badge-key="${badge.key}"]`)).toContainText(badge.name);
+  }
+  await expectStableScreenshot(page, app, 'state-badges-selected.png');
+
+  const results = await analyzeAccessibility(page);
+  assertNoBlockingAxeViolations(results);
+});
+
 test('submitted check-in state locks controls and remains accessible', async ({ page, app }) => {
   await app.open(ROUTE_BY_ID.dashboard, { state: 'submitted' });
   await expect(page.locator('#checkInButton')).toBeDisabled();

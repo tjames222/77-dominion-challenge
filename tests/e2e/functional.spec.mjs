@@ -118,6 +118,50 @@ test('community tablist follows arrow-key navigation', async ({ page, app }) => 
   await expect(page.getByPlaceholder('Write a comment…')).toHaveCount(0);
 });
 
+test('Badges & Rewards tabs preserve loaded state across pointer and keyboard navigation', async ({ page, app }) => {
+  await app.open(ROUTE_BY_ID.badgesRewards, { state: 'rewardsUnlocked' });
+  const rewardsTab = page.getByRole('tab', { name: 'Rewards' });
+  const badgesTab = page.getByRole('tab', { name: 'Badges' });
+  const rewardsPanel = page.getByRole('tabpanel', { name: 'Rewards' });
+  const badgesPanel = page.getByRole('tabpanel', { name: 'Badges' });
+  const rewardRows = page.locator('[data-reward-key]');
+  const badgeCards = page.locator('[data-badge-key]');
+
+  await expect(rewardsTab).toHaveAttribute('aria-selected', 'true');
+  await expect(rewardsTab).toHaveAttribute('tabindex', '0');
+  await expect(badgesTab).toHaveAttribute('tabindex', '-1');
+  await expect(rewardsPanel).toBeVisible();
+  await expect(badgesPanel).toBeHidden();
+  const rewardCount = await rewardRows.count();
+  const badgeCount = await badgeCards.count();
+  expect(rewardCount).toBeGreaterThan(0);
+  expect(badgeCount).toBeGreaterThan(0);
+
+  await badgesTab.click();
+  await expect(badgesTab).toHaveAttribute('aria-selected', 'true');
+  await expect(rewardsPanel).toBeHidden();
+  await expect(badgesPanel).toBeVisible();
+  await expect(badgeCards.first()).toBeVisible();
+
+  await rewardsTab.click();
+  await expect(rewardsPanel).toBeVisible();
+  await rewardsTab.focus();
+  await page.keyboard.press('ArrowRight');
+  await expect(badgesTab).toBeFocused();
+  await expect(badgesPanel).toBeVisible();
+  await page.keyboard.press('Home');
+  await expect(rewardsTab).toBeFocused();
+  await expect(rewardsPanel).toBeVisible();
+  await page.keyboard.press('End');
+  await expect(badgesTab).toBeFocused();
+  await page.keyboard.press('ArrowLeft');
+  await expect(rewardsTab).toBeFocused();
+  await expect(rewardRows).toHaveCount(rewardCount);
+  await expect(badgeCards).toHaveCount(badgeCount);
+  await expect(page.locator('#rewardsList')).toHaveAttribute('aria-busy', 'false');
+  await expect(page.locator('#badgesGallery')).toHaveAttribute('aria-busy', 'false');
+});
+
 test('single-crew setup expands, focuses, and safely cancels', async ({ page, app }) => {
   await app.open(ROUTE_BY_ID.community, { state: 'communityEmpty' });
   const openButton = page.locator('#openCrewFormButton');
