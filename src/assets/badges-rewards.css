@@ -1,7 +1,13 @@
 .badges-rewards-shell {
+  --badges-rewards-section-gap: clamp(28px, 5vw, 56px);
   width: min(100%, 1120px);
-  gap: clamp(28px, 5vw, 56px);
+  display: grid;
+  gap: var(--badges-rewards-section-gap);
   padding-bottom: clamp(64px, 9vw, 110px);
+}
+
+.badges-rewards-shell [hidden] {
+  display: none !important;
 }
 
 .badges-rewards-hero {
@@ -28,6 +34,49 @@
   color: var(--text-muted);
   font-size: clamp(1rem, 2.2vw, 1.2rem);
   line-height: 1.65;
+}
+
+.badges-rewards-tabs {
+  position: sticky;
+  top: calc(var(--topbar-sticky-height) + 8px);
+  z-index: 10;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+  padding: 6px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--background) 88%, transparent);
+  backdrop-filter: blur(18px);
+}
+
+.badges-rewards-tab {
+  min-height: 44px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: .82rem;
+  font-weight: 950;
+}
+
+.badges-rewards-tab.active {
+  background: var(--accent);
+  color: var(--button-primary-text);
+}
+
+.badges-rewards-tab:focus-visible {
+  outline: 3px solid color-mix(in srgb, var(--accent) 42%, transparent);
+  outline-offset: 2px;
+}
+
+.badges-rewards-panel {
+  display: none;
+  gap: var(--badges-rewards-section-gap);
+}
+
+.badges-rewards-panel.active {
+  display: grid;
 }
 
 .reward-unlock-notice {
@@ -420,6 +469,10 @@
   box-shadow: inset 0 1px 0 #ffffff, 0 18px 42px color-mix(in srgb, #302617 9%, transparent);
 }
 
+:root[data-theme="dominion-night"] .badges-rewards-tabs {
+  background: color-mix(in srgb, var(--background-soft) 88%, transparent);
+}
+
 @media (min-width: 720px) {
   .reward-row {
     grid-template-columns: 52px minmax(0, 1fr);
@@ -431,6 +484,16 @@
 }
 
 @media (max-width: 520px) {
+  .badges-rewards-tabs {
+    border-radius: 22px;
+  }
+
+  .badges-rewards-tab {
+    padding-inline: 5px;
+    border-radius: 16px;
+    font-size: .7rem;
+  }
+
   .reward-row-footer {
     align-items: stretch;
   }

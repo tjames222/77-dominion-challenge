@@ -21,10 +21,44 @@ const rewardsList = $('rewardsList');
 const badgesGallery = $('badgesGallery');
 const errorPanel = $('badgesRewardsError');
 const retryButton = $('badgesRewardsRetry');
+const tabs = Array.from(document.querySelectorAll('.badges-rewards-tab'));
+const panels = Array.from(document.querySelectorAll('.badges-rewards-panel'));
 let catalog = null;
 let earnedBadges = [];
 let pendingRewardKey = '';
 let loadRequestId = 0;
+
+function activateTab(tab, { focus = false } = {}) {
+  if (!tab) return;
+  const target = tab.dataset.tab;
+  tabs.forEach((item) => {
+    const selected = item === tab;
+    item.classList.toggle('active', selected);
+    item.setAttribute('aria-selected', String(selected));
+    item.tabIndex = selected ? 0 : -1;
+  });
+  panels.forEach((panel) => {
+    const selected = panel.id === target;
+    panel.classList.toggle('active', selected);
+    panel.hidden = !selected;
+  });
+  if (focus) tab.focus();
+}
+
+tabs.forEach((tab, index) => {
+  tab.tabIndex = tab.classList.contains('active') ? 0 : -1;
+  tab.addEventListener('click', () => activateTab(tab));
+  tab.addEventListener('keydown', (event) => {
+    let nextIndex = null;
+    if (event.key === 'ArrowRight') nextIndex = (index + 1) % tabs.length;
+    if (event.key === 'ArrowLeft') nextIndex = (index - 1 + tabs.length) % tabs.length;
+    if (event.key === 'Home') nextIndex = 0;
+    if (event.key === 'End') nextIndex = tabs.length - 1;
+    if (nextIndex === null) return;
+    event.preventDefault();
+    activateTab(tabs[nextIndex], { focus: true });
+  });
+});
 
 const formatPoints = (value) => `${Number(value || 0).toLocaleString()} ${Number(value || 0) === 1 ? 'point' : 'points'}`;
 

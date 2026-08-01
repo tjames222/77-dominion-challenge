@@ -71,6 +71,43 @@ describe('sharing composer contract', () => {
     assert.equal(completions, 0);
   });
 
+  test('stops between side effects when the signed-in account changes', async () => {
+    const calls = [];
+    let current = true;
+    await assert.rejects(executeSnapshotShare({
+      kind: 'progress',
+      method: 'copy_link',
+      shouldContinue: () => current,
+      createSnapshot: async () => {
+        calls.push('snapshot');
+        current = false;
+        return { url: 'https://share.example/s/old-account' };
+      },
+      createRewardIntent: async () => calls.push('intent'),
+      copyText: async () => calls.push('copy'),
+      completeReward: async () => calls.push('complete'),
+    }), (error) => error?.name === 'AbortError');
+    assert.deepEqual(calls, ['snapshot']);
+  });
+
+  test('does not expose an invite token after an account change', async () => {
+    const calls = [];
+    let current = true;
+    await assert.rejects(executeInviteShare({
+      crew: { id: 'crew-1', name: 'Iron Men' },
+      method: 'copy_link',
+      baseUrl: 'https://dominion.example/community.html',
+      shouldContinue: () => current,
+      createInvite: async () => {
+        calls.push('invite');
+        current = false;
+        return { id: 'invite-1', token: 'old-account-secret' };
+      },
+      copyText: async () => calls.push('copy'),
+    }), (error) => error?.name === 'AbortError');
+    assert.deepEqual(calls, ['invite']);
+  });
+
   test('preserves an already-earned lifetime reward after a repeated share', async () => {
     const result = await executeSnapshotShare({
       kind: 'streak',

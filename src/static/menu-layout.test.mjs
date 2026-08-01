@@ -3,7 +3,6 @@ import { readFileSync } from 'node:fs';
 import { describe, test } from 'node:test';
 
 const menuCss = readFileSync(new URL('../assets/menu.css', import.meta.url), 'utf8');
-const productCss = readFileSync(new URL('../assets/product.css', import.meta.url), 'utf8');
 const dominionNightCss = readFileSync(new URL('../assets/dominion-night.css', import.meta.url), 'utf8');
 const menuJs = readFileSync(new URL('./menu.js', import.meta.url), 'utf8');
 
@@ -74,6 +73,7 @@ describe('shared sticky menu', () => {
       const executableSource = `
         const clearAuthSession = async () => {};
         const getLocalOrSessionUser = async () => null;
+        const subscribeToAuthStateChanges = () => () => {};
         const clearThemeEntitlementState = () => {};
         const hydrateThemeEntitlementState = async () => ({});
         const initThemeState = () => {};
@@ -121,6 +121,13 @@ describe('shared sticky menu', () => {
     assert.match(dominionNightCss, /:root\[data-theme="dominion-night"\] \.topbar\.topbar-collapsed::before\s*\{/);
   });
 
+  test('uses the measured wrapped-header height for anchor and scorecard scrolling', () => {
+    const productCss = readFileSync(new URL('../assets/product.css', import.meta.url), 'utf8');
+    assert.match(menuCss, /scroll-padding-top:\s*calc\(var\(--topbar-sticky-height\) \+ 16px\)/);
+    assert.match(productCss, /\.dashboard-scorecard\s*\{[\s\S]*scroll-margin-top:\s*calc\(var\(--topbar-sticky-height\) \+ 16px\)/);
+    assert.doesNotMatch(menuCss, /scroll-padding-top:\s*calc\((?:76|88)px/);
+  });
+
   test('preserves mobile touch targets, safe areas, and reduced-motion preferences', () => {
     const menuButton = declarationsFor('.global-menu-button');
     const reducedMotion = menuCss.slice(menuCss.indexOf('@media (prefers-reduced-motion: reduce)'));
@@ -129,10 +136,10 @@ describe('shared sticky menu', () => {
     assert.match(menuButton, /height:\s*46px/);
     assert.match(menuCss, /\.global-menu-button\s*\{\s*width:\s*44px;\s*height:\s*44px;/);
     assert.doesNotMatch(menuCss, /\.topbar\.topbar-collapsed > \*\s*\{[^}]*transform\s*:/s);
-    assert.match(productCss, /\.topbar\.topbar-collapsed \.dashboard-streak-button\s*\{[^}]*transform:\s*none/s);
-    assert.match(productCss, /\.topbar\.topbar-collapsed \.dashboard-streak-button > \*\s*\{[^}]*transform:\s*scale\(\.9\)/s);
-    assert.match(productCss, /\.dashboard-streak-button > \*\s*\{[^}]*transition:\s*transform/s);
-    assert.match(productCss, /@media \(prefers-reduced-motion: reduce\)[\s\S]*\.dashboard-streak-button > \*\s*\{[^}]*transition:\s*none/s);
+    assert.match(menuCss, /\.topbar\.topbar-collapsed \.shared-header-action > \*\s*\{[^}]*transform:\s*scale\(\.94\)/s);
+    assert.match(menuCss, /\.shared-header-action > \*\s*\{[^}]*transition:\s*transform/s);
+    assert.match(reducedMotion, /\.shared-header-action/);
+    assert.doesNotMatch(menuCss, /dashboard-streak-button|streak-details-/);
     assert.match(menuCss, /env\(safe-area-inset-top\)/);
     assert.match(menuCss, /env\(safe-area-inset-right\)/);
     assert.match(reducedMotion, /\.topbar::before/);

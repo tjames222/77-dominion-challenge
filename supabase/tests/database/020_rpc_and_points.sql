@@ -3,7 +3,7 @@ begin;
 create extension if not exists pgtap with schema extensions;
 set local search_path = public, extensions;
 
-select plan(18);
+select plan(20);
 
 delete from public.game_point_events
 where user_id = '30000000-0000-4000-8000-000000000003';
@@ -89,6 +89,27 @@ select lives_ok(
   'the trusted draft mutation records the completed Daily Standard before submission'
 );
 
+select is(
+  public.set_daily_standard_workout_difficulty(
+    current_date,
+    'one',
+    'medium',
+    null
+  ) #>> '{workout_difficulty,one}',
+  'medium',
+  'an explicit Medium selection is returned instead of collapsing into the default'
+);
+select is(
+  (
+    select workout_difficulty ->> 'one'
+    from public.challenge_entries
+    where user_id = '10000000-0000-4000-8000-000000000001'
+      and entry_date = current_date
+  ),
+  'medium',
+  'an explicit Medium selection persists for refresh and synchronization'
+);
+
 reset role;
 
 select throws_ok(
@@ -170,6 +191,9 @@ select throws_ok(
   'the first check-in locks the challenge start date'
 );
 
+set local "request.jwt.claim.sub" = '30000000-0000-4000-8000-000000000003';
+set local "request.jwt.claims" = '{"sub":"30000000-0000-4000-8000-000000000003","role":"authenticated","email":"carol@example.test","user_metadata":{"name":"Carol Example"}}';
+
 select throws_ok(
   $$ select public.start_challenge('twenty_one_day_prayer') $$,
   'P0001',
@@ -177,10 +201,13 @@ select throws_ok(
   'a challenge below the point threshold remains locked'
 );
 
+set local "request.jwt.claim.sub" = '10000000-0000-4000-8000-000000000001';
+set local "request.jwt.claims" = '{"sub":"10000000-0000-4000-8000-000000000001","role":"authenticated","email":"alice@example.test","user_metadata":{"name":"Alice Example"}}';
+
 select is(
   jsonb_array_length(public.claim_challenge_unlocks() -> 'claimedKeys'),
-  1,
-  'an eligible pending unlock is claimed once'
+  5,
+  'all eligible pending unlocks from the seeded point total are claimed once'
 );
 select is(
   jsonb_array_length(public.claim_challenge_unlocks() -> 'claimedKeys'),

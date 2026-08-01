@@ -106,8 +106,8 @@ fi
 psql "$database_url" --set=ON_ERROR_STOP=1 --quiet <<SQL
 begin;
 update public.user_game_stats
-set total_points = 500,
-    challenge_points = 500
+set total_points = 560,
+    challenge_points = 560
 where user_id = '$fixture_user';
 alter table public.reward_definitions disable trigger sync_reward_definition_entitlements;
 insert into public.reward_definitions (
@@ -124,7 +124,7 @@ insert into public.reward_definitions (
   'cosmetic',
   'ownership',
   'Concurrency Reward',
-  500,
+  560,
   'concurrency_reward_asset',
   'gift',
   999

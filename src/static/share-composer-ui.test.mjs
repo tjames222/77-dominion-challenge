@@ -5,6 +5,8 @@ import { describe, test } from 'node:test';
 const read = (relativePath) => readFileSync(new URL(relativePath, import.meta.url), 'utf8');
 const api = read('./api.js');
 const composer = read('./share-composer.js');
+const composerModel = read('./share-composer.mjs');
+const sharedHeader = read('./shared-header-actions.js');
 const css = read('../assets/share-composer.css');
 const dashboard = read('../../dashboard.html');
 const rewards = read('../../badges-rewards.html');
@@ -25,14 +27,18 @@ describe('sharing composer browser integration', () => {
       assert.match(html, /src\/assets\/share-composer\.css/);
       assert.match(html, /src\/static\/share-composer\.js/);
     });
-    assert.match(dashboard, /data-share-kind="streak"/);
+    assert.match(sharedHeader, /shareButton\.dataset\.shareKind = 'progress'/);
     assert.match(dashboard, /data-share-kind="progress"/);
-    assert.match(dashboard, /data-share-kind="general"/);
     assert.match(community, /data-share-kind="invite"/);
+    assert.match(composerModel, /kind: 'streak'/);
+    assert.match(composerModel, /kind: 'general'/);
     assert.match(composer, /createDialog\(\{/);
     assert.match(composer, /Choose what to share/);
     assert.match(composer, /input\.type = 'radio'/);
     assert.match(composer, /status\.setAttribute\('aria-live', 'polite'\)/);
+    assert.match(composer, /export function initShareComposer/);
+    assert.match(composer, /shareComposerInstance\.bindTriggers\(triggers\)/);
+    assert.match(sharedHeader, /initShareComposer\(ownerDocument\)/);
   });
 
   test('retires the direct invite-copy path in favor of explicit composer actions', () => {
@@ -48,5 +54,23 @@ describe('sharing composer browser integration', () => {
     assert.match(composer, /data-share-method/);
     assert.match(composer, /Share from this device/);
     assert.match(composer, /Copy share link/);
+  });
+
+  test('force-closes and clears account-scoped state across authentication changes', () => {
+    assert.match(composer, /shareComposerInstance\?\.reset\?\.\(reason\)/);
+    assert.match(composer, /dialog\.close\('replaced'\)/);
+    assert.match(composer, /previewRequest \+= 1/);
+    assert.match(composer, /actionRequest \+= 1/);
+    assert.match(composer, /managedCrews = \[\]/);
+    assert.match(composer, /crewSelect\.replaceChildren\(\)/);
+    assert.match(composer, /requestId === actionRequest/);
+    assert.match(composer, /getLocalOrSessionUser\(\)/);
+    assert.match(composer, /expectedUserId/);
+    assert.match(composer, /shouldContinue/);
+    assert.match(composer, /const nextManagedCrews/);
+    assert.match(composer, /managedCrews = nextManagedCrews/);
+    assert.match(composer, /const actionKind = currentKind/);
+    assert.match(composer, /const actionCrew = actionKind === 'invite'/);
+    assert.match(composer, /choices\.disabled = true/);
   });
 });

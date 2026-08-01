@@ -1,3 +1,5 @@
+import { REWARD_POINT_THRESHOLDS } from './point-economy.mjs';
+
 const VALID_CHALLENGE_STATES = new Set(['available', 'active', 'completed']);
 
 export const DEFAULT_CHALLENGE_DEFINITIONS = Object.freeze([
@@ -6,7 +8,7 @@ export const DEFAULT_CHALLENGE_DEFINITIONS = Object.freeze([
     title: '7-Day Reset',
     teaser: 'A focused week to rebuild rhythm and recover momentum.',
     type: 'reset',
-    pointsRequired: 1000,
+    pointsRequired: REWARD_POINT_THRESHOLDS.seven_day_reset,
     durationDays: 7,
     icon: 'repeat',
     sortOrder: 10,
@@ -16,7 +18,7 @@ export const DEFAULT_CHALLENGE_DEFINITIONS = Object.freeze([
     title: '21-Day Prayer Track',
     teaser: 'Deepen the daily prayer habit with a guided three-week track.',
     type: 'spiritual',
-    pointsRequired: 3000,
+    pointsRequired: REWARD_POINT_THRESHOLDS.twenty_one_day_prayer,
     durationDays: 21,
     icon: 'spark',
     sortOrder: 20,
@@ -26,7 +28,7 @@ export const DEFAULT_CHALLENGE_DEFINITIONS = Object.freeze([
     title: '30-Day Strength Intensive',
     teaser: 'Turn consistency into a focused month of physical training.',
     type: 'physical',
-    pointsRequired: 4500,
+    pointsRequired: REWARD_POINT_THRESHOLDS.thirty_day_strength,
     durationDays: 30,
     icon: 'dumbbell',
     sortOrder: 30,
@@ -36,7 +38,7 @@ export const DEFAULT_CHALLENGE_DEFINITIONS = Object.freeze([
     title: '40-Day Fasting & Prayer Track',
     teaser: 'Build a guided rhythm of fasting, prayer, and disciplined reflection.',
     type: 'fasting',
-    pointsRequired: 6000,
+    pointsRequired: REWARD_POINT_THRESHOLDS.forty_day_fast,
     durationDays: 40,
     icon: 'flame',
     sortOrder: 40,
@@ -46,7 +48,7 @@ export const DEFAULT_CHALLENGE_DEFINITIONS = Object.freeze([
     title: 'Bible in a Year',
     teaser: 'Carry the reading discipline into a complete yearlong plan.',
     type: 'bible',
-    pointsRequired: 10000,
+    pointsRequired: REWARD_POINT_THRESHOLDS.bible_in_a_year,
     durationDays: 365,
     icon: 'book',
     sortOrder: 50,

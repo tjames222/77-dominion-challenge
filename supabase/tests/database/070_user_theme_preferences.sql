@@ -5,6 +5,10 @@ set local search_path = public, extensions;
 
 select plan(14);
 
+delete from public.user_reward_entitlements
+where user_id = '20000000-0000-4000-8000-000000000002'
+  and reward_key = 'dominion_night_theme';
+
 select has_table('public', 'user_theme_preferences', 'theme preferences are stored separately from public profile data');
 select is(
   has_table_privilege('authenticated', 'public.user_theme_preferences', 'SELECT'),

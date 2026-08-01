@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import { describe, it } from 'node:test';
 import {
   DOMINION_NIGHT_THEME_REWARD,
+  backfillMockRewardEntitlements,
   buildMockRewardCatalog,
   claimMockRewardEntitlementUnlocks,
   challengeProgressionToRewardCatalog,
@@ -116,22 +117,22 @@ describe('typed reward catalog', () => {
   it('uses stable Dominion Night reward and fulfillment identities', () => {
     assert.equal(DOMINION_NIGHT_THEME_REWARD.key, 'dominion_night_theme');
     assert.equal(DOMINION_NIGHT_THEME_REWARD.fulfillmentKey, 'dominion-night');
-    assert.equal(DOMINION_NIGHT_THEME_REWARD.pointsRequired, 500);
+    assert.equal(DOMINION_NIGHT_THEME_REWARD.pointsRequired, 56);
     assert.equal(DOMINION_NIGHT_THEME_REWARD.stateModel, 'ownership');
     assert.equal(DOMINION_NIGHT_THEME_REWARD.metadata.themeKey, 'dominion-night');
   });
 
   it('represents preview users below, at, and above the theme threshold', () => {
     const below = buildMockRewardCatalog({
-      progression: { totalPoints: 499, challenges: [] },
+      progression: { totalPoints: 55, challenges: [] },
       now: '2026-07-20T01:00:00Z',
     });
     const at = buildMockRewardCatalog({
-      progression: { totalPoints: 500, challenges: [] },
+      progression: { totalPoints: 56, challenges: [] },
       now: '2026-07-20T01:00:00Z',
     });
     const above = buildMockRewardCatalog({
-      progression: { totalPoints: 900, challenges: [] },
+      progression: { totalPoints: 57, challenges: [] },
       now: '2026-07-20T01:00:00Z',
     });
 
@@ -145,7 +146,7 @@ describe('typed reward catalog', () => {
 
   it('keeps mock ownership after a correction and claims its celebration once', () => {
     const earned = buildMockRewardCatalog({
-      progression: { totalPoints: 500, challenges: [] },
+      progression: { totalPoints: 56, challenges: [] },
       now: '2026-07-20T01:00:00Z',
     });
     const corrected = buildMockRewardCatalog({
@@ -169,6 +170,31 @@ describe('typed reward catalog', () => {
     assert.deepEqual(firstClaim.claimedUnlocks.map((reward) => reward.key), ['dominion_night_theme']);
     assert.equal(firstClaim.catalog.items[0].celebrationSeenAt, '2026-07-20T03:00:00Z');
     assert.deepEqual(retriedClaim.claimedUnlocks, []);
+  });
+
+  it('silently backfills only newly eligible preview ownership during the v3 economy migration', () => {
+    const migratedAt = '2026-07-30T12:00:00Z';
+    const newlyEligible = backfillMockRewardEntitlements({
+      progression: { totalPoints: 56, challenges: [] },
+      ownershipRecords: [],
+      now: migratedAt,
+    });
+    const existingPending = backfillMockRewardEntitlements({
+      progression: { totalPoints: 56, challenges: [] },
+      ownershipRecords: [{
+        key: 'dominion_night_theme',
+        ownedAt: '2026-07-30T11:00:00Z',
+        celebrationSeenAt: null,
+      }],
+      now: migratedAt,
+    });
+
+    assert.equal(newlyEligible[0].celebrationSeenAt, migratedAt);
+    assert.equal(existingPending[0].celebrationSeenAt, null);
+    assert.match(api, /MOCK_CHALLENGE_THRESHOLDS_VERSION = 3/);
+    assert.match(api, /previousDefinitions: DEFAULT_CHALLENGE_DEFINITIONS/);
+    assert.match(api, /backfillMockRewardEntitlements/);
+    assert.doesNotMatch(api, /pointsRequired: definition\.pointsRequired \/ 2/);
   });
 
   it('persists mock ownership instead of trusting point totals as proof', () => {

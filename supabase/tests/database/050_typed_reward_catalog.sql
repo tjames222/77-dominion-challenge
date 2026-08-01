@@ -18,8 +18,8 @@ select is(
     from public.reward_definitions
     where reward_type = 'challenge'
   ),
-  array[1000, 3000, 4500, 6000, 10000],
-  'the existing challenge thresholds are preserved'
+  array[126, 210, 308, 420, 532],
+  'the launch challenge thresholds are paced across the first challenge'
 );
 select ok(
   not exists (
@@ -58,7 +58,7 @@ select lives_ok(
       'ownership',
       'Test Theme',
       'A fixture cosmetic reward.',
-      500,
+      560,
       'dominion_night_test',
       null,
       'palette',
@@ -123,10 +123,9 @@ select is(
   'owned',
   'the cosmetic uses owned instead of challenge lifecycle states'
 );
-select is(
-  public.get_reward_catalog() #>> '{nextUnlock,key}',
-  'twenty_one_day_prayer',
-  'the contract identifies the next reachable locked reward'
+select ok(
+  public.get_reward_catalog() -> 'nextUnlock' = 'null'::jsonb,
+  'a user above every launch threshold has no next locked reward'
 );
 select is(
   (public.get_reward_catalog(2) #>> '{page,hasMore}')::boolean,
@@ -157,17 +156,17 @@ set local "request.jwt.claim.sub" = '20000000-0000-4000-8000-000000000002';
 set local "request.jwt.claims" = '{"sub":"20000000-0000-4000-8000-000000000002","role":"authenticated"}';
 select is(
   (select count(*)::integer from public.user_reward_entitlements),
-  0,
-  'another user cannot read Alice reward ownership'
+  1,
+  'another user sees only their own earned reward ownership'
 );
 select is(
   public.get_reward_catalog() #>> '{nextUnlock,key}',
-  'test_theme_reward',
+  'forty_day_fast',
   'the nearest locked reward is calculated from the current user points'
 );
 select is(
   (public.get_reward_catalog() #>> '{nextUnlock,pointsRemaining}')::integer,
-  100,
+  20,
   'next-unlock progress uses the authoritative point total'
 );
 
@@ -200,24 +199,25 @@ select is(
       '30000000-0000-4000-8000-000000000003', 100, null, null
     ) #>> '{nextUnlock,pointsRemaining}'
   )::integer,
-  500,
+  56,
   'a new user sees the complete points remaining'
 );
 
 update public.user_game_stats
-set total_points = 499
+set total_points = 559
 where user_id = '30000000-0000-4000-8000-000000000003';
 select is(
   (
     select count(*)::integer from public.user_reward_entitlements
     where user_id = '30000000-0000-4000-8000-000000000003'
+      and reward_key = 'test_theme_reward'
   ),
   0,
   'one point below the threshold remains locked'
 );
 
 update public.user_game_stats
-set total_points = 500
+set total_points = 560
 where user_id = '30000000-0000-4000-8000-000000000003';
 select is(
   (
@@ -265,7 +265,7 @@ select is(
 );
 
 update public.reward_definitions
-set points_required = 900
+set points_required = 700
 where reward_key = 'test_theme_reward';
 select is(
   (

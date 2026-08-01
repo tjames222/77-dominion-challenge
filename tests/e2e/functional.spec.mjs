@@ -93,7 +93,7 @@ test('global navigation applies the real compact visual styles without screensho
   await expect(topbar).toHaveClass(/topbar-collapsed/);
   await expect.poll(() => topbar.evaluate((element) => getComputedStyle(element, '::before').transform)).not.toBe('none');
 
-  const compactStyles = await page.locator('#dashboardStreakButton > strong').evaluate((element) => {
+  const compactStyles = await page.locator('.shared-header-streak > .shared-header-streak-count').evaluate((element) => {
     const styles = getComputedStyle(element);
     return { transform: styles.transform, transitionProperty: styles.transitionProperty };
   });
@@ -116,6 +116,50 @@ test('community tablist follows arrow-key navigation', async ({ page, app }) => 
   await expect(page.getByRole('tab', { name: 'My Journey' })).toHaveCount(0);
   await expect(page.getByText('Post to Private Group')).toHaveCount(0);
   await expect(page.getByPlaceholder('Write a comment…')).toHaveCount(0);
+});
+
+test('Badges & Rewards tabs preserve loaded state across pointer and keyboard navigation', async ({ page, app }) => {
+  await app.open(ROUTE_BY_ID.badgesRewards, { state: 'rewardsUnlocked' });
+  const rewardsTab = page.getByRole('tab', { name: 'Rewards' });
+  const badgesTab = page.getByRole('tab', { name: 'Badges' });
+  const rewardsPanel = page.getByRole('tabpanel', { name: 'Rewards' });
+  const badgesPanel = page.getByRole('tabpanel', { name: 'Badges' });
+  const rewardRows = page.locator('[data-reward-key]');
+  const badgeCards = page.locator('[data-badge-key]');
+
+  await expect(rewardsTab).toHaveAttribute('aria-selected', 'true');
+  await expect(rewardsTab).toHaveAttribute('tabindex', '0');
+  await expect(badgesTab).toHaveAttribute('tabindex', '-1');
+  await expect(rewardsPanel).toBeVisible();
+  await expect(badgesPanel).toBeHidden();
+  const rewardCount = await rewardRows.count();
+  const badgeCount = await badgeCards.count();
+  expect(rewardCount).toBeGreaterThan(0);
+  expect(badgeCount).toBeGreaterThan(0);
+
+  await badgesTab.click();
+  await expect(badgesTab).toHaveAttribute('aria-selected', 'true');
+  await expect(rewardsPanel).toBeHidden();
+  await expect(badgesPanel).toBeVisible();
+  await expect(badgeCards.first()).toBeVisible();
+
+  await rewardsTab.click();
+  await expect(rewardsPanel).toBeVisible();
+  await rewardsTab.focus();
+  await page.keyboard.press('ArrowRight');
+  await expect(badgesTab).toBeFocused();
+  await expect(badgesPanel).toBeVisible();
+  await page.keyboard.press('Home');
+  await expect(rewardsTab).toBeFocused();
+  await expect(rewardsPanel).toBeVisible();
+  await page.keyboard.press('End');
+  await expect(badgesTab).toBeFocused();
+  await page.keyboard.press('ArrowLeft');
+  await expect(rewardsTab).toBeFocused();
+  await expect(rewardRows).toHaveCount(rewardCount);
+  await expect(badgeCards).toHaveCount(badgeCount);
+  await expect(page.locator('#rewardsList')).toHaveAttribute('aria-busy', 'false');
+  await expect(page.locator('#badgesGallery')).toHaveAttribute('aria-busy', 'false');
 });
 
 test('single-crew setup expands, focuses, and safely cancels', async ({ page, app }) => {
@@ -291,12 +335,13 @@ test('Dashboard uses zero-point glass only outside the private-group podium', as
 
 test('Dashboard streak opens all four current and personal-best metrics', async ({ page, app }) => {
   await app.open(ROUTE_BY_ID.dashboard);
-  const trigger = page.locator('#dashboardStreakButton');
+  const trigger = page.locator('.shared-header-streak');
   await expect(trigger).toContainText('6');
+  await expect(trigger).toContainText('App Streak');
   await expect(trigger.locator('.icon-lightning')).toHaveCount(1);
   await trigger.click();
 
-  const dialog = page.getByRole('dialog', { name: 'Streak details' });
+  const dialog = page.getByRole('dialog', { name: 'App Streak' });
   await expect(dialog).toBeVisible();
   await expect(dialog).toContainText('Full standard streak');
   await expect(dialog).toContainText('Best full standard streak');
@@ -340,8 +385,8 @@ test('Dashboard celebration replaces an open dialog and exclusively owns modal f
   await app.open(ROUTE_BY_ID.dashboard);
 
   await page.locator('#selectAllActionsButton').click();
-  await page.locator('#dashboardStreakButton').click();
-  const streakDialog = page.getByRole('dialog', { name: 'Streak details' });
+  await page.locator('.shared-header-streak').click();
+  const streakDialog = page.getByRole('dialog', { name: 'App Streak' });
   await expect(streakDialog).toBeVisible();
 
   await page.locator('#checkInButton').evaluate((button) => button.click());
@@ -398,7 +443,7 @@ test('a completed share grants +14 and the Sharing badge only once', async ({ pa
     });
   });
   await app.open(ROUTE_BY_ID.dashboard);
-  await page.locator('[data-share-composer][data-share-kind="progress"]').click();
+  await page.getByRole('button', { name: 'Share my progress' }).click();
   const dialog = page.getByRole('dialog', { name: 'Choose what you want to send' });
   const nativeShare = dialog.getByRole('button', { name: 'Share from this device' });
   await expect(nativeShare).toBeEnabled();
@@ -441,13 +486,13 @@ test('profile form saves through Enter and announces success', async ({ page, ap
   await expect(page.locator('#profileName')).toHaveText('Jordan Keyboard');
 });
 
-test('Profile locks Dominion Night below 500 points and persists it after unlock', async ({ page, app }) => {
+test('Profile locks Dominion Night below 56 points and persists it after unlock', async ({ page, app }) => {
   await app.open(ROUTE_BY_ID.profile, { state: 'rewardsLocked' });
   const nightOption = page.locator('[data-theme-mode="dominion-night"]');
   await expect(nightOption).toHaveAttribute('aria-disabled', 'true');
-  await expect(page.locator('#dominionNightStatus')).toContainText('250 of 500 points');
+  await expect(page.locator('#dominionNightStatus')).toContainText('28 of 56 points');
   await expect(page.locator('#dominionNightProgressLabel')).toHaveText(
-    '50% complete. 250 points to unlock.',
+    '50% complete. 28 points to unlock.',
   );
 });
 

@@ -16,24 +16,24 @@ const definitions = [
 const timestamp = '2026-07-16T00:00:00.000Z';
 
 describe('challenge point progression', () => {
-  it('uses the doubled configurable unlock thresholds', () => {
+  it('uses the launch reward thresholds paced across one challenge', () => {
     assert.deepEqual(
       DEFAULT_CHALLENGE_DEFINITIONS.map(({ key, pointsRequired }) => [key, pointsRequired]),
       [
-        ['seven_day_reset', 1000],
-        ['twenty_one_day_prayer', 3000],
-        ['thirty_day_strength', 4500],
-        ['forty_day_fast', 6000],
-        ['bible_in_a_year', 10000],
+        ['seven_day_reset', 126],
+        ['twenty_one_day_prayer', 210],
+        ['thirty_day_strength', 308],
+        ['forty_day_fast', 420],
+        ['bible_in_a_year', 532],
       ],
     );
 
-    const below = buildChallengeProgression({ totalPoints: 999, now: timestamp });
-    const exact = buildChallengeProgression({ totalPoints: 1000, now: timestamp });
+    const below = buildChallengeProgression({ totalPoints: 125, now: timestamp });
+    const exact = buildChallengeProgression({ totalPoints: 126, now: timestamp });
 
     assert.equal(below.nextUnlock.key, 'seven_day_reset');
     assert.equal(below.nextUnlock.pointsRemaining, 1);
-    assert.equal(below.nextUnlock.progressPercent, 99.9);
+    assert.equal(below.nextUnlock.progressPercent, 125 / 126 * 100);
     assert.equal(below.newlyUnlocked.length, 0);
     assert.deepEqual(exact.newlyUnlocked.map((challenge) => challenge.key), ['seven_day_reset']);
 
@@ -48,10 +48,17 @@ describe('challenge point progression', () => {
         totalPoints: definition.pointsRequired,
         now: timestamp,
       });
+      const justAbove = buildChallengeProgression({
+        definitions: [definition],
+        totalPoints: definition.pointsRequired + 1,
+        now: timestamp,
+      });
 
       assert.equal(justBelow.challenges[0].status, 'locked');
       assert.equal(justBelow.challenges[0].pointsRemaining, 1);
       assert.deepEqual(atThreshold.newlyUnlocked.map((challenge) => challenge.key), [definition.key]);
+      assert.equal(justAbove.challenges[0].status, 'available');
+      assert.equal(justAbove.challenges[0].pointsRemaining, 0);
     });
   });
 

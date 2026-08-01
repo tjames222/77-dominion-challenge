@@ -30,6 +30,24 @@ html {
   will-change: auto !important;
 }
 
+.pending-reveal .app-icon,
+.pending-reveal .science-icon,
+.pending-reveal .summary-icon,
+.pending-reveal .feed-item,
+.pending-reveal .landing-grid article,
+.pending-reveal .mini-proof-grid article,
+.pending-reveal .timeline article,
+.pending-reveal .standard-stack article,
+.pending-reveal .verse-grid article,
+.pending-reveal .stat-card,
+.pending-reveal.stat-card {
+  animation: none !important;
+  filter: none !important;
+  opacity: 1 !important;
+  transform: none !important;
+  visibility: visible !important;
+}
+
 html,
 body {
   scroll-behavior: auto !important;
@@ -58,7 +76,7 @@ body {
   transform: none !important;
 }
 
-.topbar.topbar-collapsed .dashboard-streak-button > *,
+.topbar.topbar-collapsed .shared-header-action > *,
 .topbar.topbar-collapsed .global-menu-button::before {
   transform: none !important;
 }

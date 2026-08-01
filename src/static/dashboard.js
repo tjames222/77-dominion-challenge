@@ -1,5 +1,5 @@
 import { initReveal } from './reveal';
-import { acquireDialogLayer, createDialog } from './dialog.mjs';
+import { acquireDialogLayer } from './dialog.mjs';
 import {
   claimChallengeUnlocks,
   getBillingState,
@@ -14,13 +14,8 @@ import {
   recordAppVisit,
   redirectToLogin,
   setDailyStandardWorkoutDifficulty,
-  updateProfile,
 } from './api';
-import {
-  DEFAULT_WORKOUT_DIFFICULTY,
-  calculateCheckInScore,
-  normalizeWorkoutDifficulty,
-} from './scoring.mjs';
+import { DIFFICULTY_OPTIONS, calculateCheckInScore, normalizeWorkoutDifficulty } from './scoring.mjs';
 import { dailyStandardRoute } from './daily-standard-routes.mjs';
 import {
   CHECK_IN_ALREADY_COMPLETE_CODE,
@@ -36,6 +31,7 @@ import {
   normalizeChallengeDays,
 } from './check-in.mjs';
 import { syncWorkoutDifficultyControls } from './workout-difficulty-controls.mjs';
+import { POINTS_PER_LEVEL, calculateLevelProgress } from './point-economy.mjs';
 import { resolveLeaderboardPrestige } from './leaderboard-prestige.mjs';
 import { shouldUseZeroPointGlass } from './dashboard-view-model.mjs';
 import { createCelebrationQueue } from './celebration-queue.mjs';
@@ -47,11 +43,7 @@ import {
   selectLatestBadge,
 } from './dashboard-rewards.mjs';
 import {
-  STREAK_METRIC_DEFINITIONS,
-  buildStreakSummary,
   preserveBestStreaks,
-  streakIndicatorLabel,
-  streakMetrics,
 } from './streak-summary.mjs';
 import {
   PREVIEW_CHALLENGE_STORAGE_KEY,
@@ -120,7 +112,7 @@ const countdownCallouts = [
   'Do not negotiate with drift. Choose the standard and begin.',
   'You are training your future self right now.',
 ];
-const POINTS_PER_LEVEL = 500;
+const LEVEL_MOMENTUM_WINDOW_POINTS = 3;
 const CONFETTI_DURATION_MS = 10800;
 const REDUCED_CONFETTI_DURATION_MS = 2200;
 const REWARD_TOAST_DURATION_MS = 5200;
@@ -233,6 +225,10 @@ const LEADERBOARD_PRESTIGE_WINDOW = 'week';
 const LEADERBOARD_PRESTIGE_REFRESH_MS = 60_000;
 const load = (key, fallback) => JSON.parse(localStorage.getItem(key) || JSON.stringify(fallback));
 const save = (key, value) => localStorage.setItem(key, JSON.stringify(value));
+const workoutDifficultySelection = (value = {}) => ({
+  one: DIFFICULTY_OPTIONS.includes(value?.one) ? value.one : '',
+  two: DIFFICULTY_OPTIONS.includes(value?.two) ? value.two : '',
+});
 const localDemoMode = isLocalDemoMode();
 let previewChallengeState = normalizePreviewChallengeState(
   localDemoMode ? load(PREVIEW_CHALLENGE_STORAGE_KEY, {}) : {},
@@ -301,75 +297,9 @@ const progressionBadgeCard = (badge) => {
   return `<article class="progression-badge-card ${tier}"><span class="progression-badge-icon app-icon ${badgeIconClass(badge)}" aria-hidden="true"></span><div class="progression-badge-copy"><div class="progression-badge-meta"><span>${escapeHtml(tierLabel)}</span>${earnedMarkup}</div><strong>${escapeHtml(name)}</strong><p>${escapeHtml(description)}</p></div></article>`;
 };
 const dayCountLabel = (value) => `${value} ${value === 1 ? 'day' : 'days'}`;
-function createStreakDetailsContent(ownerDocument) {
-  const wrapper = ownerDocument.createElement('div');
-  wrapper.className = 'streak-details-content';
-
-  const zeroState = ownerDocument.createElement('p');
-  zeroState.className = 'streak-details-zero';
-  zeroState.dataset.streakZeroState = '';
-  zeroState.setAttribute('role', 'status');
-  zeroState.textContent = 'No streak history yet. Open the app and complete the full standard to begin.';
-
-  const grid = ownerDocument.createElement('div');
-  grid.className = 'streak-details-grid';
-  STREAK_METRIC_DEFINITIONS.forEach(({ key, kind, label }) => {
-    const metric = ownerDocument.createElement('article');
-    metric.className = 'streak-detail-metric';
-    metric.dataset.streakKind = kind === 'Personal best' ? 'best' : 'current';
-
-    const kindElement = ownerDocument.createElement('span');
-    kindElement.className = 'streak-detail-kind';
-    kindElement.textContent = kind;
-
-    const labelElement = ownerDocument.createElement('h3');
-    labelElement.textContent = label;
-
-    const valueRow = ownerDocument.createElement('p');
-    valueRow.className = 'streak-detail-value';
-    const valueElement = ownerDocument.createElement('strong');
-    valueElement.dataset.streakValue = key;
-    valueElement.textContent = '0';
-    const unitElement = ownerDocument.createElement('span');
-    unitElement.dataset.streakUnit = key;
-    unitElement.textContent = 'days';
-    valueRow.append(valueElement, unitElement);
-
-    metric.append(kindElement, labelElement, valueRow);
-    grid.append(metric);
-  });
-
-  wrapper.append(zeroState, grid);
-  return wrapper;
-}
-function renderStreakExperience(summary) {
-  const indicator = $('dashboardStreakButton');
-  const indicatorValue = $('dashboardAppStreakCount');
-  if (indicatorValue) indicatorValue.textContent = String(summary.currentAppStreak);
-  if (indicator) indicator.setAttribute('aria-label', streakIndicatorLabel(summary));
-
-  streakMetrics(summary).forEach(({ key, value, unit }) => {
-    const valueElement = document.querySelector(`[data-streak-value="${key}"]`);
-    const unitElement = document.querySelector(`[data-streak-unit="${key}"]`);
-    if (valueElement) valueElement.textContent = String(value);
-    if (unitElement) unitElement.textContent = unit;
-  });
-
-  const zeroState = document.querySelector('[data-streak-zero-state]');
-  if (zeroState) zeroState.hidden = summary.hasHistory;
-}
-const getLevelProgress = (rawTotalPoints) => {
-  const numericPoints = Number(rawTotalPoints);
-  const totalPoints = Number.isFinite(numericPoints) ? Math.max(0, Math.floor(numericPoints)) : 0;
-  const level = Math.floor(totalPoints / POINTS_PER_LEVEL) + 1;
-  const pointsIntoLevel = totalPoints % POINTS_PER_LEVEL;
-  const pointsToNext = POINTS_PER_LEVEL - pointsIntoLevel;
-  const progressPercent = (pointsIntoLevel / POINTS_PER_LEVEL) * 100;
-  return { totalPoints, level, nextLevel: level + 1, pointsIntoLevel, pointsToNext, progressPercent };
-};
 const momentumMessageFor = ({ totalPoints, nextLevel, pointsToNext, appStreak, fullDayStreak, recentBadges }) => {
   if (totalPoints === 0) return 'Your first honest check-in starts the climb.';
-  if (pointsToNext <= 100) return `Level ${nextLevel} is within reach—${pointsToNext} more points will get you there.`;
+  if (pointsToNext <= LEVEL_MOMENTUM_WINDOW_POINTS) return `Level ${nextLevel} is within reach—${pointsToNext} more points will get you there.`;
   if (fullDayStreak >= 7) return `${dayCountLabel(fullDayStreak)} at the full standard. Protect the streak today.`;
   if (fullDayStreak >= 3) return 'Momentum is taking shape. One more full-standard day keeps the chain alive.';
   if (appStreak >= 7) return 'You keep showing up. Turn today’s visit into a full-standard day.';
@@ -445,10 +375,9 @@ function renderGameSummary() {
   const gameMomentumMessage = $('gameMomentumMessage');
   const recentBadgeSummary = $('recentBadgeSummary');
   const badgeShelf = $('badgeShelf');
-  const levelProgress = getLevelProgress(gameStats.totalPoints ?? gameStats.challengePoints ?? 0);
-  const streakSummary = buildStreakSummary(gameStats, todayKey());
-  const appStreak = streakSummary.currentAppStreak;
-  const fullDayStreak = streakSummary.currentFullStandardStreak;
+  const levelProgress = calculateLevelProgress(gameStats.totalPoints ?? gameStats.challengePoints ?? 0);
+  const appStreak = Math.max(Number(gameStats.currentAppStreak) || 0, 0);
+  const fullDayStreak = Math.max(Number(gameStats.currentFullDayStreak) || 0, 0);
   const latestBadge = selectLatestBadge(badges);
   const recentBadges = latestBadge ? [latestBadge] : [];
   const resolvedPrestige = resolveLeaderboardPrestige(leaderboardPositions);
@@ -483,6 +412,7 @@ function renderGameSummary() {
   if (gameLevelProgressLabel) gameLevelProgressLabel.textContent = `Level ${levelProgress.level} progress`;
   if (gamePointsToNext) gamePointsToNext.textContent = `${levelProgress.pointsToNext.toLocaleString()} points to Level ${levelProgress.nextLevel}`;
   if (gameLevelProgress) {
+    gameLevelProgress.setAttribute('aria-valuemax', String(POINTS_PER_LEVEL));
     gameLevelProgress.setAttribute('aria-valuenow', String(levelProgress.pointsIntoLevel));
     gameLevelProgress.setAttribute('aria-valuetext', `${levelProgress.pointsIntoLevel} of ${POINTS_PER_LEVEL} points earned toward Level ${levelProgress.nextLevel}`);
   }
@@ -496,7 +426,6 @@ function renderGameSummary() {
     });
     if (gameMomentumMessage.textContent !== momentumMessage) gameMomentumMessage.textContent = momentumMessage;
   }
-  renderStreakExperience(streakSummary);
   if (recentBadgeSummary) recentBadgeSummary.textContent = latestBadge
     ? badgeEarnedDisplay(latestBadge).label
     : 'No badges yet';
@@ -847,7 +776,9 @@ let submittedCheckInDates = new Set(initialCheckInCache.dates);
 let submittedChallengeDays = new Set(initialCheckInCache.challengeDays);
 let feed = localDemoMode ? load('dominion:feed', starterFeed) : starterFeed;
 let completedTodayCount = null;
-let workoutDifficulty = normalizeWorkoutDifficulty(load(WORKOUT_DIFFICULTY_STORAGE_KEY, DEFAULT_WORKOUT_DIFFICULTY));
+const savedWorkoutDifficulty = load(WORKOUT_DIFFICULTY_STORAGE_KEY, {});
+let workoutDifficulty = normalizeWorkoutDifficulty(savedWorkoutDifficulty);
+let selectedWorkoutDifficulty = workoutDifficultySelection(savedWorkoutDifficulty);
 let gameStats = preserveBestStreaks(
   localDemoMode ? load('dominion:gameStats', DEFAULT_DEMO_GAME_STATS) : {},
 );
@@ -936,22 +867,6 @@ function queueCheckInCelebrations({ id, points = 0, earnedBadges = [], status = 
   });
   enqueueCelebrationItems(items);
 }
-const dashboardStreakButton = $('dashboardStreakButton');
-const streakDetailsDialog = dashboardStreakButton ? createDialog({
-  id: 'streakDetailsDialog',
-  title: 'Streak details',
-  eyebrow: 'Your consistency',
-  description: 'Current streaks reflect the active challenge day. Personal bests remain after a streak resets.',
-  content: createStreakDetailsContent(document),
-  onOpen: () => {
-    dashboardStreakButton.setAttribute('aria-expanded', 'true');
-    renderStreakExperience(buildStreakSummary(gameStats, todayKey()));
-  },
-  onClose: () => dashboardStreakButton.setAttribute('aria-expanded', 'false'),
-}) : null;
-dashboardStreakButton?.addEventListener('click', () => {
-  streakDetailsDialog?.open(dashboardStreakButton);
-});
 async function refreshChallengeProgression({ claimCelebrations = false, celebrationDelay = 0 } = {}) {
   if (!claimCelebrations) return [];
   try {
@@ -971,6 +886,9 @@ const todayEntry = () => {
     date: todayKey(),
     completed: Array.isArray(entry.completed) ? entry.completed : [],
     workoutDifficulty: normalizeWorkoutDifficulty(entry.workoutDifficulty || workoutDifficulty),
+    workoutDifficultySelections: workoutDifficultySelection(
+      entry.workoutDifficultySelections || selectedWorkoutDifficulty,
+    ),
     version: Math.max(Number.parseInt(entry.version, 10) || 0, 0),
   };
 };
@@ -1023,13 +941,16 @@ const withPendingDraftMutations = (draft) => {
     else completed.delete(actionId);
   });
   const nextDifficulty = { ...draft.workoutDifficulty };
+  const nextDifficultySelections = { ...draft.workoutDifficultySelections };
   pendingWorkoutMutations.forEach((difficulty, workoutId) => {
     nextDifficulty[workoutId] = difficulty;
+    nextDifficultySelections[workoutId] = difficulty;
   });
   return {
     ...draft,
     completed: [...completed],
     workoutDifficulty: normalizeWorkoutDifficulty(nextDifficulty),
+    workoutDifficultySelections: workoutDifficultySelection(nextDifficultySelections),
   };
 };
 
@@ -1039,7 +960,8 @@ async function reconcileDailyStandardDraft(date, fallbackMessage) {
     const reconciled = withPendingDraftMutations(authoritative);
     replaceEntry(reconciled);
     workoutDifficulty = normalizeWorkoutDifficulty(reconciled.workoutDifficulty);
-    save(WORKOUT_DIFFICULTY_STORAGE_KEY, workoutDifficulty);
+    selectedWorkoutDifficulty = workoutDifficultySelection(reconciled.workoutDifficultySelections);
+    save(WORKOUT_DIFFICULTY_STORAGE_KEY, selectedWorkoutDifficulty);
     setCheckInNotice(date, fallbackMessage);
     render();
   } catch (error) {
@@ -1078,9 +1000,9 @@ function renderChecklist(entry) {
     checklist.innerHTML = scorecardGroups.map((group) => {
       const rows = group.items.map(([id, label, detail]) => {
         const route = dailyStandardRoute(id);
-        const difficultyDescriptionId = `${id}DifficultyDescription`;
+        const difficultyLabelId = `${id}DifficultyLabel`;
         const difficultyControl = route?.workoutId
-          ? `<label class="check-row-difficulty" for="${id}Difficulty"><span>Difficulty <small id="${difficultyDescriptionId}">Context only · still +1</small></span><select id="${id}Difficulty" name="${id}Difficulty" data-workout="${route.workoutId}" aria-label="${escapeHtml(label)} difficulty" aria-describedby="${difficultyDescriptionId}"><option value="easy">Easy</option><option value="medium">Medium</option><option value="hard">Hard</option><option value="extreme">Extreme</option></select></label>`
+          ? `<label class="check-row-difficulty" for="${id}Difficulty"><span class="sr-only" id="${difficultyLabelId}">${escapeHtml(label)} difficulty</span><select id="${id}Difficulty" name="${id}Difficulty" data-workout="${route.workoutId}" aria-labelledby="${difficultyLabelId}"><option value="" disabled>Difficulty</option><option value="easy">Easy</option><option value="medium">Medium</option><option value="hard">Hard</option><option value="extreme">Extreme</option></select></label>`
           : '';
         return `<article class="check-row" id="standard-${id}" data-standard-card="${id}"><button class="check-row-toggle" data-standard="${id}" aria-label="Mark ${escapeHtml(label)} complete, worth 1 point" aria-pressed="false" type="button"><span class="box"><span class="app-icon icon-sm icon-check" aria-hidden="true"></span></span><span class="check-row-copy"><strong>${escapeHtml(label)}</strong><small>${escapeHtml(detail)}</small></span><span class="action-point-value" aria-label="1 point">+1</span></button><a class="check-row-details" href="${route?.route || './dashboard.html#daily-standards'}" aria-label="Open ${escapeHtml(label)} details">Details<span aria-hidden="true">→</span></a>${difficultyControl}</article>`;
       }).join('');
@@ -1110,7 +1032,7 @@ function renderChecklist(entry) {
     link.setAttribute('aria-disabled', String(draftBusy));
   });
   const difficultyControls = checklist.querySelectorAll('[data-workout]');
-  syncWorkoutDifficultyControls(difficultyControls, workoutDifficulty);
+  syncWorkoutDifficultyControls(difficultyControls, selectedWorkoutDifficulty);
   difficultyControls.forEach((control) => { control.disabled = locked; });
 
   const requestedFocus = new URLSearchParams(window.location.search).get('focus');
@@ -1154,7 +1076,8 @@ function toggleStandard(id) {
       const reconciled = withPendingDraftMutations(authoritative);
       replaceEntry(reconciled);
       workoutDifficulty = normalizeWorkoutDifficulty(reconciled.workoutDifficulty);
-      save(WORKOUT_DIFFICULTY_STORAGE_KEY, workoutDifficulty);
+      selectedWorkoutDifficulty = workoutDifficultySelection(reconciled.workoutDifficultySelections);
+      save(WORKOUT_DIFFICULTY_STORAGE_KEY, selectedWorkoutDifficulty);
       if (authoritative.staleWriteReconciled) {
         setCheckInNotice(currentEntry.date, 'Your change was merged with newer activity from another tab.');
       }
@@ -1233,7 +1156,6 @@ function render() {
   const dashboardTitle = $('dashboardTitle');
   const dashboardLead = $('dashboardLead');
   const challengeCompletePanel = $('challengeCompletePanel');
-  const startDateInput = $('startDate');
   const challengePercentEl = $('challengePercent');
   const challengeDayEl = $('challengeDay');
   const challengeRing = $('challengeRing');
@@ -1252,18 +1174,6 @@ function render() {
   if (dashboardTitle) dashboardTitle.textContent = finished ? COMPLETION_HERO.title : 'Today’s Dominion';
   if (dashboardLead) dashboardLead.textContent = finished ? COMPLETION_HERO.lead : 'Track your standards, post your check-in, and stay honest.';
   if (challengeCompletePanel) challengeCompletePanel.hidden = !finished;
-  if (startDateInput) {
-    startDateInput.value = previewChallengeMode() ? previewChallengeState.anchorDate : startDate;
-    const startDateLocked = previewChallengeMode() || submittedCheckInDates.size > 0 || submittedChallengeDays.size > 0;
-    startDateInput.disabled = !isCheckInStatusReady() || startDateLocked;
-    startDateInput.title = !isCheckInStatusReady()
-      ? 'Confirming the current challenge status.'
-      : previewChallengeMode()
-        ? 'The preview simulator controls the challenge date.'
-      : startDateLocked
-        ? 'The challenge start date is locked after the first check-in.'
-        : '';
-  }
   const entry = todayEntry();
   const completedStandards = new Set(entry.completed);
   const challengePercent = finished ? 100 : Math.round((currentDay() / TOTAL_DAYS) * 100);
@@ -1379,7 +1289,8 @@ async function hydrateDashboardFromApi() {
       const currentDraft = entries.find((entry) => entry.date === todayKey());
       if (currentDraft?.workoutDifficulty) {
         workoutDifficulty = normalizeWorkoutDifficulty(currentDraft.workoutDifficulty);
-        save(WORKOUT_DIFFICULTY_STORAGE_KEY, workoutDifficulty);
+        selectedWorkoutDifficulty = workoutDifficultySelection(currentDraft.workoutDifficultySelections);
+        save(WORKOUT_DIFFICULTY_STORAGE_KEY, selectedWorkoutDifficulty);
       }
     }
     if (Array.isArray(dashboard?.checkIns)) {
@@ -1490,7 +1401,6 @@ async function recordDailyAppVisit() {
   }
 }
 
-const startDateInput = $('startDate');
 const checklist = $('checklist');
 const selectAllActionsButton = $('selectAllActionsButton');
 const checkInButton = $('checkInButton');
@@ -1520,30 +1430,28 @@ document.querySelectorAll('[data-dismiss-celebration]').forEach((button) => {
     celebrationSequence.dismissCurrent('close');
   });
 });
-if (startDateInput) startDateInput.addEventListener('input', event => {
-  if (previewChallengeMode() || !isCheckInStatusReady() || submittedCheckInDates.size > 0 || submittedChallengeDays.size > 0) {
-    event.target.value = previewChallengeMode() ? previewChallengeState.anchorDate : startDate;
-    return;
-  }
-  startDate = event.target.value || todayKey();
-  if (localDemoMode) save('dominion:startDate', startDate);
-  if (hasSupabaseAuth()) {
-    updateProfile({ challengeStartDate: startDate }).catch((error) => console.warn('Unable to sync profile', error));
-  }
-  render();
-});
 document.addEventListener('change', (event) => {
   const target = event.target.closest?.('[data-workout]');
   if (!target) return;
+  if (!DIFFICULTY_OPTIONS.includes(target.value)) {
+    render();
+    return;
+  }
   if (!isCheckInStatusReady() || hasSubmittedCheckIn() || isCheckInPending()) {
     render();
     return;
   }
   const currentEntry = todayEntry();
   workoutDifficulty = normalizeWorkoutDifficulty({ ...workoutDifficulty, [target.dataset.workout]: target.value });
+  selectedWorkoutDifficulty = { ...selectedWorkoutDifficulty, [target.dataset.workout]: target.value };
   pendingWorkoutMutations.set(target.dataset.workout, target.value);
-  save(WORKOUT_DIFFICULTY_STORAGE_KEY, workoutDifficulty);
-  replaceEntry({ ...currentEntry, workoutDifficulty, version: currentEntry.version + 1 });
+  save(WORKOUT_DIFFICULTY_STORAGE_KEY, selectedWorkoutDifficulty);
+  replaceEntry({
+    ...currentEntry,
+    workoutDifficulty,
+    workoutDifficultySelections: selectedWorkoutDifficulty,
+    version: currentEntry.version + 1,
+  });
   render();
 
   if (!hasSupabaseAuth()) {
@@ -1563,7 +1471,8 @@ document.addEventListener('change', (event) => {
       const reconciled = withPendingDraftMutations(authoritative);
       replaceEntry(reconciled);
       workoutDifficulty = normalizeWorkoutDifficulty(reconciled.workoutDifficulty);
-      save(WORKOUT_DIFFICULTY_STORAGE_KEY, workoutDifficulty);
+      selectedWorkoutDifficulty = workoutDifficultySelection(reconciled.workoutDifficultySelections);
+      save(WORKOUT_DIFFICULTY_STORAGE_KEY, selectedWorkoutDifficulty);
       render();
     })
     .catch((error) => {
@@ -1604,7 +1513,11 @@ window.addEventListener('storage', (event) => {
   } else if (event.key === 'dominion:startDate') startDate = load('dominion:startDate', calendarTodayKey());
   else if (event.key === ENTRY_STORAGE_KEY) {
     entries = load(ENTRY_STORAGE_KEY, []);
-    workoutDifficulty = normalizeWorkoutDifficulty(todayEntry().workoutDifficulty);
+    const storedEntry = entries.find((entry) => entry.date === todayKey());
+    workoutDifficulty = normalizeWorkoutDifficulty(storedEntry?.workoutDifficulty || workoutDifficulty);
+    selectedWorkoutDifficulty = workoutDifficultySelection(
+      storedEntry?.workoutDifficultySelections || storedEntry?.workoutDifficulty || selectedWorkoutDifficulty,
+    );
   }
   else if (event.key === checkInDatesStorageKey()) {
     const cache = checkInCacheForOwner(load(checkInDatesStorageKey(), {}), checkInCacheOwner);
@@ -1613,7 +1526,9 @@ window.addEventListener('storage', (event) => {
     if (hasSubmittedCheckIn()) setCheckInNotice(todayKey(), CHECK_IN_ALREADY_COMPLETE_MESSAGE);
   }
   else if (event.key === WORKOUT_DIFFICULTY_STORAGE_KEY) {
-    workoutDifficulty = normalizeWorkoutDifficulty(load(WORKOUT_DIFFICULTY_STORAGE_KEY, DEFAULT_WORKOUT_DIFFICULTY));
+    const storedDifficulty = load(WORKOUT_DIFFICULTY_STORAGE_KEY, {});
+    workoutDifficulty = normalizeWorkoutDifficulty(storedDifficulty);
+    selectedWorkoutDifficulty = workoutDifficultySelection(storedDifficulty);
   } else if (event.key === 'dominion:feed') {
     feed = localDemoMode ? load('dominion:feed', starterFeed) : starterFeed;
   } else if (event.key === 'dominion:badges') {
@@ -1628,6 +1543,11 @@ window.addEventListener('storage', (event) => {
     refreshLeaderboardPrestige();
     return;
   } else return;
+  render();
+});
+window.addEventListener('dominion:challenge-start-date-updated', (event) => {
+  startDate = event.detail?.challengeStartDate || startDate;
+  if (localDemoMode) save('dominion:startDate', startDate);
   render();
 });
 if (selectAllActionsButton) selectAllActionsButton.addEventListener('click', () => {

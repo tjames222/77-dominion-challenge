@@ -24,25 +24,25 @@ const registry = [
 const nightReward = (overrides = {}) => ({
   ...DOMINION_NIGHT_THEME_REWARD,
   status: 'locked',
-  currentPoints: 125,
-  pointsRemaining: DOMINION_NIGHT_THEME_REWARD.pointsRequired - 125,
-  progressPercent: 25,
+  currentPoints: 28,
+  pointsRemaining: DOMINION_NIGHT_THEME_REWARD.pointsRequired - 28,
+  progressPercent: 50,
   ...overrides,
 });
 
 test('authorizes an entitlement theme only from an active owned catalog record', () => {
-  const locked = { totalPoints: 125, items: [nightReward()] };
+  const locked = { totalPoints: 28, items: [nightReward()] };
   assert.deepEqual(deriveAuthorizedThemeIds(locked, registry), []);
   assert.deepEqual(deriveAuthorizedThemeIds(null, registry), []);
 
-  const owned = { totalPoints: 500, items: [nightReward({ status: 'owned' })] };
+  const owned = { totalPoints: 56, items: [nightReward({ status: 'owned' })] };
   assert.deepEqual(deriveAuthorizedThemeIds(owned, registry), ['dominion-night']);
 
-  const inactive = { totalPoints: 500, items: [nightReward({ status: 'owned', active: false })] };
+  const inactive = { totalPoints: 56, items: [nightReward({ status: 'owned', active: false })] };
   assert.deepEqual(deriveAuthorizedThemeIds(inactive, registry), []);
 
   const inaccessible = {
-    totalPoints: 500,
+    totalPoints: 56,
     items: [nightReward({ status: 'owned', canAccess: false, accessReason: 'Membership required.' })],
   };
   assert.deepEqual(deriveAuthorizedThemeIds(inaccessible, registry), []);
@@ -53,7 +53,7 @@ test('authorizes an entitlement theme only from an active owned catalog record',
 });
 
 test('builds accessible locked progress from the typed reward catalog definition', () => {
-  const models = buildThemeOptionModels({ totalPoints: 125, items: [nightReward()] }, registry);
+  const models = buildThemeOptionModels({ totalPoints: 28, items: [nightReward()] }, registry);
   const dark = models.find((model) => model.themeId === 'dark');
   const night = models.find((model) => model.themeId === 'dominion-night');
 
@@ -63,10 +63,10 @@ test('builds accessible locked progress from the typed reward catalog definition
   assert.equal(night.available, false);
   assert.equal(night.locked, true);
   assert.equal(night.pointsRequired, DOMINION_NIGHT_THEME_REWARD.pointsRequired);
-  assert.equal(night.pointsRemaining, 375);
-  assert.equal(night.progressPercent, 25);
+  assert.equal(night.pointsRemaining, 28);
+  assert.equal(night.progressPercent, 50);
   assert.equal(night.isLowestPointUnlock, true);
-  assert.equal(night.reason, '375 points to unlock.');
+  assert.equal(night.reason, '28 points to unlock.');
 });
 
 test('missing or mismatched ownership fails closed while preserving public themes', () => {
@@ -79,7 +79,7 @@ test('missing or mismatched ownership fails closed while preserving public theme
   );
 
   const wrongModel = {
-    totalPoints: 500,
+    totalPoints: 56,
     items: [nightReward({ status: 'owned', stateModel: 'challenge_lifecycle' })],
   };
   assert.deepEqual(deriveAuthorizedThemeIds(wrongModel, registry), []);
@@ -89,7 +89,7 @@ test('owned progress is complete and a disabled feature flag still blocks activa
   const disabledRegistry = registry.map((theme) => theme.id === 'dominion-night'
     ? { ...theme, availability: { ...theme.availability, enabled: false } }
     : theme);
-  const catalog = { totalPoints: 500, items: [nightReward({ status: 'owned' })] };
+  const catalog = { totalPoints: 56, items: [nightReward({ status: 'owned' })] };
 
   const enabled = buildThemeOptionModels(catalog, registry).find((model) => model.themeId === 'dominion-night');
   assert.equal(enabled.available, true);

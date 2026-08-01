@@ -42,6 +42,7 @@ import {
   outboundConsentWritePayload,
 } from './integration-consent.mjs';
 import {
+  backfillMockRewardEntitlements,
   buildMockRewardCatalog,
   claimMockRewardEntitlementUnlocks,
   challengeProgressionToRewardCatalog,
@@ -101,7 +102,7 @@ const MOCK_CHALLENGE_THRESHOLDS_VERSION_KEY = 'dominion:mockChallengeThresholdsV
 const MOCK_OUTBOUND_CONSENT_KEY = 'dominion:mockOutboundConsent';
 const MOCK_SHARING_REWARD_KEY = 'dominion:mockSharingReward';
 const MOCK_THEME_PREFERENCES_KEY = 'dominion:mockThemePreferences';
-const MOCK_CHALLENGE_THRESHOLDS_VERSION = 2;
+const MOCK_CHALLENGE_THRESHOLDS_VERSION = 3;
 const MOCK_MEDIA_DB_NAME = 'dominion-preview-media';
 const MOCK_MEDIA_STORE_NAME = 'community-post-images';
 const mockCommunityImageUrls = new Map();
@@ -223,11 +224,14 @@ const lockedBillingState = () => ({
   entitlements: [],
 });
 
-const requireUser = async () => {
+const requireUser = async (expectedUserId = '') => {
   const client = requireSupabase();
   const { data, error } = await client.auth.getUser();
   if (error) throw error;
   if (!data.user) throw new Error('You need to log in again.');
+  if (expectedUserId && data.user.id !== expectedUserId) {
+    throw new Error('The signed-in account changed. Try again.');
+  }
   return data.user;
 };
 
@@ -249,6 +253,17 @@ export async function getAuthSession() {
   if (!supabase || isLocalDemoMode()) return null;
   const { data } = await supabase.auth.getSession();
   return data.session;
+}
+
+export function subscribeToAuthStateChanges(listener) {
+  if (!supabase || isLocalDemoMode() || typeof listener !== 'function') return () => {};
+  const { data } = supabase.auth.onAuthStateChange((event, session) => {
+    listener({
+      event,
+      user: session?.user ? sessionToUser(session) : null,
+    });
+  });
+  return () => data?.subscription?.unsubscribe?.();
 }
 
 export function getCurrentAppPath() {
@@ -348,9 +363,9 @@ export async function setThemePreference(themeKey) {
   return normalizeThemePreference(data);
 }
 
-export async function ensureProfile({ name, email } = {}) {
+export async function ensureProfile({ name, email, expectedUserId = '' } = {}) {
   const client = requireSupabase();
-  const user = await requireUser();
+  const user = await requireUser(expectedUserId);
   const metadata = user.user_metadata || {};
   const displayName = name || metadata.name || metadata.full_name || user.email?.split('@')[0] || 'Member';
   const result = await ensureProfileRecord(client, {
@@ -543,8 +558,11 @@ export async function getProfile() {
   return profile;
 }
 
-export async function updateProfile(profile) {
+export async function updateProfile(profile, { expectedUserId = '' } = {}) {
   if (isLocalDemoMode()) {
+    if (expectedUserId && getMockUserId() !== expectedUserId) {
+      throw new Error('The signed-in account changed. Try again.');
+    }
     const existing = getMockUser();
     const nextUser = {
       ...existing,
@@ -560,7 +578,7 @@ export async function updateProfile(profile) {
   }
 
   const client = requireSupabase();
-  const user = await requireUser();
+  const user = await requireUser(expectedUserId);
   const metadata = user.user_metadata || {};
   const nextName = profile.name || metadata.name || metadata.full_name || user.email?.split('@')[0] || 'Member';
   const nextEmail = profile.email || user.email || '';
@@ -568,7 +586,7 @@ export async function updateProfile(profile) {
   const profilePhotoStoragePath = String(profile.profilePhotoStoragePath || '');
   let currentResult = await readProfileRecord(client, user.id);
   if (!currentResult.data) {
-    await ensureProfile();
+    await ensureProfile({ expectedUserId });
     currentResult = await readProfileRecord(client, user.id);
   }
   const initialProfile = currentResult.data ? mapProfile(currentResult.data) : null;
@@ -1020,8 +1038,11 @@ export async function previewShareSnapshot(kind) {
   return invokeSupabaseAction('share-snapshot', { action: 'preview', kind });
 }
 
-export async function createShareSnapshot(kind) {
+export async function createShareSnapshot(kind, { expectedUserId = '' } = {}) {
   if (isLocalDemoMode()) {
+    if (expectedUserId && getMockUserId() !== expectedUserId) {
+      throw new Error('The signed-in account changed. Try again.');
+    }
     const preview = mockSharePresentation(kind);
     const destination = new URL('./index.html', window.location.href);
     destination.searchParams.set('shared', kind);
@@ -1033,11 +1054,15 @@ export async function createShareSnapshot(kind) {
       preview: true,
     };
   }
+  await requireUser(expectedUserId);
   return invokeSupabaseAction('share-snapshot', { action: 'create', kind });
 }
 
-export async function createSharingRewardIntent(shareKind) {
+export async function createSharingRewardIntent(shareKind, { expectedUserId = '' } = {}) {
   if (isLocalDemoMode()) {
+    if (expectedUserId && getMockUserId() !== expectedUserId) {
+      throw new Error('The signed-in account changed. Try again.');
+    }
     const grant = readJson(MOCK_SHARING_REWARD_KEY, null);
     return grant
       ? { eligible: false, alreadyGranted: true, shareKind }
@@ -1051,7 +1076,7 @@ export async function createSharingRewardIntent(shareKind) {
   }
 
   const client = requireSupabase();
-  await requireUser();
+  await requireUser(expectedUserId);
   const { data, error } = await client.rpc('create_sharing_reward_intent', {
     target_share_kind: shareKind,
   });
@@ -1059,8 +1084,11 @@ export async function createSharingRewardIntent(shareKind) {
   return data || {};
 }
 
-export async function completeSharingReward(completionToken) {
+export async function completeSharingReward(completionToken, { expectedUserId = '' } = {}) {
   if (isLocalDemoMode()) {
+    if (expectedUserId && getMockUserId() !== expectedUserId) {
+      throw new Error('The signed-in account changed. Try again.');
+    }
     const existing = readJson(MOCK_SHARING_REWARD_KEY, null);
     if (existing) return { granted: false, alreadyGranted: true, ...existing };
 
@@ -1090,7 +1118,7 @@ export async function completeSharingReward(completionToken) {
   }
 
   const client = requireSupabase();
-  await requireUser();
+  await requireUser(expectedUserId);
   const { data, error } = await client.rpc('complete_sharing_reward', {
     target_completion_token: completionToken,
   });
@@ -1103,16 +1131,27 @@ function getMockChallengeProgression() {
   let records = readJson(MOCK_CHALLENGE_STATES_KEY, []);
   const thresholdVersion = Number(localStorage.getItem(MOCK_CHALLENGE_THRESHOLDS_VERSION_KEY) || 0);
   if (!Number.isFinite(thresholdVersion) || thresholdVersion < MOCK_CHALLENGE_THRESHOLDS_VERSION) {
-    const previousDefinitions = DEFAULT_CHALLENGE_DEFINITIONS.map((definition) => ({
-      ...definition,
-      pointsRequired: definition.pointsRequired / 2,
-    }));
+    const migratedAt = new Date().toISOString();
+    const totalPoints = gameStats.totalPoints ?? gameStats.challengePoints ?? 0;
     records = migrateChallengeUnlockRecords({
-      previousDefinitions,
+      previousDefinitions: DEFAULT_CHALLENGE_DEFINITIONS,
       records: Array.isArray(records) ? records : [],
-      totalPoints: gameStats.totalPoints ?? gameStats.challengePoints ?? 0,
+      totalPoints,
+      now: migratedAt,
+    });
+    const migratedProgression = buildChallengeProgression({
+      definitions: DEFAULT_CHALLENGE_DEFINITIONS,
+      records,
+      totalPoints,
+      now: migratedAt,
+    });
+    const ownershipRecords = backfillMockRewardEntitlements({
+      progression: migratedProgression,
+      ownershipRecords: readJson(MOCK_REWARD_ENTITLEMENTS_KEY, []),
+      now: migratedAt,
     });
     writeJson(MOCK_CHALLENGE_STATES_KEY, records);
+    writeJson(MOCK_REWARD_ENTITLEMENTS_KEY, ownershipRecords);
     localStorage.setItem(MOCK_CHALLENGE_THRESHOLDS_VERSION_KEY, String(MOCK_CHALLENGE_THRESHOLDS_VERSION));
   }
   const progression = buildChallengeProgression({
@@ -2143,11 +2182,14 @@ export async function getCrewMembers(crewId) {
   }));
 }
 
-export async function getOrCreateCrewInvite(crewId) {
+export async function getOrCreateCrewInvite(crewId, { expectedUserId = '' } = {}) {
   if (isLocalDemoMode()) {
     const { crews, members } = ensureMockCrews();
     const crew = crews.find((item) => item.id === crewId);
     const currentUserId = getMockUserId();
+    if (expectedUserId && currentUserId !== expectedUserId) {
+      throw new Error('The signed-in account changed. Try again.');
+    }
     const canManage = crew && (crew.createdBy === currentUserId || (members[crewId] || []).some((member) => member.userId === currentUserId && ['owner', 'admin'].includes(member.role)));
     if (!canManage) throw new Error('Only a private-group admin can create an invitation.');
 
@@ -2177,7 +2219,7 @@ export async function getOrCreateCrewInvite(crewId) {
   }
 
   const client = requireSupabase();
-  await requireUser();
+  await requireUser(expectedUserId);
   const { data, error } = await client.rpc('issue_crew_invite', { target_crew_id: crewId });
   if (error) throw error;
   if (data?.status !== 'issued' || !data?.token) {

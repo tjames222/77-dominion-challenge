@@ -61,10 +61,10 @@ test('locked challenge progression has a deterministic visual contract', async (
   const nightReward = page.locator('[data-reward-key="dominion_night_theme"]');
   await expect(nightReward).toContainText('Dominion Night');
   await expect(nightReward).toContainText('Locked');
-  await expect(nightReward).toContainText('250 points remaining');
+  await expect(nightReward).toContainText('28 points remaining');
   await expect(nightReward.getByRole('progressbar')).toHaveAttribute(
     'aria-valuetext',
-    '250 of 500 points',
+    '28 of 56 points',
   );
   await expectStableScreenshot(page, app, 'state-rewards-locked.png');
 });
@@ -80,6 +80,21 @@ test('unlocked challenge progression has a deterministic visual contract', async
     await expect(page.locator(`[data-badge-key="${badge.key}"]`)).toContainText(badge.name);
   }
   await expectStableScreenshot(page, app, 'state-rewards-unlocked.png');
+});
+
+test('selected Badges tab has a deterministic visual and accessibility contract', async ({ page, app }) => {
+  await app.open(ROUTE_BY_ID.badgesRewards, { state: 'rewardsUnlocked' });
+  const badgesTab = page.getByRole('tab', { name: 'Badges' });
+  await badgesTab.click();
+  await expect(badgesTab).toHaveAttribute('aria-selected', 'true');
+  await expect(page.getByRole('tabpanel', { name: 'Badges' })).toBeVisible();
+  for (const badge of BASE_BADGES) {
+    await expect(page.locator(`[data-badge-key="${badge.key}"]`)).toContainText(badge.name);
+  }
+  await expectStableScreenshot(page, app, 'state-badges-selected.png');
+
+  const results = await analyzeAccessibility(page);
+  assertNoBlockingAxeViolations(results);
 });
 
 test('submitted check-in state locks controls and remains accessible', async ({ page, app }) => {

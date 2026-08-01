@@ -17,52 +17,22 @@
     <main class="app-shell dashboard-shell">
       <header class="topbar">
         <a class="back-link" href="./index.html">Dominion</a>
-        <div class="topbar-trailing-actions">
-          <button
-            class="share-entry-button dashboard-share-button"
-            type="button"
-            data-share-composer
-            data-share-kind="streak"
-            aria-label="Share your streak"
-          >
-            Share
-          </button>
-          <button
-            class="dashboard-streak-button"
-            id="dashboardStreakButton"
-            type="button"
-            aria-label="App streak: 0 days. View streak details."
-            aria-haspopup="dialog"
-            aria-controls="streakDetailsDialog"
-            aria-expanded="false"
-          >
-            <strong id="dashboardAppStreakCount">0</strong>
-            <span class="app-icon icon-lightning" aria-hidden="true"></span>
-          </button>
-        </div>
       </header>
 
       <section class="dashboard-hero compact-hero reveal" data-section-surface="plain">
         <p class="eyebrow">Member Dashboard</p>
         <h1 id="dashboardTitle">Today’s Dominion</h1>
         <p class="lead" id="dashboardLead">Track your standards, post your check-in, and stay honest.</p>
-        <button class="share-entry-button" type="button" data-share-composer data-share-kind="general">
-          Share the challenge
-        </button>
       </section>
 
       <section class="progress dashboard-section dashboard-tracking reveal" data-section-surface="plain" aria-labelledby="trackingTitle">
+        <h2 class="sr-only" id="trackingTitle">Challenge and daily progress</h2>
         <div class="progress-intro">
-          <div class="section-heading">
-            <p class="eyebrow">Progress</p>
-            <h2 id="trackingTitle">How today is tracking</h2>
-          </div>
-          <label>Challenge start date<input id="startDate" type="date" /></label>
           <button class="share-entry-button" type="button" data-share-composer data-share-kind="progress">
             Share my progress
           </button>
         </div>
-        <div class="rings">
+        <div class="rings" role="group" aria-labelledby="trackingTitle">
           <div class="ring" id="challengeRing"><div class="ring-inner"><strong id="challengePercent">1%</strong><span>Challenge</span><small id="challengeDay">Day 1 of 77</small></div></div>
           <div class="ring" id="todayRing"><div class="ring-inner"><strong id="todayPercent">0%</strong><span>Today</span><small id="todayCount">0 of 7 done</small></div></div>
         </div>
@@ -146,7 +116,7 @@
         <div class="game-level-progress-panel">
           <div class="game-level-progress-heading">
             <span id="gameLevelProgressLabel">Level 1 progress</span>
-            <strong id="gamePointsToNext">500 points to Level 2</strong>
+            <strong id="gamePointsToNext">14 points to Level 2</strong>
           </div>
           <div
             class="game-level-progress-track"
@@ -154,9 +124,9 @@
             role="progressbar"
             aria-labelledby="gameLevelProgressLabel"
             aria-valuemin="0"
-            aria-valuemax="500"
+            aria-valuemax="14"
             aria-valuenow="0"
-            aria-valuetext="0 of 500 points earned toward Level 2"
+            aria-valuetext="0 of 14 points earned toward Level 2"
           >
             <span id="gameLevelProgressFill"></span>
           </div>

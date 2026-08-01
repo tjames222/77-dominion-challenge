@@ -5,6 +5,15 @@ set local search_path = public, extensions;
 
 select plan(56);
 
+-- Keep Bob as the boundary fixture even though the launch rebalance backfills
+-- every existing user who already has at least 56 points.
+delete from public.user_reward_entitlements
+where user_id = '20000000-0000-4000-8000-000000000002'
+  and reward_key = 'dominion_night_theme';
+update public.user_game_stats
+set total_points = 55
+where user_id = '20000000-0000-4000-8000-000000000002';
+
 select ok(
   exists (
     select 1
@@ -25,8 +34,8 @@ select is(
 );
 select is(
   (select points_required from public.reward_definitions where reward_key = 'dominion_night_theme'),
-  500,
-  'the configured threshold is exactly 500 total points'
+  56,
+  'the configured threshold is exactly 56 total points'
 );
 select is(
   (select fulfillment_key from public.reward_definitions where reward_key = 'dominion_night_theme'),
@@ -59,9 +68,9 @@ select ok(
     select 1
     from public.reward_definitions
     where reward_key <> 'dominion_night_theme'
-      and points_required < 1000
+      and points_required < 126
   ),
-  'all existing rewards remain at 1,000 points or higher'
+  'the next reward remains meaningfully separated from Dominion Night'
 );
 select throws_ok(
   $$
@@ -78,13 +87,13 @@ select throws_ok(
       'cosmetic',
       'ownership',
       'Too Cheap',
-      499,
+      55,
       'too-cheap-fixture',
       true
     )
   $$,
   '23514',
-  'Active point rewards must require at least 500 points.',
+  'Active point rewards must require at least 56 points and align to a 14-point level boundary.',
   'the trusted catalog rejects an active reward below Dominion Night'
 );
 select is(
@@ -93,8 +102,8 @@ select is(
     from public.reward_definitions
     where reward_type = 'challenge'
   ),
-  array[1000, 3000, 4500, 6000, 10000],
-  'existing challenge thresholds are unchanged'
+  array[126, 210, 308, 420, 532],
+  'challenge thresholds are paced across the first challenge'
 );
 
 select is(
@@ -105,7 +114,7 @@ select is(
       and reward_key = 'dominion_night_theme'
   ),
   1,
-  'an existing user above 500 is automatically backfilled once'
+  'an existing user above 56 retains one permanent entitlement'
 );
 select is(
   (
@@ -115,7 +124,7 @@ select is(
       and reward_key = 'dominion_night_theme'
   ),
   0,
-  'an existing user below 500 is not backfilled'
+  'an existing user below 56 is not entitled'
 );
 select is(
   (
@@ -124,8 +133,8 @@ select is(
     where reward_key = 'dominion_night_theme'
       and event_type = 'reward_definition_configured'
   ),
-  1,
-  'the initial trusted reward definition is audited once'
+  2,
+  'the initial and launch reward configurations are each audited once'
 );
 select is(
   (
@@ -183,7 +192,7 @@ select is(
       '20000000-0000-4000-8000-000000000002', 100, null, null
     ) #>> '{items,0,currentPoints}'
   )::integer,
-  400,
+  55,
   'locked progress uses the authoritative overall point total'
 );
 select is(
@@ -192,7 +201,7 @@ select is(
       '20000000-0000-4000-8000-000000000002', 100, null, null
     ) #>> '{items,0,pointsRemaining}'
   )::integer,
-  100,
+  1,
   'locked progress reports accurate points remaining'
 );
 select is(
@@ -204,7 +213,7 @@ select is(
 );
 
 update public.user_game_stats
-set total_points = 499
+set total_points = 55
 where user_id = '20000000-0000-4000-8000-000000000002';
 select is(
   (
@@ -214,7 +223,7 @@ select is(
       and reward_key = 'dominion_night_theme'
   ),
   0,
-  '499 points remains locked'
+  '55 points remains locked'
 );
 select is(
   (
@@ -223,11 +232,11 @@ select is(
     ) #>> '{items,0,pointsRemaining}'
   )::integer,
   1,
-  'the boundary contract reports one point remaining at 499'
+  'the boundary contract reports one point remaining at 55'
 );
 
 update public.user_game_stats
-set total_points = 500
+set total_points = 56
 where user_id = '20000000-0000-4000-8000-000000000002';
 select is(
   (
@@ -237,7 +246,7 @@ select is(
       and reward_key = 'dominion_night_theme'
   ),
   1,
-  'crossing 500 automatically grants one permanent entitlement'
+  'crossing 56 automatically grants one permanent entitlement'
 );
 select ok(
   (
@@ -332,7 +341,7 @@ select ok(
   public.add_game_points(
     '30000000-0000-4000-8000-000000000003',
     'migration_fixture',
-    479,
+    35,
     current_date,
     1,
     null,
@@ -360,7 +369,7 @@ select is(
     from public.user_game_stats
     where user_id = '30000000-0000-4000-8000-000000000003'
   ),
-  486,
+  42,
   'Daily Standards contribute their server-derived seven points'
 );
 select is(
@@ -392,7 +401,7 @@ select is(
     from public.user_game_stats
     where user_id = '30000000-0000-4000-8000-000000000003'
   ),
-  500,
+  56,
   'all valid sources contribute to the same authoritative total'
 );
 select is(
@@ -480,7 +489,7 @@ select is(
 );
 
 update public.reward_definitions
-set points_required = 600
+set points_required = 70
 where reward_key = 'dominion_night_theme';
 select is(
   (
@@ -497,7 +506,7 @@ select is(
   'raising the configured threshold never relocks prior owners'
 );
 update public.reward_definitions
-set points_required = 500
+set points_required = 56
 where reward_key = 'dominion_night_theme';
 select is(
   (
@@ -506,12 +515,12 @@ select is(
     where reward_key = 'dominion_night_theme'
       and event_type = 'reward_definition_configured'
   ),
-  2,
+  3,
   'configuration auditing is immutable and deduplicates a restored definition'
 );
 select is(
   (select points_required from public.reward_definitions where reward_key = 'dominion_night_theme'),
-  500,
+  56,
   'the theme returns to its rollout threshold after configuration testing'
 );
 
