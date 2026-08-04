@@ -459,7 +459,7 @@ body {
   .topbar.has-authenticated-header-actions > .back-link {
     flex: 0 1 auto;
     min-width: 44px;
-    max-width: 112px;
+    max-width: 128px;
     overflow: hidden;
     padding-inline: 8px;
     font-size: .7rem;
@@ -536,8 +536,13 @@ body {
     gap: 3px;
   }
   .topbar.has-authenticated-header-actions > .back-link {
+    max-width: 98px;
     padding-inline: 6px;
     font-size: .68rem;
+    line-height: 1.05;
+    text-align: center;
+    text-overflow: clip;
+    white-space: normal;
   }
   .shared-header-action {
     padding-inline: 5px;
