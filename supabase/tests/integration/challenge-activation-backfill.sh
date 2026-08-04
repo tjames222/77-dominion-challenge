@@ -500,10 +500,38 @@ if (( blocked_migration_status == 0 )); then
   echo "The activation migration bypassed a pre-existing evidence row lock." >&2
   exit 1
 fi
-if ! grep -Fq '"code":"LegacyMigrationApplyError"' "$migration_failure_log" \
-   || ! grep -Fq 'At statement: 17' "$migration_failure_log" \
-   || ! grep -Fq 'public.challenge_entries,' "$migration_failure_log" \
-   || ! grep -Fq 'public.user_badges\nin exclusive mode' "$migration_failure_log"; then
+migration_error_rendered=false
+if grep -Fq '"code":"LegacyMigrationApplyError"' "$migration_failure_log" \
+   || grep -Fq 'effect/sql/SqlError: Failed to execute statement' "$migration_failure_log"; then
+  migration_error_rendered=true
+fi
+
+expected_lock_fragments=(
+  'At statement: 17'
+  'lock table'
+  'public.challenge_entries,'
+  'public.check_ins,'
+  'public.crews,'
+  'private.retired_community_dr_quarantined_crews,'
+  'public.crew_members,'
+  'public.crew_invite_attributions,'
+  'private.crew_lifecycle_requests,'
+  'public.user_game_stats,'
+  'public.game_point_events,'
+  'public.user_reward_entitlements,'
+  'public.user_badges'
+  'in exclusive mode'
+)
+
+lock_statement_rendered=true
+for expected_lock_fragment in "${expected_lock_fragments[@]}"; do
+  if ! grep -Fq "$expected_lock_fragment" "$migration_failure_log"; then
+    lock_statement_rendered=false
+    break
+  fi
+done
+
+if [[ "$migration_error_rendered" != "true" || "$lock_statement_rendered" != "true" ]]; then
   cat "$migration_failure_log" >&2
   echo "The blocked activation migration did not fail at the complete evidence-table EXCLUSIVE lock." >&2
   exit 1
