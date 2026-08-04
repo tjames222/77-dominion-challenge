@@ -5,7 +5,7 @@ const dashboardRoute = PRODUCTION_ROUTES.find((route) => route.id === 'dashboard
 
 test('production Inter tokens drive both app and share-composer typography', async ({ page, app }) => {
   await app.open(dashboardRoute);
-  await page.getByRole('button', { name: 'Share my progress' }).click();
+  await page.locator('.shared-header-share').click();
 
   const previewMetric = page.locator('.share-preview-metric');
   await expect(previewMetric).toBeVisible();

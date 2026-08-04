@@ -71,7 +71,12 @@ describe('authenticated shared header actions', () => {
     assert.match(composer, /boundShareTriggers = new WeakSet/);
     assert.match(composer, /if \(boundShareTriggers\.has\(trigger\)\) return/);
     assert.match(css, /\.authenticated-header-actions/);
-    assert.match(css, /@media \(max-width: 460px\)[\s\S]*\.topbar\.has-authenticated-header-actions/);
+    assert.match(css, /@media \(max-width: 460px\)[\s\S]*\.topbar\.has-authenticated-header-actions\s*\{[^}]*flex-wrap:\s*nowrap/);
+    assert.doesNotMatch(css, /\.topbar\.has-authenticated-header-actions \.topbar-trailing-actions\s*\{[^}]*flex:\s*1 0 100%/);
+    assert.match(css, /\.topbar\.has-authenticated-header-actions > \.back-link\s*\{[^}]*min-width:\s*44px/);
+    assert.match(css, /@media \(max-width: 460px\)[\s\S]*\.shared-header-action\s*\{[^}]*min-width:\s*44px[^}]*min-height:\s*44px/);
+    assert.match(css, /@media \(max-width: 340px\)[\s\S]*\.shared-header-action \.app-icon\s*\{[^}]*display:\s*none/);
+    assert.doesNotMatch(css, /\.shared-header-action-label\s*\{[^}]*display:\s*none/);
     assert.match(css, /@media \(prefers-reduced-motion: reduce\)[\s\S]*\.shared-header-action/);
     assert.match(actions, /dialog\.elements\.body\.scrollTop = 0/);
     assert.match(actions, /dialog\.close\('replaced'\)/);

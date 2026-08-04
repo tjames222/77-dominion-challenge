@@ -22,13 +22,18 @@ describe('sharing composer browser integration', () => {
     assert.match(api, /client\.rpc\('complete_sharing_reward'/);
   });
 
-  test('loads one shared accessible composer from progress, streak, general, and invite entries', () => {
-    [dashboard, rewards, community].forEach((html) => {
+  test('loads one shared accessible composer from header, rewards, streak, general, and invite entries', () => {
+    [rewards, community].forEach((html) => {
       assert.match(html, /src\/assets\/share-composer\.css/);
       assert.match(html, /src\/static\/share-composer\.js/);
     });
+    assert.match(dashboard, /src\/static\/menu\.js/);
+    assert.doesNotMatch(dashboard, /src\/(?:assets|static)\/share-composer/);
+    assert.match(sharedHeader, /ensureShareComposerStyles\(ownerDocument\)/);
+    assert.match(sharedHeader, /initShareComposer\(ownerDocument\)/);
     assert.match(sharedHeader, /shareButton\.dataset\.shareKind = 'progress'/);
-    assert.match(dashboard, /data-share-kind="progress"/);
+    assert.doesNotMatch(dashboard, /data-share-composer|data-share-kind=|Share my progress/);
+    assert.match(rewards, /data-share-kind="progress"/);
     assert.match(community, /data-share-kind="invite"/);
     assert.match(composerModel, /kind: 'streak'/);
     assert.match(composerModel, /kind: 'general'/);
