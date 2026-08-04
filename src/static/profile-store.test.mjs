@@ -95,13 +95,9 @@ test('a duplicate create race rereads and preserves the winning profile', async 
   assert.equal(client.calls.filter(([kind]) => kind === 'insert').length, 1);
 });
 
-test('challenge-date synchronization is a true partial update', () => {
-  assert.deepEqual(buildProfilePatch({ challengeStartDate: '2026-08-01' }), {
-    challenge_start_date: '2026-08-01',
-  });
-  assert.deepEqual(buildProfilePatch({ challengeStartDate: '' }), {
-    challenge_start_date: null,
-  });
+test('server-owned challenge dates are never included in direct profile patches', () => {
+  assert.deepEqual(buildProfilePatch({ challengeStartDate: '2026-08-01' }), {});
+  assert.deepEqual(buildProfilePatch({ challengeStartDate: '' }), {});
   assert.deepEqual(buildProfilePatch({
     avatarOnly: true,
     name: 'Do not write',

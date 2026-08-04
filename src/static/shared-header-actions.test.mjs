@@ -89,16 +89,23 @@ describe('authenticated shared header actions', () => {
 
   test('relocates challenge start-date persistence and lock behavior into App Streak', async () => {
     const actions = await read('./shared-header-actions.js');
-    assert.match(actions, /getDashboard\(\)/);
-    assert.match(actions, /recordVisitPromise = recordAppVisit\(\)\.catch/);
+    assert.match(actions, /getChallengeActivation\(\{ expectedUserId/);
+    assert.match(actions, /updateChallengeStartDate\(\{/);
+    assert.match(actions, /recordVisitPromise = recordAppVisit\(\{ expectedUserId \}\)\.catch/);
     assert.match(actions, /await recordVisitPromise/);
-    assert.match(actions, /recordedVisitOwner !== ownerKey/);
-    assert.match(actions, /dashboard\.checkIns\.length > 0/);
-    assert.match(actions, /expectedUserId: submitExpectedUserId/);
+    assert.match(actions, /recordedVisitOwner !== expectedUserId/);
+    assert.match(actions, /let startDateLocked = true/);
+    assert.match(actions, /startDateLocked: !activation\.canEditStartDate/);
+    assert.match(actions, /expectedRevision/);
+    assert.match(actions, /const submitTimeZone = currentActivation\?\.timeZone \|\| ''/);
+    assert.match(actions, /timeZone: submitTimeZone/);
+    assert.match(actions, /expectedUserId: submitOwnerKey/);
     assert.match(actions, /submitOwnerKey !== \(currentUser\?\.userId/);
-    assert.match(actions, /START_DATE_STORAGE_KEY, JSON\.stringify\(nextStartDate\)/);
+    assert.doesNotMatch(actions, /updateProfile\(/);
+    assert.doesNotMatch(actions, /storage\?\.setItem\?\.\(START_DATE_STORAGE_KEY/);
     assert.match(actions, /dominion:challenge-start-date-updated/);
-    assert.match(actions, /locked after the first check-in/i);
+    assert.match(actions, /activation: savedActivation/);
+    assert.match(actions, /controls stay locked until your activation status can be refreshed/i);
     assert.match(actions, /role', 'status'/);
     assert.match(actions, /aria-live', 'polite'/);
   });

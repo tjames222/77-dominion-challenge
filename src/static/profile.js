@@ -11,18 +11,23 @@ import {
   redirectToLogin,
   replaceProfilePhoto,
   setThemePreference,
+  subscribeToAuthStateChanges,
   updateProfile,
   updateOutboundUpdateConsent,
 } from './api';
 import { prepareProfilePhoto } from './profile-photo.mjs';
 import {
-  PREVIEW_CHALLENGE_RESET_KEYS,
   PREVIEW_CHALLENGE_STORAGE_KEY,
   isPreviewChallengeComplete,
   normalizePreviewChallengeState,
   previewChallengeDay,
   setPreviewChallengeEnabled,
 } from './preview-challenge.mjs';
+import {
+  PREVIEW_USER_STATE_STORAGE_KEY,
+  readPreviewUserValue,
+  writePreviewUserValue,
+} from './preview-user-state.mjs';
 import { hydrateThemeEntitlementState } from './theme-entitlement-state';
 import { buildThemeOptionModels } from './theme-entitlements.mjs';
 import {
@@ -31,13 +36,6 @@ import {
   setTheme,
 } from './theme-state';
 
-const load = (key, fallback) => {
-  try {
-    return JSON.parse(localStorage.getItem(key) || JSON.stringify(fallback));
-  } catch {
-    return fallback;
-  }
-};
 const save = (key, value) => localStorage.setItem(key, JSON.stringify(value));
 const localDateKey = () => {
   const parts = new Intl.DateTimeFormat('en', { year: 'numeric', month: '2-digit', day: '2-digit' })
@@ -126,8 +124,10 @@ function renderThemeOptions(catalog, { error = false } = {}) {
   syncThemeOptions();
 }
 
-async function hydrateThemeOptions() {
+async function hydrateThemeOptions(owner = captureProfileOwner()) {
+  if (!owner) return;
   const result = await hydrateThemeEntitlementState();
+  if (!isCurrentProfileOwner(owner)) return;
   if (result.error) console.warn('Unable to verify theme reward ownership', result.error);
   renderThemeOptions(result.catalog, { error: Boolean(result.error) || !result.authenticated });
 }
@@ -203,12 +203,14 @@ let selectedPreviewUrl = '';
 let photoPreparationSequence = 0;
 let profilePhotoAvailable = localPreviewMode;
 let integrationCrews = [];
+let currentPreviewOwnerId = '';
+let observedProfileOwner = '';
+let hydratedProfileOwner = '';
+let profileOwnerEpoch = 0;
+let profileHydrationRequestId = 0;
 const EMPTY_PHOTO_FILENAME = 'No new photo selected';
 const PROFILE_PHOTO_HINT = 'JPG, PNG, WebP, HEIC or HEIF · 5 MB input max · cropped to a square thumbnail up to 256×256 and 150 KB';
-let previewChallengeState = normalizePreviewChallengeState(
-  localPreviewMode ? load(PREVIEW_CHALLENGE_STORAGE_KEY, {}) : {},
-  localDateKey(),
-);
+let previewChallengeState = normalizePreviewChallengeState({}, localDateKey());
 
 function renderPreviewChallengeTools() {
   if (!profilePreviewTools) return;
@@ -218,15 +220,94 @@ function renderPreviewChallengeTools() {
   const day = previewChallengeDay(previewChallengeState);
   const complete = isPreviewChallengeComplete(previewChallengeState);
   if (profilePreviewChallengeSwitch) profilePreviewChallengeSwitch.checked = previewChallengeState.enabled;
+  if (profilePreviewChallengeSwitch) profilePreviewChallengeSwitch.disabled = !currentPreviewOwnerId;
+  if (resetPreviewChallengeButton) resetPreviewChallengeButton.disabled = true;
   if (profilePreviewStatus) {
     profilePreviewStatus.textContent = complete
-      ? 'Preview run complete: all 77 challenge days are posted. Reset to test another full run.'
+      ? 'Preview run complete: all 77 challenge days are posted. A new full run requires clearing this account’s saved progress and rewards together; reset is currently unavailable.'
       : previewChallengeState.enabled
         ? `Next preview check-in: Day ${day} of 77.`
         : day > 1
           ? `77-day test mode is paused before Day ${day} of 77.`
           : 'Turn on the switch to begin with Day 1 of 77.';
   }
+}
+
+function loadCurrentPreviewChallengeState() {
+  previewChallengeState = currentPreviewOwnerId
+    ? normalizePreviewChallengeState(
+        readPreviewUserValue(
+          localStorage,
+          currentPreviewOwnerId,
+          PREVIEW_CHALLENGE_STORAGE_KEY,
+          {},
+        ),
+        localDateKey(),
+      )
+    : normalizePreviewChallengeState({}, localDateKey());
+}
+
+function saveCurrentPreviewValue(key, value) {
+  if (!currentPreviewOwnerId) throw new Error('The preview account is still loading.');
+  return writePreviewUserValue(localStorage, currentPreviewOwnerId, key, value);
+}
+
+const captureProfileOwner = () => hydratedProfileOwner
+  && hydratedProfileOwner === observedProfileOwner
+  ? { userId: hydratedProfileOwner, epoch: profileOwnerEpoch }
+  : null;
+const isCurrentProfileOwner = (owner) => Boolean(
+  owner
+    && owner.epoch === profileOwnerEpoch
+    && owner.userId === hydratedProfileOwner
+    && owner.userId === observedProfileOwner,
+);
+
+function invalidateProfileOwner(nextOwner = '') {
+  profileOwnerEpoch += 1;
+  profileHydrationRequestId += 1;
+  observedProfileOwner = String(nextOwner || '');
+  hydratedProfileOwner = '';
+  currentPreviewOwnerId = '';
+  previewChallengeState = normalizePreviewChallengeState({}, localDateKey());
+  selectedPhotoFile = null;
+  selectedPreparedPhoto = null;
+  if (profilePhotoInput) profilePhotoInput.value = '';
+  revokeSelectedPreview();
+  renderPhotoSelection();
+  currentProfile = {
+    name: '',
+    email: '',
+    avatarUrl: '',
+    updatedAt: '',
+    profilePhotoAvailable: false,
+  };
+  if (profileNameEl) profileNameEl.textContent = 'Loading profile…';
+  if (profileEmailEl) profileEmailEl.textContent = 'Verifying account…';
+  if (profileNameInput) profileNameInput.value = '';
+  if (profileEmailInput) profileEmailInput.value = '';
+  renderAvatar(currentProfile);
+  setProfileFeedback('Loading your profile…');
+  const challengeStatus = document.getElementById('profileChallengeStatus');
+  const billingTitle = document.getElementById('profileBillingTitle');
+  const billingCopy = document.getElementById('profileBillingCopy');
+  const subscriptionPill = document.getElementById('profileSubscriptionPill');
+  if (challengeStatus) challengeStatus.textContent = 'Status: Checking access';
+  if (billingTitle) billingTitle.textContent = 'Billing access';
+  if (billingCopy) billingCopy.textContent = 'Loading your subscription details.';
+  if (subscriptionPill) subscriptionPill.textContent = 'Checking access';
+  integrationCrews = [];
+  integrationConsentCrew?.replaceChildren(new Option('Loading groups…', ''));
+  if (integrationConsentNoGroups) integrationConsentNoGroups.hidden = true;
+  if (integrationConsentContent) integrationConsentContent.hidden = true;
+  renderIntegrationConsent(failClosedIntegrationConsent());
+  renderIntegrationDestinations([]);
+  setIntegrationConsentFeedback('Loading update privacy…');
+  renderThemeOptions(null, { error: true });
+  renderPreviewChallengeTools();
+  profileForm?.querySelectorAll('input, button').forEach((control) => { control.disabled = true; });
+  integrationConsentForm?.querySelectorAll('input, button').forEach((control) => { control.disabled = true; });
+  if (integrationConsentCrew) integrationConsentCrew.disabled = true;
 }
 
 function initialsFor(name, email) {
@@ -320,6 +401,11 @@ function setProfileFormBusy(isBusy, label = 'Save profile') {
   }
 }
 
+function enableHydratedProfileForm() {
+  profileForm?.querySelectorAll('input, button').forEach((control) => { control.disabled = false; });
+  syncProfilePhotoAvailability(profilePhotoAvailable);
+}
+
 profileAvatarImageEl?.addEventListener('error', () => {
   profileAvatarImageEl.removeAttribute('src');
   profileAvatarImageEl.hidden = true;
@@ -410,7 +496,8 @@ function failClosedIntegrationConsent() {
   };
 }
 
-async function loadSelectedIntegrationConsent() {
+async function loadSelectedIntegrationConsent(owner = captureProfileOwner()) {
+  if (!owner) return;
   const crewId = integrationConsentCrew?.value || '';
   if (!crewId || !integrationConsentContent) return;
 
@@ -424,16 +511,18 @@ async function loadSelectedIntegrationConsent() {
       getOutboundUpdateConsent(crewId),
       getOutboundIntegrationDestinations(crewId),
     ]);
+    if (!isCurrentProfileOwner(owner)) return;
     renderIntegrationConsent(consent);
     renderIntegrationDestinations(destinations);
     loaded = true;
   } catch (error) {
+    if (!isCurrentProfileOwner(owner)) return;
     console.warn('Unable to load outbound update consent', error);
     renderIntegrationDestinations([]);
     setIntegrationConsentFeedback(error?.message || 'Unable to load update privacy right now.', 'error');
   } finally {
-    setIntegrationConsentBusy(false);
-    if (!loaded) {
+    if (isCurrentProfileOwner(owner)) setIntegrationConsentBusy(false);
+    if (isCurrentProfileOwner(owner) && !loaded) {
       integrationConsentForm?.querySelectorAll('input, button').forEach((control) => {
         control.disabled = true;
       });
@@ -441,13 +530,15 @@ async function loadSelectedIntegrationConsent() {
   }
 }
 
-async function hydrateIntegrationConsent() {
+async function hydrateIntegrationConsent(owner = captureProfileOwner()) {
+  if (!owner) return;
   if (!integrationConsentCrew || !integrationConsentContent || !integrationConsentNoGroups) return;
   integrationConsentCrew.disabled = true;
   setIntegrationConsentFeedback('Loading your groups...');
 
   try {
     integrationCrews = await getCrews();
+    if (!isCurrentProfileOwner(owner)) return;
     integrationConsentCrew.replaceChildren();
 
     if (!integrationCrews.length) {
@@ -463,8 +554,9 @@ async function hydrateIntegrationConsent() {
     });
     integrationConsentNoGroups.hidden = true;
     integrationConsentContent.hidden = false;
-    await loadSelectedIntegrationConsent();
+    await loadSelectedIntegrationConsent(owner);
   } catch (error) {
+    if (!isCurrentProfileOwner(owner)) return;
     console.warn('Unable to load integration privacy groups', error);
     integrationCrews = [];
     integrationConsentCrew.replaceChildren(new Option('Groups unavailable', ''));
@@ -475,16 +567,27 @@ async function hydrateIntegrationConsent() {
   }
 }
 
-async function hydrateProfile() {
+async function hydrateProfile(expectedOwnerId = observedProfileOwner) {
+  const requestId = ++profileHydrationRequestId;
+  const requestedOwner = String(expectedOwnerId || '');
   if (!hasSupabaseAuth() && isLocalDemoMode()) {
-    const user = load('dominion:user', { name: 'Member', email: 'Logged in', avatarUrl: '' });
+    const user = await getLocalOrSessionUser();
     const billing = await getBillingState();
-    if (!billing.authenticated) {
+    if (!billing.authenticated || !user?.userId) {
       redirectToLogin('./profile.html');
       return false;
     }
+    if (requestId !== profileHydrationRequestId
+      || (requestedOwner && requestedOwner !== user.userId)
+      || (observedProfileOwner && observedProfileOwner !== user.userId)) return false;
+    observedProfileOwner ||= user.userId;
+    hydratedProfileOwner = user.userId;
+    currentPreviewOwnerId = user.userId;
+    loadCurrentPreviewChallengeState();
+    renderPreviewChallengeTools();
     renderProfile(user);
     updateBillingSummary(billing);
+    enableHydratedProfileForm();
     return true;
   }
 
@@ -501,7 +604,15 @@ async function hydrateProfile() {
     }
 
     const sessionUser = await getLocalOrSessionUser();
-    const profile = await getProfile();
+    const ownerId = String(sessionUser?.userId || '');
+    if (!ownerId) throw new Error('Unable to verify the profile account.');
+    const profile = await getProfile({ expectedUserId: ownerId });
+    if (profile?.userId !== ownerId) throw new Error('Unable to verify the profile account.');
+    if (requestId !== profileHydrationRequestId
+      || (requestedOwner && requestedOwner !== ownerId)
+      || (observedProfileOwner && observedProfileOwner !== ownerId)) return false;
+    observedProfileOwner ||= ownerId;
+    hydratedProfileOwner = ownerId;
     const syncedUser = {
       name: profile.name || sessionUser?.name || 'Member',
       email: profile.email || sessionUser?.email || 'Logged in',
@@ -513,6 +624,7 @@ async function hydrateProfile() {
     syncStoredUser(syncedUser);
     renderProfile(syncedUser);
     updateBillingSummary(billing);
+    enableHydratedProfileForm();
     return true;
   } catch (error) {
     console.warn('Unable to load profile from Supabase', error);
@@ -572,6 +684,8 @@ profileForm?.addEventListener('submit', async (event) => {
     setProfileFeedback('Profile pictures are temporarily unavailable while storage is upgraded.', 'error');
     return;
   }
+  const mutationOwner = captureProfileOwner();
+  if (!mutationOwner) return;
 
   setProfileFormBusy(true);
   setProfileFeedback(selectedPreparedPhoto ? 'Uploading profile thumbnail...' : 'Saving profile...');
@@ -588,7 +702,7 @@ profileForm?.addEventListener('submit', async (event) => {
           avatarOnly: !textChanged,
           expectedUpdatedAt: currentProfile.updatedAt,
         },
-      });
+      }, { expectedUserId: mutationOwner.userId });
       savedProfile = result.savedProfile;
       cleanupError = result.cleanupError;
     } else {
@@ -596,8 +710,9 @@ profileForm?.addEventListener('submit', async (event) => {
         name,
         email,
         expectedUpdatedAt: currentProfile.updatedAt,
-      });
+      }, { expectedUserId: mutationOwner.userId });
     }
+    if (!isCurrentProfileOwner(mutationOwner)) return;
     const nextProfile = {
       name: savedProfile?.name || name,
       email: savedProfile?.email || email,
@@ -624,35 +739,25 @@ profileForm?.addEventListener('submit', async (event) => {
         : 'Profile saved.');
     }
   } catch (error) {
+    if (!isCurrentProfileOwner(mutationOwner)) return;
     renderAvatar(selectedPreviewUrl
       ? { ...currentProfile, avatarUrl: selectedPreviewUrl }
       : currentProfile);
     setProfileFeedback(error?.message || 'Unable to save your profile right now.', 'error');
   } finally {
-    setProfileFormBusy(false, originalButtonLabel);
+    if (isCurrentProfileOwner(mutationOwner)) setProfileFormBusy(false, originalButtonLabel);
   }
 });
 
 profilePreviewChallengeSwitch?.addEventListener('change', () => {
-  if (!localPreviewMode) return;
+  const owner = captureProfileOwner();
+  if (!localPreviewMode || !owner || owner.userId !== currentPreviewOwnerId) return;
   previewChallengeState = setPreviewChallengeEnabled(
     previewChallengeState,
     profilePreviewChallengeSwitch.checked,
     localDateKey(),
   );
-  save(PREVIEW_CHALLENGE_STORAGE_KEY, previewChallengeState);
-  renderPreviewChallengeTools();
-});
-
-resetPreviewChallengeButton?.addEventListener('click', () => {
-  if (!localPreviewMode) return;
-  const confirmed = window.confirm('Reset all preview challenge days, check-ins, points, streaks, badges, and dashboard feed? Your profile, Community content, journal, and workout difficulty will stay intact.');
-  if (!confirmed) return;
-
-  const remainsEnabled = previewChallengeState.enabled;
-  PREVIEW_CHALLENGE_RESET_KEYS.forEach((key) => localStorage.removeItem(key));
-  previewChallengeState = setPreviewChallengeEnabled({}, remainsEnabled, localDateKey());
-  save(PREVIEW_CHALLENGE_STORAGE_KEY, previewChallengeState);
+  saveCurrentPreviewValue(PREVIEW_CHALLENGE_STORAGE_KEY, previewChallengeState);
   renderPreviewChallengeTools();
 });
 
@@ -693,20 +798,59 @@ integrationConsentForm?.addEventListener('submit', async (event) => {
 });
 
 window.addEventListener('storage', (event) => {
-  if (!localPreviewMode || event.key !== PREVIEW_CHALLENGE_STORAGE_KEY) return;
-  previewChallengeState = normalizePreviewChallengeState(
-    load(PREVIEW_CHALLENGE_STORAGE_KEY, {}),
-    localDateKey(),
-  );
+  if (localPreviewMode && event.key === 'dominion:user') {
+    invalidateProfileOwner('');
+    void getLocalOrSessionUser()
+      .then((user) => {
+        const nextOwner = String(user?.userId || '');
+        if (!nextOwner) {
+          redirectToLogin('./profile.html');
+          return;
+        }
+        invalidateProfileOwner(nextOwner);
+        return hydratePage(nextOwner);
+      })
+      .catch(() => redirectToLogin('./profile.html'));
+    return;
+  }
+  if (!localPreviewMode || ![PREVIEW_CHALLENGE_STORAGE_KEY, PREVIEW_USER_STATE_STORAGE_KEY].includes(event.key)) return;
+  loadCurrentPreviewChallengeState();
   renderPreviewChallengeTools();
 });
 
 renderPreviewChallengeTools();
-async function hydratePage() {
-  const authenticated = await hydrateProfile();
-  const themeHydration = hydrateThemeOptions();
-  if (authenticated) await hydrateIntegrationConsent();
+async function hydratePage(expectedOwnerId = observedProfileOwner) {
+  const authenticated = await hydrateProfile(expectedOwnerId);
+  const owner = captureProfileOwner();
+  const themeHydration = hydrateThemeOptions(owner);
+  if (authenticated && owner) await hydrateIntegrationConsent(owner);
   await themeHydration;
 }
-hydratePage();
+
+async function bootProfilePage() {
+  invalidateProfileOwner('');
+  const currentUser = await getLocalOrSessionUser();
+  const ownerId = String(currentUser?.userId || '');
+  if (!ownerId) {
+    redirectToLogin('./profile.html');
+    return;
+  }
+  invalidateProfileOwner(ownerId);
+  const unsubscribeAuth = subscribeToAuthStateChanges(({ user }) => {
+    const nextOwner = String(user?.userId || '');
+    invalidateProfileOwner(nextOwner);
+    if (!nextOwner) {
+      redirectToLogin('./profile.html');
+      return;
+    }
+    void hydratePage(nextOwner);
+  });
+  window.addEventListener('pagehide', unsubscribeAuth, { once: true });
+  await hydratePage(ownerId);
+}
+bootProfilePage().catch((error) => {
+  console.warn('Unable to boot profile', error);
+  invalidateProfileOwner('');
+  setProfileFeedback('Unable to load your profile right now.', 'error');
+});
 initReveal();

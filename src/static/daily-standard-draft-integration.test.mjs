@@ -11,8 +11,8 @@ describe('Daily Standard draft integration', () => {
       read('./dashboard.js'),
     ]);
 
-    assert.match(api, /rpcDraft\('mutate_daily_standard_draft'/);
-    assert.match(api, /rpcDraft\('set_daily_standard_workout_difficulty'/);
+    assert.match(api, /rpcDraft\(\s*'mutate_daily_standard_draft'/);
+    assert.match(api, /rpcDraft\(\s*'set_daily_standard_workout_difficulty'/);
     assert.match(api, /typeof completed !== 'boolean'/);
     assert.match(api, /target_completed: completed/);
     assert.doesNotMatch(api, /target_completed: Boolean\(completed\)/);

@@ -15,6 +15,17 @@ describe('preview challenge controls', () => {
     assert.match(profileJs, /profilePreviewTools\.hidden = !localPreviewMode/);
   });
 
+  it('disables partial preview resets until progress and rewards can be cleared together', () => {
+    assert.match(
+      profileHtml,
+      /id=["']resetPreviewChallengeButton["'][^>]*aria-label=["'][^"']*saved progress and rewards together\.[^"']*["'][^>]*disabled/,
+    );
+    assert.match(profileHtml, /title=["']A new full run must clear this preview account’s saved progress and rewards together\.["']/);
+    assert.match(profileJs, /resetPreviewChallengeButton\.disabled = true/);
+    assert.doesNotMatch(profileJs, /resetPreviewChallengeButton\?\.addEventListener\('click'/);
+    assert.doesNotMatch(profileJs, /Reset to test another full run/);
+  });
+
   it('shares simulated action state across the Dashboard and dedicated Daily Standard pages', () => {
     assert.match(dashboardHtml, /src=["']\.\/src\/static\/dashboard\.js["']/);
     assert.match(dashboardJs, /isPreviewChallengeActive\(localDemoMode, previewChallengeState\)/);
@@ -44,6 +55,7 @@ describe('preview challenge controls', () => {
     assert.match(celebrationBlock, /refreshChallengeProgression\(/);
     assert.match(dashboardJs, /item\.kind === 'reward'\) return showRewardToast\(item\.reward\)/);
     assert.match(dashboardJs, /item\.kind === 'badge'\) return showBadgeCelebration\(item\.badge\)/);
-    assert.match(dashboardJs, /queueChallengeUnlockCelebration\(result\.claimedUnlocks, celebrationDelay\)/);
+    assert.match(dashboardJs, /queueChallengeUnlockCelebration\(result\.claimedUnlocks, celebrationDelay, owner\)/);
+    assert.match(dashboardJs, /claimChallengeUnlocks\(\{ expectedUserId: owner\.userId \}\)/);
   });
 });

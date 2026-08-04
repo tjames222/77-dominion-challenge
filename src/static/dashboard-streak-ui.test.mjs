@@ -18,6 +18,7 @@ describe('Dashboard shared streak header handoff', () => {
       /createStreakDetailsContent|renderStreakExperience|streakDetailsDialog|dashboardStreakButton|createDialog/,
     );
     assert.match(dashboardJs, /preserveBestStreaks/);
-    assert.match(dashboardJs, /event\.key === 'dominion:gameStats'/);
+    assert.match(dashboardJs, /PREVIEW_USER_STATE_STORAGE_KEY/);
+    assert.match(dashboardJs, /readPreviewUserValue\(\s*localStorage,\s*ownerId,\s*'dominion:gameStats'/);
   });
 });

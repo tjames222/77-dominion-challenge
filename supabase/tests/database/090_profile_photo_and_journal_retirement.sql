@@ -135,9 +135,9 @@ select ok(not has_column_privilege(
 select ok(has_column_privilege(
   'authenticated', 'public.profiles', 'name', 'update'
 ), 'authenticated clients retain direct access to safe profile text updates');
-select ok(has_column_privilege(
+select ok(not has_column_privilege(
   'authenticated', 'public.profiles', 'challenge_start_date', 'update'
-), 'authenticated clients retain direct challenge-date updates');
+), 'authenticated clients cannot bypass the challenge activation RPCs');
 select ok(not has_column_privilege(
   'authenticated', 'public.profiles', 'user_id', 'update'
 ), 'authenticated clients cannot rewrite profile ownership');

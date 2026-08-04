@@ -4,13 +4,12 @@ import {
   getBillingState,
   hasSupabaseAuth,
   isLocalDemoMode,
+  saveLocalMockUser,
   saveLocalUserFromSession,
   sanitizeReturnTo,
   signInWithPassword,
   signUpWithPassword,
 } from './api';
-
-const save = (key, value) => localStorage.setItem(key, JSON.stringify(value));
 
 const form = document.getElementById('authForm');
 const rawReturnTo = new URLSearchParams(window.location.search).get('returnTo');
@@ -66,13 +65,10 @@ if (form) {
         return;
       }
 
-      const user = {
+      saveLocalMockUser({
         name,
         email,
-        authenticated: true,
-      };
-      save('dominion:user', user);
-      if (user.name) save('dominion:memberName', user.name);
+      });
       window.location.href = returnTo || './dashboard.html';
     } catch (error) {
       window.alert(error?.message || 'Unable to authenticate right now.');

@@ -91,13 +91,31 @@ insert into public.profiles (
   name,
   email,
   challenge_start_date,
-  time_zone
+  time_zone,
+  challenge_activation_status,
+  challenge_participation_mode,
+  challenge_activation_time_zone,
+  challenge_activated_at,
+  challenge_confirmed_at,
+  challenge_activated_by,
+  challenge_confirmed_by,
+  challenge_activation_revision,
+  challenge_activation_updated_at
 ) values (
   '$user_id',
   'Profile Photo Race',
   '$user_id@profile-photo-race.example.test',
   current_date,
-  'UTC'
+  'UTC',
+  'active',
+  'solo',
+  'UTC',
+  clock_timestamp(),
+  clock_timestamp(),
+  '$user_id',
+  '$user_id',
+  1,
+  clock_timestamp()
 );
 SQL
 }

@@ -3,7 +3,7 @@ begin;
 create extension if not exists pgtap with schema extensions;
 set local search_path = public, extensions;
 
-select plan(56);
+select plan(65);
 
 select ok(
   exists (
@@ -95,6 +95,15 @@ select ok(
   'the retired Community production deletion controls migration was replayed'
 );
 
+select ok(
+  exists (
+    select 1
+    from supabase_migrations.schema_migrations
+    where version = '20260804200019'
+  ),
+  'the challenge activation lifecycle migration was replayed'
+);
+
 select ok(to_regclass('public.profiles') is not null, 'profiles exists');
 select ok(to_regclass('public.challenge_entries') is not null, 'challenge_entries exists');
 select ok(to_regclass('public.check_ins') is not null, 'check_ins exists');
@@ -109,12 +118,36 @@ select ok(to_regclass('public.sharing_reward_grants') is not null, 'sharing_rewa
 select ok(to_regclass('public.reward_definitions') is not null, 'reward_definitions exists');
 select ok(to_regclass('public.user_reward_entitlements') is not null, 'user_reward_entitlements exists');
 select ok(to_regclass('private.reward_audit_events') is not null, 'private reward audit events exist');
+select ok(to_regclass('private.challenge_activation_requests') is not null,
+  'private challenge activation request evidence exists');
+select ok(to_regclass('private.challenge_activation_migration_reviews') is not null,
+  'private challenge activation migration reviews exist');
 
 select ok(
-  to_regprocedure('public.submit_daily_check_in(text,text[],jsonb,text,date)') is not null,
-  'the check-in RPC has the expected signature'
+  to_regprocedure('public.bootstrap_daily_standard_time_zone(text,uuid)') is not null
+  and to_regprocedure(
+    'public.mutate_daily_standard_draft(date,text,boolean,bigint,uuid)'
+  ) is not null
+  and to_regprocedure(
+    'public.set_daily_standard_workout_difficulty(date,text,text,bigint,uuid)'
+  ) is not null
+  and to_regprocedure(
+    'public.submit_daily_check_in(text,text[],jsonb,text,date,uuid)'
+  ) is not null,
+  'the Daily Standards mutation RPCs have expected-actor signatures'
 );
-select ok(to_regprocedure('public.record_app_visit()') is not null, 'the app-visit RPC exists');
+select ok(
+  to_regprocedure('public.get_challenge_activation(uuid)') is not null
+  and to_regprocedure('public.get_challenge_activation()') is null,
+  'the authoritative challenge activation RPC has an expected-actor signature'
+);
+select ok(to_regprocedure('public.activate_solo_challenge(date,text,uuid,uuid)') is not null,
+  'the Solo challenge activation RPC has the expected signature');
+select ok(to_regprocedure('public.activate_group_challenge(uuid,text,uuid,uuid)') is not null,
+  'the Group challenge activation RPC has the expected signature');
+select ok(to_regprocedure('public.set_challenge_start_date(date,text,uuid,bigint,uuid)') is not null,
+  'the challenge date-edit RPC has the expected signature');
+select ok(to_regprocedure('public.record_app_visit(uuid)') is not null, 'the app-visit RPC exists');
 select ok(to_regprocedure('public.create_sharing_reward_intent(text)') is not null, 'the Sharing intent RPC exists');
 select ok(to_regprocedure('public.complete_sharing_reward(text)') is not null, 'the Sharing completion RPC exists');
 select ok(
@@ -188,6 +221,14 @@ select ok(
 select ok(
   (select relrowsecurity from pg_class where oid = 'public.sharing_reward_grants'::regclass),
   'sharing_reward_grants has RLS enabled'
+);
+select ok(
+  (select relrowsecurity from pg_class where oid = 'private.challenge_activation_requests'::regclass),
+  'challenge activation request evidence has RLS enabled'
+);
+select ok(
+  (select relrowsecurity from pg_class where oid = 'private.challenge_activation_migration_reviews'::regclass),
+  'challenge activation migration reviews have RLS enabled'
 );
 
 select ok(

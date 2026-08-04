@@ -3,10 +3,12 @@ import { acquireDialogLayer } from './dialog.mjs';
 import {
   claimChallengeUnlocks,
   getBillingState,
+  getChallengeActivation,
   getDailyStandardDraft,
   getDashboard,
   getGameSummary,
   getLeaderboardPrestige,
+  getLocalOrSessionUser,
   hasSupabaseAuth,
   isLocalDemoMode,
   mutateDailyStandardDraft,
@@ -14,6 +16,7 @@ import {
   recordAppVisit,
   redirectToLogin,
   setDailyStandardWorkoutDifficulty,
+  subscribeToAuthStateChanges,
 } from './api';
 import { DIFFICULTY_OPTIONS, calculateCheckInScore, normalizeWorkoutDifficulty } from './scoring.mjs';
 import { dailyStandardRoute } from './daily-standard-routes.mjs';
@@ -28,6 +31,8 @@ import {
   createCheckInCache,
   createCheckInAlreadyCompleteError,
   dateKeyForTimeZone,
+  migrateMockCheckInCache,
+  mockCheckInOwnerForUser,
   normalizeChallengeDays,
 } from './check-in.mjs';
 import { syncWorkoutDifficultyControls } from './workout-difficulty-controls.mjs';
@@ -35,6 +40,12 @@ import { POINTS_PER_LEVEL, calculateLevelProgress } from './point-economy.mjs';
 import { resolveLeaderboardPrestige } from './leaderboard-prestige.mjs';
 import { shouldUseZeroPointGlass } from './dashboard-view-model.mjs';
 import { createCelebrationQueue } from './celebration-queue.mjs';
+import { createChallengeActivationState } from './challenge-activation.mjs';
+import {
+  PREVIEW_USER_STATE_STORAGE_KEY,
+  readPreviewUserValue,
+  writePreviewUserValue,
+} from './preview-user-state.mjs';
 import {
   compareBadgesNewestFirst,
   completedTodayLabel,
@@ -230,10 +241,7 @@ const workoutDifficultySelection = (value = {}) => ({
   two: DIFFICULTY_OPTIONS.includes(value?.two) ? value.two : '',
 });
 const localDemoMode = isLocalDemoMode();
-let previewChallengeState = normalizePreviewChallengeState(
-  localDemoMode ? load(PREVIEW_CHALLENGE_STORAGE_KEY, {}) : {},
-  calendarTodayKey(),
-);
+let previewChallengeState = normalizePreviewChallengeState({}, calendarTodayKey());
 const previewChallengeMode = () => isPreviewChallengeActive(localDemoMode, previewChallengeState);
 const todayKey = () => previewChallengeMode()
   ? previewChallengeDate(previewChallengeState)
@@ -754,35 +762,33 @@ function showChallengeUnlockCelebration(challenges = []) {
     },
   };
 }
-function queueChallengeUnlockCelebration(challenges = [], delay = 0) {
-  if (!challenges.length) return;
+function queueChallengeUnlockCelebration(challenges = [], delay = 0, owner = captureMutationOwner()) {
+  if (!challenges.length || !isCurrentMutationOwner(owner)) return;
   const challengeKey = challenges.map((challenge) => challenge.key || challenge.id || challenge.title).sort().join(':');
-  const enqueue = () => enqueueCelebrationItems({
-    id: `challenge:${challengeKey}`,
-    kind: 'challenge',
-    challenges,
-    durationMs: BADGE_REVEAL_DURATION_MS,
-  });
+  const enqueue = () => {
+    if (!isCurrentMutationOwner(owner)) return;
+    enqueueCelebrationItems({
+      id: `challenge:${challengeKey}`,
+      kind: 'challenge',
+      challenges,
+      durationMs: BADGE_REVEAL_DURATION_MS,
+    });
+  };
   if (delay > 0) window.setTimeout(enqueue, delay);
   else enqueue();
 }
-let startDate = localDemoMode ? load('dominion:startDate', todayKey()) : todayKey();
-let entries = load(ENTRY_STORAGE_KEY, []);
-let checkInCacheOwner = localDemoMode
-  ? `mock:${load('dominion:user', {}).email || 'preview'}`
-  : '';
-let initialCheckInCache = checkInCacheForOwner(load(checkInDatesStorageKey(), {}), checkInCacheOwner);
-let submittedCheckInDates = new Set(initialCheckInCache.dates);
-let submittedChallengeDays = new Set(initialCheckInCache.challengeDays);
-let feed = localDemoMode ? load('dominion:feed', starterFeed) : starterFeed;
-let completedTodayCount = null;
-const savedWorkoutDifficulty = load(WORKOUT_DIFFICULTY_STORAGE_KEY, {});
-let workoutDifficulty = normalizeWorkoutDifficulty(savedWorkoutDifficulty);
-let selectedWorkoutDifficulty = workoutDifficultySelection(savedWorkoutDifficulty);
-let gameStats = preserveBestStreaks(
-  localDemoMode ? load('dominion:gameStats', DEFAULT_DEMO_GAME_STATS) : {},
-);
-let badges = localDemoMode ? load('dominion:badges', []) : [];
+let startDate = '';
+let challengeActivation = createChallengeActivationState('loading');
+let entries = [];
+let checkInCacheOwner = '';
+let submittedCheckInDates = new Set();
+let submittedChallengeDays = new Set();
+let feed = [];
+let completedTodayCount = 0;
+let workoutDifficulty = normalizeWorkoutDifficulty({});
+let selectedWorkoutDifficulty = workoutDifficultySelection({});
+let gameStats = preserveBestStreaks({}, {});
+let badges = [];
 let leaderboardPositions = {
   privateRank: null,
   crewId: null,
@@ -805,8 +811,11 @@ let lastCheckInSubmissionAt = 0;
 let checkInNotice = '';
 let checkInNoticeDate = '';
 let renderedDateKey = todayKey();
-let checkInStatusHydratedDate = hasSupabaseAuth() ? '' : renderedDateKey;
+let checkInStatusHydratedDate = '';
 let dashboardHydrationRequestId = 0;
+let observedAuthOwner = '';
+let hydratedAuthOwner = '';
+let authOwnerEpoch = 0;
 let celebrationReturnFocus = null;
 const $ = (id) => document.getElementById(id);
 const restoreCelebrationFocus = () => {
@@ -867,11 +876,17 @@ function queueCheckInCelebrations({ id, points = 0, earnedBadges = [], status = 
   });
   enqueueCelebrationItems(items);
 }
-async function refreshChallengeProgression({ claimCelebrations = false, celebrationDelay = 0 } = {}) {
+async function refreshChallengeProgression({
+  claimCelebrations = false,
+  celebrationDelay = 0,
+  owner = captureMutationOwner(),
+} = {}) {
   if (!claimCelebrations) return [];
+  if (!owner || !isCurrentMutationOwner(owner)) return [];
   try {
-    const result = await claimChallengeUnlocks();
-    queueChallengeUnlockCelebration(result.claimedUnlocks, celebrationDelay);
+    const result = await claimChallengeUnlocks({ expectedUserId: owner.userId });
+    if (!isCurrentMutationOwner(owner)) return [];
+    queueChallengeUnlockCelebration(result.claimedUnlocks, celebrationDelay, owner);
     return result.claimedUnlocks;
   } catch (error) {
     console.warn('Unable to claim challenge unlock celebrations', error);
@@ -896,9 +911,74 @@ const hasSubmittedCheckIn = (dateKey = todayKey(), challengeDay = currentDay()) 
   submittedCheckInDates.has(dateKey) || submittedChallengeDays.has(challengeDay)
 );
 const isCheckInPending = (dateKey = todayKey()) => checkInSubmissionPending && checkInSubmissionDate === dateKey;
-const isCheckInStatusReady = (dateKey = todayKey()) => (
-  !hasSupabaseAuth() || checkInStatusHydratedDate === dateKey
+const hasHydratedAuthOwner = () => Boolean(
+  hydratedAuthOwner && observedAuthOwner === hydratedAuthOwner,
 );
+const captureMutationOwner = () => hasHydratedAuthOwner()
+  ? { userId: hydratedAuthOwner, epoch: authOwnerEpoch }
+  : null;
+const isCurrentMutationOwner = (owner) => Boolean(
+  owner
+  && owner.epoch === authOwnerEpoch
+  && owner.userId === hydratedAuthOwner
+  && owner.userId === observedAuthOwner,
+);
+const isCheckInStatusReady = (dateKey = todayKey()) => (
+  hasHydratedAuthOwner() && (!hasSupabaseAuth() || checkInStatusHydratedDate === dateKey)
+);
+const canParticipateInChallenge = () => previewChallengeMode()
+  || challengeActivation.canParticipate === true;
+const canMutateChallenge = () => hasHydratedAuthOwner() && (
+  previewChallengeMode() || challengeActivation.canMutateDailyStandards === true
+);
+function readPreviewDashboardUserState(ownerId) {
+  const storedPreview = readPreviewUserValue(
+    localStorage,
+    ownerId,
+    PREVIEW_CHALLENGE_STORAGE_KEY,
+    {},
+  );
+  previewChallengeState = normalizePreviewChallengeState(storedPreview, calendarTodayKey());
+
+  const storedEntries = readPreviewUserValue(localStorage, ownerId, ENTRY_STORAGE_KEY, []);
+  entries = Array.isArray(storedEntries) ? storedEntries : [];
+  const storedDifficulty = readPreviewUserValue(
+    localStorage,
+    ownerId,
+    WORKOUT_DIFFICULTY_STORAGE_KEY,
+    {},
+  );
+  workoutDifficulty = normalizeWorkoutDifficulty(storedDifficulty);
+  selectedWorkoutDifficulty = workoutDifficultySelection(storedDifficulty);
+
+  const storedFeed = readPreviewUserValue(localStorage, ownerId, 'dominion:feed', starterFeed);
+  feed = Array.isArray(storedFeed) ? storedFeed : [];
+  completedTodayCount = feed.filter((item) => item?.status === 'complete' && item?.timestamp === 'Today').length;
+  const storedStats = readPreviewUserValue(
+    localStorage,
+    ownerId,
+    'dominion:gameStats',
+    DEFAULT_DEMO_GAME_STATS,
+  );
+  gameStats = preserveBestStreaks(
+    storedStats && typeof storedStats === 'object' && !Array.isArray(storedStats)
+      ? storedStats
+      : DEFAULT_DEMO_GAME_STATS,
+    {},
+  );
+  const storedBadges = readPreviewUserValue(localStorage, ownerId, 'dominion:badges', []);
+  badges = Array.isArray(storedBadges) ? storedBadges : [];
+}
+
+function persistPreviewDashboardUserState(ownerId = hydratedAuthOwner) {
+  if (!localDemoMode || !ownerId || ownerId !== hydratedAuthOwner || ownerId !== observedAuthOwner) return;
+  writePreviewUserValue(localStorage, ownerId, PREVIEW_CHALLENGE_STORAGE_KEY, previewChallengeState);
+  writePreviewUserValue(localStorage, ownerId, ENTRY_STORAGE_KEY, entries);
+  writePreviewUserValue(localStorage, ownerId, WORKOUT_DIFFICULTY_STORAGE_KEY, selectedWorkoutDifficulty);
+  writePreviewUserValue(localStorage, ownerId, 'dominion:feed', feed);
+  writePreviewUserValue(localStorage, ownerId, 'dominion:gameStats', gameStats);
+  writePreviewUserValue(localStorage, ownerId, 'dominion:badges', badges);
+}
 function setCheckInNotice(dateKey, message) {
   checkInNoticeDate = dateKey;
   checkInNotice = message;
@@ -907,10 +987,17 @@ function replaceSubmittedCheckIns({ dates = [], challengeDays = [] }) {
   const cache = createCheckInCache(checkInCacheOwner, dates, challengeDays);
   submittedCheckInDates = new Set(cache.dates);
   submittedChallengeDays = new Set(cache.challengeDays);
-  save(checkInDatesStorageKey(), cache);
+  if (localDemoMode) {
+    writePreviewUserValue(localStorage, hydratedAuthOwner, checkInDatesStorageKey(), cache);
+  } else {
+    save(checkInDatesStorageKey(), cache);
+  }
 }
 function markCheckInSubmitted(dateKey, challengeDay) {
-  const cached = checkInCacheForOwner(load(checkInDatesStorageKey(), {}), checkInCacheOwner);
+  const storedCache = localDemoMode
+    ? readPreviewUserValue(localStorage, hydratedAuthOwner, checkInDatesStorageKey(), {})
+    : load(checkInDatesStorageKey(), {});
+  const cached = checkInCacheForOwner(storedCache, checkInCacheOwner);
   const result = addCheckInDate([...submittedCheckInDates, ...cached.dates], dateKey);
   const challengeDays = normalizeChallengeDays([
     ...submittedChallengeDays,
@@ -931,7 +1018,7 @@ const replaceEntry = (entry) => {
   const index = entries.findIndex(item => item.date === entry.date);
   if (index >= 0) entries[index] = entry;
   else entries.push(entry);
-  save(ENTRY_STORAGE_KEY, entries);
+  if (localDemoMode) persistPreviewDashboardUserState();
 };
 
 const withPendingDraftMutations = (draft) => {
@@ -954,17 +1041,20 @@ const withPendingDraftMutations = (draft) => {
   };
 };
 
-async function reconcileDailyStandardDraft(date, fallbackMessage) {
+async function reconcileDailyStandardDraft(date, fallbackMessage, owner = captureMutationOwner()) {
+  if (!owner) return;
   try {
-    const authoritative = await getDailyStandardDraft(date);
+    const authoritative = await getDailyStandardDraft(date, { expectedUserId: owner.userId });
+    if (!isCurrentMutationOwner(owner)) return;
     const reconciled = withPendingDraftMutations(authoritative);
     replaceEntry(reconciled);
     workoutDifficulty = normalizeWorkoutDifficulty(reconciled.workoutDifficulty);
     selectedWorkoutDifficulty = workoutDifficultySelection(reconciled.workoutDifficultySelections);
-    save(WORKOUT_DIFFICULTY_STORAGE_KEY, selectedWorkoutDifficulty);
+    persistPreviewDashboardUserState();
     setCheckInNotice(date, fallbackMessage);
     render();
   } catch (error) {
+    if (!isCurrentMutationOwner(owner)) return;
     console.warn('Unable to reconcile Daily Standards draft', error);
     setCheckInNotice(date, 'Unable to sync that change. Refresh and try again.');
     render();
@@ -972,16 +1062,22 @@ async function reconcileDailyStandardDraft(date, fallbackMessage) {
 }
 const rawChallengeDay = () => previewChallengeMode()
   ? previewChallengeState.day
-  : calendarDayDifference(todayKey(), startDate) + 1;
-const currentDay = () => Math.min(Math.max(rawChallengeDay(), 1), TOTAL_DAYS);
+  : Number.isInteger(challengeActivation.challengeDay)
+    ? challengeActivation.challengeDay
+    : canParticipateInChallenge() && startDate
+      ? calendarDayDifference(todayKey(), startDate) + 1
+      : 0;
+const currentDay = () => canParticipateInChallenge()
+  ? Math.min(Math.max(rawChallengeDay(), 1), TOTAL_DAYS)
+  : 0;
 const hasFinalBadge = () => badges.some((badge) => badge.key === finaleBadgeKey);
 const isChallengeFinished = () => previewChallengeMode()
   ? isPreviewChallengeComplete(previewChallengeState)
-  : hasFinalBadge() || rawChallengeDay() > TOTAL_DAYS;
+  : canParticipateInChallenge() && (hasFinalBadge() || rawChallengeDay() > TOTAL_DAYS);
 function advanceCommittedPreviewPost(entry, submissionDay) {
   const nextState = advancePreviewChallenge(previewChallengeState);
-  save(PREVIEW_CHALLENGE_STORAGE_KEY, nextState);
   previewChallengeState = nextState;
+  persistPreviewDashboardUserState();
 
   if (isPreviewChallengeComplete(previewChallengeState)) {
     setCheckInNotice(entry.date, 'Day 77 is posted. The preview challenge is complete.');
@@ -1015,6 +1111,7 @@ function renderChecklist(entry) {
   const completed = new Set(entry.completed);
   const draftBusy = pendingActionMutations.size > 0 || pendingWorkoutMutations.size > 0;
   const locked = isChallengeFinished()
+    || !canMutateChallenge()
     || !isCheckInStatusReady(entry.date)
     || hasSubmittedCheckIn(entry.date)
     || isCheckInPending(entry.date)
@@ -1029,7 +1126,7 @@ function renderChecklist(entry) {
     row.setAttribute('aria-label', `Mark ${dailyStandardRoute(row.dataset.standard)?.title || 'action'} ${isChecked ? 'incomplete' : 'complete'}, worth 1 point`);
   });
   checklist.querySelectorAll('.check-row-details').forEach((link) => {
-    link.setAttribute('aria-disabled', String(draftBusy));
+    link.setAttribute('aria-disabled', String(!canParticipateInChallenge() || draftBusy));
   });
   const difficultyControls = checklist.querySelectorAll('[data-workout]');
   syncWorkoutDifficultyControls(difficultyControls, selectedWorkoutDifficulty);
@@ -1049,7 +1146,9 @@ function renderChecklist(entry) {
   }
 }
 function toggleStandard(id) {
-  if (isChallengeFinished() || !isCheckInStatusReady() || hasSubmittedCheckIn() || isCheckInPending()) return;
+  if (!canMutateChallenge() || isChallengeFinished() || !isCheckInStatusReady() || hasSubmittedCheckIn() || isCheckInPending()) return;
+  const owner = captureMutationOwner();
+  if (!owner) return;
   const currentEntry = todayEntry();
   const completed = new Set(currentEntry.completed);
   const nextCompleted = !completed.has(id);
@@ -1070,23 +1169,30 @@ function toggleStandard(id) {
       actionId: id,
       completed: nextCompleted,
       expectedVersion: currentEntry.version,
+      expectedUserId: owner.userId,
     }))
     .then((authoritative) => {
+      if (!isCurrentMutationOwner(owner)) return;
       if (pendingActionMutations.get(id) === nextCompleted) pendingActionMutations.delete(id);
       const reconciled = withPendingDraftMutations(authoritative);
       replaceEntry(reconciled);
       workoutDifficulty = normalizeWorkoutDifficulty(reconciled.workoutDifficulty);
       selectedWorkoutDifficulty = workoutDifficultySelection(reconciled.workoutDifficultySelections);
-      save(WORKOUT_DIFFICULTY_STORAGE_KEY, selectedWorkoutDifficulty);
+      persistPreviewDashboardUserState();
       if (authoritative.staleWriteReconciled) {
         setCheckInNotice(currentEntry.date, 'Your change was merged with newer activity from another tab.');
       }
       render();
     })
     .catch((error) => {
+      if (!isCurrentMutationOwner(owner)) return;
       if (pendingActionMutations.get(id) === nextCompleted) pendingActionMutations.delete(id);
       console.warn('Unable to sync Daily Standard', error);
-      return reconcileDailyStandardDraft(currentEntry.date, error?.message || 'That change could not be saved.');
+      return reconcileDailyStandardDraft(
+        currentEntry.date,
+        error?.message || 'That change could not be saved.',
+        owner,
+      );
     });
 }
 const padClock = (value) => String(value).padStart(2, '0');
@@ -1113,9 +1219,9 @@ function updateCountdownCard() {
   const currentDateKey = todayKey();
   if (renderedDateKey !== currentDateKey) {
     renderedDateKey = currentDateKey;
-    if (hasSupabaseAuth()) checkInStatusHydratedDate = '';
+    checkInStatusHydratedDate = '';
     render();
-    if (hasSupabaseAuth()) hydrateDashboardFromApi();
+    if (hasSupabaseAuth() || localDemoMode) void hydrateDashboardFromApi(observedAuthOwner);
     return;
   }
 
@@ -1182,7 +1288,10 @@ function render() {
   const submittedToday = hasSubmittedCheckIn(entry.date);
   const submissionPendingToday = isCheckInPending(entry.date);
   const checkInStatusReady = isCheckInStatusReady(entry.date);
-  const scorecardLocked = !checkInStatusReady || submittedToday || submissionPendingToday;
+  const scorecardLocked = !canMutateChallenge()
+    || !checkInStatusReady
+    || submittedToday
+    || submissionPendingToday;
   const dailyDraftBusy = pendingActionMutations.size > 0 || pendingWorkoutMutations.size > 0;
   const hasPostableCheckIn = !finished && !scorecardLocked && hasCompletedActions;
   const allActionsCompleted = standards.every(([id]) => completedStandards.has(id));
@@ -1204,7 +1313,13 @@ function render() {
   }
   if (checkInStatus) {
     const currentNotice = checkInNoticeDate === entry.date ? checkInNotice : '';
-    const statusCopy = !checkInStatusReady
+    const statusCopy = !previewChallengeMode() && challengeActivation.readState === 'error'
+      ? 'Challenge activation could not be confirmed. Refresh to try again.'
+      : !previewChallengeMode() && challengeActivation.status === 'not_started'
+        ? 'Start your challenge to begin tracking Daily Standards.'
+        : !previewChallengeMode() && challengeActivation.status === 'scheduled'
+          ? `Your challenge is scheduled to begin ${challengeActivation.startDate}.`
+          : !checkInStatusReady
       ? currentNotice || 'Confirming today’s check-in status…'
       : submittedToday
       ? currentNotice || 'Today’s check-in is posted. Come back tomorrow for the next challenge day.'
@@ -1214,12 +1329,16 @@ function render() {
     checkInStatus.setAttribute('aria-busy', String(submissionPendingToday));
   }
   if (countdownCheckInButton) {
-    countdownCheckInButton.disabled = finished || !checkInStatusReady || submittedToday || submissionPendingToday;
+    countdownCheckInButton.disabled = !canMutateChallenge()
+      || finished
+      || !checkInStatusReady
+      || submittedToday
+      || submissionPendingToday;
     countdownCheckInButton.textContent = submittedToday ? 'Today’s check-in complete' : 'Go to check-in';
   }
   if (selectAllActionsButton) {
     selectAllActionsButton.classList.toggle('active', allActionsCompleted);
-    selectAllActionsButton.disabled = finished || scorecardLocked || dailyDraftBusy;
+    selectAllActionsButton.disabled = !canMutateChallenge() || finished || scorecardLocked || dailyDraftBusy;
     selectAllActionsButton.setAttribute('aria-pressed', String(allActionsCompleted));
     selectAllActionsButton.setAttribute('aria-label', allActionsCompleted
       ? 'Clear all daily actions'
@@ -1258,39 +1377,122 @@ function startCountdownCard() {
   updateCountdownCard();
   countdownTimer = window.setInterval(updateCountdownCard, 1000);
 }
-async function hydrateDashboardFromApi() {
-  if (!hasSupabaseAuth()) return;
+function clearDashboardUserState() {
+  previewChallengeState = normalizePreviewChallengeState({}, calendarTodayKey());
+  userTimeZone = BROWSER_TIME_ZONE;
+  startDate = '';
+  challengeActivation = createChallengeActivationState('loading');
+  entries = [];
+  checkInCacheOwner = '';
+  submittedCheckInDates = new Set();
+  submittedChallengeDays = new Set();
+  feed = [];
+  completedTodayCount = 0;
+  workoutDifficulty = normalizeWorkoutDifficulty({});
+  selectedWorkoutDifficulty = workoutDifficultySelection({});
+  gameStats = preserveBestStreaks({}, {});
+  badges = [];
+  leaderboardPositions = {
+    privateRank: null,
+    crewId: null,
+    window: LEADERBOARD_PRESTIGE_WINDOW,
+  };
+  pendingActionMutations.clear();
+  pendingWorkoutMutations.clear();
+  pendingDetailsNavigation = '';
+  checkInSubmissionPending = false;
+  checkInSubmissionDate = '';
+  lastCheckInSubmissionAt = 0;
+  checkInNotice = '';
+  checkInNoticeDate = '';
+  checkInStatusHydratedDate = '';
+  renderedDateKey = calendarTodayKey();
+  activeCountdownCallout = '';
+  finishCelebrated = false;
+  entrySaveQueue = Promise.resolve();
+  celebrationSequence.clear({ forgetCompleted: true });
+  celebrationReturnFocus = null;
+  stopCelebrationConfetti();
+  document.querySelectorAll('.check-row-details[aria-busy="true"]')
+    .forEach((link) => link.removeAttribute('aria-busy'));
+}
+function invalidateDashboardOwner(nextOwner = '') {
+  authOwnerEpoch += 1;
+  dashboardHydrationRequestId += 1;
+  leaderboardPrestigeRequestId += 1;
+  observedAuthOwner = String(nextOwner || '');
+  hydratedAuthOwner = '';
+  clearDashboardUserState();
+  render();
+}
+
+async function hydrateDashboardFromApi(expectedOwnerId = observedAuthOwner) {
+  if (!hasSupabaseAuth() && !localDemoMode) return;
   const requestId = ++dashboardHydrationRequestId;
   const requestStartedAt = new Date();
+  const requestedOwner = String(expectedOwnerId || '');
 
   try {
+    if (localDemoMode) {
+      const currentUser = await getLocalOrSessionUser();
+      const dashboardOwner = String(currentUser?.userId || '');
+      if (!dashboardOwner) throw new Error('You need to log in again.');
+      if ((requestedOwner && requestedOwner !== dashboardOwner)
+        || (observedAuthOwner && observedAuthOwner !== dashboardOwner)) return;
+      const activation = await getChallengeActivation({ expectedUserId: dashboardOwner });
+      if (requestId !== dashboardHydrationRequestId
+        || (observedAuthOwner && observedAuthOwner !== dashboardOwner)) return;
+      observedAuthOwner ||= dashboardOwner;
+      hydratedAuthOwner = dashboardOwner;
+      challengeActivation = activation;
+      userTimeZone = activation.timeZone || BROWSER_TIME_ZONE;
+      readPreviewDashboardUserState(dashboardOwner);
+      checkInCacheOwner = mockCheckInOwnerForUser(dashboardOwner);
+      const storedCache = readPreviewUserValue(
+        localStorage,
+        dashboardOwner,
+        checkInDatesStorageKey(),
+        {},
+      );
+      const ownerCache = migrateMockCheckInCache(storedCache, dashboardOwner, currentUser.email);
+      writePreviewUserValue(localStorage, dashboardOwner, checkInDatesStorageKey(), ownerCache);
+      submittedCheckInDates = new Set(ownerCache.dates);
+      submittedChallengeDays = new Set(ownerCache.challengeDays);
+      startDate = activation.startDate || '';
+      renderedDateKey = todayKey();
+      checkInStatusHydratedDate = renderedDateKey;
+      render();
+      return;
+    }
+
     const dashboard = await getDashboard();
     if (requestId !== dashboardHydrationRequestId) return;
     const dashboardOwner = String(dashboard?.profile?.userId || '');
-    if (dashboardOwner && dashboardOwner !== checkInCacheOwner) {
+    if (!dashboardOwner) throw new Error('Unable to verify the dashboard account.');
+    if ((requestedOwner && requestedOwner !== dashboardOwner)
+      || (observedAuthOwner && observedAuthOwner !== dashboardOwner)) return;
+    observedAuthOwner ||= dashboardOwner;
+    hydratedAuthOwner = dashboardOwner;
+    if (dashboardOwner !== checkInCacheOwner) {
       checkInCacheOwner = dashboardOwner;
       const ownerCache = checkInCacheForOwner(load(CHECK_IN_DATES_STORAGE_KEY, {}), checkInCacheOwner);
       submittedCheckInDates = new Set(ownerCache.dates);
       submittedChallengeDays = new Set(ownerCache.challengeDays);
     }
-    if (dashboard?.profile?.timeZone) {
-      userTimeZone = dashboard.profile.timeZone;
+    challengeActivation = dashboard?.activation || createChallengeActivationState('error');
+    if (challengeActivation.timeZone || dashboard?.profile?.timeZone) {
+      userTimeZone = challengeActivation.timeZone || dashboard.profile.timeZone;
       renderedDateKey = todayKey();
     }
-    if (dashboard?.profile?.challengeStartDate) {
-      startDate = dashboard.profile.challengeStartDate;
-      save('dominion:startDate', startDate);
-    }
+    startDate = challengeActivation.startDate || '';
     if (Array.isArray(dashboard?.entries)) {
       entries = dashboard.entries.map((entry) => (
         entry.date === todayKey() ? withPendingDraftMutations(entry) : entry
       ));
-      save(ENTRY_STORAGE_KEY, entries);
       const currentDraft = entries.find((entry) => entry.date === todayKey());
       if (currentDraft?.workoutDifficulty) {
         workoutDifficulty = normalizeWorkoutDifficulty(currentDraft.workoutDifficulty);
         selectedWorkoutDifficulty = workoutDifficultySelection(currentDraft.workoutDifficultySelections);
-        save(WORKOUT_DIFFICULTY_STORAGE_KEY, selectedWorkoutDifficulty);
       }
     }
     if (Array.isArray(dashboard?.checkIns)) {
@@ -1306,28 +1508,58 @@ async function hydrateDashboardFromApi() {
     if (todayKey() === hydratedDate) checkInStatusHydratedDate = hydratedDate;
     if (Array.isArray(dashboard?.feed)) {
       feed = dashboard.feed;
-      save('dominion:feed', feed);
     }
     if (Number.isInteger(dashboard?.completedTodayCount) && dashboard.completedTodayCount >= 0) {
       completedTodayCount = dashboard.completedTodayCount;
     }
     if (dashboard?.gameStats) {
       gameStats = preserveBestStreaks(dashboard.gameStats, gameStats);
-      save('dominion:gameStats', gameStats);
     }
     if (Array.isArray(dashboard?.badges)) {
       badges = dashboard.badges;
-      save('dominion:badges', badges);
     }
     render();
-    if (!isCheckInStatusReady()) hydrateDashboardFromApi();
+    if (!isCheckInStatusReady()) void hydrateDashboardFromApi(dashboardOwner);
   } catch (error) {
     if (requestId !== dashboardHydrationRequestId) return;
     console.warn('Unable to load dashboard from Supabase', error);
+    hydratedAuthOwner = '';
+    clearDashboardUserState();
+    challengeActivation = createChallengeActivationState('error');
     if (!isCheckInStatusReady()) {
       setCheckInNotice(todayKey(), 'Unable to confirm today’s check-in status. Refresh to try again.');
-      render();
     }
+    render();
+  }
+}
+
+async function handleDashboardAuthOwnerChange(nextUser, { force = false } = {}) {
+  const nextOwner = String(nextUser?.userId || '');
+  if (!force && nextOwner && nextOwner === observedAuthOwner) return;
+  invalidateDashboardOwner(nextOwner);
+  if (!nextOwner) {
+    redirectToLogin();
+    return;
+  }
+
+  try {
+    const billing = await getBillingState();
+    if (observedAuthOwner !== nextOwner) return;
+    if (!billing.authenticated) {
+      redirectToLogin();
+      return;
+    }
+    if (!billing.appAccess) {
+      window.location.href = './billing.html?intent=subscription';
+      return;
+    }
+    await hydrateDashboardFromApi(nextOwner);
+  } catch (error) {
+    if (observedAuthOwner !== nextOwner) return;
+    console.warn('Unable to rehydrate the dashboard after an account change', error);
+    clearDashboardUserState();
+    challengeActivation = createChallengeActivationState('error');
+    render();
   }
 }
 
@@ -1365,24 +1597,26 @@ function startLeaderboardPrestigeRefresh() {
   document.addEventListener('visibilitychange', refreshIfVisible);
 }
 
-async function refreshGameSummary(previousBadgeKeys = new Set()) {
-  if (!hasSupabaseAuth()) return [];
+async function refreshGameSummary(previousBadgeKeys = new Set(), owner = captureMutationOwner()) {
+  if (!hasSupabaseAuth() || !owner) return [];
   const [summary] = await Promise.all([
     getGameSummary(),
     refreshLeaderboardPrestige({ renderAfter: false }),
   ]);
+  if (!isCurrentMutationOwner(owner)) return [];
   gameStats = preserveBestStreaks(summary.gameStats, gameStats);
   badges = summary.badges || [];
-  save('dominion:gameStats', gameStats);
-  save('dominion:badges', badges);
   return badges.filter((badge) => !previousBadgeKeys.has(badge.key));
 }
 
 async function recordDailyAppVisit() {
   if (!hasSupabaseAuth()) return;
+  const owner = captureMutationOwner();
+  if (!owner) return;
   const previousBadgeKeys = new Set(badges.map((badge) => badge.key));
   try {
-    const visit = await recordAppVisit();
+    const visit = await recordAppVisit({ expectedUserId: owner.userId });
+    if (!isCurrentMutationOwner(owner)) return;
     if (visit) {
       gameStats = preserveBestStreaks({
         ...gameStats,
@@ -1390,14 +1624,17 @@ async function recordDailyAppVisit() {
         currentAppStreak: visit.currentAppStreak,
         bestAppStreak: visit.bestAppStreak,
       }, gameStats);
-      save('dominion:gameStats', gameStats);
     }
-    await refreshGameSummary(previousBadgeKeys);
+    await refreshGameSummary(previousBadgeKeys, owner);
+    if (!isCurrentMutationOwner(owner)) return;
     render();
   } catch (error) {
+    if (!isCurrentMutationOwner(owner)) return;
     console.warn('Unable to record daily app visit', error);
   } finally {
-    await refreshChallengeProgression({ claimCelebrations: true, celebrationDelay: 450 });
+    if (isCurrentMutationOwner(owner)) {
+      await refreshChallengeProgression({ claimCelebrations: true, celebrationDelay: 450 });
+    }
   }
 }
 
@@ -1437,15 +1674,17 @@ document.addEventListener('change', (event) => {
     render();
     return;
   }
-  if (!isCheckInStatusReady() || hasSubmittedCheckIn() || isCheckInPending()) {
+  if (!canMutateChallenge() || !isCheckInStatusReady() || hasSubmittedCheckIn() || isCheckInPending()) {
     render();
     return;
   }
+  const owner = captureMutationOwner();
+  if (!owner) return;
   const currentEntry = todayEntry();
   workoutDifficulty = normalizeWorkoutDifficulty({ ...workoutDifficulty, [target.dataset.workout]: target.value });
   selectedWorkoutDifficulty = { ...selectedWorkoutDifficulty, [target.dataset.workout]: target.value };
   pendingWorkoutMutations.set(target.dataset.workout, target.value);
-  save(WORKOUT_DIFFICULTY_STORAGE_KEY, selectedWorkoutDifficulty);
+  if (localDemoMode) persistPreviewDashboardUserState();
   replaceEntry({
     ...currentEntry,
     workoutDifficulty,
@@ -1465,20 +1704,27 @@ document.addEventListener('change', (event) => {
       workoutId: target.dataset.workout,
       difficulty: target.value,
       expectedVersion: currentEntry.version,
+      expectedUserId: owner.userId,
     }))
     .then((authoritative) => {
+      if (!isCurrentMutationOwner(owner)) return;
       if (pendingWorkoutMutations.get(target.dataset.workout) === target.value) pendingWorkoutMutations.delete(target.dataset.workout);
       const reconciled = withPendingDraftMutations(authoritative);
       replaceEntry(reconciled);
       workoutDifficulty = normalizeWorkoutDifficulty(reconciled.workoutDifficulty);
       selectedWorkoutDifficulty = workoutDifficultySelection(reconciled.workoutDifficultySelections);
-      save(WORKOUT_DIFFICULTY_STORAGE_KEY, selectedWorkoutDifficulty);
+      if (localDemoMode) persistPreviewDashboardUserState();
       render();
     })
     .catch((error) => {
+      if (!isCurrentMutationOwner(owner)) return;
       if (pendingWorkoutMutations.get(target.dataset.workout) === target.value) pendingWorkoutMutations.delete(target.dataset.workout);
       console.warn('Unable to sync workout difficulty', error);
-      return reconcileDailyStandardDraft(currentEntry.date, error?.message || 'That difficulty could not be saved.');
+      return reconcileDailyStandardDraft(
+        currentEntry.date,
+        error?.message || 'That difficulty could not be saved.',
+        owner,
+      );
     });
 });
 if (checklist) checklist.addEventListener('click', event => {
@@ -1488,70 +1734,90 @@ if (checklist) checklist.addEventListener('click', event => {
 });
 if (checklist) checklist.addEventListener('click', (event) => {
   const link = event.target.closest('.check-row-details');
-  if (!link || (pendingActionMutations.size === 0 && pendingWorkoutMutations.size === 0)) return;
+  if (!link) return;
+  if (!canParticipateInChallenge()) {
+    event.preventDefault();
+    return;
+  }
+  if (pendingActionMutations.size === 0 && pendingWorkoutMutations.size === 0) return;
   event.preventDefault();
   if (pendingDetailsNavigation) return;
-  pendingDetailsNavigation = link.href;
+  const navigationOwner = captureMutationOwner();
+  if (!navigationOwner) return;
+  const requestedDestination = link.href;
+  pendingDetailsNavigation = requestedDestination;
   link.setAttribute('aria-busy', 'true');
   entrySaveQueue.finally(() => {
-    window.location.href = pendingDetailsNavigation;
+    if (!isCurrentMutationOwner(navigationOwner)
+      || pendingDetailsNavigation !== requestedDestination) return;
+    pendingDetailsNavigation = '';
+    window.location.href = requestedDestination;
   });
 });
 window.addEventListener('storage', (event) => {
-  if (event.key === PREVIEW_CHALLENGE_STORAGE_KEY) {
-    previewChallengeState = normalizePreviewChallengeState(
-      localDemoMode ? load(PREVIEW_CHALLENGE_STORAGE_KEY, {}) : {},
-      calendarTodayKey(),
-    );
-    if (localDemoMode) startDate = load('dominion:startDate', calendarTodayKey());
-    const cache = checkInCacheForOwner(load(checkInDatesStorageKey(), {}), checkInCacheOwner);
-    submittedCheckInDates = new Set(cache.dates);
-    submittedChallengeDays = new Set(cache.challengeDays);
-    renderedDateKey = todayKey();
-    checkInNotice = '';
-    checkInNoticeDate = '';
-  } else if (event.key === 'dominion:startDate') startDate = load('dominion:startDate', calendarTodayKey());
-  else if (event.key === ENTRY_STORAGE_KEY) {
-    entries = load(ENTRY_STORAGE_KEY, []);
-    const storedEntry = entries.find((entry) => entry.date === todayKey());
-    workoutDifficulty = normalizeWorkoutDifficulty(storedEntry?.workoutDifficulty || workoutDifficulty);
-    selectedWorkoutDifficulty = workoutDifficultySelection(
-      storedEntry?.workoutDifficultySelections || storedEntry?.workoutDifficulty || selectedWorkoutDifficulty,
-    );
+  if (event.key === 'dominion:user' && localDemoMode) {
+    invalidateDashboardOwner('');
+    void getLocalOrSessionUser()
+      .then((user) => handleDashboardAuthOwnerChange(user, { force: true }))
+      .catch((error) => {
+        console.warn('Unable to resolve the updated preview account', error);
+        redirectToLogin();
+      });
+    return;
   }
-  else if (event.key === checkInDatesStorageKey()) {
-    const cache = checkInCacheForOwner(load(checkInDatesStorageKey(), {}), checkInCacheOwner);
+  if (localDemoMode && event.key === checkInDatesStorageKey()) {
+    const storedCache = readPreviewUserValue(
+      localStorage,
+      hydratedAuthOwner,
+      checkInDatesStorageKey(),
+      {},
+    );
+    const cache = checkInCacheForOwner(storedCache, checkInCacheOwner);
     submittedCheckInDates = new Set(cache.dates);
     submittedChallengeDays = new Set(cache.challengeDays);
     if (hasSubmittedCheckIn()) setCheckInNotice(todayKey(), CHECK_IN_ALREADY_COMPLETE_MESSAGE);
+    render();
+    return;
   }
-  else if (event.key === WORKOUT_DIFFICULTY_STORAGE_KEY) {
-    const storedDifficulty = load(WORKOUT_DIFFICULTY_STORAGE_KEY, {});
-    workoutDifficulty = normalizeWorkoutDifficulty(storedDifficulty);
-    selectedWorkoutDifficulty = workoutDifficultySelection(storedDifficulty);
-  } else if (event.key === 'dominion:feed') {
-    feed = localDemoMode ? load('dominion:feed', starterFeed) : starterFeed;
-  } else if (event.key === 'dominion:badges') {
-    badges = localDemoMode ? load('dominion:badges', []) : [];
-  } else if (event.key === 'dominion:gameStats') {
-    gameStats = preserveBestStreaks(load('dominion:gameStats', DEFAULT_DEMO_GAME_STATS), gameStats);
-    refreshChallengeProgression({ claimCelebrations: true, celebrationDelay: 350 });
-    refreshLeaderboardPrestige();
-  } else if (event.key === 'dominion:mockChallengeStates' || event.key === 'dominion:mockChallengeThresholdsVersion') {
-    refreshChallengeProgression();
+  if (localDemoMode && [
+    PREVIEW_USER_STATE_STORAGE_KEY,
+    PREVIEW_CHALLENGE_STORAGE_KEY,
+    ENTRY_STORAGE_KEY,
+    WORKOUT_DIFFICULTY_STORAGE_KEY,
+    'dominion:startDate',
+    'dominion:feed',
+    'dominion:gameStats',
+    'dominion:badges',
+    'dominion:mockChallengeActivation',
+    'dominion:mockChallengeStates',
+    'dominion:mockChallengeThresholdsVersion',
+  ].includes(event.key)) {
+    void hydrateDashboardFromApi(observedAuthOwner);
+    return;
   } else if (event.key === ACTIVE_CREW_STORAGE_KEY) {
     refreshLeaderboardPrestige();
     return;
   } else return;
-  render();
 });
 window.addEventListener('dominion:challenge-start-date-updated', (event) => {
-  startDate = event.detail?.challengeStartDate || startDate;
-  if (localDemoMode) save('dominion:startDate', startDate);
+  const nextActivation = event.detail?.activation;
+  if (nextActivation?.contractValid && nextActivation.readState === 'ready') {
+    challengeActivation = nextActivation;
+    userTimeZone = nextActivation.timeZone || BROWSER_TIME_ZONE;
+    startDate = nextActivation.startDate || '';
+    renderedDateKey = todayKey();
+    checkInStatusHydratedDate = hasSupabaseAuth() ? '' : renderedDateKey;
+    checkInNotice = '';
+    checkInNoticeDate = '';
+  } else {
+    challengeActivation = createChallengeActivationState('loading');
+    startDate = '';
+  }
   render();
+  if (hasSupabaseAuth() || localDemoMode) void hydrateDashboardFromApi();
 });
 if (selectAllActionsButton) selectAllActionsButton.addEventListener('click', () => {
-  if (isChallengeFinished() || !isCheckInStatusReady() || hasSubmittedCheckIn() || isCheckInPending()) return;
+  if (!canMutateChallenge() || isChallengeFinished() || !isCheckInStatusReady() || hasSubmittedCheckIn() || isCheckInPending()) return;
   const currentEntry = todayEntry();
   const completedStandards = new Set(currentEntry.completed);
   const allActionsCompleted = standards.every(([id]) => completedStandards.has(id));
@@ -1563,7 +1829,9 @@ if (checkInButton) checkInButton.addEventListener('click', async () => {
   let entry = todayEntry();
   const submissionDay = currentDay();
   const simulatedPreviewPost = previewChallengeMode();
-  if (!isCheckInStatusReady(entry.date)) return;
+  if (!canMutateChallenge() || !isCheckInStatusReady(entry.date)) return;
+  const submissionOwner = captureMutationOwner();
+  if (!submissionOwner) return;
   if (isCheckInPending(entry.date)) return;
   if (hasSubmittedCheckIn(entry.date)) {
     setCheckInNotice(entry.date, CHECK_IN_ALREADY_COMPLETE_MESSAGE);
@@ -1603,20 +1871,28 @@ if (checkInButton) checkInButton.addEventListener('click', async () => {
   try {
     if (hasSupabaseAuth()) {
       await entrySaveQueue;
-      entry = await getDailyStandardDraft(entry.date);
+      if (!isCurrentMutationOwner(submissionOwner)) return;
+      entry = await getDailyStandardDraft(entry.date, {
+        expectedUserId: submissionOwner.userId,
+      });
+      if (!isCurrentMutationOwner(submissionOwner)) return;
       replaceEntry(entry);
       workoutDifficulty = normalizeWorkoutDifficulty(entry.workoutDifficulty);
       status = entry.completed.length === standards.length ? 'complete' : 'partial';
       if (!entry.completed.length) throw new Error('Complete at least one action before posting.');
-      const postedCheckIn = await postCheckIn({
-        date: entry.date,
-        day: submissionDay,
-        status,
-        completedCount: entry.completed.length,
-        completed: entry.completed,
-        workoutDifficulty,
-        timeZone: userTimeZone,
-      });
+      const postedCheckIn = await postCheckIn(
+        {
+          date: entry.date,
+          day: submissionDay,
+          status,
+          completedCount: entry.completed.length,
+          completed: entry.completed,
+          workoutDifficulty,
+          timeZone: userTimeZone,
+        },
+        { expectedUserId: submissionOwner.userId },
+      );
+      if (!isCurrentMutationOwner(submissionOwner)) return;
       submissionCommitted = true;
       feedItem = {
         ...postedCheckIn,
@@ -1625,7 +1901,7 @@ if (checkInButton) checkInButton.addEventListener('click', async () => {
       };
       markCheckInSubmitted(entry.date, submissionDay);
       setCheckInNotice(entry.date, 'Today’s check-in is posted. Come back tomorrow for the next challenge day.');
-      earnedBadges = (await refreshGameSummary(previousBadgeKeys))
+      earnedBadges = (await refreshGameSummary(previousBadgeKeys, submissionOwner))
         .filter((badge) => badgeEarnedDate(badge) === entry.date);
     } else {
       if (!markCheckInSubmitted(entry.date, submissionDay)) throw createCheckInAlreadyCompleteError();
@@ -1646,17 +1922,17 @@ if (checkInButton) checkInButton.addEventListener('click', async () => {
       feedItem.pointsAwarded = points;
       earnedBadges = awardLocalBadges(entry, status, nextStreak, submissionDay);
       if (simulatedPreviewPost) advanceCommittedPreviewPost(entry, submissionDay);
-      save('dominion:gameStats', gameStats);
-      save('dominion:badges', badges);
       await refreshLeaderboardPrestige({ renderAfter: false });
     }
+
+    if (!isCurrentMutationOwner(submissionOwner)) return;
 
     feedItem.timestamp = entry.date === todayKey() ? 'Today' : entry.date;
     feed = [feedItem, ...feed];
     if (status === 'complete' && feedItem.timestamp === 'Today' && Number.isInteger(completedTodayCount)) {
       completedTodayCount += 1;
     }
-    if (localDemoMode) save('dominion:feed', feed);
+    if (localDemoMode) persistPreviewDashboardUserState();
     if (status === 'complete') launchConfetti();
     queueCheckInCelebrations({
       id: entry.date,
@@ -1669,23 +1945,24 @@ if (checkInButton) checkInButton.addEventListener('click', async () => {
       celebrationDelay: 0,
     });
   } catch (error) {
+    if (!isCurrentMutationOwner(submissionOwner)) return;
     console.warn('Unable to sync check-in', error);
     if (error?.code === CHECK_IN_ALREADY_COMPLETE_CODE) {
       markCheckInSubmitted(entry.date, submissionDay);
       setCheckInNotice(entry.date, error.message || CHECK_IN_ALREADY_COMPLETE_MESSAGE);
-      if (hasSupabaseAuth()) await hydrateDashboardFromApi();
+      if (hasSupabaseAuth()) await hydrateDashboardFromApi(submissionOwner.userId);
     } else if (submissionCommitted) {
       setCheckInNotice(entry.date, 'Today’s check-in is posted. Your rewards are still syncing and will appear after a refresh.');
-      if (hasSupabaseAuth()) await hydrateDashboardFromApi();
+      if (hasSupabaseAuth()) await hydrateDashboardFromApi(submissionOwner.userId);
     } else {
       window.alert(error?.message || 'Unable to post that check-in right now.');
     }
   } finally {
-    if (checkInSubmissionDate === entry.date) {
+    if (isCurrentMutationOwner(submissionOwner) && checkInSubmissionDate === entry.date) {
       checkInSubmissionPending = false;
       checkInSubmissionDate = '';
     }
-    render();
+    if (isCurrentMutationOwner(submissionOwner)) render();
   }
 });
 if (countdownCheckInButton && scorecardSection) countdownCheckInButton.addEventListener('click', () => {
@@ -1694,12 +1971,24 @@ if (countdownCheckInButton && scorecardSection) countdownCheckInButton.addEventL
 });
 
 async function bootDashboard() {
+  invalidateDashboardOwner('');
   if (!hasSupabaseAuth() && !localDemoMode) {
     redirectToLogin();
     return;
   }
 
   if (hasSupabaseAuth() || localDemoMode) {
+    const currentUser = await getLocalOrSessionUser();
+    if (!currentUser?.userId) {
+      redirectToLogin();
+      return;
+    }
+    invalidateDashboardOwner(currentUser.userId);
+    const unsubscribeAuth = subscribeToAuthStateChanges(({ user }) => {
+      void handleDashboardAuthOwnerChange(user);
+    });
+    window.addEventListener('pagehide', unsubscribeAuth, { once: true });
+
     const billing = await getBillingState();
     if (!billing.authenticated) {
       redirectToLogin();
@@ -1713,7 +2002,7 @@ async function bootDashboard() {
 
   render();
   await Promise.all([
-    hydrateDashboardFromApi(),
+    hydrateDashboardFromApi(observedAuthOwner),
     refreshLeaderboardPrestige({ renderAfter: false }),
   ]);
   render();
@@ -1726,6 +2015,9 @@ async function bootDashboard() {
 
 bootDashboard().catch((error) => {
   console.warn('Unable to boot dashboard', error);
+  hydratedAuthOwner = '';
+  clearDashboardUserState();
+  challengeActivation = createChallengeActivationState('error');
   render();
   requestAnimationFrame(() => initReveal());
 });

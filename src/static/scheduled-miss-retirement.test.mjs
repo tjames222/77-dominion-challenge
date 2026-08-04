@@ -13,7 +13,7 @@ describe('scheduled miss retirement', () => {
     ]);
 
     assert.doesNotMatch(dashboardHtml, /scheduledButton|planned ahead|scheduled miss/i);
-    assert.doesNotMatch(dashboardSource, /scheduledMiss|planned ahead|status === ['"]scheduled['"]/i);
+    assert.doesNotMatch(dashboardSource, /scheduledMiss|planned ahead/i);
     assert.doesNotMatch(apiSource, /scheduled_miss:\s*Boolean|scheduledMiss:\s*Boolean/);
     assert.match(apiSource, /\.neq\(['"]status['"], ['"]scheduled['"]\)/);
   });

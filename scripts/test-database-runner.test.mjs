@@ -23,6 +23,12 @@ const databaseTestsDirectory = path.join(
   "tests",
   "database",
 );
+const activationMigrationPath = path.join(
+  repositoryRoot,
+  "supabase",
+  "migrations",
+  "20260804200019_challenge_activation_lifecycle.sql",
+);
 
 const fakeCliSource = `#!/usr/bin/env bash
 set -euo pipefail
@@ -58,7 +64,7 @@ emit_files() {
 case "\${FAKE_PGTAP_MODE:-pass}" in
   pass)
     emit_files
-    echo "Files=\${#files[@]}, Tests=962, 1 wallclock secs"
+    echo "Files=\${#files[@]}, Tests=1044, 1 wallclock secs"
     echo "Result: PASS"
     ;;
   notests)
@@ -72,12 +78,12 @@ case "\${FAKE_PGTAP_MODE:-pass}" in
     ;;
   count-mismatch)
     emit_files
-    echo "Files=$((\${#files[@]} - 1)), Tests=956, 1 wallclock secs"
+    echo "Files=$((\${#files[@]} - 1)), Tests=1019, 1 wallclock secs"
     echo "Result: PASS"
     ;;
   omit-profile-limit)
     emit_files
-    echo "Files=\${#files[@]}, Tests=962, 1 wallclock secs"
+    echo "Files=\${#files[@]}, Tests=1044, 1 wallclock secs"
     echo "Result: PASS"
     ;;
   malformed-summary)
@@ -86,7 +92,7 @@ case "\${FAKE_PGTAP_MODE:-pass}" in
     ;;
   nonzero)
     emit_files
-    echo "Files=\${#files[@]}, Tests=962, 1 wallclock secs"
+    echo "Files=\${#files[@]}, Tests=1044, 1 wallclock secs"
     echo "Result: FAIL"
     exit 2
     ;;
@@ -138,12 +144,13 @@ async function runFixture(mode) {
   };
 }
 
-test("the current database inventory contains all 21 files and 962 planned assertions", async () => {
+test("the database inventory and atomic activation cutover stay complete", async () => {
   const inventory = await currentDatabaseInventory();
-  assert.equal(inventory.length, 21);
+  assert.equal(inventory.length, 22);
   assert.ok(inventory.includes("095_profile_photo_registration_limits.sql"));
   assert.ok(inventory.includes("100_single_crew_lifecycle.sql"));
   assert.ok(inventory.includes("110_crew_training.sql"));
+  assert.ok(inventory.includes("120_challenge_activation.sql"));
 
   let plannedAssertions = 0;
   for (const filename of inventory) {
@@ -153,7 +160,22 @@ test("the current database inventory contains all 21 files and 962 planned asser
     plannedAssertions += Number.parseInt(plan[1], 10);
   }
 
-  assert.equal(plannedAssertions, 962);
+  assert.equal(plannedAssertions, 1044);
+
+  const activationMigration = await readFile(activationMigrationPath, "utf8");
+  assert.match(
+    activationMigration,
+    /lock table\s+public\.challenge_entries,\s+public\.check_ins,\s+public\.crews,\s+private\.retired_community_dr_quarantined_crews,\s+public\.crew_members,\s+public\.crew_invite_attributions,\s+private\.crew_lifecycle_requests,\s+public\.user_game_stats,\s+public\.game_point_events,\s+public\.user_reward_entitlements,\s+public\.user_badges\s+in exclusive mode;/i,
+  );
+  assert.ok(
+    activationMigration.indexOf("in exclusive mode;")
+      < activationMigration.indexOf("create temporary table challenge_activation_migration_clock"),
+    "the evidence locks must precede the authoritative migration clock",
+  );
+  assert.match(
+    activationMigration,
+    /A lock_timeout aborts and rolls back the whole migration; retry only after/i,
+  );
 });
 
 test("the runner succeeds from an unrelated directory and reports every file", async () => {
@@ -165,9 +187,9 @@ test("the runner succeeds from an unrelated directory and reports every file", a
   assert.match(result.args[2], /\/pgtap-tests\.[^/]+$/);
   assert.match(
     result.stdout,
-    /Database pgTAP summary: source_files=21 files=21 assertions=962/,
+    /Database pgTAP summary: source_files=22 files=22 assertions=1044/,
   );
-  assert.match(result.stdout, /all 21 files and 962 assertions executed/);
+  assert.match(result.stdout, /all 22 files and 1044 assertions executed/);
 });
 
 test("an exit-zero NOTESTS result fails closed", async () => {
@@ -188,7 +210,7 @@ test("a source and executed-file count mismatch fails closed", async () => {
   const result = await runFixture("count-mismatch");
 
   assert.notEqual(result.status, 0);
-  assert.match(result.stderr, /source inventory has 21 file\(s\), but Supabase executed 20/);
+  assert.match(result.stderr, /source inventory has 22 file\(s\), but Supabase executed 21/);
 });
 
 test("omitting the FOU-800 pgTAP file fails even when counts look valid", async () => {
@@ -224,6 +246,10 @@ test("package and CI wiring use the guarded database runner", async () => {
   assert.equal(
     packageJson.scripts["test:database"],
     "pnpm run test:database-runner && bash scripts/test-database.sh",
+  );
+  assert.match(
+    packageJson.scripts["test:rpc"],
+    /bash supabase\/tests\/integration\/challenge-activation-backfill\.sh$/,
   );
   assert.match(workflow, /run: pnpm run test:database/);
 });

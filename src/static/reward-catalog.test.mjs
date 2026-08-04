@@ -199,6 +199,6 @@ describe('typed reward catalog', () => {
 
   it('persists mock ownership instead of trusting point totals as proof', () => {
     assert.match(api, /dominion:mockRewardEntitlements/);
-    assert.match(api, /writeJson\(MOCK_REWARD_ENTITLEMENTS_KEY, result\.ownershipRecords\)/);
+    assert.match(api, /writeMockUserValue\(MOCK_REWARD_ENTITLEMENTS_KEY, result\.ownershipRecords\)/);
   });
 });
