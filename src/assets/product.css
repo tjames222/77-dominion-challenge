@@ -281,6 +281,15 @@ body.challenge-finished .confetti-layer {
 .dashboard-scorecard {
   scroll-margin-top: calc(var(--topbar-sticky-height) + 16px);
 }
+.dashboard-tracking {
+  grid-template-columns: minmax(0, 1fr);
+}
+.dashboard-tracking .rings {
+  grid-column: 1;
+  grid-row: auto;
+  width: min(100%, 560px);
+  margin-inline: auto;
+}
 .dashboard-scorecard .progress-standard {
   padding-top: 0;
 }

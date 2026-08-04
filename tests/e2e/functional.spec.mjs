@@ -476,7 +476,10 @@ test('a completed share grants +14 and the Sharing badge only once', async ({ pa
     });
   });
   await app.open(ROUTE_BY_ID.dashboard);
-  await page.getByRole('button', { name: 'Share my progress' }).click();
+  await expect(page.getByRole('button', { name: 'Share my progress' })).toHaveCount(0);
+  const headerShare = page.locator('.shared-header-share');
+  await expect(headerShare).toHaveAccessibleName('Share');
+  await headerShare.click();
   const dialog = page.getByRole('dialog', { name: 'Choose what you want to send' });
   const nativeShare = dialog.getByRole('button', { name: 'Share from this device' });
   await expect(nativeShare).toBeEnabled();

@@ -5,6 +5,7 @@ import { describe, it } from 'node:test';
 const dashboardHtml = readFileSync(new URL('../../dashboard.html', import.meta.url), 'utf8');
 const dashboardJs = readFileSync(new URL('./dashboard.js', import.meta.url), 'utf8');
 const productCss = readFileSync(new URL('../assets/product.css', import.meta.url), 'utf8');
+const stylesCss = readFileSync(new URL('../assets/styles.css', import.meta.url), 'utf8');
 
 describe('dashboard progress document order', () => {
   it('places tracking, countdown, and the actionable scorecard before remaining content', () => {
@@ -29,12 +30,24 @@ describe('dashboard progress document order', () => {
     }
   });
 
-  it('removes requested Dashboard clutter while retaining an accessible gauge name', () => {
-    assert.doesNotMatch(dashboardHtml, /data-share-kind="general"|Share the challenge/);
+  it('removes requested Dashboard clutter and local Share control while retaining an accessible gauge name', () => {
+    assert.doesNotMatch(dashboardHtml, /data-share-composer|data-share-kind=|Share my progress|Share the challenge/);
     assert.doesNotMatch(dashboardHtml, /How today is tracking|Challenge start date|id="startDate"/);
     assert.match(dashboardHtml, /<h2 class="sr-only" id="trackingTitle">Challenge and daily progress<\/h2>/);
     assert.match(dashboardHtml, /class="rings" role="group" aria-labelledby="trackingTitle"/);
-    assert.match(dashboardHtml, /data-share-kind="progress"/);
+    assert.doesNotMatch(dashboardHtml, /class="progress-intro"/);
+    assert.doesNotMatch(stylesCss, /\.progress-intro/);
+  });
+
+  it('centers the progress gauges instead of reserving the removed Share column', () => {
+    assert.match(
+      productCss,
+      /\.dashboard-tracking\s*\{[\s\S]*?grid-template-columns:\s*minmax\(0, 1fr\)/,
+    );
+    assert.match(
+      productCss,
+      /\.dashboard-tracking \.rings\s*\{[\s\S]*?grid-column:\s*1;[\s\S]*?width:\s*min\(100%, 560px\);[\s\S]*?margin-inline:\s*auto/,
+    );
   });
 
   it('refreshes gauge calculations when the shared streak dialog changes the start date', () => {

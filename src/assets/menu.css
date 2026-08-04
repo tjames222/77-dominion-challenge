@@ -448,24 +448,56 @@ body {
 }
 @media (max-width: 460px) {
   .topbar.has-authenticated-header-actions {
-    flex-wrap: wrap;
+    flex-wrap: nowrap;
+    gap: 6px;
   }
   .topbar.has-authenticated-header-actions .topbar-trailing-actions {
-    flex: 1 0 100%;
-    justify-content: flex-end;
-    margin-left: 0;
+    flex: 0 0 auto;
+    gap: 4px;
+    margin-left: auto;
+  }
+  .topbar.has-authenticated-header-actions > .back-link {
+    flex: 0 1 auto;
+    min-width: 44px;
+    max-width: 128px;
+    overflow: hidden;
+    padding-inline: 8px;
+    font-size: .7rem;
+    line-height: 1.05;
+    text-align: center;
+    text-overflow: clip;
+    white-space: normal;
+  }
+  .topbar.has-authenticated-header-actions > .brand-name {
+    display: none;
+  }
+  .authenticated-header-actions {
+    gap: 4px;
+  }
+  .shared-header-action {
+    min-width: 44px;
+    min-height: 44px;
+    gap: 3px;
+    padding-inline: 6px;
+    font-size: .7rem;
+  }
+  .shared-header-action .app-icon {
+    width: 16px;
+    height: 16px;
+  }
+  .shared-header-action .app-icon::before {
+    width: 14px;
+    height: 14px;
+  }
+  .shared-header-streak-count {
+    min-width: 20px;
+    min-height: 20px;
+    padding-inline: 4px;
+    font-size: .7rem;
   }
 }
 @media (max-width: 420px) {
   .topbar { min-height: 64px; gap: 8px; }
-  .shared-header-action {
-    min-height: 44px;
-    padding-inline: 10px;
-  }
-  .shared-header-action .app-icon {
-    width: 18px;
-    height: 18px;
-  }
   .global-streak-grid {
     grid-template-columns: 1fr;
   }
@@ -496,6 +528,26 @@ body {
   .menu-open .global-menu-button {
     top: calc(12px + env(safe-area-inset-top));
     right: max(12px, env(safe-area-inset-right));
+  }
+}
+@media (max-width: 340px) {
+  .topbar.has-authenticated-header-actions {
+    gap: 4px;
+  }
+  .topbar.has-authenticated-header-actions .topbar-trailing-actions,
+  .authenticated-header-actions {
+    gap: 3px;
+  }
+  .topbar.has-authenticated-header-actions > .back-link {
+    max-width: 98px;
+    padding-inline: 6px;
+    font-size: .68rem;
+  }
+  .shared-header-action {
+    padding-inline: 5px;
+  }
+  .shared-header-action .app-icon {
+    display: none;
   }
 }
 @media (prefers-reduced-motion: reduce) {
