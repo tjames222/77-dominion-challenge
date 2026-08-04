@@ -54,6 +54,9 @@
   --button-secondary-text: #f1f8f6;
   --button-danger-background: #512d30;
   --button-danger-text: #fff5f3;
+  --button-disabled-background: #1b4648;
+  --button-disabled-text: #c4d9d5;
+  --button-disabled-border: #4e7b7b;
 
   /* Progress, data visualization, and earned states */
   --progress-track: #0b2227;
@@ -96,6 +99,26 @@
 
 :root[data-theme="dominion-night"] :where(button, input, select, textarea):disabled {
   color: var(--text-disabled);
+}
+
+:root[data-theme="dominion-night"] .primary:disabled:not(.is-complete) {
+  color: var(--button-disabled-text);
+  background: var(--button-disabled-background);
+  box-shadow: inset 0 0 0 1px var(--button-disabled-border);
+  opacity: 1;
+}
+
+:root[data-theme="dominion-night"] :is(
+  .danger-button:disabled,
+  .secondary:disabled,
+  .secondary[aria-disabled="true"],
+  .secondary-button:disabled,
+  .secondary-button[aria-disabled="true"]
+) {
+  border-color: var(--button-disabled-border);
+  background: var(--button-disabled-background);
+  color: var(--button-disabled-text);
+  opacity: 1;
 }
 
 :root[data-theme="dominion-night"] input,

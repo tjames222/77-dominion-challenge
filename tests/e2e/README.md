@@ -62,10 +62,13 @@ can differ from the Linux comparison environment.
 
 Screenshots disable motion and carets, freeze the clock, use UTC, replace
 external images with a local SVG response, and block all other external
-requests. They also use the bundled Inter variable font from upstream commit
+requests. The app bundles its Inter variable brand font from upstream commit
 `353b61b9f4430d5f420d56605a6e7993e0941470`, with its SIL Open Font License
-kept beside the asset. This prevents Linux runner font-package changes from
-altering text metrics and full-page screenshot heights. Failed runs retain a
+copied into the production build at `fonts/Inter-LICENSE.txt`. The build fails
+if either the font or its license is absent. The screenshot harness waits for
+that same production face instead of substituting a test-only family. This prevents Linux
+runner font-package changes from altering text metrics and full-page screenshot
+heights while keeping visual tests faithful to production. Failed runs retain a
 trace, screenshot, video, HTML report, and Playwright image diff in the CI
 artifact.
 

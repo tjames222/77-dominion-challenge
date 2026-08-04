@@ -41,14 +41,36 @@ test.describe('authenticated route guards', () => {
 test('global navigation is keyboard operable and Escape closes it', async ({ page, app }) => {
   await app.open(ROUTE_BY_ID.dashboard);
   const menuButton = page.getByRole('button', { name: 'Open menu' });
+  const menu = page.locator('.global-menu');
+  const firstMenuLink = menu.locator('a').first();
+  const lastMenuControl = menu.getByRole('button', { name: 'Log Out' });
+
+  await expect(menu).toHaveAttribute('aria-hidden', 'true');
+  await expect(menu).toHaveAttribute('inert', '');
+  await expect(menu).toBeHidden();
   await menuButton.focus();
   await page.keyboard.press('Enter');
   await expect(menuButton).toHaveAttribute('aria-expanded', 'true');
+  await expect(menu).toHaveAttribute('aria-hidden', 'false');
+  await expect(menu).not.toHaveAttribute('inert', '');
   await expect(page.getByRole('navigation', { name: 'Global navigation' })).toBeVisible();
+  await expect(firstMenuLink).toBeFocused();
+
+  await page.keyboard.press('Shift+Tab');
+  await expect(lastMenuControl).toBeFocused();
+  await page.keyboard.press('Tab');
+  await expect(firstMenuLink).toBeFocused();
 
   await page.keyboard.press('Escape');
   await expect(menuButton).toHaveAttribute('aria-expanded', 'false');
+  await expect(menuButton).toBeFocused();
+  await expect(menu).toHaveAttribute('aria-hidden', 'true');
+  await expect(menu).toHaveAttribute('inert', '');
+  await expect(menu).toBeHidden();
   await expect(page.locator('body')).not.toHaveClass(/menu-open/);
+
+  await firstMenuLink.evaluate((link) => link.focus());
+  await expect(firstMenuLink).not.toBeFocused();
 });
 
 test('global navigation stays compact away from the top without shifting layout', async ({ page, app }) => {
@@ -100,6 +122,17 @@ test('global navigation applies the real compact visual styles without screensho
   expect(compactStyles.transform).not.toBe('none');
   expect(compactStyles.transitionProperty).toContain('transform');
   expect(await topbar.evaluate((element) => element.getBoundingClientRect().height)).toBe(initialHeight);
+});
+
+test('Dominion Night keeps the disabled Dashboard action readable', async ({ page, app }) => {
+  await app.open(ROUTE_BY_ID.dashboard, { theme: 'dominion-night' });
+  const checkIn = page.locator('#checkInButton');
+
+  await expect(checkIn).toBeDisabled();
+  await expect(checkIn).toHaveCSS('color', 'rgb(196, 217, 213)');
+  await expect(checkIn).toHaveCSS('background-color', 'rgb(27, 70, 72)');
+  await expect(checkIn).toHaveCSS('opacity', '1');
+  await expect(checkIn).toHaveCSS('cursor', 'not-allowed');
 });
 
 test('community tablist follows arrow-key navigation', async ({ page, app }) => {

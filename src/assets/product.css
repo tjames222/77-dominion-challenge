@@ -60,6 +60,7 @@
   margin: 18px 0;
 }
 .cta-button,
+.secondary,
 .secondary-button {
   display: grid;
   place-items: center;
@@ -68,12 +69,44 @@
   min-width: 0;
   overflow-wrap: anywhere;
 }
+.secondary,
 .secondary-button {
-  border: 1px solid var(--border);
+  padding: 12px 18px;
+  border: 1px solid color-mix(in srgb, var(--accent) 28%, var(--border));
   border-radius: 16px;
-  color: var(--text);
-  background: var(--surface-elevated);
+  color: var(--button-secondary-text);
+  background: var(--button-secondary-background);
+  font: inherit;
   font-weight: 900;
+  line-height: 1.2;
+  text-decoration: none;
+  transition: border-color 160ms ease, background 160ms ease, box-shadow 160ms ease, transform 160ms ease;
+}
+.secondary.compact {
+  min-height: 44px;
+  padding: 8px 14px;
+  border-radius: 14px;
+}
+.secondary:not(:disabled):not([aria-disabled="true"]):hover,
+.secondary-button:not(:disabled):not([aria-disabled="true"]):hover {
+  border-color: color-mix(in srgb, var(--accent) 58%, var(--border));
+  background: color-mix(in srgb, var(--accent) 10%, var(--button-secondary-background));
+  box-shadow: 0 8px 18px color-mix(in srgb, var(--shadow-color) 13%, transparent);
+  transform: translateY(-1px);
+}
+.secondary:not(:disabled):not([aria-disabled="true"]):active,
+.secondary-button:not(:disabled):not([aria-disabled="true"]):active {
+  box-shadow: none;
+  transform: translateY(1px);
+}
+.secondary.destructive {
+  border-color: color-mix(in srgb, var(--danger) 58%, var(--border));
+  background: var(--button-danger-background);
+  color: var(--button-danger-text);
+}
+.secondary.destructive:not(:disabled):not([aria-disabled="true"]):hover {
+  border-color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 20%, var(--button-secondary-background));
 }
 .danger-button {
   display: grid;
@@ -90,9 +123,17 @@
   overflow-wrap: anywhere;
 }
 .danger-button:disabled,
+.secondary:disabled,
+.secondary[aria-disabled="true"],
+.secondary-button[aria-disabled="true"],
 .secondary-button:disabled {
+  border-color: var(--button-disabled-border);
+  background: var(--button-disabled-background);
+  color: var(--button-disabled-text);
   cursor: not-allowed;
-  opacity: .48;
+  opacity: 1;
+  box-shadow: none;
+  transform: none;
 }
 .section-copy {
   color: var(--text-muted);
@@ -2878,6 +2919,9 @@ body.challenge-finished .reward-backdrop {
 .appearance-reward-choice.is-owned .appearance-reward-progress {
   display: none;
 }
+.appearance-reward-choice.is-owned .appearance-option {
+  border-radius: 16px;
+}
 .profile-theme-status {
   min-height: 1.1rem;
   margin: 10px 0 0;
@@ -3039,7 +3083,10 @@ body.challenge-finished .reward-backdrop {
   border-right: 0;
   border-left: 0;
   background: transparent;
-  font: inherit;
+  font-family: inherit;
+  font-size: inherit;
+  line-height: inherit;
+  text-align: left;
   cursor: pointer;
 }
 .action-difficulty-field {
