@@ -14,15 +14,27 @@ const screenshotCss = readFileSync(
   new URL('../../tests/e2e/support/screenshot.css', import.meta.url),
   'utf8',
 );
+const stylesCss = readFileSync(
+  new URL('../assets/styles.css', import.meta.url),
+  'utf8',
+);
+const shareComposerCss = readFileSync(
+  new URL('../assets/share-composer.css', import.meta.url),
+  'utf8',
+);
 const appTestHarness = readFileSync(
   new URL('../../tests/e2e/support/app-test.mjs', import.meta.url),
   'utf8',
 );
-const screenshotFont = readFileSync(
-  new URL('../../tests/e2e/support/InterVariable.woff2', import.meta.url),
+const productionFont = readFileSync(
+  new URL('../assets/fonts/InterVariable.woff2', import.meta.url),
 );
-const screenshotFontLicense = readFileSync(
-  new URL('../../tests/e2e/support/Inter-LICENSE.txt', import.meta.url),
+const productionFontLicense = readFileSync(
+  new URL('../../public/fonts/Inter-LICENSE.txt', import.meta.url),
+  'utf8',
+);
+const buildAssetVerifier = readFileSync(
+  new URL('../../scripts/verify-build-assets.mjs', import.meta.url),
   'utf8',
 );
 
@@ -37,23 +49,42 @@ test('manual baseline generation forcibly rewrites every screenshot', () => {
   );
 });
 
-test('visual comparisons use the pinned open-source Inter font', () => {
+test('production bundles the pinned Inter variable font as the brand family', () => {
   assert.match(
-    screenshotCss,
-    /font-family: "Dominion E2E Inter";[\s\S]*?InterVariable\.woff2/,
+    stylesCss,
+    /@font-face \{[\s\S]*?font-family: "Inter";[\s\S]*?fonts\/InterVariable\.woff2[\s\S]*?font-weight: 100 900;[\s\S]*?font-display: swap;/,
   );
-  assert.match(screenshotCss, /html \{[\s\S]*?Dominion E2E Inter[\s\S]*?!important/);
+  assert.match(
+    stylesCss,
+    /:root \{[\s\S]*?--font-sans: "Inter"[\s\S]*?--font-display: var\(--font-sans\);[\s\S]*?font-family: var\(--font-sans\);/,
+  );
+  assert.equal(
+    createHash('sha256').update(productionFont).digest('hex'),
+    '693b77d4f32ee9b8bfc995589b5fad5e99adf2832738661f5402f9978429a8e3',
+  );
+  assert.match(productionFontLicense, /SIL OPEN FONT LICENSE Version 1\.1/);
+  assert.equal(packageJson.scripts.build, 'vite build && node scripts/verify-build-assets.mjs');
+  assert.match(buildAssetVerifier, /fonts\/Inter-LICENSE\.txt/);
+  assert.match(buildAssetVerifier, /InterVariable-/);
+});
+
+test('visual comparisons wait for the production brand font without replacing it', () => {
+  assert.doesNotMatch(screenshotCss, /@font-face|Dominion E2E Inter/);
   assert.match(appTestHarness, /data-dominion-e2e-screenshot-style/);
   assert.match(
     appTestHarness,
-    /document\.fonts\.load\('400 16px "Dominion E2E Inter"'\)/,
+    /document\.fonts\.load\('400 16px "Inter"'\)/,
   );
+  assert.doesNotMatch(appTestHarness, /Dominion E2E Inter/);
   assert.doesNotMatch(appTestHarness, /stylePath:\s*app\.screenshotStyle/);
-  assert.equal(
-    createHash('sha256').update(screenshotFont).digest('hex'),
-    '693b77d4f32ee9b8bfc995589b5fad5e99adf2832738661f5402f9978429a8e3',
+});
+
+test('share composer metrics use the authoritative display font token', () => {
+  assert.match(
+    shareComposerCss,
+    /\.share-preview-metric \{[\s\S]*?font-family: var\(--font-display\);/,
   );
-  assert.match(screenshotFontLicense, /SIL OPEN FONT LICENSE Version 1\.1/);
+  assert.doesNotMatch(shareComposerCss, /--display-font/);
 });
 
 test('full-page screenshots neutralize scroll-responsive topbar visuals', () => {

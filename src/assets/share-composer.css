@@ -110,7 +110,7 @@
 
 .share-preview-metric {
   color: var(--accent-strong);
-  font-family: var(--display-font);
+  font-family: var(--font-display);
   font-size: clamp(2.2rem, 9vw, 4rem);
   line-height: .92;
 }

@@ -1,5 +1,15 @@
+@font-face {
+  font-family: "Inter";
+  src: url("./fonts/InterVariable.woff2") format("woff2-variations");
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+}
+
 :root {
-  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-sans: "Inter", ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-display: var(--font-sans);
+  font-family: var(--font-sans);
   color: var(--text);
   background: var(--background);
   --background: #000000;
@@ -34,6 +44,9 @@
   --button-secondary-text: var(--text);
   --button-danger-background: color-mix(in srgb, var(--danger) 14%, var(--surface-elevated));
   --button-danger-text: var(--text);
+  --button-disabled-background: var(--surface-elevated);
+  --button-disabled-text: var(--text-muted);
+  --button-disabled-border: color-mix(in srgb, var(--border) 84%, var(--text-muted));
   --progress-track: color-mix(in srgb, var(--background) 48%, var(--surface-elevated));
   --progress-fill-start: var(--accent);
   --progress-fill-end: var(--success);
@@ -154,7 +167,11 @@ textarea::placeholder { color: var(--text-disabled); opacity: 1; }
 }
 .theme-toggle,
 .back-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   flex: 0 0 auto;
+  min-height: 44px;
   border: 1px solid var(--border);
   background: var(--surface);
   color: var(--text);
@@ -500,7 +517,13 @@ select {
   color: var(--button-primary-text);
   background: var(--button-primary-background);
 }
-.primary:disabled { opacity: .45; cursor: not-allowed; }
+.primary:disabled {
+  color: var(--button-disabled-text);
+  background: var(--button-disabled-background);
+  box-shadow: inset 0 0 0 1px var(--button-disabled-border);
+  opacity: 1;
+  cursor: not-allowed;
+}
 .primary.is-complete:disabled {
   opacity: 1;
   color: var(--button-primary-text);

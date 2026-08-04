@@ -61,8 +61,8 @@ async function installScreenshotStyle(page) {
   await page.evaluate(async () => {
     if (!document.fonts) return;
     await Promise.all([
-      document.fonts.load('400 16px "Dominion E2E Inter"'),
-      document.fonts.load('900 16px "Dominion E2E Inter"'),
+      document.fonts.load('400 16px "Inter"'),
+      document.fonts.load('900 16px "Inter"'),
     ]);
     await document.fonts.ready;
   });

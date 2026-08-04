@@ -44,6 +44,9 @@ const requiredTokens = [
   '--button-secondary-text',
   '--button-danger-background',
   '--button-danger-text',
+  '--button-disabled-background',
+  '--button-disabled-text',
+  '--button-disabled-border',
   '--progress-track',
   '--progress-fill-start',
   '--progress-fill-end',
@@ -102,6 +105,7 @@ test('palette contrast meets text, control, focus, and meaningful graphic thresh
 
   assert.ok(contrast(hexValue('--button-primary-text'), hexValue('--button-primary-background')) >= 4.5);
   assert.ok(contrast(hexValue('--button-danger-text'), hexValue('--button-danger-background')) >= 4.5);
+  assert.ok(contrast(hexValue('--button-disabled-text'), hexValue('--button-disabled-background')) >= 4.5);
 
   for (const status of ['--success', '--warning', '--danger', '--info']) {
     assert.ok(

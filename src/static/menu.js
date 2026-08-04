@@ -39,16 +39,88 @@ const publicLinks = [
   ['Log In', './login.html'],
 ];
 
+const MENU_FOCUSABLE_SELECTOR = [
+  'a[href]',
+  'button:not([disabled])',
+  'input:not([disabled])',
+  'select:not([disabled])',
+  'textarea:not([disabled])',
+  '[tabindex]:not([tabindex="-1"])',
+].join(',');
+
+function focusWithoutScroll(element) {
+  if (!element?.focus) return;
+  try {
+    element.focus({ preventScroll: true });
+  } catch {
+    element.focus();
+  }
+}
+
+function trapMenuFocus(event) {
+  if (event.key !== 'Tab' || !document.body.classList.contains('menu-open')) return;
+
+  const menu = document.querySelector('.global-menu');
+  const focusable = [...(menu?.querySelectorAll(MENU_FOCUSABLE_SELECTOR) || [])]
+    .filter((element) => {
+      const styles = window.getComputedStyle(element);
+      return !element.hidden
+        && element.getAttribute('aria-hidden') !== 'true'
+        && styles.display !== 'none'
+        && styles.visibility !== 'hidden';
+    });
+  if (!focusable.length) {
+    event.preventDefault();
+    return;
+  }
+
+  const first = focusable[0];
+  const last = focusable[focusable.length - 1];
+  const focusIsOutside = !menu.contains(document.activeElement);
+
+  if (event.shiftKey && (focusIsOutside || document.activeElement === first)) {
+    event.preventDefault();
+    focusWithoutScroll(last);
+  } else if (!event.shiftKey && (focusIsOutside || document.activeElement === last)) {
+    event.preventDefault();
+    focusWithoutScroll(first);
+  }
+}
+
+function syncMenuExpandedState(isOpen) {
+  const button = document.querySelector('.global-menu-button');
+  const menu = document.querySelector('.global-menu');
+
+  button?.setAttribute('aria-expanded', String(isOpen));
+  if (!menu) return;
+
+  menu.inert = !isOpen;
+  menu.setAttribute('aria-hidden', String(!isOpen));
+  if (isOpen) menu.removeAttribute('inert');
+  else menu.setAttribute('inert', '');
+}
+
 function closeMenu() {
+  const wasOpen = document.body.classList.contains('menu-open');
+  const button = document.querySelector('.global-menu-button');
   document.body.classList.remove('menu-open');
-  document.querySelector('.global-menu-button')?.setAttribute('aria-expanded', 'false');
+  syncMenuExpandedState(false);
   syncTopbarScrollState?.();
+
+  if (wasOpen) focusWithoutScroll(button);
 }
 
 function openMenu() {
   document.body.classList.add('menu-open');
-  document.querySelector('.global-menu-button')?.setAttribute('aria-expanded', 'true');
+  syncMenuExpandedState(true);
   topbar?.classList.remove('topbar-collapsed');
+  const menu = document.querySelector('.global-menu');
+  const firstVisibleControl = [...(menu?.querySelectorAll(MENU_FOCUSABLE_SELECTOR) || [])]
+    .find((element) => {
+      const styles = window.getComputedStyle(element);
+      return !element.hidden && styles.display !== 'none' && styles.visibility !== 'hidden';
+    });
+  focusWithoutScroll(firstVisibleControl);
 }
 
 function initScrollResponsiveTopbar() {
@@ -130,6 +202,7 @@ async function buildMenu() {
     button.className = 'global-menu-button';
     button.type = 'button';
     button.setAttribute('aria-label', 'Open menu');
+    button.setAttribute('aria-controls', 'global-menu');
     button.setAttribute('aria-expanded', 'false');
     button.innerHTML = '<span></span><span></span><span></span>';
     button.addEventListener('click', () => {
@@ -146,10 +219,17 @@ async function buildMenu() {
 
   if (!menu) {
     menu = document.createElement('aside');
+    menu.id = 'global-menu';
     menu.className = 'global-menu';
     menu.setAttribute('aria-label', 'Application menu');
+    menu.setAttribute('aria-hidden', 'true');
+    menu.setAttribute('inert', '');
+    menu.inert = true;
     document.body.appendChild(menu);
   }
+
+  menu.id ||= 'global-menu';
+  button.setAttribute('aria-controls', menu.id);
 
   const links = isLoggedIn ? loggedInLinks : publicLinks;
   const profileLabel = isLoggedIn ? (user?.name || 'Member') : 'Visitor';
@@ -172,6 +252,7 @@ async function buildMenu() {
 
   const trailingActions = topbar.querySelector('.topbar-trailing-actions');
   (trailingActions || topbar).appendChild(button);
+  syncMenuExpandedState(document.body.classList.contains('menu-open'));
   menu.querySelector('.global-menu-close')?.addEventListener('click', closeMenu);
   menu.querySelector('.global-menu-logout')?.addEventListener('click', async () => {
     closeShareComposer('logout');
@@ -187,7 +268,12 @@ async function buildMenu() {
   if (!globalMenuListenersBound) {
     globalMenuListenersBound = true;
     document.addEventListener('keydown', (event) => {
-      if (event.key === 'Escape') closeMenu();
+      if (event.key === 'Escape' && document.body.classList.contains('menu-open')) {
+        event.preventDefault();
+        closeMenu();
+      } else {
+        trapMenuFocus(event);
+      }
     });
   }
 

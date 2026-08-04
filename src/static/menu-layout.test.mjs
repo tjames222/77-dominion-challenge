@@ -146,4 +146,26 @@ describe('shared sticky menu', () => {
     assert.match(reducedMotion, /\.global-menu/);
     assert.match(reducedMotion, /transition:\s*none\s*!important/);
   });
+
+  test('fully hides the closed drawer visually and from interaction', () => {
+    const drawer = declarationsFor('.global-menu');
+    const backdrop = declarationsFor('.global-menu-backdrop');
+    const openDrawer = declarationsFor('.menu-open .global-menu');
+
+    assert.match(drawer, /visibility:\s*hidden/);
+    assert.match(drawer, /pointer-events:\s*none/);
+    assert.match(drawer, /box-shadow:\s*none/);
+    assert.match(backdrop, /visibility:\s*hidden/);
+    assert.match(openDrawer, /visibility:\s*visible/);
+    assert.match(openDrawer, /pointer-events:\s*auto/);
+    assert.match(openDrawer, /box-shadow:\s*-24px 0 80px/);
+    assert.match(menuJs, /menu\.inert = !isOpen/);
+    assert.match(menuJs, /menu\.setAttribute\('aria-hidden', String\(!isOpen\)\)/);
+    assert.match(menuJs, /button\.setAttribute\('aria-controls', menu\.id\)/);
+    assert.match(menuJs, /event\.key !== 'Tab'/);
+    assert.match(menuJs, /styles\.display !== 'none'/);
+    assert.match(menuJs, /styles\.visibility !== 'hidden'/);
+    assert.match(menuJs, /focusIsOutside \|\| document\.activeElement === first/);
+    assert.match(menuJs, /document\.activeElement === last/);
+  });
 });
