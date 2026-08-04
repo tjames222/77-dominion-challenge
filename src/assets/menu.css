@@ -463,7 +463,10 @@ body {
     overflow: hidden;
     padding-inline: 8px;
     font-size: .7rem;
-    text-overflow: ellipsis;
+    line-height: 1.05;
+    text-align: center;
+    text-overflow: clip;
+    white-space: normal;
   }
   .topbar.has-authenticated-header-actions > .brand-name {
     display: none;
@@ -539,10 +542,6 @@ body {
     max-width: 98px;
     padding-inline: 6px;
     font-size: .68rem;
-    line-height: 1.05;
-    text-align: center;
-    text-overflow: clip;
-    white-space: normal;
   }
   .shared-header-action {
     padding-inline: 5px;
