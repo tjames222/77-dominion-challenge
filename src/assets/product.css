@@ -69,6 +69,11 @@
   min-width: 0;
   overflow-wrap: anywhere;
 }
+.cta-button[hidden],
+.secondary[hidden],
+.secondary-button[hidden] {
+  display: none !important;
+}
 .secondary,
 .secondary-button {
   padding: 12px 18px;

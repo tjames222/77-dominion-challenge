@@ -65,6 +65,10 @@ describe('shared branded secondary controls', () => {
       productCss,
       /\.cta-button,\s*\.secondary,\s*\.secondary-button\s*\{[^}]*min-height:\s*52px/,
     );
+    assert.match(
+      productCss,
+      /\.cta-button\[hidden\],[\s\S]*?\.secondary\[hidden\],[\s\S]*?display:\s*none\s*!important/,
+    );
     assert.match(base, /padding:\s*12px 18px/);
     assert.match(base, /border-radius:\s*16px/);
     assert.match(base, /var\(--button-secondary-background\)/);
