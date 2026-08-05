@@ -3,8 +3,9 @@ import {
   challengeActivationDay,
   isSupportedChallengeActivationDate,
 } from './challenge-activation.mjs';
+import { CHALLENGE_START_INTENT_PATH } from './challenge-start-intent.mjs';
 
-export const GROUP_CHALLENGE_START_HREF = './community.html?intent=challenge-start';
+export const GROUP_CHALLENGE_START_HREF = CHALLENGE_START_INTENT_PATH;
 export const SOLO_TRAINING_LAUNCH_EVENT = 'dominion:solo-training-launch-requested';
 export const SOLO_TRAINING_LAUNCH_STORAGE_KEY = 'dominion:soloTrainingLaunchRequests';
 export const SOLO_TRAINING_LAUNCH_SCHEMA_VERSION = 1;
