@@ -20,17 +20,19 @@ import {
 import {
   TERMINAL_INVITE_STATUSES,
   buildInviteAuthHref,
-  captureInviteSecret,
+  captureInviteCredential,
   clearInviteContinuation,
   getStoredInviteContinuation,
   inviteNeedsContinuation,
   inviteStatusContent,
   storeInviteContinuation,
 } from './invite-flow.mjs';
+import { formatCrewInviteCode, normalizeCrewInviteCode } from './crew-invite.mjs';
 
 const $ = (id) => document.getElementById(id);
-const capturedInvite = captureInviteSecret(window);
-let rawInviteSecret = capturedInvite.secret;
+const capturedInvite = captureInviteCredential(window);
+let rawInviteSecret = capturedInvite.type === 'token' ? capturedInvite.value : '';
+let rawInviteCode = capturedInvite.type === 'code' ? capturedInvite.value : '';
 let latestPreview = {};
 let latestServerStatus = 'invalid';
 let billingState = { authenticated: false, appAccess: false };
@@ -84,6 +86,15 @@ function render(serverStatus, preview = {}) {
   $('inviteEyebrow').textContent = content.eyebrow;
   $('inviteTitle').textContent = content.title;
   $('inviteMessage').textContent = content.message;
+
+  const showCodeEntry = ['enter_code', 'invalid', 'expired', 'revoked', 'already_used', 'session_expired'].includes(status);
+  $('inviteCodeForm').hidden = !showCodeEntry;
+  if (!showCodeEntry) {
+    $('inviteCodeInput').value = '';
+    $('inviteCodeError').hidden = true;
+    $('inviteCodeError').textContent = '';
+  }
+  if (status === 'enter_code') queueMicrotask(() => $('inviteCodeInput')?.focus());
 
   const canRevealPreview = ['ready', 'authentication_required', 'subscription_required', 'already_member', 'current_crew_conflict', 'joined', 'activation_pending', 'challenge_started'].includes(status)
     && Boolean(preview.groupName);
@@ -200,7 +211,7 @@ async function loadInvite() {
     billingState = await getBillingState();
     await bindCurrentGroupStartIntent();
     const continuationToken = getStoredInviteContinuation(sessionStorage);
-    if (!rawInviteSecret && !continuationToken) {
+    if (!rawInviteSecret && !rawInviteCode && !continuationToken) {
       if (groupStartIntent?.stage === 'activation_pending') {
         const outcome = await reconcilePendingGroupStart();
         if (outcome === 'complete') {
@@ -216,15 +227,17 @@ async function loadInvite() {
         }
         return;
       }
-      render('invalid');
+      render('enter_code');
       return;
     }
 
     const response = await previewCrewInvite({
       token: rawInviteSecret || '',
-      continuationToken: rawInviteSecret ? '' : continuationToken,
+      code: rawInviteCode || '',
+      continuationToken: rawInviteSecret || rawInviteCode ? '' : continuationToken,
     });
     rawInviteSecret = '';
+    rawInviteCode = '';
 
     if (response.continuationToken) {
       storeInviteContinuation(sessionStorage, response.continuationToken);
@@ -248,9 +261,37 @@ async function loadInvite() {
     render(response.status, response.preview || {});
   } catch {
     rawInviteSecret = '';
+    rawInviteCode = '';
     render('rate_limited');
   }
 }
+
+$('inviteCodeInput')?.addEventListener('input', (event) => {
+  event.currentTarget.value = formatCrewInviteCode(event.currentTarget.value, { partial: true });
+  $('inviteCodeError').hidden = true;
+  $('inviteCodeError').textContent = '';
+});
+
+$('inviteCodeForm')?.addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const input = $('inviteCodeInput');
+  const code = normalizeCrewInviteCode(input.value);
+  if (!code) {
+    $('inviteCodeError').textContent = 'Enter all four code groups exactly as shown.';
+    $('inviteCodeError').hidden = false;
+    input.focus();
+    return;
+  }
+
+  rawInviteCode = code;
+  input.value = '';
+  $('inviteCodeError').hidden = true;
+  $('inviteCodeError').textContent = '';
+  $('inviteCodeForm').hidden = true;
+  $('inviteTitle').textContent = 'Checking invitation…';
+  $('inviteMessage').textContent = 'No membership change will happen until you confirm.';
+  await loadInvite();
+});
 
 $('confirmInviteButton')?.addEventListener('click', async () => {
   const continuationToken = getStoredInviteContinuation(sessionStorage);

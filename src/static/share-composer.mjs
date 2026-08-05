@@ -14,11 +14,6 @@ export const SHARE_FLOWS = Object.freeze({
     label: 'The Dominion challenge',
     description: 'Invite someone to learn about the seven daily standards.',
   }),
-  invite: Object.freeze({
-    kind: 'invite',
-    label: 'Private-group invite',
-    description: 'Invite someone to join one of your private groups.',
-  }),
 });
 
 export const SNAPSHOT_SHARE_KINDS = Object.freeze(['streak', 'progress', 'general']);

@@ -1,0 +1,283 @@
+.crew-empty-actions,
+.crew-invite-panel-actions,
+.crew-invite-lifecycle-actions,
+.crew-invite-confirmation-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.65rem;
+}
+
+.crew-empty-actions > button,
+.crew-invite-panel-actions > button,
+.crew-invite-lifecycle-actions > button,
+.crew-invite-confirmation-actions > button {
+  min-height: 44px;
+}
+
+.crew-invite-composer {
+  display: grid;
+  gap: 1rem;
+}
+
+.crew-invite-lifecycle {
+  padding: 1rem;
+  border: 1px solid color-mix(in srgb, var(--accent) 34%, var(--border));
+  border-radius: 16px;
+  background:
+    radial-gradient(circle at 100% 0, color-mix(in srgb, var(--accent) 16%, transparent), transparent 48%),
+    color-mix(in srgb, var(--surface-elevated) 84%, var(--surface));
+}
+
+.crew-invite-lifecycle > * {
+  margin: 0;
+}
+
+.crew-invite-lifecycle h3 {
+  color: var(--text);
+  font-size: 1.05rem;
+}
+
+.crew-invite-lifecycle > p:not(.eyebrow) {
+  margin-top: 0.4rem;
+  color: var(--text-muted);
+  font-size: 0.8rem;
+  line-height: 1.5;
+}
+
+.crew-invite-lifecycle[data-status="active"] {
+  border-color: color-mix(in srgb, var(--accent) 68%, var(--border));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 18%, transparent);
+}
+
+.crew-invite-facts {
+  margin-top: 0.9rem;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 1px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--border);
+}
+
+.crew-invite-facts div {
+  min-width: 0;
+  padding: 0.7rem;
+  background: color-mix(in srgb, var(--surface) 94%, var(--background));
+}
+
+.crew-invite-facts dt {
+  margin-bottom: 0.25rem;
+  color: var(--text-muted);
+  font-size: 0.62rem;
+  font-weight: 850;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.crew-invite-facts dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+  color: var(--text);
+  font-size: 0.74rem;
+  font-weight: 800;
+}
+
+.crew-invite-generation {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.crew-invite-generation[hidden],
+.crew-invite-representations[hidden],
+.crew-invite-lifecycle-actions[hidden],
+.crew-invite-inline-confirmation[hidden],
+.crew-invite-panel[hidden] {
+  display: none;
+}
+
+.crew-invite-generation p,
+.crew-invite-instructions,
+.crew-invite-safety,
+.crew-invite-status,
+.crew-invite-inline-confirmation p {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 0.78rem;
+  line-height: 1.5;
+}
+
+.crew-invite-generation button {
+  min-height: 48px;
+}
+
+.crew-invite-representations {
+  min-width: 0;
+}
+
+.crew-invite-tabs {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.4rem;
+  padding: 0.35rem;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--surface-elevated) 70%, transparent);
+}
+
+.crew-invite-tab {
+  min-height: 44px;
+  padding: 0.55rem 0.7rem;
+  color: var(--text-muted);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  font-weight: 850;
+}
+
+.crew-invite-tab[aria-selected="true"] {
+  color: var(--text);
+  background: color-mix(in srgb, var(--accent) 14%, var(--surface));
+  border-color: color-mix(in srgb, var(--accent) 56%, var(--border));
+}
+
+.crew-invite-panel {
+  min-width: 0;
+  padding-top: 1rem;
+  display: grid;
+  gap: 0.9rem;
+}
+
+.crew-invite-link-value {
+  width: 100%;
+  min-height: 48px;
+  padding-inline: 0.8rem;
+  color: var(--text);
+  background: var(--surface-elevated);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  font-size: 0.78rem;
+}
+
+.crew-invite-code-value {
+  width: 100%;
+  padding: clamp(0.8rem, 4vw, 1.15rem);
+  display: block;
+  overflow-wrap: anywhere;
+  color: var(--accent-strong);
+  background: color-mix(in srgb, var(--accent) 9%, var(--surface-elevated));
+  border: 1px solid color-mix(in srgb, var(--accent) 45%, var(--border));
+  border-radius: 14px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: clamp(1rem, 5vw, 1.35rem);
+  font-weight: 900;
+  letter-spacing: 0.09em;
+  line-height: 1.5;
+  text-align: center;
+  user-select: all;
+}
+
+.crew-invite-qr-figure {
+  margin: 0;
+  display: grid;
+  justify-items: center;
+  gap: 0.75rem;
+}
+
+.crew-invite-qr-figure canvas {
+  width: min(100%, 320px);
+  height: auto;
+  padding: 0;
+  border: 1px solid color-mix(in srgb, #0e1116 22%, var(--border));
+  border-radius: 12px;
+  background: #fff;
+  image-rendering: pixelated;
+}
+
+.crew-invite-qr-figure figcaption {
+  max-width: 42ch;
+  color: var(--text-muted);
+  font-size: 0.72rem;
+  line-height: 1.45;
+  text-align: center;
+}
+
+.crew-invite-panel-actions > button {
+  flex: 1 1 10rem;
+}
+
+.crew-invite-safety {
+  padding: 0.75rem 0.85rem;
+  border-left: 3px solid var(--accent);
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+}
+
+.crew-invite-lifecycle-actions {
+  padding-top: 0.25rem;
+  border-top: 1px solid var(--border);
+}
+
+.crew-invite-inline-confirmation {
+  padding: 0.9rem;
+  display: grid;
+  gap: 0.75rem;
+  border: 1px solid color-mix(in srgb, var(--danger) 42%, var(--border));
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--danger) 8%, var(--surface));
+}
+
+.crew-invite-status:not(:empty) {
+  color: var(--text);
+  font-weight: 800;
+}
+
+.crew-invite-tab:focus-visible,
+.crew-invite-link-value:focus-visible,
+.crew-invite-code-value:focus-visible,
+.crew-invite-composer button:focus-visible {
+  outline: 3px solid color-mix(in srgb, var(--accent) 62%, transparent);
+  outline-offset: 3px;
+}
+
+@media (max-width: 640px) {
+  .crew-empty-actions,
+  .crew-invite-panel-actions,
+  .crew-invite-lifecycle-actions,
+  .crew-invite-confirmation-actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .crew-empty-actions > button,
+  .crew-invite-panel-actions > button,
+  .crew-invite-lifecycle-actions > button,
+  .crew-invite-confirmation-actions > button {
+    width: 100%;
+  }
+
+  .crew-invite-facts {
+    grid-template-columns: 1fr;
+  }
+
+  .crew-invite-code-value {
+    letter-spacing: 0.045em;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .crew-invite-composer *,
+  .crew-empty-actions * {
+    scroll-behavior: auto;
+    transition: none;
+  }
+}
+
+@media (forced-colors: active) {
+  .crew-invite-lifecycle,
+  .crew-invite-tabs,
+  .crew-invite-code-value,
+  .crew-invite-safety,
+  .crew-invite-inline-confirmation {
+    forced-color-adjust: auto;
+  }
+}

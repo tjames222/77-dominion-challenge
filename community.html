@@ -10,6 +10,7 @@
     <link rel="stylesheet" href="./src/assets/product.css" />
     <link rel="stylesheet" href="./src/assets/dialog.css" />
     <link rel="stylesheet" href="./src/assets/share-composer.css" />
+    <link rel="stylesheet" href="./src/assets/crew-invite.css" />
     <link rel="stylesheet" href="./src/assets/community.css" />
     <link rel="stylesheet" href="./src/assets/menu.css" />
     <link rel="stylesheet" href="./src/assets/dominion-night.css" />
@@ -51,13 +52,16 @@
               <p class="eyebrow">Start a Crew</p>
               <h2>Build your accountability group.</h2>
               </div>
-              <button
-                class="primary"
-                id="openCrewFormButton"
-                type="button"
-                aria-expanded="false"
-                aria-controls="crewForm"
-              >Create a Crew</button>
+              <div class="crew-empty-actions">
+                <button
+                  class="primary"
+                  id="openCrewFormButton"
+                  type="button"
+                  aria-expanded="false"
+                  aria-controls="crewForm"
+                >Create a Crew</button>
+                <button class="secondary" id="joinCrewButton" type="button">Join a Crew</button>
+              </div>
             </div>
             <form class="community-form" id="crewForm" hidden>
               <label>
@@ -93,8 +97,6 @@
                   class="invite-people-button"
                   id="copyInviteButton"
                   type="button"
-                  data-share-composer
-                  data-share-kind="invite"
                 >
                   <span class="invite-people-icon" aria-hidden="true">+</span>
                   <span>Invite People</span>

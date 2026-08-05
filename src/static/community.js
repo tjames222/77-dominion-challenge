@@ -46,6 +46,7 @@ import {
   buildCrewTrainingSteps,
   crewTrainingActionLabel,
 } from './crew-training.mjs';
+import { initCrewInviteDialog } from './crew-invite-dialog.js';
 
 const GROUP_INTEGRATIONS_ENABLED = groupIntegrationsEnabled(
   import.meta.env.VITE_ENABLE_GROUP_INTEGRATIONS,
@@ -816,6 +817,7 @@ function renderCrewShell() {
   });
   const createCard = $('crewCreateCard');
   const openCreateButton = $('openCrewFormButton');
+  const joinCrewButton = $('joinCrewButton');
   const createForm = $('crewForm');
   const manageCard = $('crewManageCard');
   const membersCard = $('crewMembersCard');
@@ -829,6 +831,7 @@ function renderCrewShell() {
     openCreateButton.hidden = !view.showCreateButton;
     openCreateButton.setAttribute('aria-expanded', String(view.showCreateForm));
   }
+  if (joinCrewButton) joinCrewButton.hidden = !view.showCreateButton;
   if (createForm) createForm.hidden = !view.showCreateForm;
   const createSubmit = createForm?.querySelector('button[type="submit"]');
   if (createSubmit) {
@@ -1302,6 +1305,9 @@ function setCrewFormOpen(open, { focus = true } = {}) {
 }
 
 $('openCrewFormButton')?.addEventListener('click', () => setCrewFormOpen(true));
+$('joinCrewButton')?.addEventListener('click', () => {
+  window.location.href = './invite.html';
+});
 $('cancelCrewFormButton')?.addEventListener('click', () => {
   $('crewForm')?.reset();
   $('crewStartDateInput').value = todayKey();
@@ -1555,7 +1561,7 @@ $('crewForm')?.addEventListener('submit', async (event) => {
     state.createFormOpen = false;
     setFeedback(startingGroupChallenge
       ? `${crew.name} is ready. Verifying your Group challenge start…`
-      : `${crew.name} is ready. Copy the invite link when you want to bring people in.`);
+      : `${crew.name} is ready. Use Invite People when you want to bring someone in.`);
     await refreshCrews();
     const authoritativeCrew = activeCrew();
     if (startingGroupChallenge) {
@@ -1624,6 +1630,8 @@ $('journalForm')?.addEventListener('submit', async (event) => {
     release();
   }
 });
+
+initCrewInviteDialog({ getCrew: activeCrew });
 
 bootCommunity().catch((error) => {
   console.warn('Unable to load community', error);

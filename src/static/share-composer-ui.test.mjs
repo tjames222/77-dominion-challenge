@@ -12,6 +12,7 @@ const dashboard = read('../../dashboard.html');
 const rewards = read('../../badges-rewards.html');
 const community = read('../../community.html');
 const communityJs = read('./community.js');
+const inviteDialog = read('./crew-invite-dialog.js');
 
 describe('sharing composer browser integration', () => {
   test('uses the authoritative snapshot and lifetime reward APIs', () => {
@@ -22,7 +23,7 @@ describe('sharing composer browser integration', () => {
     assert.match(api, /client\.rpc\('complete_sharing_reward'/);
   });
 
-  test('loads one shared accessible composer from header, rewards, streak, general, and invite entries', () => {
+  test('loads one shared public composer and a distinct private-invitation dialog', () => {
     [rewards, community].forEach((html) => {
       assert.match(html, /src\/assets\/share-composer\.css/);
       assert.match(html, /src\/static\/share-composer\.js/);
@@ -34,9 +35,11 @@ describe('sharing composer browser integration', () => {
     assert.match(sharedHeader, /shareButton\.dataset\.shareKind = 'progress'/);
     assert.doesNotMatch(dashboard, /data-share-composer|data-share-kind=|Share my progress/);
     assert.match(rewards, /data-share-kind="progress"/);
-    assert.match(community, /data-share-kind="invite"/);
+    assert.doesNotMatch(community, /data-share-kind="invite"/);
+    assert.match(community, /id="copyInviteButton"/);
     assert.match(composerModel, /kind: 'streak'/);
     assert.match(composerModel, /kind: 'general'/);
+    assert.doesNotMatch(composerModel, /kind: 'invite',[\s\S]*?label:/);
     assert.match(composer, /createDialog\(\{/);
     assert.match(composer, /Choose what to share/);
     assert.match(composer, /input\.type = 'radio'/);
@@ -44,13 +47,17 @@ describe('sharing composer browser integration', () => {
     assert.match(composer, /export function initShareComposer/);
     assert.match(composer, /shareComposerInstance\.bindTriggers\(triggers\)/);
     assert.match(sharedHeader, /initShareComposer\(ownerDocument\)/);
+    assert.match(communityJs, /initCrewInviteDialog/);
+    assert.match(inviteDialog, /dataset\.inviteTab/);
   });
 
-  test('retires the direct invite-copy path in favor of explicit composer actions', () => {
+  test('routes private invitations through explicit Link, Code, and QR actions', () => {
     assert.doesNotMatch(communityJs, /getOrCreateCrewInvite/);
     assert.doesNotMatch(communityJs, /navigator\.clipboard/);
-    assert.match(composer, /executeInviteShare/);
-    assert.match(composer, /reward unlocks after another person joins/);
+    assert.match(inviteDialog, /issueCrewInviteBundle/);
+    assert.match(inviteDialog, /copy-link/);
+    assert.match(inviteDialog, /copy-code/);
+    assert.match(inviteDialog, /share-qr/);
   });
 
   test('supports keyboard focus, narrow screens, and reduced ambiguity between methods', () => {

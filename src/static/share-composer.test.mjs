@@ -10,9 +10,10 @@ import {
 } from './share-composer.mjs';
 
 describe('sharing composer contract', () => {
-  test('offers the four intended share flows', () => {
-    assert.deepEqual(Object.keys(SHARE_FLOWS), ['streak', 'progress', 'general', 'invite']);
+  test('offers public sharing only; private invitations use their secure dialog', () => {
+    assert.deepEqual(Object.keys(SHARE_FLOWS), ['streak', 'progress', 'general']);
     assert.equal(normalizeShareKind('unknown'), 'progress');
+    assert.equal(normalizeShareKind('invite'), 'progress');
   });
 
   test('uses privacy-safe server presentation and opaque public URL', () => {

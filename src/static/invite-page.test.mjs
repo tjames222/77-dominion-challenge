@@ -26,6 +26,17 @@ describe('private-group invitation browser page', () => {
     assert.match(inviteHtml, /Opening this page never joins a group by itself\./);
   });
 
+  test('accepts a normalized code without exposing it to history or authentication URLs', () => {
+    assert.match(inviteHtml, /id="inviteCodeForm"/);
+    assert.match(inviteHtml, /id="inviteCodeInput"/);
+    assert.match(inviteHtml, /autocomplete="off"/);
+    assert.match(inviteHtml, /spellcheck="false"/);
+    assert.match(inviteJs, /normalizeCrewInviteCode\(input\.value\)/);
+    assert.match(inviteJs, /rawInviteCode = ''/);
+    assert.match(inviteJs, /captureInviteCredential\(window\)/);
+    assert.doesNotMatch(inviteHtml, /returnTo=[^"']*(?:code|invite=)/);
+  });
+
   test('creates new invitation links with a fragment instead of a query secret', () => {
     assert.doesNotMatch(communityJs, /searchParams\.set\(['"]invite/);
     assert.match(shareComposer, /new URL\('\.\/invite\.html'/);
@@ -37,6 +48,8 @@ describe('private-group invitation browser page', () => {
     const sanitizer = apiJs.match(/export function sanitizeReturnTo\([\s\S]*?\n\}/)?.[0] || '';
     assert.match(sanitizer, /searchParams\.has\('invite'\)/);
     assert.match(sanitizer, /fragmentParams\.has\('invite'\)/);
+    assert.match(sanitizer, /searchParams\.has\('code'\)/);
+    assert.match(sanitizer, /fragmentParams\.has\('code'\)/);
     assert.match(sanitizer, /path === 'invite\.html'\) return '\.\/invite\.html'/);
   });
 
@@ -60,5 +73,6 @@ describe('private-group invitation browser page', () => {
     assert.match(inviteCss, /@media \(max-width: 560px\)/);
     assert.match(inviteCss, /\.invite-actions[\s\S]*?flex-direction:\s*column/);
     assert.match(inviteCss, /\.invite-actions a,[\s\S]*?\.invite-actions button[\s\S]*?width:\s*100%/);
+    assert.match(inviteCss, /\.invite-code-form input[\s\S]*?min-height:\s*48px/);
   });
 });
