@@ -31,13 +31,20 @@
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.110.0",
+    "qrcode": "1.5.4",
     "vite": "latest"
   },
   "devDependencies": {
     "@axe-core/playwright": "4.12.1",
     "@playwright/test": "1.61.1",
+    "jsqr": "1.4.0",
     "npm": "^11.18.0",
     "supabase": "2.109.0",
     "wrangler": "^4.107.0"
+  },
+  "pnpm": {
+    "overrides": {
+      "postcss": "8.5.25"
+    }
   }
 }

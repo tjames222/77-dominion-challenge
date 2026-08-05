@@ -42,6 +42,28 @@
           </div>
         </dl>
 
+        <form class="invite-code-form" id="inviteCodeForm" aria-describedby="inviteCodeGuidance" hidden>
+          <label for="inviteCodeInput">Join code</label>
+          <p id="inviteCodeGuidance">
+            Enter the four groups printed on your invitation. Spaces and hyphens are optional.
+          </p>
+          <input
+            id="inviteCodeInput"
+            name="code"
+            type="text"
+            inputmode="text"
+            autocomplete="off"
+            autocapitalize="characters"
+            spellcheck="false"
+            maxlength="23"
+            placeholder="3467-9ACD-EFGH-JKMN"
+            aria-label="16-character crew join code"
+            required
+          />
+          <button class="primary" id="submitInviteCodeButton" type="submit">Preview invitation</button>
+          <p class="invite-code-error" id="inviteCodeError" role="alert" hidden></p>
+        </form>
+
         <div class="invite-actions" id="inviteActions" aria-live="polite">
           <button class="primary" id="confirmInviteButton" type="button" hidden>Confirm and join group</button>
           <a class="primary" id="loginInviteLink" href="./login.html?returnTo=.%2Finvite.html" hidden>Log in to continue</a>

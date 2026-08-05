@@ -73,6 +73,11 @@ import {
 } from './reward-catalog.mjs';
 import { assertSingleCrew, newCrewLifecycleRequestId } from './crew-experience.mjs';
 import {
+  CREW_INVITE_CODE_ALPHABET,
+  CREW_INVITE_CODE_LENGTH,
+  normalizeCrewInviteCode,
+} from './crew-invite.mjs';
+import {
   CREW_TRAINING_STEP_COUNT,
   CREW_TRAINING_VERSION,
   normalizeCrewTrainingProgress,
@@ -180,6 +185,27 @@ const randomSecret = () => {
   globalThis.crypto?.getRandomValues?.(bytes);
   if (bytes.some(Boolean)) return Array.from(bytes, (value) => value.toString(16).padStart(2, '0')).join('');
   return `${randomId('invite')}${randomId('secret')}`.replace(/[^A-Za-z0-9_-]/g, '');
+};
+
+const randomCrewInviteCode = () => {
+  if (typeof globalThis.crypto?.getRandomValues !== 'function') {
+    throw new Error('Secure invitation code generation is unavailable.');
+  }
+
+  // Reject the high tail instead of applying `% alphabet.length`, which would
+  // make the first few characters measurably more likely than the rest.
+  const unbiasedLimit = Math.floor(256 / CREW_INVITE_CODE_ALPHABET.length)
+    * CREW_INVITE_CODE_ALPHABET.length;
+  let code = '';
+  while (code.length < CREW_INVITE_CODE_LENGTH) {
+    const bytes = new Uint8Array(CREW_INVITE_CODE_LENGTH - code.length);
+    globalThis.crypto.getRandomValues(bytes);
+    for (const value of bytes) {
+      if (value >= unbiasedLimit) continue;
+      code += CREW_INVITE_CODE_ALPHABET[value % CREW_INVITE_CODE_ALPHABET.length];
+    }
+  }
+  return code.slice(0, CREW_INVITE_CODE_LENGTH);
 };
 
 const sha256Hex = async (value) => {
@@ -365,7 +391,12 @@ export function sanitizeReturnTo(returnTo, fallback = './dashboard.html') {
     if (resolved.origin !== window.location.origin) return fallback;
     const path = resolved.pathname.split('/').pop() || 'dashboard.html';
     const fragmentParams = new URLSearchParams(resolved.hash.replace(/^#/, ''));
-    if (resolved.searchParams.has('invite') || fragmentParams.has('invite')) return fallback;
+    if (
+      resolved.searchParams.has('invite')
+      || resolved.searchParams.has('code')
+      || fragmentParams.has('invite')
+      || fragmentParams.has('code')
+    ) return fallback;
     if (path === 'invite.html') return './invite.html';
     return `./${path}${resolved.search}${resolved.hash}`;
   } catch {
@@ -3539,6 +3570,10 @@ export async function getCrewMemberProgressProfile({
 }
 
 export async function getOrCreateCrewInvite(crewId, { expectedUserId = '' } = {}) {
+  return issueCrewInviteBundle(crewId, { expectedUserId });
+}
+
+export async function issueCrewInviteBundle(crewId, { expectedUserId = '' } = {}) {
   if (isLocalDemoMode()) {
     const { crews, members } = ensureMockCrews();
     const crew = crews.find((item) => item.id === crewId);
@@ -3557,11 +3592,14 @@ export async function getOrCreateCrewInvite(crewId, { expectedUserId = '' } = {}
     if (previous && !previous.revoked_at) previous.revoked_at = new Date().toISOString();
 
     const token = randomSecret();
+    const code = randomCrewInviteCode();
     const invite = {
       id: randomId('preview_invite'),
       crew_id: crewId,
       token_hash: await sha256Hex(token),
       token_hint: token.slice(-6),
+      code_hash: await sha256Hex(normalizeCrewInviteCode(code)),
+      code_hint: code.slice(-4),
       created_by: currentUserId,
       expires_at: new Date(Date.now() + 14 * 86400000).toISOString(),
       revoked_at: null,
@@ -3571,14 +3609,14 @@ export async function getOrCreateCrewInvite(crewId, { expectedUserId = '' } = {}
     };
     invites[crewId] = invite;
     writeJson(MOCK_INVITES_KEY, invites);
-    return { ...invite, token };
+    return { ...invite, token, code };
   }
 
   const client = requireSupabase();
   await requireUser(expectedUserId);
-  const { data, error } = await client.rpc('issue_crew_invite', { target_crew_id: crewId });
+  const { data, error } = await client.rpc('issue_crew_invite_bundle', { target_crew_id: crewId });
   if (error) throw error;
-  if (data?.status !== 'issued' || !data?.token) {
+  if (data?.status !== 'issued' || !data?.token || !data?.code) {
     throw new Error(data?.status === 'rate_limited'
       ? 'Wait a few minutes before rotating another invitation.'
       : 'Unable to create an invitation right now.');
@@ -3588,8 +3626,78 @@ export async function getOrCreateCrewInvite(crewId, { expectedUserId = '' } = {}
     crew_id: crewId,
     token: data.token,
     token_hint: data.tokenHint,
+    code: data.code,
+    code_hint: data.codeHint,
     expires_at: data.expiresAt,
   };
+}
+
+export async function getActiveCrewInvite(crewId, { expectedUserId = '' } = {}) {
+  if (isLocalDemoMode()) {
+    const currentUserId = getMockUserId();
+    if (expectedUserId && currentUserId !== expectedUserId) {
+      throw new Error('The signed-in account changed. Try again.');
+    }
+    const { crews, members } = ensureMockCrews();
+    const crew = crews.find((item) => item.id === crewId);
+    const canManage = crew && (members[crewId] || []).some((member) => (
+      member.userId === currentUserId && ['owner', 'admin'].includes(member.role)
+    ));
+    if (!canManage) throw new Error('Only a private-group admin can view invitations.');
+
+    const invite = readJson(MOCK_INVITES_KEY, {})[crewId];
+    const active = invite
+      && !invite.revoked_at
+      && !invite.redeemed_at
+      && new Date(invite.expires_at).getTime() > Date.now();
+    if (!active) return { status: 'none' };
+    return {
+      status: 'active',
+      inviteId: invite.id,
+      codeHint: invite.code_hint || null,
+      expiresAt: invite.expires_at,
+      createdAt: invite.created_at,
+    };
+  }
+
+  const client = requireSupabase();
+  await requireUser(expectedUserId);
+  const { data, error } = await client.rpc('get_active_crew_invite', {
+    target_crew_id: crewId,
+  });
+  if (error) throw error;
+  if (!['active', 'none'].includes(data?.status)) {
+    throw new Error('Unable to load this invitation right now.');
+  }
+  return data;
+}
+
+export async function revokeCrewInvite(inviteId, { expectedUserId = '' } = {}) {
+  if (isLocalDemoMode()) {
+    const currentUserId = getMockUserId();
+    if (expectedUserId && currentUserId !== expectedUserId) {
+      throw new Error('The signed-in account changed. Try again.');
+    }
+    const { members } = ensureMockCrews();
+    const invites = readJson(MOCK_INVITES_KEY, {});
+    const invite = Object.values(invites).find((item) => item.id === inviteId);
+    const canManage = invite && (members[invite.crew_id] || []).some((member) => (
+      member.userId === currentUserId && ['owner', 'admin'].includes(member.role)
+    ));
+    if (!canManage) throw new Error('Only a private-group admin can revoke invitations.');
+    invite.revoked_at ||= new Date().toISOString();
+    writeJson(MOCK_INVITES_KEY, invites);
+    return { status: 'revoked' };
+  }
+
+  const client = requireSupabase();
+  await requireUser(expectedUserId);
+  const { data, error } = await client.rpc('revoke_crew_invite', {
+    target_invite_id: inviteId,
+  });
+  if (error) throw error;
+  if (data?.status !== 'revoked') throw new Error('Unable to revoke this invitation.');
+  return data;
 }
 
 function mockInvitePreview(invite, crew, members) {
@@ -3615,7 +3723,12 @@ function mockInviteStatus(invite, crew, members, currentUserId = '') {
   return 'ready';
 }
 
-export async function previewCrewInvite({ token = '', continuationToken = '' } = {}) {
+export async function previewCrewInvite({ token = '', code = '', continuationToken = '' } = {}) {
+  const sourceCount = [token, code, continuationToken]
+    .filter((value) => String(value || '').length > 0).length;
+  if (sourceCount !== 1) return { status: 'invalid' };
+  const normalizedCode = code ? normalizeCrewInviteCode(code) : '';
+  if (code && !normalizedCode) return { status: 'invalid' };
   if (isLocalDemoMode()) {
     const crews = readJson(MOCK_CREWS_KEY, []);
     const members = readJson(MOCK_CREW_MEMBERS_KEY, {});
@@ -3627,9 +3740,13 @@ export async function previewCrewInvite({ token = '', continuationToken = '' } =
     let session = null;
     let invite = null;
 
-    if (token) {
-      const tokenHash = await sha256Hex(token);
-      invite = Object.values(invites).find((item) => item.token_hash === tokenHash || item.token === token) || null;
+    if (token || code) {
+      const credentialHash = await sha256Hex(token || normalizedCode);
+      invite = Object.values(invites).find((item) => (
+        token
+          ? item.token_hash === credentialHash || item.token === token
+          : normalizedCode && item.code_hash === credentialHash
+      )) || null;
       if (invite) {
         continuation = randomSecret();
         session = {
@@ -3664,15 +3781,22 @@ export async function previewCrewInvite({ token = '', continuationToken = '' } =
       response.preview = mockInvitePreview(invite, crew, members);
     }
     if (status === 'already_member' && crew?.id) response.crewId = crew.id;
-    if (token && continuation && ['ready', 'full'].includes(status)) response.continuationToken = continuation;
+    if (code && !currentUserId && !['ready'].includes(status)) {
+      return { status: status === 'rate_limited' ? status : 'invalid' };
+    }
+    if ((token || code) && continuation && ['ready', 'full', 'current_crew_conflict'].includes(status)) {
+      response.continuationToken = continuation;
+    }
     return response;
   }
 
   const client = requireSupabase();
-  const { data, error } = await client.rpc('preview_crew_invite', {
-    invite_token: token || null,
-    continuation_token: continuationToken || null,
-  });
+  const { data, error } = code
+    ? await client.rpc('preview_crew_invite_code', { invite_code: normalizedCode })
+    : await client.rpc('preview_crew_invite', {
+        invite_token: token || null,
+        continuation_token: continuationToken || null,
+      });
   if (error) throw error;
   return data || { status: 'invalid' };
 }

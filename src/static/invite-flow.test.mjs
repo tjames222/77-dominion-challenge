@@ -3,12 +3,15 @@ import assert from 'node:assert/strict';
 import {
   INVITE_CONTINUATION_STORAGE_KEY,
   buildInviteAuthHref,
+  captureInviteCredential,
   captureInviteSecret,
   cleanInviteLocation,
   clearInviteContinuation,
   getStoredInviteContinuation,
   inviteStatusContent,
   isInviteReturnPath,
+  normalizeInviteCode,
+  readInviteCredential,
   readInviteSecret,
   storeInviteContinuation,
 } from './invite-flow.mjs';
@@ -46,10 +49,62 @@ test('legacy query invites are accepted only for migration and stripped immediat
   assert.equal(cleanInviteLocation(location), '/invite.html?source=old-link');
 });
 
+test('join codes are case-insensitive, tolerate grouping, and are stripped before lookup', () => {
+  const calls = [];
+  const fakeWindow = {
+    location: {
+      pathname: '/invite.html',
+      search: '?campaign=code-card',
+      hash: '#code=3467-9acd-efgh-jkmn',
+    },
+    history: { replaceState: (...args) => calls.push(args) },
+  };
+
+  assert.equal(normalizeInviteCode('3467 9acd-efgh jkmn'), '34679ACDEFGHJKMN');
+  assert.deepEqual(readInviteCredential(fakeWindow.location), {
+    type: 'code',
+    value: '34679ACDEFGHJKMN',
+    source: 'fragment',
+  });
+  assert.deepEqual(captureInviteCredential(fakeWindow), {
+    type: 'code',
+    value: '34679ACDEFGHJKMN',
+    source: 'fragment',
+  });
+  assert.equal(calls[0][2], '/invite.html?campaign=code-card');
+  assert.equal(calls[0][2].includes('3467'), false);
+});
+
+test('link credentials win over a conflicting code and code query parameters are never accepted', () => {
+  assert.deepEqual(readInviteCredential({
+    hash: '#invite=valid-link-secret-12345&code=34679ACDEFGHJKMN',
+  }), {
+    type: 'token',
+    value: 'valid-link-secret-12345',
+    source: 'fragment',
+  });
+  assert.deepEqual(readInviteCredential({ search: '?code=34679ACDEFGHJKMN' }), {
+    type: '',
+    value: '',
+    source: '',
+  });
+  assert.equal(cleanInviteLocation({
+    pathname: '/invite.html',
+    search: '?code=34679ACDEFGHJKMN&campaign=safe',
+  }), '/invite.html?campaign=safe');
+});
+
 test('short, malformed, and script-like secrets are ignored', () => {
   assert.equal(readInviteSecret({ hash: '#invite=short' }).secret, '');
   assert.equal(readInviteSecret({ hash: '#invite=%3Cscript%3Ealert(1)%3C%2Fscript%3E' }).secret, '');
   assert.equal(readInviteSecret({ hash: '#invite=valid_secret-token-123' }).secret, 'valid_secret-token-123');
+});
+
+test('code entry copy states that preview and confirmation are separate', () => {
+  const content = inviteStatusContent('enter_code');
+  assert.match(content.title, /Enter your join code/);
+  assert.match(content.message, /never joins/i);
+  assert.match(content.message, /confirm/i);
 });
 
 test('auth continuation is fixed to the invite page and cannot carry secrets', () => {
