@@ -157,6 +157,29 @@ const NOT_STARTED_CHALLENGE_ACTIVATION = Object.freeze({
   canEditStartDate: false,
 });
 
+const SCHEDULED_SOLO_CHALLENGE_ACTIVATION = Object.freeze({
+  schemaVersion: 1,
+  revision: 1,
+  status: 'scheduled',
+  storedStatus: 'scheduled',
+  mode: 'solo',
+  startDate: '2026-02-20',
+  timeZone: 'UTC',
+  challengeDay: null,
+  crewId: null,
+  groupMembershipActive: false,
+  activatedAt: null,
+  confirmedAt: FIXED_NOW,
+  activatedBy: null,
+  confirmedBy: FIXED_USER_ID,
+  reviewRequired: false,
+  canActivateSolo: false,
+  canActivateGroup: false,
+  canParticipate: false,
+  canMutateDailyStandards: false,
+  canEditStartDate: true,
+});
+
 const json = (value) => JSON.parse(JSON.stringify(value));
 
 function baseMemberJson() {
@@ -214,6 +237,69 @@ export const APP_STATES = Object.freeze({
   member: {
     json: baseMemberJson(),
     raw: baseMemberRaw(),
+  },
+  notStarted: {
+    json: {
+      ...baseMemberJson(),
+      'dominion:startDate': null,
+      'dominion:entries': [
+        {
+          date: FIXED_TODAY,
+          completed: ['bible', 'morningPrayer', 'workoutOne'],
+          workoutDifficulty: { workoutOne: 'hard' },
+          workoutDifficultySelections: { workoutOne: 'hard' },
+          version: 4,
+        },
+      ],
+      'dominion:checkInDates': {
+        owner: 'mock:' + FIXED_USER.email,
+        dates: [],
+        challengeDays: [],
+      },
+      'dominion:feed': [],
+      'dominion:gameStats': {
+        ...json(BASE_GAME_STATS),
+        totalPoints: 0,
+        challengePoints: 0,
+        currentAppStreak: 0,
+        bestAppStreak: 0,
+        currentFullDayStreak: 0,
+        bestFullDayStreak: 0,
+        lastSeenDate: null,
+        lastFullDayDate: null,
+      },
+      'dominion:badges': [],
+      'dominion:mockCrews': [],
+      'dominion:mockCrewMembers': {},
+      'dominion:mockChallengeActivation': {
+        [FIXED_USER_ID]: json(NOT_STARTED_CHALLENGE_ACTIVATION),
+      },
+    },
+    raw: {
+      ...baseMemberRaw(),
+      'dominion:activeCrewId': null,
+    },
+  },
+  scheduledSolo: {
+    json: {
+      ...baseMemberJson(),
+      'dominion:startDate': '2026-02-20',
+      'dominion:entries': [],
+      'dominion:checkInDates': {
+        owner: 'mock:' + FIXED_USER.email,
+        dates: [],
+        challengeDays: [],
+      },
+      'dominion:mockCrews': [],
+      'dominion:mockCrewMembers': {},
+      'dominion:mockChallengeActivation': {
+        [FIXED_USER_ID]: json(SCHEDULED_SOLO_CHALLENGE_ACTIVATION),
+      },
+    },
+    raw: {
+      ...baseMemberRaw(),
+      'dominion:activeCrewId': null,
+    },
   },
   communityEmpty: {
     json: {

@@ -185,6 +185,7 @@ function localHeaderSnapshot(user, storage, activation) {
         status: 'active',
         mode: 'solo',
         startDate: previewState.anchorDate,
+        canParticipate: true,
         canEditStartDate: false,
       }
     : activation;
@@ -231,6 +232,8 @@ export function createAuthenticatedHeaderActions({
 
   const shareButton = element(ownerDocument, 'button', 'shared-header-action shared-header-share');
   shareButton.type = 'button';
+  shareButton.disabled = true;
+  shareButton.setAttribute('aria-label', 'Share progress unavailable until your challenge starts.');
   shareButton.dataset.shareComposer = '';
   shareButton.dataset.shareKind = 'progress';
   shareButton.append(
@@ -318,6 +321,14 @@ export function createAuthenticatedHeaderActions({
     startDateLocked: locked = true,
     previewActive: preview = false,
   }) => {
+    const shareAvailable = activation?.readState === 'ready'
+      && activation?.contractValid
+      && activation?.canParticipate === true;
+    shareButton.disabled = !shareAvailable;
+    shareButton.setAttribute(
+      'aria-label',
+      shareAvailable ? 'Share' : 'Share progress unavailable until your challenge starts.',
+    );
     const summary = buildStreakSummary(stats, localDateKey());
     streakCount.textContent = String(summary.currentAppStreak);
     streakButton.setAttribute('aria-label', streakIndicatorLabel(summary));
@@ -347,7 +358,8 @@ export function createAuthenticatedHeaderActions({
       );
     }
     const expectedUserId = currentUser?.userId || '';
-    if (expectedUserId) {
+    const activation = await getChallengeActivation({ expectedUserId });
+    if (expectedUserId && activation?.canParticipate === true) {
       if (recordedVisitOwner !== expectedUserId || !recordVisitPromise) {
         recordedVisitOwner = expectedUserId;
         recordVisitPromise = recordAppVisit({ expectedUserId }).catch((error) => {
@@ -358,10 +370,7 @@ export function createAuthenticatedHeaderActions({
       }
       await recordVisitPromise;
     }
-    const [summary, activation] = await Promise.all([
-      getGameSummary(),
-      getChallengeActivation({ expectedUserId }),
-    ]);
+    const summary = await getGameSummary();
     return {
       stats: summary?.gameStats || DEFAULT_GAME_STATS,
       profile: { challengeStartDate: activation.startDate },
@@ -492,6 +501,8 @@ export function createAuthenticatedHeaderActions({
         dialog.setBusy(false);
         streakCount.textContent = '—';
         streakButton.setAttribute('aria-label', 'App streak: loading. View streak details.');
+        shareButton.disabled = true;
+        shareButton.setAttribute('aria-label', 'Share progress unavailable until your challenge starts.');
         content.querySelectorAll('[data-global-streak-value]').forEach((valueElement) => {
           valueElement.textContent = '0';
         });

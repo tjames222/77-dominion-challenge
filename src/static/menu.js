@@ -340,6 +340,10 @@ window.addEventListener('storage', (event) => {
   ].includes(event.key)) void sharedHeaderActions?.refresh({ includeLockState: true });
 });
 
+window.addEventListener('dominion:challenge-activation-updated', () => {
+  void sharedHeaderActions?.refresh({ includeLockState: true });
+});
+
 window.addEventListener('focus', () => {
   void buildMenu();
 });

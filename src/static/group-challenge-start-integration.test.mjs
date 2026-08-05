@@ -8,6 +8,7 @@ const auth = read('./auth.js');
 const billing = read('./billing.js');
 const community = read('./community.js');
 const invite = read('./invite.js');
+const dashboardStartFlow = read('./challenge-start-flow.mjs');
 const migration = read('../../supabase/migrations/20260805010103_integrate_group_challenge_start.sql');
 
 function sourceBetween(source, start, end) {
@@ -82,6 +83,7 @@ describe('Group challenge start integration', () => {
     assert.match(billing, /readChallengeStartIntent\(sessionStorage\)/);
     assert.match(billing, /return CHALLENGE_START_INTENT_PATH/);
     assert.doesNotMatch(billing, /crewId=.*challenge-start/);
+    assert.match(dashboardStartFlow, /GROUP_CHALLENGE_START_HREF = CHALLENGE_START_INTENT_PATH/);
   });
 
   test('creator training remains owner-gated and invite completion never claims it', () => {

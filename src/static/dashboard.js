@@ -41,6 +41,8 @@ import { resolveLeaderboardPrestige } from './leaderboard-prestige.mjs';
 import { shouldUseZeroPointGlass } from './dashboard-view-model.mjs';
 import { createCelebrationQueue } from './celebration-queue.mjs';
 import { createChallengeActivationState } from './challenge-activation.mjs';
+import { createChallengeStartFlow } from './challenge-start-flow.js';
+import { dashboardActivationGate } from './challenge-start-flow.mjs';
 import {
   PREVIEW_USER_STATE_STORAGE_KEY,
   readPreviewUserValue,
@@ -817,6 +819,7 @@ let observedAuthOwner = '';
 let hydratedAuthOwner = '';
 let authOwnerEpoch = 0;
 let celebrationReturnFocus = null;
+let challengeStartFlow = null;
 const $ = (id) => document.getElementById(id);
 const restoreCelebrationFocus = () => {
   const target = celebrationReturnFocus;
@@ -1098,9 +1101,9 @@ function renderChecklist(entry) {
         const route = dailyStandardRoute(id);
         const difficultyLabelId = `${id}DifficultyLabel`;
         const difficultyControl = route?.workoutId
-          ? `<label class="check-row-difficulty" for="${id}Difficulty"><span class="sr-only" id="${difficultyLabelId}">${escapeHtml(label)} difficulty</span><select id="${id}Difficulty" name="${id}Difficulty" data-workout="${route.workoutId}" aria-labelledby="${difficultyLabelId}"><option value="" disabled>Difficulty</option><option value="easy">Easy</option><option value="medium">Medium</option><option value="hard">Hard</option><option value="extreme">Extreme</option></select></label>`
+          ? `<label class="check-row-difficulty" for="${id}Difficulty"><span class="sr-only" id="${difficultyLabelId}">${escapeHtml(label)} difficulty</span><select id="${id}Difficulty" name="${id}Difficulty" data-workout="${route.workoutId}" aria-labelledby="${difficultyLabelId}" disabled><option value="" disabled>Difficulty</option><option value="easy">Easy</option><option value="medium">Medium</option><option value="hard">Hard</option><option value="extreme">Extreme</option></select></label>`
           : '';
-        return `<article class="check-row" id="standard-${id}" data-standard-card="${id}"><button class="check-row-toggle" data-standard="${id}" aria-label="Mark ${escapeHtml(label)} complete, worth 1 point" aria-pressed="false" type="button"><span class="box"><span class="app-icon icon-sm icon-check" aria-hidden="true"></span></span><span class="check-row-copy"><strong>${escapeHtml(label)}</strong><small>${escapeHtml(detail)}</small></span><span class="action-point-value" aria-label="1 point">+1</span></button><a class="check-row-details" href="${route?.route || './dashboard.html#daily-standards'}" aria-label="Open ${escapeHtml(label)} details">Details<span aria-hidden="true">→</span></a>${difficultyControl}</article>`;
+        return `<article class="check-row" id="standard-${id}" data-standard-card="${id}"><button class="check-row-toggle" data-standard="${id}" aria-label="Mark ${escapeHtml(label)} complete, worth 1 point" aria-pressed="false" type="button" disabled><span class="box"><span class="app-icon icon-sm icon-check" aria-hidden="true"></span></span><span class="check-row-copy"><strong>${escapeHtml(label)}</strong><small>${escapeHtml(detail)}</small></span><span class="action-point-value" aria-label="1 point">+1</span></button><a class="check-row-details" data-enabled-href="${route?.route || './dashboard.html#daily-standards'}" aria-label="Open ${escapeHtml(label)} details" aria-disabled="true" aria-describedby="checkInStatus" tabindex="-1">Details<span aria-hidden="true">→</span></a>${difficultyControl}</article>`;
       }).join('');
       const itemLabel = group.items.length === 1 ? 'action' : 'actions';
       return `<section class="checklist-group" aria-labelledby="checklistGroup-${group.key}"><div class="checklist-group-header"><h3 class="checklist-group-title" id="checklistGroup-${group.key}">${escapeHtml(group.label)}</h3><span>${group.items.length} ${itemLabel}</span></div><div class="checklist-group-items">${rows}</div></section>`;
@@ -1126,10 +1129,25 @@ function renderChecklist(entry) {
     row.setAttribute('aria-label', `Mark ${dailyStandardRoute(row.dataset.standard)?.title || 'action'} ${isChecked ? 'incomplete' : 'complete'}, worth 1 point`);
   });
   checklist.querySelectorAll('.check-row-details').forEach((link) => {
-    link.setAttribute('aria-disabled', String(!canParticipateInChallenge() || draftBusy));
+    const navigationLocked = !canParticipateInChallenge() || draftBusy;
+    if (navigationLocked) {
+      link.removeAttribute('href');
+      link.removeAttribute('target');
+      link.setAttribute('aria-disabled', 'true');
+      link.setAttribute('aria-describedby', 'checkInStatus');
+      link.setAttribute('tabindex', '-1');
+    } else {
+      link.href = link.dataset.enabledHref;
+      link.removeAttribute('aria-disabled');
+      link.removeAttribute('aria-describedby');
+      link.removeAttribute('tabindex');
+    }
   });
   const difficultyControls = checklist.querySelectorAll('[data-workout]');
-  syncWorkoutDifficultyControls(difficultyControls, selectedWorkoutDifficulty);
+  syncWorkoutDifficultyControls(
+    difficultyControls,
+    canParticipateInChallenge() ? selectedWorkoutDifficulty : {},
+  );
   difficultyControls.forEach((control) => { control.disabled = locked; });
 
   const requestedFocus = new URLSearchParams(window.location.search).get('focus');
@@ -1232,6 +1250,24 @@ function updateCountdownCard() {
   const countdownActionsLabel = $('countdownActionsLabel');
   if (!countdownTime || !countdownProgress || !countdownCallout) return;
 
+  if (!canParticipateInChallenge()) {
+    const scheduled = !previewChallengeMode() && challengeActivation.status === 'scheduled';
+    const failed = !previewChallengeMode() && challengeActivation.readState === 'error';
+    countdownTime.textContent = scheduled ? 'Scheduled' : failed ? 'Unavailable' : 'Not started';
+    countdownProgress.style.setProperty('--progress', '0%');
+    countdownCallout.textContent = scheduled
+      ? `Daily Standards unlock when your challenge begins ${challengeActivation.startDate}.`
+      : failed
+        ? 'Challenge access stays locked until your activation status can be refreshed.'
+        : 'Start your challenge to unlock today’s seven Daily Standards.';
+    activeCountdownCallout = countdownCallout.textContent;
+    if (countdownProgressLabel) countdownProgressLabel.textContent = scheduled
+      ? 'Challenge start scheduled'
+      : 'Challenge participation locked';
+    if (countdownActionsLabel) countdownActionsLabel.textContent = '0 of 7 actions available';
+    return;
+  }
+
   const entry = todayEntry();
   if (isChallengeFinished()) {
     countdownTime.textContent = '77 days complete';
@@ -1256,6 +1292,49 @@ function updateCountdownCard() {
   if (countdownProgressLabel) countdownProgressLabel.textContent = `${elapsedPercent}% of the day used`;
   if (countdownActionsLabel) countdownActionsLabel.textContent = `${entry.completed.length} of 7 actions complete`;
 }
+
+function setDashboardActivationStatus(message, { focus = false } = {}) {
+  const status = $('dashboardActivationStatus');
+  if (!status) return;
+  status.textContent = String(message || '');
+  if (focus) status.focus({ preventScroll: true });
+}
+
+function renderChallengeStartGate() {
+  const gate = $('challengeStartGate');
+  const title = $('challengeStartGateTitle');
+  const description = $('challengeStartGateDescription');
+  const startButton = $('startChallengeButton');
+  const retryButton = $('retryChallengeActivationButton');
+  if (!gate || !title || !description || !startButton || !retryButton) return;
+
+  const online = typeof navigator === 'undefined' || navigator.onLine !== false;
+  const ownerKnown = hasHydratedAuthOwner()
+    || Boolean(observedAuthOwner && challengeActivation.readState === 'error');
+  const gateState = dashboardActivationGate(challengeActivation, {
+    hydrated: ownerKnown,
+    online,
+  });
+  gate.hidden = !gateState.showStartGate;
+  startButton.hidden = gateState.showRetry;
+  retryButton.hidden = !gateState.showRetry;
+  startButton.disabled = !gateState.canStart;
+  retryButton.disabled = !gateState.showRetry || !online;
+
+  if (gateState.showRetry) {
+    title.textContent = 'Challenge setup needs a fresh status.';
+    description.textContent = online
+      ? 'Dominion could not verify this account’s activation. Participation stays locked until the authoritative status loads.'
+      : 'You appear to be offline. Participation stays locked until Dominion can verify this account’s activation.';
+    return;
+  }
+
+  title.textContent = 'Your 77 days begin with one clear choice.';
+  description.textContent = online
+    ? 'Choose whether you will take the challenge Solo or With a group, then confirm the timeline Dominion will protect.'
+    : 'Reconnect to start your challenge. Dashboard participation remains safely locked while you are offline.';
+}
+
 function render() {
   const finished = isChallengeFinished();
   document.body.classList.toggle('challenge-finished', finished);
@@ -1277,16 +1356,23 @@ function render() {
   const checklist = $('checklist');
   const feedEl = $('feed');
   const completedToday = $('completedToday');
+  renderChallengeStartGate();
   if (dashboardTitle) dashboardTitle.textContent = finished ? COMPLETION_HERO.title : 'Today’s Dominion';
   if (dashboardLead) dashboardLead.textContent = finished ? COMPLETION_HERO.lead : 'Track your standards, post your check-in, and stay honest.';
   if (challengeCompletePanel) challengeCompletePanel.hidden = !finished;
-  const entry = todayEntry();
+  const participationOpen = canParticipateInChallenge();
+  const storedEntry = todayEntry();
+  const entry = participationOpen
+    ? storedEntry
+    : { ...storedEntry, completed: [] };
   const completedStandards = new Set(entry.completed);
-  const challengePercent = finished ? 100 : Math.round((currentDay() / TOTAL_DAYS) * 100);
+  const challengePercent = participationOpen
+    ? finished ? 100 : Math.round((currentDay() / TOTAL_DAYS) * 100)
+    : 0;
   const todayPercent = Math.round((entry.completed.length / standards.length) * 100);
   const hasCompletedActions = entry.completed.length > 0;
-  const submittedToday = hasSubmittedCheckIn(entry.date);
-  const submissionPendingToday = isCheckInPending(entry.date);
+  const submittedToday = participationOpen && hasSubmittedCheckIn(entry.date);
+  const submissionPendingToday = participationOpen && isCheckInPending(entry.date);
   const checkInStatusReady = isCheckInStatusReady(entry.date);
   const scorecardLocked = !canMutateChallenge()
     || !checkInStatusReady
@@ -1295,8 +1381,17 @@ function render() {
   const dailyDraftBusy = pendingActionMutations.size > 0 || pendingWorkoutMutations.size > 0;
   const hasPostableCheckIn = !finished && !scorecardLocked && hasCompletedActions;
   const allActionsCompleted = standards.every(([id]) => completedStandards.has(id));
-  if (challengePercentEl) challengePercentEl.textContent = `${challengePercent}%`;
-  if (challengeDayEl) challengeDayEl.textContent = `Day ${currentDay()} of 77`;
+  if (challengePercentEl) challengePercentEl.textContent = challengeActivation.readState === 'loading'
+    && !previewChallengeMode() ? '—' : `${challengePercent}%`;
+  if (challengeDayEl) challengeDayEl.textContent = canParticipateInChallenge()
+    ? `Day ${currentDay()} of 77`
+    : challengeActivation.status === 'scheduled'
+      ? 'Scheduled'
+      : challengeActivation.readState === 'error'
+        ? 'Unavailable'
+        : challengeActivation.readState === 'loading'
+          ? 'Confirming…'
+          : 'Not started';
   if (challengeRing) challengeRing.style.setProperty('--value', `${challengePercent}%`);
   if (todayPercentEl) todayPercentEl.textContent = `${todayPercent}%`;
   if (todayCountEl) todayCountEl.textContent = `${entry.completed.length} of ${standards.length} done`;
@@ -1377,6 +1472,20 @@ function startCountdownCard() {
   updateCountdownCard();
   countdownTimer = window.setInterval(updateCountdownCard, 1000);
 }
+
+function applyAuthoritativeChallengeActivation(nextActivation) {
+  if (!nextActivation?.contractValid || nextActivation.readState !== 'ready') return false;
+  challengeActivation = nextActivation;
+  userTimeZone = nextActivation.timeZone || BROWSER_TIME_ZONE;
+  startDate = nextActivation.startDate || '';
+  renderedDateKey = todayKey();
+  checkInStatusHydratedDate = hasSupabaseAuth() ? '' : renderedDateKey;
+  checkInNotice = '';
+  checkInNoticeDate = '';
+  render();
+  return true;
+}
+
 function clearDashboardUserState() {
   previewChallengeState = normalizePreviewChallengeState({}, calendarTodayKey());
   userTimeZone = BROWSER_TIME_ZONE;
@@ -1417,6 +1526,7 @@ function clearDashboardUserState() {
     .forEach((link) => link.removeAttribute('aria-busy'));
 }
 function invalidateDashboardOwner(nextOwner = '') {
+  challengeStartFlow?.closeForOwnerChange();
   authOwnerEpoch += 1;
   dashboardHydrationRequestId += 1;
   leaderboardPrestigeRequestId += 1;
@@ -1610,7 +1720,7 @@ async function refreshGameSummary(previousBadgeKeys = new Set(), owner = capture
 }
 
 async function recordDailyAppVisit() {
-  if (!hasSupabaseAuth()) return;
+  if (!hasSupabaseAuth() || !canParticipateInChallenge()) return;
   const owner = captureMutationOwner();
   if (!owner) return;
   const previousBadgeKeys = new Set(badges.map((badge) => badge.key));
@@ -1632,7 +1742,7 @@ async function recordDailyAppVisit() {
     if (!isCurrentMutationOwner(owner)) return;
     console.warn('Unable to record daily app visit', error);
   } finally {
-    if (isCurrentMutationOwner(owner)) {
+    if (isCurrentMutationOwner(owner) && canParticipateInChallenge()) {
       await refreshChallengeProgression({ claimCelebrations: true, celebrationDelay: 450 });
     }
   }
@@ -1643,8 +1753,60 @@ const selectAllActionsButton = $('selectAllActionsButton');
 const checkInButton = $('checkInButton');
 const countdownCheckInButton = $('countdownCheckInButton');
 const scorecardSection = $('check-in');
+const startChallengeButton = $('startChallengeButton');
+const retryChallengeActivationButton = $('retryChallengeActivationButton');
 const rewardBackdrop = $('rewardBackdrop');
 const rewardToast = $('rewardToast');
+
+challengeStartFlow = createChallengeStartFlow({
+  captureOwner: captureMutationOwner,
+  isCurrentOwner: isCurrentMutationOwner,
+  getActivationState: () => challengeActivation,
+  onActivation: async (activation, owner) => {
+    if (!isCurrentMutationOwner(owner)) return;
+    applyAuthoritativeChallengeActivation(activation);
+    const EventConstructor = window.CustomEvent;
+    if (typeof EventConstructor === 'function') {
+      window.dispatchEvent(new EventConstructor('dominion:challenge-activation-updated', {
+        detail: { activation },
+      }));
+    }
+    await hydrateDashboardFromApi(owner.userId);
+  },
+  onStatus: setDashboardActivationStatus,
+});
+
+startChallengeButton?.addEventListener('click', () => {
+  challengeStartFlow?.open(startChallengeButton);
+});
+
+retryChallengeActivationButton?.addEventListener('click', async () => {
+  const retryOwner = String(observedAuthOwner || '');
+  if (!retryOwner || retryChallengeActivationButton.disabled) return;
+  retryChallengeActivationButton.disabled = true;
+  setDashboardActivationStatus('Refreshing challenge activation…');
+  await hydrateDashboardFromApi(retryOwner);
+  if (observedAuthOwner !== retryOwner) return;
+  setDashboardActivationStatus(
+    challengeActivation.readState === 'ready'
+      ? 'Challenge activation refreshed.'
+      : 'Challenge activation is still unavailable. Try again when your connection is stable.',
+  );
+  render();
+});
+
+window.addEventListener('offline', () => {
+  challengeStartFlow?.setOnline(false);
+  setDashboardActivationStatus('You are offline. Challenge participation remains locked.');
+  render();
+});
+window.addEventListener('online', () => {
+  challengeStartFlow?.setOnline(true);
+  setDashboardActivationStatus('Connection restored. Refreshing challenge activation…');
+  render();
+  if (observedAuthOwner) void hydrateDashboardFromApi(observedAuthOwner);
+});
+
 if (rewardBackdrop && rewardToast) {
   rewardBackdrop.addEventListener('click', (event) => {
     event.preventDefault();
@@ -1732,11 +1894,13 @@ if (checklist) checklist.addEventListener('click', event => {
   if (!row) return;
   toggleStandard(row.dataset.standard);
 });
-if (checklist) checklist.addEventListener('click', (event) => {
+function handleDashboardDetailsNavigation(event) {
   const link = event.target.closest('.check-row-details');
   if (!link) return;
-  if (!canParticipateInChallenge()) {
+  if (!canParticipateInChallenge() || !link.hasAttribute('href')) {
     event.preventDefault();
+    event.stopImmediatePropagation();
+    event.stopPropagation();
     return;
   }
   if (pendingActionMutations.size === 0 && pendingWorkoutMutations.size === 0) return;
@@ -1753,7 +1917,9 @@ if (checklist) checklist.addEventListener('click', (event) => {
     pendingDetailsNavigation = '';
     window.location.href = requestedDestination;
   });
-});
+}
+if (checklist) checklist.addEventListener('click', handleDashboardDetailsNavigation);
+if (checklist) checklist.addEventListener('auxclick', handleDashboardDetailsNavigation);
 window.addEventListener('storage', (event) => {
   if (event.key === 'dominion:user' && localDemoMode) {
     invalidateDashboardOwner('');
@@ -1966,6 +2132,7 @@ if (checkInButton) checkInButton.addEventListener('click', async () => {
   }
 });
 if (countdownCheckInButton && scorecardSection) countdownCheckInButton.addEventListener('click', () => {
+  if (!canParticipateInChallenge() || !canMutateChallenge()) return;
   scorecardSection.scrollIntoView({ behavior: reducedMotionEnabled() ? 'auto' : 'smooth', block: 'start' });
   scorecardSection.focus({ preventScroll: true });
 });
@@ -2007,7 +2174,9 @@ async function bootDashboard() {
   ]);
   render();
   if (hasSupabaseAuth()) await recordDailyAppVisit();
-  else await refreshChallengeProgression({ claimCelebrations: true, celebrationDelay: 450 });
+  else if (canParticipateInChallenge()) {
+    await refreshChallengeProgression({ claimCelebrations: true, celebrationDelay: 450 });
+  }
   startCountdownCard();
   startLeaderboardPrestigeRefresh();
   requestAnimationFrame(() => initReveal());

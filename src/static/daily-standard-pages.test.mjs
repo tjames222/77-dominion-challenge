@@ -29,7 +29,9 @@ describe('dedicated Daily Standard page framework', () => {
     const dashboard = await read('./dashboard.js');
     assert.match(dashboard, /<article class="check-row"[^>]*data-standard-card/);
     assert.match(dashboard, /<button class="check-row-toggle" data-standard/);
-    assert.match(dashboard, /<a class="check-row-details" href=/);
+    assert.match(dashboard, /<a class="check-row-details" data-enabled-href=/);
+    assert.match(dashboard, /link\.href = link\.dataset\.enabledHref/);
+    assert.match(dashboard, /link\.removeAttribute\('href'\)/);
     assert.doesNotMatch(dashboard, /<button class="check-row"/);
   });
 

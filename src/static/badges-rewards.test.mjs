@@ -204,7 +204,7 @@ describe('Badges & Rewards route integration', () => {
 
   it('removes the Challenge Vault from Dashboard and adds the concise progress link', () => {
     assert.doesNotMatch(dashboardHtml, /id="challengeVault"|Challenge Vault/);
-    assert.doesNotMatch(dashboardSource, /data-start-challenge|startChallenge/);
+    assert.doesNotMatch(dashboardSource, /data-start-challenge|challengeVault/);
     assert.match(dashboardHtml, /href="\.\/badges-rewards\.html"/);
     assert.match(dashboardHtml, />View badges and rewards</);
   });
