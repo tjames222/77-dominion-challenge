@@ -431,7 +431,10 @@ blockquote strong { display: block; margin-top: 10px; color: var(--accent-strong
   color: color-mix(in srgb, var(--success) 72%, var(--text));
 }
 .scorecard-select-all:disabled {
-  opacity: .45;
+  border-color: var(--button-disabled-border);
+  background: var(--button-disabled-background);
+  color: var(--button-disabled-text);
+  opacity: 1;
   cursor: not-allowed;
 }
 #feed {
@@ -742,7 +745,28 @@ select {
 .check-row-toggle:disabled {
   cursor: not-allowed;
   color: var(--text-muted);
-  opacity: .68;
+  opacity: 1;
+}
+.check-row.is-locked {
+  border-color: color-mix(in srgb, var(--button-disabled-border) 74%, transparent);
+  background: color-mix(in srgb, var(--button-disabled-background) 62%, transparent);
+  box-shadow: none;
+  transform: none;
+}
+.check-row-details[aria-disabled="true"] {
+  color: var(--button-disabled-text);
+  background: var(--button-disabled-background);
+  cursor: not-allowed;
+}
+.check-row-details[aria-disabled="true"]:hover {
+  background: var(--button-disabled-background);
+}
+.check-row-difficulty select:disabled {
+  border-color: var(--button-disabled-border);
+  background: var(--button-disabled-background);
+  color: var(--button-disabled-text);
+  cursor: not-allowed;
+  opacity: 1;
 }
 .check-row:has(.check-row-toggle:disabled) .box {
   border-color: color-mix(in srgb, var(--text-muted) 34%, transparent);

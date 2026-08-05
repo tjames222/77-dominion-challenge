@@ -24,10 +24,37 @@
         <p class="lead" id="dashboardLead">Track your standards, post your check-in, and stay honest.</p>
       </section>
 
+      <section
+        class="challenge-start-gate spotlight-panel reveal"
+        id="challengeStartGate"
+        data-section-surface="accent"
+        aria-labelledby="challengeStartGateTitle"
+        hidden
+      >
+        <div class="challenge-start-gate-copy">
+          <p class="eyebrow">Challenge Setup</p>
+          <h2 id="challengeStartGateTitle">Your 77 days begin with one clear choice.</h2>
+          <p id="challengeStartGateDescription">Choose whether you will take the challenge Solo or With a group, then confirm the timeline Dominion will protect.</p>
+        </div>
+        <div class="challenge-start-gate-actions">
+          <button
+            class="primary"
+            id="startChallengeButton"
+            type="button"
+            aria-haspopup="dialog"
+            aria-controls="challengeStartDialog"
+            aria-describedby="challengeStartGateDescription"
+            disabled
+          >Start Challenge</button>
+          <button class="secondary" id="retryChallengeActivationButton" type="button" hidden disabled>Retry activation status</button>
+        </div>
+      </section>
+      <p class="sr-only" id="dashboardActivationStatus" role="status" aria-live="polite" aria-atomic="true" tabindex="-1"></p>
+
       <section class="progress dashboard-section dashboard-tracking reveal" data-section-surface="plain" aria-labelledby="trackingTitle">
         <h2 class="sr-only" id="trackingTitle">Challenge and daily progress</h2>
         <div class="rings" role="group" aria-labelledby="trackingTitle">
-          <div class="ring" id="challengeRing"><div class="ring-inner"><strong id="challengePercent">1%</strong><span>Challenge</span><small id="challengeDay">Day 1 of 77</small></div></div>
+          <div class="ring" id="challengeRing"><div class="ring-inner"><strong id="challengePercent">—</strong><span>Challenge</span><small id="challengeDay">Confirming…</small></div></div>
           <div class="ring" id="todayRing"><div class="ring-inner"><strong id="todayPercent">0%</strong><span>Today</span><small id="todayCount">0 of 7 done</small></div></div>
         </div>
       </section>
@@ -58,7 +85,7 @@
           <span id="countdownProgressLabel">0% of the day used</span>
           <span id="countdownActionsLabel">0 of 7 actions complete</span>
         </div>
-        <button class="action-button countdown-action" type="button" id="countdownCheckInButton" aria-controls="check-in">Go to check-in</button>
+        <button class="action-button countdown-action" type="button" id="countdownCheckInButton" aria-controls="check-in" disabled>Go to check-in</button>
       </section>
 
       <section class="progress dashboard-section dashboard-scorecard reveal" id="check-in" tabindex="-1" data-section-surface="plain" aria-labelledby="todaysScorecardTitle">
@@ -69,7 +96,7 @@
               <p>Daily standards</p>
               <span id="scorecardSelectionStatus" role="status" aria-live="polite" aria-atomic="true">0 of 7 complete</span>
             </div>
-            <button class="scorecard-select-all" id="selectAllActionsButton" type="button" aria-controls="checklist">
+            <button class="scorecard-select-all" id="selectAllActionsButton" type="button" aria-controls="checklist" disabled>
               <span class="app-icon icon-check" aria-hidden="true"></span>
               <span id="selectAllActionsLabel">Mark all complete</span>
             </button>

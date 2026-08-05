@@ -27,7 +27,7 @@ describe('workout-card difficulty controls', () => {
     const dashboardSource = await read('./dashboard.js');
     assert.match(dashboardSource, /document\.addEventListener\('change',[\s\S]+closest\?\.\('\[data-workout\]'\)/);
     assert.match(dashboardSource, /if \(!DIFFICULTY_OPTIONS\.includes\(target\.value\)\)/);
-    assert.match(dashboardSource, /syncWorkoutDifficultyControls\(difficultyControls, selectedWorkoutDifficulty\)/);
+    assert.match(dashboardSource, /syncWorkoutDifficultyControls\([\s\S]*?canParticipateInChallenge\(\) \? selectedWorkoutDifficulty : \{\}/);
     assert.match(dashboardSource, /writePreviewUserValue\(localStorage, ownerId, WORKOUT_DIFFICULTY_STORAGE_KEY, selectedWorkoutDifficulty\)/);
     assert.match(dashboardSource, /persistPreviewDashboardUserState\(\)/);
     assert.doesNotMatch(dashboardSource, /save\(WORKOUT_DIFFICULTY_STORAGE_KEY, workoutDifficulty\)/);
