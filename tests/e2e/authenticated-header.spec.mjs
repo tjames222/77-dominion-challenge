@@ -319,6 +319,26 @@ test('legacy mock start dates wait for their evidenced owner and never leak to a
   ))).toBe(FIXED_USER_ID);
 });
 
+test('profile hydration clears loading feedback independently for each preview account', async ({ page, app }) => {
+  await app.open(ROUTE_BY_ID.profile);
+  await expect(page.locator('#profileName')).toHaveText(FIXED_USER.name);
+  await expect(page.locator('#profileFeedback')).toBeEmpty();
+
+  const secondUser = {
+    name: 'Second Member',
+    email: 'second.member@example.test',
+    avatarUrl: '',
+  };
+  const secondUserId = await logInAsPreviewAccount(page, secondUser);
+  expect(secondUserId).not.toBe(FIXED_USER_ID);
+  await expect(page.locator('#profileName')).toHaveText(secondUser.name);
+  await expect(page.locator('#profileFeedback')).toBeEmpty();
+
+  expect(await logInAsPreviewAccount(page, FIXED_USER)).toBe(FIXED_USER_ID);
+  await expect(page.locator('#profileName')).toHaveText(FIXED_USER.name);
+  await expect(page.locator('#profileFeedback')).toBeEmpty();
+});
+
 test('adopting a legacy preview ID preserves its Solo date and owned check-in lock', async ({ page, app }) => {
   await app.open(ROUTE_BY_ID.dashboard);
   await page.evaluate(() => {

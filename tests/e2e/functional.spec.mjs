@@ -516,6 +516,7 @@ test('the retired Today’s Actions URL returns safely to Dashboard', async ({ p
 
 test('profile form saves through Enter and announces success', async ({ page, app }) => {
   await app.open(ROUTE_BY_ID.profile);
+  await expect(page.locator('#profileFeedback')).toBeEmpty();
   await page.getByLabel('Name', { exact: true }).fill('Jordan Keyboard');
   await page.getByLabel('Email', { exact: true }).press('Enter');
   await expect(page.locator('#profileFeedback')).toHaveText('Profile saved.');

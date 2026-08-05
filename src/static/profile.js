@@ -588,6 +588,7 @@ async function hydrateProfile(expectedOwnerId = observedProfileOwner) {
     renderProfile(user);
     updateBillingSummary(billing);
     enableHydratedProfileForm();
+    setProfileFeedback('');
     return true;
   }
 
@@ -625,6 +626,7 @@ async function hydrateProfile(expectedOwnerId = observedProfileOwner) {
     renderProfile(syncedUser);
     updateBillingSummary(billing);
     enableHydratedProfileForm();
+    setProfileFeedback('');
     return true;
   } catch (error) {
     console.warn('Unable to load profile from Supabase', error);
