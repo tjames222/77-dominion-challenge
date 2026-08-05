@@ -134,6 +134,7 @@ const MOCK_JOURNAL_KEY = 'dominion:mockJournalEntries';
 const MOCK_CHALLENGE_STATES_KEY = 'dominion:mockChallengeStates';
 const MOCK_CHALLENGE_ACTIVATION_KEY = 'dominion:mockChallengeActivation';
 const MOCK_CHALLENGE_ACTIVATION_REQUESTS_KEY = 'dominion:mockChallengeActivationRequests';
+const MOCK_GROUP_START_REQUESTS_KEY = 'dominion:mockGroupChallengeStartRequests';
 const MOCK_CHALLENGE_ACTIVATION_LEGACY_OWNER_KEY = 'dominion:mockChallengeActivationLegacyOwner';
 const MOCK_REWARD_ENTITLEMENTS_KEY = 'dominion:mockRewardEntitlements';
 const MOCK_CHALLENGE_THRESHOLDS_VERSION_KEY = 'dominion:mockChallengeThresholdsVersion';
@@ -2950,6 +2951,144 @@ export async function createCrew({
   };
 }
 
+function normalizeCreatedGroupStart(value) {
+  const crew = value?.crew || {};
+  return {
+    crew: {
+      id: crew.crewId ?? crew.crew_id ?? crew.id,
+      name: crew.name || 'Crew',
+      description: crew.description || '',
+      challengeStartDate: crew.challengeStartDate ?? crew.challenge_start_date ?? null,
+      createdBy: crew.createdBy ?? crew.created_by ?? null,
+      createdAt: crew.createdAt ?? crew.created_at ?? null,
+      joinedAt: crew.joinedAt ?? crew.joined_at ?? null,
+      role: crew.role || 'owner',
+      createdNew: Boolean(crew.createdNew ?? crew.created_new),
+    },
+    activation: normalizeChallengeActivationMutation(value?.activation),
+  };
+}
+
+export async function createCrewAndActivateGroup({
+  name,
+  description = '',
+  challengeStartDate,
+  timeZone = browserTimeZone(),
+  crewRequestId = newCrewLifecycleRequestId(),
+  activationRequestId = newChallengeActivationRequestId(),
+  expectedUserId,
+} = {}) {
+  const capturedActorId = requireCapturedActivationActor(expectedUserId);
+
+  if (isLocalDemoMode()) {
+    const actorId = getMockUserId();
+    if (actorId !== capturedActorId) {
+      throw new Error('The signed-in account changed. Try again.');
+    }
+
+    const signature = JSON.stringify([
+      String(name || '').trim(),
+      String(description || ''),
+      challengeStartDate || null,
+      String(timeZone || '').trim(),
+      activationRequestId,
+    ]);
+    const storedStarts = readJson(MOCK_GROUP_START_REQUESTS_KEY, {});
+    const starts = storedStarts && typeof storedStarts === 'object' && !Array.isArray(storedStarts)
+      ? storedStarts
+      : {};
+    const priorStart = starts[crewRequestId];
+    if (priorStart) {
+      if (priorStart.actorId !== actorId || priorStart.signature !== signature) {
+        throw new Error('This request ID was already used for another operation.');
+      }
+      return normalizeCreatedGroupStart(priorStart.result);
+    }
+
+    const { crews, members } = ensureMockCrews();
+    if (crews.length) {
+      throw new Error('Leave or delete your current crew before creating another.');
+    }
+
+    const activationParameters = {
+      crewId: '',
+      timeZone: String(timeZone || '').trim(),
+    };
+    const storedActivationRequests = readJson(MOCK_CHALLENGE_ACTIVATION_REQUESTS_KEY, {});
+    const activationRequests = storedActivationRequests
+      && typeof storedActivationRequests === 'object'
+      && !Array.isArray(storedActivationRequests)
+      ? storedActivationRequests
+      : {};
+    const priorActivation = activationRequests?.[activationRequestId];
+    if (priorActivation) {
+      throw new Error('This request ID was already used for another operation.');
+    }
+
+    const now = new Date().toISOString();
+    const crew = {
+      id: randomId('preview_crew'),
+      name: String(name || '').trim(),
+      description: String(description || ''),
+      challengeStartDate: challengeStartDate || null,
+      createdBy: actorId,
+      createdAt: now,
+      role: 'owner',
+      joinedAt: now,
+      createdNew: true,
+    };
+    activationParameters.crewId = crew.id;
+    const activation = normalizeChallengeActivationMutation(buildMockChallengeActivation({
+      current: readMockChallengeActivation(),
+      action: 'group_activate',
+      startDate: crew.challengeStartDate,
+      timeZone,
+      actorId,
+      crewId: crew.id,
+      groupMembershipActive: true,
+      hasEntitlement: getMockBillingState().appAccess,
+    }));
+
+    const result = { crew, activation };
+    crews.unshift(crew);
+    members[crew.id] = [{
+      crewId: crew.id,
+      userId: actorId,
+      name: getMockUser().name || 'Preview Member',
+      avatarUrl: getMockUser().avatarUrl || '',
+      role: 'owner',
+      joinedAt: now,
+    }];
+    writeJson(MOCK_CREWS_KEY, crews);
+    saveMockCrewMembers(members);
+    writeMockChallengeActivation(activation);
+    activationRequests[activationRequestId] = {
+      actorId,
+      action: 'group_activate',
+      signature: mockActivationRequestSignature('group_activate', activationParameters),
+      result: activation,
+    };
+    writeJson(MOCK_CHALLENGE_ACTIVATION_REQUESTS_KEY, activationRequests);
+    starts[crewRequestId] = { actorId, signature, result };
+    writeJson(MOCK_GROUP_START_REQUESTS_KEY, starts);
+    return normalizeCreatedGroupStart(result);
+  }
+
+  const client = requireSupabase();
+  const user = await requireUser(capturedActorId);
+  const { data, error } = await client.rpc('create_crew_and_activate_group', {
+    target_crew_request_id: crewRequestId,
+    target_activation_request_id: activationRequestId,
+    target_name: name,
+    target_description: description,
+    target_challenge_start_date: challengeStartDate,
+    target_time_zone: timeZone,
+    target_expected_actor_id: user.id,
+  });
+  if (error) throw error;
+  return normalizeCreatedGroupStart(data);
+}
+
 function defaultCrewTrainingProgress(crewId, userId, contentVersion) {
   return normalizeCrewTrainingProgress({
     crewId,
@@ -3322,6 +3461,7 @@ export async function previewCrewInvite({ token = '', continuationToken = '' } =
     if (['ready', 'already_member', 'current_crew_conflict'].includes(status)) {
       response.preview = mockInvitePreview(invite, crew, members);
     }
+    if (status === 'already_member' && crew?.id) response.crewId = crew.id;
     if (token && continuation && ['ready', 'full'].includes(status)) response.continuationToken = continuation;
     return response;
   }
@@ -3335,7 +3475,7 @@ export async function previewCrewInvite({ token = '', continuationToken = '' } =
   return data || { status: 'invalid' };
 }
 
-export async function confirmCrewInvite(continuationToken) {
+export async function confirmCrewInvite(continuationToken, { expectedUserId = '' } = {}) {
   if (isLocalDemoMode()) {
     const mockUser = readJson('dominion:user', null);
     if (!mockUser?.authenticated) return { status: 'authentication_required' };
@@ -3348,6 +3488,9 @@ export async function confirmCrewInvite(continuationToken) {
     if (!session) return { status: 'invalid' };
     if (new Date(session.expires_at).getTime() <= Date.now()) return { status: 'session_expired' };
     const currentUserId = getMockUserId();
+    if (expectedUserId && currentUserId !== expectedUserId) {
+      throw new Error('The signed-in account changed. Try again.');
+    }
     if (session.bound_user_id && session.bound_user_id !== currentUserId) return { status: 'wrong_account' };
     session.bound_user_id = currentUserId;
     session.confirmation_attempts = Number(session.confirmation_attempts || 0) + 1;
@@ -3365,6 +3508,7 @@ export async function confirmCrewInvite(continuationToken) {
         ...(['already_member', 'current_crew_conflict'].includes(status)
           ? { preview: mockInvitePreview(invite, crew, members) }
           : {}),
+        ...(status === 'already_member' && crew?.id ? { crewId: crew.id } : {}),
       };
     }
 
@@ -3406,7 +3550,7 @@ export async function confirmCrewInvite(continuationToken) {
   }
 
   const client = requireSupabase();
-  await requireUser();
+  await requireUser(expectedUserId);
   const { data, error } = await client.rpc('confirm_crew_invite', {
     continuation_token: continuationToken,
   });

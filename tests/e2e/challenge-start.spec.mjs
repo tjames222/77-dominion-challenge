@@ -190,7 +190,7 @@ test('Group choice hands off only to canonical Community intent', async ({ page,
   app.assertNoRuntimeErrors();
 });
 
-test('Solo confirmation activates once, unlocks Dashboard, and survives refresh for training', async ({ page, app }) => {
+test('Solo confirmation activates once, claims training, and resumes after refresh', async ({ page, app }) => {
   await page.addInitScript(() => {
     window.__soloTrainingEvents = [];
     window.addEventListener('dominion:solo-training-launch-requested', (event) => {
@@ -205,12 +205,15 @@ test('Solo confirmation activates once, unlocks Dashboard, and survives refresh 
   });
 
   await expect(dialog).toBeHidden();
+  const trainingDialog = page.getByRole('dialog', { name: 'Welcome to your Solo walkthrough' });
+  await expect(trainingDialog).toBeVisible();
+  await expect(page.locator('#siteTrainingProgress')).toHaveText('Page 1 of 13 · Step 1 of 9');
+  await expect(page.locator('#siteTrainingTitle')).toBeFocused();
   await expect(page.locator('#challengeStartGate')).toBeHidden();
   await expect(page.locator('#challengeDay')).toHaveText('Day 1 of 77');
   await expect(page.locator('.check-row-toggle').first()).toBeEnabled();
   await expect(page.locator('.check-row-details').first()).toHaveAttribute('href', /bible-reading\.html/);
   await expect(page.locator('.shared-header-share')).toBeEnabled();
-  await expect(page.locator('.shared-header-share')).toHaveAccessibleName('Share');
 
   const persisted = await page.evaluate(({ activationKey, requestKey, trainingKey, userId }) => {
     const activation = JSON.parse(localStorage.getItem(activationKey) || '{}')[userId];
@@ -238,35 +241,67 @@ test('Solo confirmation activates once, unlocks Dashboard, and survives refresh 
   });
   expect(persisted.requestCount).toBe(1);
   expect(persisted.request).toMatchObject({ actorId: FIXED_USER_ID, action: 'solo_activate' });
-  expect(persisted.training).toMatchObject({
+  expect(persisted.training).toBeUndefined();
+  expect(persisted.events).toHaveLength(1);
+  expect(persisted.events[0]).toMatchObject({
     schemaVersion: 1,
     actorId: FIXED_USER_ID,
     activationStatus: 'active',
     startDate: FIXED_TODAY,
     source: 'challenge_activation',
   });
-  expect(persisted.events).toHaveLength(1);
-  expect(persisted.events[0]).toEqual(persisted.training);
+
+  await trainingDialog.getByRole('button', { name: 'Stop for now' }).click();
+  await expect(trainingDialog).toBeHidden();
+  await expect(page.locator('.shared-header-share')).toHaveAccessibleName('Share');
 
   await page.reload({ waitUntil: 'networkidle' });
   await expect(page.locator('#challengeStartGate')).toBeHidden();
   await expect(page.locator('#challengeDay')).toHaveText('Day 1 of 77');
-  const afterRefresh = await page.evaluate(({ requestKey, trainingKey, userId }) => ({
+  await expect(page.locator('.site-training-layer')).toBeHidden();
+  await page.getByRole('button', { name: 'Open menu' }).click();
+  await expect(page.getByRole('button', { name: 'Resume Training' })).toBeVisible();
+  const afterRefresh = await page.evaluate(async ({ requestKey, trainingKey, userId }) => {
+    const [api, registryModule] = await Promise.all([
+      import('/src/static/api.js'),
+      import('/src/static/site-training-registry.mjs'),
+    ]);
+    const trainingPage = registryModule.siteTrainingPageForRoute(
+      registryModule.SITE_TRAINING_REGISTRY,
+      location.pathname,
+    );
+    const program = registryModule.siteTrainingProgramForPage(
+      registryModule.SITE_TRAINING_REGISTRY,
+      trainingPage,
+    );
+    const state = await api.getSiteTrainingState({ page: trainingPage, program, expectedUserId: userId });
+    return {
     requestCount: Object.keys(JSON.parse(localStorage.getItem(requestKey) || '{}')).length,
     training: JSON.parse(localStorage.getItem(trainingKey) || '{}')[userId],
-  }), { requestKey: REQUEST_STORAGE_KEY, trainingKey: TRAINING_STORAGE_KEY, userId: FIXED_USER_ID });
+      state,
+    };
+  }, { requestKey: REQUEST_STORAGE_KEY, trainingKey: TRAINING_STORAGE_KEY, userId: FIXED_USER_ID });
   expect(afterRefresh.requestCount).toBe(1);
-  expect(afterRefresh.training).toEqual(persisted.training);
+  expect(afterRefresh.training).toBeUndefined();
+  expect(afterRefresh.state).toMatchObject({
+    contractValid: true,
+    actorId: FIXED_USER_ID,
+    page: { status: 'stopped', currentStepId: 'orientation' },
+    overall: { status: 'stopped', currentPageId: 'dashboard', currentPageIndex: 0 },
+  });
   app.assertNoRuntimeErrors();
 });
 
-test('future Solo start schedules once, keeps participation locked, and persists training handoff', async ({ page, app }) => {
+test('future Solo start schedules once, keeps participation locked, and launches safe training', async ({ page, app }) => {
   await app.open(ROUTE_BY_ID.dashboard, { state: 'notStarted' });
   const dialog = await reviewSoloStart(page, '2026-02-20');
   await expect(dialog).toContainText('will be scheduled for this date');
   await dialog.getByRole('button', { name: 'Confirm and start challenge' }).click();
 
   await expect(dialog).toBeHidden();
+  const trainingDialog = page.getByRole('dialog', { name: 'Welcome to your Solo walkthrough' });
+  await expect(trainingDialog).toBeVisible();
+  await expect(page.locator('#siteTrainingProgress')).toHaveText('Page 1 of 13 · Step 1 of 9');
   await expect(page.locator('#challengeStartGate')).toBeHidden();
   await expect(page.locator('#challengePercent')).toHaveText('0%');
   await expect(page.locator('#challengeDay')).toHaveText('Scheduled');
@@ -274,7 +309,12 @@ test('future Solo start schedules once, keeps participation locked, and persists
   await expect(page.locator('.check-row-toggle').first()).toBeDisabled();
   await expect(page.locator('.check-row-details').first()).not.toHaveAttribute('href');
   await expect(page.locator('#checkInStatus')).toContainText('scheduled to begin 2026-02-20');
-  await expect(page.getByRole('button', { name: /Share progress unavailable/i })).toBeDisabled();
+  await expect(page.locator('.shared-header-share')).toBeDisabled();
+
+  await page.locator('[data-training-action="next"]').click();
+  await page.locator('[data-training-action="next"]').click();
+  await expect(page.locator('#siteTrainingTitle')).toHaveText('Sharing stays under your control');
+  await expect(page.locator('#siteTrainingFallback')).toBeVisible();
 
   const result = await page.evaluate(({ activationKey, requestKey, trainingKey, userId }) => ({
     activation: JSON.parse(localStorage.getItem(activationKey) || '{}')[userId],
@@ -293,11 +333,9 @@ test('future Solo start schedules once, keeps participation locked, and persists
     challengeDay: null,
   });
   expect(result.requestCount).toBe(1);
-  expect(result.training).toMatchObject({
-    actorId: FIXED_USER_ID,
-    activationStatus: 'scheduled',
-    startDate: '2026-02-20',
-  });
+  expect(result.training).toBeUndefined();
+  await page.locator('[data-training-action="stop"]').click();
+  await expect(page.getByRole('button', { name: /Share progress unavailable/i })).toBeDisabled();
   app.assertNoRuntimeErrors();
 });
 

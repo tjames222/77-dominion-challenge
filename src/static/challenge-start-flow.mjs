@@ -3,8 +3,9 @@ import {
   challengeActivationDay,
   isSupportedChallengeActivationDate,
 } from './challenge-activation.mjs';
+import { CHALLENGE_START_INTENT_PATH } from './challenge-start-intent.mjs';
 
-export const GROUP_CHALLENGE_START_HREF = './community.html?intent=challenge-start';
+export const GROUP_CHALLENGE_START_HREF = CHALLENGE_START_INTENT_PATH;
 export const SOLO_TRAINING_LAUNCH_EVENT = 'dominion:solo-training-launch-requested';
 export const SOLO_TRAINING_LAUNCH_STORAGE_KEY = 'dominion:soloTrainingLaunchRequests';
 export const SOLO_TRAINING_LAUNCH_SCHEMA_VERSION = 1;
@@ -257,6 +258,14 @@ function readStoredSoloTrainingLaunches(storage) {
   }
 }
 
+function soloTrainingLaunchSignature(launch) {
+  try {
+    return JSON.stringify(normalizeSoloTrainingLaunch(launch));
+  } catch {
+    return '';
+  }
+}
+
 export function persistSoloTrainingLaunch(storage, launch) {
   if (typeof storage?.setItem !== 'function') {
     throw new TypeError('Durable browser storage is required for Solo training.');
@@ -278,6 +287,50 @@ export function readSoloTrainingLaunch(storage, actorId) {
   } catch {
     return null;
   }
+}
+
+export function compareAndClearSoloTrainingLaunch(storage, expectedLaunch) {
+  if (typeof storage?.getItem !== 'function' || typeof storage?.setItem !== 'function') {
+    return false;
+  }
+  let normalized;
+  try {
+    normalized = normalizeSoloTrainingLaunch(expectedLaunch);
+  } catch {
+    return false;
+  }
+  const launches = readStoredSoloTrainingLaunches(storage);
+  const current = launches[normalized.actorId];
+  if (!current
+    || soloTrainingLaunchSignature(current) !== soloTrainingLaunchSignature(normalized)) {
+    return false;
+  }
+  delete launches[normalized.actorId];
+  if (Object.keys(launches).length > 0) {
+    storage.setItem(SOLO_TRAINING_LAUNCH_STORAGE_KEY, JSON.stringify(launches));
+  } else if (typeof storage.removeItem === 'function') {
+    storage.removeItem(SOLO_TRAINING_LAUNCH_STORAGE_KEY);
+  } else {
+    storage.setItem(SOLO_TRAINING_LAUNCH_STORAGE_KEY, '{}');
+  }
+  return true;
+}
+
+export function soloTrainingLaunchMatchesActivation(launch, activation, actorId) {
+  let normalized;
+  try {
+    normalized = normalizeSoloTrainingLaunch(launch);
+  } catch {
+    return false;
+  }
+  return normalized.actorId === asText(actorId)
+    && activation?.readState === 'ready'
+    && activation.contractValid === true
+    && activation.mode === 'solo'
+    && ACTIVE_ACTIVATION_STATUSES.has(activation.status)
+    && activation.status === normalized.activationStatus
+    && activation.startDate === normalized.startDate
+    && activation.revision === normalized.activationRevision;
 }
 
 export function publishSoloTrainingLaunch({

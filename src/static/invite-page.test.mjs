@@ -46,6 +46,7 @@ describe('private-group invitation browser page', () => {
       'registerInviteLink',
       'billingInviteLink',
       'retryInviteButton',
+      'continueGroupStartButton',
       'openGroupLink',
       'leaveInviteLink',
     ]) {

@@ -13884,4 +13884,6 @@ revoke execute on function public.grant_sharing_reward_after_invite_redemption()
 \ir migrations/20260731193250_persist_explicit_workout_difficulty.sql
 \ir migrations/20260804200019_challenge_activation_lifecycle.sql
 \ir migrations/20260805003000_resumable_site_training_framework.sql
+\ir migrations/20260805010103_integrate_group_challenge_start.sql
+\ir migrations/20260805015225_publish_solo_first_run_training_catalog.sql
 \ir migrations/20260805021049_add_page_training_restart_controls.sql

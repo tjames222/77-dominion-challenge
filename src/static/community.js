@@ -1,14 +1,18 @@
 import {
+  activateGroupChallenge,
   advanceCrewTraining,
   claimCrewTraining,
   createCrew,
+  createCrewAndActivateGroup,
   deleteCrew,
   getBillingState,
+  getChallengeActivation,
   getCrews,
   getCrewMembers,
   getCrewTrainingProgress,
   getJournalEntries,
   getLeaderboard,
+  getLocalOrSessionUser,
   hasSupabaseAuth,
   isLocalDemoMode,
   leaveCrew,
@@ -16,6 +20,19 @@ import {
   redirectToLogin,
   saveJournalEntry,
 } from './api';
+import { newChallengeActivationRequestId } from './challenge-activation.mjs';
+import {
+  CHALLENGE_START_INTENT_PATH,
+  armGroupChallengeActivation,
+  bindChallengeStartIntent,
+  captureChallengeStartIntent,
+  challengeStartTimeZone,
+  clearChallengeStartIntent,
+  clearChallengeStartIntentMarker,
+  readChallengeStartIntent,
+  reconcileGroupChallengeStart,
+  setChallengeStartIntentStage,
+} from './challenge-start-intent.mjs';
 import { acquireDialogLayer, createConfirmationDialog } from './dialog.mjs';
 import {
   crewLifecycleAction,
@@ -52,6 +69,10 @@ const state = {
   crewsLoaded: false,
   createFormOpen: false,
   createRequestId: '',
+  currentUser: null,
+  challengeActivation: null,
+  groupStartIntent: null,
+  groupStartDialog: null,
   activeCrewId: localStorage.getItem('dominion:activeCrewId') || '',
   crewMembers: [],
   leaderboard: { window: 'week', rows: [], requestId: 0 },
@@ -179,6 +200,140 @@ function dayLabel(startDate) {
 
 function activeCrew() {
   return state.crews.find((crew) => crew.id === state.activeCrewId) || null;
+}
+
+function abandonGroupChallengeStart(message = 'Group challenge start canceled. Nothing changed.') {
+  clearChallengeStartIntent(sessionStorage);
+  clearChallengeStartIntentMarker(window);
+  state.groupStartIntent = null;
+  state.groupStartDialog = null;
+  setFeedback(message);
+}
+
+async function refreshChallengeActivation() {
+  if (!state.currentUser?.userId) return null;
+  state.challengeActivation = await getChallengeActivation({
+    expectedUserId: state.currentUser.userId,
+  });
+  return state.challengeActivation;
+}
+
+function openGroupStartConfirmation(crew, { continuation = false } = {}) {
+  if (!crew || !state.groupStartIntent || state.groupStartDialog) return;
+  const startDate = crew.challengeStartDate || 'the group’s selected date';
+  const dialog = createConfirmationDialog({
+    id: 'group-challenge-start-confirmation',
+    title: continuation ? 'Finish starting your Group challenge?' : `Start with ${crew.name}?`,
+    description: continuation
+      ? `Your membership in ${crew.name} is ready. Continue to bind your challenge to its ${startDate} start date.`
+      : `${crew.name} starts on ${startDate}. Your challenge will use that group-owned date and cannot later switch to Solo mode.`,
+    cancelLabel: 'Cancel',
+    confirmLabel: continuation ? 'Continue Starting' : 'Confirm Group Start',
+    pendingLabel: 'Starting challenge…',
+    closeOnBackdrop: false,
+    onCancel: () => abandonGroupChallengeStart(),
+    onConfirm: async () => {
+      const actorId = state.currentUser?.userId || '';
+      let intent = bindChallengeStartIntent(sessionStorage, actorId);
+      if (!intent) throw new Error('This start request expired. Return to the dashboard and try again.');
+      const requestId = intent.crewId === crew.id && intent.activationRequestId
+        ? intent.activationRequestId
+        : newChallengeActivationRequestId();
+      const timeZone = intent.timeZone || challengeStartTimeZone();
+      intent = armGroupChallengeActivation(sessionStorage, {
+        actorId,
+        crewId: crew.id,
+        requestId,
+        timeZone,
+      });
+      if (!intent) throw new Error('The signed-in account changed. Refresh and try again.');
+      state.groupStartIntent = intent;
+
+      await activateGroupChallenge({
+        crewId: crew.id,
+        timeZone,
+        requestId,
+        expectedUserId: actorId,
+      });
+      const activation = await refreshChallengeActivation();
+      const outcome = reconcileGroupChallengeStart(intent, {
+        activation,
+        crewIds: state.crews.map((item) => item.id),
+      });
+      if (outcome !== 'complete') {
+        throw new Error('Your start was received but could not be verified. Continue with the same request.');
+      }
+      clearChallengeStartIntent(sessionStorage);
+      clearChallengeStartIntentMarker(window);
+      state.groupStartIntent = null;
+      setFeedback(`${crew.name} is now your Group challenge.`);
+    },
+    onClose: ({ reason }) => {
+      if (['escape', 'close-button'].includes(reason) && state.groupStartIntent) {
+        abandonGroupChallengeStart();
+      }
+      state.groupStartDialog = null;
+      dialog.destroy();
+    },
+  });
+  state.groupStartDialog = dialog;
+  dialog.open($('crewManageCard') || $('openCrewFormButton'));
+}
+
+async function resumeGroupChallengeStart() {
+  const intent = state.groupStartIntent;
+  if (!intent) return;
+  const activation = state.challengeActivation || await refreshChallengeActivation();
+  const outcome = reconcileGroupChallengeStart(intent, {
+    activation,
+    crewIds: state.crews.map((crew) => crew.id),
+  });
+
+  if (outcome === 'complete') {
+    clearChallengeStartIntent(sessionStorage);
+    clearChallengeStartIntentMarker(window);
+    state.groupStartIntent = null;
+    setFeedback('Your Group challenge start is confirmed.');
+    return;
+  }
+  if (outcome === 'conflict') {
+    abandonGroupChallengeStart('Your challenge already has a different confirmed start. Nothing was changed.');
+    return;
+  }
+  if (outcome === 'unavailable') {
+    setFeedback('Challenge start details are temporarily unavailable. Refresh to try again.');
+    return;
+  }
+  if (outcome === 'membership_missing') {
+    state.groupStartIntent = setChallengeStartIntentStage(sessionStorage, 'choose_group', {
+      crewId: null,
+      activationRequestId: null,
+      timeZone: null,
+    });
+    if (!state.groupStartIntent) {
+      abandonGroupChallengeStart('This Group start request expired. Return to the dashboard and try again.');
+      return;
+    }
+  }
+
+  const crew = activeCrew();
+  if (crew) {
+    const continuation = state.groupStartIntent?.stage === 'activation_pending';
+    if (!continuation) {
+      state.groupStartIntent = setChallengeStartIntentStage(
+        sessionStorage,
+        'confirm_group',
+        { crewId: crew.id },
+      );
+    }
+    openGroupStartConfirmation(crew, { continuation });
+    return;
+  }
+
+  state.createFormOpen = true;
+  setFeedback('Create your group below, or open a private invitation in this tab. Nothing starts until you confirm.');
+  renderCrewShell();
+  $('crewNameInput')?.focus();
 }
 
 function crewTrainingSteps() {
@@ -675,6 +830,12 @@ function renderCrewShell() {
     openCreateButton.setAttribute('aria-expanded', String(view.showCreateForm));
   }
   if (createForm) createForm.hidden = !view.showCreateForm;
+  const createSubmit = createForm?.querySelector('button[type="submit"]');
+  if (createSubmit) {
+    createSubmit.textContent = state.groupStartIntent
+      ? 'Create Crew and Start Challenge'
+      : 'Create Crew';
+  }
   if (manageCard) manageCard.hidden = !view.showActiveCrew;
   if (membersCard) membersCard.hidden = !crew;
   if (integrationsCard) integrationsCard.hidden = !crew || !GROUP_INTEGRATIONS_ENABLED;
@@ -1094,19 +1255,20 @@ function continueLegacyInviteIfPresent() {
 }
 
 async function bootCommunity() {
+  state.groupStartIntent = captureChallengeStartIntent(sessionStorage, window.location);
   continueLegacyInviteIfPresent();
   if (new URLSearchParams(window.location.search).has('invite')) return;
   $('crewStartDateInput').value = todayKey();
   $('journalDate').value = todayKey();
 
   if (!hasSupabaseAuth() && !isLocalDemoMode()) {
-    redirectToLogin('./community.html');
+    redirectToLogin(state.groupStartIntent ? CHALLENGE_START_INTENT_PATH : './community.html');
     return;
   }
 
   state.billing = await getBillingState();
   if (!state.billing.authenticated) {
-    redirectToLogin('./community.html');
+    redirectToLogin(state.groupStartIntent ? CHALLENGE_START_INTENT_PATH : './community.html');
     return;
   }
   if (!state.billing.appAccess) {
@@ -1114,14 +1276,21 @@ async function bootCommunity() {
     return;
   }
 
+  state.currentUser = await getLocalOrSessionUser();
+  state.groupStartIntent = bindChallengeStartIntent(
+    sessionStorage,
+    state.currentUser?.userId,
+  );
+
   takeIntegrationCallbackFragment();
   if (isLocalDemoMode()) {
     setFeedback(GROUP_INTEGRATIONS_ENABLED
       ? 'Preview mode: groups, leaderboards, integrations, and journal entries use local mock data.'
       : 'Preview mode: groups, leaderboards, and journal entries use local mock data. External channel connections are safely off.');
   }
-  await Promise.all([refreshCrews(), refreshJournal()]);
+  await Promise.all([refreshCrews(), refreshJournal(), refreshChallengeActivation()]);
   await loadIntegrationSetup();
+  await resumeGroupChallengeStart();
 }
 
 function setCrewFormOpen(open, { focus = true } = {}) {
@@ -1137,6 +1306,7 @@ $('cancelCrewFormButton')?.addEventListener('click', () => {
   $('crewForm')?.reset();
   $('crewStartDateInput').value = todayKey();
   state.createRequestId = '';
+  if (state.groupStartIntent) abandonGroupChallengeStart();
   setCrewFormOpen(false);
 });
 
@@ -1330,24 +1500,78 @@ document.querySelectorAll('[data-leaderboard-window]').forEach((button) => {
 $('crewForm')?.addEventListener('submit', async (event) => {
   event.preventDefault();
   const button = event.submitter;
-  const release = setButtonBusy(button, 'Creating...');
+  const startingGroupChallenge = Boolean(state.groupStartIntent);
+  const release = setButtonBusy(
+    button,
+    startingGroupChallenge ? 'Creating and starting…' : 'Creating...',
+  );
   try {
     state.createRequestId ||= newCrewLifecycleRequestId();
-    const crew = await createCrew({
+    const crewInput = {
       name: $('crewNameInput').value.trim(),
       description: $('crewDescriptionInput').value.trim(),
       challengeStartDate: $('crewStartDateInput').value,
-      requestId: state.createRequestId,
-    });
+    };
+    let crew;
+    if (startingGroupChallenge) {
+      const actorId = state.currentUser?.userId || '';
+      const activationRequestId = state.groupStartIntent.activationRequestId
+        || newChallengeActivationRequestId();
+      const timeZone = state.groupStartIntent.timeZone || challengeStartTimeZone();
+      state.groupStartIntent = setChallengeStartIntentStage(
+        sessionStorage,
+        'membership_pending',
+        { activationRequestId, timeZone },
+      );
+      if (!state.groupStartIntent) {
+        throw new Error('This Group start request expired. Return to the dashboard and try again.');
+      }
+      const result = await createCrewAndActivateGroup({
+        ...crewInput,
+        timeZone,
+        crewRequestId: state.createRequestId,
+        activationRequestId,
+        expectedUserId: actorId,
+      });
+      crew = result.crew;
+      state.challengeActivation = result.activation;
+      state.groupStartIntent = armGroupChallengeActivation(sessionStorage, {
+        actorId,
+        crewId: crew.id,
+        requestId: activationRequestId,
+        timeZone,
+      });
+    } else {
+      crew = await createCrew({
+        ...crewInput,
+        requestId: state.createRequestId,
+      });
+    }
     state.activeCrewId = crew.id;
     localStorage.setItem('dominion:activeCrewId', crew.id);
     event.target.reset();
     $('crewStartDateInput').value = todayKey();
     state.createRequestId = '';
     state.createFormOpen = false;
-    setFeedback(`${crew.name} is ready. Copy the invite link when you want to bring people in.`);
+    setFeedback(startingGroupChallenge
+      ? `${crew.name} is ready. Verifying your Group challenge start…`
+      : `${crew.name} is ready. Copy the invite link when you want to bring people in.`);
     await refreshCrews();
     const authoritativeCrew = activeCrew();
+    if (startingGroupChallenge) {
+      const activation = await refreshChallengeActivation();
+      const outcome = reconcileGroupChallengeStart(state.groupStartIntent, {
+        activation,
+        crewIds: state.crews.map((item) => item.id),
+      });
+      if (outcome !== 'complete') {
+        throw new Error('The group was created, but its challenge start could not be verified. Refresh to continue safely.');
+      }
+      clearChallengeStartIntent(sessionStorage);
+      clearChallengeStartIntentMarker(window);
+      state.groupStartIntent = null;
+      setFeedback(`${crew.name} is ready and your Group challenge is confirmed.`);
+    }
     if (crew.createdNew && authoritativeCrew?.id === crew.id && isCrewLeader()) {
       try {
         const trainingProgress = await claimCrewTraining(

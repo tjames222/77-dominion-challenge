@@ -1,6 +1,10 @@
 import { initReveal } from './reveal';
 import { buildInviteAuthHref, isInviteReturnPath } from './invite-flow.mjs';
 import {
+  buildChallengeStartAuthHref,
+  isChallengeStartReturnPath,
+} from './challenge-start-intent.mjs';
+import {
   getBillingState,
   hasSupabaseAuth,
   isLocalDemoMode,
@@ -15,10 +19,13 @@ const form = document.getElementById('authForm');
 const rawReturnTo = new URLSearchParams(window.location.search).get('returnTo');
 const returnTo = sanitizeReturnTo(rawReturnTo);
 const inviteReturn = isInviteReturnPath(returnTo);
+const groupStartReturn = isChallengeStartReturnPath(returnTo);
 const authSwitchLink = document.querySelector('[data-auth-switch]');
-if (authSwitchLink && inviteReturn) {
+if (authSwitchLink && (inviteReturn || groupStartReturn)) {
   const switchingToRegister = Boolean(document.getElementById('email') && !document.getElementById('name'));
-  authSwitchLink.href = buildInviteAuthHref(switchingToRegister ? 'register' : 'login');
+  authSwitchLink.href = inviteReturn
+    ? buildInviteAuthHref(switchingToRegister ? 'register' : 'login')
+    : buildChallengeStartAuthHref(switchingToRegister ? 'register' : 'login');
   if (switchingToRegister) authSwitchLink.textContent = 'Create an account';
 }
 if (form) {

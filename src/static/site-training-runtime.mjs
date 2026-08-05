@@ -37,9 +37,13 @@ export function createSiteTrainingRuntime({
   document: ownerDocument = globalThis.document,
   coachmarkFactory = createSiteTrainingCoachmark,
   onStateChange = null,
+  onTransition = async () => {},
 } = {}) {
   if (onStateChange !== null && typeof onStateChange !== 'function') {
     throw new TypeError('Page training state changes require a function listener.');
+  }
+  if (typeof onTransition !== 'function') {
+    throw new TypeError('Page training transitions require a function listener.');
   }
   const page = siteTrainingPageForRoute(registry, pathname);
   const program = siteTrainingProgramForPage(registry, page);
@@ -82,6 +86,21 @@ export function createSiteTrainingRuntime({
     typeof capabilities === 'function' ? capabilities() || {} : capabilities || {}
   );
 
+  const notifyTransition = async (result) => {
+    try {
+      await onTransition({
+        actorId,
+        page,
+        program,
+        state: result,
+        transition: result?.transition || null,
+        scope: activeScope,
+      });
+    } catch (error) {
+      console.warn('Site training transition callback failed after progress was saved.', error);
+    }
+  };
+
   const assertCurrent = (capturedActorId, capturedGeneration) => {
     if (destroyed || actorId !== capturedActorId || generation !== capturedGeneration) {
       throw accountChangedError();
@@ -95,6 +114,8 @@ export function createSiteTrainingRuntime({
       step,
       index,
       total: page.steps.length,
+      pageIndex: activeScope === 'overall' ? trainingState.overall?.currentPageIndex : null,
+      pageTotal: activeScope === 'overall' ? program?.pages?.length : null,
       capabilities: currentCapabilities(),
       replay,
     });
@@ -169,6 +190,7 @@ export function createSiteTrainingRuntime({
       if (action === 'stop' || action === 'finish') coachmark?.close();
       else renderLiveState();
       notifyStateChange();
+      await notifyTransition(result);
       return result;
     } finally {
       if (pendingMutation === mutation) {
@@ -286,15 +308,19 @@ export function createSiteTrainingRuntime({
       }
       assertCurrent(capturedActorId, capturedGeneration);
       if (!result?.contractValid || result.actorId !== capturedActorId) throw accountChangedError();
-      if (result.page.status === 'completed') {
+      if (result.page.status === 'completed' && normalizedScope !== 'overall') {
         throw new Error('This lesson is complete. Use replay to review it without changing progress.');
       }
       trainingState = result;
       activeScope = normalizedScope;
       replayIndex = null;
+      await notifyTransition(result);
+      notifyStateChange();
+      if (result.page.status === 'completed' && normalizedScope === 'overall') {
+        return result;
+      }
       ensureCoachmark().open({ trigger, replay: false });
       renderLiveState();
-      notifyStateChange();
       return result;
     } finally {
       if (pendingMutation === mutation) {
@@ -360,6 +386,7 @@ export function createSiteTrainingRuntime({
       ensureCoachmark().open({ trigger, replay: false });
       renderLiveState();
       notifyStateChange();
+      await notifyTransition(result);
       return result;
     } finally {
       if (pendingMutation === mutation) {
@@ -390,6 +417,42 @@ export function createSiteTrainingRuntime({
     hydrate,
     start(options = {}) { return claim('start', options); },
     resume(options = {}) { return claim('resume', options); },
+    open({ scope = 'page', trigger = ownerDocument?.activeElement } = {}) {
+      if (!page) throw new Error('Page training is not published for this page.');
+      const normalizedScope = scope === 'overall' ? 'overall' : 'page';
+      const current = requireReadyState(trainingState, actorId, page);
+      if (current.page.status !== 'in_progress') {
+        throw new Error('Start or resume this page training before opening it.');
+      }
+      if (normalizedScope === 'overall' && (
+        !program
+        || current.overall?.status !== 'in_progress'
+        || current.overall.currentPageId !== page.id
+        || current.overall.currentPageContentVersion !== page.contentVersion
+      )) {
+        throw new Error('Open the current page in this site training program before continuing.');
+      }
+      activeScope = normalizedScope;
+      replayIndex = null;
+      ensureCoachmark().open({ trigger, replay: false });
+      renderLiveState();
+      notifyStateChange();
+      return controller.snapshot;
+    },
+    advanceCompletedPage({ scope = 'overall' } = {}) {
+      const normalizedScope = scope === 'overall' ? 'overall' : 'page';
+      const current = requireReadyState(trainingState, actorId, page);
+      if (normalizedScope !== 'overall' || !program || current.page.status !== 'completed') {
+        throw new Error('Only a completed current program page can be advanced.');
+      }
+      if (current.overall?.status !== 'in_progress'
+        || current.overall.currentPageId !== page.id
+        || current.overall.currentPageContentVersion !== page.contentVersion) {
+        throw new Error('Open the current completed program page before advancing.');
+      }
+      activeScope = 'overall';
+      return performTransition('finish');
+    },
     restart,
     replay({ trigger = ownerDocument?.activeElement } = {}) {
       const current = requireReadyState(trainingState, actorId, page);

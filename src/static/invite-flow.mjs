@@ -164,6 +164,18 @@ export function inviteStatusContent(status, preview = {}) {
       message: 'Your private-group membership is active.',
       recoverable: false,
     },
+    activation_pending: {
+      eyebrow: 'Group joined',
+      title: `Finish starting with ${group}.`,
+      message: 'Your private-group membership is active. Continue the same protected request to bind your challenge to the group date.',
+      recoverable: true,
+    },
+    challenge_started: {
+      eyebrow: 'Group challenge confirmed',
+      title: `You are starting with ${group}.`,
+      message: 'Your challenge now uses the private group’s authoritative start date.',
+      recoverable: false,
+    },
     invalid: {
       eyebrow: 'Invitation unavailable',
       title: 'This invitation is not valid.',
