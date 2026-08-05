@@ -3,7 +3,7 @@ begin;
 create extension if not exists pgtap with schema extensions;
 set local search_path = public, extensions;
 
-select plan(71);
+select plan(87);
 
 create temporary table site_training_test_results (
   key text primary key,
@@ -40,7 +40,8 @@ from (values
   ('d1000000-0000-4000-8000-000000000001'::uuid, 'training-main@example.test', 'Training Main'),
   ('d2000000-0000-4000-8000-000000000002'::uuid, 'training-removed@example.test', 'Training Removed'),
   ('d3000000-0000-4000-8000-000000000003'::uuid, 'training-shared@example.test', 'Training Shared'),
-  ('d4000000-0000-4000-8000-000000000004'::uuid, 'training-completed@example.test', 'Training Completed')
+  ('d4000000-0000-4000-8000-000000000004'::uuid, 'training-completed@example.test', 'Training Completed'),
+  ('d5000000-0000-4000-8000-000000000005'::uuid, 'training-restart@example.test', 'Training Restart')
 ) as fixture(id, email, name);
 
 insert into private.site_training_page_versions (
@@ -180,6 +181,10 @@ select ok(has_function_privilege(
   'authenticated',
   'public.transition_site_training(text,text,integer,text,integer,text,uuid,bigint,bigint,uuid)',
   'execute'
+) and not has_function_privilege(
+  'authenticated',
+  'private.restart_site_training_page(text,text,integer,text,integer,text,uuid,bigint,bigint,uuid)',
+  'execute'
 ), 'authenticated callers can use only the public lifecycle boundary');
 select ok(not has_function_privilege(
   'anon', 'public.get_site_training_state(text,integer,text,integer,uuid)', 'execute'
@@ -250,6 +255,9 @@ select ok((select payload #>> '{page,status}' = 'not_started'
 select is((select (payload #>> '{page,revision}')::integer
     from site_training_test_results where key = 'unclaimed-page'), 0,
   'an unclaimed page has synthetic revision zero');
+select is((select (payload #>> '{page,attemptNumber}')::integer
+    from site_training_test_results where key = 'unclaimed-page'), 0,
+  'an unclaimed page has synthetic attempt zero');
 select is((select payload ->> 'overall'
     from site_training_test_results where key = 'unclaimed-page'), null,
   'a page-only read has no overall lifecycle');
@@ -288,6 +296,9 @@ select is((select payload #>> '{page,status}' from site_training_test_results
 select is((select (payload #>> '{page,revision}')::integer
     from site_training_test_results where key = 'page-start'), 1,
   'Start advances the page revision once');
+select is((select (payload #>> '{page,attemptNumber}')::integer
+    from site_training_test_results where key = 'page-start'), 1,
+  'Start begins the first durable page attempt');
 select ok((select payload #>> '{transition,applied}' = 'true'
       and payload ->> 'claimedNow' = 'true'
     from site_training_test_results where key = 'page-start'),
@@ -619,16 +630,191 @@ reset role;
 select is((select count(*)::integer from private.site_training_page_completions
     where user_id = 'd1000000-0000-4000-8000-000000000001'), 3,
   'page-only and overall completions are retained independently');
+
+insert into private.site_training_page_progress (
+  user_id, page_id, content_version, status, current_step_id,
+  current_step_index, furthest_step_index, attempt_number, revision,
+  started_at, stopped_at, completed_at, updated_at
+) values (
+  'd5000000-0000-4000-8000-000000000005', 'beta', 1, 'stopped', 'only',
+  0, 0, 4, 9,
+  pg_catalog.statement_timestamp() - interval '3 hours',
+  pg_catalog.statement_timestamp() - interval '2 hours', null,
+  pg_catalog.statement_timestamp() - interval '2 hours'
+);
+insert into site_training_test_results (key, payload)
+select 'restart-other-page-before', pg_catalog.to_jsonb(progress)
+from private.site_training_page_progress progress
+where progress.user_id = 'd5000000-0000-4000-8000-000000000005'
+  and progress.page_id = 'beta' and progress.content_version = 1;
+
+set local role authenticated;
+set local "request.jwt.claim.sub" = 'd5000000-0000-4000-8000-000000000005';
+set local "request.jwt.claims" =
+  '{"sub":"d5000000-0000-4000-8000-000000000005","role":"authenticated"}';
+
+select throws_ok(
+  $$select public.transition_site_training(
+    'overall', 'alpha', 2, 'foundation-tour', 1, 'restart',
+    'a5000000-0000-4000-8000-000000000001', 0, 0,
+    'd5000000-0000-4000-8000-000000000005'
+  )$$,
+  '22023',
+  'Restart is available only for current page training.',
+  'Restart rejects overall scope before changing either lifecycle'
+);
+select throws_ok(
+  $$select public.transition_site_training(
+    'page', 'alpha', 1, null, null, 'restart',
+    'a5000000-0000-4000-8000-000000000002', 0, 0,
+    'd5000000-0000-4000-8000-000000000005'
+  )$$,
+  '22023',
+  'A current published page training version is required.',
+  'Restart rejects retired content versions'
+);
+
+insert into site_training_test_results (key, payload)
+values (
+  'restart-overall-start',
+  public.claim_site_training(
+    'overall', 'alpha', 2, 'foundation-tour', 1, 'start',
+    'a5000000-0000-4000-8000-000000000003', 0, 0,
+    'd5000000-0000-4000-8000-000000000005'
+  )
+), (
+  'restart-page-next',
+  public.transition_site_training(
+    'page', 'alpha', 2, 'foundation-tour', 1, 'next',
+    'a5000000-0000-4000-8000-000000000004', 1, 1,
+    'd5000000-0000-4000-8000-000000000005'
+  )
+), (
+  'restart-page-stop',
+  public.transition_site_training(
+    'page', 'alpha', 2, 'foundation-tour', 1, 'stop',
+    'a5000000-0000-4000-8000-000000000005', 2, 2,
+    'd5000000-0000-4000-8000-000000000005'
+  )
+), (
+  'page-restart',
+  public.transition_site_training(
+    'page', 'alpha', 2, 'foundation-tour', 1, 'restart',
+    'a5000000-0000-4000-8000-000000000006', 3, 3,
+    'd5000000-0000-4000-8000-000000000005'
+  )
+), (
+  'restart-post-next',
+  public.transition_site_training(
+    'page', 'alpha', 2, 'foundation-tour', 1, 'next',
+    'a5000000-0000-4000-8000-000000000007', 4, 4,
+    'd5000000-0000-4000-8000-000000000005'
+  )
+), (
+  'page-restart-late-replay',
+  public.transition_site_training(
+    'page', 'alpha', 2, 'foundation-tour', 1, 'restart',
+    'a5000000-0000-4000-8000-000000000006', 3, 3,
+    'd5000000-0000-4000-8000-000000000005'
+  )
+), (
+  'restart-final-step',
+  public.transition_site_training(
+    'page', 'alpha', 2, 'foundation-tour', 1, 'next',
+    'a5000000-0000-4000-8000-000000000008', 5, 5,
+    'd5000000-0000-4000-8000-000000000005'
+  )
+), (
+  'restart-finish',
+  public.transition_site_training(
+    'page', 'alpha', 2, 'foundation-tour', 1, 'finish',
+    'a5000000-0000-4000-8000-000000000009', 6, 6,
+    'd5000000-0000-4000-8000-000000000005'
+  )
+);
+
+select ok((select payload #>> '{page,status}' = 'in_progress'
+      and (payload #>> '{page,currentStepIndex}')::integer = 0
+      and (payload #>> '{page,furthestStepIndex}')::integer = 0
+      and payload #>> '{page,currentStepId}' = 'intro'
+    from site_training_test_results where key = 'page-restart'),
+  'Restart resets only the unfinished page cursor to its first stable step');
+select is((select (payload #>> '{page,attemptNumber}')::integer
+    from site_training_test_results where key = 'page-restart'), 2,
+  'Restart begins a fresh durable attempt');
+select is((select (payload #>> '{page,revision}')::integer
+    from site_training_test_results where key = 'page-restart'), 4,
+  'Restart advances the page revision exactly once');
+select ok((select payload #>> '{page,startedAt}' is not null
+      and payload #>> '{page,startedAt}' is distinct from (
+        select started.payload #>> '{page,startedAt}'
+        from site_training_test_results started
+        where started.key = 'restart-overall-start'
+      )
+      and payload #>> '{page,stoppedAt}' is null
+      and payload #>> '{page,completedAt}' is null
+      and (payload #>> '{page,completionCount}')::integer = 0
+    from site_training_test_results where key = 'page-restart'),
+  'Restart records a fresh attempt timestamp without fabricating completion history');
+select ok((select payload #>> '{overall,status}' = 'in_progress'
+      and (payload #>> '{overall,revision}')::integer = 1
+    from site_training_test_results where key = 'page-restart'),
+  'Restart returns but does not change the active overall lifecycle');
+select is((select (payload #>> '{page,attemptNumber}')::integer
+    from site_training_test_results where key = 'restart-post-next'), 2,
+  'navigation after Restart stays on the fresh attempt');
+select is((select payload from site_training_test_results where key = 'page-restart-late-replay'),
+  (select payload from site_training_test_results where key = 'page-restart'),
+  'an exact Restart replay returns its stored result after newer progress');
+select throws_ok(
+  $$select public.transition_site_training(
+    'page', 'alpha', 2, 'foundation-tour', 1, 'restart',
+    'a5000000-0000-4000-8000-000000000010', 7, 7,
+    'd5000000-0000-4000-8000-000000000005'
+  )$$,
+  '55000',
+  'Only unfinished page training can be restarted.',
+  'completed current content replays locally instead of restarting durably'
+);
+
+reset role;
+select is(private.site_training_overall_payload(
+    'd5000000-0000-4000-8000-000000000005', 'foundation-tour', 1
+  ),
+  (select payload -> 'overall' from site_training_test_results
+    where key = 'restart-overall-start'),
+  'every page-only Restart flow leaves the complete overall row unchanged');
+select is((select pg_catalog.to_jsonb(progress)
+    from private.site_training_page_progress progress
+    where progress.user_id = 'd5000000-0000-4000-8000-000000000005'
+      and progress.page_id = 'beta' and progress.content_version = 1),
+  (select payload from site_training_test_results where key = 'restart-other-page-before'),
+  'Restart leaves every other page progress row unchanged');
+select ok((select status = 'completed'
+      and current_step_index = 2
+      and attempt_number = 2
+      and revision = 7
+    from private.site_training_page_progress
+    where user_id = 'd5000000-0000-4000-8000-000000000005'
+      and page_id = 'alpha' and content_version = 2),
+  'late idempotent replay never rewinds newer page progress');
+select ok((select pg_catalog.count(*) = 1
+      and pg_catalog.max(attempt_number) = 2
+    from private.site_training_page_completions
+    where user_id = 'd5000000-0000-4000-8000-000000000005'
+      and page_id = 'alpha'),
+  'completion evidence records only the completed restarted attempt');
+
 select ok(not exists (
   select 1 from public.profiles profile
   where profile.user_id between
     'd1000000-0000-4000-8000-000000000001'::uuid and
-    'd4000000-0000-4000-8000-000000000004'::uuid
+    'd5000000-0000-4000-8000-000000000005'::uuid
 ) and not exists (
   select 1 from public.check_ins check_in
   where check_in.user_id between
     'd1000000-0000-4000-8000-000000000001'::uuid and
-    'd4000000-0000-4000-8000-000000000004'::uuid
+    'd5000000-0000-4000-8000-000000000005'::uuid
 ), 'training transitions never mutate profile or product progress');
 
 select * from finish();

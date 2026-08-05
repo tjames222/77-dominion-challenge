@@ -12,6 +12,7 @@ test_directory="$(mktemp -d)"
 race_user="e1000000-0000-4000-8000-000000000001"
 erasure_user="e2000000-0000-4000-8000-000000000002"
 cross_scope_user="e3000000-0000-4000-8000-000000000003"
+restart_user="e4000000-0000-4000-8000-000000000004"
 page_id="concurrency-fixture"
 program_id="concurrency-program"
 same_request="e1100000-0000-4000-8000-000000000001"
@@ -23,10 +24,14 @@ cross_page_claim_request="e3100000-0000-4000-8000-000000000001"
 cross_overall_claim_request="e3100000-0000-4000-8000-000000000002"
 cross_page_next_request="e3100000-0000-4000-8000-000000000003"
 cross_overall_next_request="e3100000-0000-4000-8000-000000000004"
+restart_claim_request="e4100000-0000-4000-8000-000000000001"
+restart_next_request="e4100000-0000-4000-8000-000000000002"
+restart_race_request="e4100000-0000-4000-8000-000000000003"
+restart_stop_request="e4100000-0000-4000-8000-000000000004"
 
 cleanup_fixture() {
   psql "$database_url" --set=ON_ERROR_STOP=1 --quiet <<SQL
-delete from auth.users where id in ('$race_user', '$erasure_user', '$cross_scope_user');
+delete from auth.users where id in ('$race_user', '$erasure_user', '$cross_scope_user', '$restart_user');
 delete from private.site_training_program_pages
 where program_id = '$program_id' and program_version = 1;
 delete from private.site_training_program_versions
@@ -59,6 +64,11 @@ values
     '00000000-0000-0000-0000-000000000000', '$cross_scope_user',
     'authenticated', 'authenticated', 'site-training-cross-scope@example.test',
     'fixture', now(), '{"provider":"email"}', '{"name":"Training Cross Scope"}', now(), now()
+  ),
+  (
+    '00000000-0000-0000-0000-000000000000', '$restart_user',
+    'authenticated', 'authenticated', 'site-training-restart@example.test',
+    'fixture', now(), '{"provider":"email"}', '{"name":"Training Restart"}', now(), now()
   );
 
 insert into private.site_training_page_versions (
@@ -269,6 +279,87 @@ if [[ "$cross_page_revision $cross_page_index $cross_page_status_value $cross_re
   exit 1
 fi
 
+psql "$database_url" --set=ON_ERROR_STOP=1 --quiet --command "
+  begin;
+  set local statement_timeout = '10s';
+  set local role authenticated;
+  set local \"request.jwt.claim.sub\" = '$restart_user';
+  select public.claim_site_training(
+    'page', '$page_id', 1, null, null, 'start',
+    '$restart_claim_request', 0, 0, '$restart_user'
+  );
+  select public.transition_site_training(
+    'page', '$page_id', 1, null, null, 'next',
+    '$restart_next_request', 1, 1, '$restart_user'
+  );
+  commit;
+" >"$test_directory/restart-setup.log" 2>&1
+
+mutate_restart_training() {
+  local action="$1" request_id="$2" output_file="$3"
+  psql "$database_url" --set=ON_ERROR_STOP=1 --quiet --tuples-only --no-align --command "
+    begin;
+    set local statement_timeout = '10s';
+    set local role authenticated;
+    set local \"request.jwt.claim.sub\" = '$restart_user';
+    select public.transition_site_training(
+      'page', '$page_id', 1, null, null, '$action',
+      '$request_id', 2, 2, '$restart_user'
+    )::text;
+    commit;
+  " >"$output_file" 2>&1
+}
+
+# Restart competes for the same page revision as every other control. Exactly
+# one tab may begin a fresh attempt or stop the current attempt.
+mutate_restart_training restart "$restart_race_request" "$test_directory/restart.log" &
+restart_pid=$!
+mutate_restart_training stop "$restart_stop_request" "$test_directory/restart-stop.log" &
+restart_stop_pid=$!
+restart_status=0
+restart_stop_status=0
+wait "$restart_pid" || restart_status=$?
+wait "$restart_stop_pid" || restart_stop_status=$?
+if (( (restart_status == 0) == (restart_stop_status == 0) )); then
+  cat "$test_directory/restart.log" "$test_directory/restart-stop.log" >&2
+  echo "The Restart race did not produce exactly one winner." >&2
+  exit 1
+fi
+if ! grep -q 'Site training changed in another session' \
+  "$test_directory/restart.log" "$test_directory/restart-stop.log"; then
+  cat "$test_directory/restart.log" "$test_directory/restart-stop.log" >&2
+  echo "The losing Restart race did not fail at page revision CAS." >&2
+  exit 1
+fi
+
+read -r restart_revision restart_attempt restart_requests restart_valid_state <<<"$(
+  psql "$database_url" --set=ON_ERROR_STOP=1 --tuples-only --no-align \
+    --field-separator=' ' --command "
+      select progress.revision, progress.attempt_number,
+        (select count(*) from private.site_training_transition_requests
+         where actor_id = '$restart_user'),
+        case
+          when progress.status = 'in_progress'
+            and progress.current_step_index = 0
+            and progress.furthest_step_index = 0
+            and progress.attempt_number = 2 then 1
+          when progress.status = 'stopped'
+            and progress.current_step_index = 1
+            and progress.furthest_step_index = 1
+            and progress.attempt_number = 1 then 1
+          else 0
+        end
+      from private.site_training_page_progress progress
+      where progress.user_id = '$restart_user' and progress.page_id = '$page_id';
+    "
+)"
+if [[ "$restart_revision $restart_requests $restart_valid_state" != "3 3 1" \
+    || ( "$restart_attempt" != "1" && "$restart_attempt" != "2" ) ]]; then
+  cat "$test_directory/restart.log" "$test_directory/restart-stop.log" >&2
+  echo "The Restart race left partial attempt state ($restart_revision/$restart_attempt/$restart_requests/$restart_valid_state)." >&2
+  exit 1
+fi
+
 claim_training "$erasure_user" "$erasure_claim_request" "$test_directory/erasure-claim.log"
 
 # Account erasure takes the auth parent lock first. A training mutation that
@@ -345,4 +436,4 @@ if [[ "$erased_auth $erased_progress $erased_requests" != "f f f" ]]; then
   exit 1
 fi
 
-echo "Site training concurrency checks passed: exact replay, same-scope and cross-scope CAS, and account-erasure serialization."
+echo "Site training concurrency checks passed: exact replay, same-scope, cross-scope and Restart CAS, and account-erasure serialization."

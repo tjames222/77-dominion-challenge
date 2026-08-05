@@ -133,6 +133,159 @@ describe('site training runtime', () => {
     assert.equal(coachmark.closeCalls, 1);
   });
 
+  test('restarts unfinished page progress and publishes observable busy/state changes', async () => {
+    const coachmark = fakeCoachmark();
+    let state = readyState();
+    const calls = [];
+    const observed = [];
+    const subscribed = [];
+    const api = {
+      async getSiteTrainingState() { return state; },
+      async claimSiteTraining(input) {
+        state = normalizeSiteTrainingMutation(
+          applySiteTrainingTransition(state, input.action),
+          { expectedPage: page },
+        );
+        return state;
+      },
+      async transitionSiteTraining(input) {
+        calls.push(input);
+        const targetStepId = input.action === 'next' ? 'progress' : null;
+        state = normalizeSiteTrainingMutation(
+          applySiteTrainingTransition(state, input.action, { targetStepId }),
+          { expectedPage: page },
+        );
+        return state;
+      },
+    };
+    const runtime = createSiteTrainingRuntime({
+      registry,
+      pathname: '/dashboard.html',
+      expectedUserId: 'actor-1',
+      api,
+      coachmarkFactory: coachmark.factory,
+      onStateChange(snapshot) {
+        observed.push({
+          busy: snapshot.busy,
+          readState: snapshot.state.readState,
+          status: snapshot.state.page?.status || null,
+          attemptNumber: snapshot.state.page?.attemptNumber ?? null,
+        });
+      },
+    });
+    const unsubscribe = runtime.subscribe((snapshot) => subscribed.push(snapshot));
+    runtime.subscribe(() => { throw new Error('broken observer'); });
+    runtime.subscribe(async () => {
+      await Promise.resolve();
+      throw new Error('broken async observer');
+    });
+
+    await runtime.hydrate();
+    await runtime.start();
+    await coachmark.invoke('next');
+    await coachmark.invoke('stop');
+    const priorStartedAt = runtime.state.page.startedAt;
+    const restarted = await runtime.restart();
+
+    assert.deepEqual({
+      status: restarted.page.status,
+      currentStepId: restarted.page.currentStepId,
+      currentStepIndex: restarted.page.currentStepIndex,
+      furthestStepIndex: restarted.page.furthestStepIndex,
+      attemptNumber: restarted.page.attemptNumber,
+      revision: restarted.page.revision,
+    }, {
+      status: 'in_progress',
+      currentStepId: 'welcome',
+      currentStepIndex: 0,
+      furthestStepIndex: 0,
+      attemptNumber: 2,
+      revision: 4,
+    });
+    assert.match(calls.at(-1).requestId, /^[0-9a-f-]{36}$/i);
+    assert.notEqual(restarted.page.startedAt, priorStartedAt);
+    assert.deepEqual({
+      action: calls.at(-1).action,
+      scope: calls.at(-1).scope,
+      program: calls.at(-1).program,
+      expectedRevision: calls.at(-1).expectedRevision,
+      expectedPageRevision: calls.at(-1).expectedPageRevision,
+    }, {
+      action: 'restart',
+      scope: 'page',
+      program: null,
+      expectedRevision: 3,
+      expectedPageRevision: 3,
+    });
+    assert.equal(coachmark.renderCalls.at(-1).index, 0);
+    assert.equal(coachmark.openCalls, 2);
+    assert.ok(observed.some((snapshot) => snapshot.busy));
+    assert.ok(observed.some((snapshot) => (
+      !snapshot.busy && snapshot.status === 'in_progress' && snapshot.attemptNumber === 2
+    )));
+    const subscribedCount = subscribed.length;
+    assert.equal(unsubscribe(), true);
+    runtime.setActor('actor-2');
+    assert.equal(subscribed.length, subscribedCount);
+  });
+
+  test('fails closed when a Restart response changes protected completion or overall state', async () => {
+    const coachmark = fakeCoachmark();
+    const raw = createSiteTrainingPageProgress(page, 'actor-1');
+    raw.overall = {
+      programId: 'site-basics',
+      programVersion: 1,
+      status: 'not_started',
+      currentPageId: 'dashboard',
+      currentPageContentVersion: 1,
+      currentPageIndex: 0,
+      revision: 0,
+      startedAt: null,
+      stoppedAt: null,
+      completedAt: null,
+      updatedAt: null,
+    };
+    let state = normalizeSiteTrainingState(raw, {
+      expectedPage: page,
+      expectedProgram: registry.programs[0],
+    });
+    state = normalizeSiteTrainingMutation(
+      applySiteTrainingTransition(state, 'start'),
+      { expectedPage: page, expectedProgram: registry.programs[0] },
+    );
+    state = normalizeSiteTrainingMutation(
+      applySiteTrainingTransition(state, 'stop'),
+      { expectedPage: page, expectedProgram: registry.programs[0] },
+    );
+    const durableBefore = structuredClone(state);
+    const api = {
+      async getSiteTrainingState() { return state; },
+      async transitionSiteTraining() {
+        const invalid = applySiteTrainingTransition(state, 'restart');
+        invalid.page.revision += 1;
+        invalid.page.completionCount = 1;
+        invalid.page.everCompleted = true;
+        invalid.page.startedAt = state.page.startedAt;
+        invalid.overall.revision = 1;
+        return normalizeSiteTrainingMutation(invalid, {
+          expectedPage: page,
+          expectedProgram: registry.programs[0],
+        });
+      },
+    };
+    const runtime = createSiteTrainingRuntime({
+      registry,
+      pathname: '/dashboard.html',
+      expectedUserId: 'actor-1',
+      api,
+      coachmarkFactory: coachmark.factory,
+    });
+    await runtime.hydrate();
+    await assert.rejects(runtime.restart(), { code: 'SITE_TRAINING_CONTRACT_INVALID' });
+    assert.deepEqual(runtime.state, durableBefore);
+    assert.equal(coachmark.openCalls, 0);
+  });
+
   test('rehydrates a stale tab so modal actions remain recoverable', async () => {
     const coachmark = fakeCoachmark();
     let state = readyState();

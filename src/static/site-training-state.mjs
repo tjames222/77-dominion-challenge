@@ -9,6 +9,7 @@ export const SITE_TRAINING_STATUSES = Object.freeze([
 export const SITE_TRAINING_TRANSITIONS = Object.freeze([
   'start',
   'resume',
+  'restart',
   'back',
   'next',
   'stop',
@@ -66,6 +67,7 @@ function normalizePage(value) {
   const currentStepId = text(read(value, 'currentStepId', 'current_step_id'));
   const currentStepIndex = integer(read(value, 'currentStepIndex', 'current_step_index', 'currentStep', 'current_step'), -1);
   const furthestStepIndex = integer(read(value, 'furthestStepIndex', 'furthest_step_index', 'furthestStep', 'furthest_step'), -1);
+  const attemptNumber = integer(read(value, 'attemptNumber', 'attempt_number'), -1);
   const revision = integer(read(value, 'revision'), -1);
   const completionCount = integer(read(value, 'completionCount', 'completion_count'), 0);
   const everCompleted = read(value, 'everCompleted', 'ever_completed') === true;
@@ -88,6 +90,7 @@ function normalizePage(value) {
     && furthestStepIndex >= currentStepIndex
     && furthestStepIndex < stepIds.length
     && currentStepId === stepIds[currentStepIndex]
+    && (status === 'not_started' ? attemptNumber === 0 : attemptNumber >= 1)
     && revision >= 0
     && completionCount >= 0
     && everCompleted === (completionCount > 0)
@@ -117,6 +120,7 @@ function normalizePage(value) {
     currentStepId,
     currentStepIndex,
     furthestStepIndex,
+    attemptNumber,
     revision,
     everCompleted,
     completionCount,
@@ -284,6 +288,7 @@ export function createSiteTrainingPageProgress(page, actorId) {
       currentStepId: page.steps[0].id,
       currentStepIndex: 0,
       furthestStepIndex: 0,
+      attemptNumber: 0,
       revision: 0,
       everCompleted: false,
       completionCount: 0,
@@ -316,6 +321,7 @@ export function applySiteTrainingTransition(state, action, {
     else {
       page.status = 'in_progress';
       page.startedAt = now;
+      page.attemptNumber = Math.max(1, page.attemptNumber);
       current.claimedNow = true;
     }
   } else if (normalizedAction === 'resume') {
@@ -325,6 +331,21 @@ export function applySiteTrainingTransition(state, action, {
       page.status = 'in_progress';
       page.stoppedAt = null;
     }
+  } else if (normalizedAction === 'restart') {
+    if (!['in_progress', 'stopped'].includes(page.status)) {
+      throw new Error('Only unfinished page training can be restarted.');
+    }
+    if (now === page.startedAt) {
+      now = new Date(Date.parse(now) + 1).toISOString();
+    }
+    page.status = 'in_progress';
+    page.currentStepId = page.stepIds[0];
+    page.currentStepIndex = 0;
+    page.furthestStepIndex = 0;
+    page.attemptNumber += 1;
+    page.startedAt = now;
+    page.stoppedAt = null;
+    page.completedAt = null;
   } else if (normalizedAction === 'back') {
     if (page.status === 'in_progress' && page.currentStepIndex === 0) applied = false;
     else if (page.status !== 'in_progress' || targetIndex !== page.currentStepIndex - 1) {
@@ -383,6 +404,7 @@ export function reconcileSiteTrainingContentVersion(previousState, page, actorId
   initial.page.currentStepIndex = nextIndex;
   initial.page.currentStepId = initial.page.stepIds[nextIndex];
   initial.page.furthestStepIndex = nextIndex;
+  initial.page.attemptNumber = previous.attemptNumber;
   initial.page.revision = 1;
   initial.page.startedAt = previous.startedAt;
   initial.page.stoppedAt = previous.status === 'not_started' ? null : new Date().toISOString();

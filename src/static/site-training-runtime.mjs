@@ -36,7 +36,11 @@ export function createSiteTrainingRuntime({
   api = null,
   document: ownerDocument = globalThis.document,
   coachmarkFactory = createSiteTrainingCoachmark,
+  onStateChange = null,
 } = {}) {
+  if (onStateChange !== null && typeof onStateChange !== 'function') {
+    throw new TypeError('Page training state changes require a function listener.');
+  }
   const page = siteTrainingPageForRoute(registry, pathname);
   const program = siteTrainingProgramForPage(registry, page);
   let actorId = text(expectedUserId);
@@ -49,6 +53,24 @@ export function createSiteTrainingRuntime({
   let activeScope = 'page';
   let replayIndex = null;
   let resolvedApiPromise = null;
+  const listeners = new Set();
+  let controller = null;
+
+  const notifyListener = (listener, snapshot) => {
+    try {
+      Promise.resolve(listener(snapshot)).catch(() => {
+        // Controls are observers; an async rejection must never mask persistence.
+      });
+    } catch {
+      // Controls are observers; a synchronous throw must never interrupt persistence.
+    }
+  };
+
+  const notifyStateChange = () => {
+    if (!controller) return;
+    const snapshot = controller.snapshot;
+    listeners.forEach((listener) => notifyListener(listener, snapshot));
+  };
 
   const resolveApi = async () => {
     if (api) return api;
@@ -104,6 +126,7 @@ export function createSiteTrainingRuntime({
       && refreshed.page.contentVersion === page.contentVersion) {
       if (coachmark) renderLiveState();
     } else coachmark?.close();
+    notifyStateChange();
     const recovered = new Error('Page training changed in another tab. The latest progress is loaded; try again.');
     recovered.code = error.code;
     recovered.details = error.details;
@@ -118,6 +141,7 @@ export function createSiteTrainingRuntime({
     const mutation = {};
     pendingMutation = mutation;
     coachmark?.setBusy(true);
+    notifyStateChange();
     try {
       const service = await resolveApi();
       assertCurrent(capturedActorId, capturedGeneration);
@@ -144,11 +168,13 @@ export function createSiteTrainingRuntime({
       trainingState = result;
       if (action === 'stop' || action === 'finish') coachmark?.close();
       else renderLiveState();
+      notifyStateChange();
       return result;
     } finally {
       if (pendingMutation === mutation) {
         pendingMutation = null;
         coachmark?.setBusy(false);
+        notifyStateChange();
       }
     }
   };
@@ -158,12 +184,14 @@ export function createSiteTrainingRuntime({
     if (action === 'stop' || action === 'finish') {
       replayIndex = null;
       coachmark?.close();
+      notifyStateChange();
       return true;
     }
     if (action === 'back') replayIndex = Math.max(0, replayIndex - 1);
     else if (action === 'next') replayIndex = Math.min(page.steps.length - 1, replayIndex + 1);
     else throw new TypeError('Choose a valid replay action.');
     renderIndex(replayIndex, { replay: true });
+    notifyStateChange();
     return true;
   };
 
@@ -181,6 +209,7 @@ export function createSiteTrainingRuntime({
     if (destroyed) throw new Error('Page training has been destroyed.');
     if (!page) {
       trainingState = createSiteTrainingState('ready');
+      notifyStateChange();
       return controller.snapshot;
     }
     const capturedActorId = actorId;
@@ -188,6 +217,7 @@ export function createSiteTrainingRuntime({
     const capturedGeneration = generation;
     const readId = ++latestRead;
     trainingState = createSiteTrainingState('loading');
+    notifyStateChange();
     try {
       const service = await resolveApi();
       assertCurrent(capturedActorId, capturedGeneration);
@@ -201,12 +231,14 @@ export function createSiteTrainingRuntime({
       if (!result?.contractValid || result.actorId !== capturedActorId) {
         trainingState = result || createSiteTrainingState('error');
       } else trainingState = result;
+      notifyStateChange();
       return controller.snapshot;
     } catch (error) {
       assertCurrent(capturedActorId, capturedGeneration);
       if (readId === latestRead) {
         trainingState = createSiteTrainingState('error');
         trainingState.errorMessage = error?.message || 'Unable to load page training.';
+        notifyStateChange();
       }
       throw error;
     }
@@ -224,6 +256,7 @@ export function createSiteTrainingRuntime({
     const capturedGeneration = generation;
     const mutation = {};
     pendingMutation = mutation;
+    notifyStateChange();
     try {
       const service = await resolveApi();
       assertCurrent(capturedActorId, capturedGeneration);
@@ -261,13 +294,82 @@ export function createSiteTrainingRuntime({
       replayIndex = null;
       ensureCoachmark().open({ trigger, replay: false });
       renderLiveState();
+      notifyStateChange();
       return result;
     } finally {
-      if (pendingMutation === mutation) pendingMutation = null;
+      if (pendingMutation === mutation) {
+        pendingMutation = null;
+        notifyStateChange();
+      }
     }
   };
 
-  const controller = {
+  const restart = async ({ trigger = ownerDocument?.activeElement } = {}) => {
+    if (!page) throw new Error('Page training is not published for this page.');
+    if (pendingMutation) throw new Error('Page training is already being updated.');
+    const current = requireReadyState(trainingState, actorId, page);
+    if (!['in_progress', 'stopped'].includes(current.page.status)) {
+      throw new Error('Only unfinished page training can be restarted.');
+    }
+    const capturedActorId = actorId;
+    const capturedGeneration = generation;
+    const mutation = {};
+    pendingMutation = mutation;
+    notifyStateChange();
+    try {
+      const service = await resolveApi();
+      assertCurrent(capturedActorId, capturedGeneration);
+      let result;
+      try {
+        result = await service.transitionSiteTraining({
+          page,
+          program: null,
+          scope: 'page',
+          action: 'restart',
+          requestId: newSiteTrainingRequestId(),
+          expectedRevision: current.page.revision,
+          expectedPageRevision: current.page.revision,
+          expectedUserId: capturedActorId,
+        });
+      } catch (error) {
+        await recoverStaleProgress(service, error, capturedActorId, capturedGeneration, 'page');
+        return null;
+      }
+      assertCurrent(capturedActorId, capturedGeneration);
+      if (!result?.contractValid || result.actorId !== capturedActorId) throw accountChangedError();
+      const overallUnchanged = result.overall === null
+        || JSON.stringify(result.overall) === JSON.stringify(current.overall);
+      if (result.page.status !== 'in_progress'
+        || result.page.currentStepIndex !== 0
+        || result.page.furthestStepIndex !== 0
+        || result.page.currentStepId !== page.steps[0].id
+        || result.page.attemptNumber !== current.page.attemptNumber + 1
+        || result.page.revision !== current.page.revision + 1
+        || result.page.startedAt === null
+        || result.page.startedAt === current.page.startedAt
+        || result.page.everCompleted !== current.page.everCompleted
+        || result.page.completionCount !== current.page.completionCount
+        || !overallUnchanged) {
+        const error = new Error('The page training restart response was invalid. Refresh and try again.');
+        error.code = 'SITE_TRAINING_CONTRACT_INVALID';
+        throw error;
+      }
+      trainingState = result;
+      activeScope = 'page';
+      replayIndex = null;
+      ensureCoachmark().open({ trigger, replay: false });
+      renderLiveState();
+      notifyStateChange();
+      return result;
+    } finally {
+      if (pendingMutation === mutation) {
+        pendingMutation = null;
+        notifyStateChange();
+      }
+    }
+  };
+
+  controller = {
     get available() { return Boolean(page); },
     get page() { return page; },
     get program() { return program; },
@@ -281,11 +383,14 @@ export function createSiteTrainingRuntime({
         state: trainingState,
         activeScope,
         replaying: replayIndex !== null,
+        busy: pendingMutation !== null,
+        destroyed,
       });
     },
     hydrate,
     start(options = {}) { return claim('start', options); },
     resume(options = {}) { return claim('resume', options); },
+    restart,
     replay({ trigger = ownerDocument?.activeElement } = {}) {
       const current = requireReadyState(trainingState, actorId, page);
       if (!page || current.page.status !== 'completed') {
@@ -295,7 +400,17 @@ export function createSiteTrainingRuntime({
       replayIndex = 0;
       ensureCoachmark().open({ trigger, replay: true });
       renderIndex(replayIndex, { replay: true });
+      notifyStateChange();
       return controller.snapshot;
+    },
+    subscribe(listener) {
+      if (typeof listener !== 'function') {
+        throw new TypeError('Page training state changes require a function listener.');
+      }
+      if (destroyed) throw new Error('Page training has been destroyed.');
+      listeners.add(listener);
+      notifyListener(listener, controller.snapshot);
+      return () => listeners.delete(listener);
     },
     setActor(nextActorId) {
       const next = text(nextActorId);
@@ -308,6 +423,7 @@ export function createSiteTrainingRuntime({
       activeScope = 'page';
       trainingState = createSiteTrainingState('loading');
       coachmark?.close({ restoreFocus: false });
+      notifyStateChange();
       return true;
     },
     destroy() {
@@ -319,9 +435,13 @@ export function createSiteTrainingRuntime({
       pendingMutation = null;
       coachmark?.destroy();
       coachmark = null;
+      notifyStateChange();
+      listeners.clear();
       return true;
     },
   };
+
+  if (onStateChange) controller.subscribe(onStateChange);
 
   return controller;
 }

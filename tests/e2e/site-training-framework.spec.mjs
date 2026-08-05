@@ -40,14 +40,22 @@ async function installFramework(page) {
       ],
     }] });
     const user = await api.getLocalOrSessionUser();
+    const stateChanges = [];
     const runtime = runtimeModule.createSiteTrainingRuntime({
       registry,
       pathname: location.pathname,
       expectedUserId: user.userId,
       api,
+      onStateChange(snapshot) {
+        stateChanges.push({
+          busy: snapshot.busy,
+          status: snapshot.state.page?.status || null,
+          attemptNumber: snapshot.state.page?.attemptNumber ?? null,
+        });
+      },
     });
     await runtime.hydrate();
-    window.__siteTrainingE2e = { runtime, target, trigger };
+    window.__siteTrainingE2e = { runtime, target, trigger, stateChanges };
   });
 }
 
@@ -85,8 +93,25 @@ test('generic page training is modal, resumable, durable, and replay-safe', asyn
     status: 'stopped',
     currentStepId: 'progress',
     furthestStepIndex: 1,
+    attemptNumber: 1,
     revision: 4,
   });
+
+  await page.evaluate(() => window.__siteTrainingE2e.runtime.restart({
+    trigger: window.__siteTrainingE2e.trigger,
+  }));
+  await expect(layer).toBeVisible();
+  await expect(page.locator('#siteTrainingProgress')).toHaveText('Step 1 of 2');
+  expect(await page.evaluate(() => window.__siteTrainingE2e.runtime.state.page)).toMatchObject({
+    status: 'in_progress',
+    currentStepId: 'progress',
+    currentStepIndex: 0,
+    furthestStepIndex: 0,
+    attemptNumber: 2,
+    revision: 5,
+  });
+  await page.locator('[data-training-action="stop"]').click();
+  await expect(layer).toBeHidden();
 
   await page.evaluate(() => window.__siteTrainingE2e.runtime.resume({
     trigger: window.__siteTrainingE2e.trigger,
@@ -99,8 +124,15 @@ test('generic page training is modal, resumable, durable, and replay-safe', asyn
     status: 'completed',
     everCompleted: true,
     completionCount: 1,
-    revision: 7,
+    attemptNumber: 2,
+    revision: 9,
   });
+  expect(await page.evaluate(() => window.__siteTrainingE2e.stateChanges.some(
+    (snapshot) => snapshot.busy,
+  ))).toBe(true);
+  expect(await page.evaluate(() => window.__siteTrainingE2e.stateChanges.some(
+    (snapshot) => snapshot.status === 'in_progress' && snapshot.attemptNumber === 2,
+  ))).toBe(true);
 
   const durableBeforeReplay = await page.evaluate(() => localStorage.getItem('dominion:previewUserStateByOwner'));
   await page.setViewportSize({ width: 360, height: 800 });
