@@ -2,6 +2,8 @@ import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
 import {
   PREVIEW_USER_STATE_LEGACY_OWNER_KEY,
+  PREVIEW_USER_STATE_STORAGE_KEY,
+  peekPreviewUserValue,
   readPreviewUserValue,
   writePreviewUserValue,
 } from './preview-user-state.mjs';
@@ -77,6 +79,16 @@ describe('preview user state isolation', () => {
     });
 
     assert.deepEqual(readPreviewUserValue(storage, 'user-b', 'dominion:badges', []), []);
+    assert.equal(storage.getItem(PREVIEW_USER_STATE_LEGACY_OWNER_KEY), null);
+  });
+
+  test('can inspect an account-scoped value without claiming or writing fallback state', () => {
+    const storage = memoryStorage({
+      'dominion:mockUserId': 'user-a',
+      'dominion:mockUserIdsByIdentity': JSON.stringify({ 'a@example.test': 'user-a' }),
+    });
+    assert.deepEqual(peekPreviewUserValue(storage, 'user-a', 'dominion:siteTrainingProgress', {}), {});
+    assert.equal(storage.getItem(PREVIEW_USER_STATE_STORAGE_KEY), null);
     assert.equal(storage.getItem(PREVIEW_USER_STATE_LEGACY_OWNER_KEY), null);
   });
 });
