@@ -28,6 +28,11 @@ function requireReadyState(state, actorId, page) {
   return state;
 }
 
+function preserveOverallSnapshot(result, current, scope) {
+  if (scope !== 'page' || result?.overall !== null || !current?.overall) return result;
+  return { ...result, overall: current.overall };
+}
+
 export function createSiteTrainingRuntime({
   registry = SITE_TRAINING_REGISTRY,
   pathname = globalThis.location?.pathname || '',
@@ -58,6 +63,7 @@ export function createSiteTrainingRuntime({
   let replayIndex = null;
   let resolvedApiPromise = null;
   const listeners = new Set();
+  const transitionListeners = new Set();
   let controller = null;
 
   const notifyListener = (listener, snapshot) => {
@@ -86,19 +92,27 @@ export function createSiteTrainingRuntime({
     typeof capabilities === 'function' ? capabilities() || {} : capabilities || {}
   );
 
-  const notifyTransition = async (result) => {
+  const notifyTransitionListener = async (listener, payload) => {
     try {
-      await onTransition({
-        actorId,
-        page,
-        program,
-        state: result,
-        transition: result?.transition || null,
-        scope: activeScope,
-      });
+      await listener(payload);
     } catch (error) {
       console.warn('Site training transition callback failed after progress was saved.', error);
     }
+  };
+
+  const notifyTransition = async (result) => {
+    const payload = Object.freeze({
+      actorId,
+      page,
+      program,
+      state: result,
+      transition: result?.transition || null,
+      scope: activeScope,
+    });
+    await notifyTransitionListener(onTransition, payload);
+    await Promise.all(
+      [...transitionListeners].map((listener) => notifyTransitionListener(listener, payload)),
+    );
   };
 
   const assertCurrent = (capturedActorId, capturedGeneration) => {
@@ -186,6 +200,7 @@ export function createSiteTrainingRuntime({
       }
       assertCurrent(capturedActorId, capturedGeneration);
       if (!result?.contractValid || result.actorId !== capturedActorId) throw accountChangedError();
+      result = preserveOverallSnapshot(result, current, activeScope);
       trainingState = result;
       if (action === 'stop' || action === 'finish') coachmark?.close();
       else renderLiveState();
@@ -311,6 +326,7 @@ export function createSiteTrainingRuntime({
       if (result.page.status === 'completed' && normalizedScope !== 'overall') {
         throw new Error('This lesson is complete. Use replay to review it without changing progress.');
       }
+      result = preserveOverallSnapshot(result, current, normalizedScope);
       trainingState = result;
       activeScope = normalizedScope;
       replayIndex = null;
@@ -380,6 +396,7 @@ export function createSiteTrainingRuntime({
         error.code = 'SITE_TRAINING_CONTRACT_INVALID';
         throw error;
       }
+      result = preserveOverallSnapshot(result, current, 'page');
       trainingState = result;
       activeScope = 'page';
       replayIndex = null;
@@ -466,6 +483,12 @@ export function createSiteTrainingRuntime({
       notifyStateChange();
       return controller.snapshot;
     },
+    dismiss({ restoreFocus = true } = {}) {
+      replayIndex = null;
+      const closed = coachmark?.close({ restoreFocus }) || false;
+      notifyStateChange();
+      return closed;
+    },
     subscribe(listener) {
       if (typeof listener !== 'function') {
         throw new TypeError('Page training state changes require a function listener.');
@@ -474,6 +497,14 @@ export function createSiteTrainingRuntime({
       listeners.add(listener);
       notifyListener(listener, controller.snapshot);
       return () => listeners.delete(listener);
+    },
+    subscribeTransitions(listener) {
+      if (typeof listener !== 'function') {
+        throw new TypeError('Page training transitions require a function listener.');
+      }
+      if (destroyed) throw new Error('Page training has been destroyed.');
+      transitionListeners.add(listener);
+      return () => transitionListeners.delete(listener);
     },
     setActor(nextActorId) {
       const next = text(nextActorId);
@@ -500,6 +531,7 @@ export function createSiteTrainingRuntime({
       coachmark = null;
       notifyStateChange();
       listeners.clear();
+      transitionListeners.clear();
       return true;
     },
   };

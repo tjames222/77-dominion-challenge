@@ -169,6 +169,7 @@ export function createSoloFirstRunTraining({
   document: ownerDocument = globalThis.document,
   window: windowLike = globalThis.window,
   api = null,
+  runtime: sharedRuntime = null,
   runtimeFactory = createSiteTrainingRuntime,
   navigate = null,
 } = {}) {
@@ -183,7 +184,10 @@ export function createSoloFirstRunTraining({
     && program.audience === 'solo',
   );
   let activation = null;
-  let runtime = null;
+  const ownsRuntime = !sharedRuntime;
+  let runtime = sharedRuntime;
+  let runtimeStateUnsubscribe = null;
+  let runtimeTransitionUnsubscribe = null;
   let servicePromise = null;
   let control = null;
   let controlListener = null;
@@ -243,8 +247,10 @@ export function createSoloFirstRunTraining({
   const invalidateActivation = () => {
     generation += 1;
     activation = null;
-    runtime?.destroy();
-    runtime = null;
+    if (ownsRuntime) {
+      runtime?.destroy();
+      runtime = null;
+    }
     renderControl();
   };
 
@@ -292,22 +298,26 @@ export function createSoloFirstRunTraining({
   };
 
   const ensureRuntime = async () => {
-    if (runtime) return runtime;
-    const service = await resolveApi();
-    runtime = runtimeFactory({
-      registry,
-      pathname: windowLike.location.pathname,
-      expectedUserId: actorId,
-      api: service,
-      document: ownerDocument,
-      capabilities: () => soloFirstRunCapabilities({
-        activation,
+    if (!runtime) {
+      const service = await resolveApi();
+      runtime = runtimeFactory({
+        registry,
+        pathname: windowLike.location.pathname,
+        expectedUserId: actorId,
+        api: service,
         document: ownerDocument,
-        window: windowLike,
-      }),
-      onStateChange: async () => renderControl(),
-      onTransition: handleRuntimeTransition,
-    });
+        capabilities: () => soloFirstRunCapabilities({
+          activation,
+          document: ownerDocument,
+          window: windowLike,
+        }),
+        onStateChange: async () => renderControl(),
+        onTransition: handleRuntimeTransition,
+      });
+    } else if (!ownsRuntime) {
+      runtimeStateUnsubscribe ||= runtime.subscribe(() => renderControl());
+      runtimeTransitionUnsubscribe ||= runtime.subscribeTransitions(handleRuntimeTransition);
+    }
     return runtime;
   };
 
@@ -426,8 +436,10 @@ export function createSoloFirstRunTraining({
       try {
         await readActivation(capturedGeneration);
         if (!isVerifiedSoloTrainingActivation(activation)) {
-          runtime?.destroy();
-          runtime = null;
+          if (ownsRuntime) {
+            runtime?.destroy();
+            runtime = null;
+          }
           renderControl();
           return null;
         }
@@ -501,7 +513,11 @@ export function createSoloFirstRunTraining({
       if (control) control.hidden = true;
       control = null;
       controlListener = null;
-      runtime?.destroy();
+      runtimeStateUnsubscribe?.();
+      runtimeStateUnsubscribe = null;
+      runtimeTransitionUnsubscribe?.();
+      runtimeTransitionUnsubscribe = null;
+      if (ownsRuntime) runtime?.destroy();
       runtime = null;
       return true;
     },

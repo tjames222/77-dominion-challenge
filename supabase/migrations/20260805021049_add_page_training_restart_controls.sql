@@ -203,8 +203,8 @@ begin
   for update;
   has_progress := found;
 
-  if target_expected_revision <> case when has_progress then page_progress.revision else 0 end
-     or target_expected_page_revision <> case when has_progress then page_progress.revision else 0 end then
+  if target_expected_revision <> (case when has_progress then page_progress.revision else 0 end)
+     or target_expected_page_revision <> (case when has_progress then page_progress.revision else 0 end) then
     raise exception 'Site training changed in another session. Refresh and try again.'
       using errcode = '40001', detail = 'site_training_stale_revision';
   end if;

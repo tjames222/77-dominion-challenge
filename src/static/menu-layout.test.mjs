@@ -84,6 +84,10 @@ describe('shared sticky menu', () => {
           available: false,
           attachControl() {}, destroy() {}, refresh: async () => {}, consumeHandoff: async () => {},
         });
+        const createPageTrainingControls = () => ({
+          available: false,
+          attachControls() {}, destroy() {}, refresh: async () => {},
+        });
         ${menuJs.replace(/^import[\s\S]*?from .*;$/gm, '')}
       `;
       await import(`data:text/javascript;base64,${Buffer.from(executableSource).toString('base64')}`);
@@ -176,7 +180,12 @@ describe('shared sticky menu', () => {
   });
 
   test('keeps authenticated site training independent from optional header actions', () => {
-    assert.match(menuJs, /if \(isLoggedIn && nextOwner\) \{\s*if \(!soloFirstRunTraining\)/);
+    assert.match(menuJs, /if \(!pageTrainingControls\)[\s\S]*?createPageTrainingControls/);
+    assert.ok(
+      menuJs.indexOf('createPageTrainingControls({')
+        < menuJs.indexOf('createSoloFirstRunTraining({'),
+      'the page controller must create the shared runtime before Solo subscribes',
+    );
     assert.match(menuJs, /if \(nextTraining\.available\)/);
     assert.doesNotMatch(
       menuJs,
@@ -187,5 +196,30 @@ describe('shared sticky menu', () => {
       /addEventListener\('dominion:challenge-start-date-updated',[\s\S]*?invalidateCachedActivation:\s*true/,
     );
     assert.match(menuCss, /\.global-menu-training\[hidden\]\s*\{\s*display:\s*none/);
+    assert.match(menuCss, /\.global-menu-page-training\[hidden\]/);
+    assert.match(menuJs, /Start page training/);
+    assert.match(menuJs, /Restart page training/);
+    assert.match(menuJs, /role="alert" aria-live="assertive"/);
+    assert.match(menuJs, /runtime:\s*pageTrainingControls\?\.runtime \|\| null/);
+    assert.match(menuJs, /function openMenu\(\) \{\s*void refreshTrainingControllers\(\)/);
+    assert.match(
+      menuJs,
+      /else \{\s*pageTrainingRefresh = pageTrainingControls\.refresh\(\{ hideWhileLoading: true \}\)/,
+    );
+    assert.match(menuJs, /autoOpen:\s*false,[\s\S]*?consumeHandoff:\s*false/);
+    const trainingMarkup = menuJs.match(
+      /<section class="global-menu-training-section" aria-label="Training" hidden>([\s\S]*?)<\/section>/,
+    );
+    assert.ok(trainingMarkup, 'authenticated navigation must have one semantic Training section');
+    assert.match(trainingMarkup[1], /class="global-menu-training"/);
+    assert.match(trainingMarkup[1], /class="global-menu-page-training-primary"/);
+    assert.match(trainingMarkup[1], /class="global-menu-page-training-restart"/);
+    assert.equal(
+      (menuJs.match(/<section class="global-menu-training-section"/g) || []).length,
+      1,
+    );
+    const drawer = declarationsFor('.global-menu');
+    assert.match(drawer, /overflow-y:\s*auto/);
+    assert.match(drawer, /overscroll-behavior:\s*contain/);
   });
 });
