@@ -9,6 +9,7 @@ import {
   getChallengeActivation,
   getCrews,
   getCrewMembers,
+  getCrewMemberProgressProfile,
   getCrewTrainingProgress,
   getJournalEntries,
   getLeaderboard,
@@ -19,6 +20,7 @@ import {
   manageGroupIntegration,
   redirectToLogin,
   saveJournalEntry,
+  subscribeToAuthStateChanges,
 } from './api';
 import { newChallengeActivationRequestId } from './challenge-activation.mjs';
 import {
@@ -33,7 +35,7 @@ import {
   reconcileGroupChallengeStart,
   setChallengeStartIntentStage,
 } from './challenge-start-intent.mjs';
-import { acquireDialogLayer, createConfirmationDialog } from './dialog.mjs';
+import { acquireDialogLayer, createConfirmationDialog, createDialog } from './dialog.mjs';
 import {
   crewLifecycleAction,
   crewViewState,
@@ -46,6 +48,14 @@ import {
   buildCrewTrainingSteps,
   crewTrainingActionLabel,
 } from './crew-training.mjs';
+import {
+  MEMBER_PROGRESS_BADGE_PAGE_SIZE,
+  MEMBER_PROGRESS_UNAVAILABLE,
+  createMemberProgressRevalidationGate,
+  createMemberProgressRequestGate,
+  memberProgressRoleLabel,
+  mergeMemberProgressBadgePage,
+} from './member-progress-profile.mjs';
 
 const GROUP_INTEGRATIONS_ENABLED = groupIntegrationsEnabled(
   import.meta.env.VITE_ENABLE_GROUP_INTEGRATIONS,
@@ -76,6 +86,19 @@ const state = {
   activeCrewId: localStorage.getItem('dominion:activeCrewId') || '',
   crewMembers: [],
   leaderboard: { window: 'week', rows: [], requestId: 0 },
+  memberProgress: {
+    announcement: '',
+    crewId: '',
+    dialog: null,
+    gate: createMemberProgressRequestGate(),
+    revalidationGate: createMemberProgressRevalidationGate(),
+    loading: false,
+    loadingMore: false,
+    memberId: '',
+    profile: null,
+    trigger: null,
+    unavailable: false,
+  },
   journalEntries: [],
   integrations: [],
   integrationSetupToken: '',
@@ -160,7 +183,7 @@ function initials(name = 'Member') {
 
 function avatarMarkup({ name = 'Member', avatarUrl = '', size = 'medium', decorative = false } = {}) {
   const label = `${name}'s profile photo`;
-  const dimensions = { medium: 42, leaderboard: 40, small: 30, tiny: 26 };
+  const dimensions = { large: 72, medium: 42, leaderboard: 40, small: 30, tiny: 26 };
   const dimension = dimensions[size] || dimensions.medium;
   const accessibility = decorative
     ? 'aria-hidden="true"'
@@ -732,6 +755,349 @@ function badgeChip(badge) {
   return `<span class="badge-chip ${badge.tier || 'bronze'}"><span>${escapeHtml(badge.name || 'Badge')}</span></span>`;
 }
 
+function memberProgressTriggerLabel(name = 'Member') {
+  return `View ${name || 'Member'}’s level and badges`;
+}
+
+function ensureMemberProgressDialog() {
+  const progress = state.memberProgress;
+  if (progress.dialog) return progress.dialog;
+  progress.dialog = createDialog({
+    id: 'member-progress-dialog',
+    title: 'Member progress',
+    eyebrow: 'Private Group',
+    description: 'Read-only lifetime level and earned badges for a current member of this private group.',
+    closeLabel: 'Close member progress',
+    presentation: 'responsive',
+    onClose: () => {
+      progress.gate.invalidate();
+      progress.revalidationGate.reset();
+      progress.announcement = '';
+      progress.crewId = '';
+      progress.loading = false;
+      progress.loadingMore = false;
+      progress.memberId = '';
+      progress.profile = null;
+      progress.trigger = null;
+      progress.unavailable = false;
+      scrubMemberProgressDialog();
+    },
+  });
+  progress.dialog.elements.panel.classList.add('member-progress-dialog');
+  return progress.dialog;
+}
+
+function scrubMemberProgressDialog() {
+  const dialog = state.memberProgress.dialog;
+  if (!dialog) return;
+  dialog.clearError();
+  dialog.elements.content.replaceChildren();
+  dialog.elements.content.removeAttribute('aria-busy');
+}
+
+function memberProgressBadgeMarkup(badge) {
+  const tier = badge.tier === 'gold' ? 'gold' : badge.tier === 'silver' ? 'silver' : 'bronze';
+  return `
+    <article class="member-progress-badge" data-badge-tier="${tier}">
+      <span class="member-progress-badge-icon app-icon icon-${escapeHtml(badge.icon || 'shield')}" aria-hidden="true"></span>
+      <div>
+        <p class="member-progress-badge-tier">${escapeHtml(tier)} badge</p>
+        <h4>${escapeHtml(badge.name || 'Badge')}</h4>
+        <p>${escapeHtml(badge.description || 'Earned through faithful progress.')}</p>
+      </div>
+    </article>
+  `;
+}
+
+function renderMemberProgressDialog() {
+  const progress = state.memberProgress;
+  const dialog = ensureMemberProgressDialog();
+  const { content } = dialog.elements;
+  content.classList.add('member-progress-content');
+  content.setAttribute('aria-busy', String(progress.loading || progress.loadingMore));
+
+  if (progress.loading) {
+    dialog.clearError();
+    content.innerHTML = `
+      <div class="member-progress-loading" role="status" aria-live="polite">
+        <span class="skeleton member-progress-avatar-skeleton" aria-hidden="true"></span>
+        <div aria-hidden="true">
+          <span class="skeleton member-progress-line-skeleton"></span>
+          <span class="skeleton member-progress-line-skeleton short"></span>
+        </div>
+        <span class="sr-only">Loading member progress…</span>
+      </div>
+    `;
+    return;
+  }
+
+  if (progress.unavailable || !progress.profile) {
+    dialog.setError(MEMBER_PROGRESS_UNAVAILABLE);
+    content.innerHTML = `
+      <div class="member-progress-unavailable">
+        <span class="app-icon icon-shield" aria-hidden="true"></span>
+        <h3>${escapeHtml(MEMBER_PROGRESS_UNAVAILABLE)}</h3>
+        <p>This private-group view may have changed. Retry to verify access again.</p>
+        <button class="secondary" type="button" data-member-progress-retry>Try again</button>
+      </div>
+    `;
+    return;
+  }
+
+  dialog.clearError();
+  const profile = progress.profile;
+  const loadedCount = profile.badges.length;
+  const summary = `${loadedCount} of ${profile.badgeCount} badges loaded`;
+  const badgeCollection = loadedCount
+    ? `<div class="member-progress-badges">${profile.badges.map(memberProgressBadgeMarkup).join('')}</div>`
+    : `
+      <div class="member-progress-empty">
+        <span class="app-icon icon-shield" aria-hidden="true"></span>
+        <p>No badges earned yet. This member’s shelf is ready for the first one.</p>
+      </div>
+    `;
+  content.innerHTML = `
+    <section class="member-progress-summary" aria-label="${escapeHtml(profile.displayName)} progress summary">
+      ${avatarMarkup({
+        name: profile.displayName,
+        avatarUrl: profile.avatarUrl,
+        size: 'large',
+      })}
+      <div class="member-progress-identity">
+        <p class="member-progress-role">${escapeHtml(memberProgressRoleLabel(profile.role))}</p>
+        <h3>${escapeHtml(profile.displayName)}</h3>
+        <div class="member-progress-stats" aria-label="Level and earned badge count">
+          <span><strong>Level ${profile.level}</strong><small>Lifetime level</small></span>
+          <span><strong>${profile.badgeCount}</strong><small>${profile.badgeCount === 1 ? 'Earned badge' : 'Earned badges'}</small></span>
+        </div>
+      </div>
+    </section>
+    <section class="member-progress-collection" aria-labelledby="memberProgressBadgesTitle">
+      <div class="member-progress-collection-heading">
+        <div>
+          <p class="eyebrow">Earned Badges</p>
+          <h3 id="memberProgressBadgesTitle">Proof of the work</h3>
+        </div>
+        <span>${profile.badgeCount}</span>
+      </div>
+      ${badgeCollection}
+      <p class="member-progress-announcement" tabindex="-1" role="status" aria-live="polite" aria-atomic="true">${escapeHtml(progress.announcement || summary)}</p>
+      ${profile.hasMore ? `
+        <button class="secondary member-progress-load-more" type="button" data-member-progress-load-more>
+          Load more badges
+        </button>
+      ` : ''}
+    </section>
+  `;
+}
+
+function showMemberProgressUnavailable() {
+  const progress = state.memberProgress;
+  progress.loading = false;
+  progress.loadingMore = false;
+  progress.profile = null;
+  progress.unavailable = true;
+  progress.announcement = '';
+  renderMemberProgressDialog();
+}
+
+function clearMemberProgress({ close = true, reason = 'access-changed' } = {}) {
+  const progress = state.memberProgress;
+  progress.gate.invalidate();
+  progress.revalidationGate.reset();
+  progress.announcement = '';
+  progress.crewId = '';
+  progress.loading = false;
+  progress.loadingMore = false;
+  progress.memberId = '';
+  progress.profile = null;
+  progress.trigger = null;
+  progress.unavailable = false;
+  if (close && progress.dialog?.isOpen) progress.dialog.close(reason);
+  scrubMemberProgressDialog();
+}
+
+function setActiveCrewId(nextCrewId = '') {
+  const normalized = String(nextCrewId || '');
+  if (normalized !== state.activeCrewId) clearMemberProgress({ reason: 'crew-change' });
+  state.activeCrewId = normalized;
+}
+
+async function openMemberProgress(trigger, memberId) {
+  const crew = activeCrew();
+  const progress = state.memberProgress;
+  if (!crew || !memberId || !state.currentUser?.userId) return false;
+  if (progress.loading && progress.gate.pendingFor(crew.id, memberId, 'profile')) return false;
+
+  progress.revalidationGate.reset();
+  const request = progress.gate.begin({ crewId: crew.id, memberId, kind: 'profile' });
+  progress.announcement = '';
+  progress.crewId = crew.id;
+  progress.loading = true;
+  progress.loadingMore = false;
+  progress.memberId = memberId;
+  progress.profile = null;
+  progress.trigger = trigger;
+  progress.unavailable = false;
+  renderMemberProgressDialog();
+  ensureMemberProgressDialog().open(trigger);
+
+  try {
+    const profile = await getCrewMemberProgressProfile({
+      crewId: crew.id,
+      userId: memberId,
+      limit: MEMBER_PROGRESS_BADGE_PAGE_SIZE,
+      expectedUserId: state.currentUser.userId,
+    });
+    if (!progress.gate.isCurrent(request, {
+      crewId: activeCrew()?.id || '',
+      memberId: progress.memberId,
+    })) return false;
+    progress.loading = false;
+    progress.profile = profile;
+    progress.unavailable = false;
+    progress.announcement = `${profile.badges.length} of ${profile.badgeCount} badges loaded`;
+    renderMemberProgressDialog();
+    return true;
+  } catch {
+    if (!progress.gate.isCurrent(request, {
+      crewId: activeCrew()?.id || '',
+      memberId: progress.memberId,
+    })) return false;
+    showMemberProgressUnavailable();
+    return false;
+  }
+}
+
+async function revalidateOpenMemberProgress({ bypassCooldown = false } = {}) {
+  const progress = state.memberProgress;
+  const crew = activeCrew();
+  const actorId = state.currentUser?.userId || '';
+  const memberId = progress.memberId;
+  const contextIsCurrent = Boolean(
+    progress.dialog?.isOpen
+      && progress.profile
+      && !progress.loading
+      && crew?.id
+      && actorId
+      && progress.crewId === crew.id
+      && progress.profile.memberId === memberId
+  );
+  if (!contextIsCurrent) {
+    if (progress.dialog?.isOpen && (
+      !crew?.id
+      || !actorId
+      || progress.crewId !== crew.id
+      || (progress.profile && progress.profile.memberId !== memberId)
+    )) {
+      clearMemberProgress({ reason: 'access-context-changed' });
+    }
+    return false;
+  }
+
+  const revalidation = progress.revalidationGate.begin({ bypassCooldown });
+  if (!revalidation) return false;
+  const request = progress.gate.begin({
+    crewId: crew.id,
+    memberId,
+    kind: 'revalidate',
+  });
+  progress.announcement = '';
+  progress.loading = true;
+  progress.loadingMore = false;
+  progress.profile = null;
+  progress.unavailable = false;
+  renderMemberProgressDialog();
+
+  try {
+    const profile = await getCrewMemberProgressProfile({
+      crewId: crew.id,
+      userId: memberId,
+      limit: MEMBER_PROGRESS_BADGE_PAGE_SIZE,
+      expectedUserId: actorId,
+    });
+    if (!progress.dialog?.isOpen || !progress.gate.isCurrent(request, {
+      crewId: activeCrew()?.id || '',
+      memberId: progress.memberId,
+    })) return false;
+    progress.loading = false;
+    progress.profile = profile;
+    progress.unavailable = false;
+    progress.announcement = `${profile.badges.length} of ${profile.badgeCount} badges loaded`;
+    renderMemberProgressDialog();
+    return true;
+  } catch {
+    if (!progress.dialog?.isOpen || !progress.gate.isCurrent(request, {
+      crewId: activeCrew()?.id || '',
+      memberId: progress.memberId,
+    })) return false;
+    showMemberProgressUnavailable();
+    return false;
+  } finally {
+    progress.revalidationGate.finish(revalidation);
+  }
+}
+
+async function loadMoreMemberProgressBadges(button) {
+  const progress = state.memberProgress;
+  const profile = progress.profile;
+  const crew = activeCrew();
+  if (!crew || !profile?.hasMore || !profile.nextCursor || progress.loadingMore) return false;
+  const request = progress.gate.begin({
+    crewId: crew.id,
+    memberId: profile.memberId,
+    kind: 'badges',
+  });
+  progress.loadingMore = true;
+  progress.announcement = 'Loading more badges…';
+  button.disabled = true;
+  button.setAttribute('aria-busy', 'true');
+  button.textContent = 'Loading badges…';
+  const status = ensureMemberProgressDialog().elements.content.querySelector('.member-progress-announcement');
+  if (status) status.textContent = progress.announcement;
+
+  try {
+    const nextPage = await getCrewMemberProgressProfile({
+      crewId: crew.id,
+      userId: profile.memberId,
+      cursor: profile.nextCursor,
+      limit: MEMBER_PROGRESS_BADGE_PAGE_SIZE,
+      expectedUserId: state.currentUser?.userId || '',
+    });
+    if (!progress.gate.isCurrent(request, {
+      crewId: activeCrew()?.id || '',
+      memberId: progress.memberId,
+    })) return false;
+    progress.profile = mergeMemberProgressBadgePage(profile, nextPage);
+    progress.loadingMore = false;
+    progress.announcement = `${progress.profile.badges.length} of ${progress.profile.badgeCount} badges loaded`;
+    renderMemberProgressDialog();
+    const nextFocus = ensureMemberProgressDialog().elements.content.querySelector(
+      '[data-member-progress-load-more], .member-progress-announcement',
+    );
+    nextFocus?.focus?.({ preventScroll: true });
+    return true;
+  } catch {
+    if (!progress.gate.isCurrent(request, {
+      crewId: activeCrew()?.id || '',
+      memberId: progress.memberId,
+    })) return false;
+    showMemberProgressUnavailable();
+    ensureMemberProgressDialog().elements.content.querySelector('[data-member-progress-retry]')
+      ?.focus?.({ preventScroll: true });
+    return false;
+  }
+}
+
+function reconcileOpenMemberProgress(members, crewId) {
+  const progress = state.memberProgress;
+  if (!progress.dialog?.isOpen || progress.crewId !== crewId || !progress.memberId) return;
+  if (!members.some((member) => member.userId === progress.memberId)) {
+    progress.gate.invalidate();
+    showMemberProgressUnavailable();
+  }
+}
+
 function renderLeaderboard() {
   const board = state.leaderboard;
   const container = $('crewLeaderboard');
@@ -760,14 +1126,19 @@ function renderLeaderboard() {
     return `
       <article class="leaderboard-row">
         <span class="leaderboard-rank">${row.rank || '-'}</span>
-        <div class="leaderboard-identity">
+        <button
+          class="leaderboard-identity leaderboard-member-trigger"
+          type="button"
+          data-member-progress-user-id="${escapeHtml(row.userId)}"
+          aria-label="${escapeHtml(memberProgressTriggerLabel(row.name))}"
+        >
           ${avatarMarkup({ ...row, size: 'leaderboard' })}
           <div class="leaderboard-player">
             <strong>${escapeHtml(row.name)}</strong>
             <small>${dayLabelText} · ${row.currentAppStreak || 0} day app streak</small>
             ${badges}
           </div>
-        </div>
+        </button>
         <div class="leaderboard-points">
           <strong>${Number(row.points || 0).toLocaleString()}</strong>
           <span>pts</span>
@@ -1108,7 +1479,7 @@ async function loadIntegrationSetup() {
       setupToken: state.integrationSetupToken,
     });
     if (setup.crewId && state.crews.some((crew) => crew.id === setup.crewId)) {
-      state.activeCrewId = setup.crewId;
+      setActiveCrewId(setup.crewId);
       localStorage.setItem('dominion:activeCrewId', setup.crewId);
       renderCrewShell();
     }
@@ -1160,13 +1531,18 @@ function renderMembers({ loading = false, error = '' } = {}) {
     return;
   }
   container.innerHTML = state.crewMembers.map((member) => `
-    <article class="member-chip">
+    <button
+      class="member-chip member-progress-trigger"
+      type="button"
+      data-member-progress-user-id="${escapeHtml(member.userId)}"
+      aria-label="${escapeHtml(memberProgressTriggerLabel(member.name))}"
+    >
       ${avatarMarkup(member)}
       <div>
         <strong>${escapeHtml(member.name)}</strong>
-        <span>${escapeHtml(member.role === 'owner' ? 'Group leader' : member.role === 'admin' ? 'Leader' : 'Member')}</span>
+        <span>${escapeHtml(memberProgressRoleLabel(member.role))}</span>
       </div>
-    </article>
+    </button>
   `).join('');
 }
 
@@ -1199,6 +1575,26 @@ function fillJournalFormForDate() {
   $('journalEnergy').value = entry?.energy || '';
 }
 
+async function refreshCrewRoster(requestedCrewId, { revalidateProfile = true } = {}) {
+  state.crewMembers = [];
+  renderMembers({ loading: true });
+
+  try {
+    const members = await getCrewMembers(requestedCrewId);
+    if (state.activeCrewId !== requestedCrewId) return;
+    state.crewMembers = members;
+    renderMembers();
+    reconcileOpenMemberProgress(members, requestedCrewId);
+  } catch (error) {
+    if (state.activeCrewId !== requestedCrewId) return;
+    renderMembers({ error: error?.message || 'Member activity is unavailable right now.' });
+  } finally {
+    if (revalidateProfile && state.activeCrewId === requestedCrewId) {
+      await revalidateOpenMemberProgress({ bypassCooldown: true });
+    }
+  }
+}
+
 async function refreshCrew() {
   renderCrewShell();
   const crew = activeCrew();
@@ -1207,19 +1603,7 @@ async function refreshCrew() {
     return;
   }
   const requestedCrewId = crew.id;
-  state.crewMembers = [];
-  renderMembers({ loading: true });
-
-  const membersPromise = getCrewMembers(requestedCrewId)
-    .then((members) => {
-      if (state.activeCrewId !== requestedCrewId) return;
-      state.crewMembers = members;
-      renderMembers();
-    })
-    .catch((error) => {
-      if (state.activeCrewId !== requestedCrewId) return;
-      renderMembers({ error: error?.message || 'Member activity is unavailable right now.' });
-    });
+  const membersPromise = refreshCrewRoster(requestedCrewId);
 
   await Promise.all([
     membersPromise,
@@ -1238,7 +1622,7 @@ async function refreshJournal() {
 async function refreshCrews() {
   state.crews = await getCrews();
   state.crewsLoaded = true;
-  state.activeCrewId = state.crews[0]?.id || '';
+  setActiveCrewId(state.crews[0]?.id || '');
   if (state.activeCrewId) {
     localStorage.setItem('dominion:activeCrewId', state.activeCrewId);
   } else {
@@ -1344,6 +1728,26 @@ document.addEventListener('click', (event) => {
 window.addEventListener('resize', queueCrewTrainingPosition, { passive: true });
 window.addEventListener('scroll', queueCrewTrainingPosition, { passive: true });
 
+['crewMemberList', 'crewLeaderboard'].forEach((containerId) => {
+  $(containerId)?.addEventListener('click', (event) => {
+    const trigger = event.target.closest?.('[data-member-progress-user-id]');
+    if (!trigger || !event.currentTarget.contains(trigger)) return;
+    void openMemberProgress(trigger, trigger.dataset.memberProgressUserId);
+  });
+});
+
+document.addEventListener('click', (event) => {
+  const dialog = state.memberProgress.dialog;
+  if (!dialog?.isOpen || !dialog.elements.content.contains(event.target)) return;
+  const retry = event.target.closest?.('[data-member-progress-retry]');
+  if (retry) {
+    void openMemberProgress(state.memberProgress.trigger || retry, state.memberProgress.memberId);
+    return;
+  }
+  const loadMore = event.target.closest?.('[data-member-progress-load-more]');
+  if (loadMore) void loadMoreMemberProgressBadges(loadMore);
+});
+
 $('crewLifecycleButton')?.addEventListener('click', (event) => {
   const crew = activeCrew();
   if (!crew) return;
@@ -1363,6 +1767,7 @@ $('crewLifecycleButton')?.addEventListener('click', (event) => {
     alert: true,
     closeOnBackdrop: false,
     onConfirm: async () => {
+      clearMemberProgress({ reason: isDelete ? 'crew-delete' : 'crew-leave' });
       if (isDelete) await deleteCrew({ crewId: crew.id, requestId });
       else await leaveCrew({ crewId: crew.id, requestId });
       state.createFormOpen = false;
@@ -1466,7 +1871,7 @@ $('integrationConfirmForm')?.addEventListener('submit', async (event) => {
     state.integrationSetup = null;
     renderIntegrationSetup();
     if (result.destination?.crewId && result.destination.crewId !== state.activeCrewId) {
-      state.activeCrewId = result.destination.crewId;
+      setActiveCrewId(result.destination.crewId);
       localStorage.setItem('dominion:activeCrewId', state.activeCrewId);
       renderCrewShell();
     }
@@ -1547,7 +1952,7 @@ $('crewForm')?.addEventListener('submit', async (event) => {
         requestId: state.createRequestId,
       });
     }
-    state.activeCrewId = crew.id;
+    setActiveCrewId(crew.id);
     localStorage.setItem('dominion:activeCrewId', crew.id);
     event.target.reset();
     $('crewStartDateInput').value = todayKey();
@@ -1622,6 +2027,54 @@ $('journalForm')?.addEventListener('submit', async (event) => {
     window.alert(error?.message || 'Unable to save your journal entry right now.');
   } finally {
     release();
+  }
+});
+
+const unsubscribeMemberProgressAuth = subscribeToAuthStateChanges(({ event, user }) => {
+  const signedOut = event === 'SIGNED_OUT' || !user?.authenticated;
+  const accountChanged = Boolean(
+    user?.userId
+    && state.currentUser?.userId
+    && user.userId !== state.currentUser.userId
+  );
+  if (signedOut || accountChanged) clearMemberProgress({ reason: 'auth-change' });
+});
+
+function revalidateMemberProgressAfterForegroundSignal() {
+  if (document.visibilityState === 'hidden') return;
+  void revalidateOpenMemberProgress();
+}
+
+function revalidateMemberProgressAfterReconnect() {
+  const progress = state.memberProgress;
+  const crewId = activeCrew()?.id || '';
+  if (!progress.dialog?.isOpen || !progress.profile || progress.crewId !== crewId) return;
+  void revalidateOpenMemberProgress({ bypassCooldown: true });
+  void refreshCrewRoster(crewId);
+}
+
+window.addEventListener('focus', revalidateMemberProgressAfterForegroundSignal);
+document.addEventListener('visibilitychange', revalidateMemberProgressAfterForegroundSignal);
+window.addEventListener('pageshow', revalidateMemberProgressAfterForegroundSignal);
+window.addEventListener('online', revalidateMemberProgressAfterReconnect);
+
+window.addEventListener('storage', (event) => {
+  if (![
+    'dominion:user',
+    'dominion:activeCrewId',
+    'dominion:mockCrews',
+    'dominion:mockCrewMembers',
+    'dominion:mockSubscription',
+  ].includes(event.key)) return;
+  clearMemberProgress({ reason: 'cross-tab-access-change' });
+});
+
+let memberProgressAuthUnsubscribed = false;
+window.addEventListener('pagehide', (event) => {
+  clearMemberProgress({ reason: 'pagehide' });
+  if (!event.persisted && !memberProgressAuthUnsubscribed) {
+    memberProgressAuthUnsubscribed = true;
+    unsubscribeMemberProgressAuth();
   }
 });
 
