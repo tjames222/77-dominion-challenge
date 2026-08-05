@@ -78,6 +78,12 @@ describe('shared sticky menu', () => {
         const hydrateThemeEntitlementState = async () => ({});
         const initThemeState = () => {};
         const initThemeAssets = () => {};
+        const SOLO_TRAINING_LAUNCH_EVENT = 'dominion:solo-training-launch-requested';
+        const SOLO_TRAINING_LAUNCH_STORAGE_KEY = 'dominion:soloTrainingLaunchRequests';
+        const createSoloFirstRunTraining = () => ({
+          available: false,
+          attachControl() {}, destroy() {}, refresh: async () => {}, consumeHandoff: async () => {},
+        });
         ${menuJs.replace(/^import[\s\S]*?from .*;$/gm, '')}
       `;
       await import(`data:text/javascript;base64,${Buffer.from(executableSource).toString('base64')}`);
@@ -167,5 +173,19 @@ describe('shared sticky menu', () => {
     assert.match(menuJs, /styles\.visibility !== 'hidden'/);
     assert.match(menuJs, /focusIsOutside \|\| document\.activeElement === first/);
     assert.match(menuJs, /document\.activeElement === last/);
+  });
+
+  test('keeps authenticated site training independent from optional header actions', () => {
+    assert.match(menuJs, /if \(isLoggedIn && nextOwner\) \{\s*if \(!soloFirstRunTraining\)/);
+    assert.match(menuJs, /if \(nextTraining\.available\)/);
+    assert.doesNotMatch(
+      menuJs,
+      /if \(showMemberActions && nextOwner\) \{\s*if \(!soloFirstRunTraining\)/,
+    );
+    assert.match(
+      menuJs,
+      /addEventListener\('dominion:challenge-start-date-updated',[\s\S]*?invalidateCachedActivation:\s*true/,
+    );
+    assert.match(menuCss, /\.global-menu-training\[hidden\]\s*\{\s*display:\s*none/);
   });
 });

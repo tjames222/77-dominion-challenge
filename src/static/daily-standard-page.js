@@ -174,6 +174,7 @@ function contentTemplate({ eyebrow, title, lead, steps = [], linkLabel, linkHref
 
   const introduction = document.createElement('div');
   introduction.className = 'action-guidance-intro';
+  introduction.dataset.trainingTarget = 'daily-standard-guidance';
   const label = document.createElement('span');
   label.className = 'eyebrow';
   label.textContent = eyebrow;
@@ -198,6 +199,7 @@ function contentTemplate({ eyebrow, title, lead, steps = [], linkLabel, linkHref
   if (linkLabel && linkHref) {
     const link = document.createElement('a');
     link.className = 'action-resource-link';
+    link.dataset.trainingTarget = 'daily-standard-resource';
     link.textContent = `${linkLabel} ↗`;
     setExternalLink(link, linkHref);
     content.append(link);
@@ -208,6 +210,7 @@ function contentTemplate({ eyebrow, title, lead, steps = [], linkLabel, linkHref
 function createHealthControl(label) {
   const wrapper = document.createElement('div');
   wrapper.className = 'action-native-control';
+  wrapper.dataset.trainingTarget = 'daily-standard-native';
   const button = document.createElement('button');
   button.className = 'action-secondary-button';
   button.type = 'button';
@@ -237,6 +240,7 @@ function createWorkoutContent() {
 
   const field = document.createElement('label');
   field.className = 'action-difficulty-field';
+  field.dataset.trainingTarget = 'daily-standard-difficulty';
   const label = document.createElement('span');
   label.textContent = 'Difficulty';
   const description = document.createElement('small');
@@ -277,6 +281,7 @@ function createWalkContent() {
 
   const reminder = document.createElement(WALK_ALARM_URL ? 'a' : 'button');
   reminder.className = 'action-resource-link';
+  reminder.dataset.trainingTarget = 'daily-standard-resource';
   reminder.textContent = 'Set walk alarm ↗';
   if (WALK_ALARM_URL) {
     setExternalLink(reminder, WALK_ALARM_URL);

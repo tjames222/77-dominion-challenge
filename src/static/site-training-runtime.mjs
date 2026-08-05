@@ -36,6 +36,8 @@ export function createSiteTrainingRuntime({
   api = null,
   document: ownerDocument = globalThis.document,
   coachmarkFactory = createSiteTrainingCoachmark,
+  onStateChange = async () => {},
+  onTransition = async () => {},
 } = {}) {
   const page = siteTrainingPageForRoute(registry, pathname);
   const program = siteTrainingProgramForPage(registry, page);
@@ -60,6 +62,31 @@ export function createSiteTrainingRuntime({
     typeof capabilities === 'function' ? capabilities() || {} : capabilities || {}
   );
 
+  const notifySafely = async (callback, detail, label) => {
+    try {
+      await callback(detail);
+    } catch (error) {
+      console.warn(`Site training ${label} callback failed after progress was saved.`, error);
+    }
+  };
+
+  const notifyState = (reason) => notifySafely(onStateChange, {
+    reason,
+    actorId,
+    page,
+    program,
+    state: trainingState,
+  }, 'state');
+
+  const notifyTransition = (result) => notifySafely(onTransition, {
+    actorId,
+    page,
+    program,
+    state: result,
+    transition: result?.transition || null,
+    scope: activeScope,
+  }, 'transition');
+
   const assertCurrent = (capturedActorId, capturedGeneration) => {
     if (destroyed || actorId !== capturedActorId || generation !== capturedGeneration) {
       throw accountChangedError();
@@ -73,6 +100,8 @@ export function createSiteTrainingRuntime({
       step,
       index,
       total: page.steps.length,
+      pageIndex: activeScope === 'overall' ? trainingState.overall?.currentPageIndex : null,
+      pageTotal: activeScope === 'overall' ? program?.pages?.length : null,
       capabilities: currentCapabilities(),
       replay,
     });
@@ -104,6 +133,7 @@ export function createSiteTrainingRuntime({
       && refreshed.page.contentVersion === page.contentVersion) {
       if (coachmark) renderLiveState();
     } else coachmark?.close();
+    await notifyState('stale-recovered');
     const recovered = new Error('Page training changed in another tab. The latest progress is loaded; try again.');
     recovered.code = error.code;
     recovered.details = error.details;
@@ -144,6 +174,8 @@ export function createSiteTrainingRuntime({
       trainingState = result;
       if (action === 'stop' || action === 'finish') coachmark?.close();
       else renderLiveState();
+      await notifyTransition(result);
+      await notifyState('transition');
       return result;
     } finally {
       if (pendingMutation === mutation) {
@@ -201,6 +233,7 @@ export function createSiteTrainingRuntime({
       if (!result?.contractValid || result.actorId !== capturedActorId) {
         trainingState = result || createSiteTrainingState('error');
       } else trainingState = result;
+      await notifyState('hydrate');
       return controller.snapshot;
     } catch (error) {
       assertCurrent(capturedActorId, capturedGeneration);
@@ -253,12 +286,17 @@ export function createSiteTrainingRuntime({
       }
       assertCurrent(capturedActorId, capturedGeneration);
       if (!result?.contractValid || result.actorId !== capturedActorId) throw accountChangedError();
-      if (result.page.status === 'completed') {
+      if (result.page.status === 'completed' && normalizedScope !== 'overall') {
         throw new Error('This lesson is complete. Use replay to review it without changing progress.');
       }
       trainingState = result;
       activeScope = normalizedScope;
       replayIndex = null;
+      await notifyTransition(result);
+      await notifyState('claim');
+      if (result.page.status === 'completed' && normalizedScope === 'overall') {
+        return result;
+      }
       ensureCoachmark().open({ trigger, replay: false });
       renderLiveState();
       return result;
@@ -286,6 +324,41 @@ export function createSiteTrainingRuntime({
     hydrate,
     start(options = {}) { return claim('start', options); },
     resume(options = {}) { return claim('resume', options); },
+    open({ scope = 'page', trigger = ownerDocument?.activeElement } = {}) {
+      if (!page) throw new Error('Page training is not published for this page.');
+      const normalizedScope = scope === 'overall' ? 'overall' : 'page';
+      const current = requireReadyState(trainingState, actorId, page);
+      if (current.page.status !== 'in_progress') {
+        throw new Error('Start or resume this page training before opening it.');
+      }
+      if (normalizedScope === 'overall' && (
+        !program
+        || current.overall?.status !== 'in_progress'
+        || current.overall.currentPageId !== page.id
+        || current.overall.currentPageContentVersion !== page.contentVersion
+      )) {
+        throw new Error('Open the current page in this site training program before continuing.');
+      }
+      activeScope = normalizedScope;
+      replayIndex = null;
+      ensureCoachmark().open({ trigger, replay: false });
+      renderLiveState();
+      return controller.snapshot;
+    },
+    advanceCompletedPage({ scope = 'overall' } = {}) {
+      const normalizedScope = scope === 'overall' ? 'overall' : 'page';
+      const current = requireReadyState(trainingState, actorId, page);
+      if (normalizedScope !== 'overall' || !program || current.page.status !== 'completed') {
+        throw new Error('Only a completed current program page can be advanced.');
+      }
+      if (current.overall?.status !== 'in_progress'
+        || current.overall.currentPageId !== page.id
+        || current.overall.currentPageContentVersion !== page.contentVersion) {
+        throw new Error('Open the current completed program page before advancing.');
+      }
+      activeScope = 'overall';
+      return performTransition('finish');
+    },
     replay({ trigger = ownerDocument?.activeElement } = {}) {
       const current = requireReadyState(trainingState, actorId, page);
       if (!page || current.page.status !== 'completed') {
@@ -308,6 +381,7 @@ export function createSiteTrainingRuntime({
       activeScope = 'page';
       trainingState = createSiteTrainingState('loading');
       coachmark?.close({ restoreFocus: false });
+      void notifyState('actor-change');
       return true;
     },
     destroy() {

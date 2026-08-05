@@ -51,7 +51,7 @@
       </section>
       <p class="sr-only" id="dashboardActivationStatus" role="status" aria-live="polite" aria-atomic="true" tabindex="-1"></p>
 
-      <section class="progress dashboard-section dashboard-tracking reveal" data-section-surface="plain" aria-labelledby="trackingTitle">
+      <section class="progress dashboard-section dashboard-tracking reveal" data-section-surface="plain" data-training-target="dashboard-progress" aria-labelledby="trackingTitle">
         <h2 class="sr-only" id="trackingTitle">Challenge and daily progress</h2>
         <div class="rings" role="group" aria-labelledby="trackingTitle">
           <div class="ring" id="challengeRing"><div class="ring-inner"><strong id="challengePercent">—</strong><span>Challenge</span><small id="challengeDay">Confirming…</small></div></div>
@@ -89,7 +89,7 @@
       </section>
 
       <section class="progress dashboard-section dashboard-scorecard reveal" id="check-in" tabindex="-1" data-section-surface="plain" aria-labelledby="todaysScorecardTitle">
-        <div class="progress-standard" id="daily-standards">
+        <div class="progress-standard" id="daily-standards" data-training-target="dashboard-standards">
           <div class="section-heading"><p class="eyebrow">Today's Scorecard</p><h2 id="todaysScorecardTitle">Mind, Spirit, Body</h2></div>
           <div class="scorecard-checklist-heading">
             <div>
@@ -102,14 +102,14 @@
             </button>
           </div>
           <div id="checklist"></div>
-          <div class="scorecard-actions">
+          <div class="scorecard-actions" data-training-target="dashboard-check-in">
             <button class="primary" id="checkInButton" type="button" aria-describedby="checkInStatus" disabled>Post Check-In</button>
             <p class="check-in-status" id="checkInStatus" role="status" aria-live="polite" aria-atomic="true" tabindex="-1"></p>
           </div>
         </div>
       </section>
 
-      <section class="game-summary-card reveal" id="gameSummaryCard" data-section-surface="plain" aria-labelledby="gameSummaryEyebrow gameSummaryTitle">
+      <section class="game-summary-card reveal" id="gameSummaryCard" data-section-surface="plain" data-training-target="dashboard-levels" aria-labelledby="gameSummaryEyebrow gameSummaryTitle">
         <div class="game-summary-hero">
           <div
             class="game-level-emblem"
@@ -185,7 +185,7 @@
         />
       </section>
 
-      <section class="community dashboard-section reveal" data-section-surface="plain">
+      <section class="community dashboard-section reveal" data-section-surface="plain" data-training-target="dashboard-community">
         <div class="section-heading"><p class="eyebrow">Accountability</p><h2 id="completedToday">3 people completed today</h2></div>
         <div id="feed"></div>
         <a class="action-button with-icon dashboard-section-link" href="./community.html">

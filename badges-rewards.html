@@ -24,12 +24,12 @@
         <p class="eyebrow">Your Progress</p>
         <h1 id="badgesRewardsTitle">Badges &amp; Rewards</h1>
         <p class="lead">See the proof you have earned, the rewards your points opened, and the next milestone ahead.</p>
-        <button class="share-entry-button" type="button" data-share-composer data-share-kind="progress">
+        <button class="share-entry-button" type="button" data-share-composer data-share-kind="progress" data-training-target="rewards-sharing">
           Share my progress
         </button>
       </section>
 
-      <nav class="badges-rewards-tabs" role="tablist" aria-label="Rewards and badges" aria-orientation="horizontal">
+      <nav class="badges-rewards-tabs" role="tablist" aria-label="Rewards and badges" aria-orientation="horizontal" data-training-target="rewards-tabs">
         <button
           class="badges-rewards-tab active"
           id="rewards-tab"
@@ -47,6 +47,7 @@
           aria-selected="false"
           aria-controls="badges-panel"
           data-tab="badges-panel"
+          data-training-target="rewards-badges"
           tabindex="-1"
         >Badges</button>
       </nav>
@@ -67,7 +68,7 @@
           </div>
         </aside>
 
-        <section class="reward-next-panel reveal" id="rewardNextPanel" data-section-surface="accent" aria-labelledby="rewardNextTitle" aria-busy="true">
+        <section class="reward-next-panel reveal" id="rewardNextPanel" data-section-surface="accent" data-training-target="rewards-next-unlock" aria-labelledby="rewardNextTitle" aria-busy="true">
           <div class="reward-next-heading">
             <div>
               <p class="eyebrow" id="rewardNextEyebrow">Next unlock</p>
@@ -90,7 +91,7 @@
           </div>
         </section>
 
-        <section class="rewards-catalog-section reveal" data-section-surface="plain" aria-labelledby="rewardsCatalogTitle">
+        <section class="rewards-catalog-section reveal" data-section-surface="plain" data-training-target="rewards-catalog" aria-labelledby="rewardsCatalogTitle">
           <div class="badges-rewards-section-heading">
             <div>
               <p class="eyebrow">Point Rewards</p>

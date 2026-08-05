@@ -180,6 +180,13 @@ const SCHEDULED_SOLO_CHALLENGE_ACTIVATION = Object.freeze({
   canEditStartDate: true,
 });
 
+const ACTIVE_SOLO_CHALLENGE_ACTIVATION = Object.freeze({
+  ...BASE_CHALLENGE_ACTIVATION,
+  mode: 'solo',
+  crewId: null,
+  groupMembershipActive: false,
+});
+
 const json = (value) => JSON.parse(JSON.stringify(value));
 
 function baseMemberJson() {
@@ -294,6 +301,21 @@ export const APP_STATES = Object.freeze({
       'dominion:mockCrewMembers': {},
       'dominion:mockChallengeActivation': {
         [FIXED_USER_ID]: json(SCHEDULED_SOLO_CHALLENGE_ACTIVATION),
+      },
+    },
+    raw: {
+      ...baseMemberRaw(),
+      'dominion:activeCrewId': null,
+    },
+  },
+  activeSolo: {
+    json: {
+      ...baseMemberJson(),
+      'dominion:mockCrews': [],
+      'dominion:mockCrewMembers': {},
+      'dominion:mockJournalEntries': [],
+      'dominion:mockChallengeActivation': {
+        [FIXED_USER_ID]: json(ACTIVE_SOLO_CHALLENGE_ACTIVATION),
       },
     },
     raw: {

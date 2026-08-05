@@ -27,9 +27,9 @@
         <p class="lead">Stay accountable with the people you invited, compare private-group progress, and keep your own journey honest.</p>
       </section>
 
-      <nav class="community-tabs" role="tablist" aria-label="Private group and journal">
+      <nav class="community-tabs" role="tablist" aria-label="Private group and journal" data-training-target="community-tabs">
         <button class="community-tab active" id="crew-tab" type="button" role="tab" aria-selected="true" aria-controls="crew" data-tab="crew">Private Group</button>
-        <button class="community-tab" id="journey-tab" type="button" role="tab" aria-selected="false" aria-controls="journey" data-tab="journey">Private Journal</button>
+        <button class="community-tab" id="journey-tab" type="button" role="tab" aria-selected="false" aria-controls="journey" data-tab="journey" data-training-target="community-private-journal">Private Journal</button>
       </nav>
 
       <div class="community-feedback" id="communityFeedback" role="status" aria-live="polite"></div>
@@ -44,7 +44,7 @@
           </div>
         </div>
 
-        <div class="community-tools-slot card" data-section-surface="accent">
+        <div class="community-tools-slot card" data-section-surface="accent" data-training-target="community-create-or-join">
           <section class="community-tools crew-create-empty" id="crewCreateCard" hidden>
             <div class="crew-create-heading">
               <div>
@@ -104,7 +104,7 @@
           </section>
         </div>
 
-        <section class="group-integrations" id="crewIntegrationsCard" data-section-surface="plain" aria-labelledby="groupIntegrationsTitle" hidden>
+        <section class="group-integrations" id="crewIntegrationsCard" data-section-surface="plain" data-training-target="community-integrations" aria-labelledby="groupIntegrationsTitle" hidden>
           <div class="section-heading-row">
             <div>
               <p class="eyebrow">External Updates</p>
@@ -164,7 +164,7 @@
           <article><strong id="crewDayCount">Day 1</strong><span>Group pace</span></article>
         </div>
 
-        <section class="member-activity" id="crewMembersCard" data-section-surface="plain" hidden>
+        <section class="member-activity" id="crewMembersCard" data-section-surface="plain" data-training-target="community-roster" hidden>
           <div class="section-heading-row">
             <div>
               <p class="eyebrow">Group Activity</p>
@@ -175,7 +175,7 @@
           <div class="member-list" id="crewMemberList" tabindex="0" aria-label="Private group members" aria-live="polite"></div>
         </section>
 
-        <section class="leaderboard-card card" data-section-surface="accent" id="crewLeaderboardCard">
+        <section class="leaderboard-card card" data-section-surface="accent" data-training-target="community-leaderboard" id="crewLeaderboardCard">
           <div class="leaderboard-header">
             <div>
               <p class="eyebrow">Crew Leaderboard</p>

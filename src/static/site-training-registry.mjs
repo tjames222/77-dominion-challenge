@@ -4,6 +4,26 @@ export const SITE_TRAINING_CATALOG_VERSION = 1;
 const IDENTIFIER_PATTERN = /^[a-z][a-z0-9]*(?:[-_][a-z0-9]+)*$/;
 const ROUTE_PATTERN = /^\/[a-z0-9]+(?:-[a-z0-9]+)*\.html$/;
 const TARGET_PATTERN = /^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/;
+const AUDIENCE_SET = new Set(['all', 'solo', 'group']);
+
+export const SITE_TRAINING_KNOWN_CAPABILITIES = Object.freeze([
+  'billing-management-available',
+  'can-share-progress',
+  'crew-integration-authorized',
+  'daily-standards-open',
+  'group-integrations-enabled',
+  'has-active-crew',
+  'themes-available',
+]);
+
+export const SITE_TRAINING_EXCLUDED_ROUTES = Object.freeze([
+  '/index.html',
+  '/membership.html',
+  '/login.html',
+  '/register.html',
+  '/invite.html',
+  '/today-actions.html',
+]);
 
 const text = (value) => (typeof value === 'string' ? value.trim() : '');
 const integer = (value) => {
@@ -62,6 +82,7 @@ function normalizedProgram(program = {}) {
   return {
     id: text(program.id),
     version: integer(program.version),
+    audience: text(program.audience).toLowerCase() || 'all',
     title: text(program.title),
     pages: Array.isArray(program.pages) ? program.pages.map(normalizedProgramPage) : [],
   };
@@ -145,6 +166,9 @@ export function validateSiteTrainingRegistry(registry, {
     }
     if (programContracts.has(contractId)) errors.push(`Duplicate program version: ${contractId}.`);
     programContracts.add(contractId);
+    if (!AUDIENCE_SET.has(program.audience)) {
+      errors.push(`Invalid audience for program ${program.id || '(empty)'}.`);
+    }
     if (!text(program.title)) errors.push(`A title is required for program ${program.id || '(empty)'}.`);
     if (!Array.isArray(program.pages) || program.pages.length === 0) {
       errors.push(`At least one ordered page is required for program ${program.id || '(empty)'}.`);
@@ -209,8 +233,174 @@ export function defineSiteTrainingRegistry({
 }
 
 export const EMPTY_SITE_TRAINING_REGISTRY = defineSiteTrainingRegistry();
-// FOU-1442 replaces this inert publication point with the launch catalog.
-export const SITE_TRAINING_REGISTRY = EMPTY_SITE_TRAINING_REGISTRY;
+
+const fallback = (title, description) => ({ title, description });
+const step = (id, title, description, target = null, capabilities = [], unavailable = null) => ({
+  id,
+  title,
+  description,
+  target,
+  capabilities,
+  unavailable: unavailable || fallback(title, description),
+});
+const orientation = (title, description) => step('orientation', title, description);
+
+const PAGES = [
+  {
+    id: 'dashboard', route: '/dashboard.html', contentVersion: 1, title: 'Dashboard',
+    steps: [
+      orientation('Welcome to your Solo walkthrough', 'This walkthrough explains Dominion without changing challenge entries, dates, sharing, or any other product data.'),
+      step('global-navigation', 'Move through Dominion', 'The application menu keeps every signed-in destination together. Training navigation follows only the published walkthrough order.', 'global-navigation'),
+      step('sharing', 'Share only when you choose', 'Share opens a reviewable composer outside training. This walkthrough never opens it or publishes progress.', 'global-share', ['can-share-progress'], fallback('Sharing stays under your control', 'Progress sharing is unavailable in the current challenge state. Training will never publish on your behalf.')),
+      step('app-streak', 'See consistency at a glance', 'App Streak shows visits, full-standard streaks, personal bests, and the challenge start date without changing them.', 'global-app-streak'),
+      step('progress-gauges', 'Read today and the full challenge', 'These gauges separate today’s seven standards from progress across all 77 days.', 'dashboard-progress'),
+      step('daily-standards', 'Your seven Daily Standards', 'The scorecard links Spirit, Mind, and Body practices and reflects today’s completion state.', 'dashboard-standards', ['daily-standards-open'], fallback('Your standards unlock on schedule', 'You can learn the full site now. Daily Standard controls become available when your scheduled Solo start date arrives.')),
+      step('check-in', 'Post only after review', 'Check-In records the day only when you deliberately use the product control outside training. This walkthrough never posts it.', 'dashboard-check-in', ['daily-standards-open'], fallback('Check-In unlocks with today’s standards', 'Your scheduled challenge can be trained now; Check-In remains unavailable until its date arrives.')),
+      step('levels-points', 'Levels and points show momentum', 'Levels rise independently from point-unlocked rewards, while this card shows your current total, progress, and latest badge.', 'dashboard-levels'),
+      step('community-entry', 'Accountability has its own space', 'Community leads to private groups, leaderboards, integrations, and a private journal. Training does not open, create, or join anything.', 'dashboard-community'),
+    ],
+  },
+  {
+    id: 'bible-reading', route: '/bible-reading.html', contentVersion: 1, title: 'Bible Reading',
+    steps: [
+      orientation('Bible Reading', 'This page brings today’s reading standard, guidance, and optional external Bible resource together.'),
+      step('completion', 'Today’s completion control', 'Outside training, this control marks only Bible Reading for today. Training never changes it.', 'daily-standard-completion', ['daily-standards-open'], fallback('Completion unlocks on your start date', 'Training is available now; today’s completion control remains locked until the scheduled challenge begins.')),
+      step('reading-guidance', 'Read with attention', 'The guidance recommends five to eight chapters and carrying one truth into the day.', 'daily-standard-guidance'),
+      step('youversion-resource', 'Optional YouVersion handoff', 'This link can open YouVersion outside Dominion when you choose it outside training. Training never follows external links.', 'daily-standard-resource'),
+    ],
+  },
+  {
+    id: 'morning-prayer', route: '/morning-prayer.html', contentVersion: 1, title: 'Morning Prayer',
+    steps: [
+      orientation('Morning Prayer', 'This page keeps the morning prayer standard and a simple opening practice together.'),
+      step('completion', 'Today’s completion control', 'Outside training, this control marks only Morning Prayer for today. Training never changes it.', 'daily-standard-completion', ['daily-standards-open'], fallback('Completion unlocks on your start date', 'Training is available now; today’s completion control remains locked until the scheduled challenge begins.')),
+      step('prayer-guidance', 'Begin before the noise', 'The practice centers stillness, surrender, wisdom, courage, and a willing spirit.', 'daily-standard-guidance'),
+      step('guided-prayer-resource', 'Optional guided prayer', 'This external resource is available when you choose it outside training. Training never opens it.', 'daily-standard-resource'),
+    ],
+  },
+  {
+    id: 'worship', route: '/worship.html', contentVersion: 1, title: 'Worship',
+    steps: [
+      orientation('Worship', 'This page keeps today’s worship standard and listening prompt in one place.'),
+      step('completion', 'Today’s completion control', 'Outside training, this control marks only Worship for today. Training never changes it.', 'daily-standard-completion', ['daily-standards-open'], fallback('Completion unlocks on your start date', 'Training is available now; today’s completion control remains locked until the scheduled challenge begins.')),
+      step('worship-guidance', 'Listen with full attention', 'The prompt keeps the standard centered on worship rather than background multitasking.', 'daily-standard-guidance'),
+      step('spotify-resource', 'Optional Spotify handoff', 'The daily playlist can open Spotify outside Dominion when you choose it outside training. Training never opens it.', 'daily-standard-resource'),
+    ],
+  },
+  {
+    id: 'evening-prayer', route: '/evening-prayer.html', contentVersion: 1, title: 'Evening Prayer',
+    steps: [
+      orientation('Evening Prayer', 'This page closes the day with reflection, gratitude, confession, and release.'),
+      step('completion', 'Today’s completion control', 'Outside training, this control marks only Evening Prayer for today. Training never changes it.', 'daily-standard-completion', ['daily-standards-open'], fallback('Completion unlocks on your start date', 'Training is available now; today’s completion control remains locked until the scheduled challenge begins.')),
+      step('reflection-guidance', 'Review the day honestly', 'The prompts help you notice gifts, receive grace, reflect, and entrust tomorrow to God.', 'daily-standard-guidance'),
+      step('guided-prayer-resource', 'Optional guided prayer', 'This external resource is available when you choose it outside training. Training never opens it.', 'daily-standard-resource'),
+    ],
+  },
+  ...[
+    ['workout-one', '/workout-one.html', 'Workout #1', 'Build the first movement session with a recommendation that can match your chosen difficulty.'],
+    ['workout-two', '/workout-two.html', 'Workout #2', 'Finish the second movement session with a recommendation that can match your chosen difficulty.'],
+  ].map(([id, route, title, intro]) => ({
+    id, route, contentVersion: 1, title,
+    steps: [
+      orientation(title, intro),
+      step('completion', 'Today’s completion control', `Outside training, this control marks only ${title} for today. Training never changes it.`, 'daily-standard-completion', ['daily-standards-open'], fallback('Completion unlocks on your start date', 'Training is available now; today’s completion control remains locked until the scheduled challenge begins.')),
+      step('recommendation', 'Today’s workout recommendation', 'The recommendation changes with the selected difficulty while the standard remains worth the same point.', 'daily-standard-guidance'),
+      step('difficulty', 'Difficulty is context, not extra credit', 'Outside training, Difficulty adjusts the recommendation without changing the point value. Training never changes the selection.', 'daily-standard-difficulty', ['daily-standards-open'], fallback('Difficulty unlocks with the daily standard', 'The recommendation can be reviewed now; its selector remains locked until the scheduled challenge begins.')),
+      step('native-health', 'Native health is optional', 'Apple Fitness can open as a resource. HealthKit connections require a native app, and this web walkthrough never requests health data.', 'daily-standard-native'),
+    ],
+  })),
+  {
+    id: 'intentional-walk', route: '/intentional-walk.html', contentVersion: 1, title: 'Intentional Walk',
+    steps: [
+      orientation('Intentional Walk', 'This page frames the workday walk as an intentional reset rather than another screen task.'),
+      step('completion', 'Today’s completion control', 'Outside training, this control marks only Intentional Walk for today. Training never changes it.', 'daily-standard-completion', ['daily-standards-open'], fallback('Completion unlocks on your start date', 'Training is available now; today’s completion control remains locked until the scheduled challenge begins.')),
+      step('walk-guidance', 'Leave the screen behind', 'The guidance emphasizes presence, a sustainable pace, and returning with one clear priority.', 'daily-standard-guidance'),
+      step('alarm-and-steps', 'Alarm and steps stay optional', 'Native alarm and step integrations are informational in the web app. Training never creates alarms, requests step data, or connects a provider.', 'daily-standard-native'),
+    ],
+  },
+  {
+    id: 'badges-rewards', route: '/badges-rewards.html', contentVersion: 1, title: 'Badges & Rewards',
+    steps: [
+      orientation('Badges & Rewards', 'Rewards and badges are separate views of progress: points unlock rewards, while badges recognize specific milestones.'),
+      step('tabs', 'Rewards and badges have separate tabs', 'The tabs keep unlockable rewards and earned badges distinct without changing either.', 'rewards-tabs'),
+      step('next-unlock', 'See the next attainable reward', 'This card shows the point target ahead and progress toward it.', 'rewards-next-unlock'),
+      step('reward-catalog', 'Review every point reward', 'The catalog shows locked and unlocked paths by their point requirements; training never unlocks or purchases anything.', 'rewards-catalog'),
+      step('badges', 'Badges record earned milestones', 'The Badges tab contains milestone proof earned through challenge activity, independent of training.', 'rewards-badges'),
+      step('sharing', 'Share after reviewing', 'The progress composer remains under your control outside training. This walkthrough never opens or publishes it.', 'rewards-sharing', ['can-share-progress'], fallback('Sharing is currently unavailable', 'Your rewards and badges remain private until progress sharing is available and you explicitly choose it.')),
+    ],
+  },
+  {
+    id: 'community', route: '/community.html', contentVersion: 1, title: 'Community',
+    steps: [
+      orientation('Community', 'Community contains private-group accountability and a separate private journal. This walkthrough never creates, joins, invites, connects, or saves content.'),
+      step('tabs', 'Group and journal stay separate', 'These tabs separate shared crew information from your private journal.', 'community-tabs'),
+      step('create-or-join', 'Create or join only by explicit choice', 'This area reflects whether you can create a crew or manage an existing one. Training never submits either flow.', 'community-create-or-join'),
+      step('roles-and-roster', 'Roles protect group controls', 'Owners, admins, and members see only the roster and controls allowed for their role.', 'community-roster', ['has-active-crew'], fallback('Roster controls appear with a crew', 'You are not currently viewing an active crew roster. Roles and member controls remain unavailable until a crew exists.')),
+      step('leaderboard', 'The leaderboard stays crew-scoped', 'Week and challenge views compare only members of the selected private group.', 'community-leaderboard'),
+      step('integrations', 'External updates are safe-off', 'Slack and Discord require eligible group controls, a destination, and each member’s consent. Training never connects a provider.', 'community-integrations', ['group-integrations-enabled', 'crew-integration-authorized'], fallback('Group integrations are informational here', 'Slack and Discord controls stay hidden unless the feature, crew, and role are eligible. Training never enables or connects them.')),
+      step('private-journal', 'Your journal stays private', 'The Private Journal tab holds personal notes and reflections. Training never reads, reveals, or saves journal content.', 'community-private-journal'),
+    ],
+  },
+  {
+    id: 'profile', route: '/profile.html', contentVersion: 1, title: 'Profile',
+    steps: [
+      orientation('Profile', 'Profile brings account identity, challenge status, privacy, billing access, and appearance together.'),
+      step('account', 'Account details remain editable by you', 'The account card manages your name, email, and profile picture outside training. Training never edits or uploads anything.', 'profile-account'),
+      step('challenge-status', 'Check your challenge status', 'This card summarizes the current challenge and participation context without changing it.', 'profile-challenge-status'),
+      step('integration-privacy', 'Outbound updates start off', 'Per-group consent controls what approved activity may reach connected services. Training never changes consent.', 'profile-integration-privacy', ['has-active-crew'], fallback('Integration privacy is safe-off', 'No eligible private group is available, so outbound update consent remains unavailable and no data leaves Dominion.')),
+      step('billing', 'Billing access has one home', 'This link leads to subscription status and management. Training never opens checkout or changes membership.', 'profile-billing'),
+      step('themes', 'Choose an available theme', 'Dark and Light are available; earned themes appear with their unlock status. Training never changes appearance.', 'profile-themes', ['themes-available'], fallback('Theme controls are unavailable', 'Appearance remains unchanged while theme availability is being verified.')),
+    ],
+  },
+  {
+    id: 'billing', route: '/billing.html', contentVersion: 1, title: 'Billing',
+    steps: [
+      orientation('Billing', 'Billing explains membership access and contains the only subscription and payment controls in this walkthrough.'),
+      step('membership-access', 'See membership status', 'The access card shows whether the account can open member features.', 'billing-membership-access'),
+      step('billing-management', 'Management actions require your choice', 'Visible billing controls may open a provider outside training. This walkthrough never purchases, cancels, or changes payment details.', 'billing-management', ['billing-management-available'], fallback('Billing management depends on account status', 'No eligible management action is currently available. Training never starts checkout or changes membership.')),
+      step('membership-includes', 'What membership includes', 'Membership covers challenge tracking, daily standards, private groups, journaling, rewards, and future guided content.', 'billing-membership-includes'),
+    ],
+  },
+  {
+    id: 'science', route: '/science.html', contentVersion: 1, title: 'Science',
+    steps: [
+      orientation('The why behind Dominion', 'This final page explains the behavioral and biblical reasoning behind a 77-day repeated standard.'),
+      step('repetition', 'Repetition builds automaticity', 'Consistent cues, clear actions, visible feedback, and identity reinforce the daily rhythm over time.', 'science-repetition'),
+      step('scripture', 'Scripture frames discipline as stewardship', 'The biblical foundation connects bodily discipline, spiritual fruit, renewed thinking, and faithfulness.', 'science-scripture'),
+      step('standards', 'Each standard has a purpose', 'Mind, Spirit, Body, and accountability practices combine into one repeated pattern.', 'science-standards'),
+      step('sources', 'Review the sources and limits', 'Sources summarize habit research and scriptural patterns, including the need to adapt wisely for health and life circumstances.', 'science-sources'),
+      step('training-complete', 'Your Solo site walkthrough is complete', 'Finish records only walkthrough completion. It does not change challenge entries, membership, journal content, integrations, sharing, or settings.'),
+    ],
+  },
+];
+
+const PROGRAM_PAGE_IDS = [
+  'dashboard',
+  'bible-reading',
+  'morning-prayer',
+  'worship',
+  'evening-prayer',
+  'workout-one',
+  'intentional-walk',
+  'workout-two',
+  'badges-rewards',
+  'community',
+  'profile',
+  'billing',
+  'science',
+];
+
+export const SITE_TRAINING_REGISTRY = defineSiteTrainingRegistry({
+  catalogVersion: SITE_TRAINING_CATALOG_VERSION,
+  pages: PAGES,
+  programs: [{
+    id: 'solo-first-run',
+    version: 1,
+    audience: 'solo',
+    title: 'Solo first-run site training',
+    pages: PROGRAM_PAGE_IDS.map((pageId) => ({ pageId, contentVersion: 1 })),
+  }],
+});
 
 export function siteTrainingPageForRoute(registry, pathname = '') {
   const route = `/${String(pathname || '').split(/[?#]/, 1)[0].split('/').filter(Boolean).pop() || 'index.html'}`;
@@ -239,6 +429,7 @@ export function siteTrainingProgramContract(program) {
   return {
     programId: program.id,
     programVersion: program.version,
+    audience: program.audience,
     pages: program.pages.map(({ pageId, contentVersion }) => ({ pageId, contentVersion })),
   };
 }
