@@ -58,6 +58,16 @@ export function readPreviewUserValue(storage, ownerId, key, fallback) {
   return value;
 }
 
+export function peekPreviewUserValue(storage, ownerId, key, fallback) {
+  const normalizedOwnerId = String(ownerId || '').trim();
+  if (!normalizedOwnerId || !String(key || '').trim()) return fallback;
+  const records = cleanOwnerRecords(readJson(storage, PREVIEW_USER_STATE_STORAGE_KEY, {}));
+  const ownerRecord = records[normalizedOwnerId] || {};
+  if (Object.hasOwn(ownerRecord, key)) return ownerRecord[key];
+  const legacyOwner = String(storage.getItem(PREVIEW_USER_STATE_LEGACY_OWNER_KEY) || '').trim();
+  return legacyOwner === normalizedOwnerId ? readJson(storage, key, fallback) : fallback;
+}
+
 export function writePreviewUserValue(storage, ownerId, key, value) {
   const normalizedOwnerId = String(ownerId || '').trim();
   if (!normalizedOwnerId || !String(key || '').trim()) {
