@@ -1851,7 +1851,7 @@ const bootstrapDailyStandardTimeZone = async (client, userId) => {
 
 const SITE_TRAINING_SCOPE_SET = new Set(['page', 'overall']);
 const SITE_TRAINING_CLAIM_ACTION_SET = new Set(['start', 'resume']);
-const SITE_TRAINING_TRANSITION_ACTION_SET = new Set(['back', 'next', 'stop', 'finish']);
+const SITE_TRAINING_TRANSITION_ACTION_SET = new Set(['restart', 'back', 'next', 'stop', 'finish']);
 const SITE_TRAINING_REQUEST_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 const requireCapturedSiteTrainingActor = (expectedUserId) => {
@@ -1926,6 +1926,16 @@ function requireSiteTrainingOperation({
 const mockSiteTrainingPageKey = (page) => `${page.id}:${page.contentVersion}`;
 const mockSiteTrainingProgramKey = (program) => `${program.id}:${program.version}`;
 
+function withMockSiteTrainingAttemptParity(pageState) {
+  if (!pageState || typeof pageState !== 'object' || Array.isArray(pageState)
+    || Object.prototype.hasOwnProperty.call(pageState, 'attemptNumber')
+    || Object.prototype.hasOwnProperty.call(pageState, 'attempt_number')) return pageState;
+  return {
+    ...pageState,
+    attemptNumber: pageState.status === 'not_started' ? 0 : 1,
+  };
+}
+
 function readMockSiteTrainingStore(actorId, { readOnly = false } = {}) {
   const stored = readOnly
     ? peekPreviewUserValue(localStorage, actorId, MOCK_SITE_TRAINING_PROGRESS_KEY, {})
@@ -1959,7 +1969,7 @@ function createMockSiteTrainingOverall(program) {
 
 function mockSiteTrainingSnapshot(page, program, actorId, store) {
   const pageKey = mockSiteTrainingPageKey(page);
-  const storedPage = store.pages[pageKey];
+  const storedPage = withMockSiteTrainingAttemptParity(store.pages[pageKey]);
   let pageState;
   if (storedPage) {
     pageState = {
@@ -2057,6 +2067,15 @@ function normalizeSiteTrainingResult(payload, page, program, operation = null) {
   if (operation && (
     result.transition.action !== operation.action
     || result.transition.scope !== operation.scope
+    || (operation.action === 'restart' && (
+      result.page.status !== 'in_progress'
+      || result.page.currentStepId !== operation.page.steps[0].id
+      || result.page.currentStepIndex !== 0
+      || result.page.furthestStepIndex !== 0
+      || result.page.attemptNumber < 2
+      || result.page.revision !== operation.expectedPageRevision + 1
+      || result.claimedNow
+    ))
   )) {
     const error = new Error('The page training response did not match the requested operation.');
     error.code = 'SITE_TRAINING_CONTRACT_INVALID';
@@ -2207,7 +2226,10 @@ function runMockSiteTrainingOperation(operation, actorId) {
   if (prior) {
     if (prior.actorId !== actorId || prior.signature !== signature) throw siteTrainingRequestReuseError();
     return normalizeSiteTrainingResult(
-      prior.result,
+      {
+        ...prior.result,
+        page: withMockSiteTrainingAttemptParity(prior.result?.page),
+      },
       operation.page,
       operation.program,
       operation,
@@ -2353,7 +2375,10 @@ export async function transitionSiteTraining({
     page, program, scope, action, requestId, expectedRevision, expectedPageRevision,
   });
   if (!SITE_TRAINING_TRANSITION_ACTION_SET.has(operation.action)) {
-    throw new TypeError('Choose Back, Next, Stop, or Finish for active page training.');
+    throw new TypeError('Choose Restart, Back, Next, Stop, or Finish for active page training.');
+  }
+  if (operation.action === 'restart' && operation.scope !== 'page') {
+    throw new TypeError('Restart is available only for current page training.');
   }
   if (isLocalDemoMode()) return runMockSiteTrainingOperation(operation, actorId);
   const client = requireSupabase();

@@ -384,10 +384,13 @@ body {
   right: 0;
   z-index: 100;
   display: grid;
-  grid-template-rows: auto 1fr auto;
+  grid-template-rows: repeat(4, auto);
+  align-content: start;
   gap: 20px;
   width: min(88vw, 380px);
   height: 100dvh;
+  overflow-y: auto;
+  overscroll-behavior: contain;
   visibility: hidden;
   pointer-events: none;
   padding: calc(72px + env(safe-area-inset-top)) max(18px, env(safe-area-inset-right)) max(18px, env(safe-area-inset-bottom)) max(18px, env(safe-area-inset-left));
@@ -434,6 +437,8 @@ body {
   gap: 10px;
 }
 .global-menu-links a,
+.global-menu-page-training-primary,
+.global-menu-page-training-restart,
 .global-menu-training,
 .global-menu-logout {
   display: flex;
@@ -446,6 +451,62 @@ body {
   background: var(--surface);
   color: var(--text);
   font-weight: 950;
+}
+.global-menu-training-section,
+.global-menu-page-training,
+.global-menu-full-training {
+  display: grid;
+  gap: 8px;
+}
+.global-menu-training-section {
+  padding: 12px;
+  border: 1px solid color-mix(in srgb, var(--accent) 30%, var(--border));
+  border-radius: 18px;
+  background: color-mix(in srgb, var(--accent) 7%, var(--surface));
+}
+.global-menu-full-training,
+.global-menu-page-training {
+  padding-top: 10px;
+  border-top: 1px solid color-mix(in srgb, var(--accent) 20%, var(--border));
+}
+.global-menu-full-training > span,
+.global-menu-page-training > span {
+  color: var(--text-muted);
+  font-size: .72rem;
+  font-weight: 850;
+}
+.global-menu-training-section[hidden],
+.global-menu-page-training[hidden],
+.global-menu-page-training-primary[hidden],
+.global-menu-page-training-restart[hidden],
+.global-menu-page-training-feedback[hidden] {
+  display: none;
+}
+.global-menu-training-section > .eyebrow {
+  margin: 0 4px 2px;
+}
+.global-menu-full-training:has(.global-menu-training[hidden]) {
+  display: none;
+}
+.global-menu-page-training-primary,
+.global-menu-page-training-restart {
+  width: 100%;
+  justify-content: center;
+}
+.global-menu-page-training-primary {
+  border-color: color-mix(in srgb, var(--accent) 48%, var(--border));
+  background: color-mix(in srgb, var(--accent) 18%, var(--surface));
+}
+.global-menu-page-training-restart {
+  color: var(--accent-strong);
+  background: var(--surface);
+}
+.global-menu-page-training-feedback {
+  margin: 2px 4px 0;
+  color: color-mix(in srgb, var(--danger) 78%, var(--text));
+  font-size: .78rem;
+  font-weight: 750;
+  line-height: 1.45;
 }
 .global-menu-links a::after {
   content: "›";

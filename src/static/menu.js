@@ -17,6 +17,7 @@ import {
   SOLO_TRAINING_LAUNCH_STORAGE_KEY,
   createSoloFirstRunTraining,
 } from './solo-first-run-training.mjs';
+import { createPageTrainingControls } from './page-training-controls.mjs';
 
 const topbar = document.querySelector('.topbar');
 const TOPBAR_COMPACT_SCROLL_Y = 12;
@@ -29,6 +30,7 @@ let currentTrainingOwner = '';
 let menuHydrationRequest = 0;
 let globalMenuListenersBound = false;
 let soloFirstRunTraining = null;
+let pageTrainingControls = null;
 
 const loggedInLinks = [
   ['Dashboard', './dashboard.html'],
@@ -117,7 +119,29 @@ function closeMenu() {
   if (wasOpen) focusWithoutScroll(button);
 }
 
+function destroyTrainingControllers() {
+  soloFirstRunTraining?.destroy();
+  soloFirstRunTraining = null;
+  pageTrainingControls?.destroy();
+  pageTrainingControls = null;
+  currentTrainingOwner = '';
+}
+
+function closeMenuForTraining() {
+  closeMenu();
+  return document.querySelector('.global-menu-button');
+}
+
+function refreshTrainingControllers({ hideWhileLoading = true } = {}) {
+  const pageRefresh = pageTrainingControls?.refresh({ hideWhileLoading });
+  return Promise.resolve(pageRefresh).then(() => soloFirstRunTraining?.refresh({
+    autoOpen: false,
+    consumeHandoff: false,
+  }));
+}
+
 function openMenu() {
+  void refreshTrainingControllers();
   document.body.classList.add('menu-open');
   syncMenuExpandedState(true);
   topbar?.classList.remove('topbar-collapsed');
@@ -254,7 +278,21 @@ async function buildMenu() {
     <nav class="global-menu-links" aria-label="Global navigation" data-training-target="global-navigation">
       ${links.map(([label, href]) => `<a href="${href}">${label}</a>`).join('')}
     </nav>
-    ${isLoggedIn ? '<button class="global-menu-training" type="button" hidden>Start Training</button>' : ''}
+    ${isLoggedIn ? `
+      <section class="global-menu-training-section" aria-label="Training" hidden>
+        <p class="eyebrow">Training</p>
+        <div class="global-menu-full-training" aria-label="Full-site Solo training">
+          <span>Full-site Solo walkthrough</span>
+          <button class="global-menu-training" type="button" hidden>Start Training</button>
+        </div>
+        <div class="global-menu-page-training" role="group" aria-label="This page" hidden>
+          <span>This page</span>
+          <button class="global-menu-page-training-primary" type="button" hidden>Start page training</button>
+          <button class="global-menu-page-training-restart" type="button" aria-haspopup="dialog" hidden>Restart page training</button>
+          <p class="global-menu-page-training-feedback" role="alert" aria-live="assertive" hidden></p>
+        </div>
+      </section>
+    ` : ''}
     ${isLoggedIn ? '<button class="global-menu-logout" type="button">Log Out</button>' : ''}
   `;
 
@@ -264,9 +302,7 @@ async function buildMenu() {
   menu.querySelector('.global-menu-close')?.addEventListener('click', closeMenu);
   menu.querySelector('.global-menu-logout')?.addEventListener('click', async () => {
     closeShareComposer('logout');
-    soloFirstRunTraining?.destroy();
-    soloFirstRunTraining = null;
-    currentTrainingOwner = '';
+    destroyTrainingControllers();
     sharedHeaderActions?.destroy();
     sharedHeaderActions = null;
     currentMenuOwner = '';
@@ -294,9 +330,7 @@ async function buildMenu() {
   });
   if (currentMenuOwner && currentMenuOwner !== nextOwner) closeShareComposer('account-change');
   if (currentTrainingOwner && currentTrainingOwner !== nextOwner) {
-    soloFirstRunTraining?.destroy();
-    soloFirstRunTraining = null;
-    currentTrainingOwner = '';
+    destroyTrainingControllers();
   }
 
   if (showMemberActions) {
@@ -308,21 +342,51 @@ async function buildMenu() {
     sharedHeaderActions = null;
   }
   if (isLoggedIn && nextOwner) {
+    let pageTrainingRefresh = null;
+    if (!pageTrainingControls) {
+      const nextPageTraining = createPageTrainingControls({
+        user,
+        beforeOpen: closeMenuForTraining,
+      });
+      if (nextPageTraining.available) {
+        pageTrainingControls = nextPageTraining;
+        currentTrainingOwner = nextOwner;
+        pageTrainingRefresh = pageTrainingControls.refresh();
+      } else {
+        nextPageTraining.destroy();
+      }
+    } else {
+      pageTrainingRefresh = pageTrainingControls.refresh({ hideWhileLoading: true });
+    }
     if (!soloFirstRunTraining) {
-      const nextTraining = createSoloFirstRunTraining({ user });
+      const nextTraining = createSoloFirstRunTraining({
+        user,
+        runtime: pageTrainingControls?.runtime || null,
+      });
       if (nextTraining.available) {
         soloFirstRunTraining = nextTraining;
         currentTrainingOwner = nextOwner;
-        void soloFirstRunTraining.refresh();
+        void Promise.resolve(pageTrainingRefresh)
+          .then(() => soloFirstRunTraining?.refresh());
       } else {
         nextTraining.destroy();
       }
+    } else {
+      void Promise.resolve(pageTrainingRefresh).then(() => soloFirstRunTraining?.refresh({
+        autoOpen: false,
+        consumeHandoff: false,
+      }));
     }
+    pageTrainingControls?.attachControls({
+      section: menu.querySelector('.global-menu-training-section'),
+      group: menu.querySelector('.global-menu-page-training'),
+      primary: menu.querySelector('.global-menu-page-training-primary'),
+      restart: menu.querySelector('.global-menu-page-training-restart'),
+      feedback: menu.querySelector('.global-menu-page-training-feedback'),
+    });
     soloFirstRunTraining?.attachControl(menu.querySelector('.global-menu-training'));
   } else {
-    soloFirstRunTraining?.destroy();
-    soloFirstRunTraining = null;
-    currentTrainingOwner = '';
+    destroyTrainingControllers();
   }
   currentMenuOwner = nextOwner;
 }
@@ -344,9 +408,7 @@ subscribeToAuthStateChanges(({ event, user }) => {
     closeShareComposer('auth-state-change');
     sharedHeaderActions?.destroy();
     sharedHeaderActions = null;
-    soloFirstRunTraining?.destroy();
-    soloFirstRunTraining = null;
-    currentTrainingOwner = '';
+    destroyTrainingControllers();
     currentMenuOwner = '';
     clearThemeEntitlementState();
     closeMenu();
@@ -371,7 +433,12 @@ window.addEventListener('storage', (event) => {
     void soloFirstRunTraining?.refresh({ autoOpen: false, consumeHandoff: true });
     return;
   }
+  if (event.key === 'dominion:siteTrainingProgress') {
+    void refreshTrainingControllers();
+    return;
+  }
   if (event.key === 'dominion:startDate' || event.key === 'dominion:mockChallengeActivation') {
+    void pageTrainingControls?.refresh({ invalidateCachedActivation: true });
     void soloFirstRunTraining?.refresh({
       autoOpen: false,
       consumeHandoff: false,
@@ -389,6 +456,7 @@ window.addEventListener('storage', (event) => {
 
 window.addEventListener('dominion:challenge-activation-updated', () => {
   void sharedHeaderActions?.refresh({ includeLockState: true });
+  void pageTrainingControls?.refresh({ invalidateCachedActivation: true });
   void soloFirstRunTraining?.refresh({
     autoOpen: false,
     consumeHandoff: true,
@@ -397,6 +465,7 @@ window.addEventListener('dominion:challenge-activation-updated', () => {
 });
 
 window.addEventListener('dominion:challenge-start-date-updated', () => {
+  void pageTrainingControls?.refresh({ invalidateCachedActivation: true });
   void soloFirstRunTraining?.refresh({
     autoOpen: false,
     consumeHandoff: false,

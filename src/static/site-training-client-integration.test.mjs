@@ -30,6 +30,8 @@ describe('site training client integration', () => {
       api.indexOf('function siteTrainingRpcParameters'),
     );
     assert.match(reader, /peekPreviewUserValue\(localStorage/);
+    assert.match(api, /function withMockSiteTrainingAttemptParity/);
+    assert.match(api, /page: withMockSiteTrainingAttemptParity\(prior\.result\?\.page\)/);
     assert.match(api, /readMockSiteTrainingStore\(actorId, \{ readOnly: true \}\)/);
     assert.ok(runner.indexOf('const prior = requests[operation.requestId]') < runner.indexOf('if (revision !== operation.expectedRevision)'));
     assert.ok(runner.indexOf('const prior = requests[operation.requestId]') < runner.indexOf('current.page.revision !== operation.expectedPageRevision'));
@@ -42,7 +44,7 @@ describe('site training client integration', () => {
 
   test('never auto-opens or auto-claims while hydrating and keeps replay client-only', async () => {
     const runtime = await read('./site-training-runtime.mjs');
-    assert.equal((runtime.match(/expectedPageRevision: current\.page\.revision/g) || []).length, 2);
+    assert.equal((runtime.match(/expectedPageRevision: current\.page\.revision/g) || []).length, 3);
     const hydrate = runtime.slice(
       runtime.indexOf('const hydrate = async'),
       runtime.indexOf('const claim = async'),
@@ -55,5 +57,24 @@ describe('site training client integration', () => {
     assert.doesNotMatch(hydrate, /claimSiteTraining|\.open\(/);
     assert.doesNotMatch(replay, /claimSiteTraining|transitionSiteTraining/);
     assert.match(replay, /replayIndex = 0/);
+  });
+
+  test('keeps restart page-only and exposes observable runtime state for controls', async () => {
+    const [api, runtime] = await Promise.all([
+      read('./api.js'),
+      read('./site-training-runtime.mjs'),
+    ]);
+    const transition = api.slice(
+      api.indexOf('export async function transitionSiteTraining'),
+      api.indexOf('const rpcDraft'),
+    );
+    assert.match(transition, /operation\.action === 'restart' && operation\.scope !== 'page'/);
+    assert.match(transition, /Restart is available only for current page training/);
+    assert.match(api, /result\.page\.revision !== operation\.expectedPageRevision \+ 1/);
+    assert.match(runtime, /scope: 'page',\s+action: 'restart'/);
+    assert.match(runtime, /restart,/);
+    assert.match(runtime, /subscribe\(listener\)/);
+    assert.match(runtime, /busy: pendingMutation !== null/);
+    assert.match(runtime, /if \(onStateChange\) controller\.subscribe\(onStateChange\)/);
   });
 });

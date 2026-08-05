@@ -64,7 +64,7 @@ emit_files() {
 case "\${FAKE_PGTAP_MODE:-pass}" in
   pass)
     emit_files
-    echo "Files=\${#files[@]}, Tests=1183, 1 wallclock secs"
+    echo "Files=\${#files[@]}, Tests=1200, 1 wallclock secs"
     echo "Result: PASS"
     ;;
   notests)
@@ -83,7 +83,7 @@ case "\${FAKE_PGTAP_MODE:-pass}" in
     ;;
   omit-profile-limit)
     emit_files
-    echo "Files=\${#files[@]}, Tests=1183, 1 wallclock secs"
+    echo "Files=\${#files[@]}, Tests=1200, 1 wallclock secs"
     echo "Result: PASS"
     ;;
   malformed-summary)
@@ -92,7 +92,7 @@ case "\${FAKE_PGTAP_MODE:-pass}" in
     ;;
   nonzero)
     emit_files
-    echo "Files=\${#files[@]}, Tests=1183, 1 wallclock secs"
+    echo "Files=\${#files[@]}, Tests=1200, 1 wallclock secs"
     echo "Result: FAIL"
     exit 2
     ;;
@@ -163,7 +163,7 @@ test("the database inventory and latest lifecycle foundations stay complete", as
     plannedAssertions += Number.parseInt(plan[1], 10);
   }
 
-  assert.equal(plannedAssertions, 1183);
+  assert.equal(plannedAssertions, 1200);
 
   const activationMigration = await readFile(activationMigrationPath, "utf8");
   assert.match(
@@ -190,9 +190,9 @@ test("the runner succeeds from an unrelated directory and reports every file", a
   assert.match(result.args[2], /\/pgtap-tests\.[^/]+$/);
   assert.match(
     result.stdout,
-    /Database pgTAP summary: source_files=25 files=25 assertions=1183/,
+    /Database pgTAP summary: source_files=25 files=25 assertions=1200/,
   );
-  assert.match(result.stdout, /all 25 files and 1183 assertions executed/);
+  assert.match(result.stdout, /all 25 files and 1200 assertions executed/);
 });
 
 test("an exit-zero NOTESTS result fails closed", async () => {

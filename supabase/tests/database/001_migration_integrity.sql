@@ -3,7 +3,7 @@ begin;
 create extension if not exists pgtap with schema extensions;
 set local search_path = public, extensions;
 
-select plan(69);
+select plan(70);
 
 select ok(
   exists (
@@ -129,6 +129,15 @@ select ok(
     where version = '20260805015225'
   ),
   'the Solo first-run training catalog migration was replayed'
+);
+
+select ok(
+  exists (
+    select 1
+    from supabase_migrations.schema_migrations
+    where version = '20260805021049'
+  ),
+  'the page training restart controls migration was replayed'
 );
 
 select ok(to_regclass('public.profiles') is not null, 'profiles exists');
