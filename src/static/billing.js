@@ -10,6 +10,10 @@ import {
 } from './api';
 import { initReveal } from './reveal';
 import { INVITE_PAGE_PATH, getStoredInviteContinuation } from './invite-flow.mjs';
+import {
+  CHALLENGE_START_INTENT_PATH,
+  readChallengeStartIntent,
+} from './challenge-start-intent.mjs';
 
 const SUBSCRIPTION_PRODUCT_KEY = 'dominion_membership';
 
@@ -30,6 +34,12 @@ const billingStatusCopy = document.getElementById('billingStatusCopy');
 const billingFeedback = document.getElementById('billingFeedback');
 const subscriptionStatusPill = document.getElementById('subscriptionStatusPill');
 const billingDashboardLink = document.getElementById('billingDashboardLink');
+
+function continuationDestination() {
+  if (getStoredInviteContinuation(sessionStorage)) return INVITE_PAGE_PATH;
+  if (readChallengeStartIntent(sessionStorage)) return CHALLENGE_START_INTENT_PATH;
+  return './dashboard.html';
+}
 
 function setButtonBusy(button, label) {
   if (!button) return () => {};
@@ -58,8 +68,12 @@ function renderStatus(state) {
 
   if (billingDashboardLink) {
     billingDashboardLink.hidden = !state.appAccess;
-    billingDashboardLink.href = getStoredInviteContinuation(sessionStorage) ? INVITE_PAGE_PATH : './dashboard.html';
-    billingDashboardLink.textContent = getStoredInviteContinuation(sessionStorage) ? 'Return to invitation' : 'Go to dashboard';
+    billingDashboardLink.href = continuationDestination();
+    billingDashboardLink.textContent = getStoredInviteContinuation(sessionStorage)
+      ? 'Return to invitation'
+      : readChallengeStartIntent(sessionStorage)
+        ? 'Continue Group challenge start'
+        : 'Go to dashboard';
   }
   if (subscriptionStatusPill) {
     subscriptionStatusPill.textContent = isPreviewBilling
@@ -136,7 +150,7 @@ async function hydrateBillingPage() {
       if (settledState.appAccess) {
         billingFeedback.textContent = 'Subscription active. Taking you to the dashboard.';
         window.setTimeout(() => {
-          window.location.href = getStoredInviteContinuation(sessionStorage) ? INVITE_PAGE_PATH : './dashboard.html';
+          window.location.href = continuationDestination();
         }, 1200);
       }
     }

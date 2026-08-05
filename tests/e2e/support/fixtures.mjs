@@ -134,6 +134,29 @@ const BASE_CHALLENGE_ACTIVATION = Object.freeze({
   canEditStartDate: false,
 });
 
+const NOT_STARTED_CHALLENGE_ACTIVATION = Object.freeze({
+  schemaVersion: 1,
+  revision: 0,
+  status: 'not_started',
+  storedStatus: 'not_started',
+  mode: null,
+  startDate: null,
+  timeZone: null,
+  challengeDay: null,
+  crewId: null,
+  groupMembershipActive: false,
+  activatedAt: null,
+  confirmedAt: null,
+  activatedBy: null,
+  confirmedBy: null,
+  reviewRequired: false,
+  canActivateSolo: true,
+  canActivateGroup: true,
+  canParticipate: false,
+  canMutateDailyStandards: false,
+  canEditStartDate: false,
+});
+
 const json = (value) => JSON.parse(JSON.stringify(value));
 
 function baseMemberJson() {
@@ -215,6 +238,69 @@ export const APP_STATES = Object.freeze({
       },
     },
     raw: baseMemberRaw(),
+  },
+  groupStartExisting: {
+    json: {
+      ...baseMemberJson(),
+      'dominion:mockChallengeActivation': {
+        [FIXED_USER_ID]: json(NOT_STARTED_CHALLENGE_ACTIVATION),
+      },
+    },
+    raw: baseMemberRaw(),
+  },
+  groupStartEmpty: {
+    json: {
+      ...baseMemberJson(),
+      'dominion:mockCrews': [],
+      'dominion:mockCrewMembers': {},
+      'dominion:mockChallengeActivation': {
+        [FIXED_USER_ID]: json(NOT_STARTED_CHALLENGE_ACTIVATION),
+      },
+    },
+    raw: {
+      ...baseMemberRaw(),
+      'dominion:activeCrewId': null,
+    },
+  },
+  groupStartInvite: {
+    json: {
+      ...baseMemberJson(),
+      'dominion:mockCrews': [{
+        ...json(BASE_CREWS[0]),
+        createdBy: 'inviter_e2e_alex',
+        role: 'member',
+      }],
+      'dominion:mockCrewMembers': {
+        crew_e2e_alpha: [{
+          crewId: 'crew_e2e_alpha',
+          userId: 'inviter_e2e_alex',
+          name: 'Alex Guide',
+          avatarUrl: '',
+          role: 'owner',
+          joinedAt: '2026-02-01T12:00:00.000Z',
+        }],
+      },
+      'dominion:mockCrewInvites': {
+        crew_e2e_alpha: {
+          id: 'invite_e2e_group_start',
+          crew_id: 'crew_e2e_alpha',
+          token: 'group-invite-secret-12345',
+          created_by: 'inviter_e2e_alex',
+          expires_at: '2026-02-28T17:30:00.000Z',
+          revoked_at: null,
+          redeemed_by: null,
+          redeemed_at: null,
+          created_at: '2026-02-14T16:00:00.000Z',
+        },
+      },
+      'dominion:mockChallengeActivation': {
+        [FIXED_USER_ID]: json(NOT_STARTED_CHALLENGE_ACTIVATION),
+      },
+    },
+    raw: {
+      ...baseMemberRaw(),
+      'dominion:activeCrewId': null,
+    },
   },
   rewardsLocked: {
     json: {

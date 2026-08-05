@@ -95,6 +95,13 @@ test('ready and joined states name only the privacy-safe preview fields', () => 
   assert.match(ready.message, /Alex/);
   const joined = inviteStatusContent('joined', { groupName: 'Morning Crew' });
   assert.match(joined.title, /Morning Crew/);
+  const pending = inviteStatusContent('activation_pending', { groupName: 'Morning Crew' });
+  assert.match(pending.title, /Morning Crew/);
+  assert.match(pending.message, /membership is active/i);
+  assert.equal(pending.recoverable, true);
+  const started = inviteStatusContent('challenge_started', { groupName: 'Morning Crew' });
+  assert.match(started.title, /Morning Crew/);
+  assert.equal(started.recoverable, false);
 });
 
 test('a second-crew conflict explains the safe recovery without changing membership', () => {

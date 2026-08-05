@@ -3,7 +3,7 @@ begin;
 create extension if not exists pgtap with schema extensions;
 set local search_path = public, extensions;
 
-select plan(65);
+select plan(67);
 
 select ok(
   exists (
@@ -104,6 +104,15 @@ select ok(
   'the challenge activation lifecycle migration was replayed'
 );
 
+select ok(
+  exists (
+    select 1
+    from supabase_migrations.schema_migrations
+    where version = '20260805010103'
+  ),
+  'the integrated Group-start migration was replayed'
+);
+
 select ok(to_regclass('public.profiles') is not null, 'profiles exists');
 select ok(to_regclass('public.challenge_entries') is not null, 'challenge_entries exists');
 select ok(to_regclass('public.check_ins') is not null, 'check_ins exists');
@@ -145,6 +154,12 @@ select ok(to_regprocedure('public.activate_solo_challenge(date,text,uuid,uuid)')
   'the Solo challenge activation RPC has the expected signature');
 select ok(to_regprocedure('public.activate_group_challenge(uuid,text,uuid,uuid)') is not null,
   'the Group challenge activation RPC has the expected signature');
+select ok(
+  to_regprocedure(
+    'public.create_crew_and_activate_group(uuid,uuid,text,text,date,text,uuid)'
+  ) is not null,
+  'the atomic crew-create and Group-start RPC has the expected signature'
+);
 select ok(to_regprocedure('public.set_challenge_start_date(date,text,uuid,bigint,uuid)') is not null,
   'the challenge date-edit RPC has the expected signature');
 select ok(to_regprocedure('public.record_app_visit(uuid)') is not null, 'the app-visit RPC exists');

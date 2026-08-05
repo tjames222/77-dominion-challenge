@@ -13883,3 +13883,4 @@ revoke execute on function public.grant_sharing_reward_after_invite_redemption()
 \ir migrations/20260730074130_rebalance_level_reward_progression.sql
 \ir migrations/20260731193250_persist_explicit_workout_difficulty.sql
 \ir migrations/20260804200019_challenge_activation_lifecycle.sql
+\ir migrations/20260805010103_integrate_group_challenge_start.sql

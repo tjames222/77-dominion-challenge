@@ -3,6 +3,25 @@ function apiModulePattern(url) {
   return parsed.pathname.endsWith('/src/static/api.js');
 }
 
+function exportedFunctionBodyStart(source, markerIndex, functionName) {
+  const parametersStart = source.indexOf('(', markerIndex);
+  if (parametersStart < 0) {
+    throw new Error('Unable to inspect API function parameters for ' + functionName);
+  }
+
+  let depth = 0;
+  for (let index = parametersStart; index < source.length; index += 1) {
+    if (source[index] === '(') depth += 1;
+    if (source[index] !== ')') continue;
+    depth -= 1;
+    if (depth !== 0) continue;
+    const bodyStart = source.indexOf('{', index + 1);
+    if (bodyStart >= 0) return bodyStart;
+    break;
+  }
+  throw new Error('Unable to inspect API function body for ' + functionName);
+}
+
 export function deferApiFunction(page, functionName) {
   let markIntercepted;
   const intercepted = new Promise((resolve) => {
@@ -17,10 +36,7 @@ export function deferApiFunction(page, functionName) {
     if (markerIndex < 0) {
       throw new Error('Unable to defer API function; missing export ' + functionName);
     }
-    const bodyStart = source.indexOf('{', markerIndex);
-    if (bodyStart < 0) {
-      throw new Error('Unable to defer API function; missing function body for ' + functionName);
-    }
+    const bodyStart = exportedFunctionBodyStart(source, markerIndex, functionName);
     const injected = source.slice(0, bodyStart + 1)
       + '\nawait new Promise((resolve) => {\n'
       + '  globalThis.__DOMINION_E2E_DEFERRED_API__ ||= {};\n'
@@ -54,10 +70,7 @@ export async function injectApiFunctionFailure(page, functionName, message) {
     if (markerIndex < 0) {
       throw new Error('Unable to inject API failure; missing export ' + functionName);
     }
-    const bodyStart = source.indexOf('{', markerIndex);
-    if (bodyStart < 0) {
-      throw new Error('Unable to inject API failure; missing function body for ' + functionName);
-    }
+    const bodyStart = exportedFunctionBodyStart(source, markerIndex, functionName);
     const injected = source.slice(0, bodyStart + 1)
       + '\nthrow new Error(' + JSON.stringify(message) + ');\n'
       + source.slice(bodyStart + 1);
