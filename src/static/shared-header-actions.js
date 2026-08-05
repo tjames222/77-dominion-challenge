@@ -236,6 +236,7 @@ export function createAuthenticatedHeaderActions({
   shareButton.setAttribute('aria-label', 'Share progress unavailable until your challenge starts.');
   shareButton.dataset.shareComposer = '';
   shareButton.dataset.shareKind = 'progress';
+  shareButton.dataset.trainingTarget = 'global-share';
   shareButton.append(
     element(ownerDocument, 'span', 'app-icon icon-share', ''),
     element(ownerDocument, 'span', 'shared-header-action-label', 'Share'),
@@ -248,6 +249,7 @@ export function createAuthenticatedHeaderActions({
   streakButton.setAttribute('aria-controls', 'globalStreakDetailsDialog');
   streakButton.setAttribute('aria-expanded', 'false');
   streakButton.setAttribute('aria-label', 'App streak: loading. View streak details.');
+  streakButton.dataset.trainingTarget = 'global-app-streak';
   const streakIcon = element(ownerDocument, 'span', 'app-icon icon-lightning');
   streakIcon.setAttribute('aria-hidden', 'true');
   const streakLabel = element(ownerDocument, 'span', 'shared-header-action-label', 'App Streak');

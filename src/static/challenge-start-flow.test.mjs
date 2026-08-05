@@ -6,6 +6,7 @@ import {
   SOLO_TRAINING_LAUNCH_STORAGE_KEY,
   backChallengeStartFlow,
   buildGroupChallengeStartHref,
+  compareAndClearSoloTrainingLaunch,
   confirmSoloChallengeStart,
   continueChallengeStartMode,
   createChallengeStartFlowState,
@@ -17,6 +18,7 @@ import {
   readSoloTrainingLaunch,
   selectChallengeStartMode,
   setSoloChallengeStartDate,
+  soloTrainingLaunchMatchesActivation,
   soloChallengeStartSummary,
   validateSoloChallengeStartDate,
 } from './challenge-start-flow.mjs';
@@ -301,5 +303,29 @@ describe('Solo training launch handoff', () => {
     assert.equal(events[0].type, SOLO_TRAINING_LAUNCH_EVENT);
     assert.deepEqual(events[0].detail, launch);
     assert.deepEqual(readSoloTrainingLaunch(storage, 'user-1'), launch);
+  });
+
+  test('matches the authoritative activation and compare-clears only the exact handoff', () => {
+    const storage = new MemoryStorage();
+    const launch = persistSoloTrainingLaunch(storage, createSoloTrainingLaunch({
+      actorId: 'user-1',
+      activation: ACTIVE_SOLO,
+      requestedAt: '2026-02-14T17:31:00.000Z',
+    }));
+    persistSoloTrainingLaunch(storage, { ...launch, actorId: 'user-2' });
+
+    assert.equal(soloTrainingLaunchMatchesActivation(launch, ACTIVE_SOLO, 'user-1'), true);
+    assert.equal(soloTrainingLaunchMatchesActivation(launch, {
+      ...ACTIVE_SOLO,
+      revision: ACTIVE_SOLO.revision + 1,
+    }, 'user-1'), false);
+    assert.equal(compareAndClearSoloTrainingLaunch(storage, {
+      ...launch,
+      requestedAt: '2026-02-14T17:32:00.000Z',
+    }), false);
+    assert.deepEqual(readSoloTrainingLaunch(storage, 'user-1'), launch);
+    assert.equal(compareAndClearSoloTrainingLaunch(storage, launch), true);
+    assert.equal(readSoloTrainingLaunch(storage, 'user-1'), null);
+    assert.equal(readSoloTrainingLaunch(storage, 'user-2')?.actorId, 'user-2');
   });
 });

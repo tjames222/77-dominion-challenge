@@ -12,6 +12,11 @@ import { initThemeAssets } from './theme-assets';
 import { createAuthenticatedHeaderActions } from './shared-header-actions.js';
 import { shouldShowAuthenticatedHeaderActions } from './shared-header-state.mjs';
 import { closeShareComposer } from './share-composer.js';
+import {
+  SOLO_TRAINING_LAUNCH_EVENT,
+  SOLO_TRAINING_LAUNCH_STORAGE_KEY,
+  createSoloFirstRunTraining,
+} from './solo-first-run-training.mjs';
 
 const topbar = document.querySelector('.topbar');
 const TOPBAR_COMPACT_SCROLL_Y = 12;
@@ -20,8 +25,10 @@ const TOPBAR_TOP_SCROLL_Y = 2;
 let syncTopbarScrollState = null;
 let sharedHeaderActions = null;
 let currentMenuOwner = '';
+let currentTrainingOwner = '';
 let menuHydrationRequest = 0;
 let globalMenuListenersBound = false;
+let soloFirstRunTraining = null;
 
 const loggedInLinks = [
   ['Dashboard', './dashboard.html'],
@@ -244,9 +251,10 @@ async function buildMenu() {
       </div>
       <button class="global-menu-close" type="button" aria-label="Close menu">×</button>
     </div>
-    <nav class="global-menu-links" aria-label="Global navigation">
+    <nav class="global-menu-links" aria-label="Global navigation" data-training-target="global-navigation">
       ${links.map(([label, href]) => `<a href="${href}">${label}</a>`).join('')}
     </nav>
+    ${isLoggedIn ? '<button class="global-menu-training" type="button" hidden>Start Training</button>' : ''}
     ${isLoggedIn ? '<button class="global-menu-logout" type="button">Log Out</button>' : ''}
   `;
 
@@ -256,6 +264,9 @@ async function buildMenu() {
   menu.querySelector('.global-menu-close')?.addEventListener('click', closeMenu);
   menu.querySelector('.global-menu-logout')?.addEventListener('click', async () => {
     closeShareComposer('logout');
+    soloFirstRunTraining?.destroy();
+    soloFirstRunTraining = null;
+    currentTrainingOwner = '';
     sharedHeaderActions?.destroy();
     sharedHeaderActions = null;
     currentMenuOwner = '';
@@ -282,6 +293,11 @@ async function buildMenu() {
     pathname: window.location?.pathname || '',
   });
   if (currentMenuOwner && currentMenuOwner !== nextOwner) closeShareComposer('account-change');
+  if (currentTrainingOwner && currentTrainingOwner !== nextOwner) {
+    soloFirstRunTraining?.destroy();
+    soloFirstRunTraining = null;
+    currentTrainingOwner = '';
+  }
 
   if (showMemberActions) {
     if (sharedHeaderActions) sharedHeaderActions.setUser(user);
@@ -290,6 +306,23 @@ async function buildMenu() {
     closeShareComposer('auth-change');
     sharedHeaderActions.destroy();
     sharedHeaderActions = null;
+  }
+  if (isLoggedIn && nextOwner) {
+    if (!soloFirstRunTraining) {
+      const nextTraining = createSoloFirstRunTraining({ user });
+      if (nextTraining.available) {
+        soloFirstRunTraining = nextTraining;
+        currentTrainingOwner = nextOwner;
+        void soloFirstRunTraining.refresh();
+      } else {
+        nextTraining.destroy();
+      }
+    }
+    soloFirstRunTraining?.attachControl(menu.querySelector('.global-menu-training'));
+  } else {
+    soloFirstRunTraining?.destroy();
+    soloFirstRunTraining = null;
+    currentTrainingOwner = '';
   }
   currentMenuOwner = nextOwner;
 }
@@ -311,6 +344,9 @@ subscribeToAuthStateChanges(({ event, user }) => {
     closeShareComposer('auth-state-change');
     sharedHeaderActions?.destroy();
     sharedHeaderActions = null;
+    soloFirstRunTraining?.destroy();
+    soloFirstRunTraining = null;
+    currentTrainingOwner = '';
     currentMenuOwner = '';
     clearThemeEntitlementState();
     closeMenu();
@@ -331,6 +367,17 @@ window.addEventListener('storage', (event) => {
     void buildMenu();
     return;
   }
+  if (event.key === SOLO_TRAINING_LAUNCH_STORAGE_KEY) {
+    void soloFirstRunTraining?.refresh({ autoOpen: false, consumeHandoff: true });
+    return;
+  }
+  if (event.key === 'dominion:startDate' || event.key === 'dominion:mockChallengeActivation') {
+    void soloFirstRunTraining?.refresh({
+      autoOpen: false,
+      consumeHandoff: false,
+      invalidateCachedActivation: true,
+    });
+  }
   if ([
     'dominion:gameStats',
     'dominion:startDate',
@@ -342,6 +389,23 @@ window.addEventListener('storage', (event) => {
 
 window.addEventListener('dominion:challenge-activation-updated', () => {
   void sharedHeaderActions?.refresh({ includeLockState: true });
+  void soloFirstRunTraining?.refresh({
+    autoOpen: false,
+    consumeHandoff: true,
+    invalidateCachedActivation: true,
+  });
+});
+
+window.addEventListener('dominion:challenge-start-date-updated', () => {
+  void soloFirstRunTraining?.refresh({
+    autoOpen: false,
+    consumeHandoff: false,
+    invalidateCachedActivation: true,
+  });
+});
+
+window.addEventListener(SOLO_TRAINING_LAUNCH_EVENT, (event) => {
+  void soloFirstRunTraining?.consumeHandoff(event.detail);
 });
 
 window.addEventListener('focus', () => {

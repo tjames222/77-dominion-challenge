@@ -434,6 +434,7 @@ body {
   gap: 10px;
 }
 .global-menu-links a,
+.global-menu-training,
 .global-menu-logout {
   display: flex;
   align-items: center;
@@ -458,6 +459,13 @@ body {
   color: var(--accent-strong);
   background: color-mix(in srgb, var(--accent) 10%, transparent);
 }
+.global-menu-training {
+  width: 100%;
+  justify-content: center;
+  border-color: color-mix(in srgb, var(--accent) 48%, var(--border));
+  background: color-mix(in srgb, var(--accent) 18%, var(--surface));
+}
+.global-menu-training[hidden] { display: none; }
 @media (max-width: 460px) {
   .topbar.has-authenticated-header-actions {
     flex-wrap: nowrap;

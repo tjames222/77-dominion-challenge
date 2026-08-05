@@ -63,7 +63,7 @@ export function createSiteTrainingCoachmark({
   progress.setAttribute('aria-atomic', 'true');
   const closeButton = element(ownerDocument, 'button', 'site-training-close', '×');
   closeButton.type = 'button';
-  closeButton.setAttribute('aria-label', 'Stop page training');
+  closeButton.setAttribute('aria-label', 'Stop training for now');
   header.append(progress, closeButton);
 
   const title = element(ownerDocument, 'h2');
@@ -89,7 +89,7 @@ export function createSiteTrainingCoachmark({
   const backButton = element(ownerDocument, 'button', 'secondary', 'Back');
   backButton.type = 'button';
   backButton.dataset.trainingAction = 'back';
-  const stopButton = element(ownerDocument, 'button', 'secondary', 'Stop');
+  const stopButton = element(ownerDocument, 'button', 'secondary', 'Stop for now');
   stopButton.type = 'button';
   stopButton.dataset.trainingAction = 'stop';
   const nextButton = element(ownerDocument, 'button', 'primary', 'Next');
@@ -185,7 +185,15 @@ export function createSiteTrainingCoachmark({
     get target() { return state.target; },
     setBusy,
     setError,
-    render({ step, index, total, capabilities = {}, replay = false } = {}) {
+    render({
+      step,
+      index,
+      total,
+      pageIndex = null,
+      pageTotal = null,
+      capabilities = {},
+      replay = false,
+    } = {}) {
       if (!step || !Number.isInteger(index) || !Number.isInteger(total) || total < 1) {
         throw new TypeError('A published page training step is required.');
       }
@@ -199,7 +207,16 @@ export function createSiteTrainingCoachmark({
       }
       state.finalStep = index === total - 1;
       state.replay = Boolean(replay);
-      progress.dataset.label = `${state.replay ? 'Replay · ' : ''}Step ${index + 1} of ${total}`;
+      const hasOverallProgress = Number.isInteger(pageIndex)
+        && Number.isInteger(pageTotal)
+        && pageIndex >= 0
+        && pageIndex < pageTotal
+        && pageTotal > 0;
+      progress.dataset.label = state.replay
+        ? `Replay · Step ${index + 1} of ${total}`
+        : hasOverallProgress
+          ? `Page ${pageIndex + 1} of ${pageTotal} · Step ${index + 1} of ${total}`
+          : `Step ${index + 1} of ${total}`;
       progress.textContent = progress.dataset.label;
       title.textContent = resolved.title;
       description.textContent = resolved.description;
@@ -209,7 +226,7 @@ export function createSiteTrainingCoachmark({
         fallback.hidden ? 'siteTrainingDescription' : 'siteTrainingDescription siteTrainingFallback',
       );
       backButton.hidden = index === 0;
-      stopButton.textContent = state.replay ? 'Close replay' : 'Stop';
+      stopButton.textContent = state.replay ? 'Close replay' : 'Stop for now';
       nextButton.textContent = state.finalStep ? 'Finish' : 'Next';
       layer.classList.toggle('has-target', Boolean(state.target));
       setError('');
