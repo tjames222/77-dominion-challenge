@@ -2,25 +2,40 @@ import {
   addPostComment,
   createCommunityPost,
   createCrew,
+  deleteCrew,
   deleteCommunityPost,
   deletePostComment,
   getBillingState,
   getCommunityPostPage,
   getCommunityPosts,
   getCrews,
+  getCrewInvitePreview,
   getCrewMembers,
+  getCrewTrainingProgress,
   getJournalEntries,
   getLeaderboard,
   getOrCreateCrewInvite,
   hasSupabaseAuth,
   isLocalDemoMode,
   joinCrewByInvite,
+  leaveCrew,
+  manageGroupIntegration,
   redirectToLogin,
   saveJournalEntry,
+  saveCrewTrainingProgress,
   setPostLiked,
   updateCommunityPost,
-  uploadJournalPhoto,
 } from './api';
+import {
+  CREW_TRAINING_VERSION,
+  buildCrewTrainingSteps,
+  crewLifecycleAction,
+  crewTrainingActionLabel,
+  crewViewState,
+  integrationsEnabled,
+  normalizeCrewTrainingProgress,
+  shouldAutoStartCrewTraining,
+} from './crew-experience.mjs';
 
 const tabs = Array.from(document.querySelectorAll('.community-tab'));
 const panels = Array.from(document.querySelectorAll('.community-panel'));
@@ -29,6 +44,8 @@ const todayKey = () => new Date().toISOString().slice(0, 10);
 const CREW_POST_PAGE_SIZE = 8;
 const MAX_POST_IMAGE_BYTES = 10 * 1024 * 1024;
 const ALLOWED_POST_IMAGE_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/heic', 'image/heif']);
+const GROUP_INTEGRATIONS_ENABLED = integrationsEnabled(import.meta.env.VITE_ENABLE_GROUP_INTEGRATIONS);
+const prefersReducedMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches ?? false;
 const escapeHtml = (value = '') => String(value).replace(/[&<>"']/g, (char) => ({
   '&': '&amp;',
   '<': '&lt;',
@@ -40,7 +57,10 @@ const escapeHtml = (value = '') => String(value).replace(/[&<>"']/g, (char) => (
 const state = {
   billing: null,
   crews: [],
+  crewsLoaded: false,
   activeCrewId: localStorage.getItem('dominion:activeCrewId') || '',
+  createFormOpen: false,
+  createRequestId: '',
   crewMembers: [],
   crewPosts: [],
   globalPosts: [],
@@ -60,6 +80,19 @@ const state = {
     global: { window: 'week', rows: [], requestId: 0 },
   },
   journalEntries: [],
+  integrations: [],
+  integrationSetupToken: '',
+  integrationSetup: null,
+  trainingProgress: null,
+  trainingStep: 0,
+  trainingTrigger: null,
+  trainingHighlightedElement: null,
+  lifecycleAction: '',
+  lifecycleRequestId: '',
+  lifecycleTrigger: null,
+  inviteToken: '',
+  invitePreview: null,
+  inviteTrigger: null,
 };
 
 function activateTab(tab, { focus = false } = {}) {
@@ -103,12 +136,13 @@ function setFeedback(message = '') {
 
 function setButtonBusy(button, label) {
   if (!button) return () => {};
-  const original = button.textContent;
+  const original = button.innerHTML;
+  const originallyDisabled = button.disabled;
   button.disabled = true;
   button.textContent = label;
   return () => {
-    button.disabled = false;
-    button.textContent = original;
+    button.disabled = originallyDisabled;
+    if (button.textContent === label) button.innerHTML = original;
   };
 }
 
@@ -267,24 +301,40 @@ async function refreshLeaderboard(scope) {
 
 function renderCrewShell() {
   const crew = activeCrew();
-  const select = $('crewSelect');
+  const view = crewViewState({
+    loaded: state.crewsLoaded,
+    crew,
+    createFormOpen: state.createFormOpen,
+  });
+  const createCard = $('crewCreateCard');
+  const createButton = $('openCrewFormButton');
+  const createForm = $('crewForm');
   const manageCard = $('crewManageCard');
   const composerCard = $('crewComposerCard');
   const membersCard = $('crewMembersCard');
   const feedSection = $('crewFeedSection');
+  const integrationsCard = $('crewIntegrationsCard');
+  const stats = $('crewStats');
+  const leaderboardCard = $('crewLeaderboardCard');
+  const lifecycleCard = $('crewLifecycleCard');
+  const trainingButton = $('crewTrainingButton');
   const title = $('crewTitle');
   const description = $('crewDescription');
 
-  if (select) {
-    select.innerHTML = state.crews.map((item) => (
-      `<option value="${item.id}" ${item.id === state.activeCrewId ? 'selected' : ''}>${escapeHtml(item.name)}</option>`
-    )).join('');
+  if (createCard) createCard.hidden = !view.showCreateCard;
+  if (createButton) {
+    createButton.hidden = !view.showCreateButton;
+    createButton.setAttribute('aria-expanded', String(view.showCreateForm));
   }
-
-  if (manageCard) manageCard.hidden = !state.crews.length;
-  if (composerCard) composerCard.hidden = !crew;
-  if (membersCard) membersCard.hidden = !crew;
-  if (feedSection) feedSection.hidden = !crew;
+  if (createForm) createForm.hidden = !view.showCreateForm;
+  if (manageCard) manageCard.hidden = !view.showActiveCrew;
+  if (composerCard) composerCard.hidden = !view.showActiveCrew;
+  if (membersCard) membersCard.hidden = !view.showActiveCrew;
+  if (feedSection) feedSection.hidden = !view.showActiveCrew;
+  if (integrationsCard) integrationsCard.hidden = !view.showActiveCrew || !GROUP_INTEGRATIONS_ENABLED;
+  if (stats) stats.hidden = !view.showActiveCrew;
+  if (leaderboardCard) leaderboardCard.hidden = !view.showActiveCrew;
+  if (lifecycleCard) lifecycleCard.hidden = !view.showActiveCrew;
 
   if (!crew) {
     if (title) title.textContent = 'Create or join a crew.';
@@ -294,6 +344,10 @@ function renderCrewShell() {
     $('crewPostCount').textContent = '0';
     $('crewFeed').innerHTML = emptyCard('Create a crew or open an invite link to start a private channel.');
     $('crewMemberList').innerHTML = '';
+    $('inviteLinkText').textContent = '';
+    state.integrations = [];
+    state.trainingProgress = null;
+    renderIntegrations();
     state.leaderboards.crew.rows = [];
     renderLeaderboard('crew');
     return;
@@ -301,7 +355,201 @@ function renderCrewShell() {
 
   if (title) title.textContent = crew.name;
   if (description) description.textContent = crew.description || 'A private crew channel for this 77-day challenge.';
+  if ($('activeCrewName')) $('activeCrewName').textContent = crew.name;
   $('crewDayCount').textContent = dayLabel(crew.challengeStartDate);
+
+  const isCreator = crew.role === 'owner';
+  if (trainingButton) {
+    trainingButton.hidden = !isCreator;
+    trainingButton.textContent = crewTrainingActionLabel(state.trainingProgress);
+  }
+
+  const action = crewLifecycleAction(crew.role);
+  state.lifecycleAction = action;
+  $('crewLifecycleHeading').textContent = action === 'delete' ? 'Delete this crew' : 'Leave this crew';
+  $('crewLifecycleDescription').textContent = action === 'delete'
+    ? 'Deleting ends crew access for everyone, revokes invitations, and disconnects external destinations. Personal profiles, progress, points, badges, and journals are never deleted.'
+    : 'Leaving removes only your membership. Your profile, progress, points, badges, and journal remain yours.';
+  $('crewLifecycleButton').textContent = action === 'delete' ? 'Delete Crew' : 'Leave Group';
+}
+
+function integrationStatusLabel(status = '') {
+  if (status === 'active') return 'Connected';
+  if (status === 'reconnect_required') return 'Needs attention';
+  if (status === 'disconnected' || status === 'revoked') return 'Disconnected';
+  return 'Unavailable';
+}
+
+function integrationActivityLabel(destination = {}) {
+  const value = destination.lastDeliveredAt || destination.lastTestedAt || destination.lastVerifiedAt;
+  if (!value) return 'No successful test or delivery yet.';
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? 'Connection activity recorded.' : `Last verified ${date.toLocaleString()}`;
+}
+
+function integrationHealthLabel(destination = {}) {
+  if (destination.correctiveAction) return destination.correctiveAction;
+  if (destination.status === 'reconnect_required') return 'Reconnect this destination, then send a test update.';
+  if (destination.lastErrorCode === 'provider_rate_limited') return 'The provider is rate limiting updates. Dominion will retry automatically.';
+  if (destination.lastErrorCode) return 'Review the connection and send a test update.';
+  if (destination.status === 'active') return 'Delivery health is good.';
+  return 'Connect or reconnect this destination to deliver updates.';
+}
+
+function renderIntegrations({ loading = false, error = '' } = {}) {
+  const container = $('integrationDestinationList');
+  const actions = $('integrationConnectActions');
+  const crew = activeCrew();
+  if (!container || !actions) return;
+
+  if (!GROUP_INTEGRATIONS_ENABLED || !crew) {
+    container.innerHTML = '';
+    actions.hidden = true;
+    return;
+  }
+  if (loading) {
+    container.innerHTML = '<p class="integration-disclosure">Loading connected destinations…</p>';
+    actions.hidden = true;
+    return;
+  }
+  if (error) {
+    container.innerHTML = `<p class="inline-error">${escapeHtml(error)}</p>`;
+    actions.hidden = !isCrewLeader();
+    return;
+  }
+
+  const canManage = isCrewLeader();
+  if (!state.integrations.length) {
+    container.innerHTML = '<p class="integration-disclosure">No external channels are connected. Crew progress stays inside Dominion.</p>';
+  } else {
+    container.innerHTML = state.integrations.map((destination) => {
+      const status = destination.status || 'disconnected';
+      const provider = destination.provider === 'discord' ? 'discord' : 'slack';
+      const providerName = provider === 'discord' ? 'Discord' : 'Slack';
+      const actionMarkup = canManage && destination.canManage ? `
+        <div class="integration-destination-actions">
+          ${status === 'active' ? `<button class="provider-button provider-${provider} provider-secondary" type="button" data-test-integration="${escapeHtml(destination.id)}">Test ${providerName}</button>` : ''}
+          <button class="provider-button provider-${provider} provider-secondary" type="button" data-reconnect-provider="${provider}">Reconnect</button>
+          ${status !== 'disconnected' ? `<button class="provider-button provider-disconnect provider-secondary" type="button" data-disconnect-integration="${escapeHtml(destination.id)}">Disconnect</button>` : ''}
+        </div>
+      ` : '';
+      return `
+        <article class="integration-destination">
+          <div class="integration-destination-copy">
+            <div class="integration-destination-title">
+              <strong>${providerName}</strong>
+              <span class="integration-status ${escapeHtml(status)}">${escapeHtml(integrationStatusLabel(status))}</span>
+            </div>
+            <span>${escapeHtml(destination.workspaceName || destination.workspaceId || 'Workspace')} · #${escapeHtml(destination.channelName || destination.channelId || 'channel')}</span>
+            <small>${escapeHtml(integrationActivityLabel(destination))}</small>
+            <small>${escapeHtml(integrationHealthLabel(destination))}</small>
+          </div>
+          ${actionMarkup}
+        </article>
+      `;
+    }).join('');
+  }
+
+  const configured = new Set(state.integrations.map((item) => item.provider));
+  actions.querySelectorAll('[data-connect-provider]').forEach((button) => {
+    button.hidden = configured.has(button.dataset.connectProvider);
+  });
+  actions.hidden = !canManage || configured.size >= 2;
+}
+
+async function loadCrewIntegrations() {
+  const crew = activeCrew();
+  if (!GROUP_INTEGRATIONS_ENABLED || !crew) {
+    state.integrations = [];
+    renderIntegrations();
+    return;
+  }
+  const requestedCrewId = crew.id;
+  renderIntegrations({ loading: true });
+  try {
+    const result = await manageGroupIntegration('list', { crewId: requestedCrewId });
+    if (state.activeCrewId !== requestedCrewId) return;
+    state.integrations = Array.isArray(result.destinations) ? result.destinations : [];
+    renderIntegrations();
+  } catch (error) {
+    if (state.activeCrewId !== requestedCrewId) return;
+    state.integrations = [];
+    renderIntegrations({ error: error?.message || 'Connected destinations are unavailable right now.' });
+  }
+}
+
+function renderIntegrationSetup() {
+  const form = $('integrationConfirmForm');
+  const select = $('integrationChannelSelect');
+  const setup = state.integrationSetup;
+  if (!form || !select) return;
+  form.hidden = !GROUP_INTEGRATIONS_ENABLED || !setup;
+  if (!GROUP_INTEGRATIONS_ENABLED || !setup) return;
+  $('integrationConfirmTitle').textContent = `Choose a ${setup.provider === 'slack' ? 'Slack' : 'Discord'} channel`;
+  $('integrationConfirmWorkspace').textContent = setup.workspace?.name || 'Authorized workspace';
+  select.innerHTML = (setup.channels || []).map((item) => (
+    `<option value="${escapeHtml(item.id)}">#${escapeHtml(item.name)}${item.kind === 'private' ? ' · private' : ''}</option>`
+  )).join('');
+  select.disabled = !(setup.channels || []).length;
+  form.querySelector('button[type="submit"]').disabled = !(setup.channels || []).length;
+  if (!(setup.channels || []).length) {
+    setFeedback(`Add the Dominion app to a ${setup.provider} channel, then reconnect and try again.`);
+  }
+}
+
+function takeIntegrationCallbackFragment() {
+  if (!window.location.hash) return;
+  const params = new URLSearchParams(window.location.hash.slice(1));
+  const setupToken = params.get('integration-setup');
+  const integrationError = params.get('integration-error');
+  if (!setupToken && !integrationError) return;
+  window.history.replaceState({}, '', `${window.location.pathname}${window.location.search}`);
+  if (!GROUP_INTEGRATIONS_ENABLED) {
+    setFeedback('Slack and Discord connections are not available right now. Nothing was connected.');
+    return;
+  }
+  if (setupToken) state.integrationSetupToken = setupToken;
+  if (integrationError) {
+    setFeedback(integrationError === 'authorization_denied'
+      ? 'Provider authorization was canceled. Nothing was connected.'
+      : 'Provider authorization could not be completed. Try connecting again.');
+  }
+}
+
+async function loadIntegrationSetup() {
+  if (!GROUP_INTEGRATIONS_ENABLED || !state.integrationSetupToken) return;
+  try {
+    const setup = await manageGroupIntegration('channels', { setupToken: state.integrationSetupToken });
+    if (setup.crewId && state.crews.some((crew) => crew.id === setup.crewId)) {
+      state.activeCrewId = setup.crewId;
+      localStorage.setItem('dominion:activeCrewId', setup.crewId);
+      renderCrewShell();
+    }
+    state.integrationSetup = setup;
+    renderIntegrationSetup();
+  } catch (error) {
+    state.integrationSetupToken = '';
+    state.integrationSetup = null;
+    renderIntegrationSetup();
+    setFeedback(error?.message || 'That integration setup expired. Start the connection again.');
+  }
+}
+
+async function beginIntegrationAuthorization(provider, button) {
+  const crew = activeCrew();
+  if (!GROUP_INTEGRATIONS_ENABLED || !crew || !isCrewLeader()) return;
+  const release = setButtonBusy(button, 'Opening…');
+  try {
+    const result = await manageGroupIntegration('begin', { crewId: crew.id, provider });
+    const authorization = new URL(result.authorizationUrl);
+    if (!['slack.com', 'discord.com'].includes(authorization.hostname)) {
+      throw new Error('The provider returned an invalid authorization destination.');
+    }
+    window.location.assign(authorization.toString());
+  } catch (error) {
+    release();
+    setFeedback(error?.message || `Unable to connect ${provider} right now.`);
+  }
 }
 
 function renderMembers({ loading = false, error = '' } = {}) {
@@ -527,7 +775,7 @@ function renderJournal() {
   const timeline = $('journalTimeline');
   if (!timeline) return;
   if (!state.journalEntries.length) {
-    timeline.innerHTML = emptyCard('Your private journal is ready. Save a note, add a progress photo, and start building the record.');
+    timeline.innerHTML = emptyCard('Your private journal is ready. Save a note and start building the record.');
     return;
   }
 
@@ -538,18 +786,217 @@ function renderJournal() {
       ${entry.note ? `<p>${escapeHtml(entry.note)}</p>` : ''}
       ${entry.prayer ? `<p>${escapeHtml(entry.prayer)}</p>` : ''}
       ${entry.energy ? `<small>Energy: ${escapeHtml(entry.energy)}</small>` : ''}
-      ${entry.photos.length ? `
-        <div class="journal-photos">
-          ${entry.photos.map((photo) => `
-            <figure>
-              <img src="${escapeHtml(photo.url)}" alt="${escapeHtml(photo.caption || 'Progress photo')}" />
-              ${photo.caption ? `<figcaption>${escapeHtml(photo.caption)}</figcaption>` : ''}
-            </figure>
-          `).join('')}
-        </div>
-      ` : ''}
     </article>
   `).join('');
+}
+
+const dialogFocusReturn = new WeakMap();
+
+function dialogFocusableElements(dialog) {
+  return Array.from(dialog?.querySelectorAll(
+    'button:not([disabled]):not([hidden]), input:not([disabled]):not([hidden]), select:not([disabled]):not([hidden]), textarea:not([disabled]):not([hidden]), [href], [tabindex]:not([tabindex="-1"])',
+  ) || []).filter((element) => !element.closest('[hidden]'));
+}
+
+function showCrewDialog(dialog, { trigger = document.activeElement, initialFocus = null } = {}) {
+  if (!dialog || dialog.open) return;
+  if (trigger instanceof HTMLElement) dialogFocusReturn.set(dialog, trigger);
+  dialog.showModal();
+  requestAnimationFrame(() => (initialFocus || dialogFocusableElements(dialog)[0] || dialog).focus());
+}
+
+function closeCrewDialog(dialog) {
+  if (dialog?.open) dialog.close();
+}
+
+function restoreDialogFocus(dialog) {
+  const trigger = dialogFocusReturn.get(dialog);
+  dialogFocusReturn.delete(dialog);
+  if (trigger?.isConnected && !trigger.hidden && !trigger.disabled) trigger.focus();
+}
+
+function trapDialogFocus(event) {
+  if (event.key !== 'Tab') return;
+  const dialog = event.currentTarget;
+  const focusable = dialogFocusableElements(dialog);
+  if (!focusable.length) {
+    event.preventDefault();
+    dialog.focus();
+    return;
+  }
+  const first = focusable[0];
+  const last = focusable.at(-1);
+  if (event.shiftKey && document.activeElement === first) {
+    event.preventDefault();
+    last.focus();
+  } else if (!event.shiftKey && document.activeElement === last) {
+    event.preventDefault();
+    first.focus();
+  }
+}
+
+document.querySelectorAll('.crew-dialog').forEach((dialog) => {
+  dialog.addEventListener('keydown', trapDialogFocus);
+  dialog.addEventListener('close', () => restoreDialogFocus(dialog));
+});
+
+function removeInviteFromUrl() {
+  const params = new URLSearchParams(window.location.search);
+  params.delete('invite');
+  const query = params.toString();
+  window.history.replaceState({}, '', `${window.location.pathname}${query ? `?${query}` : ''}${window.location.hash}`);
+}
+
+async function prepareInviteIfPresent() {
+  const token = new URLSearchParams(window.location.search).get('invite');
+  if (!token) return;
+  state.inviteToken = token;
+  const dialog = $('crewInviteDialog');
+  const errorElement = $('crewInviteDialogError');
+  const confirmButton = $('confirmCrewInviteButton');
+  errorElement.hidden = true;
+  confirmButton.disabled = true;
+  try {
+    const preview = await getCrewInvitePreview(token);
+    state.invitePreview = preview;
+    if (preview.alreadyMember) {
+      state.activeCrewId = preview.crewId;
+      localStorage.setItem('dominion:activeCrewId', preview.crewId);
+      removeInviteFromUrl();
+      setFeedback(`You are already a member of ${preview.name}.`);
+      await refreshCrews();
+      return;
+    }
+    $('crewInviteDialogTitle').textContent = `Join ${preview.name}?`;
+    $('crewInviteDialogDescription').textContent = `${preview.inviterName} invited you to this private crew. Joining requires your confirmation.`;
+    if (preview.hasOtherCrew) {
+      errorElement.textContent = 'You already have an active crew. Leave or delete it before joining another.';
+      errorElement.hidden = false;
+    } else {
+      confirmButton.disabled = false;
+    }
+    showCrewDialog(dialog, { initialFocus: preview.hasOtherCrew ? $('cancelCrewInviteButton') : confirmButton });
+  } catch (error) {
+    removeInviteFromUrl();
+    setFeedback(error?.message || 'This invitation is invalid or has expired.');
+  }
+}
+
+function clearTrainingHighlight() {
+  state.trainingHighlightedElement?.classList.remove('crew-training-highlight');
+  state.trainingHighlightedElement = null;
+}
+
+function trainingSteps() {
+  return buildCrewTrainingSteps({
+    crewName: activeCrew()?.name,
+    providersEnabled: GROUP_INTEGRATIONS_ENABLED,
+  });
+}
+
+function renderCrewTraining() {
+  const steps = trainingSteps();
+  const index = Math.max(0, Math.min(steps.length - 1, state.trainingStep));
+  const step = steps[index];
+  state.trainingStep = index;
+  clearTrainingHighlight();
+
+  $('crewTrainingProgress').textContent = `Step ${index + 1} of ${steps.length}`;
+  $('crewTrainingTitle').textContent = step.title;
+  $('crewTrainingDescription').textContent = step.body;
+  $('crewTrainingBackButton').disabled = index === 0;
+  $('crewTrainingNextButton').textContent = index === steps.length - 1 ? 'Finish' : 'Next';
+
+  const target = step.targetId ? $(step.targetId) : null;
+  const targetAvailable = Boolean(target && !target.hidden && target.getClientRects().length);
+  $('crewTrainingTargetNote').hidden = targetAvailable;
+  if (targetAvailable) {
+    target.classList.add('crew-training-highlight');
+    state.trainingHighlightedElement = target;
+    const bounds = target.getBoundingClientRect();
+    if (bounds.top < 12 || bounds.bottom > window.innerHeight - 12) {
+      target.scrollIntoView({ behavior: prefersReducedMotion ? 'auto' : 'smooth', block: 'center' });
+    }
+  }
+}
+
+async function loadCrewTraining() {
+  const crew = activeCrew();
+  if (!crew || crew.role !== 'owner') {
+    state.trainingProgress = null;
+    renderCrewShell();
+    return null;
+  }
+  try {
+    state.trainingProgress = normalizeCrewTrainingProgress(
+      await getCrewTrainingProgress(crew.id, CREW_TRAINING_VERSION),
+    );
+  } catch (error) {
+    state.trainingProgress = null;
+    console.warn('Unable to load crew training progress', error);
+  }
+  renderCrewShell();
+  return state.trainingProgress;
+}
+
+async function persistCrewTraining(status, step = state.trainingStep) {
+  const crew = activeCrew();
+  if (!crew || crew.role !== 'owner') throw new Error('Only the crew creator can update this training.');
+  const saved = await saveCrewTrainingProgress({
+    crewId: crew.id,
+    version: CREW_TRAINING_VERSION,
+    status,
+    currentStep: step,
+  });
+  state.trainingProgress = normalizeCrewTrainingProgress(saved);
+  $('crewTrainingButton').textContent = crewTrainingActionLabel(state.trainingProgress);
+  return state.trainingProgress;
+}
+
+async function openCrewTraining({ replay = false, trigger = document.activeElement } = {}) {
+  const crew = activeCrew();
+  if (!crew || crew.role !== 'owner') return;
+  const progress = normalizeCrewTrainingProgress(state.trainingProgress);
+  state.trainingStep = replay || progress.status === 'completed' ? 0 : progress.currentStep;
+  state.trainingTrigger = trigger;
+  $('crewTrainingError').hidden = true;
+  try {
+    await persistCrewTraining('in_progress', state.trainingStep);
+    renderCrewTraining();
+    showCrewDialog($('crewTrainingDialog'), { trigger, initialFocus: $('crewTrainingNextButton') });
+  } catch (error) {
+    setFeedback(error?.message || 'Crew training is unavailable right now.');
+  }
+}
+
+async function skipCrewTraining() {
+  const dialog = $('crewTrainingDialog');
+  const errorElement = $('crewTrainingError');
+  try {
+    await persistCrewTraining('skipped', state.trainingStep);
+    clearTrainingHighlight();
+    closeCrewDialog(dialog);
+    setFeedback('Crew training saved. You can resume it from the crew card.');
+  } catch (error) {
+    errorElement.textContent = error?.message || 'Unable to save crew training progress.';
+    errorElement.hidden = false;
+  }
+}
+
+function openCrewLifecycleDialog(trigger) {
+  const crew = activeCrew();
+  if (!crew) return;
+  const action = crewLifecycleAction(crew.role);
+  state.lifecycleAction = action;
+  state.lifecycleRequestId = globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  state.lifecycleTrigger = trigger;
+  $('crewLifecycleDialogTitle').textContent = 'Are you sure?';
+  $('crewLifecycleDialogDescription').textContent = action === 'delete'
+    ? `Delete ${crew.name}? Everyone will lose access, active invitations will be revoked, and connected Slack or Discord destinations will be disabled. Personal profile and challenge data will remain intact.`
+    : `Leave ${crew.name}? You will lose access to its private feed and will need a new invitation to rejoin. Your personal profile and challenge data will remain intact.`;
+  $('confirmCrewLifecycleButton').textContent = action === 'delete' ? 'Delete Crew' : 'Leave Group';
+  $('crewLifecycleDialogError').hidden = true;
+  showCrewDialog($('crewLifecycleDialog'), { trigger, initialFocus: $('cancelCrewLifecycleButton') });
 }
 
 function fillJournalFormForDate() {
@@ -630,7 +1077,12 @@ async function loadCrewFeed({ reset = false } = {}) {
 async function refreshCrew() {
   renderCrewShell();
   const crew = activeCrew();
-  if (!crew) return;
+  if (!crew) {
+    state.crewMembers = [];
+    state.crewPosts = [];
+    state.integrations = [];
+    return;
+  }
   const requestedCrewId = crew.id;
   state.crewMembers = [];
   renderMembers({ loading: true });
@@ -650,6 +1102,8 @@ async function refreshCrew() {
     membersPromise,
     loadCrewFeed({ reset: true }),
     refreshLeaderboard('crew'),
+    loadCrewIntegrations(),
+    loadCrewTraining(),
   ]);
 }
 
@@ -670,27 +1124,14 @@ async function refreshJournal() {
 
 async function refreshCrews() {
   state.crews = await getCrews();
+  state.crewsLoaded = true;
   if (!state.crews.some((crew) => crew.id === state.activeCrewId)) {
     state.activeCrewId = state.crews[0]?.id || '';
-    localStorage.setItem('dominion:activeCrewId', state.activeCrewId);
+    if (state.activeCrewId) localStorage.setItem('dominion:activeCrewId', state.activeCrewId);
+    else localStorage.removeItem('dominion:activeCrewId');
   }
+  if (state.activeCrewId) state.createFormOpen = false;
   await refreshCrew();
-}
-
-async function redeemInviteIfPresent() {
-  const params = new URLSearchParams(window.location.search);
-  const token = params.get('invite');
-  if (!token) return;
-
-  const crew = await joinCrewByInvite(token);
-  if (crew?.id) {
-    state.activeCrewId = crew.id;
-    localStorage.setItem('dominion:activeCrewId', crew.id);
-    setFeedback(`You joined ${crew.name}.`);
-  }
-  params.delete('invite');
-  const nextUrl = `${window.location.pathname}${params.toString() ? `?${params}` : ''}${window.location.hash}`;
-  window.history.replaceState({}, '', nextUrl);
 }
 
 let crewPostImagePreviewUrl = '';
@@ -730,13 +1171,13 @@ async function bootCommunity() {
   $('journalDate').value = todayKey();
 
   if (!hasSupabaseAuth() && !isLocalDemoMode()) {
-    redirectToLogin('./community.html');
+    redirectToLogin();
     return;
   }
 
   state.billing = await getBillingState();
   if (!state.billing.authenticated) {
-    redirectToLogin('./community.html');
+    redirectToLogin();
     return;
   }
   if (!state.billing.appAccess) {
@@ -744,18 +1185,30 @@ async function bootCommunity() {
     return;
   }
 
+  takeIntegrationCallbackFragment();
   if (isLocalDemoMode()) setFeedback('Preview mode: crews, posts, comments, leaderboards, and journal entries are using mock local data.');
-  await redeemInviteIfPresent();
   await Promise.all([refreshCrews(), refreshGlobal(), refreshJournal()]);
+  await Promise.all([prepareInviteIfPresent(), loadIntegrationSetup()]);
 }
 
 setupCrewInfiniteScroll();
 
-$('crewSelect')?.addEventListener('change', async (event) => {
-  state.activeCrewId = event.target.value;
-  localStorage.setItem('dominion:activeCrewId', state.activeCrewId);
-  setFeedback('');
-  await refreshCrew();
+$('openCrewFormButton')?.addEventListener('click', (event) => {
+  state.createFormOpen = true;
+  state.createRequestId = '';
+  renderCrewShell();
+  $('crewNameInput')?.focus();
+  event.currentTarget.setAttribute('aria-expanded', 'true');
+});
+
+$('cancelCrewFormButton')?.addEventListener('click', () => {
+  state.createFormOpen = false;
+  state.createRequestId = '';
+  $('crewForm')?.reset();
+  $('crewStartDateInput').value = todayKey();
+  renderCrewShell();
+  $('openCrewFormButton')?.setAttribute('aria-expanded', 'false');
+  $('openCrewFormButton')?.focus();
 });
 
 $('refreshCrewFeedButton')?.addEventListener('click', async (event) => {
@@ -806,23 +1259,242 @@ $('crewForm')?.addEventListener('submit', async (event) => {
   event.preventDefault();
   const button = event.submitter;
   const release = setButtonBusy(button, 'Creating...');
+  if (!state.createRequestId) {
+    state.createRequestId = globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  }
+  const createdInThisFlow = Boolean(state.createRequestId);
   try {
     const crew = await createCrew({
       name: $('crewNameInput').value.trim(),
       description: $('crewDescriptionInput').value.trim(),
       challengeStartDate: $('crewStartDateInput').value,
+      requestId: state.createRequestId,
     });
     state.activeCrewId = crew.id;
     localStorage.setItem('dominion:activeCrewId', crew.id);
     event.target.reset();
     $('crewStartDateInput').value = todayKey();
+    state.createFormOpen = false;
+    state.createRequestId = '';
     setFeedback(`${crew.name} is ready. Copy the invite link when you want to bring people in.`);
     await refreshCrews();
+    if (shouldAutoStartCrewTraining({
+      createdNew: crew.createdNew || createdInThisFlow,
+      role: activeCrew()?.role,
+      progress: state.trainingProgress,
+    })) {
+      await openCrewTraining({ trigger: $('crewTrainingButton') });
+    }
   } catch (error) {
     window.alert(error?.message || 'Unable to create that crew right now.');
   } finally {
     release();
   }
+});
+
+$('crewIntegrationsCard')?.addEventListener('click', async (event) => {
+  if (!GROUP_INTEGRATIONS_ENABLED) return;
+  const connectButton = event.target.closest('[data-connect-provider]');
+  const reconnectButton = event.target.closest('[data-reconnect-provider]');
+  if (connectButton || reconnectButton) {
+    const button = connectButton || reconnectButton;
+    await beginIntegrationAuthorization(
+      button.dataset.connectProvider || button.dataset.reconnectProvider,
+      button,
+    );
+    return;
+  }
+
+  const testButton = event.target.closest('[data-test-integration]');
+  if (testButton) {
+    const release = setButtonBusy(testButton, 'Testing…');
+    try {
+      await manageGroupIntegration('test', { destinationId: testButton.dataset.testIntegration });
+      setFeedback('Test update delivered. The external channel is ready.');
+      await loadCrewIntegrations();
+    } catch (error) {
+      setFeedback(error?.message || 'The integration test could not be delivered.');
+      await loadCrewIntegrations();
+    } finally {
+      release();
+    }
+    return;
+  }
+
+  const disconnectButton = event.target.closest('[data-disconnect-integration]');
+  if (!disconnectButton || !window.confirm('Disconnect this external channel? Queued updates will be canceled immediately.')) return;
+  const release = setButtonBusy(disconnectButton, 'Disconnecting…');
+  try {
+    const result = await manageGroupIntegration('disconnect', {
+      destinationId: disconnectButton.dataset.disconnectIntegration,
+    });
+    setFeedback(result.providerRevoked
+      ? 'External channel disconnected and provider access revoked.'
+      : 'External channel disconnected. Dominion credentials and queued updates were removed.');
+    await loadCrewIntegrations();
+  } catch (error) {
+    setFeedback(error?.message || 'Unable to disconnect that channel right now.');
+  } finally {
+    release();
+  }
+});
+
+$('integrationConfirmForm')?.addEventListener('submit', async (event) => {
+  event.preventDefault();
+  if (!GROUP_INTEGRATIONS_ENABLED || !state.integrationSetupToken || !state.integrationSetup) return;
+  const submitButton = event.currentTarget.querySelector('button[type="submit"]');
+  const release = setButtonBusy(submitButton, 'Confirming…');
+  try {
+    const result = await manageGroupIntegration('confirm', {
+      setupToken: state.integrationSetupToken,
+      channelId: $('integrationChannelSelect').value,
+    });
+    state.integrationSetupToken = '';
+    state.integrationSetup = null;
+    renderIntegrationSetup();
+    setFeedback(`${result.destination?.provider === 'discord' ? 'Discord' : 'Slack'} channel connected.`);
+    await loadCrewIntegrations();
+  } catch (error) {
+    setFeedback(error?.message || 'Unable to confirm that external channel.');
+  } finally {
+    release();
+  }
+});
+
+$('cancelIntegrationSetup')?.addEventListener('click', () => {
+  state.integrationSetupToken = '';
+  state.integrationSetup = null;
+  renderIntegrationSetup();
+  setFeedback('Integration setup canceled. No channel was connected.');
+});
+
+$('crewLifecycleButton')?.addEventListener('click', (event) => openCrewLifecycleDialog(event.currentTarget));
+
+$('cancelCrewLifecycleButton')?.addEventListener('click', () => {
+  state.lifecycleRequestId = '';
+  closeCrewDialog($('crewLifecycleDialog'));
+});
+
+$('crewLifecycleDialog')?.addEventListener('cancel', (event) => {
+  event.preventDefault();
+  state.lifecycleRequestId = '';
+  closeCrewDialog(event.currentTarget);
+});
+
+$('confirmCrewLifecycleButton')?.addEventListener('click', async (event) => {
+  const crew = activeCrew();
+  if (!crew || !state.lifecycleRequestId) return;
+  const action = state.lifecycleAction;
+  const errorElement = $('crewLifecycleDialogError');
+  errorElement.hidden = true;
+  const release = setButtonBusy(event.currentTarget, action === 'delete' ? 'Deleting…' : 'Leaving…');
+  try {
+    if (action === 'delete') await deleteCrew(crew.id, state.lifecycleRequestId);
+    else await leaveCrew(crew.id, state.lifecycleRequestId);
+    clearTrainingHighlight();
+    closeCrewDialog($('crewLifecycleDialog'));
+    state.lifecycleRequestId = '';
+    state.activeCrewId = '';
+    localStorage.removeItem('dominion:activeCrewId');
+    await refreshCrews();
+    setFeedback(action === 'delete' ? `${crew.name} was deleted.` : `You left ${crew.name}.`);
+  } catch (error) {
+    errorElement.textContent = error?.message || `Unable to ${action} this crew right now.`;
+    errorElement.hidden = false;
+  } finally {
+    release();
+  }
+});
+
+$('cancelCrewInviteButton')?.addEventListener('click', () => {
+  removeInviteFromUrl();
+  state.inviteToken = '';
+  state.invitePreview = null;
+  closeCrewDialog($('crewInviteDialog'));
+});
+
+$('crewInviteDialog')?.addEventListener('cancel', (event) => {
+  event.preventDefault();
+  $('cancelCrewInviteButton').click();
+});
+
+$('confirmCrewInviteButton')?.addEventListener('click', async (event) => {
+  if (!state.inviteToken || state.invitePreview?.hasOtherCrew) return;
+  const errorElement = $('crewInviteDialogError');
+  errorElement.hidden = true;
+  const release = setButtonBusy(event.currentTarget, 'Joining…');
+  try {
+    const crew = await joinCrewByInvite(state.inviteToken);
+    if (!crew?.id) throw new Error('This invitation is invalid or has expired.');
+    state.activeCrewId = crew.id;
+    localStorage.setItem('dominion:activeCrewId', crew.id);
+    removeInviteFromUrl();
+    state.inviteToken = '';
+    state.invitePreview = null;
+    closeCrewDialog($('crewInviteDialog'));
+    await refreshCrews();
+    setFeedback(`You joined ${crew.name}.`);
+  } catch (error) {
+    errorElement.textContent = error?.message || 'Unable to join this crew right now.';
+    errorElement.hidden = false;
+  } finally {
+    release();
+  }
+});
+
+$('crewTrainingButton')?.addEventListener('click', async (event) => {
+  const progress = normalizeCrewTrainingProgress(state.trainingProgress);
+  await openCrewTraining({ replay: progress.status === 'completed', trigger: event.currentTarget });
+});
+
+$('crewTrainingBackButton')?.addEventListener('click', async (event) => {
+  if (state.trainingStep <= 0) return;
+  const release = setButtonBusy(event.currentTarget, 'Saving…');
+  try {
+    state.trainingStep -= 1;
+    await persistCrewTraining('in_progress', state.trainingStep);
+    renderCrewTraining();
+    $('crewTrainingNextButton').focus();
+  } catch (error) {
+    state.trainingStep += 1;
+    $('crewTrainingError').textContent = error?.message || 'Unable to save your place.';
+    $('crewTrainingError').hidden = false;
+  } finally {
+    release();
+    event.currentTarget.disabled = state.trainingStep === 0;
+  }
+});
+
+$('crewTrainingNextButton')?.addEventListener('click', async (event) => {
+  const steps = trainingSteps();
+  const isLast = state.trainingStep >= steps.length - 1;
+  const release = setButtonBusy(event.currentTarget, isLast ? 'Finishing…' : 'Saving…');
+  $('crewTrainingError').hidden = true;
+  try {
+    if (isLast) {
+      await persistCrewTraining('completed', state.trainingStep);
+      clearTrainingHighlight();
+      closeCrewDialog($('crewTrainingDialog'));
+      setFeedback('Crew training complete. You can replay it any time.');
+    } else {
+      state.trainingStep += 1;
+      await persistCrewTraining('in_progress', state.trainingStep);
+      renderCrewTraining();
+    }
+  } catch (error) {
+    if (!isLast) state.trainingStep -= 1;
+    $('crewTrainingError').textContent = error?.message || 'Unable to save crew training progress.';
+    $('crewTrainingError').hidden = false;
+  } finally {
+    release();
+  }
+});
+
+$('skipCrewTrainingButton')?.addEventListener('click', skipCrewTraining);
+
+$('crewTrainingDialog')?.addEventListener('cancel', (event) => {
+  event.preventDefault();
+  skipCrewTraining();
 });
 
 $('copyInviteButton')?.addEventListener('click', async (event) => {
@@ -1077,7 +1749,7 @@ $('journalForm')?.addEventListener('submit', async (event) => {
   const release = setButtonBusy(event.submitter, 'Saving...');
   try {
     const crew = activeCrew();
-    const savedEntry = await saveJournalEntry({
+    await saveJournalEntry({
       date: $('journalDate').value,
       day: crew?.challengeStartDate ? Number(dayLabel(crew.challengeStartDate).replace('Day ', '')) : null,
       note: $('journalNote').value.trim(),
@@ -1086,17 +1758,6 @@ $('journalForm')?.addEventListener('submit', async (event) => {
       mood: $('journalMood').value,
       energy: $('journalEnergy').value,
     });
-
-    const photo = $('journalPhoto').files?.[0];
-    if (photo) {
-      await uploadJournalPhoto({
-        entryId: savedEntry.id,
-        file: photo,
-        caption: $('journalPhotoCaption').value.trim(),
-      });
-      $('journalPhoto').value = '';
-      $('journalPhotoCaption').value = '';
-    }
 
     setFeedback('Private journal entry saved.');
     await refreshJournal();

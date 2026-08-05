@@ -6,9 +6,16 @@ import {
   hasSupabaseAuth,
   isLocalDemoMode,
   redirectToLogin,
+  removeReplacedProfilePhoto,
+  removeUploadedProfilePhoto,
   updateProfile,
   uploadProfilePhoto,
 } from './api';
+import {
+  prepareProfilePhoto,
+  replaceProfilePhoto,
+  validateProfilePhotoInput,
+} from './profile-photo.mjs';
 import {
   PREVIEW_CHALLENGE_RESET_KEYS,
   PREVIEW_CHALLENGE_STORAGE_KEY,
@@ -68,11 +75,16 @@ const profilePreviewTools = document.getElementById('profilePreviewTools');
 const profilePreviewChallengeSwitch = document.getElementById('profilePreviewChallengeSwitch');
 const profilePreviewStatus = document.getElementById('profilePreviewStatus');
 const resetPreviewChallengeButton = document.getElementById('resetPreviewChallengeButton');
-const MAX_PROFILE_PHOTO_SIZE = 5 * 1024 * 1024;
 let currentProfile = { name: 'Member', email: 'Logged in', avatarUrl: '' };
-let selectedPhotoFile = null;
+let selectedPreparedPhoto = null;
 let selectedPreviewUrl = '';
+let photoProcessingPromise = null;
+let photoSelectionVersion = 0;
+let isPhotoProcessing = false;
+let isProfileSaving = false;
 const EMPTY_PHOTO_FILENAME = 'No new photo selected';
+const profileSubmitButton = profileForm?.querySelector('button[type="submit"]');
+const PROFILE_SUBMIT_LABEL = profileSubmitButton?.textContent || 'Save profile';
 let previewChallengeState = normalizePreviewChallengeState(
   localPreviewMode ? load(PREVIEW_CHALLENGE_STORAGE_KEY, {}) : {},
   localDateKey(),
@@ -165,14 +177,29 @@ function setProfileFeedback(message, tone = '') {
   profileFeedback.classList.toggle('error', tone === 'error');
 }
 
-function setProfileFormBusy(isBusy, label = 'Save profile') {
-  const submitButton = profileForm?.querySelector('button[type="submit"]');
-  if (profilePhotoInput) profilePhotoInput.disabled = isBusy;
-  if (profilePhotoField) profilePhotoField.setAttribute('aria-busy', String(isBusy));
-  if (submitButton) {
-    submitButton.disabled = isBusy;
-    submitButton.textContent = isBusy ? 'Saving...' : label;
+function syncProfileFormAvailability() {
+  if (profilePhotoInput) profilePhotoInput.disabled = isProfileSaving;
+  if (profilePhotoField) {
+    profilePhotoField.setAttribute('aria-busy', String(isProfileSaving || isPhotoProcessing));
   }
+  if (profileSubmitButton) {
+    profileSubmitButton.disabled = isProfileSaving || isPhotoProcessing;
+    profileSubmitButton.textContent = isProfileSaving
+      ? 'Saving...'
+      : isPhotoProcessing
+        ? 'Preparing photo...'
+        : PROFILE_SUBMIT_LABEL;
+  }
+}
+
+function setProfileFormBusy(isBusy) {
+  isProfileSaving = isBusy;
+  syncProfileFormAvailability();
+}
+
+function setProfilePhotoProcessing(isProcessing) {
+  isPhotoProcessing = isProcessing;
+  syncProfileFormAvailability();
 }
 
 function updateBillingSummary(state) {
@@ -228,9 +255,12 @@ async function hydrateProfile() {
   }
 }
 
-profilePhotoInput?.addEventListener('change', () => {
+profilePhotoInput?.addEventListener('change', async () => {
+  const selectionVersion = ++photoSelectionVersion;
+  photoProcessingPromise = null;
+  setProfilePhotoProcessing(false);
   revokeSelectedPreview();
-  selectedPhotoFile = null;
+  selectedPreparedPhoto = null;
   renderPhotoSelection();
 
   const file = profilePhotoInput.files?.[0];
@@ -239,68 +269,126 @@ profilePhotoInput?.addEventListener('change', () => {
     return;
   }
 
-  if (!file.type?.startsWith('image/')) {
+  try {
+    validateProfilePhotoInput(file);
+  } catch (error) {
     profilePhotoInput.value = '';
-    setProfileFeedback('Profile picture must be an image file.', 'error');
+    setProfileFeedback(error?.message || 'Choose a valid profile picture.', 'error');
     renderAvatar(currentProfile);
     return;
   }
 
-  if (file.size > MAX_PROFILE_PHOTO_SIZE) {
-    profilePhotoInput.value = '';
-    setProfileFeedback('Profile picture must be smaller than 5 MB.', 'error');
-    renderAvatar(currentProfile);
-    return;
-  }
-
-  selectedPhotoFile = file;
-  selectedPreviewUrl = URL.createObjectURL(file);
   renderPhotoSelection(file);
-  renderAvatar({ ...currentProfile, avatarUrl: selectedPreviewUrl });
-  setProfileFeedback(`“${file.name}” selected. Save profile when ready.`);
+  renderAvatar(currentProfile);
+  setProfilePhotoProcessing(true);
+  setProfileFeedback(`Preparing “${file.name}” as a square thumbnail...`);
+  const processingPromise = prepareProfilePhoto(file);
+  photoProcessingPromise = processingPromise;
+
+  try {
+    const preparedPhoto = await processingPromise;
+    if (selectionVersion !== photoSelectionVersion) return;
+    selectedPreparedPhoto = preparedPhoto;
+    selectedPreviewUrl = URL.createObjectURL(preparedPhoto.blob);
+    renderAvatar({ ...currentProfile, avatarUrl: selectedPreviewUrl });
+    const format = preparedPhoto.contentType === 'image/webp' ? 'WebP' : 'JPEG';
+    const kilobytes = Math.max(1, Math.ceil(preparedPhoto.blob.size / 1024));
+    setProfileFeedback(
+      `“${file.name}” is ready as a ${preparedPhoto.width}×${preparedPhoto.height} ${format} thumbnail (${kilobytes} KB). Save profile when ready.`,
+    );
+  } catch (error) {
+    if (selectionVersion !== photoSelectionVersion) return;
+    profilePhotoInput.value = '';
+    renderPhotoSelection();
+    renderAvatar(currentProfile);
+    setProfileFeedback(error?.message || 'Unable to prepare that profile picture.', 'error');
+  } finally {
+    if (selectionVersion === photoSelectionVersion) {
+      photoProcessingPromise = null;
+      setProfilePhotoProcessing(false);
+    }
+  }
 });
 
 profileForm?.addEventListener('submit', async (event) => {
   event.preventDefault();
   const name = profileNameInput?.value.trim() || '';
   const email = profileEmailInput?.value.trim() || '';
-  const originalButtonLabel = profileForm.querySelector('button[type="submit"]')?.textContent || 'Save profile';
 
   if (!name || !email) {
     setProfileFeedback('Name and email are required.', 'error');
     return;
   }
 
+  if (photoProcessingPromise) {
+    try {
+      await photoProcessingPromise;
+    } catch {
+      return;
+    }
+  }
+
   setProfileFormBusy(true);
-  setProfileFeedback(selectedPhotoFile ? 'Uploading profile picture...' : 'Saving profile...');
+  setProfileFeedback(selectedPreparedPhoto ? 'Uploading profile thumbnail...' : 'Saving profile...');
 
   try {
     let avatarUrl = currentProfile.avatarUrl || '';
-    if (selectedPhotoFile) avatarUrl = await uploadProfilePhoto(selectedPhotoFile);
-
-    const savedProfile = await updateProfile({ name, email, avatarUrl });
+    let cleanupError = null;
+    let savedProfile;
+    if (selectedPreparedPhoto) {
+      const replacement = await replaceProfilePhoto({
+        preparedPhoto: selectedPreparedPhoto,
+        previousAvatarUrl: currentProfile.avatarUrl,
+        profile: { name, email },
+        uploadPhoto: uploadProfilePhoto,
+        saveProfile: updateProfile,
+        removePreviousPhoto: removeReplacedProfilePhoto,
+        removeUploadedPhoto: removeUploadedProfilePhoto,
+      });
+      savedProfile = replacement.savedProfile;
+      avatarUrl = replacement.uploadedPhoto.avatarUrl;
+      cleanupError = replacement.cleanupError;
+    } else {
+      // Do not resubmit a cached avatar when this save only changes text fields;
+      // another tab may have replaced that photo since this form was hydrated.
+      savedProfile = await updateProfile({ name, email });
+    }
     const nextProfile = {
       name: savedProfile?.name || name,
       email: savedProfile?.email || email,
       avatarUrl: savedProfile?.avatarUrl || avatarUrl,
     };
 
-    selectedPhotoFile = null;
+    selectedPreparedPhoto = null;
     if (profilePhotoInput) profilePhotoInput.value = '';
     revokeSelectedPreview();
     renderPhotoSelection();
     syncStoredUser(nextProfile);
     renderProfile(nextProfile);
-    setProfileFeedback(savedProfile?.emailChangeRequested
-      ? 'Profile saved. Confirm the email change from your inbox.'
-      : 'Profile saved.');
+    if (cleanupError) {
+      console.warn('Unable to remove the previous profile photo', cleanupError);
+      setProfileFeedback('Profile saved, but the previous stored photo could not be removed. Try again later.', 'error');
+    } else if (savedProfile?.metadataSyncError) {
+      console.warn('Unable to sync profile display metadata to Auth', savedProfile.metadataSyncError);
+      setProfileFeedback('Profile saved, but account display metadata could not finish syncing. Try saving again.', 'error');
+    } else {
+      setProfileFeedback(savedProfile?.emailChangeRequested
+        ? 'Profile saved. Confirm the email change from your inbox.'
+        : 'Profile saved.');
+    }
   } catch (error) {
+    if (error?.profilePhotoRollbackUnsafe) {
+      console.warn('Profile photo commit could not be verified; the uploaded object was retained', error);
+    }
+    if (error?.profilePhotoRollbackError) {
+      console.warn('Unable to roll back the uncommitted profile photo', error.profilePhotoRollbackError);
+    }
     renderAvatar(selectedPreviewUrl
       ? { ...currentProfile, avatarUrl: selectedPreviewUrl }
       : currentProfile);
     setProfileFeedback(error?.message || 'Unable to save your profile right now.', 'error');
   } finally {
-    setProfileFormBusy(false, originalButtonLabel);
+    setProfileFormBusy(false);
   }
 });
 

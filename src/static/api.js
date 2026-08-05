@@ -16,8 +16,24 @@ import {
   prepareMockCrewMembersForStorage,
 } from './mock-community-storage.mjs';
 import { normalizeLeaderboardRank } from './leaderboard-prestige.mjs';
+import { normalizeJournalEntry, sortJournalEntries } from './journal-entry.mjs';
+import { CREW_TRAINING_VERSION, assertSingleCrew } from './crew-experience.mjs';
+import {
+  commitProfilePhotoWithCompareAndSwap,
+  isOwnedProfilePhotoPath,
+  isPreparedProfilePhoto,
+  ownedProfilePhotoPathFromUrl,
+  syncProfileMetadataBestEffort,
+} from './profile-photo.mjs';
 
 const SUPABASE_URL = (import.meta.env.VITE_SUPABASE_URL || '').replace(/\/$/, '');
+const SUPABASE_ORIGIN = (() => {
+  try {
+    return new URL(SUPABASE_URL).origin;
+  } catch {
+    return '';
+  }
+})();
 const SUPABASE_KEY =
   import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY ||
   import.meta.env.VITE_SUPABASE_ANON_KEY ||
@@ -47,6 +63,7 @@ const MOCK_SUBSCRIPTION_KEY = 'dominion:mockSubscription';
 const MOCK_CREWS_KEY = 'dominion:mockCrews';
 const MOCK_CREW_MEMBERS_KEY = 'dominion:mockCrewMembers';
 const MOCK_INVITES_KEY = 'dominion:mockCrewInvites';
+const MOCK_CREW_TRAINING_KEY = 'dominion:mockCrewTraining';
 const MOCK_POSTS_KEY = 'dominion:mockCommunityPosts';
 const MOCK_JOURNAL_KEY = 'dominion:mockJournalEntries';
 const MOCK_CHALLENGE_STATES_KEY = 'dominion:mockChallengeStates';
@@ -66,6 +83,15 @@ const readJson = (key, fallback) => {
 };
 
 const writeJson = (key, value) => localStorage.setItem(key, JSON.stringify(value));
+
+function fileToDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ''));
+    reader.onerror = () => reject(reader.error || new Error('Unable to read preview photo.'));
+    reader.readAsDataURL(file);
+  });
+}
 
 function getMockMediaDatabase() {
   if (!globalThis.indexedDB) return Promise.resolve(null);
@@ -234,8 +260,10 @@ export function sessionToUser(session, fallbackName = 'Member') {
   const metadata = user.user_metadata || {};
   const email = user.email || '';
   const name = metadata.name || metadata.full_name || fallbackName || email.split('@')[0] || 'Member';
-  const avatarUrl = metadata.avatar_url || metadata.picture || '';
-  return { name, email, avatarUrl, authenticated: Boolean(session?.access_token) };
+  // Profile photos are canonical in public.profiles. Auth avatar metadata is
+  // deliberately ignored so stale external metadata cannot become a live image
+  // reference after an owned Storage object is replaced.
+  return { name, email, avatarUrl: '', authenticated: Boolean(session?.access_token) };
 }
 
 export const hasSupabaseAuth = () => Boolean(supabase) && !isLocalDemoMode();
@@ -379,6 +407,7 @@ const mapCrew = (item) => {
     createdAt: crew.created_at,
     role: item.role || crew.role || 'member',
     joinedAt: item.joined_at,
+    createdNew: Boolean(item.created_new ?? crew.created_new ?? crew.createdNew),
   } : null;
 };
 
@@ -477,20 +506,6 @@ const mapLeaderboardRow = (row) => ({
   badges: Array.isArray(row.badges) ? row.badges.map(mapBadge).filter(Boolean) : [],
 });
 
-const mapJournalEntry = (entry, photos = []) => ({
-  id: entry.id,
-  date: entry.entry_date,
-  day: entry.challenge_day,
-  note: entry.note || '',
-  win: entry.win || '',
-  prayer: entry.prayer || '',
-  mood: entry.mood || '',
-  energy: entry.energy || '',
-  createdAt: entry.created_at,
-  updatedAt: entry.updated_at,
-  photos,
-});
-
 const mapSubscription = (subscription) => subscription ? ({
   id: subscription.id,
   productKey: subscription.product_key,
@@ -570,7 +585,6 @@ export async function updateProfile(profile) {
   const client = requireSupabase();
   const user = await requireUser();
   const metadata = user.user_metadata || {};
-  const authUpdates = {};
   const dataUpdates = {};
   const nextName = profile.name || metadata.name || metadata.full_name || user.email?.split('@')[0] || 'Member';
   const nextEmail = profile.email || user.email || '';
@@ -580,49 +594,108 @@ export async function updateProfile(profile) {
     dataUpdates.full_name = nextName;
   }
   if (profile.avatarUrl !== undefined) {
-    dataUpdates.avatar_url = profile.avatarUrl || '';
-    dataUpdates.picture = profile.avatarUrl || '';
+    // Clear the legacy mirror with a commutative update. All supported avatar
+    // rendering paths read profiles.avatar_url, which is protected by RLS.
+    dataUpdates.avatar_url = null;
+    dataUpdates.picture = null;
   }
-  if (Object.keys(dataUpdates).length) authUpdates.data = dataUpdates;
-  if (profile.email && profile.email !== user.email) authUpdates.email = profile.email;
 
   let emailChangeRequested = false;
-  if (Object.keys(authUpdates).length) {
-    const { data, error } = await client.auth.updateUser(authUpdates);
+  if (profile.email && profile.email !== user.email) {
+    const { data, error } = await client.auth.updateUser({ email: profile.email });
     if (error) throw error;
-    emailChangeRequested = Boolean(profile.email && profile.email !== user.email && data?.user?.email !== profile.email);
+    emailChangeRequested = Boolean(data?.user?.email !== profile.email);
   }
 
-  const savedProfile = await upsertProfile({
-    name: nextName,
-    email: nextEmail,
-    avatarUrl: profile.avatarUrl,
-    challengeStartDate: profile.challengeStartDate,
-  });
+  // The profile row is the sole avatar source used by profile, roster, and
+  // leaderboard views. Commit it before the best-effort Auth metadata cleanup.
+  let savedProfile;
+  let replacedAvatarUrl;
+  if (profile.avatarUrl !== undefined && profile.expectedAvatarUrl !== undefined) {
+    // Save text fields without resubmitting a possibly stale avatar, then swap
+    // only avatar_url with optimistic concurrency. A retry cannot overwrite a
+    // newer name/email edit made in another tab.
+    await upsertProfile({
+      name: nextName,
+      email: nextEmail,
+      challengeStartDate: profile.challengeStartDate,
+    });
+
+    const swapResult = await commitProfilePhotoWithCompareAndSwap({
+      expectedAvatarUrl: profile.expectedAvatarUrl,
+      newAvatarUrl: profile.avatarUrl,
+      trySwap: async (expectedAvatarUrl) => {
+        const { data, error } = await client
+          .from('profiles')
+          .update({ avatar_url: profile.avatarUrl || '' })
+          .eq('user_id', user.id)
+          .eq('avatar_url', expectedAvatarUrl)
+          .select('user_id, name, email, avatar_url, challenge_start_date, time_zone, created_at, updated_at')
+          .maybeSingle();
+        if (error) throw error;
+        return data ? mapProfile(data) : null;
+      },
+      readCurrentProfile: async () => {
+        const { data, error } = await client
+          .from('profiles')
+          .select('user_id, name, email, avatar_url, challenge_start_date, time_zone, created_at, updated_at')
+          .eq('user_id', user.id)
+          .maybeSingle();
+        if (error) throw error;
+        return data ? mapProfile(data) : null;
+      },
+    });
+    savedProfile = swapResult.savedProfile;
+    replacedAvatarUrl = swapResult.replacedAvatarUrl;
+  } else {
+    savedProfile = await upsertProfile({
+      name: nextName,
+      email: nextEmail,
+      avatarUrl: profile.avatarUrl,
+      challengeStartDate: profile.challengeStartDate,
+    });
+  }
+
+  let metadataSyncError = null;
+  if (Object.keys(dataUpdates).length) {
+    metadataSyncError = await syncProfileMetadataBestEffort(
+      (data) => client.auth.updateUser({ data }),
+      dataUpdates,
+    );
+  }
 
   return {
     ...savedProfile,
+    ...(replacedAvatarUrl !== undefined ? { replacedAvatarUrl } : {}),
     emailChangeRequested,
+    metadataSyncError,
   };
 }
 
-export async function uploadProfilePhoto(file) {
-  if (!file) throw new Error('Choose a profile picture first.');
-  if (!file.type?.startsWith('image/')) throw new Error('Profile picture must be an image file.');
-  if (file.size > 5 * 1024 * 1024) throw new Error('Profile picture must be smaller than 5 MB.');
+export async function uploadProfilePhoto(preparedPhoto) {
+  if (!isPreparedProfilePhoto(preparedPhoto)) {
+    throw new Error('Prepare the profile picture before uploading it.');
+  }
 
-  if (isLocalDemoMode()) return fileToDataUrl(file);
+  if (isLocalDemoMode()) {
+    return {
+      avatarUrl: await fileToDataUrl(preparedPhoto.blob),
+      storagePath: '',
+    };
+  }
 
   const client = requireSupabase();
   const user = await requireUser();
-  const extensionFromType = file.type.split('/')[1]?.replace('jpeg', 'jpg') || '';
-  const extensionFromName = file.name?.split('.').pop()?.toLowerCase() || '';
-  const extension = extensionFromType || extensionFromName || 'jpg';
-  const safeExtension = ['jpg', 'png', 'webp', 'heic', 'heif'].includes(extension) ? extension : 'jpg';
-  const storagePath = `${user.id}/avatar-${Date.now()}.${safeExtension}`;
+  const uniqueId = globalThis.crypto?.randomUUID?.().replaceAll('-', '')
+    || `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  const storagePath = `${user.id}/avatar-${Date.now()}-${uniqueId}.${preparedPhoto.extension}`;
   const { error } = await client.storage
     .from(PROFILE_PHOTO_BUCKET)
-    .upload(storagePath, file, { cacheControl: '3600', upsert: true });
+    .upload(storagePath, preparedPhoto.blob, {
+      cacheControl: '31536000',
+      contentType: preparedPhoto.contentType,
+      upsert: false,
+    });
 
   if (error) throw error;
 
@@ -630,7 +703,42 @@ export async function uploadProfilePhoto(file) {
     .from(PROFILE_PHOTO_BUCKET)
     .getPublicUrl(storagePath);
 
-  return data?.publicUrl || '';
+  const avatarUrl = data?.publicUrl || '';
+  if (!avatarUrl) {
+    await client.storage.from(PROFILE_PHOTO_BUCKET).remove([storagePath]);
+    throw new Error('The profile picture uploaded, but its public URL was unavailable. Try again.');
+  }
+  return { avatarUrl, storagePath };
+}
+
+async function removeOwnedProfilePhoto(storagePath) {
+  if (isLocalDemoMode() || !storagePath) return false;
+  const client = requireSupabase();
+  const user = await requireUser();
+  if (!isOwnedProfilePhotoPath(storagePath, user.id)) return false;
+
+  const { error } = await client.storage
+    .from(PROFILE_PHOTO_BUCKET)
+    .remove([storagePath]);
+  if (error) throw error;
+  return true;
+}
+
+export async function removeUploadedProfilePhoto(uploadedPhoto) {
+  return removeOwnedProfilePhoto(uploadedPhoto?.storagePath || '');
+}
+
+export async function removeReplacedProfilePhoto(previousAvatarUrl, uploadedPhoto) {
+  if (isLocalDemoMode() || !previousAvatarUrl) return false;
+  const user = await requireUser();
+  const previousStoragePath = ownedProfilePhotoPathFromUrl(
+    previousAvatarUrl,
+    user.id,
+    PROFILE_PHOTO_BUCKET,
+    SUPABASE_ORIGIN,
+  );
+  if (!previousStoragePath || previousStoragePath === uploadedPhoto?.storagePath) return false;
+  return removeOwnedProfilePhoto(previousStoragePath);
 }
 
 export async function getBillingState() {
@@ -739,6 +847,14 @@ export async function cancelMembership() {
     return { canceled: true, accessRemoved: true, preview: true };
   }
   return invokeSupabaseAction('cancel-membership');
+}
+
+export async function manageGroupIntegration(action, values = {}) {
+  if (isLocalDemoMode()) {
+    if (action === 'list') return { destinations: [], preview: true };
+    throw new Error('Slack and Discord connections remain safely off in preview mode.');
+  }
+  return invokeSupabaseAction('group-integrations', { action, ...values });
 }
 
 function getMockChallengeProgression() {
@@ -1108,17 +1224,7 @@ function ensureMockCrews() {
   let members = readJson(MOCK_CREW_MEMBERS_KEY, null);
 
   if (!Array.isArray(crews)) {
-    const createdAt = new Date().toISOString();
-    crews = [{
-      id: 'preview_crew_alpha',
-      name: 'Preview Crew',
-      description: 'A private mock crew for testing invites, posts, comments, and leaderboards.',
-      challengeStartDate: new Date().toISOString().slice(0, 10),
-      createdBy: userId,
-      createdAt,
-      role: 'owner',
-      joinedAt: createdAt,
-    }];
+    crews = [];
     writeJson(MOCK_CREWS_KEY, crews);
   }
 
@@ -1126,14 +1232,24 @@ function ensureMockCrews() {
     members = {};
   }
 
+  // Retire only the exact legacy auto-seeded preview crew. Keep its record and
+  // posts for retention parity, but remove memberships so preview users begin
+  // unassigned just like production users. User-created preview crews use
+  // generated IDs and are never matched by this migration.
+  const legacySeed = crews.find((crew) => (
+    crew.id === 'preview_crew_alpha'
+    && crew.name === 'Preview Crew'
+    && crew.description === 'A private mock crew for testing invites, posts, comments, and leaderboards.'
+  ));
+  if (legacySeed && !legacySeed.deletedAt) {
+    legacySeed.deletedAt = new Date().toISOString();
+    legacySeed.deletedBy = 'preview_seed_retirement';
+    members[legacySeed.id] = [];
+    writeJson(MOCK_CREWS_KEY, crews);
+  }
+
   crews.forEach((crew) => {
-    if (!members[crew.id]) {
-      members[crew.id] = [
-        { crewId: crew.id, userId, name: user.name || 'Preview Member', avatarUrl: user.avatarUrl || '', role: 'owner', joinedAt: crew.createdAt || new Date().toISOString() },
-        { crewId: crew.id, userId: 'preview_member_josh', name: 'Josh', avatarUrl: createMockAvatar('Josh', '#45634d'), role: 'member', joinedAt: crew.createdAt || new Date().toISOString() },
-        { crewId: crew.id, userId: 'preview_member_sarah', name: 'Sarah', avatarUrl: createMockAvatar('Sarah', '#7a4652'), role: 'member', joinedAt: crew.createdAt || new Date().toISOString() },
-      ];
-    }
+    if (!Array.isArray(members[crew.id])) members[crew.id] = [];
     members[crew.id] = members[crew.id].map((member) => ({
       ...member,
       ...(member.userId === userId
@@ -1143,7 +1259,13 @@ function ensureMockCrews() {
   });
 
   saveMockCrewMembers(members);
-  return { crews, members };
+  const joinedCrews = crews
+    .map((crew) => {
+      const membership = members[crew.id].find((member) => member.userId === userId);
+      return membership ? { ...crew, role: membership.role, joinedAt: membership.joinedAt } : null;
+    })
+    .filter(Boolean);
+  return { crews, joinedCrews, members };
 }
 
 function ensureMockPosts() {
@@ -1313,24 +1435,26 @@ async function getCurrentCommunityIdentity() {
 async function queryCrewsForUser(client, userId) {
   const { data, error } = await client
     .from('crew_members')
-    .select('crew_id, role, display_name, joined_at, crews(id, name, description, challenge_start_date, created_by, created_at)')
+    .select('crew_id, role, display_name, joined_at, crews!inner(id, name, description, challenge_start_date, created_by, created_at, deleted_at)')
     .eq('user_id', userId)
+    .is('crews.deleted_at', null)
     .order('joined_at', { ascending: false });
 
   if (error) throw error;
-  return (data || []).map(mapCrew).filter(Boolean);
+  return assertSingleCrew((data || []).map(mapCrew).filter(Boolean));
 }
 
 export async function getCrews() {
-  if (isLocalDemoMode()) return ensureMockCrews().crews;
+  if (isLocalDemoMode()) return assertSingleCrew(ensureMockCrews().joinedCrews);
   const client = requireSupabase();
   const user = await requireUser();
   return queryCrewsForUser(client, user.id);
 }
 
-export async function createCrew({ name, description = '', challengeStartDate = null }) {
+export async function createCrew({ name, description = '', challengeStartDate = null, requestId = null }) {
   if (isLocalDemoMode()) {
-    const { crews, members } = ensureMockCrews();
+    const { crews, joinedCrews, members } = ensureMockCrews();
+    if (joinedCrews.length) throw new Error('Leave or delete your current crew before creating another.');
     const now = new Date().toISOString();
     const crew = {
       id: randomId('preview_crew'),
@@ -1341,6 +1465,7 @@ export async function createCrew({ name, description = '', challengeStartDate = 
       createdAt: now,
       role: 'owner',
       joinedAt: now,
+      createdNew: true,
     };
     crews.unshift(crew);
     members[crew.id] = [{
@@ -1357,33 +1482,29 @@ export async function createCrew({ name, description = '', challengeStartDate = 
   }
 
   const client = requireSupabase();
-  const user = await requireUser();
-  const identity = await getCurrentCommunityIdentity();
-  const { data: crew, error: crewError } = await client
-    .from('crews')
-    .insert({
-      name,
-      description,
-      challenge_start_date: challengeStartDate || null,
-      created_by: user.id,
-    })
-    .select('id, name, description, challenge_start_date, created_by, created_at')
-    .single();
-
-  if (crewError) throw crewError;
-
-  const { error: memberError } = await client
-    .from('crew_members')
-    .insert({
-      crew_id: crew.id,
-      user_id: user.id,
-      display_name: identity.name,
-      avatar_url: identity.avatarUrl,
-      role: 'owner',
-    });
-
-  if (memberError) throw memberError;
-  return mapCrew({ ...crew, role: 'owner' });
+  await requireUser();
+  const operationId = requestId || globalThis.crypto?.randomUUID?.();
+  if (!operationId) throw new Error('This browser could not prepare a safe crew-creation request. Try again.');
+  const { data, error } = await client.rpc('create_crew', {
+    request_id: operationId,
+    crew_name: name,
+    crew_description: description,
+    crew_challenge_start_date: challengeStartDate || null,
+  });
+  if (error) throw error;
+  const crew = data?.[0];
+  if (!crew) throw new Error('The crew was not returned after creation. Refresh to verify its status.');
+  return mapCrew({
+    id: crew.crew_id,
+    name: crew.name,
+    description: crew.description,
+    challenge_start_date: crew.challenge_start_date,
+    created_by: crew.created_by,
+    created_at: crew.created_at,
+    joined_at: crew.joined_at,
+    role: crew.role,
+    created_new: crew.created_new,
+  });
 }
 
 export async function getCrewMembers(crewId) {
@@ -1452,12 +1573,15 @@ export async function getOrCreateCrewInvite(crewId) {
 
 export async function joinCrewByInvite(token) {
   if (isLocalDemoMode()) {
-    const { crews, members } = ensureMockCrews();
+    const { crews, joinedCrews, members } = ensureMockCrews();
     const invites = readJson(MOCK_INVITES_KEY, {});
     const invite = Object.values(invites).find((item) => item.token === token) ||
       (String(token).startsWith('preview-') ? { crew_id: String(token).replace('preview-', '') } : null);
-    const crew = crews.find((item) => item.id === invite?.crew_id);
+    const crew = crews.find((item) => item.id === invite?.crew_id && !item.deletedAt);
     if (!crew) return null;
+    if (joinedCrews.length && joinedCrews[0].id !== crew.id) {
+      throw new Error('Leave or delete your current crew before joining another.');
+    }
 
     const crewMembers = members[crew.id] || [];
     const userId = getMockUserId();
@@ -1487,6 +1611,157 @@ export async function joinCrewByInvite(token) {
     challenge_start_date: crew.challenge_start_date,
     role: 'member',
   }) : null;
+}
+
+export async function getCrewInvitePreview(token) {
+  if (isLocalDemoMode()) {
+    const { crews, joinedCrews } = ensureMockCrews();
+    const invites = readJson(MOCK_INVITES_KEY, {});
+    const invite = Object.values(invites).find((item) => item.token === token) ||
+      (String(token).startsWith('preview-') ? { crew_id: String(token).replace('preview-', '') } : null);
+    const crew = crews.find((item) => item.id === invite?.crew_id && !item.deletedAt);
+    if (!crew) throw new Error('This invite is invalid or expired.');
+    return {
+      crewId: crew.id,
+      name: crew.name,
+      inviterName: 'A crew admin',
+      hasOtherCrew: Boolean(joinedCrews.length && joinedCrews[0].id !== crew.id),
+      alreadyMember: joinedCrews[0]?.id === crew.id,
+    };
+  }
+
+  const client = requireSupabase();
+  await requireUser();
+  const { data, error } = await client.rpc('preview_crew_invite', { invite_token: token });
+  if (error) throw error;
+  const preview = data?.[0];
+  if (!preview) throw new Error('This invite is invalid or expired.');
+  return {
+    crewId: preview.crew_id,
+    name: preview.name,
+    inviterName: preview.inviter_name || 'A crew admin',
+    hasOtherCrew: Boolean(preview.has_other_crew),
+    alreadyMember: Boolean(preview.already_member),
+  };
+}
+
+export async function deleteCrew(crewId, requestId) {
+  if (isLocalDemoMode()) {
+    const { crews, members } = ensureMockCrews();
+    const membership = (members[crewId] || []).find((item) => item.userId === getMockUserId());
+    if (!['owner', 'admin'].includes(membership?.role)) throw new Error('Only a crew owner or admin can delete this crew.');
+    const now = new Date().toISOString();
+    const nextCrews = crews.map((crew) => crew.id === crewId
+      ? { ...crew, deletedAt: crew.deletedAt || now, deletedBy: getMockUserId() }
+      : crew);
+    delete members[crewId];
+    const invites = readJson(MOCK_INVITES_KEY, {});
+    Object.values(invites).forEach((invite) => {
+      if (invite.crew_id === crewId) invite.revoked_at = invite.revoked_at || now;
+    });
+    writeJson(MOCK_CREWS_KEY, nextCrews);
+    writeJson(MOCK_INVITES_KEY, invites);
+    saveMockCrewMembers(members);
+    return { crewId, action: 'delete', completed: true };
+  }
+
+  const client = requireSupabase();
+  await requireUser();
+  const { data, error } = await client.rpc('delete_crew', {
+    target_crew_id: crewId,
+    request_id: requestId,
+  });
+  if (error) throw error;
+  return data?.[0] || { crew_id: crewId, action: 'delete', completed: true };
+}
+
+export async function leaveCrew(crewId, requestId) {
+  if (isLocalDemoMode()) {
+    const { members } = ensureMockCrews();
+    const membership = (members[crewId] || []).find((item) => item.userId === getMockUserId());
+    if (!membership) return { crewId, action: 'leave', completed: true };
+    if (['owner', 'admin'].includes(membership.role)) throw new Error('Crew owners and admins must delete the crew instead of leaving it.');
+    members[crewId] = members[crewId].filter((item) => item.userId !== getMockUserId());
+    saveMockCrewMembers(members);
+    return { crewId, action: 'leave', completed: true };
+  }
+
+  const client = requireSupabase();
+  await requireUser();
+  const { data, error } = await client.rpc('leave_crew', {
+    target_crew_id: crewId,
+    request_id: requestId,
+  });
+  if (error) throw error;
+  return data?.[0] || { crew_id: crewId, action: 'leave', completed: true };
+}
+
+const mapCrewTrainingProgress = (progress) => progress ? ({
+  crewId: progress.crew_id || progress.crewId,
+  version: Number(progress.content_version || progress.version || CREW_TRAINING_VERSION),
+  status: progress.status || 'not_started',
+  currentStep: Number(progress.current_step || progress.currentStep || 0),
+  startedAt: progress.started_at || progress.startedAt || null,
+  completedAt: progress.completed_at || progress.completedAt || null,
+  updatedAt: progress.updated_at || progress.updatedAt || null,
+}) : null;
+
+export async function getCrewTrainingProgress(crewId, version = CREW_TRAINING_VERSION) {
+  if (isLocalDemoMode()) {
+    const rows = readJson(MOCK_CREW_TRAINING_KEY, {});
+    return mapCrewTrainingProgress(rows[`${crewId}:${version}`] || {
+      crew_id: crewId,
+      content_version: version,
+      status: 'not_started',
+      current_step: 0,
+    });
+  }
+
+  const client = requireSupabase();
+  await requireUser();
+  const { data, error } = await client.rpc('get_crew_training_progress', {
+    target_crew_id: crewId,
+    target_version: version,
+  });
+  if (error) throw error;
+  return mapCrewTrainingProgress(data?.[0] || null);
+}
+
+export async function saveCrewTrainingProgress({
+  crewId,
+  version = CREW_TRAINING_VERSION,
+  status,
+  currentStep = 0,
+}) {
+  if (isLocalDemoMode()) {
+    const rows = readJson(MOCK_CREW_TRAINING_KEY, {});
+    const key = `${crewId}:${version}`;
+    const existing = rows[key] || {};
+    const now = new Date().toISOString();
+    rows[key] = {
+      ...existing,
+      crew_id: crewId,
+      content_version: version,
+      status,
+      current_step: currentStep,
+      started_at: existing.started_at || (status === 'in_progress' ? now : null),
+      completed_at: status === 'completed' ? now : null,
+      updated_at: now,
+    };
+    writeJson(MOCK_CREW_TRAINING_KEY, rows);
+    return mapCrewTrainingProgress(rows[key]);
+  }
+
+  const client = requireSupabase();
+  await requireUser();
+  const { data, error } = await client.rpc('save_crew_training_progress', {
+    target_crew_id: crewId,
+    target_version: version,
+    target_status: status,
+    target_step: currentStep,
+  });
+  if (error) throw error;
+  return mapCrewTrainingProgress(data?.[0] || null);
 }
 
 const COMMUNITY_POST_SELECT = 'id, author_id, display_name, avatar_url, crew_id, scope, body, image_path, image_alt, post_type, challenge_day, status, completed_count, created_at';
@@ -1937,38 +2212,14 @@ export async function deletePostComment(commentId) {
   return true;
 }
 
-async function createSignedPhoto(photo) {
-  if (!photo?.storage_path) return null;
-  const client = requireSupabase();
-  const { data } = await client.storage
-    .from('journal-progress')
-    .createSignedUrl(photo.storage_path, 3600);
-
-  return {
-    id: photo.id,
-    entryId: photo.journal_entry_id,
-    storagePath: photo.storage_path,
-    caption: photo.caption || '',
-    createdAt: photo.created_at,
-    url: data?.signedUrl || '',
-  };
-}
-
-function sortJournalEntries(entries) {
-  return [...entries].sort((left, right) => new Date(right.date || right.entry_date) - new Date(left.date || left.entry_date));
-}
-
-function fileToDataUrl(file) {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(String(reader.result || ''));
-    reader.onerror = () => reject(reader.error || new Error('Unable to read preview photo.'));
-    reader.readAsDataURL(file);
-  });
-}
-
 export async function getJournalEntries() {
-  if (isLocalDemoMode()) return sortJournalEntries(readJson(MOCK_JOURNAL_KEY, []));
+  if (isLocalDemoMode()) {
+    const entries = sortJournalEntries(
+      readJson(MOCK_JOURNAL_KEY, []).map(normalizeJournalEntry),
+    );
+    writeJson(MOCK_JOURNAL_KEY, entries);
+    return entries;
+  }
 
   const client = requireSupabase();
   await requireUser();
@@ -1979,26 +2230,12 @@ export async function getJournalEntries() {
     .limit(30);
 
   if (error) throw error;
-  if (!entries?.length) return [];
-
-  const entryIds = entries.map((entry) => entry.id);
-  const { data: photos, error: photosError } = await client
-    .from('journal_photos')
-    .select('id, journal_entry_id, storage_path, caption, created_at')
-    .in('journal_entry_id', entryIds)
-    .order('created_at', { ascending: false });
-
-  if (photosError) throw photosError;
-  const signedPhotos = (await Promise.all((photos || []).map(createSignedPhoto))).filter(Boolean);
-  return entries.map((entry) => mapJournalEntry(
-    entry,
-    signedPhotos.filter((photo) => photo.entryId === entry.id),
-  ));
+  return (entries || []).map(normalizeJournalEntry);
 }
 
 export async function saveJournalEntry(entry) {
   if (isLocalDemoMode()) {
-    const entries = readJson(MOCK_JOURNAL_KEY, []);
+    const entries = readJson(MOCK_JOURNAL_KEY, []).map(normalizeJournalEntry);
     const existingIndex = entries.findIndex((item) => item.date === entry.date);
     const existing = existingIndex >= 0 ? entries[existingIndex] : {};
     const now = new Date().toISOString();
@@ -2011,7 +2248,6 @@ export async function saveJournalEntry(entry) {
       prayer: entry.prayer || '',
       mood: entry.mood || '',
       energy: entry.energy || '',
-      photos: existing.photos || [],
       createdAt: existing.createdAt || now,
       updatedAt: now,
     };
@@ -2039,51 +2275,5 @@ export async function saveJournalEntry(entry) {
     .single();
 
   if (error) throw error;
-  return mapJournalEntry(data, []);
-}
-
-export async function uploadJournalPhoto({ entryId, file, caption = '' }) {
-  if (isLocalDemoMode()) {
-    const entries = readJson(MOCK_JOURNAL_KEY, []);
-    const entry = entries.find((item) => item.id === entryId);
-    if (!entry) throw new Error('Save the preview journal entry before adding a photo.');
-    const now = new Date().toISOString();
-    const photo = {
-      id: randomId('preview_photo'),
-      entryId,
-      storagePath: `preview/${entryId}/${file.name || 'progress-photo'}`,
-      caption,
-      createdAt: now,
-      url: await fileToDataUrl(file),
-    };
-    entry.photos = [photo, ...(entry.photos || [])];
-    entry.updatedAt = now;
-    writeJson(MOCK_JOURNAL_KEY, sortJournalEntries(entries));
-    return photo;
-  }
-
-  const client = requireSupabase();
-  const user = await requireUser();
-  const extension = file.name?.split('.').pop()?.toLowerCase() || 'jpg';
-  const safeName = `${Date.now()}-${globalThis.crypto?.randomUUID?.() || Math.random().toString(16).slice(2)}.${extension}`;
-  const storagePath = `${user.id}/${entryId}/${safeName}`;
-  const { error: uploadError } = await client.storage
-    .from('journal-progress')
-    .upload(storagePath, file, { cacheControl: '3600', upsert: false });
-
-  if (uploadError) throw uploadError;
-
-  const { data, error } = await client
-    .from('journal_photos')
-    .insert({
-      user_id: user.id,
-      journal_entry_id: entryId,
-      storage_path: storagePath,
-      caption,
-    })
-    .select('id, journal_entry_id, storage_path, caption, created_at')
-    .single();
-
-  if (error) throw error;
-  return createSignedPhoto(data);
+  return normalizeJournalEntry(data);
 }

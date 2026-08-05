@@ -21,6 +21,20 @@
         <p class="lead" id="dashboardLead">Track your standards, post your check-in, and stay honest.</p>
       </section>
 
+      <section class="progress dashboard-section dashboard-tracking reveal" aria-labelledby="trackingTitle">
+        <div class="progress-intro">
+          <div class="section-heading">
+            <p class="eyebrow">Progress</p>
+            <h2 id="trackingTitle">How today is tracking</h2>
+          </div>
+          <label>Challenge start date<input id="startDate" type="date" /></label>
+        </div>
+        <div class="rings">
+          <div class="ring" id="challengeRing"><div class="ring-inner"><strong id="challengePercent">1%</strong><span>Challenge</span><small id="challengeDay">Day 1 of 77</small></div></div>
+          <div class="ring" id="todayRing"><div class="ring-inner"><strong id="todayPercent">0%</strong><span>Today</span><small id="todayCount">0 of 7 done</small></div></div>
+        </div>
+      </section>
+
       <section class="challenge-complete-panel reveal" id="challengeCompletePanel" hidden>
         <p class="eyebrow">77 Days Complete</p>
         <h2>Your next challenge is ready below.</h2>
@@ -47,183 +61,12 @@
           <span id="countdownProgressLabel">0% of the day used</span>
           <span id="countdownActionsLabel">0 of 7 actions complete</span>
         </div>
-        <button class="action-button countdown-action" type="button" id="countdownCheckInButton">Go to check-in</button>
+        <button class="action-button countdown-action" type="button" id="countdownCheckInButton" aria-controls="check-in">Go to check-in</button>
       </section>
 
-      <section class="game-summary-card reveal" id="gameSummaryCard" aria-labelledby="gameSummaryEyebrow gameSummaryTitle">
-        <div class="game-summary-hero">
-          <div
-            class="game-level-emblem"
-            id="gameLevelEmblem"
-            data-prestige="default"
-            role="img"
-            aria-label="Level 1 — No top-three leaderboard placement"
-          >
-            <span class="game-prestige-orbit" aria-hidden="true"></span>
-            <span class="game-level-crown app-icon icon-crown" id="gameLevelCrown" aria-hidden="true" hidden></span>
-            <strong id="gameLevelNumber">1</strong>
-            <small>Level</small>
-          </div>
-          <div class="game-points-block">
-            <p class="eyebrow" id="gameSummaryEyebrow">Your Progress</p>
-            <h2 class="game-points-total" id="gameSummaryTitle">
-              <span id="gamePointsTotal">0</span>
-              <small>points</small>
-            </h2>
-            <p class="game-level-label" id="gameLevelLabel">Level 1</p>
-            <p class="sr-only" id="gamePrestigeStatus" role="status" aria-live="polite">No top-three leaderboard placement</p>
-          </div>
-        </div>
-
-        <div class="game-level-progress-panel">
-          <div class="game-level-progress-heading">
-            <span id="gameLevelProgressLabel">Level 1 progress</span>
-            <strong id="gamePointsToNext">500 points to Level 2</strong>
-          </div>
-          <div
-            class="game-level-progress-track"
-            id="gameLevelProgress"
-            role="progressbar"
-            aria-labelledby="gameLevelProgressLabel"
-            aria-valuemin="0"
-            aria-valuemax="500"
-            aria-valuenow="0"
-            aria-valuetext="0 of 500 points earned toward Level 2"
-          >
-            <span id="gameLevelProgressFill"></span>
-          </div>
-          <p class="game-momentum-message" role="status" aria-live="polite">
-            <span class="app-icon icon-spark" aria-hidden="true"></span>
-            <span id="gameMomentumMessage">Your first honest check-in starts the climb.</span>
-          </p>
-        </div>
-
-        <div class="game-streak-grid" aria-label="Current and best streaks">
-          <article class="game-streak-card app-streak-card">
-            <span class="app-icon icon-eye" aria-hidden="true"></span>
-            <div>
-              <p>App streak</p>
-              <div class="game-streak-value"><strong id="appStreakCount">0</strong><span id="appStreakUnit">days</span></div>
-              <small id="appStreakBest">Best 0 days</small>
-            </div>
-          </article>
-          <article class="game-streak-card full-streak-card">
-            <span class="app-icon icon-flame" aria-hidden="true"></span>
-            <div>
-              <p>Full-standard streak</p>
-              <div class="game-streak-value"><strong id="fullDayStreakCount">0</strong><span id="fullDayStreakUnit">days</span></div>
-              <small id="fullDayStreakBest">Best 0 days</small>
-            </div>
-          </article>
-        </div>
-
-        <div class="progression-badges">
-          <div class="progression-badges-heading">
-            <div>
-              <p class="eyebrow">Recent Badges</p>
-              <h3>Proof of the work</h3>
-            </div>
-            <span id="recentBadgeSummary">No badges yet</span>
-          </div>
-          <div class="progression-badge-grid" id="badgeShelf" aria-label="Recent badges"></div>
-        </div>
-      </section>
-
-      <section class="challenge-vault-card reveal" id="challengeVault" aria-labelledby="challengeVaultTitle">
-        <div class="challenge-vault-heading">
-          <div>
-            <p class="eyebrow">Challenge Vault</p>
-            <h2 id="challengeVaultTitle">Points open the next path.</h2>
-            <p>Keep stacking the standard. Every point moves a new challenge closer.</p>
-          </div>
-          <span id="challengeVaultSummary">Loading challenges</span>
-        </div>
-
-        <div class="challenge-next-unlock" id="challengeNextUnlock">
-          <div class="challenge-next-copy">
-            <span>Next unlock</span>
-            <strong id="challengeNextTitle">A new challenge is taking shape.</strong>
-            <small id="challengeNextPoints">Your point progress will load here.</small>
-          </div>
-          <div
-            class="challenge-unlock-progress"
-            id="challengeUnlockProgress"
-            role="progressbar"
-            aria-label="Progress toward the next challenge"
-            aria-valuemin="0"
-            aria-valuemax="1"
-            aria-valuenow="0"
-          >
-            <span id="challengeUnlockProgressFill"></span>
-          </div>
-        </div>
-
-        <div class="challenge-vault-disclosure">
-          <button
-            class="challenge-vault-toggle"
-            id="challengeVaultToggle"
-            type="button"
-            aria-expanded="false"
-            aria-controls="challengeVaultDetails"
-          >
-            <span id="challengeVaultToggleLabel">View challenge paths</span>
-            <span class="challenge-vault-toggle-icon" aria-hidden="true"></span>
-          </button>
-          <div
-            class="challenge-vault-details"
-            id="challengeVaultDetails"
-            role="region"
-            aria-label="Challenge paths"
-            aria-hidden="true"
-            inert
-          >
-            <div class="challenge-vault-details-inner">
-              <p class="sr-only" id="challengeCatalogFeedback" role="status" aria-live="polite" aria-atomic="true"></p>
-              <div class="challenge-catalog" id="challengeCatalog" aria-label="Point-unlock challenges" aria-busy="true">
-                <article class="challenge-catalog-empty">Challenge progression is loading.</article>
-              </div>
-            </div>
-          </div>
-        </div>
-      </section>
-
-      <section class="dashboard-brand-panel reveal" aria-label="77 Dominion Challenge mark">
-        <img
-          src="/images/dominion-77-mark.jpg"
-          data-theme-src-dark="/images/dominion-77-mark.jpg"
-          data-theme-src-light="https://pub-53499389187a4de4984349b4f9b36b74.r2.dev/photo_1783730958.105418.png"
-          alt="77 Dominion Challenge"
-          decoding="async"
-        />
-      </section>
-
-      <section class="actions-handoff dashboard-section reveal">
-        <div>
-          <p class="eyebrow">Today's Actions</p>
-          <h2>Open the full playbook</h2>
-          <p>The dashboard keeps score. The action page gives you the details, links, and recommendations for each standard.</p>
-        </div>
-        <a class="action-button with-icon actions-handoff-link" href="./today-actions.html">
-          <span class="app-icon icon-check action-button-icon" aria-hidden="true"></span>
-          <span>Go to today’s actions</span>
-          <span aria-hidden="true">↗</span>
-        </a>
-      </section>
-
-      <section class="progress dashboard-section reveal" id="check-in">
-        <div class="progress-intro">
-          <div class="section-heading">
-            <p class="eyebrow">Progress</p>
-            <h2>How today is tracking</h2>
-          </div>
-          <label>Challenge start date<input id="startDate" type="date" /></label>
-        </div>
-        <div class="rings">
-          <div class="ring" id="challengeRing"><div class="ring-inner"><strong id="challengePercent">1%</strong><span>Challenge</span><small id="challengeDay">Day 1 of 77</small></div></div>
-          <div class="ring" id="todayRing"><div class="ring-inner"><strong id="todayPercent">0%</strong><span>Today</span><small id="todayCount">0 of 7 done</small></div></div>
-        </div>
+      <section class="progress dashboard-section dashboard-scorecard reveal" id="check-in" tabindex="-1" aria-labelledby="todaysScorecardTitle">
         <div class="progress-standard">
-          <div class="section-heading"><p class="eyebrow">Today's Scorecard</p><h3>Mind, Spirit, Body</h3></div>
+          <div class="section-heading"><p class="eyebrow">Today's Scorecard</p><h2 id="todaysScorecardTitle">Mind, Spirit, Body</h2></div>
           <section class="scorecard-training-panel" aria-labelledby="scorecardTrainingTitle">
             <div class="scorecard-training-heading">
               <span class="scorecard-training-icon app-icon icon-dumbbell" aria-hidden="true"></span>
@@ -311,6 +154,166 @@
         </div>
       </section>
 
+      <section class="game-summary-card reveal" id="gameSummaryCard" aria-labelledby="gameSummaryEyebrow gameSummaryTitle">
+        <div class="game-summary-hero">
+          <div
+            class="game-level-emblem"
+            id="gameLevelEmblem"
+            data-prestige="default"
+            role="img"
+            aria-label="Level 1 — No top-three leaderboard placement"
+          >
+            <span class="game-prestige-orbit" aria-hidden="true"></span>
+            <span class="game-level-crown app-icon icon-crown" id="gameLevelCrown" aria-hidden="true" hidden></span>
+            <strong id="gameLevelNumber">1</strong>
+            <small>Level</small>
+          </div>
+          <div class="game-points-block">
+            <p class="eyebrow" id="gameSummaryEyebrow">Your Progress</p>
+            <h2 class="game-points-total" id="gameSummaryTitle">
+              <span id="gamePointsTotal">0</span>
+              <small>points</small>
+            </h2>
+            <p class="game-level-label" id="gameLevelLabel">Level 1</p>
+            <p class="sr-only" id="gamePrestigeStatus" role="status" aria-live="polite">No top-three leaderboard placement</p>
+          </div>
+        </div>
+
+        <div class="game-level-progress-panel">
+          <div class="game-level-progress-heading">
+            <span id="gameLevelProgressLabel">Level 1 progress</span>
+            <strong id="gamePointsToNext">500 points to Level 2</strong>
+          </div>
+          <div
+            class="game-level-progress-track"
+            id="gameLevelProgress"
+            role="progressbar"
+            aria-labelledby="gameLevelProgressLabel"
+            aria-valuemin="0"
+            aria-valuemax="500"
+            aria-valuenow="0"
+            aria-valuetext="0 of 500 points earned toward Level 2"
+          >
+            <span id="gameLevelProgressFill"></span>
+          </div>
+          <p class="game-momentum-message" role="status" aria-live="polite">
+            <span class="app-icon icon-spark" aria-hidden="true"></span>
+            <span id="gameMomentumMessage">Your first honest check-in starts the climb.</span>
+          </p>
+        </div>
+
+        <div class="game-streak-grid" aria-label="Current and best streaks">
+          <article class="game-streak-card app-streak-card">
+            <span class="app-icon icon-eye" aria-hidden="true"></span>
+            <div>
+              <p>App streak</p>
+              <div class="game-streak-value"><strong id="appStreakCount">0</strong><span id="appStreakUnit">days</span></div>
+              <small id="appStreakBest">Best 0 days</small>
+            </div>
+          </article>
+          <article class="game-streak-card full-streak-card">
+            <span class="app-icon icon-flame" aria-hidden="true"></span>
+            <div>
+              <p>Full-standard streak</p>
+              <div class="game-streak-value"><strong id="fullDayStreakCount">0</strong><span id="fullDayStreakUnit">days</span></div>
+              <small id="fullDayStreakBest">Best 0 days</small>
+            </div>
+          </article>
+        </div>
+
+        <div class="progression-badges">
+          <div class="progression-badges-heading">
+            <div>
+              <p class="eyebrow">Latest Badge</p>
+              <h3>Proof of the work</h3>
+            </div>
+            <span id="recentBadgeSummary">No badges yet</span>
+          </div>
+          <div class="progression-badge-grid" id="badgeShelf" aria-label="Latest earned badge"></div>
+        </div>
+      </section>
+
+      <section class="challenge-vault-card reveal" id="challengeVault" aria-labelledby="challengeVaultTitle">
+        <div class="challenge-vault-heading">
+          <div>
+            <p class="eyebrow">Challenge Vault</p>
+            <h2 id="challengeVaultTitle">Points open the next path.</h2>
+            <p>Keep stacking the standard. Every point moves a new challenge closer.</p>
+          </div>
+          <span id="challengeVaultSummary">Loading challenges</span>
+        </div>
+
+        <div class="challenge-next-unlock" id="challengeNextUnlock">
+          <div class="challenge-next-copy">
+            <span>Next unlock</span>
+            <strong id="challengeNextTitle">A new challenge is taking shape.</strong>
+            <small id="challengeNextPoints">Your point progress will load here.</small>
+          </div>
+          <div
+            class="challenge-unlock-progress"
+            id="challengeUnlockProgress"
+            role="progressbar"
+            aria-label="Progress toward the next challenge"
+            aria-valuemin="0"
+            aria-valuemax="1"
+            aria-valuenow="0"
+          >
+            <span id="challengeUnlockProgressFill"></span>
+          </div>
+        </div>
+
+        <div class="challenge-vault-disclosure">
+          <button
+            class="challenge-vault-toggle"
+            id="challengeVaultToggle"
+            type="button"
+            aria-expanded="false"
+            aria-controls="challengeVaultDetails"
+          >
+            <span id="challengeVaultToggleLabel">View challenge paths</span>
+            <span class="challenge-vault-toggle-icon" aria-hidden="true"></span>
+          </button>
+          <div
+            class="challenge-vault-details"
+            id="challengeVaultDetails"
+            role="region"
+            aria-label="Challenge paths"
+            aria-hidden="true"
+            inert
+          >
+            <div class="challenge-vault-details-inner">
+              <p class="sr-only" id="challengeCatalogFeedback" role="status" aria-live="polite" aria-atomic="true"></p>
+              <div class="challenge-catalog" id="challengeCatalog" aria-label="Point-unlock challenges" aria-busy="true">
+                <article class="challenge-catalog-empty">Challenge progression is loading.</article>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="dashboard-brand-panel reveal" aria-label="77 Dominion Challenge mark">
+        <img
+          src="/images/dominion-77-mark.jpg"
+          data-theme-src-dark="/images/dominion-77-mark.jpg"
+          data-theme-src-light="https://pub-53499389187a4de4984349b4f9b36b74.r2.dev/photo_1783730958.105418.png"
+          alt="77 Dominion Challenge"
+          decoding="async"
+        />
+      </section>
+
+      <section class="actions-handoff dashboard-section reveal">
+        <div>
+          <p class="eyebrow">Today's Actions</p>
+          <h2>Open the full playbook</h2>
+          <p>The dashboard keeps score. The action page gives you the details, links, and recommendations for each standard.</p>
+        </div>
+        <a class="action-button with-icon actions-handoff-link" href="./today-actions.html">
+          <span class="app-icon icon-check action-button-icon" aria-hidden="true"></span>
+          <span>Go to today’s actions</span>
+          <span aria-hidden="true">↗</span>
+        </a>
+      </section>
+
       <section class="community dashboard-section reveal">
         <div class="section-heading"><p class="eyebrow">Accountability</p><h2 id="completedToday">3 people completed today</h2></div>
         <div id="feed"></div>
@@ -324,24 +327,27 @@
     </main>
     <div class="confetti-layer" id="confettiLayer" aria-hidden="true"></div>
     <div class="reward-backdrop" id="rewardBackdrop" aria-hidden="true" hidden></div>
-    <div class="reward-toast" id="rewardToast" role="status" aria-live="polite" hidden>
+    <div class="reward-toast" id="rewardToast" role="dialog" aria-modal="true" aria-labelledby="rewardTitle" aria-describedby="rewardCopy" hidden>
+      <button class="celebration-close" type="button" data-dismiss-celebration aria-label="Dismiss day complete celebration"><span aria-hidden="true">×</span></button>
       <p class="eyebrow">Day Complete</p>
       <h2 id="rewardTitle">Dominion earned.</h2>
       <p id="rewardCopy">Points and badges are being tallied.</p>
       <div class="badge-shelf" id="rewardBadges"></div>
     </div>
-    <div class="badge-celebration" id="badgeCelebration" role="status" aria-live="polite" hidden>
+    <div class="badge-celebration" id="badgeCelebration" role="dialog" aria-modal="true" aria-labelledby="badgeCelebrationTitle" aria-describedby="badgeCelebrationCopy" hidden>
       <div class="badge-rays" aria-hidden="true"></div>
       <article class="badge-medal">
+        <button class="celebration-close" type="button" data-dismiss-celebration aria-label="Dismiss badge celebration"><span aria-hidden="true">×</span></button>
         <span class="badge-medal-icon app-icon icon-shield" id="badgeCelebrationIcon" aria-hidden="true"></span>
-        <p class="eyebrow">Badge Earned</p>
+        <p class="eyebrow" id="badgeCelebrationEyebrow">Bronze Badge Earned</p>
         <h2 id="badgeCelebrationTitle">Faithful Start</h2>
         <p id="badgeCelebrationCopy">A new badge has been added to your shelf.</p>
       </article>
     </div>
-    <div class="badge-celebration challenge-unlock-celebration" id="challengeUnlockCelebration" role="status" aria-live="polite" aria-atomic="true" hidden>
+    <div class="badge-celebration challenge-unlock-celebration" id="challengeUnlockCelebration" role="dialog" aria-modal="true" aria-labelledby="challengeUnlockTitle" aria-describedby="challengeUnlockCopy" hidden>
       <div class="badge-rays" aria-hidden="true"></div>
       <article class="badge-medal">
+        <button class="celebration-close" type="button" data-dismiss-celebration aria-label="Dismiss challenge unlock celebration"><span aria-hidden="true">×</span></button>
         <span class="badge-medal-icon app-icon icon-spark" id="challengeUnlockIcon" aria-hidden="true"></span>
         <p class="eyebrow">Challenge Unlocked</p>
         <h2 id="challengeUnlockTitle">A new path is open.</h2>

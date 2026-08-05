@@ -36,6 +36,10 @@ npm run dev
 
 The frontend uses Supabase Auth for login/register and writes directly to Supabase Postgres with Row Level Security policies.
 
+### Storage
+
+Running `supabase/schema.sql` creates the supported `profile-photos` and Community image infrastructure. Profile-photo originals are never uploaded: the browser center-crops and compresses them to square WebP/JPEG thumbnails no larger than 256×256 pixels and 150 KB. Private journals are text-only and require neither a `journal_photos` table nor a `journal-progress` bucket.
+
 ### Workout difficulty scoring
 
 Workout completions receive the standard 10 action points plus a configurable difficulty bonus. The default bonuses are Easy `2`, Medium `5`, Hard `10`, and Extreme `15` points.
