@@ -78,6 +78,12 @@ import {
   normalizeCrewTrainingProgress,
 } from './crew-training.mjs';
 import {
+  MEMBER_PROGRESS_BADGE_PAGE_SIZE,
+  MEMBER_PROGRESS_UNAVAILABLE,
+  mockLifetimeLevel,
+  normalizeMemberProgressProfile,
+} from './member-progress-profile.mjs';
+import {
   applySiteTrainingTransition,
   createSiteTrainingPageProgress,
   newSiteTrainingRequestId,
@@ -2738,44 +2744,166 @@ function clearMockCrewTraining(crewId, userId = getMockUserId()) {
   writeJson(MOCK_CREW_TRAINING_KEY, next);
 }
 
-function getMockLeaderboard({ crewId = null } = {}) {
-  const user = getMockUser();
-  const stats = readMockUserValue('dominion:gameStats', {});
-  const badges = readMockUserValue('dominion:badges', []);
-  const rows = [
-    {
-      userId: getMockUserId(),
-      name: user.name || 'You',
-      avatarUrl: user.avatarUrl || '',
-      points: stats.totalPoints || stats.challengePoints || 777,
-      currentAppStreak: stats.currentAppStreak || 3,
-      latestChallengeDay: 12,
-      badges,
-    },
-    {
-      userId: 'preview_member_josh',
-      name: 'Josh',
-      avatarUrl: createMockAvatar('Josh', '#45634d'),
-      points: 690,
-      currentAppStreak: 5,
-      latestChallengeDay: 12,
-      badges: [{ key: 'iron_standard', name: 'Iron Standard', tier: 'silver', icon: 'dumbbell' }],
-    },
-    {
-      userId: 'preview_member_sarah',
-      name: 'Sarah',
-      avatarUrl: createMockAvatar('Sarah', '#7a4652'),
-      points: 620,
-      currentAppStreak: 4,
-      latestChallengeDay: 12,
-      badges: [{ key: 'faithful_start', name: 'Faithful Start', tier: 'bronze', icon: 'shield' }],
-    },
-  ];
+const MOCK_MEMBER_BADGES = Object.freeze([
+  ['day_77_finisher', 'Day 77 Finisher', 'Finished the final day of the Dominion challenge.', 'gold', 'crown'],
+  ['full_streak_70', '70-Day Full Streak', 'Held the full standard for seventy days.', 'gold', 'flame'],
+  ['full_streak_63', '63-Day Full Streak', 'Held the full standard for sixty-three days.', 'gold', 'flame'],
+  ['full_streak_56', '56-Day Full Streak', 'Held the full standard for fifty-six days.', 'gold', 'flame'],
+  ['full_streak_49', '49-Day Full Streak', 'Held the full standard for forty-nine days.', 'gold', 'flame'],
+  ['full_streak_42', '42-Day Full Streak', 'Held the full standard for forty-two days.', 'gold', 'flame'],
+  ['full_streak_35', '35-Day Full Streak', 'Held the full standard for thirty-five days.', 'silver', 'shield'],
+  ['full_streak_28', '28-Day Full Streak', 'Held the full standard for twenty-eight days.', 'silver', 'shield'],
+  ['full_streak_21', '21-Day Full Streak', 'Held the full standard for twenty-one days.', 'silver', 'shield'],
+  ['full_streak_14', '14-Day Full Streak', 'Held the full standard for fourteen days.', 'silver', 'shield'],
+  ['seven_sealed', 'Seven Sealed', 'Held a seven-day full-standard streak.', 'gold', 'repeat'],
+  ['iron_standard', 'Iron Standard', 'Completed all seven daily actions in one day.', 'silver', 'dumbbell'],
+  ['first_sweat', 'First Sweat', 'Completed the first training action.', 'bronze', 'spark'],
+  ['faithful_start', 'Faithful Start', 'Posted the first honest check-in.', 'bronze', 'shield'],
+].map(([key, name, description, tier, icon], index) => Object.freeze({
+  key,
+  name,
+  description,
+  tier,
+  icon,
+  earnedAt: new Date(Date.UTC(2026, 1, 14 - index, 20)).toISOString(),
+})));
 
-  if (!crewId) return [];
-  return rows
-    .sort((left, right) => right.points - left.points)
+const MOCK_MEMBER_PROGRESS_FIXTURES = Object.freeze({
+  member_e2e_micah: Object.freeze({
+    lifetimePoints: 420,
+    weeklyPoints: 41,
+    challengePoints: 402,
+    currentAppStreak: 5,
+    latestChallengeDay: 14,
+    badges: MOCK_MEMBER_BADGES,
+  }),
+  preview_member_josh: Object.freeze({
+    lifetimePoints: 98,
+    weeklyPoints: 36,
+    challengePoints: 90,
+    currentAppStreak: 5,
+    latestChallengeDay: 12,
+    badges: MOCK_MEMBER_BADGES.slice(-2),
+  }),
+  preview_member_sarah: Object.freeze({
+    lifetimePoints: 42,
+    weeklyPoints: 28,
+    challengePoints: 42,
+    currentAppStreak: 4,
+    latestChallengeDay: 12,
+    badges: [],
+  }),
+  preview_member_one: Object.freeze({
+    lifetimePoints: 13,
+    weeklyPoints: 7,
+    challengePoints: 13,
+    currentAppStreak: 1,
+    latestChallengeDay: 2,
+    badges: MOCK_MEMBER_BADGES.slice(-1),
+  }),
+});
+
+function getMockMemberProgressFixture(member) {
+  const userId = getMockUserId();
+  if (member.userId === userId) {
+    const stats = readMockUserValue('dominion:gameStats', {});
+    return {
+      lifetimePoints: Number(stats.totalPoints ?? stats.challengePoints ?? 0),
+      weeklyPoints: Number(stats.totalPoints ?? stats.challengePoints ?? 0),
+      challengePoints: Number(stats.challengePoints ?? stats.totalPoints ?? 0),
+      currentAppStreak: Number(stats.currentAppStreak || 0),
+      latestChallengeDay: 14,
+      badges: readMockUserValue('dominion:badges', []).map(mapBadge).filter(Boolean),
+    };
+  }
+  return MOCK_MEMBER_PROGRESS_FIXTURES[member.userId] || {
+    lifetimePoints: 0,
+    weeklyPoints: 0,
+    challengePoints: 0,
+    currentAppStreak: 0,
+    latestChallengeDay: 0,
+    badges: [],
+  };
+}
+
+function getMockLeaderboard({ crewId = null, window = 'week' } = {}) {
+  if (!crewId || !getMockBillingState().appAccess) return [];
+  const { crews, members } = ensureMockCrews();
+  const currentUserId = getMockUserId();
+  const crew = crews.find((item) => item.id === crewId && !item.deletedAt);
+  const crewMembers = members[crewId] || [];
+  if (!crew || !crewMembers.some((member) => member.userId === currentUserId)) return [];
+
+  return crewMembers
+    .map((member) => {
+      const fixture = getMockMemberProgressFixture(member);
+      const selectedPoints = window === 'challenge'
+        ? fixture.challengePoints
+        : fixture.weeklyPoints;
+      // Preview game-stat edits are client-local; preserve the last mock
+      // leaderboard score until a trusted check-in syncs a non-zero total.
+      const points = member.userId === currentUserId
+        ? Number(selectedPoints || fixture.lifetimePoints || 777)
+        : Number(selectedPoints || 0);
+      return {
+        userId: member.userId,
+        name: member.name || 'Member',
+        avatarUrl: member.avatarUrl || '',
+        points,
+        currentAppStreak: fixture.currentAppStreak,
+        latestChallengeDay: fixture.latestChallengeDay,
+        badges: fixture.badges.slice(0, 3),
+      };
+    })
+    .sort((left, right) => right.points - left.points || left.name.localeCompare(right.name))
     .map((row, index) => ({ ...row, rank: index + 1 }));
+}
+
+function mockBadgeIsAfterCursor(badge, cursor) {
+  if (!cursor) return true;
+  const earnedAt = String(badge.earnedAt || '');
+  if (earnedAt < cursor.earnedAt) return true;
+  return earnedAt === cursor.earnedAt && String(badge.key || '') > cursor.badgeKey;
+}
+
+function getMockCrewMemberProgressProfile({ crewId, userId, cursor, limit }) {
+  const billing = getMockBillingState();
+  const currentUserId = getMockUserId();
+  const { crews, members } = ensureMockCrews();
+  const crew = crews.find((item) => item.id === crewId && !item.deletedAt);
+  const crewMembers = members[crewId] || [];
+  const caller = crewMembers.find((member) => member.userId === currentUserId);
+  const target = crewMembers.find((member) => member.userId === userId);
+  if (!billing.authenticated || !billing.appAccess || !crew || !caller || !target) {
+    throw new Error(MEMBER_PROGRESS_UNAVAILABLE);
+  }
+
+  const fixture = getMockMemberProgressFixture(target);
+  const badges = [...fixture.badges]
+    .map(mapBadge)
+    .filter(Boolean)
+    .sort((left, right) => (
+      String(right.earnedAt || '').localeCompare(String(left.earnedAt || ''))
+      || String(left.key || '').localeCompare(String(right.key || ''))
+    ));
+  const pageCandidates = badges.filter((badge) => mockBadgeIsAfterCursor(badge, cursor));
+  const page = pageCandidates.slice(0, limit);
+  const hasMore = pageCandidates.length > limit;
+  const finalBadge = page.at(-1);
+
+  return normalizeMemberProgressProfile({
+    memberId: target.userId,
+    displayName: target.name || 'Member',
+    avatarUrl: target.avatarUrl || '',
+    role: target.role,
+    level: mockLifetimeLevel(fixture.lifetimePoints),
+    badgeCount: badges.length,
+    badges: page,
+    hasMore,
+    nextCursor: hasMore && finalBadge
+      ? { earnedAt: finalBadge.earnedAt, badgeKey: finalBadge.key }
+      : null,
+  }, { expectedMemberId: userId });
 }
 
 async function getCurrentCommunityIdentity() {
@@ -3310,7 +3438,16 @@ export async function leaveCrew({ crewId, requestId = newCrewLifecycleRequestId(
 
 export async function getCrewMembers(crewId) {
   if (isLocalDemoMode()) {
-    const { members } = ensureMockCrews();
+    const billing = getMockBillingState();
+    const currentUserId = getMockUserId();
+    const { crews, members } = ensureMockCrews();
+    const crew = crews.find((item) => item.id === crewId && !item.deletedAt);
+    const callerIsMember = Boolean(
+      (members[crewId] || []).some((member) => member.userId === currentUserId),
+    );
+    if (!billing.authenticated || !billing.appAccess || !crew || !callerIsMember) {
+      throw new Error('Crew membership is required to view these members.');
+    }
     return members[crewId] || [];
   }
 
@@ -3334,6 +3471,71 @@ export async function getCrewMembers(crewId) {
     role: member.role,
     joinedAt: member.joined_at,
   }));
+}
+
+export async function getCrewMemberProgressProfile({
+  crewId,
+  userId,
+  cursor = null,
+  limit = MEMBER_PROGRESS_BADGE_PAGE_SIZE,
+  expectedUserId = '',
+} = {}) {
+  const normalizedLimit = Math.min(
+    Math.max(Math.floor(Number(limit) || MEMBER_PROGRESS_BADGE_PAGE_SIZE), 1),
+    24,
+  );
+  const normalizedCursor = cursor
+    && Number.isFinite(Date.parse(cursor.earnedAt))
+    && typeof cursor.badgeKey === 'string'
+    && cursor.badgeKey.trim()
+    ? {
+        earnedAt: new Date(cursor.earnedAt).toISOString(),
+        badgeKey: cursor.badgeKey.trim().slice(0, 120),
+      }
+    : null;
+  if (!crewId || !userId || (cursor && !normalizedCursor)) {
+    throw new Error(MEMBER_PROGRESS_UNAVAILABLE);
+  }
+
+  if (isLocalDemoMode()) {
+    const actorId = getMockUserId();
+    if (expectedUserId && actorId !== expectedUserId) {
+      throw new Error('The signed-in account changed. Try again.');
+    }
+    const profile = getMockCrewMemberProgressProfile({
+      crewId,
+      userId,
+      cursor: normalizedCursor,
+      limit: normalizedLimit,
+    });
+    await Promise.resolve();
+    if (!getMockBillingState().authenticated || getMockUserId() !== actorId) {
+      throw new Error('The signed-in account changed. Try again.');
+    }
+    return profile;
+  }
+
+  const client = requireSupabase();
+  const actor = await requireUser(expectedUserId);
+  const { data, error } = await client.rpc('get_crew_member_progress_profile', {
+    target_crew_id: crewId,
+    target_user_id: userId,
+    target_badge_cursor_earned_at: normalizedCursor?.earnedAt || null,
+    target_badge_cursor_key: normalizedCursor?.badgeKey || null,
+    target_badge_limit: normalizedLimit,
+  });
+  if (error) throw error;
+  await requireUser(actor.id);
+  const profile = normalizeMemberProgressProfile(data, { expectedMemberId: userId });
+  return {
+    ...profile,
+    avatarUrl: canonicalProfilePhotoUrl(
+      profile.avatarUrl,
+      profile.memberId,
+      SUPABASE_ORIGIN,
+      PROFILE_PHOTO_BUCKET,
+    ),
+  };
 }
 
 export async function getOrCreateCrewInvite(crewId, { expectedUserId = '' } = {}) {
