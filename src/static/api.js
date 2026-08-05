@@ -1886,14 +1886,29 @@ function requireSiteTrainingProgram(program, scope) {
   return program;
 }
 
-function requireSiteTrainingOperation({ page, program = null, scope = 'page', action, requestId, expectedRevision }) {
+function requireSiteTrainingOperation({
+  page,
+  program = null,
+  scope = 'page',
+  action,
+  requestId,
+  expectedRevision,
+  expectedPageRevision,
+}) {
   const normalizedScope = String(scope || '').trim().toLowerCase();
   if (!SITE_TRAINING_SCOPE_SET.has(normalizedScope)) throw new TypeError('Choose page or overall training progress.');
+  const resolvedExpectedPageRevision = expectedPageRevision === undefined
+    && normalizedScope === 'page'
+    ? expectedRevision
+    : expectedPageRevision;
   const normalizedAction = String(action || '').trim().toLowerCase();
   if (!SITE_TRAINING_REQUEST_PATTERN.test(String(requestId || ''))) {
     throw new TypeError('A fresh page training request ID is required.');
   }
   if (!Number.isInteger(expectedRevision) || expectedRevision < 0) {
+    throw new TypeError('A current page training revision is required.');
+  }
+  if (!Number.isInteger(resolvedExpectedPageRevision) || resolvedExpectedPageRevision < 0) {
     throw new TypeError('A current page training revision is required.');
   }
   return {
@@ -1903,6 +1918,7 @@ function requireSiteTrainingOperation({ page, program = null, scope = 'page', ac
     action: normalizedAction,
     requestId,
     expectedRevision,
+    expectedPageRevision: resolvedExpectedPageRevision,
   };
 }
 
@@ -2180,6 +2196,7 @@ function runMockSiteTrainingOperation(operation, actorId) {
     programId: operation.program?.id || null,
     programVersion: operation.program?.version || null,
     expectedRevision: operation.expectedRevision,
+    expectedPageRevision: operation.expectedPageRevision,
   });
   const storedRequests = readJson(MOCK_SITE_TRAINING_REQUESTS_KEY, {});
   const requests = storedRequests && typeof storedRequests === 'object' && !Array.isArray(storedRequests)
@@ -2205,6 +2222,7 @@ function runMockSiteTrainingOperation(operation, actorId) {
   }
   const revision = operation.scope === 'overall' ? current.overall.revision : current.page.revision;
   if (revision !== operation.expectedRevision) throw siteTrainingStaleRevisionError();
+  if (current.page.revision !== operation.expectedPageRevision) throw siteTrainingStaleRevisionError();
 
   const transition = operation.scope === 'overall'
     ? applyMockOverallSiteTrainingTransition(
@@ -2241,7 +2259,15 @@ function runMockSiteTrainingOperation(operation, actorId) {
   return result;
 }
 
-function siteTrainingRpcParameters({ page, program = null, scope = 'page', action, requestId, expectedRevision }, actorId) {
+function siteTrainingRpcParameters({
+  page,
+  program = null,
+  scope = 'page',
+  action,
+  requestId,
+  expectedRevision,
+  expectedPageRevision,
+}, actorId) {
   return {
     target_scope: scope,
     target_page_id: page.id,
@@ -2251,6 +2277,7 @@ function siteTrainingRpcParameters({ page, program = null, scope = 'page', actio
     target_action: action,
     target_request_id: requestId,
     target_expected_revision: expectedRevision,
+    target_expected_page_revision: expectedPageRevision,
     target_expected_actor_id: actorId,
   };
 }
@@ -2289,11 +2316,12 @@ export async function claimSiteTraining({
   action = 'start',
   requestId = newSiteTrainingRequestId(),
   expectedRevision = 0,
+  expectedPageRevision,
   expectedUserId,
 } = {}) {
   const actorId = requireCapturedSiteTrainingActor(expectedUserId);
   const operation = requireSiteTrainingOperation({
-    page, program, scope, action, requestId, expectedRevision,
+    page, program, scope, action, requestId, expectedRevision, expectedPageRevision,
   });
   if (!SITE_TRAINING_CLAIM_ACTION_SET.has(operation.action)) {
     throw new TypeError('Start or resume page training through the claim operation.');
@@ -2316,11 +2344,12 @@ export async function transitionSiteTraining({
   action,
   requestId = newSiteTrainingRequestId(),
   expectedRevision,
+  expectedPageRevision,
   expectedUserId,
 } = {}) {
   const actorId = requireCapturedSiteTrainingActor(expectedUserId);
   const operation = requireSiteTrainingOperation({
-    page, program, scope, action, requestId, expectedRevision,
+    page, program, scope, action, requestId, expectedRevision, expectedPageRevision,
   });
   if (!SITE_TRAINING_TRANSITION_ACTION_SET.has(operation.action)) {
     throw new TypeError('Choose Back, Next, Stop, or Finish for active page training.');

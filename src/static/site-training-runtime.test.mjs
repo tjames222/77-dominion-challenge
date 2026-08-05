@@ -94,12 +94,14 @@ describe('site training runtime', () => {
     await runtime.start();
     assert.equal(coachmark.openCalls, 1);
     assert.equal(calls.claim[0].expectedRevision, 0);
+    assert.equal(calls.claim[0].expectedPageRevision, 0);
     assert.match(calls.claim[0].requestId, /^[0-9a-f-]{36}$/i);
     await coachmark.invoke('next');
     await coachmark.invoke('back');
     await coachmark.invoke('stop');
     assert.deepEqual(calls.transition.map((call) => call.action), ['next', 'back', 'stop']);
     assert.equal(calls.transition[1].expectedRevision, 2);
+    assert.equal(calls.transition[1].expectedPageRevision, 2);
     assert.equal(new Set(calls.transition.map((call) => call.requestId)).size, 3);
     assert.equal(coachmark.closeCalls, 1);
   });
@@ -166,6 +168,35 @@ describe('site training runtime', () => {
     assert.equal(runtime.state.page.currentStepId, 'progress');
     assert.equal(coachmark.renderCalls.at(-1).index, 1);
     assert.equal(coachmark.closeCalls, 0);
+  });
+
+  test('rehydrates a stale Start claim before opening the coachmark', async () => {
+    const coachmark = fakeCoachmark();
+    let state = readyState();
+    let reads = 0;
+    const api = {
+      async getSiteTrainingState() { reads += 1; return state; },
+      async claimSiteTraining() {
+        state = normalizeSiteTrainingMutation(
+          applySiteTrainingTransition(state, 'start'),
+          { expectedPage: page },
+        );
+        const error = new Error('stale');
+        error.code = '40001';
+        error.details = 'site_training_stale_revision';
+        throw error;
+      },
+    };
+    const runtime = createSiteTrainingRuntime({
+      registry, pathname: '/dashboard.html', expectedUserId: 'actor-1', api,
+      coachmarkFactory: coachmark.factory,
+    });
+    await runtime.hydrate();
+    await assert.rejects(runtime.start(), /latest progress is loaded/);
+    assert.equal(reads, 2);
+    assert.equal(runtime.state.page.status, 'in_progress');
+    assert.equal(runtime.state.page.revision, 1);
+    assert.equal(coachmark.openCalls, 0);
   });
 
   test('invalidates a stale in-flight read when the signed-in account changes', async () => {

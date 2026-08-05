@@ -150,6 +150,7 @@ export function validateSiteTrainingRegistry(registry, {
       errors.push(`At least one ordered page is required for program ${program.id || '(empty)'}.`);
       continue;
     }
+    const programPageIds = new Set();
     const programPages = new Set();
     for (const page of program.pages) {
       const pageContract = `${page.pageId}:${page.contentVersion}`;
@@ -167,6 +168,10 @@ export function validateSiteTrainingRegistry(registry, {
       if (programPages.has(pageContract)) {
         errors.push(`Duplicate page version in program ${program.id}: ${pageContract}.`);
       }
+      if (programPageIds.has(page.pageId)) {
+        errors.push(`Duplicate page id in program ${program.id}: ${page.pageId}.`);
+      }
+      programPageIds.add(page.pageId);
       programPages.add(pageContract);
     }
   }

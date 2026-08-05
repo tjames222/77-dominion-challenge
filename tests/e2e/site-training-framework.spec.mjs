@@ -137,7 +137,10 @@ test('preview parity keeps page scope independent and advances an ordered overal
       pages: [
         {
           id: 'first-page', route: '/dashboard.html', contentVersion: 1, title: 'First page',
-          steps: [{ id: 'first-step', title: 'First', description: 'First lesson.' }],
+          steps: [
+            { id: 'first-step', title: 'First', description: 'First lesson.' },
+            { id: 'first-finish', title: 'First finish', description: 'Finish the first lesson.' },
+          ],
         },
         {
           id: 'second-page', route: '/profile.html', contentVersion: 1, title: 'Second page',
@@ -158,12 +161,27 @@ test('preview parity keeps page scope independent and advances an ordered overal
     const request = () => stateModule.newSiteTrainingRequestId();
 
     const initial = await api.getSiteTrainingState({ page: firstPage, program, expectedUserId: actorId });
+    let missingPageRevision = '';
+    try {
+      await api.claimSiteTraining({
+        page: firstPage,
+        program,
+        scope: 'overall',
+        action: 'start',
+        requestId: request(),
+        expectedRevision: initial.overall.revision,
+        expectedUserId: actorId,
+      });
+    } catch (error) {
+      missingPageRevision = `${error.name}:${error.message}`;
+    }
     const pageOnly = await api.claimSiteTraining({
       page: firstPage,
       scope: 'page',
       action: 'start',
       requestId: request(),
       expectedRevision: initial.page.revision,
+      expectedPageRevision: initial.page.revision,
       expectedUserId: actorId,
     });
     const afterPageOnly = await api.getSiteTrainingState({ page: firstPage, program, expectedUserId: actorId });
@@ -175,6 +193,7 @@ test('preview parity keeps page scope independent and advances an ordered overal
       action: 'start',
       requestId: startRequestId,
       expectedRevision: afterPageOnly.overall.revision,
+      expectedPageRevision: afterPageOnly.page.revision,
       expectedUserId: actorId,
     });
     const replay = await api.claimSiteTraining({
@@ -184,6 +203,26 @@ test('preview parity keeps page scope independent and advances an ordered overal
       action: 'start',
       requestId: startRequestId,
       expectedRevision: afterPageOnly.overall.revision,
+      expectedPageRevision: afterPageOnly.page.revision,
+      expectedUserId: actorId,
+    });
+    const pageAdvanced = await api.transitionSiteTraining({
+      page: firstPage,
+      scope: 'page',
+      action: 'next',
+      requestId: request(),
+      expectedRevision: started.page.revision,
+      expectedPageRevision: started.page.revision,
+      expectedUserId: actorId,
+    });
+    const lateReplay = await api.claimSiteTraining({
+      page: firstPage,
+      program,
+      scope: 'overall',
+      action: 'start',
+      requestId: startRequestId,
+      expectedRevision: afterPageOnly.overall.revision,
+      expectedPageRevision: afterPageOnly.page.revision,
       expectedUserId: actorId,
     });
     let staleCode = '';
@@ -192,14 +231,20 @@ test('preview parity keeps page scope independent and advances an ordered overal
         page: firstPage,
         program,
         scope: 'overall',
-        action: 'finish',
+        action: 'next',
         requestId: request(),
-        expectedRevision: 0,
+        expectedRevision: started.overall.revision,
+        expectedPageRevision: started.page.revision,
         expectedUserId: actorId,
       });
     } catch (error) {
       staleCode = `${error.code}:${error.details}`;
     }
+    const afterStale = await api.getSiteTrainingState({
+      page: firstPage,
+      program,
+      expectedUserId: actorId,
+    });
     const advanced = await api.transitionSiteTraining({
       page: firstPage,
       program,
@@ -207,6 +252,7 @@ test('preview parity keeps page scope independent and advances an ordered overal
       action: 'finish',
       requestId: request(),
       expectedRevision: started.overall.revision,
+      expectedPageRevision: pageAdvanced.page.revision,
       expectedUserId: actorId,
     });
     const secondStarted = await api.claimSiteTraining({
@@ -216,6 +262,7 @@ test('preview parity keeps page scope independent and advances an ordered overal
       action: 'start',
       requestId: request(),
       expectedRevision: advanced.overall.revision,
+      expectedPageRevision: advanced.page.revision,
       expectedUserId: actorId,
     });
     const completed = await api.transitionSiteTraining({
@@ -225,14 +272,21 @@ test('preview parity keeps page scope independent and advances an ordered overal
       action: 'finish',
       requestId: request(),
       expectedRevision: secondStarted.overall.revision,
+      expectedPageRevision: secondStarted.page.revision,
       expectedUserId: actorId,
     });
     return {
       initialOverall: initial.overall,
+      missingPageRevision,
       pageOnlyOverall: pageOnly.overall,
       afterPageOnlyOverall: afterPageOnly.overall,
       replayRevision: replay.overall.revision,
+      lateReplayPageRevision: lateReplay.page.revision,
+      lateReplayOverallRevision: lateReplay.overall.revision,
       staleCode,
+      pageAdvanced: pageAdvanced.page,
+      afterStalePage: afterStale.page,
+      afterStaleOverall: afterStale.overall,
       advancedPage: advanced.page,
       advancedOverall: advanced.overall,
       advancedTransition: advanced.transition,
@@ -241,10 +295,16 @@ test('preview parity keeps page scope independent and advances an ordered overal
   });
 
   expect(result.initialOverall).toMatchObject({ status: 'not_started', revision: 0 });
+  expect(result.missingPageRevision).toContain('TypeError:A current page training revision is required.');
   expect(result.pageOnlyOverall).toBeNull();
   expect(result.afterPageOnlyOverall).toMatchObject({ status: 'not_started', revision: 0 });
   expect(result.replayRevision).toBe(1);
+  expect(result.lateReplayPageRevision).toBe(1);
+  expect(result.lateReplayOverallRevision).toBe(1);
   expect(result.staleCode).toBe('40001:site_training_stale_revision');
+  expect(result.pageAdvanced).toMatchObject({ currentStepIndex: 1, revision: 2 });
+  expect(result.afterStalePage).toMatchObject({ currentStepIndex: 1, revision: 2 });
+  expect(result.afterStaleOverall).toMatchObject({ currentPageIndex: 0, revision: 1 });
   expect(result.advancedPage).toMatchObject({ pageId: 'second-page', status: 'not_started' });
   expect(result.advancedOverall).toMatchObject({ currentPageId: 'second-page', currentPageIndex: 1 });
   expect(result.advancedTransition).toMatchObject({

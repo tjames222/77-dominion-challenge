@@ -80,14 +80,20 @@ export function createSiteTrainingRuntime({
 
   const renderLiveState = () => renderIndex(trainingState.page.currentStepIndex);
 
-  const recoverStaleProgress = async (service, error, capturedActorId, capturedGeneration) => {
+  const recoverStaleProgress = async (
+    service,
+    error,
+    capturedActorId,
+    capturedGeneration,
+    scope = activeScope,
+  ) => {
     if (error?.code !== '40001'
       || !['site_training_stale_revision', 'site_training_stale_page'].includes(error?.details)) {
       throw error;
     }
     const refreshed = await service.getSiteTrainingState({
       page,
-      program: activeScope === 'overall' ? program : null,
+      program: scope === 'overall' ? program : null,
       expectedUserId: capturedActorId,
     });
     assertCurrent(capturedActorId, capturedGeneration);
@@ -96,7 +102,7 @@ export function createSiteTrainingRuntime({
     if (refreshed.page.status === 'in_progress'
       && refreshed.page.pageId === page.id
       && refreshed.page.contentVersion === page.contentVersion) {
-      renderLiveState();
+      if (coachmark) renderLiveState();
     } else coachmark?.close();
     const recovered = new Error('Page training changed in another tab. The latest progress is loaded; try again.');
     recovered.code = error.code;
@@ -126,10 +132,11 @@ export function createSiteTrainingRuntime({
           expectedRevision: activeScope === 'overall'
             ? current.overall?.revision
             : current.page.revision,
+          expectedPageRevision: current.page.revision,
           expectedUserId: capturedActorId,
         });
       } catch (error) {
-        await recoverStaleProgress(service, error, capturedActorId, capturedGeneration);
+        await recoverStaleProgress(service, error, capturedActorId, capturedGeneration, activeScope);
         return null;
       }
       assertCurrent(capturedActorId, capturedGeneration);
@@ -220,17 +227,30 @@ export function createSiteTrainingRuntime({
     try {
       const service = await resolveApi();
       assertCurrent(capturedActorId, capturedGeneration);
-      const result = await service.claimSiteTraining({
-        page,
-        program: normalizedScope === 'overall' ? program : null,
-        scope: normalizedScope,
-        action,
-        requestId: newSiteTrainingRequestId(),
-        expectedRevision: normalizedScope === 'overall'
-          ? current.overall?.revision
-          : current.page.revision,
-        expectedUserId: capturedActorId,
-      });
+      let result;
+      try {
+        result = await service.claimSiteTraining({
+          page,
+          program: normalizedScope === 'overall' ? program : null,
+          scope: normalizedScope,
+          action,
+          requestId: newSiteTrainingRequestId(),
+          expectedRevision: normalizedScope === 'overall'
+            ? current.overall?.revision
+            : current.page.revision,
+          expectedPageRevision: current.page.revision,
+          expectedUserId: capturedActorId,
+        });
+      } catch (error) {
+        await recoverStaleProgress(
+          service,
+          error,
+          capturedActorId,
+          capturedGeneration,
+          normalizedScope,
+        );
+        return null;
+      }
       assertCurrent(capturedActorId, capturedGeneration);
       if (!result?.contractValid || result.actorId !== capturedActorId) throw accountChangedError();
       if (result.page.status === 'completed') {

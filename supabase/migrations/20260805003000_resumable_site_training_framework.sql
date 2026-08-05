@@ -575,6 +575,7 @@ create or replace function private.mutate_site_training(
   target_action text,
   target_request_id uuid,
   target_expected_revision bigint,
+  target_expected_page_revision bigint,
   target_expected_actor_id uuid
 )
 returns jsonb
@@ -596,6 +597,7 @@ declare
   next_program_page private.site_training_program_pages%rowtype;
   mutation_time timestamptz;
   current_revision bigint;
+  current_page_revision bigint;
   last_step_index integer;
   applied boolean := false;
   page_applied boolean := false;
@@ -615,8 +617,10 @@ begin
      or normalized_scope not in ('page', 'overall')
      or target_request_id is null
      or target_expected_revision is null
-     or target_expected_revision < 0 then
-    raise exception 'A valid scope, request ID, and expected revision are required.'
+     or target_expected_revision < 0
+     or target_expected_page_revision is null
+     or target_expected_page_revision < 0 then
+    raise exception 'A valid scope, request ID, and expected revisions are required.'
       using errcode = '22023';
   end if;
   if normalized_rpc_kind = 'claim' and normalized_action not in ('start', 'resume') then
@@ -645,7 +649,8 @@ begin
         target_program_id,
         target_program_version,
         normalized_action,
-        target_expected_revision
+        target_expected_revision,
+        target_expected_page_revision
       )::text,
       'UTF8'
     ),
@@ -753,9 +758,15 @@ begin
     and progress.page_id = target_page_id
     and progress.content_version = target_page_content_version
   for update;
+  current_page_revision := case when found then page_progress.revision else 0 end;
+
+  if target_expected_page_revision <> current_page_revision then
+    raise exception 'Site training changed in another session. Refresh and try again.'
+      using errcode = '40001', detail = 'site_training_stale_revision';
+  end if;
 
   if normalized_scope = 'page' then
-    current_revision := case when found then page_progress.revision else 0 end;
+    current_revision := current_page_revision;
     if target_expected_revision <> current_revision then
       raise exception 'Site training changed in another session. Refresh and try again.'
         using errcode = '40001', detail = 'site_training_stale_revision';
@@ -1173,6 +1184,7 @@ create or replace function public.claim_site_training(
   target_action text,
   target_request_id uuid,
   target_expected_revision bigint,
+  target_expected_page_revision bigint,
   target_expected_actor_id uuid
 )
 returns jsonb
@@ -1190,6 +1202,7 @@ as $$
     target_action,
     target_request_id,
     target_expected_revision,
+    target_expected_page_revision,
     target_expected_actor_id
   );
 $$;
@@ -1203,6 +1216,7 @@ create or replace function public.transition_site_training(
   target_action text,
   target_request_id uuid,
   target_expected_revision bigint,
+  target_expected_page_revision bigint,
   target_expected_actor_id uuid
 )
 returns jsonb
@@ -1220,6 +1234,7 @@ as $$
     target_action,
     target_request_id,
     target_expected_revision,
+    target_expected_page_revision,
     target_expected_actor_id
   );
 $$;
@@ -1239,23 +1254,23 @@ revoke all on function private.site_training_overall_payload(uuid, text, integer
 revoke all on function private.site_training_state_payload(uuid, text, integer, text, integer, jsonb)
   from public, anon, authenticated, service_role;
 revoke all on function private.mutate_site_training(
-  text, text, text, integer, text, integer, text, uuid, bigint, uuid
+  text, text, text, integer, text, integer, text, uuid, bigint, bigint, uuid
 ) from public, anon, authenticated, service_role;
 
 revoke all on function public.get_site_training_state(text, integer, text, integer, uuid)
   from public, anon, authenticated, service_role;
 revoke all on function public.claim_site_training(
-  text, text, integer, text, integer, text, uuid, bigint, uuid
+  text, text, integer, text, integer, text, uuid, bigint, bigint, uuid
 ) from public, anon, authenticated, service_role;
 revoke all on function public.transition_site_training(
-  text, text, integer, text, integer, text, uuid, bigint, uuid
+  text, text, integer, text, integer, text, uuid, bigint, bigint, uuid
 ) from public, anon, authenticated, service_role;
 
 grant execute on function public.get_site_training_state(text, integer, text, integer, uuid)
   to authenticated;
 grant execute on function public.claim_site_training(
-  text, text, integer, text, integer, text, uuid, bigint, uuid
+  text, text, integer, text, integer, text, uuid, bigint, bigint, uuid
 ) to authenticated;
 grant execute on function public.transition_site_training(
-  text, text, integer, text, integer, text, uuid, bigint, uuid
+  text, text, integer, text, integer, text, uuid, bigint, bigint, uuid
 ) to authenticated;

@@ -3,7 +3,7 @@ begin;
 create extension if not exists pgtap with schema extensions;
 set local search_path = public, extensions;
 
-select plan(69);
+select plan(71);
 
 create temporary table site_training_test_results (
   key text primary key,
@@ -163,10 +163,10 @@ select ok(to_regprocedure(
   'public.get_site_training_state(text,integer,text,integer,uuid)'
 ) is not null, 'the read RPC has the expected actor-bound signature');
 select ok(to_regprocedure(
-  'public.claim_site_training(text,text,integer,text,integer,text,uuid,bigint,uuid)'
+  'public.claim_site_training(text,text,integer,text,integer,text,uuid,bigint,bigint,uuid)'
 ) is not null, 'the claim RPC has the expected request and revision signature');
 select ok(to_regprocedure(
-  'public.transition_site_training(text,text,integer,text,integer,text,uuid,bigint,uuid)'
+  'public.transition_site_training(text,text,integer,text,integer,text,uuid,bigint,bigint,uuid)'
 ) is not null, 'the transition RPC has the expected request and revision signature');
 select ok(has_function_privilege(
   'authenticated',
@@ -174,22 +174,22 @@ select ok(has_function_privilege(
   'execute'
 ) and has_function_privilege(
   'authenticated',
-  'public.claim_site_training(text,text,integer,text,integer,text,uuid,bigint,uuid)',
+  'public.claim_site_training(text,text,integer,text,integer,text,uuid,bigint,bigint,uuid)',
   'execute'
 ) and has_function_privilege(
   'authenticated',
-  'public.transition_site_training(text,text,integer,text,integer,text,uuid,bigint,uuid)',
+  'public.transition_site_training(text,text,integer,text,integer,text,uuid,bigint,bigint,uuid)',
   'execute'
 ), 'authenticated callers can use only the public lifecycle boundary');
 select ok(not has_function_privilege(
   'anon', 'public.get_site_training_state(text,integer,text,integer,uuid)', 'execute'
 ) and not has_function_privilege(
   'anon',
-  'public.claim_site_training(text,text,integer,text,integer,text,uuid,bigint,uuid)',
+  'public.claim_site_training(text,text,integer,text,integer,text,uuid,bigint,bigint,uuid)',
   'execute'
 ) and not has_function_privilege(
   'anon',
-  'public.transition_site_training(text,text,integer,text,integer,text,uuid,bigint,uuid)',
+  'public.transition_site_training(text,text,integer,text,integer,text,uuid,bigint,bigint,uuid)',
   'execute'
 ), 'anonymous callers cannot use site training');
 select ok((select procedure.prosecdef
@@ -202,13 +202,13 @@ select ok((select procedure.prosecdef
     and procedure.proconfig @> array['search_path=""']
   from pg_catalog.pg_proc procedure
   where procedure.oid =
-    'public.claim_site_training(text,text,integer,text,integer,text,uuid,bigint,uuid)'::regprocedure),
+    'public.claim_site_training(text,text,integer,text,integer,text,uuid,bigint,bigint,uuid)'::regprocedure),
   'the claim RPC is a hardened security-definer boundary');
 select ok((select procedure.prosecdef
     and procedure.proconfig @> array['search_path=""']
   from pg_catalog.pg_proc procedure
   where procedure.oid =
-    'public.transition_site_training(text,text,integer,text,integer,text,uuid,bigint,uuid)'::regprocedure),
+    'public.transition_site_training(text,text,integer,text,integer,text,uuid,bigint,bigint,uuid)'::regprocedure),
   'the transition RPC is a hardened security-definer boundary');
 
 set local "request.jwt.claim.sub" = '';
@@ -267,7 +267,7 @@ values (
   'page-start',
   public.claim_site_training(
     'page', 'gamma', 1, null, null, 'start',
-    'e1000000-0000-4000-8000-000000000001', 0,
+    'e1000000-0000-4000-8000-000000000001', 0, 0,
     'd1000000-0000-4000-8000-000000000001'
   )
 );
@@ -276,7 +276,7 @@ values (
   'page-start-replay',
   public.claim_site_training(
     'page', 'gamma', 1, null, null, 'start',
-    'e1000000-0000-4000-8000-000000000001', 0,
+    'e1000000-0000-4000-8000-000000000001', 0, 0,
     'd1000000-0000-4000-8000-000000000001'
   )
 );
@@ -298,7 +298,7 @@ select is((select payload from site_training_test_results where key = 'page-star
 select throws_ok(
   $$select public.transition_site_training(
     'page', 'gamma', 1, null, null, 'next',
-    'e1000000-0000-4000-8000-000000000001', 1,
+    'e1000000-0000-4000-8000-000000000001', 1, 1,
     'd1000000-0000-4000-8000-000000000001'
   )$$,
   '23505',
@@ -308,7 +308,7 @@ select throws_ok(
 select throws_ok(
   $$select public.claim_site_training(
     'page', 'gamma', 1, null, null, 'start',
-    'e1000000-0000-4000-8000-000000000002', 0,
+    'e1000000-0000-4000-8000-000000000002', 0, 0,
     'd1000000-0000-4000-8000-000000000001'
   )$$,
   '40001',
@@ -321,21 +321,21 @@ values (
   'page-next-one',
   public.transition_site_training(
     'page', 'gamma', 1, null, null, 'next',
-    'e1000000-0000-4000-8000-000000000003', 1,
+    'e1000000-0000-4000-8000-000000000003', 1, 1,
     'd1000000-0000-4000-8000-000000000001'
   )
 ), (
   'page-next-two',
   public.transition_site_training(
     'page', 'gamma', 1, null, null, 'next',
-    'e1000000-0000-4000-8000-000000000004', 2,
+    'e1000000-0000-4000-8000-000000000004', 2, 2,
     'd1000000-0000-4000-8000-000000000001'
   )
 ), (
   'page-back',
   public.transition_site_training(
     'page', 'gamma', 1, null, null, 'back',
-    'e1000000-0000-4000-8000-000000000005', 3,
+    'e1000000-0000-4000-8000-000000000005', 3, 3,
     'd1000000-0000-4000-8000-000000000001'
   )
 );
@@ -363,14 +363,14 @@ values (
   'page-stop',
   public.transition_site_training(
     'page', 'gamma', 1, null, null, 'stop',
-    'e1000000-0000-4000-8000-000000000006', 4,
+    'e1000000-0000-4000-8000-000000000006', 4, 4,
     'd1000000-0000-4000-8000-000000000001'
   )
 ), (
   'page-resume',
   public.claim_site_training(
     'page', 'gamma', 1, null, null, 'resume',
-    'e1000000-0000-4000-8000-000000000007', 5,
+    'e1000000-0000-4000-8000-000000000007', 5, 5,
     'd1000000-0000-4000-8000-000000000001'
   )
 );
@@ -391,7 +391,7 @@ select is((select payload #>> '{page,currentStepId}' from site_training_test_res
 select throws_ok(
   $$select public.transition_site_training(
     'page', 'gamma', 1, null, null, 'finish',
-    'e1000000-0000-4000-8000-000000000008', 6,
+    'e1000000-0000-4000-8000-000000000008', 6, 6,
     'd1000000-0000-4000-8000-000000000001'
   )$$,
   '55000',
@@ -404,14 +404,14 @@ values (
   'page-final-step',
   public.transition_site_training(
     'page', 'gamma', 1, null, null, 'next',
-    'e1000000-0000-4000-8000-000000000009', 6,
+    'e1000000-0000-4000-8000-000000000009', 6, 6,
     'd1000000-0000-4000-8000-000000000001'
   )
 ), (
   'page-finish',
   public.transition_site_training(
     'page', 'gamma', 1, null, null, 'finish',
-    'e1000000-0000-4000-8000-000000000010', 7,
+    'e1000000-0000-4000-8000-000000000010', 7, 7,
     'd1000000-0000-4000-8000-000000000001'
   )
 );
@@ -497,14 +497,14 @@ values (
   'program-page-start',
   public.claim_site_training(
     'page', 'alpha', 2, 'foundation-tour', 1, 'start',
-    'f1000000-0000-4000-8000-000000000001', 0,
+    'f1000000-0000-4000-8000-000000000001', 0, 0,
     'd1000000-0000-4000-8000-000000000001'
   )
 ), (
   'program-page-next',
   public.transition_site_training(
     'page', 'alpha', 2, 'foundation-tour', 1, 'next',
-    'f1000000-0000-4000-8000-000000000002', 1,
+    'f1000000-0000-4000-8000-000000000002', 1, 1,
     'd1000000-0000-4000-8000-000000000001'
   )
 );
@@ -529,26 +529,40 @@ values (
   'overall-start',
   public.claim_site_training(
     'overall', 'alpha', 2, 'foundation-tour', 1, 'start',
-    'f1000000-0000-4000-8000-000000000003', 0,
+    'f1000000-0000-4000-8000-000000000003', 0, 2,
     'd1000000-0000-4000-8000-000000000001'
   )
-), (
+);
+
+select throws_ok(
+  $$select public.transition_site_training(
+    'overall', 'alpha', 2, 'foundation-tour', 1, 'next',
+    'f1000000-0000-4000-8000-000000000008', 1, 1,
+    'd1000000-0000-4000-8000-000000000001'
+  )$$,
+  '40001',
+  'Site training changed in another session. Refresh and try again.',
+  'overall movement rejects a stale shared page revision'
+);
+
+insert into site_training_test_results (key, payload)
+values (
   'overall-alpha-next',
   public.transition_site_training(
     'overall', 'alpha', 2, 'foundation-tour', 1, 'next',
-    'f1000000-0000-4000-8000-000000000004', 1,
+    'f1000000-0000-4000-8000-000000000004', 1, 2,
     'd1000000-0000-4000-8000-000000000001'
   )
 ), (
   'overall-alpha-finish',
   public.transition_site_training(
     'overall', 'alpha', 2, 'foundation-tour', 1, 'finish',
-    'f1000000-0000-4000-8000-000000000005', 2,
+    'f1000000-0000-4000-8000-000000000005', 2, 3,
     'd1000000-0000-4000-8000-000000000001'
   )
 );
 
--- 61-65: overall scope owns ordering and advances atomically to the next route.
+-- 61-66: overall scope owns both revisions and advances atomically to the next route.
 select is((select payload #>> '{overall,status}' from site_training_test_results
     where key = 'overall-start'), 'in_progress',
   'overall Start claims the program');
@@ -570,19 +584,26 @@ values (
   'overall-beta-start',
   public.claim_site_training(
     'overall', 'beta', 1, 'foundation-tour', 1, 'start',
-    'f1000000-0000-4000-8000-000000000006', 3,
+    'f1000000-0000-4000-8000-000000000006', 3, 0,
     'd1000000-0000-4000-8000-000000000001'
   )
 ), (
   'overall-beta-finish',
   public.transition_site_training(
     'overall', 'beta', 1, 'foundation-tour', 1, 'finish',
-    'f1000000-0000-4000-8000-000000000007', 4,
+    'f1000000-0000-4000-8000-000000000007', 4, 1,
+    'd1000000-0000-4000-8000-000000000001'
+  )
+), (
+  'overall-start-late-replay',
+  public.claim_site_training(
+    'overall', 'alpha', 2, 'foundation-tour', 1, 'start',
+    'f1000000-0000-4000-8000-000000000003', 0, 2,
     'd1000000-0000-4000-8000-000000000001'
   )
 );
 
--- 66-69: the final page completes the program without touching product state.
+-- 67-71: exact replay survives newer state and completion does not touch product state.
 select is((select (payload #>> '{overall,revision}')::integer
     from site_training_test_results where key = 'overall-beta-start'), 4,
   'starting the newly current page advances overall revision');
@@ -591,6 +612,9 @@ select ok((select payload #>> '{overall,status}' = 'completed'
       and (payload #>> '{overall,currentPageIndex}')::integer = 1
     from site_training_test_results where key = 'overall-beta-finish'),
   'completion retains the final overall page cursor');
+select is((select payload from site_training_test_results where key = 'overall-start-late-replay'),
+  (select payload from site_training_test_results where key = 'overall-start'),
+  'an exact replay returns its stored result before either stale revision check');
 reset role;
 select is((select count(*)::integer from private.site_training_page_completions
     where user_id = 'd1000000-0000-4000-8000-000000000001'), 3,

@@ -74,6 +74,7 @@ describe('site training state contract', () => {
     const retained = reconcileSiteTrainingContentVersion(prior, retainedPage, 'actor-1');
     assert.equal(retained.page.status, 'stopped');
     assert.equal(retained.page.currentStepId, 'two');
+    assert.equal(retained.page.revision, 1);
 
     const removedPage = {
       ...retainedPage,
@@ -83,6 +84,7 @@ describe('site training state contract', () => {
     const reset = reconcileSiteTrainingContentVersion(prior, removedPage, 'actor-1');
     assert.equal(reset.page.currentStepId, 'one');
     assert.equal(reset.page.status, 'stopped');
+    assert.equal(reset.page.revision, 1);
   });
 
   test('issues unique UUID-v4 idempotency keys', () => {

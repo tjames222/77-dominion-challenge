@@ -383,6 +383,7 @@ export function reconcileSiteTrainingContentVersion(previousState, page, actorId
   initial.page.currentStepIndex = nextIndex;
   initial.page.currentStepId = initial.page.stepIds[nextIndex];
   initial.page.furthestStepIndex = nextIndex;
+  initial.page.revision = 1;
   initial.page.startedAt = previous.startedAt;
   initial.page.stoppedAt = previous.status === 'not_started' ? null : new Date().toISOString();
   initial.page.everCompleted = Boolean(previous.everCompleted);

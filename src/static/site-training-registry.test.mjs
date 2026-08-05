@@ -116,4 +116,28 @@ describe('site training registry', () => {
     assert.match(result.errors.join('\n'), /Duplicate step id/);
     assert.match(result.errors.join('\n'), /Unknown page version/);
   });
+
+  test('rejects one page ID at multiple versions within the same program', () => {
+    const secondVersion = {
+      ...page,
+      route: '/profile.html',
+      contentVersion: 2,
+    };
+    const result = validateSiteTrainingRegistry({
+      schemaVersion: 1,
+      catalogVersion: 1,
+      pages: [page, secondVersion],
+      programs: [{
+        id: 'site-basics',
+        version: 1,
+        title: 'Site basics',
+        pages: [
+          { pageId: page.id, contentVersion: 1 },
+          { pageId: page.id, contentVersion: 2 },
+        ],
+      }],
+    });
+    assert.equal(result.valid, false);
+    assert.match(result.errors.join('\n'), /Duplicate page id in program site-basics: framework-page/);
+  });
 });
