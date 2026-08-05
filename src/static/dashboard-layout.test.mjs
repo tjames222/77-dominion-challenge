@@ -52,7 +52,11 @@ describe('dashboard progress document order', () => {
 
   it('refreshes gauge calculations when the shared streak dialog changes the start date', () => {
     assert.match(dashboardJs, /window\.addEventListener\('dominion:challenge-start-date-updated'/);
-    assert.match(dashboardJs, /startDate = event\.detail\?\.challengeStartDate \|\| startDate/);
+    assert.match(dashboardJs, /const nextActivation = event\.detail\?\.activation/);
+    assert.match(dashboardJs, /nextActivation\?\.contractValid && nextActivation\.readState === 'ready'/);
+    assert.match(dashboardJs, /challengeActivation = nextActivation/);
+    assert.match(dashboardJs, /startDate = nextActivation\.startDate \|\| ''/);
+    assert.doesNotMatch(dashboardJs, /event\.detail\?\.challengeStartDate \|\| startDate/);
     assert.doesNotMatch(dashboardJs, /startDateInput|updateProfile\(\{ challengeStartDate/);
   });
 

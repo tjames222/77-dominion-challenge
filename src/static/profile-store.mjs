@@ -61,8 +61,5 @@ export function buildProfilePatch(profile, { nextName, nextEmail } = {}) {
   const patch = {};
   if (!profile.avatarOnly && profile.name !== undefined) patch.name = nextName;
   if (!profile.avatarOnly && profile.email !== undefined) patch.email = nextEmail;
-  if (!profile.avatarOnly && profile.challengeStartDate !== undefined) {
-    patch.challenge_start_date = profile.challengeStartDate || null;
-  }
   return patch;
 }

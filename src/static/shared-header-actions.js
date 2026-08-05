@@ -1,13 +1,11 @@
 import {
-  getDashboard,
+  getChallengeActivation,
   getGameSummary,
-  getProfile,
-  hasSupabaseAuth,
   isLocalDemoMode,
   recordAppVisit,
-  updateProfile,
+  updateChallengeStartDate,
 } from './api';
-import { checkInCacheForOwner, dateKeyForTimeZone } from './check-in.mjs';
+import { dateKeyForTimeZone, migrateMockCheckInCache } from './check-in.mjs';
 import { createDialog } from './dialog.mjs';
 import {
   PREVIEW_CHALLENGE_STORAGE_KEY,
@@ -15,6 +13,7 @@ import {
   isPreviewChallengeActive,
   normalizePreviewChallengeState,
 } from './preview-challenge.mjs';
+import { readPreviewUserValue, writePreviewUserValue } from './preview-user-state.mjs';
 import { initShareComposer } from './share-composer.js';
 import {
   STREAK_METRIC_DEFINITIONS,
@@ -25,7 +24,6 @@ import {
 import { normalizeChallengeStartDate } from './shared-header-state.mjs';
 
 const GAME_STATS_STORAGE_KEY = 'dominion:gameStats';
-const START_DATE_STORAGE_KEY = 'dominion:startDate';
 const CHECK_IN_DATES_STORAGE_KEY = 'dominion:checkInDates';
 const SHARE_COMPOSER_STYLESHEET = new URL('../assets/share-composer.css', import.meta.url).href;
 const DEFAULT_GAME_STATS = Object.freeze({
@@ -40,14 +38,6 @@ function element(ownerDocument, tag, className = '', text = '') {
   if (className) node.className = className;
   if (text) node.textContent = text;
   return node;
-}
-
-function readJson(storage, key, fallback) {
-  try {
-    return JSON.parse(storage?.getItem?.(key) || JSON.stringify(fallback));
-  } catch {
-    return fallback;
-  }
 }
 
 function localDateKey() {
@@ -142,10 +132,12 @@ function createStreakDetailsContent(ownerDocument) {
   input.type = 'date';
   input.name = 'challengeStartDate';
   input.required = true;
+  input.disabled = true;
   input.dataset.globalStreakStartDateInput = '';
   label.append(input);
   const saveButton = element(ownerDocument, 'button', 'primary', 'Save start date');
   saveButton.type = 'submit';
+  saveButton.disabled = true;
   saveButton.dataset.globalStreakStartDateSave = '';
   form.append(label, saveButton);
 
@@ -167,27 +159,45 @@ function createStreakDetailsContent(ownerDocument) {
   return wrapper;
 }
 
-function localHeaderSnapshot(user, storage) {
+function localHeaderSnapshot(user, storage, activation) {
   const today = localDateKey();
-  const stats = readJson(storage, GAME_STATS_STORAGE_KEY, DEFAULT_GAME_STATS);
+  const ownerId = String(user?.userId || '');
+  const stats = readPreviewUserValue(storage, ownerId, GAME_STATS_STORAGE_KEY, DEFAULT_GAME_STATS);
   const previewState = normalizePreviewChallengeState(
-    readJson(storage, PREVIEW_CHALLENGE_STORAGE_KEY, {}),
+    readPreviewUserValue(storage, ownerId, PREVIEW_CHALLENGE_STORAGE_KEY, {}),
     today,
   );
   const previewActive = isPreviewChallengeActive(true, previewState);
   const checkInStorageKey = previewActive
     ? PREVIEW_CHECK_IN_DATES_STORAGE_KEY
     : CHECK_IN_DATES_STORAGE_KEY;
-  const owner = `mock:${user?.email || 'preview'}`;
-  const checkIns = checkInCacheForOwner(readJson(storage, checkInStorageKey, {}), owner);
-  const startDate = previewActive
-    ? previewState.anchorDate
-    : normalizeChallengeStartDate(readJson(storage, START_DATE_STORAGE_KEY, today), today);
+  const checkIns = migrateMockCheckInCache(
+    readPreviewUserValue(storage, ownerId, checkInStorageKey, {}),
+    ownerId,
+    user?.email,
+  );
+  writePreviewUserValue(storage, ownerId, checkInStorageKey, checkIns);
+  const effectiveActivation = previewActive
+    ? {
+        ...activation,
+        readState: 'ready',
+        contractValid: true,
+        status: 'active',
+        mode: 'solo',
+        startDate: previewState.anchorDate,
+        canEditStartDate: false,
+      }
+    : activation;
+  const startDate = effectiveActivation?.startDate || '';
 
   return {
     stats,
     profile: { challengeStartDate: startDate },
-    startDateLocked: previewActive || checkIns.dates.length > 0 || checkIns.challengeDays.length > 0,
+    activation: effectiveActivation,
+    startDateLocked: previewActive
+      || !effectiveActivation?.canEditStartDate
+      || checkIns.dates.length > 0
+      || checkIns.challengeDays.length > 0,
     previewActive,
   };
 }
@@ -257,7 +267,8 @@ export function createAuthenticatedHeaderActions({
 
   let currentUser = user;
   let currentStartDate = '';
-  let startDateLocked = false;
+  let currentActivation = null;
+  let startDateLocked = true;
   let previewActive = false;
   let destroyed = false;
   let hydrationRequest = 0;
@@ -287,6 +298,12 @@ export function createAuthenticatedHeaderActions({
     dateDisplay.textContent = formatChallengeStartDate(currentStartDate);
     if (previewActive) {
       dateHelp.textContent = 'The preview simulator controls this challenge date.';
+    } else if (currentActivation?.readState === 'error') {
+      dateHelp.textContent = 'Challenge timeline controls stay locked until your activation status can be refreshed.';
+    } else if (currentActivation?.status === 'not_started') {
+      dateHelp.textContent = 'Start your challenge before setting its timeline.';
+    } else if (currentActivation?.mode === 'group') {
+      dateHelp.textContent = 'Your crew owns the Group challenge start date.';
     } else if (startDateLocked) {
       dateHelp.textContent = 'The challenge start date is locked after the first check-in.';
     } else {
@@ -294,7 +311,13 @@ export function createAuthenticatedHeaderActions({
     }
   };
 
-  const renderSnapshot = ({ stats = DEFAULT_GAME_STATS, profile = {}, startDateLocked: locked = false, previewActive: preview = false }) => {
+  const renderSnapshot = ({
+    stats = DEFAULT_GAME_STATS,
+    profile = {},
+    activation = null,
+    startDateLocked: locked = true,
+    previewActive: preview = false,
+  }) => {
     const summary = buildStreakSummary(stats, localDateKey());
     streakCount.textContent = String(summary.currentAppStreak);
     streakButton.setAttribute('aria-label', streakIndicatorLabel(summary));
@@ -305,19 +328,29 @@ export function createAuthenticatedHeaderActions({
       if (unitElement) unitElement.textContent = unit;
     });
     zeroState.hidden = summary.hasHistory;
-    currentStartDate = normalizeChallengeStartDate(profile?.challengeStartDate, localDateKey());
-    startDateLocked = Boolean(locked);
+    currentActivation = activation;
+    currentStartDate = normalizeChallengeStartDate(
+      activation?.startDate || profile?.challengeStartDate,
+    );
+    startDateLocked = Boolean(locked || !activation?.canEditStartDate);
     previewActive = Boolean(preview);
     renderStartDate();
   };
 
   async function loadSnapshot(includeLockState) {
-    if (isLocalDemoMode()) return localHeaderSnapshot(currentUser, ownerDocument.defaultView?.localStorage);
-    const ownerKey = currentUser?.userId || currentUser?.email || '';
-    if (ownerKey) {
-      if (recordedVisitOwner !== ownerKey || !recordVisitPromise) {
-        recordedVisitOwner = ownerKey;
-        recordVisitPromise = recordAppVisit().catch((error) => {
+    if (isLocalDemoMode()) {
+      const activation = await getChallengeActivation({ expectedUserId: currentUser?.userId });
+      return localHeaderSnapshot(
+        currentUser,
+        ownerDocument.defaultView?.localStorage,
+        activation,
+      );
+    }
+    const expectedUserId = currentUser?.userId || '';
+    if (expectedUserId) {
+      if (recordedVisitOwner !== expectedUserId || !recordVisitPromise) {
+        recordedVisitOwner = expectedUserId;
+        recordVisitPromise = recordAppVisit({ expectedUserId }).catch((error) => {
           recordedVisitOwner = '';
           recordVisitPromise = null;
           console.warn('Unable to record this app visit from the shared header', error);
@@ -325,20 +358,15 @@ export function createAuthenticatedHeaderActions({
       }
       await recordVisitPromise;
     }
-    if (includeLockState) {
-      const dashboard = await getDashboard();
-      return {
-        stats: dashboard?.gameStats || DEFAULT_GAME_STATS,
-        profile: dashboard?.profile || {},
-        startDateLocked: Array.isArray(dashboard?.checkIns) && dashboard.checkIns.length > 0,
-        previewActive: false,
-      };
-    }
-    const [summary, profile] = await Promise.all([getGameSummary(), getProfile()]);
+    const [summary, activation] = await Promise.all([
+      getGameSummary(),
+      getChallengeActivation({ expectedUserId }),
+    ]);
     return {
       stats: summary?.gameStats || DEFAULT_GAME_STATS,
-      profile: profile || {},
-      startDateLocked,
+      profile: { challengeStartDate: activation.startDate },
+      activation,
+      startDateLocked: !activation.canEditStartDate,
       previewActive: false,
     };
   }
@@ -381,7 +409,8 @@ export function createAuthenticatedHeaderActions({
     const previousStartDate = currentStartDate;
     const submitOwnerVersion = ownerVersion;
     const submitOwnerKey = currentUser?.userId || currentUser?.email || '';
-    const submitExpectedUserId = currentUser?.userId || '';
+    const expectedRevision = currentActivation?.revision ?? null;
+    const submitTimeZone = currentActivation?.timeZone || '';
     currentStartDate = nextStartDate;
     dateFeedback.textContent = '';
     dialog.clearError();
@@ -390,16 +419,12 @@ export function createAuthenticatedHeaderActions({
     saveButton.disabled = true;
 
     try {
-      if (isLocalDemoMode()) {
-        ownerDocument.defaultView?.localStorage?.setItem(START_DATE_STORAGE_KEY, JSON.stringify(nextStartDate));
-      } else if (hasSupabaseAuth()) {
-        await updateProfile(
-          { challengeStartDate: nextStartDate },
-          { expectedUserId: submitExpectedUserId },
-        );
-      } else {
-        throw new Error('Log in again before changing your challenge start date.');
-      }
+      const savedActivation = await updateChallengeStartDate({
+        startDate: nextStartDate,
+        timeZone: submitTimeZone,
+        expectedRevision,
+        expectedUserId: submitOwnerKey,
+      });
 
       if (
         destroyed
@@ -407,11 +432,17 @@ export function createAuthenticatedHeaderActions({
         || submitOwnerKey !== (currentUser?.userId || currentUser?.email || '')
       ) return;
 
+      currentActivation = savedActivation;
+      currentStartDate = savedActivation.startDate || nextStartDate;
+      startDateLocked = !savedActivation.canEditStartDate;
       dateFeedback.textContent = 'Challenge start date saved.';
       const CustomEventConstructor = ownerDocument.defaultView?.CustomEvent;
       if (CustomEventConstructor) {
         ownerDocument.defaultView.dispatchEvent(new CustomEventConstructor('dominion:challenge-start-date-updated', {
-          detail: { challengeStartDate: nextStartDate },
+          detail: {
+            activation: savedActivation,
+            challengeStartDate: savedActivation.startDate || nextStartDate,
+          },
         }));
       }
       renderStartDate();
@@ -422,10 +453,10 @@ export function createAuthenticatedHeaderActions({
         || submitOwnerKey !== (currentUser?.userId || currentUser?.email || '')
       ) return;
       currentStartDate = previousStartDate;
-      if (/locked after the first check-in/i.test(String(error?.message || ''))) startDateLocked = true;
       renderStartDate();
       dateFeedback.textContent = error?.message || 'Unable to save the challenge start date.';
       dialog.setError(dateFeedback.textContent);
+      await refresh({ includeLockState: true });
     } finally {
       if (!destroyed && submitOwnerVersion === ownerVersion) {
         dialog.setBusy(false);
@@ -468,6 +499,7 @@ export function createAuthenticatedHeaderActions({
           unitElement.textContent = 'days';
         });
         currentStartDate = '';
+        currentActivation = null;
         startDateLocked = true;
         previewActive = false;
         dateInput.value = '';

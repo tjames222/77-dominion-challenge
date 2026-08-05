@@ -1,14 +1,22 @@
 import {
   getBillingState,
+  getChallengeActivation,
   getDailyStandardDraft,
   getDashboard,
+  getLocalOrSessionUser,
   hasSupabaseAuth,
   isLocalDemoMode,
   mutateDailyStandardDraft,
   redirectToLogin,
   setDailyStandardWorkoutDifficulty,
+  subscribeToAuthStateChanges,
 } from './api';
-import { calendarDayDifference, dateKeyForTimeZone } from './check-in.mjs';
+import {
+  dateKeyForTimeZone,
+  migrateMockCheckInCache,
+  mockCheckInOwnerForUser,
+} from './check-in.mjs';
+import { createChallengeActivationState } from './challenge-activation.mjs';
 import {
   applyWorkoutDifficultyMutation,
   normalizeDailyStandardDraft,
@@ -23,11 +31,17 @@ import { workoutPlanForDate } from './daily-standard-physical-content.mjs';
 import { dailyStandardRoute } from './daily-standard-routes.mjs';
 import {
   PREVIEW_CHALLENGE_STORAGE_KEY,
+  PREVIEW_CHECK_IN_DATES_STORAGE_KEY,
   isPreviewChallengeActive,
   isPreviewChallengeComplete,
   normalizePreviewChallengeState,
   previewChallengeDate,
 } from './preview-challenge.mjs';
+import {
+  PREVIEW_USER_STATE_STORAGE_KEY,
+  readPreviewUserValue,
+  writePreviewUserValue,
+} from './preview-user-state.mjs';
 
 const ENTRY_STORAGE_KEY = 'dominion:entries';
 const WORKOUT_DIFFICULTY_STORAGE_KEY = 'dominion:workoutDifficulty';
@@ -48,67 +62,98 @@ let saving = false;
 let errorMessage = '';
 let renderedContentKey = '';
 let interactiveReady = false;
+let challengeActivation = createChallengeActivationState('loading');
 let hydrationRequestId = 0;
+let activationRefreshPending = false;
+let observedAuthOwner = '';
+let hydratedAuthOwner = '';
+let authOwnerEpoch = 0;
 
-const readJson = (key, fallback) => {
-  try {
-    return JSON.parse(localStorage.getItem(key) || JSON.stringify(fallback));
-  } catch {
-    return fallback;
-  }
-};
+const hasHydratedAuthOwner = () => Boolean(
+  hydratedAuthOwner && hydratedAuthOwner === observedAuthOwner,
+);
+const captureMutationOwner = () => hasHydratedAuthOwner()
+  ? { userId: hydratedAuthOwner, epoch: authOwnerEpoch }
+  : null;
+const isCurrentMutationOwner = (owner) => Boolean(
+  owner
+  && owner.epoch === authOwnerEpoch
+  && owner.userId === hydratedAuthOwner
+  && owner.userId === observedAuthOwner,
+);
 
-const writeJson = (key, value) => localStorage.setItem(key, JSON.stringify(value));
-
-function localPreviewState() {
+function localPreviewState(ownerId) {
   return normalizePreviewChallengeState(
-    readJson(PREVIEW_CHALLENGE_STORAGE_KEY, {}),
+    readPreviewUserValue(localStorage, ownerId, PREVIEW_CHALLENGE_STORAGE_KEY, {}),
     entryDate,
   );
 }
 
-function localEntryDate() {
-  const preview = localPreviewState();
+function localEntryDate(timeZone = browserTimeZone, ownerId = hydratedAuthOwner) {
+  const preview = localPreviewState(ownerId);
   return isPreviewChallengeActive(localDemoMode, preview)
     ? previewChallengeDate(preview)
-    : dateKeyForTimeZone(new Date(), browserTimeZone);
+    : dateKeyForTimeZone(new Date(), timeZone);
 }
 
-function localDateWasSubmitted(date) {
-  const candidates = [
-    readJson('dominion:checkInDates', {}),
-    readJson('dominion:previewCheckInDates', {}),
-  ];
-  return candidates.some((value) => {
-    if (Array.isArray(value)) return value.includes(date);
-    if (Array.isArray(value?.dates) && value.dates.includes(date)) return true;
-    return Object.values(value || {}).some((nested) => Array.isArray(nested?.dates) && nested.dates.includes(date));
-  });
+function localDateWasSubmitted(date, user, previewActive) {
+  const storageKey = previewActive
+    ? PREVIEW_CHECK_IN_DATES_STORAGE_KEY
+    : 'dominion:checkInDates';
+  const stored = readPreviewUserValue(localStorage, user.userId, storageKey, {});
+  const cache = migrateMockCheckInCache(stored, user.userId, user.email);
+  writePreviewUserValue(localStorage, user.userId, storageKey, cache);
+  return cache.dates.includes(date);
 }
 
-function readLocalDraft() {
-  entryDate = localEntryDate();
-  const preview = localPreviewState();
-  const challengeStart = readJson('dominion:startDate', entryDate);
-  const challengeDay = calendarDayDifference(entryDate, challengeStart) + 1;
-  const challengeFinished = challengeDay < 1 || challengeDay > 77;
-  const entry = readJson(ENTRY_STORAGE_KEY, []).find((item) => item.date === entryDate) || {};
-  return normalizeDailyStandardDraft({
-    ...entry,
-    entry_date: entryDate,
-    workoutDifficulty: entry.workoutDifficulty || readJson(WORKOUT_DIFFICULTY_STORAGE_KEY, {}),
-    submitted: localDateWasSubmitted(entryDate),
-    locked: localDateWasSubmitted(entryDate) || isPreviewChallengeComplete(preview) || challengeFinished,
-  });
+function readLocalDraft(activation, user) {
+  const date = localEntryDate(activation.timeZone || browserTimeZone, user.userId);
+  const preview = localPreviewState(user.userId);
+  const previewActive = isPreviewChallengeActive(localDemoMode, preview);
+  const nextActivation = previewActive
+    ? {
+        ...activation,
+        readState: 'ready',
+        contractValid: true,
+        status: 'active',
+        mode: 'solo',
+        startDate: preview.anchorDate,
+        canParticipate: true,
+        canMutateDailyStandards: true,
+      }
+    : activation;
+  const challengeActive = nextActivation.canMutateDailyStandards === true;
+  const storedEntries = readPreviewUserValue(localStorage, user.userId, ENTRY_STORAGE_KEY, []);
+  const entries = Array.isArray(storedEntries) ? storedEntries : [];
+  const entry = entries.find((item) => item.date === date) || {};
+  const submitted = localDateWasSubmitted(date, user, previewActive);
+  return {
+    activation: nextActivation,
+    date,
+    draft: normalizeDailyStandardDraft({
+      ...entry,
+      entry_date: date,
+      workoutDifficulty: entry.workoutDifficulty || readPreviewUserValue(
+        localStorage,
+        user.userId,
+        WORKOUT_DIFFICULTY_STORAGE_KEY,
+        {},
+      ),
+      submitted,
+      locked: submitted || isPreviewChallengeComplete(preview) || !challengeActive,
+      lockReason: challengeActive ? null : 'challenge_not_active',
+    }),
+  };
 }
 
-function writeLocalDraft(nextDraft) {
-  const entries = readJson(ENTRY_STORAGE_KEY, []);
+function writeLocalDraft(nextDraft, ownerId) {
+  const storedEntries = readPreviewUserValue(localStorage, ownerId, ENTRY_STORAGE_KEY, []);
+  const entries = Array.isArray(storedEntries) ? storedEntries : [];
   const index = entries.findIndex((item) => item.date === nextDraft.date);
   if (index >= 0) entries[index] = nextDraft;
   else entries.push(nextDraft);
-  writeJson(ENTRY_STORAGE_KEY, entries);
-  writeJson(WORKOUT_DIFFICULTY_STORAGE_KEY, nextDraft.workoutDifficulty);
+  writePreviewUserValue(localStorage, ownerId, ENTRY_STORAGE_KEY, entries);
+  writePreviewUserValue(localStorage, ownerId, WORKOUT_DIFFICULTY_STORAGE_KEY, nextDraft.workoutDifficulty);
 }
 
 function setText(id, value) {
@@ -338,7 +383,12 @@ function syncPhysicalContent() {
   const recommendation = document.getElementById('actionWorkoutRecommendation');
   if (select) {
     select.value = difficulty;
-    select.disabled = loading || saving || draft.locked || draft.submitted;
+    select.disabled = loading
+      || saving
+      || !hasHydratedAuthOwner()
+      || !challengeActivation.canMutateDailyStandards
+      || draft.locked
+      || draft.submitted;
   }
   if (recommendation) recommendation.textContent = workoutPlanForDate(entryDate, difficulty, action.workoutId);
 }
@@ -346,7 +396,11 @@ function syncPhysicalContent() {
 function render() {
   if (!root || !action) return;
   const isComplete = draft.completed.includes(action.id);
-  const isLocked = !interactiveReady || draft.locked || draft.submitted;
+  const isLocked = !interactiveReady
+    || !hasHydratedAuthOwner()
+    || !challengeActivation.canMutateDailyStandards
+    || draft.locked
+    || draft.submitted;
   const button = document.getElementById('actionCompletionToggle');
   const status = document.getElementById('actionPageStatus');
   const handoff = document.getElementById('actionCheckInHandoff');
@@ -375,6 +429,12 @@ function render() {
     status.textContent = errorMessage
       || (loading ? 'Loading today’s action…'
         : saving ? 'Saving your change…'
+          : challengeActivation.readState === 'error'
+            ? 'Challenge activation could not be confirmed. Refresh to try again.'
+          : challengeActivation.status === 'not_started'
+            ? 'Start your challenge before tracking this Daily Standard.'
+          : challengeActivation.status === 'scheduled'
+            ? `Your challenge is scheduled to begin ${challengeActivation.startDate}.`
           : isLocked ? 'This day is finalized. Completion can no longer be changed.'
             : isComplete ? `${action.title} is complete for today.`
               : 'Ready when you are. This page never submits your Check-In.');
@@ -387,8 +447,10 @@ function render() {
 async function setWorkoutDifficulty(event) {
   const workoutId = action?.workoutId;
   const difficulty = event.currentTarget.value;
-  if (!workoutId || loading || saving || draft.locked || draft.submitted) return;
+  if (!workoutId || loading || saving || !hasHydratedAuthOwner() || !challengeActivation.canMutateDailyStandards || draft.locked || draft.submitted) return;
   if (draft.workoutDifficulty[workoutId] === difficulty) return;
+  const owner = captureMutationOwner();
+  if (!owner) return;
   const previousDraft = draft;
   draft = applyWorkoutDifficultyMutation(draft, workoutId, difficulty);
   saving = true;
@@ -397,51 +459,106 @@ async function setWorkoutDifficulty(event) {
 
   try {
     if (hasSupabaseAuth()) {
-      draft = await setDailyStandardWorkoutDifficulty({
+      const authoritative = await setDailyStandardWorkoutDifficulty({
         date: entryDate,
         workoutId,
         difficulty,
         expectedVersion: previousDraft.version,
+        expectedUserId: owner.userId,
       });
+      if (!isCurrentMutationOwner(owner)) return;
+      draft = authoritative;
     } else {
-      writeLocalDraft(draft);
+      if (!isCurrentMutationOwner(owner)) return;
+      writeLocalDraft(draft, owner.userId);
     }
   } catch (error) {
+    if (!isCurrentMutationOwner(owner)) return;
     draft = previousDraft;
     errorMessage = error?.message || 'That difficulty could not be saved. Try again.';
     if (hasSupabaseAuth()) {
-      try { draft = await getDailyStandardDraft(entryDate); } catch { /* keep recoverable local state */ }
+      activationRefreshPending = true;
+      try {
+        const authoritative = await getDailyStandardDraft(entryDate, {
+          expectedUserId: owner.userId,
+        });
+        if (isCurrentMutationOwner(owner)) draft = authoritative;
+      } catch { /* keep recoverable local state */ }
     }
   } finally {
+    if (!isCurrentMutationOwner(owner)) return;
     saving = false;
     render();
+    if (activationRefreshPending) {
+      activationRefreshPending = false;
+      void hydrate();
+    }
   }
 }
 
-async function hydrate() {
+async function hydrate(expectedOwnerId = observedAuthOwner) {
   if (saving) return;
   const requestId = ++hydrationRequestId;
+  const requestedOwner = String(expectedOwnerId || '');
   loading = true;
+  interactiveReady = false;
   errorMessage = '';
   render();
   try {
     let nextDate = entryDate;
     let nextDraft;
+    let nextActivation;
+    let dashboardOwner;
     if (hasSupabaseAuth()) {
       const dashboard = await getDashboard();
-      const timeZone = dashboard?.profile?.timeZone || browserTimeZone;
+      dashboardOwner = String(dashboard?.profile?.userId || '');
+      if (!dashboardOwner) throw new Error('Unable to verify the Daily Standard account.');
+      if ((requestedOwner && requestedOwner !== dashboardOwner)
+        || (observedAuthOwner && observedAuthOwner !== dashboardOwner)) return;
+      nextActivation = dashboard?.activation || createChallengeActivationState('error');
+      const timeZone = nextActivation.timeZone || dashboard?.profile?.timeZone || browserTimeZone;
       nextDate = dateKeyForTimeZone(new Date(), timeZone);
-      nextDraft = await getDailyStandardDraft(nextDate);
+      nextDraft = nextActivation.canMutateDailyStandards
+        ? await getDailyStandardDraft(nextDate, { expectedUserId: dashboardOwner })
+        : normalizeDailyStandardDraft({
+            entry_date: nextDate,
+            locked: true,
+            lock_reason: nextActivation.status === 'scheduled'
+              ? 'challenge_scheduled'
+              : 'challenge_not_active',
+            activation_status: nextActivation.status,
+          });
     } else {
-      nextDraft = readLocalDraft();
-      nextDate = entryDate;
+      const currentUser = await getLocalOrSessionUser();
+      dashboardOwner = String(currentUser?.userId || '');
+      if (!dashboardOwner) throw new Error('You need to log in again.');
+      if ((requestedOwner && requestedOwner !== dashboardOwner)
+        || (observedAuthOwner && observedAuthOwner !== dashboardOwner)) return;
+      const activation = await getChallengeActivation({ expectedUserId: dashboardOwner });
+      const localState = readLocalDraft(
+        activation,
+        currentUser,
+      );
+      nextActivation = localState.activation;
+      nextDraft = localState.draft;
+      nextDate = localState.date;
     }
-    if (requestId !== hydrationRequestId || saving) return;
+    if (requestId !== hydrationRequestId
+      || saving
+      || (observedAuthOwner && observedAuthOwner !== dashboardOwner)) return;
+    observedAuthOwner ||= dashboardOwner;
+    hydratedAuthOwner = dashboardOwner;
+    challengeActivation = nextActivation;
     entryDate = nextDate;
     draft = nextDraft;
     interactiveReady = true;
   } catch (error) {
     if (requestId !== hydrationRequestId) return;
+    hydratedAuthOwner = '';
+    entryDate = dateKeyForTimeZone(new Date(), browserTimeZone);
+    draft = normalizeDailyStandardDraft({ entry_date: entryDate });
+    renderedContentKey = '';
+    if (hasSupabaseAuth()) challengeActivation = createChallengeActivationState('error');
     interactiveReady = false;
     errorMessage = error?.message || 'Unable to load today’s action.';
   } finally {
@@ -453,8 +570,59 @@ async function hydrate() {
   }
 }
 
+function invalidateDailyStandardOwner(nextOwner = '') {
+  authOwnerEpoch += 1;
+  hydrationRequestId += 1;
+  observedAuthOwner = String(nextOwner || '');
+  hydratedAuthOwner = '';
+  interactiveReady = false;
+  loading = true;
+  saving = false;
+  activationRefreshPending = false;
+  challengeActivation = createChallengeActivationState('loading');
+  entryDate = dateKeyForTimeZone(new Date(), browserTimeZone);
+  draft = normalizeDailyStandardDraft({ entry_date: entryDate });
+  renderedContentKey = '';
+  errorMessage = '';
+  render();
+  void renderActionContent();
+  syncPhysicalContent();
+}
+
+async function handleDailyStandardAuthOwnerChange(nextUser, { force = false } = {}) {
+  const nextOwner = String(nextUser?.userId || '');
+  if (!force && nextOwner && nextOwner === observedAuthOwner) return;
+  invalidateDailyStandardOwner(nextOwner);
+  if (!nextOwner) {
+    redirectToLogin();
+    return;
+  }
+
+  try {
+    const billing = await getBillingState();
+    if (observedAuthOwner !== nextOwner) return;
+    if (!billing.authenticated) {
+      redirectToLogin();
+      return;
+    }
+    if (!billing.appAccess) {
+      window.location.href = './billing.html?intent=subscription';
+      return;
+    }
+    await hydrate(nextOwner);
+  } catch (error) {
+    if (observedAuthOwner !== nextOwner) return;
+    loading = false;
+    challengeActivation = createChallengeActivationState('error');
+    errorMessage = error?.message || 'Unable to reload this action after the account changed.';
+    render();
+  }
+}
+
 async function toggleCompletion() {
-  if (loading || saving || draft.locked || draft.submitted) return;
+  if (loading || saving || !hasHydratedAuthOwner() || !challengeActivation.canMutateDailyStandards || draft.locked || draft.submitted) return;
+  const owner = captureMutationOwner();
+  if (!owner) return;
   const nextCompleted = !draft.completed.includes(action.id);
   const previousDraft = draft;
   const completed = new Set(draft.completed);
@@ -467,32 +635,74 @@ async function toggleCompletion() {
 
   try {
     if (hasSupabaseAuth()) {
-      draft = await mutateDailyStandardDraft({
+      const authoritative = await mutateDailyStandardDraft({
         date: entryDate,
         actionId: action.id,
         completed: nextCompleted,
         expectedVersion: previousDraft.version,
+        expectedUserId: owner.userId,
       });
+      if (!isCurrentMutationOwner(owner)) return;
+      draft = authoritative;
     } else {
-      writeLocalDraft(draft);
+      if (!isCurrentMutationOwner(owner)) return;
+      writeLocalDraft(draft, owner.userId);
     }
   } catch (error) {
+    if (!isCurrentMutationOwner(owner)) return;
     draft = previousDraft;
     errorMessage = error?.message || 'That change could not be saved. Try again.';
     if (hasSupabaseAuth()) {
-      try { draft = await getDailyStandardDraft(entryDate); } catch { /* keep recoverable local state */ }
+      activationRefreshPending = true;
+      try {
+        const authoritative = await getDailyStandardDraft(entryDate, {
+          expectedUserId: owner.userId,
+        });
+        if (isCurrentMutationOwner(owner)) draft = authoritative;
+      } catch { /* keep recoverable local state */ }
     }
   } finally {
+    if (!isCurrentMutationOwner(owner)) return;
     saving = false;
     render();
+    if (activationRefreshPending) {
+      activationRefreshPending = false;
+      void hydrate();
+    }
   }
 }
 
+function refreshAfterChallengeActivationEvent(event) {
+  const nextActivation = event.detail?.activation;
+  challengeActivation = nextActivation?.contractValid && nextActivation.readState === 'ready'
+    ? nextActivation
+    : createChallengeActivationState('loading');
+  interactiveReady = false;
+  render();
+  if (saving) {
+    activationRefreshPending = true;
+    return;
+  }
+  void hydrate();
+}
+
 async function boot() {
+  invalidateDailyStandardOwner('');
   if (!root || !action) {
     window.location.replace('./dashboard.html#daily-standards');
     return;
   }
+  const currentUser = await getLocalOrSessionUser();
+  if (!currentUser?.userId) {
+    redirectToLogin();
+    return;
+  }
+  invalidateDailyStandardOwner(currentUser.userId);
+  const unsubscribeAuth = subscribeToAuthStateChanges(({ user }) => {
+    void handleDailyStandardAuthOwnerChange(user);
+  });
+  window.addEventListener('pagehide', unsubscribeAuth, { once: true });
+
   const billing = await getBillingState();
   if (!billing.authenticated) {
     redirectToLogin();
@@ -503,12 +713,30 @@ async function boot() {
     return;
   }
   document.getElementById('actionCompletionToggle')?.addEventListener('click', toggleCompletion);
+  window.addEventListener('dominion:challenge-start-date-updated', refreshAfterChallengeActivationEvent);
   window.addEventListener('focus', () => { if (!document.hidden) hydrate(); });
   document.addEventListener('visibilitychange', () => { if (!document.hidden) hydrate(); });
   window.addEventListener('storage', (event) => {
-    if (!hasSupabaseAuth() && [ENTRY_STORAGE_KEY, 'dominion:checkInDates', 'dominion:previewCheckInDates'].includes(event.key)) hydrate();
+    if (event.key === 'dominion:user' && localDemoMode) {
+      invalidateDailyStandardOwner('');
+      void getLocalOrSessionUser()
+        .then((user) => handleDailyStandardAuthOwnerChange(user, { force: true }))
+        .catch((error) => {
+          console.warn('Unable to resolve the updated preview account', error);
+          redirectToLogin();
+        });
+      return;
+    }
+    if (localDemoMode && [
+      PREVIEW_USER_STATE_STORAGE_KEY,
+      ENTRY_STORAGE_KEY,
+      'dominion:checkInDates',
+      'dominion:previewCheckInDates',
+      'dominion:startDate',
+      'dominion:mockChallengeActivation',
+    ].includes(event.key)) hydrate(observedAuthOwner);
   });
-  await hydrate();
+  await hydrate(observedAuthOwner);
 }
 
 boot().catch((error) => {

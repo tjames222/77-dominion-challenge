@@ -85,7 +85,13 @@ set local "request.jwt.claim.sub" = '10000000-0000-4000-8000-000000000001';
 set local "request.jwt.claims" = '{"sub":"10000000-0000-4000-8000-000000000001","role":"authenticated","email":"alice@example.test","user_metadata":{"name":"Alice Example"}}';
 
 select lives_ok(
-  $$ select public.mutate_daily_standard_draft(current_date, 'bible', true) $$,
+  $$ select public.mutate_daily_standard_draft(
+    current_date,
+    'bible',
+    true,
+    null,
+    '10000000-0000-4000-8000-000000000001'
+  ) $$,
   'the trusted draft mutation records the completed Daily Standard before submission'
 );
 
@@ -94,7 +100,8 @@ select is(
     current_date,
     'one',
     'medium',
-    null
+    null,
+    '10000000-0000-4000-8000-000000000001'
   ) #>> '{workout_difficulty,one}',
   'medium',
   'an explicit Medium selection is returned instead of collapsing into the default'
@@ -145,7 +152,8 @@ select is(
     array['bible', 'bible', 'notAnAction'],
     '{}',
     'UTC',
-    current_date
+    current_date,
+    '10000000-0000-4000-8000-000000000001'
   ) ->> 'status',
   'partial',
   'the RPC derives status from the authoritative draft instead of client-supplied actions'
@@ -186,9 +194,9 @@ select throws_ok(
     set challenge_start_date = current_date - 1
     where user_id = auth.uid()
   $$,
-  'P0001',
-  'The challenge start date is locked after the first check-in.',
-  'the first check-in locks the challenge start date'
+  '42501',
+  'permission denied for table profiles',
+  'authenticated clients cannot bypass the server-owned challenge date lifecycle'
 );
 
 set local "request.jwt.claim.sub" = '30000000-0000-4000-8000-000000000003';

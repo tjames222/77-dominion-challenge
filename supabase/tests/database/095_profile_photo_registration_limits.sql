@@ -72,16 +72,15 @@ insert into public.profiles (
   user_id,
   name,
   email,
-  challenge_start_date,
   time_zone
 )
 values
   ('f8000000-0000-4000-8000-000000000001',
-    'Hourly Limit', 'hourly-limit@example.test', current_date, 'UTC'),
+    'Hourly Limit', 'hourly-limit@example.test', 'UTC'),
   ('f8000000-0000-4000-8000-000000000002',
-    'Daily Limit', 'daily-limit@example.test', current_date, 'UTC'),
+    'Daily Limit', 'daily-limit@example.test', 'UTC'),
   ('f8000000-0000-4000-8000-000000000003',
-    'Erasure Limit', 'erasure-limit@example.test', current_date, 'UTC');
+    'Erasure Limit', 'erasure-limit@example.test', 'UTC');
 
 set local role authenticated;
 set local "request.jwt.claim.sub" = '10000000-0000-4000-8000-000000000001';

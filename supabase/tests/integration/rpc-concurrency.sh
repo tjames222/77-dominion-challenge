@@ -47,7 +47,7 @@ select set_config(
   '{"sub":"$fixture_user","role":"authenticated","email":"carol@example.test"}',
   true
 );
-select * from public.record_app_visit();
+select * from public.record_app_visit('$fixture_user');
 commit;
 SQL
 )

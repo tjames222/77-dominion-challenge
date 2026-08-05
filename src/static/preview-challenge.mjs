@@ -2,18 +2,6 @@ export const PREVIEW_CHALLENGE_STORAGE_KEY = 'dominion:previewChallengeSimulatio
 export const PREVIEW_CHECK_IN_DATES_STORAGE_KEY = 'dominion:previewCheckInDates';
 export const PREVIEW_TOTAL_DAYS = 77;
 export const PREVIEW_COMPLETE_DAY = PREVIEW_TOTAL_DAYS + 1;
-export const PREVIEW_CHALLENGE_RESET_KEYS = [
-  'dominion:startDate',
-  'dominion:entries',
-  'dominion:checkInDates',
-  PREVIEW_CHECK_IN_DATES_STORAGE_KEY,
-  'dominion:feed',
-  'dominion:gameStats',
-  'dominion:badges',
-  'dominion:mockChallengeStates',
-  'dominion:mockChallengeThresholdsVersion',
-  PREVIEW_CHALLENGE_STORAGE_KEY,
-];
 
 const DATE_KEY_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 

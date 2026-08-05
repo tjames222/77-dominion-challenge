@@ -68,6 +68,32 @@ export function checkInCacheForOwner(cache, owner) {
   return createCheckInCache(normalizedOwner, cache.dates, cache.challengeDays);
 }
 
+export function mockCheckInOwnerForUser(userId) {
+  const normalizedUserId = String(userId || '').trim();
+  return normalizedUserId ? `mock:${normalizedUserId}` : '';
+}
+
+export function migrateMockCheckInCache(cache, userId, legacyEmail = '') {
+  const owner = mockCheckInOwnerForUser(userId);
+  if (!owner) return createCheckInCache('');
+  if (Array.isArray(cache)) return createCheckInCache(owner, cache);
+  if (!cache || typeof cache !== 'object') return createCheckInCache(owner);
+
+  const legacyOwner = String(legacyEmail || '').trim().toLowerCase()
+    ? `mock:${String(legacyEmail).trim().toLowerCase()}`
+    : '';
+  const candidates = cache.owner ? [cache] : Object.values(cache);
+  const matched = candidates.find((candidate) => (
+    candidate
+      && typeof candidate === 'object'
+      && !Array.isArray(candidate)
+      && (candidate.owner === owner || (legacyOwner && candidate.owner === legacyOwner))
+  ));
+  return matched
+    ? createCheckInCache(owner, matched.dates, matched.challengeDays)
+    : createCheckInCache(owner);
+}
+
 export function addCheckInDate(values, dateKey) {
   const dates = normalizeCheckInDates(values);
   if (!DATE_KEY_PATTERN.test(String(dateKey || ''))) return { dates, added: false };

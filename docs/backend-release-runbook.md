@@ -309,6 +309,25 @@ governed claim/confirmation flow.
 
 ## Staged production release
 
+### One-time challenge activation cutover
+
+Migration `20260804200019_challenge_activation_lifecycle.sql` is an approved
+prelaunch, atomic cutover with a bounded write outage. Before the migration
+stage starts, put the application in maintenance mode, pause every application
+and worker path that can write activation evidence, and wait for their open
+transactions to drain. This includes writes to challenge entries, check-ins,
+crews and membership/invite lifecycle evidence, game stats and point events,
+reward entitlements, and badges. Ordinary read-only traffic may remain online.
+
+The migration takes the retired-community deletion advisory lock, freezes the
+`auth.users` parent set, and then acquires its eleven evidence-table locks in one
+fixed order before capturing the backfill clock. Do not run this migration while
+mixed-order live writers are active. If its 10-second `lock_timeout` fires, the
+entire transaction rolls back: keep writers quiesced, identify and drain the
+remaining lock holder, and retry the complete migration. Never mark a timed-out
+attempt as applied or run fragments manually. Resume writers only after migration
+history and the activation smoke checks confirm the cutover applied once.
+
 `.github/workflows/deploy.yml` enforces the following order and stops before the
 next stage when one fails:
 

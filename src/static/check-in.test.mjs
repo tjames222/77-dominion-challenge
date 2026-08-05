@@ -13,6 +13,8 @@ import {
   currentFullDayStreakForDate,
   dateKeyForTimeZone,
   isDuplicateCheckInError,
+  migrateMockCheckInCache,
+  mockCheckInOwnerForUser,
   normalizeChallengeDays,
   normalizeCheckInDates,
 } from './check-in.mjs';
@@ -65,6 +67,19 @@ describe('daily check-in safeguards', () => {
       challengeDays: [],
     });
     assert.deepEqual(normalizeChallengeDays([2, '2', 1, 0, 78, 'bad']), [2, 1]);
+  });
+
+  it('migrates an email-owned preview cache to the stable mock user ID', () => {
+    const migrated = migrateMockCheckInCache({
+      owner: 'mock:old@example.test',
+      dates: ['2026-08-04'],
+      challengeDays: [3],
+    }, 'mock-user-a', 'OLD@example.test');
+
+    assert.equal(migrated.owner, mockCheckInOwnerForUser('mock-user-a'));
+    assert.deepEqual(migrated.dates, ['2026-08-04']);
+    assert.deepEqual(migrated.challengeDays, [3]);
+    assert.deepEqual(migrateMockCheckInCache(migrated, 'mock-user-b', 'new@example.test').dates, []);
   });
 
   it('recognizes only the daily check-in uniqueness failure', () => {

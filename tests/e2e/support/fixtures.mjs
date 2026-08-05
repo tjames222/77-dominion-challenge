@@ -111,12 +111,38 @@ const BASE_FEED = Object.freeze([
   },
 ]);
 
+const BASE_CHALLENGE_ACTIVATION = Object.freeze({
+  schemaVersion: 1,
+  revision: 1,
+  status: 'active',
+  storedStatus: 'active',
+  mode: 'group',
+  startDate: FIXED_CHALLENGE_START,
+  timeZone: 'UTC',
+  challengeDay: FIXED_CHALLENGE_DAY,
+  crewId: 'crew_e2e_alpha',
+  groupMembershipActive: true,
+  activatedAt: '2026-02-01T12:00:00.000Z',
+  confirmedAt: '2026-02-01T12:00:00.000Z',
+  activatedBy: FIXED_USER_ID,
+  confirmedBy: FIXED_USER_ID,
+  reviewRequired: false,
+  canActivateSolo: false,
+  canActivateGroup: false,
+  canParticipate: true,
+  canMutateDailyStandards: true,
+  canEditStartDate: false,
+});
+
 const json = (value) => JSON.parse(JSON.stringify(value));
 
 function baseMemberJson() {
   return {
     'dominion:user': json(FIXED_USER),
     'dominion:memberName': FIXED_USER.name,
+    'dominion:mockUserIdsByIdentity': {
+      [FIXED_USER.email.trim().toLowerCase()]: FIXED_USER_ID,
+    },
     'dominion:mockSubscription': json(ACTIVE_SUBSCRIPTION),
     'dominion:startDate': FIXED_CHALLENGE_START,
     'dominion:entries': [],
@@ -134,6 +160,9 @@ function baseMemberJson() {
     'dominion:mockCrewInvites': {},
     'dominion:mockJournalEntries': [],
     'dominion:mockChallengeStates': [],
+    'dominion:mockChallengeActivation': {
+      [FIXED_USER_ID]: json(BASE_CHALLENGE_ACTIVATION),
+    },
     'dominion:mockRewardEntitlements': json(BASE_REWARD_ENTITLEMENTS),
     'dominion:previewChallenge': { enabled: false },
   };

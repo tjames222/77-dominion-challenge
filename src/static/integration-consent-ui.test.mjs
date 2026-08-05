@@ -38,7 +38,8 @@ describe('member outbound update privacy surface', () => {
   test('loads and saves preferences only after the authenticated profile hydrates', () => {
     assert.match(profileJs, /getOutboundUpdateConsent\(crewId\)/);
     assert.match(profileJs, /updateOutboundUpdateConsent\(crewId/);
-    assert.match(profileJs, /if \(authenticated\) await hydrateIntegrationConsent\(\)/);
+    assert.match(profileJs, /if \(authenticated && owner\) await hydrateIntegrationConsent\(owner\)/);
+    assert.match(profileJs, /if \(!isCurrentProfileOwner\(owner\)\) return/);
     assert.match(apiJs, /target_event_type: null/);
     assert.match(apiJs, /target_share_membership_events: settings\.events\.membership/);
   });

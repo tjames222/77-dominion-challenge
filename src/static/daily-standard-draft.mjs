@@ -42,6 +42,8 @@ export function normalizeDailyStandardDraft(draft = {}, fallbackDate = '') {
     version: Math.max(Number.parseInt(draft.version, 10) || 0, 0),
     updatedAt: draft.updatedAt || draft.updated_at || null,
     locked: Boolean(draft.locked),
+    lockReason: draft.lockReason || draft.lock_reason || null,
+    activationStatus: draft.activationStatus || draft.activation_status || null,
     submitted: Boolean(draft.submitted),
     staleWriteReconciled: Boolean(draft.staleWriteReconciled || draft.stale_write_reconciled),
   };

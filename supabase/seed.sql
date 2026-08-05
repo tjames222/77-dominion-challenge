@@ -115,18 +115,66 @@ insert into public.profiles (
   email,
   challenge_start_date,
   time_zone,
+  challenge_activation_status,
+  challenge_participation_mode,
+  challenge_activation_time_zone,
+  challenge_group_attribution_crew_id,
+  challenge_activated_at,
+  challenge_confirmed_at,
+  challenge_activated_by,
+  challenge_confirmed_by,
+  challenge_activation_schema_version,
+  challenge_activation_revision,
+  challenge_activation_review_required,
+  challenge_activation_updated_at,
   created_at,
   updated_at
 )
 values
-  ('10000000-0000-4000-8000-000000000001', 'Alice Example', 'alice@example.test', '2026-07-01', 'UTC', '2026-07-01 12:00:00+00', '2026-07-01 12:00:00+00'),
-  ('20000000-0000-4000-8000-000000000002', 'Bob Example', 'bob@example.test', '2026-07-01', 'UTC', '2026-07-01 12:00:00+00', '2026-07-01 12:00:00+00'),
-  ('30000000-0000-4000-8000-000000000003', 'Carol Example', 'carol@example.test', '2026-07-01', 'UTC', '2026-07-01 12:00:00+00', '2026-07-01 12:00:00+00')
+  (
+    '10000000-0000-4000-8000-000000000001', 'Alice Example', 'alice@example.test',
+    '2026-07-01', 'UTC', 'active', 'group', 'UTC',
+    'a0000000-0000-4000-8000-000000000001',
+    '2026-07-01 12:00:00+00', '2026-07-01 12:00:00+00',
+    '10000000-0000-4000-8000-000000000001', '10000000-0000-4000-8000-000000000001',
+    1, 1, false, '2026-07-01 12:00:00+00',
+    '2026-07-01 12:00:00+00', '2026-07-01 12:00:00+00'
+  ),
+  (
+    '20000000-0000-4000-8000-000000000002', 'Bob Example', 'bob@example.test',
+    '2026-07-01', 'UTC', 'active', 'group', 'UTC',
+    'b0000000-0000-4000-8000-000000000002',
+    '2026-07-01 12:00:00+00', '2026-07-01 12:00:00+00',
+    '20000000-0000-4000-8000-000000000002', '20000000-0000-4000-8000-000000000002',
+    1, 1, false, '2026-07-01 12:00:00+00',
+    '2026-07-01 12:00:00+00', '2026-07-01 12:00:00+00'
+  ),
+  (
+    '30000000-0000-4000-8000-000000000003', 'Carol Example', 'carol@example.test',
+    '2026-07-01', 'UTC', 'active', 'group', 'UTC',
+    'a0000000-0000-4000-8000-000000000001',
+    '2026-07-01 12:00:00+00', '2026-07-01 12:00:00+00',
+    '30000000-0000-4000-8000-000000000003', '30000000-0000-4000-8000-000000000003',
+    1, 1, false, '2026-07-01 12:00:00+00',
+    '2026-07-01 12:00:00+00', '2026-07-01 12:00:00+00'
+  )
 on conflict (user_id) do update set
   name = excluded.name,
   email = excluded.email,
   challenge_start_date = excluded.challenge_start_date,
   time_zone = excluded.time_zone,
+  challenge_activation_status = excluded.challenge_activation_status,
+  challenge_participation_mode = excluded.challenge_participation_mode,
+  challenge_activation_time_zone = excluded.challenge_activation_time_zone,
+  challenge_group_attribution_crew_id = excluded.challenge_group_attribution_crew_id,
+  challenge_activated_at = excluded.challenge_activated_at,
+  challenge_confirmed_at = excluded.challenge_confirmed_at,
+  challenge_activated_by = excluded.challenge_activated_by,
+  challenge_confirmed_by = excluded.challenge_confirmed_by,
+  challenge_activation_schema_version = excluded.challenge_activation_schema_version,
+  challenge_activation_revision = excluded.challenge_activation_revision,
+  challenge_activation_review_required = excluded.challenge_activation_review_required,
+  challenge_activation_updated_at = excluded.challenge_activation_updated_at,
   updated_at = excluded.updated_at;
 
 insert into public.entitlements (
