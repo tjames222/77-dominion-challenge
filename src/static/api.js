@@ -39,6 +39,16 @@ import {
   readPreviewUserValue,
   writePreviewUserValue,
 } from './preview-user-state.mjs';
+import {
+  PREVIEW_AUTH_OWNER_STORAGE_KEY,
+  PREVIEW_AUTH_PROFILE_STORAGE_KEY,
+  assertPreviewAuthEmail,
+  bindPreviewAuthOwner,
+  clearPreviewAuthOwner,
+  previewAuthUser,
+  readPreviewAuthOwner,
+  shouldUseSupabaseAuthentication,
+} from './preview-auth-runtime.mjs';
 import { normalizeEarnedBadges } from './badges-rewards.mjs';
 import { normalizeJournalEntry, sortJournalEntries } from './journal-entry.mjs';
 import {
@@ -72,6 +82,10 @@ import {
   normalizeRewardCatalog,
 } from './reward-catalog.mjs';
 import { assertSingleCrew, newCrewLifecycleRequestId } from './crew-experience.mjs';
+import {
+  mockCrewMembership,
+  mockCrewsForUser,
+} from './mock-crew-access.mjs';
 import {
   CREW_INVITE_CODE_ALPHABET,
   CREW_INVITE_CODE_LENGTH,
@@ -111,9 +125,12 @@ const SUPABASE_KEY =
   import.meta.env.VITE_SUPABASE_ANON_KEY ||
   '';
 const ENABLE_MOCKS = String(import.meta.env.VITE_ENABLE_MOCKS || '').toLowerCase() === 'true';
+const ENABLE_SUPABASE_AUTH_IN_MOCKS = String(
+  import.meta.env.VITE_ENABLE_SUPABASE_AUTH_IN_MOCKS || '',
+).toLowerCase() === 'true';
 const isPlaceholder = (value) => !value || value.includes('YOUR_');
 const isSupabaseConfigured = () => !isPlaceholder(SUPABASE_URL) && !isPlaceholder(SUPABASE_KEY);
-export const supabase = isSupabaseConfigured() && !ENABLE_MOCKS
+export const supabase = isSupabaseConfigured()
   ? createClient(SUPABASE_URL, SUPABASE_KEY, {
       auth: {
         persistSession: true,
@@ -126,6 +143,15 @@ export function isLocalDemoMode() {
   if (typeof window === 'undefined') return false;
   return ENABLE_MOCKS || (import.meta.env.DEV && ['localhost', '127.0.0.1', '::1'].includes(window.location.hostname));
 }
+const usesSupabaseAuthentication = () => Boolean(supabase)
+  && shouldUseSupabaseAuthentication({
+    configured: true,
+    localDemo: isLocalDemoMode(),
+    mocksEnabled: ENABLE_MOCKS,
+    productionBuild: import.meta.env.PROD,
+    localHybridEnabled: ENABLE_SUPABASE_AUTH_IN_MOCKS,
+  });
+const isHybridAuthPreview = () => isLocalDemoMode() && usesSupabaseAuthentication();
 const MEMBERSHIP_ACCESS_KEY = 'membership_active';
 const MEMBERSHIP_PRODUCT_KEY = 'dominion_membership';
 const PROFILE_PHOTO_BUCKET = 'profile-photos';
@@ -245,6 +271,11 @@ const preserveAdoptedMockLegacyActivation = (resolution) => {
 };
 
 const getMockUserId = () => {
+  if (isHybridAuthPreview()) {
+    const ownerId = readPreviewAuthOwner(localStorage);
+    if (!ownerId) throw new Error('You need to log in again.');
+    return ownerId;
+  }
   const resolution = resolveMockIdentity({
     email: getMockUser().email,
     identityMap: readJson(MOCK_USER_IDS_BY_IDENTITY_KEY, {}),
@@ -267,8 +298,8 @@ const writeMockUserValue = (key, value, userId = getMockUserId()) => (
 
 const getMockSubscription = () => readMockUserValue(MOCK_SUBSCRIPTION_KEY, null);
 
-const getMockBillingState = () => {
-  const user = readJson('dominion:user', null);
+const getMockBillingState = (verifiedUser = null) => {
+  const user = verifiedUser || readJson('dominion:user', null);
   // A logged-out preview must not create a placeholder identity and claim
   // legacy account state merely because a public page checks billing access.
   const subscription = user?.authenticated ? getMockSubscription() : null;
@@ -319,7 +350,52 @@ const requireSupabase = () => {
   return supabase;
 };
 
-const localBypassBillingState = () => getMockBillingState();
+const requireSupabaseAuthentication = () => {
+  if (!usesSupabaseAuthentication()) {
+    throw new Error('Supabase authentication is not configured.');
+  }
+  return supabase;
+};
+
+function persistHybridAuthUser(authUser, fallbackName) {
+  const ownerId = bindPreviewAuthOwner(localStorage, authUser?.id);
+  const profile = readPreviewUserValue(
+    localStorage,
+    ownerId,
+    PREVIEW_AUTH_PROFILE_STORAGE_KEY,
+    {},
+  );
+  const user = previewAuthUser(authUser, { fallbackName, profile });
+  writeJson('dominion:user', user);
+  if (user.name) writeJson('dominion:memberName', user.name);
+  return user;
+}
+
+function clearLocalAuthenticatedIdentity() {
+  if (typeof localStorage === 'undefined') return;
+  clearPreviewAuthOwner(localStorage);
+}
+
+async function getVerifiedHybridUser(expectedUserId = '') {
+  const client = requireSupabaseAuthentication();
+  const { data, error } = await client.auth.getUser();
+  if (error || !data?.user) {
+    clearLocalAuthenticatedIdentity();
+    if (error) throw error;
+    return null;
+  }
+  if (expectedUserId && data.user.id !== expectedUserId) {
+    throw new Error('The signed-in account changed. Try again.');
+  }
+  return persistHybridAuthUser(data.user);
+}
+
+async function requireHybridPreviewUser(expectedUserId = '') {
+  if (!isHybridAuthPreview()) return null;
+  const user = await getVerifiedHybridUser(expectedUserId);
+  if (!user) throw new Error('You need to log in again.');
+  return user;
+}
 
 const lockedBillingState = () => ({
   authenticated: false,
@@ -355,19 +431,21 @@ export function sessionToUser(session, fallbackName = 'Member') {
 }
 
 export const hasSupabaseAuth = () => Boolean(supabase) && !isLocalDemoMode();
+export const hasSupabaseAuthentication = () => usesSupabaseAuthentication();
 
 export async function getAuthSession() {
-  if (!supabase || isLocalDemoMode()) return null;
+  if (!usesSupabaseAuthentication()) return null;
   const { data } = await supabase.auth.getSession();
   return data.session;
 }
 
 export function subscribeToAuthStateChanges(listener) {
-  if (!supabase || isLocalDemoMode() || typeof listener !== 'function') return () => {};
+  if (!usesSupabaseAuthentication() || typeof listener !== 'function') return () => {};
   const { data } = supabase.auth.onAuthStateChange((event, session) => {
+    if (!session?.user && isHybridAuthPreview()) clearLocalAuthenticatedIdentity();
     listener({
       event,
-      user: session?.user ? sessionToUser(session) : null,
+      user: session?.user ? runtimeUserFromSession(session) : null,
     });
   });
   return () => data?.subscription?.unsubscribe?.();
@@ -405,8 +483,13 @@ export function sanitizeReturnTo(returnTo, fallback = './dashboard.html') {
 }
 
 export async function clearAuthSession() {
-  if (supabase) await supabase.auth.signOut();
-  if (isLocalDemoMode() && readJson('dominion:user', null)?.email) {
+  if (usesSupabaseAuthentication()) {
+    try {
+      await supabase.auth.signOut();
+    } finally {
+      if (isHybridAuthPreview()) clearLocalAuthenticatedIdentity();
+    }
+  } else if (isLocalDemoMode() && readJson('dominion:user', null)?.email) {
     // Adopt a legacy install's active ID before clearing the account pointer.
     claimPreviewLegacyOwner(localStorage, getMockUserId());
   }
@@ -439,6 +522,7 @@ export function saveLocalMockUser(user) {
     createUserId: createMockUserId,
   });
   writeJson(MOCK_USER_IDS_BY_IDENTITY_KEY, resolution.identityMap);
+  localStorage.removeItem(PREVIEW_AUTH_OWNER_STORAGE_KEY);
   localStorage.setItem(MOCK_USER_ID_KEY, resolution.userId);
   preserveAdoptedMockLegacyActivation(resolution);
   writeJson('dominion:user', nextUser);
@@ -447,14 +531,27 @@ export function saveLocalMockUser(user) {
 }
 
 export function saveLocalUserFromSession(session, fallbackName) {
+  if (isHybridAuthPreview()) return persistHybridAuthUser(session?.user, fallbackName);
   const user = sessionToUser(session, fallbackName);
   localStorage.setItem('dominion:user', JSON.stringify(user));
   if (user.name) localStorage.setItem('dominion:memberName', JSON.stringify(user.name));
   return user;
 }
 
+function runtimeUserFromSession(session, fallbackName) {
+  return saveLocalUserFromSession(session, fallbackName);
+}
+
 export async function getLocalOrSessionUser() {
   if (isLocalDemoMode()) {
+    if (isHybridAuthPreview()) {
+      try {
+        return await getVerifiedHybridUser();
+      } catch {
+        clearLocalAuthenticatedIdentity();
+        return null;
+      }
+    }
     const user = readJson('dominion:user', null);
     return user ? { ...user, userId: getMockUserId() } : null;
   }
@@ -490,6 +587,7 @@ export async function setThemePreference(themeKey) {
   }
 
   if (isLocalDemoMode()) {
+    await requireHybridPreviewUser();
     const userId = getMockUserId();
     const preferences = readJson(MOCK_THEME_PREFERENCES_KEY, {});
     const preference = {
@@ -524,26 +622,34 @@ export async function ensureProfile({ name, email, expectedUserId = '' } = {}) {
 }
 
 export async function signUpWithPassword({ name, email, password }) {
-  const client = requireSupabase();
+  const client = requireSupabaseAuthentication();
+  const emailRedirectTo = !isHybridAuthPreview() || typeof window === 'undefined'
+    ? undefined
+    : new URL('./login.html', window.location.href).href;
   const { data, error } = await client.auth.signUp({
     email,
     password,
-    options: { data: { name } },
+    options: {
+      data: { name },
+      ...(emailRedirectTo ? { emailRedirectTo } : {}),
+    },
   });
   if (error) throw error;
-  if (data.session?.access_token) await ensureProfile({ name, expectedUserId: data.user?.id });
+  if (data.session?.access_token && hasSupabaseAuth()) {
+    await ensureProfile({ name, expectedUserId: data.user?.id });
+  }
 
   return { session: data.session, user: data.user };
 }
 
 export async function signInWithPassword({ email, password }) {
-  const client = requireSupabase();
+  const client = requireSupabaseAuthentication();
   const { data, error } = await client.auth.signInWithPassword({
     email,
     password,
   });
   if (error) throw error;
-  if (data.session?.access_token) await ensureProfile();
+  if (data.session?.access_token && hasSupabaseAuth()) await ensureProfile();
 
   return { session: data.session, user: data.user };
 }
@@ -713,11 +819,30 @@ export async function updateProfile(profile, { expectedUserId = '' } = {}) {
     throw new Error('Challenge start dates must be changed through the challenge activation service.');
   }
   if (isLocalDemoMode()) {
+    const verifiedUser = await requireHybridPreviewUser(expectedUserId);
     const currentUserId = getMockUserId();
     if (expectedUserId && currentUserId !== expectedUserId) {
       throw new Error('The signed-in account changed. Try again.');
     }
     const existing = getMockUser();
+    if (verifiedUser) {
+      const nextUser = {
+        ...existing,
+        name: profile.name ?? existing.name ?? 'Member',
+        email: assertPreviewAuthEmail(verifiedUser.email, profile.email),
+        avatarUrl: profile.avatarUrl ?? existing.avatarUrl ?? '',
+        authenticated: true,
+        updatedAt: new Date().toISOString(),
+      };
+      writeMockUserValue(PREVIEW_AUTH_PROFILE_STORAGE_KEY, {
+        name: nextUser.name,
+        avatarUrl: nextUser.avatarUrl,
+        updatedAt: nextUser.updatedAt,
+      }, currentUserId);
+      writeJson('dominion:user', nextUser);
+      if (nextUser.name) writeJson('dominion:memberName', nextUser.name);
+      return { ...nextUser, userId: currentUserId };
+    }
     for (const checkInKey of ['dominion:checkInDates', 'dominion:previewCheckInDates']) {
       const migratedCheckIns = migrateMockCheckInCache(
         readMockUserValue(checkInKey, {}, currentUserId),
@@ -952,6 +1077,7 @@ export async function uploadProfilePhoto(preparedPhoto, { expectedUserId = '' } 
     throw new Error('Prepare the profile picture before uploading it.');
   }
   if (isLocalDemoMode()) {
+    await requireHybridPreviewUser(expectedUserId);
     if (expectedUserId && getMockUserId() !== expectedUserId) {
       throw new Error('The signed-in account changed. Try again.');
     }
@@ -1032,7 +1158,16 @@ export async function replaceProfilePhoto({ preparedPhoto, profile }, { expected
 }
 
 export async function getBillingState() {
-  if (isLocalDemoMode()) return localBypassBillingState();
+  if (isLocalDemoMode()) {
+    if (!isHybridAuthPreview()) return getMockBillingState();
+    try {
+      const user = await getVerifiedHybridUser();
+      return getMockBillingState(user || { authenticated: false });
+    } catch {
+      clearLocalAuthenticatedIdentity();
+      return getMockBillingState({ authenticated: false });
+    }
+  }
   if (!supabase) return lockedBillingState();
 
   const session = await getAuthSession();
@@ -1097,6 +1232,7 @@ async function invokeSupabaseFunction(name, body = {}) {
 
 export async function createCheckoutSession(productKey) {
   if (isLocalDemoMode()) {
+    await requireHybridPreviewUser();
     if (productKey !== MEMBERSHIP_PRODUCT_KEY) throw new Error('Unsupported preview product selection.');
     const now = new Date();
     const currentPeriodEnd = new Date(now);
@@ -1123,6 +1259,7 @@ export async function createCustomerPortalSession(options = {}) {
   const flow = options?.flow || '';
   const returnPath = options?.returnPath || '';
   if (isLocalDemoMode()) {
+    await requireHybridPreviewUser();
     const url = flow === 'payment_method_update'
       ? './billing.html?payment=updated&preview=1'
       : './profile.html#billing';
@@ -1133,6 +1270,7 @@ export async function createCustomerPortalSession(options = {}) {
 
 export async function cancelMembership() {
   if (isLocalDemoMode()) {
+    await requireHybridPreviewUser();
     writeMockUserValue(MOCK_SUBSCRIPTION_KEY, null);
     return { canceled: true, accessRemoved: true, preview: true };
   }
@@ -1141,6 +1279,7 @@ export async function cancelMembership() {
 
 export async function manageGroupIntegration(action, values = {}) {
   if (isLocalDemoMode()) {
+    await requireHybridPreviewUser();
     if (action === 'list') return { destinations: [], preview: true };
     throw new Error('Connect Slack or Discord from a signed-in staging or production account.');
   }
@@ -1212,6 +1351,7 @@ export async function previewShareSnapshot(kind) {
 
 export async function createShareSnapshot(kind, { expectedUserId = '' } = {}) {
   if (isLocalDemoMode()) {
+    await requireHybridPreviewUser(expectedUserId);
     if (expectedUserId && getMockUserId() !== expectedUserId) {
       throw new Error('The signed-in account changed. Try again.');
     }
@@ -1232,6 +1372,7 @@ export async function createShareSnapshot(kind, { expectedUserId = '' } = {}) {
 
 export async function createSharingRewardIntent(shareKind, { expectedUserId = '' } = {}) {
   if (isLocalDemoMode()) {
+    await requireHybridPreviewUser(expectedUserId);
     if (expectedUserId && getMockUserId() !== expectedUserId) {
       throw new Error('The signed-in account changed. Try again.');
     }
@@ -1258,6 +1399,7 @@ export async function createSharingRewardIntent(shareKind, { expectedUserId = ''
 
 export async function completeSharingReward(completionToken, { expectedUserId = '' } = {}) {
   if (isLocalDemoMode()) {
+    await requireHybridPreviewUser(expectedUserId);
     if (expectedUserId && getMockUserId() !== expectedUserId) {
       throw new Error('The signed-in account changed. Try again.');
     }
@@ -1409,6 +1551,7 @@ export async function getAllRewardCatalog({ pageSize = 100 } = {}) {
 
 export async function claimRewardEntitlementUnlocks() {
   if (isLocalDemoMode()) {
+    await requireHybridPreviewUser();
     const result = claimMockRewardEntitlementUnlocks({
       progression: getMockChallengeProgression(),
       ownershipRecords: readMockUserValue(MOCK_REWARD_ENTITLEMENTS_KEY, []),
@@ -1434,6 +1577,7 @@ export async function claimRewardEntitlementUnlocks() {
 
 export async function claimChallengeUnlocks({ expectedUserId = '' } = {}) {
   if (isLocalDemoMode()) {
+    await requireHybridPreviewUser(expectedUserId);
     if (expectedUserId && getMockUserId() !== expectedUserId) {
       throw new Error('The signed-in account changed. Try again.');
     }
@@ -1469,6 +1613,7 @@ export async function claimChallengeUnlocks({ expectedUserId = '' } = {}) {
 
 export async function startChallenge(challengeKey) {
   if (isLocalDemoMode()) {
+    await requireHybridPreviewUser();
     const progression = getMockChallengeProgression();
     const record = progression.records.find((item) => item.key === challengeKey);
     const nextRecord = transitionChallengeRecord(record, 'active');
@@ -1714,6 +1859,7 @@ const requireCapturedActivationActor = (expectedUserId) => {
 export async function getChallengeActivation({ expectedUserId } = {}) {
   const capturedActorId = requireCapturedActivationActor(expectedUserId);
   if (isLocalDemoMode()) {
+    await requireHybridPreviewUser(capturedActorId);
     if (getMockUserId() !== capturedActorId) {
       throw new Error('The signed-in account changed. Try again.');
     }
@@ -1737,6 +1883,7 @@ export async function activateSoloChallenge({
 } = {}) {
   const capturedActorId = requireCapturedActivationActor(expectedUserId);
   if (isLocalDemoMode()) {
+    await requireHybridPreviewUser(capturedActorId);
     const userId = getMockUserId();
     if (userId !== capturedActorId) {
       throw new Error('The signed-in account changed. Try again.');
@@ -1776,6 +1923,7 @@ export async function activateGroupChallenge({
 } = {}) {
   const capturedActorId = requireCapturedActivationActor(expectedUserId);
   if (isLocalDemoMode()) {
+    await requireHybridPreviewUser(capturedActorId);
     const userId = getMockUserId();
     if (userId !== capturedActorId) {
       throw new Error('The signed-in account changed. Try again.');
@@ -1829,6 +1977,7 @@ export async function updateChallengeStartDate({
 } = {}) {
   const capturedActorId = requireCapturedActivationActor(expectedUserId);
   if (isLocalDemoMode()) {
+    await requireHybridPreviewUser(capturedActorId);
     const userId = getMockUserId();
     if (userId !== capturedActorId) {
       throw new Error('The signed-in account changed. Try again.');
@@ -2347,6 +2496,7 @@ export async function getSiteTrainingState({ page, program = null, expectedUserI
   requireSiteTrainingPage(page);
   if (program) requireSiteTrainingProgram(program, 'overall');
   if (isLocalDemoMode()) {
+    await requireHybridPreviewUser(actorId);
     if (getMockUserId() !== actorId) throw new Error('The signed-in account changed. Try again.');
     return mockSiteTrainingSnapshot(
       page,
@@ -2386,7 +2536,10 @@ export async function claimSiteTraining({
   if (!SITE_TRAINING_CLAIM_ACTION_SET.has(operation.action)) {
     throw new TypeError('Start or resume page training through the claim operation.');
   }
-  if (isLocalDemoMode()) return runMockSiteTrainingOperation(operation, actorId);
+  if (isLocalDemoMode()) {
+    await requireHybridPreviewUser(actorId);
+    return runMockSiteTrainingOperation(operation, actorId);
+  }
   const client = requireSupabase();
   const user = await requireUser(actorId);
   const { data, error } = await client.rpc(
@@ -2417,7 +2570,10 @@ export async function transitionSiteTraining({
   if (operation.action === 'restart' && operation.scope !== 'page') {
     throw new TypeError('Restart is available only for current page training.');
   }
-  if (isLocalDemoMode()) return runMockSiteTrainingOperation(operation, actorId);
+  if (isLocalDemoMode()) {
+    await requireHybridPreviewUser(actorId);
+    return runMockSiteTrainingOperation(operation, actorId);
+  }
   const client = requireSupabase();
   const user = await requireUser(actorId);
   const { data, error } = await client.rpc(
@@ -2717,11 +2873,14 @@ function ensureMockCrews() {
 
   crews.forEach((crew) => {
     if (!members[crew.id]) {
-      members[crew.id] = [
-        { crewId: crew.id, userId, name: user.name || 'Preview Member', avatarUrl: user.avatarUrl || '', role: 'owner', joinedAt: crew.createdAt || new Date().toISOString() },
-        { crewId: crew.id, userId: 'preview_member_josh', name: 'Josh', avatarUrl: createMockAvatar('Josh', '#45634d'), role: 'member', joinedAt: crew.createdAt || new Date().toISOString() },
-        { crewId: crew.id, userId: 'preview_member_sarah', name: 'Sarah', avatarUrl: createMockAvatar('Sarah', '#7a4652'), role: 'member', joinedAt: crew.createdAt || new Date().toISOString() },
-      ];
+      const canAdoptLegacyCrew = !isHybridAuthPreview() || crew.createdBy === userId;
+      members[crew.id] = canAdoptLegacyCrew
+        ? [
+            { crewId: crew.id, userId, name: user.name || 'Preview Member', avatarUrl: user.avatarUrl || '', role: 'owner', joinedAt: crew.createdAt || new Date().toISOString() },
+            { crewId: crew.id, userId: 'preview_member_josh', name: 'Josh', avatarUrl: createMockAvatar('Josh', '#45634d'), role: 'member', joinedAt: crew.createdAt || new Date().toISOString() },
+            { crewId: crew.id, userId: 'preview_member_sarah', name: 'Sarah', avatarUrl: createMockAvatar('Sarah', '#7a4652'), role: 'member', joinedAt: crew.createdAt || new Date().toISOString() },
+          ]
+        : [];
     }
     members[crew.id] = members[crew.id].map((member) => ({
       ...member,
@@ -2732,7 +2891,7 @@ function ensureMockCrews() {
   });
 
   saveMockCrewMembers(members);
-  return { crews: assertSingleCrew(crews), members };
+  return { crews, members };
 }
 
 function saveMockCrewMembers(members) {
@@ -2744,14 +2903,15 @@ function saveMockCrewMembers(members) {
 
 function requireMockCrewTrainingAccess(crewId) {
   const userId = getMockUserId();
-  const { crews } = ensureMockCrews();
+  const { crews, members } = ensureMockCrews();
   const crew = crews.find((item) => item.id === crewId);
+  const membership = mockCrewMembership(members, crewId, userId);
   if (!crew
     || crew.createdBy !== userId
-    || !['owner', 'admin'].includes(crew.role)) {
+    || !['owner', 'admin'].includes(membership?.role)) {
     throw new Error('Crew training is available only to the active crew creator.');
   }
-  return { crew, userId };
+  return { crew: { ...crew, role: membership.role }, userId };
 }
 
 function requireMockCrewTrainingVersion(contentVersion) {
@@ -2965,7 +3125,12 @@ async function queryCrewsForUser(client, userId) {
 }
 
 export async function getCrews() {
-  if (isLocalDemoMode()) return ensureMockCrews().crews;
+  if (isLocalDemoMode()) {
+    await requireHybridPreviewUser();
+    const userId = getMockUserId();
+    const { crews, members } = ensureMockCrews();
+    return mockCrewsForUser(crews, members, userId);
+  }
   const client = requireSupabase();
   const user = await requireUser();
   return queryCrewsForUser(client, user.id);
@@ -2975,12 +3140,13 @@ export async function getOutboundUpdateConsent(crewId) {
   if (!crewId) throw new Error('Choose a group to review update privacy.');
 
   if (isLocalDemoMode()) {
+    await requireHybridPreviewUser();
     const userId = getMockUserId();
     const user = getMockUser();
     const { members } = ensureMockCrews();
     const membershipActive = Boolean(members[crewId]?.some((member) => member.userId === userId));
-    const storedByCrew = readJson(MOCK_OUTBOUND_CONSENT_KEY, {});
-    const stored = storedByCrew[crewId]?.userId === userId ? storedByCrew[crewId] : {};
+    const storedByCrew = readMockUserValue(MOCK_OUTBOUND_CONSENT_KEY, {}, userId);
+    const stored = storedByCrew[crewId] || {};
     return normalizeOutboundConsent(stored, {
       userId,
       crewId,
@@ -3005,15 +3171,16 @@ export async function updateOutboundUpdateConsent(crewId, preferences) {
   const settings = outboundConsentWritePayload(preferences);
 
   if (isLocalDemoMode()) {
+    await requireHybridPreviewUser();
     const userId = getMockUserId();
     const user = getMockUser();
     const { members } = ensureMockCrews();
     const membershipActive = Boolean(members[crewId]?.some((member) => member.userId === userId));
     if (!membershipActive) throw new Error('You can only change consent for a group you belong to.');
 
-    const storedByCrew = readJson(MOCK_OUTBOUND_CONSENT_KEY, {});
+    const storedByCrew = readMockUserValue(MOCK_OUTBOUND_CONSENT_KEY, {}, userId);
     const prior = normalizeOutboundConsent(
-      storedByCrew[crewId]?.userId === userId ? storedByCrew[crewId] : {},
+      storedByCrew[crewId] || {},
       { userId, crewId, accountActive: Boolean(user.authenticated), membershipActive },
     );
     if (prior.consentRecorded && outboundConsentSettingsEqual(prior, settings)) return prior;
@@ -3032,7 +3199,7 @@ export async function updateOutboundUpdateConsent(crewId, preferences) {
       evaluatedAt: new Date().toISOString(),
     });
     storedByCrew[crewId] = next;
-    writeJson(MOCK_OUTBOUND_CONSENT_KEY, storedByCrew);
+    writeMockUserValue(MOCK_OUTBOUND_CONSENT_KEY, storedByCrew, userId);
     return next;
   }
 
@@ -3066,8 +3233,10 @@ export async function createCrew({
   requestId = newCrewLifecycleRequestId(),
 }) {
   if (isLocalDemoMode()) {
+    await requireHybridPreviewUser();
     const { crews, members } = ensureMockCrews();
-    if (crews.length) {
+    const userId = getMockUserId();
+    if (mockCrewsForUser(crews, members, userId).length) {
       throw new Error('Leave or delete your current crew before creating another.');
     }
     const now = new Date().toISOString();
@@ -3076,7 +3245,7 @@ export async function createCrew({
       name,
       description,
       challengeStartDate: challengeStartDate || null,
-      createdBy: getMockUserId(),
+      createdBy: userId,
       createdAt: now,
       role: 'owner',
       joinedAt: now,
@@ -3084,7 +3253,7 @@ export async function createCrew({
     crews.unshift(crew);
     members[crew.id] = [{
       crewId: crew.id,
-      userId: getMockUserId(),
+      userId,
       name: getMockUser().name || 'Preview Member',
       avatarUrl: getMockUser().avatarUrl || '',
       role: 'owner',
@@ -3140,6 +3309,7 @@ export async function createCrewAndActivateGroup({
   const capturedActorId = requireCapturedActivationActor(expectedUserId);
 
   if (isLocalDemoMode()) {
+    await requireHybridPreviewUser(capturedActorId);
     const actorId = getMockUserId();
     if (actorId !== capturedActorId) {
       throw new Error('The signed-in account changed. Try again.');
@@ -3165,7 +3335,7 @@ export async function createCrewAndActivateGroup({
     }
 
     const { crews, members } = ensureMockCrews();
-    if (crews.length) {
+    if (mockCrewsForUser(crews, members, actorId).length) {
       throw new Error('Leave or delete your current crew before creating another.');
     }
 
@@ -3275,6 +3445,7 @@ export async function getCrewTrainingProgress(
   contentVersion = CREW_TRAINING_VERSION,
 ) {
   if (isLocalDemoMode()) {
+    await requireHybridPreviewUser();
     contentVersion = requireMockCrewTrainingVersion(contentVersion);
     const { userId } = requireMockCrewTrainingAccess(crewId);
     const rows = readJson(MOCK_CREW_TRAINING_KEY, {});
@@ -3299,6 +3470,7 @@ export async function claimCrewTraining(
   contentVersion = CREW_TRAINING_VERSION,
 ) {
   if (isLocalDemoMode()) {
+    await requireHybridPreviewUser();
     contentVersion = requireMockCrewTrainingVersion(contentVersion);
     const { userId } = requireMockCrewTrainingAccess(crewId);
     const rows = readJson(MOCK_CREW_TRAINING_KEY, {});
@@ -3337,6 +3509,7 @@ export async function advanceCrewTraining({
   targetStep = 0,
 }) {
   if (isLocalDemoMode()) {
+    await requireHybridPreviewUser();
     contentVersion = requireMockCrewTrainingVersion(contentVersion);
     const { userId } = requireMockCrewTrainingAccess(crewId);
     const rows = readJson(MOCK_CREW_TRAINING_KEY, {});
@@ -3416,9 +3589,12 @@ export async function advanceCrewTraining({
 
 export async function deleteCrew({ crewId, requestId = newCrewLifecycleRequestId() }) {
   if (isLocalDemoMode()) {
+    await requireHybridPreviewUser();
+    const userId = getMockUserId();
     const { crews, members } = ensureMockCrews();
     const crew = crews.find((item) => item.id === crewId);
-    if (!crew || !['owner', 'admin'].includes(crew.role)) {
+    const membership = mockCrewMembership(members, crewId, userId);
+    if (!crew || !['owner', 'admin'].includes(membership?.role)) {
       throw new Error('Only a crew owner or admin can delete this crew.');
     }
     writeJson(MOCK_CREWS_KEY, crews.filter((item) => item.id !== crewId));
@@ -3445,15 +3621,17 @@ export async function deleteCrew({ crewId, requestId = newCrewLifecycleRequestId
 
 export async function leaveCrew({ crewId, requestId = newCrewLifecycleRequestId() }) {
   if (isLocalDemoMode()) {
+    await requireHybridPreviewUser();
+    const userId = getMockUserId();
     const { crews, members } = ensureMockCrews();
     const crew = crews.find((item) => item.id === crewId);
-    if (!crew || ['owner', 'admin'].includes(crew.role)) {
+    const membership = mockCrewMembership(members, crewId, userId);
+    if (!crew || !membership || ['owner', 'admin'].includes(membership.role)) {
       throw new Error('Crew owners and admins must delete the crew instead of leaving it.');
     }
-    writeJson(MOCK_CREWS_KEY, crews.filter((item) => item.id !== crewId));
-    members[crewId] = (members[crewId] || []).filter((item) => item.userId !== getMockUserId());
+    members[crewId] = (members[crewId] || []).filter((item) => item.userId !== userId);
     saveMockCrewMembers(members);
-    clearMockCrewTraining(crewId);
+    clearMockCrewTraining(crewId, userId);
     return { status: 'left', crewId, requestId };
   }
 
@@ -3469,6 +3647,7 @@ export async function leaveCrew({ crewId, requestId = newCrewLifecycleRequestId(
 
 export async function getCrewMembers(crewId) {
   if (isLocalDemoMode()) {
+    await requireHybridPreviewUser();
     const billing = getMockBillingState();
     const currentUserId = getMockUserId();
     const { crews, members } = ensureMockCrews();
@@ -3529,6 +3708,7 @@ export async function getCrewMemberProgressProfile({
   }
 
   if (isLocalDemoMode()) {
+    await requireHybridPreviewUser(expectedUserId);
     const actorId = getMockUserId();
     if (expectedUserId && actorId !== expectedUserId) {
       throw new Error('The signed-in account changed. Try again.');
@@ -3585,7 +3765,9 @@ export async function issueCrewInviteBundle(crewId, { expectedUserId = '' } = {}
     if (expectedUserId && currentUserId !== expectedUserId) {
       throw new Error('The signed-in account changed. Try again.');
     }
-    const canManage = crew && (crew.createdBy === currentUserId || (members[crewId] || []).some((member) => member.userId === currentUserId && ['owner', 'admin'].includes(member.role)));
+    const canManage = crew && (members[crewId] || []).some((member) => (
+      member.userId === currentUserId && ['owner', 'admin'].includes(member.role)
+    ));
     if (!canManage) throw new Error('Only a private-group admin can create an invitation.');
 
     const invites = readJson(MOCK_INVITES_KEY, {});
@@ -3822,6 +4004,7 @@ export async function previewCrewInvite({ token = '', code = '', continuationTok
 
 export async function confirmCrewInvite(continuationToken, { expectedUserId = '' } = {}) {
   if (isLocalDemoMode()) {
+    await requireHybridPreviewUser(expectedUserId);
     const mockUser = readJson('dominion:user', null);
     if (!mockUser?.authenticated) return { status: 'authentication_required' };
     const billing = getMockBillingState();
@@ -3905,8 +4088,11 @@ export async function confirmCrewInvite(continuationToken, { expectedUserId = ''
 
 export async function getJournalEntries() {
   if (isLocalDemoMode()) {
-    const entries = sortJournalEntries(readJson(MOCK_JOURNAL_KEY, []).map(normalizeJournalEntry));
-    writeJson(MOCK_JOURNAL_KEY, entries);
+    await requireHybridPreviewUser();
+    const entries = sortJournalEntries(
+      readMockUserValue(MOCK_JOURNAL_KEY, []).map(normalizeJournalEntry),
+    );
+    writeMockUserValue(MOCK_JOURNAL_KEY, entries);
     return entries;
   }
 
@@ -3924,7 +4110,8 @@ export async function getJournalEntries() {
 
 export async function saveJournalEntry(entry) {
   if (isLocalDemoMode()) {
-    const entries = readJson(MOCK_JOURNAL_KEY, []).map(normalizeJournalEntry);
+    await requireHybridPreviewUser();
+    const entries = readMockUserValue(MOCK_JOURNAL_KEY, []).map(normalizeJournalEntry);
     const existingIndex = entries.findIndex((item) => item.date === entry.date);
     const existing = existingIndex >= 0 ? entries[existingIndex] : {};
     const now = new Date().toISOString();
@@ -3942,7 +4129,7 @@ export async function saveJournalEntry(entry) {
     };
     if (existingIndex >= 0) entries[existingIndex] = nextEntry;
     else entries.unshift(nextEntry);
-    writeJson(MOCK_JOURNAL_KEY, sortJournalEntries(entries));
+    writeMockUserValue(MOCK_JOURNAL_KEY, sortJournalEntries(entries));
     return nextEntry;
   }
 

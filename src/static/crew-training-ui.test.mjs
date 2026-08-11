@@ -99,5 +99,6 @@ test('progress uses only the versioned training RPCs and is cleared with mock me
   assert.match(api, /client\.rpc\('claim_crew_training'/);
   assert.match(api, /client\.rpc\('advance_crew_training'/);
   assert.match(api, /target_content_version:\s*contentVersion/);
-  assert.equal((api.match(/clearMockCrewTraining\(crewId\);/g) || []).length, 2);
+  assert.equal((api.match(/clearMockCrewTraining\(crewId\);/g) || []).length, 1);
+  assert.equal((api.match(/clearMockCrewTraining\(crewId, userId\);/g) || []).length, 1);
 });
