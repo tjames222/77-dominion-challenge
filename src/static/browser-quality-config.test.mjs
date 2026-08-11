@@ -63,7 +63,10 @@ test('production bundles the pinned Inter variable font as the brand family', ()
     '693b77d4f32ee9b8bfc995589b5fad5e99adf2832738661f5402f9978429a8e3',
   );
   assert.match(productionFontLicense, /SIL OPEN FONT LICENSE Version 1\.1/);
-  assert.equal(packageJson.scripts.build, 'vite build && node scripts/verify-build-assets.mjs');
+  assert.equal(
+    packageJson.scripts.build,
+    'node scripts/validate-frontend-env.mjs && vite build && node scripts/verify-build-assets.mjs',
+  );
   assert.match(buildAssetVerifier, /fonts\/Inter-LICENSE\.txt/);
   assert.match(buildAssetVerifier, /InterVariable-/);
 });

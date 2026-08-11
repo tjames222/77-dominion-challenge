@@ -53,6 +53,9 @@ jobs:
       - name: Production build
         run: pnpm build
 
+      - name: Hybrid dev authentication regression
+        run: pnpm test:e2e:auth
+
       - name: Check committed visual baselines
         id: visual-baselines
         shell: bash

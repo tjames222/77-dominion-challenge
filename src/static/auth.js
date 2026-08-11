@@ -6,7 +6,7 @@ import {
 } from './challenge-start-intent.mjs';
 import {
   getBillingState,
-  hasSupabaseAuth,
+  hasSupabaseAuthentication,
   isLocalDemoMode,
   saveLocalMockUser,
   saveLocalUserFromSession,
@@ -46,7 +46,7 @@ if (form) {
     }
 
     try {
-      if (hasSupabaseAuth()) {
+      if (hasSupabaseAuthentication()) {
         const result = nameInput
           ? await signUpWithPassword({ name, email, password })
           : await signInWithPassword({ email, password });

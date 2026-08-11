@@ -53,8 +53,8 @@ describe('text-only private journal', () => {
     assert.match(communityHtml, /id=["']journalForm["']/);
     assert.match(communityHtml, /id=["']journalTimeline["']/);
     assert.match(apiJs, /\.from\('journal_entries'\)/);
-    assert.match(apiJs, /readJson\(MOCK_JOURNAL_KEY, \[\]\)\.map\(normalizeJournalEntry\)/);
-    assert.match(apiJs, /writeJson\(MOCK_JOURNAL_KEY, entries\)/);
+    assert.match(apiJs, /readMockUserValue\(MOCK_JOURNAL_KEY, \[\]\)\.map\(normalizeJournalEntry\)/);
+    assert.match(apiJs, /writeMockUserValue\(MOCK_JOURNAL_KEY, entries\)/);
   });
 
   test('removes every supported photo hook while retaining responsive layout', () => {

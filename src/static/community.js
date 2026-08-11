@@ -2036,6 +2036,28 @@ $('journalForm')?.addEventListener('submit', async (event) => {
   }
 });
 
+function scrubPrivateCommunityState() {
+  clearMemberProgress({ reason: 'auth-change' });
+  state.currentUser = null;
+  state.billing = null;
+  state.crews = [];
+  state.crewsLoaded = false;
+  state.createFormOpen = false;
+  state.createRequestId = '';
+  state.activeCrewId = '';
+  state.crewMembers = [];
+  state.leaderboard.rows = [];
+  state.leaderboard.requestId += 1;
+  state.journalEntries = [];
+  state.integrations = [];
+  state.integrationSetup = null;
+  state.integrationSetupToken = '';
+  localStorage.removeItem('dominion:activeCrewId');
+  renderCrewShell();
+  renderJournal();
+  fillJournalFormForDate();
+}
+
 const unsubscribeMemberProgressAuth = subscribeToAuthStateChanges(({ event, user }) => {
   const signedOut = event === 'SIGNED_OUT' || !user?.authenticated;
   const accountChanged = Boolean(
@@ -2043,7 +2065,13 @@ const unsubscribeMemberProgressAuth = subscribeToAuthStateChanges(({ event, user
     && state.currentUser?.userId
     && user.userId !== state.currentUser.userId
   );
-  if (signedOut || accountChanged) clearMemberProgress({ reason: 'auth-change' });
+  if (!signedOut && !accountChanged) return;
+  scrubPrivateCommunityState();
+  if (signedOut) {
+    redirectToLogin('./community.html');
+  } else {
+    window.location.reload();
+  }
 });
 
 function revalidateMemberProgressAfterForegroundSignal() {

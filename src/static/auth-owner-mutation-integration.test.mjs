@@ -91,7 +91,8 @@ describe('authenticated mutation owner binding', () => {
       api.indexOf('const getMockBillingState'),
       api.indexOf('const todayLabel'),
     );
-    assert.match(billing, /const user = readJson\('dominion:user', null\)/);
+    assert.match(billing, /const user = verifiedUser \|\| readJson\('dominion:user', null\)/);
     assert.match(billing, /const subscription = user\?\.authenticated \? getMockSubscription\(\) : null/);
+    assert.match(api, /getVerifiedHybridUser\(\)[\s\S]*getMockBillingState\(user \|\| \{ authenticated: false \}\)/);
   });
 });

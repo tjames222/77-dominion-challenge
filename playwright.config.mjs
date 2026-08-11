@@ -98,7 +98,10 @@ export default defineConfig({
   projects: [
     {
       name: 'chromium-functional',
-      testIgnore: /visual-routes\.spec\.mjs/,
+      testIgnore: [
+        /visual-routes\.spec\.mjs/,
+        /fou-1452-hybrid-auth\.spec\.mjs/,
+      ],
       metadata: {
         breakpoint: 'desktop',
         theme: 'dark',

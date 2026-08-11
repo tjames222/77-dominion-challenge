@@ -44,7 +44,7 @@ pnpm install
 pnpm dev
 ```
 
-Local Vite development automatically uses the preview mock workflow. To exercise the explicit preview behavior in another environment, set `VITE_ENABLE_MOCKS=true`.
+Local Vite development automatically uses the browser-local preview workflow. A production-built preview with `VITE_ENABLE_MOCKS=true` keeps product data and billing mocked; when valid Supabase public configuration is also present, login, registration, session persistence, and logout use Supabase Auth. Local `vite` sessions keep fake identities unless `VITE_ENABLE_SUPABASE_AUTH_IN_MOCKS=true` is explicitly set with the mock and Supabase variables.
 
 Slack and Discord connection controls fail closed unless `VITE_ENABLE_GROUP_INTEGRATIONS=true`. Keep the flag false until the complete provider rollout in FOU-764 is approved; when it is false, the browser does not expose provider controls or call provider-management functions.
 
@@ -84,9 +84,11 @@ Workout difficulty describes the work performed and never changes points. Histor
 ## Deployment workflow
 
 - `main` is production and must use real Supabase Auth, Postgres, and Stripe billing.
-- `develop` is the Cloudflare Pages preview branch and should set `VITE_ENABLE_MOCKS=true` so auth, membership, dashboard, community, and journal flows use local mock state instead of Supabase or Stripe.
-- Production should not set `VITE_ENABLE_MOCKS`; the default is `false`.
-- Local Vite dev on localhost also enables mock mode for rapid UI testing.
+- `https://develop.77-dominion-challenge.pages.dev` is the canonical prelaunch dev URL. The bare `https://77-dominion-challenge.pages.dev` host follows `main` and must not be treated as the current dev deployment.
+- `develop` should set `VITE_ENABLE_MOCKS=true` together with `VITE_SUPABASE_URL` and `VITE_SUPABASE_PUBLISHABLE_KEY`. Supabase owns real login, registration, sessions, and logout; membership, billing, dashboard, community, and journal state remain browser-local previews and never call Stripe.
+- Production must resolve `VITE_ENABLE_MOCKS` to `false`; `main` builds fail closed if mocks are enabled.
+- Local Vite dev on localhost enables browser-local product data for rapid UI testing. It uses local mock identities unless `VITE_ENABLE_MOCKS=true`, `VITE_ENABLE_SUPABASE_AUTH_IN_MOCKS=true`, and valid Supabase public configuration are all supplied explicitly.
+- Canonical `develop` and `main` Cloudflare builds fail before bundling when their required mode or Supabase URL/publishable key is missing.
 
 ### Feature-flagged Dominion Night theme
 

@@ -7,6 +7,7 @@ import {
   getOutboundUpdateConsent,
   getProfile,
   hasSupabaseAuth,
+  hasSupabaseAuthentication,
   isLocalDemoMode,
   redirectToLogin,
   replaceProfilePhoto,
@@ -196,6 +197,11 @@ const integrationShareBadges = document.getElementById('integrationShareBadges')
 const integrationShareMembership = document.getElementById('integrationShareMembership');
 const integrationConsentFeedback = document.getElementById('integrationConsentFeedback');
 const saveIntegrationConsent = document.getElementById('saveIntegrationConsent');
+const hybridAuthPreview = localPreviewMode && hasSupabaseAuthentication();
+if (profileEmailInput && hybridAuthPreview) {
+  profileEmailInput.readOnly = true;
+  profileEmailInput.title = 'Sign-in email changes are disabled on the dev preview.';
+}
 let currentProfile = { name: 'Member', email: 'Logged in', avatarUrl: '', updatedAt: '' };
 let selectedPhotoFile = null;
 let selectedPreparedPhoto = null;
