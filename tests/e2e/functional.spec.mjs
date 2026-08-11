@@ -244,18 +244,19 @@ test('non-admin members see Leave Group and retain personal data after confirmat
   expect(personal.stats.totalPoints).toBe(750);
 });
 
-test('Community branded invite and provider actions retain their existing flows', async ({ page, app }) => {
+test('Community branded invite and provider actions retain their dedicated flows', async ({ page, app }) => {
   await app.open(ROUTE_BY_ID.community);
 
   const inviteButton = page.getByRole('button', { name: 'Invite People' });
-  await expect(inviteButton).toHaveAttribute('data-share-kind', 'invite');
+  await expect(inviteButton).not.toHaveAttribute('data-share-kind', 'invite');
   await expect(inviteButton).toHaveAttribute('aria-haspopup', 'dialog');
   const inviteBox = await inviteButton.boundingBox();
   expect(inviteBox?.height).toBeGreaterThanOrEqual(44);
   expect(inviteBox?.width).toBeGreaterThanOrEqual(44);
 
   await inviteButton.click();
-  await expect(page.getByRole('dialog', { name: 'Choose what you want to send' })).toBeVisible();
+  await expect(page.getByRole('dialog', { name: 'Invite People' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Generate invitation' })).toBeEnabled();
   await page.keyboard.press('Escape');
 
   const slack = page.getByRole('button', { name: 'Connect Slack' });

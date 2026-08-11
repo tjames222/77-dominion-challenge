@@ -13888,3 +13888,4 @@ revoke execute on function public.grant_sharing_reward_after_invite_redemption()
 \ir migrations/20260805015225_publish_solo_first_run_training_catalog.sql
 \ir migrations/20260805021049_add_page_training_restart_controls.sql
 \ir migrations/20260805055359_crew_member_progress_profile.sql
+\ir migrations/20260811012059_add_secure_crew_invite_codes.sql

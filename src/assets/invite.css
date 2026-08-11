@@ -92,6 +92,61 @@
   gap: 0.65rem;
 }
 
+.invite-code-form {
+  width: min(100%, 32rem);
+  margin: 1.5rem auto 0;
+  padding: clamp(1rem, 4vw, 1.35rem);
+  display: grid;
+  gap: 0.75rem;
+  border: 1px solid color-mix(in srgb, var(--accent) 38%, var(--border));
+  border-radius: 16px;
+  background: color-mix(in srgb, var(--surface-elevated) 82%, var(--surface));
+  text-align: left;
+}
+
+.invite-code-form[hidden],
+.invite-code-error[hidden] {
+  display: none;
+}
+
+.invite-code-form label {
+  color: var(--text);
+  font-weight: 850;
+}
+
+.invite-code-form p {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 0.78rem;
+  line-height: 1.5;
+}
+
+.invite-code-form input {
+  width: 100%;
+  min-height: 48px;
+  padding-inline: 0.9rem;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: clamp(0.9rem, 4vw, 1.05rem);
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.invite-code-form input:focus-visible,
+.invite-code-form button:focus-visible {
+  outline: 3px solid color-mix(in srgb, var(--accent) 60%, transparent);
+  outline-offset: 3px;
+}
+
+.invite-code-form .invite-code-error {
+  color: color-mix(in srgb, var(--danger) 78%, var(--text));
+  font-weight: 750;
+}
+
 .invite-actions a,
 .invite-actions button {
   min-width: 11rem;
@@ -117,7 +172,8 @@
   .invite-mark,
   .invite-card h1,
   .invite-card .lead,
-  .invite-safety-note {
+  .invite-safety-note,
+  .invite-code-form {
     margin-inline: 0;
   }
 
@@ -133,5 +189,13 @@
   .invite-actions a,
   .invite-actions button {
     width: 100%;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .invite-code-form input,
+  .invite-code-form button {
+    scroll-behavior: auto;
+    transition: none;
   }
 }

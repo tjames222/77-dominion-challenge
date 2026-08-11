@@ -2,41 +2,83 @@ export const INVITE_CONTINUATION_STORAGE_KEY = 'dominion:crewInviteContinuation'
 export const INVITE_PAGE_PATH = './invite.html';
 
 const INVITE_SECRET_PATTERN = /^[A-Za-z0-9_-]{16,256}$/;
+const INVITE_CODE_PATTERN = /^[34679ACDEFGHJKMNPQRTUVWXY]{16}$/;
 
 export function normalizeInviteSecret(value) {
   const secret = String(value || '').trim();
   return INVITE_SECRET_PATTERN.test(secret) ? secret : '';
 }
 
-export function readInviteSecret(locationLike = {}) {
+export function normalizeInviteCode(value) {
+  const code = String(value || '')
+    .trim()
+    .toUpperCase()
+    .replace(/[\s-]+/g, '');
+  return INVITE_CODE_PATTERN.test(code) ? code : '';
+}
+
+export function readInviteCredential(locationLike = {}) {
   const hash = String(locationLike.hash || '').replace(/^#/, '');
   const hashParams = new URLSearchParams(hash);
   const fragmentSecret = normalizeInviteSecret(hashParams.get('invite'));
-  if (fragmentSecret) return { secret: fragmentSecret, source: 'fragment' };
+  if (fragmentSecret) return { type: 'token', value: fragmentSecret, source: 'fragment' };
+
+  const fragmentCode = normalizeInviteCode(hashParams.get('code'));
+  if (fragmentCode) return { type: 'code', value: fragmentCode, source: 'fragment' };
 
   const searchParams = new URLSearchParams(String(locationLike.search || '').replace(/^\?/, ''));
   const legacySecret = normalizeInviteSecret(searchParams.get('invite'));
-  return legacySecret ? { secret: legacySecret, source: 'legacy-query' } : { secret: '', source: '' };
+  return legacySecret
+    ? { type: 'token', value: legacySecret, source: 'legacy-query' }
+    : { type: '', value: '', source: '' };
+}
+
+export function readInviteSecret(locationLike = {}) {
+  const credential = readInviteCredential(locationLike);
+  return credential.type === 'token'
+    ? { secret: credential.value, source: credential.source }
+    : { secret: '', source: '' };
 }
 
 export function cleanInviteLocation(locationLike = {}) {
   const pathname = String(locationLike.pathname || '/invite.html');
   const searchParams = new URLSearchParams(String(locationLike.search || '').replace(/^\?/, ''));
   searchParams.delete('invite');
+  searchParams.delete('code');
   searchParams.delete('inviteFlow');
 
+  const hashParams = new URLSearchParams(String(locationLike.hash || '').replace(/^#/, ''));
+  hashParams.delete('invite');
+  hashParams.delete('code');
+
   const safeSearch = searchParams.toString();
-  return `${pathname}${safeSearch ? `?${safeSearch}` : ''}`;
+  const safeHash = hashParams.toString();
+  return `${pathname}${safeSearch ? `?${safeSearch}` : ''}${safeHash ? `#${safeHash}` : ''}`;
+}
+
+export function captureInviteCredential(windowLike) {
+  const location = windowLike?.location || {};
+  const result = readInviteCredential(location);
+  const searchParams = new URLSearchParams(String(location.search || '').replace(/^\?/, ''));
+  const hashParams = new URLSearchParams(String(location.hash || '').replace(/^#/, ''));
+  const hasCredentialLocation = searchParams.has('invite')
+    || searchParams.has('code')
+    || hashParams.has('invite')
+    || hashParams.has('code');
+  if (!hasCredentialLocation) return result;
+
+  // Strip both credential formats before an RPC, redirect, analytics callback,
+  // or referrer-bearing navigation can observe them, even when normalization
+  // rejects the supplied value.
+  windowLike?.history?.replaceState?.({}, '', cleanInviteLocation(location));
+  return result;
 }
 
 export function captureInviteSecret(windowLike) {
-  const result = readInviteSecret(windowLike?.location);
-  if (!result.secret) return result;
-
-  // Strip both query and fragment forms before any network request, redirect,
-  // analytics callback, or referrer-bearing navigation can observe the secret.
-  windowLike?.history?.replaceState?.({}, '', cleanInviteLocation(windowLike.location));
-  return result;
+  const result = captureInviteCredential(windowLike);
+  return result.type === 'token'
+    ? { secret: result.value, source: result.source }
+    : { secret: '', source: '' };
 }
 
 export function buildInviteAuthHref(page) {
@@ -86,6 +128,12 @@ export function inviteStatusContent(status, preview = {}) {
   const inviter = preview.inviterName || 'A Dominion member';
   const group = preview.groupName || 'this private group';
   const content = {
+    enter_code: {
+      eyebrow: 'Join a private group',
+      title: 'Enter your join code.',
+      message: 'A valid code opens a privacy-safe preview. It never joins a group until you explicitly confirm.',
+      recoverable: true,
+    },
     ready: {
       eyebrow: 'Private group invitation',
       title: `Join ${group}?`,
