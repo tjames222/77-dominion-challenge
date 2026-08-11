@@ -157,7 +157,10 @@ test('Solo first-run training completes all 13 routes without performing product
   await expect(page).toHaveURL(/\/science\.html$/);
   await expect(layer).toBeHidden();
   await expect(page.locator('.global-menu-button')).toBeFocused();
-  await expect(page.locator('.shared-header-action')).toHaveCount(0);
+  await expect(page.locator('.shared-header-share')).toHaveCount(1);
+  await expect(page.locator('.shared-header-streak')).toHaveCount(1);
+  await expect(page.locator('.shared-header-share')).toHaveAccessibleName('Share');
+  await expect(page.locator('.shared-header-streak')).toHaveAccessibleName(/App streak:/i);
 
   const completed = await durableSoloTrainingState(page);
   expect(completed).toMatchObject({
