@@ -189,6 +189,63 @@ test('share cancellation and lifecycle cancellation preserve the active invitati
   expect(revoked.revoked_at).toBeTruthy();
 });
 
+test('a failed replacement restores lifecycle controls without restoring invite credentials', async ({ page, app }) => {
+  const dialog = await openInviteDialog(page, app);
+  await generateInvite(dialog);
+
+  await dialog.getByRole('button', { name: 'Replace invitation' }).click();
+  await dialog.getByRole('button', { name: 'Replace invitation' }).last().click();
+
+  await expect(dialog).toContainText('Wait a few seconds before rotating this invitation.');
+  await expect(dialog.getByRole('button', { name: 'Replace invitation' })).toBeVisible();
+  await expect(dialog.getByRole('button', { name: 'Replace invitation' })).toBeEnabled();
+  await expect(dialog.getByRole('button', { name: 'Replace invitation' })).toBeFocused();
+  await expect(dialog.getByRole('button', { name: 'Revoke invitation' })).toBeVisible();
+  await expect(dialog.getByRole('tab', { name: 'Link' })).toBeHidden();
+  await expect(dialog.getByLabel('Private crew join link')).toHaveValue('');
+  await expect(dialog.locator('#crewInviteCodeValue')).toHaveText('');
+  await expect(dialog.locator('#crewInviteQrCanvas')).toHaveJSProperty('width', 0);
+  app.assertNoRuntimeErrors();
+});
+
+test('an account change during QR export cannot restore the prior account invitation', async ({ page, app }) => {
+  await page.addInitScript(() => {
+    const originalToBlob = HTMLCanvasElement.prototype.toBlob;
+    HTMLCanvasElement.prototype.toBlob = function deferredQrToBlob(callback, type, quality) {
+      if (type !== 'image/png' || window.__dominionQrExportDeferred) {
+        return originalToBlob.call(this, callback, type, quality);
+      }
+      window.__dominionQrExportDeferred = true;
+      window.__releaseDominionQrExport = () => {
+        originalToBlob.call(this, (blob) => {
+          window.__dominionQrExportResolved = true;
+          callback(blob);
+        }, type, quality);
+      };
+      return undefined;
+    };
+  });
+
+  const dialog = await openInviteDialog(page, app);
+  await dialog.getByRole('button', { name: 'Generate invitation' }).click();
+  await expect.poll(() => page.evaluate(() => Boolean(window.__dominionQrExportDeferred))).toBe(true);
+
+  await page.evaluate(() => {
+    localStorage.removeItem('dominion:user');
+    localStorage.removeItem('dominion:mockUserId');
+    window.dispatchEvent(new StorageEvent('storage', { key: 'dominion:user' }));
+  });
+  await expect(dialog).toBeHidden();
+
+  await page.evaluate(() => window.__releaseDominionQrExport());
+  await expect.poll(() => page.evaluate(() => Boolean(window.__dominionQrExportResolved))).toBe(true);
+  await expect(page.locator('#crewInviteDialog .crew-invite-link-value')).toHaveValue('');
+  await expect(page.locator('#crewInviteCodeValue')).toHaveText('');
+  await expect(page.locator('#crewInviteQrCanvas')).toHaveJSProperty('width', 0);
+  await expect(page.locator('#crewInviteDialog .crew-invite-representations')).toBeHidden();
+  app.assertNoRuntimeErrors();
+});
+
 test('a signed-out recipient can enter the code, authenticate through the fixed continuation, and explicitly join once', async ({ page, app }) => {
   const dialog = await openInviteDialog(page, app);
   await generateInvite(dialog);
@@ -274,6 +331,18 @@ test('the no-crew Join action opens a focused code form with mobile-size targets
   const inputBox = await page.getByLabel('16-character crew join code').boundingBox();
   expect(inputBox.height).toBeGreaterThanOrEqual(44);
   await expectNoHorizontalOverflow(page);
+});
+
+test('malformed invite locations are scrubbed before any preview work', async ({ page, app }) => {
+  await page.goto('/invite.html?code=not-valid&campaign=safe#invite=short&panel=details', {
+    waitUntil: 'networkidle',
+  });
+
+  await expect(page).toHaveURL(/\/invite\.html\?campaign=safe#panel=details$/);
+  await expect(page.getByLabel('16-character crew join code')).toBeVisible();
+  expect(page.url()).not.toContain('not-valid');
+  expect(page.url()).not.toContain('invite=short');
+  app.assertNoRuntimeErrors();
 });
 
 for (const theme of ['light', 'dark', 'dominion-night']) {

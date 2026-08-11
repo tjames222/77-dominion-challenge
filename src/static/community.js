@@ -2085,8 +2085,6 @@ window.addEventListener('pagehide', (event) => {
 });
 initCrewInviteDialog({ getCrew: activeCrew });
 
-initCrewInviteDialog({ getCrew: activeCrew });
-
 bootCommunity().catch((error) => {
   console.warn('Unable to load community', error);
   setFeedback(error?.message || 'Unable to load community right now.');

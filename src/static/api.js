@@ -3575,9 +3575,13 @@ export async function getOrCreateCrewInvite(crewId, { expectedUserId = '' } = {}
 
 export async function issueCrewInviteBundle(crewId, { expectedUserId = '' } = {}) {
   if (isLocalDemoMode()) {
+    const initialActor = await getLocalOrSessionUser();
+    if (!initialActor?.authenticated || !initialActor.userId) {
+      throw new Error('Log in again before creating an invitation.');
+    }
     const { crews, members } = ensureMockCrews();
     const crew = crews.find((item) => item.id === crewId);
-    const currentUserId = getMockUserId();
+    const currentUserId = initialActor.userId;
     if (expectedUserId && currentUserId !== expectedUserId) {
       throw new Error('The signed-in account changed. Try again.');
     }
@@ -3607,15 +3611,20 @@ export async function issueCrewInviteBundle(crewId, { expectedUserId = '' } = {}
       redeemed_at: null,
       created_at: new Date().toISOString(),
     };
+    const currentActor = await getLocalOrSessionUser();
+    if (!currentActor?.authenticated || currentActor.userId !== currentUserId) {
+      throw new Error('The signed-in account changed. Try again.');
+    }
     invites[crewId] = invite;
     writeJson(MOCK_INVITES_KEY, invites);
     return { ...invite, token, code };
   }
 
   const client = requireSupabase();
-  await requireUser(expectedUserId);
+  const actor = await requireUser(expectedUserId);
   const { data, error } = await client.rpc('issue_crew_invite_bundle', { target_crew_id: crewId });
   if (error) throw error;
+  await requireUser(actor.id);
   if (data?.status !== 'issued' || !data?.token || !data?.code) {
     throw new Error(data?.status === 'rate_limited'
       ? 'Wait a few minutes before rotating another invitation.'
@@ -3634,7 +3643,11 @@ export async function issueCrewInviteBundle(crewId, { expectedUserId = '' } = {}
 
 export async function getActiveCrewInvite(crewId, { expectedUserId = '' } = {}) {
   if (isLocalDemoMode()) {
-    const currentUserId = getMockUserId();
+    const currentActor = await getLocalOrSessionUser();
+    if (!currentActor?.authenticated || !currentActor.userId) {
+      throw new Error('Log in again before viewing invitations.');
+    }
+    const currentUserId = currentActor.userId;
     if (expectedUserId && currentUserId !== expectedUserId) {
       throw new Error('The signed-in account changed. Try again.');
     }
@@ -3661,11 +3674,12 @@ export async function getActiveCrewInvite(crewId, { expectedUserId = '' } = {}) 
   }
 
   const client = requireSupabase();
-  await requireUser(expectedUserId);
+  const actor = await requireUser(expectedUserId);
   const { data, error } = await client.rpc('get_active_crew_invite', {
     target_crew_id: crewId,
   });
   if (error) throw error;
+  await requireUser(actor.id);
   if (!['active', 'none'].includes(data?.status)) {
     throw new Error('Unable to load this invitation right now.');
   }
@@ -3674,7 +3688,11 @@ export async function getActiveCrewInvite(crewId, { expectedUserId = '' } = {}) 
 
 export async function revokeCrewInvite(inviteId, { expectedUserId = '' } = {}) {
   if (isLocalDemoMode()) {
-    const currentUserId = getMockUserId();
+    const currentActor = await getLocalOrSessionUser();
+    if (!currentActor?.authenticated || !currentActor.userId) {
+      throw new Error('Log in again before revoking an invitation.');
+    }
+    const currentUserId = currentActor.userId;
     if (expectedUserId && currentUserId !== expectedUserId) {
       throw new Error('The signed-in account changed. Try again.');
     }
@@ -3691,11 +3709,12 @@ export async function revokeCrewInvite(inviteId, { expectedUserId = '' } = {}) {
   }
 
   const client = requireSupabase();
-  await requireUser(expectedUserId);
+  const actor = await requireUser(expectedUserId);
   const { data, error } = await client.rpc('revoke_crew_invite', {
     target_invite_id: inviteId,
   });
   if (error) throw error;
+  await requireUser(actor.id);
   if (data?.status !== 'revoked') throw new Error('Unable to revoke this invitation.');
   return data;
 }

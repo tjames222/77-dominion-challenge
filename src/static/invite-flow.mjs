@@ -47,17 +47,30 @@ export function cleanInviteLocation(locationLike = {}) {
   searchParams.delete('code');
   searchParams.delete('inviteFlow');
 
+  const hashParams = new URLSearchParams(String(locationLike.hash || '').replace(/^#/, ''));
+  hashParams.delete('invite');
+  hashParams.delete('code');
+
   const safeSearch = searchParams.toString();
-  return `${pathname}${safeSearch ? `?${safeSearch}` : ''}`;
+  const safeHash = hashParams.toString();
+  return `${pathname}${safeSearch ? `?${safeSearch}` : ''}${safeHash ? `#${safeHash}` : ''}`;
 }
 
 export function captureInviteCredential(windowLike) {
-  const result = readInviteCredential(windowLike?.location);
-  if (!result.value) return result;
+  const location = windowLike?.location || {};
+  const result = readInviteCredential(location);
+  const searchParams = new URLSearchParams(String(location.search || '').replace(/^\?/, ''));
+  const hashParams = new URLSearchParams(String(location.hash || '').replace(/^#/, ''));
+  const hasCredentialLocation = searchParams.has('invite')
+    || searchParams.has('code')
+    || hashParams.has('invite')
+    || hashParams.has('code');
+  if (!hasCredentialLocation) return result;
 
   // Strip both credential formats before an RPC, redirect, analytics callback,
-  // or referrer-bearing navigation can observe them.
-  windowLike?.history?.replaceState?.({}, '', cleanInviteLocation(windowLike.location));
+  // or referrer-bearing navigation can observe them, even when normalization
+  // rejects the supplied value.
+  windowLike?.history?.replaceState?.({}, '', cleanInviteLocation(location));
   return result;
 }
 

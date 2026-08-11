@@ -30,6 +30,28 @@ describe('crew invitation Link, Code, and QR interface', () => {
     assert.match(dialog, /Revoke invitation/);
   });
 
+  test('restores a usable lifecycle after replacement generation fails', () => {
+    const generateBody = dialog.match(
+      /async function generateInvitation\(\) \{[\s\S]*?\n  \}\n\n  function beginLifecycleConfirmation/,
+    )?.[0] || '';
+    const failureBody = generateBody.match(/\} catch \(error\) \{[\s\S]*?\n    \} finally \{/)?.[0] || '';
+
+    assert.match(
+      failureBody,
+      /if \(version !== requestVersion\) return;[\s\S]*?clearSecrets\(\);[\s\S]*?confirmation\.hidden = true;/,
+    );
+    assert.match(failureBody, /renderLifecycle\(\);/);
+    assert.match(
+      failureBody,
+      /recoveryFocus = metadata\.status === 'active' \? replaceButton : generateButton;/,
+    );
+    assert.doesNotMatch(failureBody, /bundle\s*=/);
+    assert.match(
+      generateBody,
+      /setButtonBusyState\(allActionButtons, false\);[\s\S]*?recoveryFocus\?\.focus\(\)/,
+    );
+  });
+
   test('renders and exports the QR locally without a hosted QR endpoint', () => {
     assert.equal(packageJson.dependencies.qrcode, '1.5.4');
     assert.equal(packageJson.devDependencies.jsqr, '1.4.0');
@@ -37,7 +59,7 @@ describe('crew invitation Link, Code, and QR interface', () => {
     assert.match(dialog, /QRCode\.toCanvas/);
     assert.match(dialog, /dominion-crew-invite\.png/);
     assert.doesNotMatch(dialog, /https?:\/\//);
-    assert.doesNotMatch(dialog, /fetch\(|XMLHttpRequest|Image\s*\(/);
+    assert.doesNotMatch(dialog, /fetch\(|XMLHttpRequest|\bImage\s*\(/);
   });
 
   test('revalidates actor and crew authorization and clears credentials on close', () => {
@@ -48,6 +70,18 @@ describe('crew invitation Link, Code, and QR interface', () => {
     assert.match(dialog, /linkInput\.value = ''/);
     assert.match(dialog, /codeOutput\.textContent = ''/);
     assert.match(dialog, /qrCanvas\.width = 0/);
+    assert.match(dialog, /subscribeToAuthStateChanges/);
+    assert.match(dialog, /if \(!event\?\.persisted\) destroy\(\)/);
+    assert.doesNotMatch(dialog, /addEventListener\?\.\('pagehide', destroy/);
+    assert.match(dialog, /event === 'SIGNED_OUT'/);
+    assert.match(dialog, /user\.userId !== actorId/);
+    assert.match(dialog, /event\?\.key === 'dominion:user'/);
+    assert.match(dialog, /event\?\.key === null/);
+    assert.match(dialog, /const invite = await issueCrewInviteBundle[\s\S]*?await currentActor\(\)/);
+    assert.match(dialog, /const pendingQrBlob = await canvasToPngBlob\(pendingQrCanvas\)[\s\S]*?await currentActor\(\)[\s\S]*?bundle =/);
+    assert.match(dialog, /dialog\.destroy\(\)/);
+    assert.match(dialog, /boundTriggers\.delete\(boundTrigger\)/);
+    assert.match(api, /client\.rpc\('issue_crew_invite_bundle'[\s\S]*?await requireUser\(actor\.id\)/);
   });
 
   test('keeps code and link credentials out of persisted mock invitation data', () => {

@@ -94,6 +94,73 @@ test('link credentials win over a conflicting code and code query parameters are
   }), '/invite.html?campaign=safe');
 });
 
+test('rejected query credentials are stripped while unrelated URL parts are retained', () => {
+  for (const search of [
+    '?code=not-a-supported-code&campaign=safe',
+    '?invite=short&campaign=safe',
+  ]) {
+    const calls = [];
+    const fakeWindow = {
+      location: {
+        pathname: '/invite.html',
+        search,
+        hash: '#panel=details',
+      },
+      history: { replaceState: (...args) => calls.push(args) },
+    };
+
+    assert.deepEqual(captureInviteCredential(fakeWindow), {
+      type: '',
+      value: '',
+      source: '',
+    });
+    assert.deepEqual(calls, [[{}, '', '/invite.html?campaign=safe#panel=details']]);
+  }
+});
+
+test('malformed fragment credentials are stripped while unrelated query and fragment data remain', () => {
+  for (const hash of [
+    '#invite=%3Cscript%3Ealert(1)%3C%2Fscript%3E&panel=details',
+    '#code=3467-NOT-A-JOIN-CODE&panel=details',
+  ]) {
+    const calls = [];
+    const fakeWindow = {
+      location: {
+        pathname: '/invite.html',
+        search: '?campaign=safe',
+        hash,
+      },
+      history: { replaceState: (...args) => calls.push(args) },
+    };
+
+    assert.deepEqual(captureInviteCredential(fakeWindow), {
+      type: '',
+      value: '',
+      source: '',
+    });
+    assert.deepEqual(calls, [[{}, '', '/invite.html?campaign=safe#panel=details']]);
+  }
+});
+
+test('capture leaves credential-free locations unchanged', () => {
+  const calls = [];
+  const fakeWindow = {
+    location: {
+      pathname: '/invite.html',
+      search: '?campaign=safe',
+      hash: '#panel=details',
+    },
+    history: { replaceState: (...args) => calls.push(args) },
+  };
+
+  assert.deepEqual(captureInviteCredential(fakeWindow), {
+    type: '',
+    value: '',
+    source: '',
+  });
+  assert.deepEqual(calls, []);
+});
+
 test('short, malformed, and script-like secrets are ignored', () => {
   assert.equal(readInviteSecret({ hash: '#invite=short' }).secret, '');
   assert.equal(readInviteSecret({ hash: '#invite=%3Cscript%3Ealert(1)%3C%2Fscript%3E' }).secret, '');

@@ -5,6 +5,7 @@ import {
   getLocalOrSessionUser,
   issueCrewInviteBundle,
   revokeCrewInvite,
+  subscribeToAuthStateChanges,
 } from './api';
 import { createDialog } from './dialog.mjs';
 import {
@@ -23,7 +24,7 @@ import {
   renderCrewInviteQr,
 } from './crew-invite.mjs';
 
-const boundTriggers = new WeakSet();
+const boundTriggers = new WeakMap();
 let inviteDialogInstance = null;
 
 function element(ownerDocument, tag, className = '', text = '') {
@@ -388,6 +389,7 @@ export function initCrewInviteDialog({
   async function generateInvitation() {
     const version = ++requestVersion;
     let issuedInvite = null;
+    let recoveryFocus = null;
     dialog.clearError();
     setStatus('');
     dialog.setBusy(true, 'Generating one secure invitation…');
@@ -395,18 +397,33 @@ export function initCrewInviteDialog({
     try {
       await currentActor();
       const invite = await issueCrewInviteBundle(currentCrew.id, { expectedUserId: actorId });
+      await currentActor();
       issuedInvite = invite;
       if (version !== requestVersion) return;
       const url = inviteUrlFromToken(invite.token, windowLike.location.href);
+      const pendingQrCanvas = ownerDocument.createElement('canvas');
       const canvasResult = await renderCrewInviteQr(
-        qrCanvas,
+        pendingQrCanvas,
         url,
         QRCode.toCanvas.bind(QRCode),
         512,
       );
       if (version !== requestVersion || canvasResult.payload !== url) return;
-      qrBlob = await canvasToPngBlob(qrCanvas);
-      qrFile = createCrewInviteQrFile(qrBlob, windowLike.File || globalThis.File);
+      const pendingQrBlob = await canvasToPngBlob(pendingQrCanvas);
+      if (version !== requestVersion || !dialog.isOpen) return;
+      await currentActor();
+      if (version !== requestVersion || !dialog.isOpen) return;
+      const pendingQrFile = createCrewInviteQrFile(
+        pendingQrBlob,
+        windowLike.File || globalThis.File,
+      );
+      const qrContext = qrCanvas.getContext('2d');
+      if (!qrContext) throw new Error('The QR image could not be displayed.');
+      qrCanvas.width = pendingQrCanvas.width;
+      qrCanvas.height = pendingQrCanvas.height;
+      qrContext.drawImage(pendingQrCanvas, 0, 0);
+      qrBlob = pendingQrBlob;
+      qrFile = pendingQrFile;
       bundle = {
         id: invite.id,
         token: invite.token,
@@ -433,8 +450,11 @@ export function initCrewInviteDialog({
       ));
       tabButtons[0].focus();
     } catch (error) {
+      if (version !== requestVersion) return;
       clearSecrets();
-      if (issuedInvite?.id && version === requestVersion) {
+      pendingLifecycleAction = '';
+      confirmation.hidden = true;
+      if (issuedInvite?.id) {
         metadata = {
           status: 'active',
           inviteId: issuedInvite.id,
@@ -442,17 +462,19 @@ export function initCrewInviteDialog({
           expiresAt: issuedInvite.expires_at,
           createdAt: new Date().toISOString(),
         };
-        renderLifecycle();
       }
+      renderLifecycle();
       if (error?.name !== 'AbortError') {
         dialog.setError(issuedInvite?.id
           ? 'The invitation was created, but its share formats could not be prepared. Revoke it or replace it after a few seconds.'
           : error?.message || 'Unable to generate an invitation right now.');
+        recoveryFocus = metadata.status === 'active' ? replaceButton : generateButton;
       }
     } finally {
       if (version === requestVersion) {
         dialog.setBusy(false);
         setButtonBusyState(allActionButtons, false);
+        if (dialog.isOpen) recoveryFocus?.focus();
       }
     }
   }
@@ -596,17 +618,61 @@ export function initCrewInviteDialog({
   cancelConfirmationButton.addEventListener('click', cancelLifecycleConfirmation);
   confirmLifecycleButton.addEventListener('click', () => { void confirmLifecycleAction(); });
 
+  const triggerHandlers = new Map();
   const bindTrigger = (nextTrigger) => {
     if (!nextTrigger || boundTriggers.has(nextTrigger)) return;
-    boundTriggers.add(nextTrigger);
+    const handleTriggerClick = () => dialog.open(nextTrigger);
+    boundTriggers.set(nextTrigger, handleTriggerClick);
+    triggerHandlers.set(nextTrigger, handleTriggerClick);
     nextTrigger.setAttribute('aria-haspopup', 'dialog');
     nextTrigger.setAttribute('aria-controls', 'crewInviteDialog');
-    nextTrigger.addEventListener('click', () => dialog.open(nextTrigger));
+    nextTrigger.addEventListener('click', handleTriggerClick);
   };
+
+  const clearForAccountChange = () => {
+    clearAccountScopedState();
+    if (dialog.isOpen) dialog.close('auth-change');
+  };
+
+  const unsubscribeAuth = subscribeToAuthStateChanges(({ event, user }) => {
+    const signedOut = event === 'SIGNED_OUT' || !user?.authenticated;
+    const accountChanged = Boolean(actorId && user?.userId && user.userId !== actorId);
+    if (signedOut || accountChanged) clearForAccountChange();
+  });
+
+  const handleStorageChange = (event) => {
+    if (event?.key === null || event?.key === 'dominion:user') clearForAccountChange();
+  };
+  windowLike?.addEventListener?.('storage', handleStorageChange);
+
+  let disposed = false;
+  function handlePageHide(event) {
+    clearForAccountChange();
+    if (!event?.persisted) destroy();
+  }
+  function destroy() {
+    if (disposed) return;
+    disposed = true;
+    clearAccountScopedState();
+    unsubscribeAuth();
+    windowLike?.removeEventListener?.('storage', handleStorageChange);
+    windowLike?.removeEventListener?.('pagehide', handlePageHide);
+    triggerHandlers.forEach((handler, boundTrigger) => {
+      boundTrigger.removeEventListener('click', handler);
+      boundTrigger.removeAttribute('aria-haspopup');
+      boundTrigger.removeAttribute('aria-controls');
+      boundTriggers.delete(boundTrigger);
+    });
+    triggerHandlers.clear();
+    dialog.destroy();
+    if (inviteDialogInstance?.dialog === dialog) inviteDialogInstance = null;
+  }
+  windowLike?.addEventListener?.('pagehide', handlePageHide);
 
   inviteDialogInstance = {
     bindTrigger,
     dialog,
+    destroy,
     reset: clearAccountScopedState,
   };
   bindTrigger(trigger);
