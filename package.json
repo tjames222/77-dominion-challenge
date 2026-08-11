@@ -21,7 +21,7 @@
     "supabase:reset": "supabase db reset --local",
     "test:database": "pnpm run test:database-runner && bash scripts/test-database.sh",
     "test:database-runner": "node --test scripts/test-database-runner.test.mjs",
-    "test:rpc": "bash supabase/tests/integration/rpc-concurrency.sh && bash supabase/tests/integration/profile-photo-concurrency.sh && bash supabase/tests/integration/crew-lifecycle-concurrency.sh && bash supabase/tests/integration/crew-training-concurrency.sh && bash supabase/tests/integration/challenge-activation-concurrency.sh && bash supabase/tests/integration/challenge-activation-backfill.sh && bash supabase/tests/integration/site-training-concurrency.sh && bash supabase/tests/integration/group-challenge-start-concurrency.sh && bash supabase/tests/integration/solo-training-catalog-concurrency.sh",
+    "test:rpc": "bash supabase/tests/integration/rpc-concurrency.sh && bash supabase/tests/integration/profile-photo-concurrency.sh && bash supabase/tests/integration/crew-lifecycle-concurrency.sh && bash supabase/tests/integration/crew-training-concurrency.sh && bash supabase/tests/integration/challenge-activation-concurrency.sh && bash supabase/tests/integration/challenge-activation-backfill.sh && bash supabase/tests/integration/site-training-concurrency.sh && bash supabase/tests/integration/group-challenge-start-concurrency.sh && bash supabase/tests/integration/solo-training-catalog-concurrency.sh && bash supabase/tests/integration/member-progress-profile-concurrency.sh",
     "test:profile-photo-races": "bash supabase/tests/integration/profile-photo-concurrency.sh",
     "check:schema": "bash scripts/check-schema-drift.sh",
     "check:functions": "cd supabase && deno task fmt:check && deno task check",
