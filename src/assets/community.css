@@ -52,38 +52,9 @@
   min-height: 44px;
   padding: 0 14px;
 }
-.community-tabs {
-  position: sticky;
-  top: calc(var(--topbar-sticky-height) + 8px);
-  z-index: 10;
+.community-view {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 6px;
-  padding: 6px;
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--background) 88%, transparent);
-  backdrop-filter: blur(18px);
-}
-.community-tab {
-  min-height: 44px;
-  border: 0;
-  border-radius: 999px;
-  background: transparent;
-  color: var(--text-muted);
-  font-size: .82rem;
-  font-weight: 950;
-}
-.community-tab.active {
-  background: var(--accent);
-  color: var(--button-primary-text);
-}
-.community-panel {
-  display: none;
   gap: 16px;
-}
-.community-panel.active {
-  display: grid;
 }
 .community-summary {
   display: grid;
@@ -376,6 +347,7 @@
   border-block-start: 1px solid color-mix(in srgb, var(--danger, #d85c54) 46%, var(--border));
 }
 .crew-lifecycle-card h2,
+.crew-lifecycle-card h3,
 .crew-lifecycle-card p {
   margin: 0;
 }
@@ -466,6 +438,48 @@
 }
 .crew-toolbar-actions > button {
   min-height: 48px;
+}
+.crew-settings-link {
+  width: 48px;
+  min-width: 48px;
+  min-height: 48px;
+  display: inline-grid;
+  place-items: center;
+  border: 1px solid color-mix(in srgb, var(--accent) 44%, var(--border));
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--accent) 10%, var(--button-secondary-background));
+  color: var(--text);
+  text-decoration: none;
+  transition: border-color 160ms ease, background 160ms ease, transform 160ms ease;
+}
+.crew-settings-link:hover {
+  border-color: color-mix(in srgb, var(--accent) 72%, var(--border));
+  background: color-mix(in srgb, var(--accent) 18%, var(--button-secondary-background));
+}
+.crew-settings-link:active {
+  transform: translateY(1px);
+}
+.crew-settings-link .app-icon {
+  width: 34px;
+  height: 34px;
+  border-radius: 10px;
+  background: transparent;
+}
+.group-settings-card {
+  display: grid;
+  gap: 16px;
+  scroll-margin-top: calc(var(--topbar-sticky-height) + 18px);
+}
+.group-settings-card:focus-visible {
+  outline: 3px solid var(--focus-ring);
+  outline-offset: 6px;
+  border-radius: 12px;
+}
+.group-settings-description {
+  max-width: 72ch;
+  margin: 0;
+  color: var(--text-muted);
+  line-height: 1.55;
 }
 .crew-training-launch {
   border-color: color-mix(in srgb, var(--accent) 48%, var(--border));
@@ -1256,8 +1270,6 @@
   scroll-margin: 92px 16px;
 }
 @media (max-width: 520px) {
-  .community-tabs { border-radius: 22px; }
-  .community-tab { border-radius: 16px; padding-inline: 5px; font-size: .7rem; }
   .community-stats { grid-template-columns: 1fr; }
   .community-stats article + article {
     border-inline-start: 0;
@@ -1302,8 +1314,8 @@
   .crew-create-heading button,
   .crew-form-actions button,
   .crew-lifecycle-card button { width: 100%; }
-  .crew-toolbar-actions,
-  .crew-toolbar-actions > button { width: 100%; }
+  .crew-toolbar-actions { width: 100%; }
+  .crew-toolbar-actions > button:not(.crew-training-launch) { flex: 1 1 180px; }
   .crew-training-layer:not(.is-modal) .crew-training-coachmark {
     inset: auto 12px 12px;
     width: auto;

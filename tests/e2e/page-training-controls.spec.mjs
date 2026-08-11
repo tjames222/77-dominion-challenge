@@ -17,6 +17,7 @@ const TRAINING_ROUTES = Object.freeze([
   ROUTE_BY_ID.workoutTwo,
   ROUTE_BY_ID.badgesRewards,
   ROUTE_BY_ID.community,
+  ROUTE_BY_ID.privateJournal,
   ROUTE_BY_ID.profile,
   ROUTE_BY_ID.billing,
   ROUTE_BY_ID.science,

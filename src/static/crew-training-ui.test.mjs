@@ -61,7 +61,7 @@ test('automatic claim happens only after create and authoritative refresh', () =
   const submit = sourceBetween(
     community,
     "$('crewForm')?.addEventListener('submit'",
-    "$('journalDate')?.addEventListener",
+    'function scrubPrivateCommunityState()',
   );
   const refreshIndex = submit.indexOf('await refreshCrews()');
   const claimIndex = submit.indexOf('await claimCrewTraining(');

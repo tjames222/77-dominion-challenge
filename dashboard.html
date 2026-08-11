@@ -18,6 +18,13 @@
         <a class="back-link" href="./index.html">Dominion</a>
       </header>
 
+      <nav class="member-tabs" aria-label="Member sections" data-member-tabs>
+        <a class="member-tab" href="./dashboard.html" aria-current="page">Dashboard</a>
+        <a class="member-tab" href="./badges-rewards.html">Rewards</a>
+        <a class="member-tab" href="./community.html" data-training-target="dashboard-community">Community</a>
+        <a class="member-tab" href="./private-journal.html">Private Journal</a>
+      </nav>
+
       <section class="dashboard-hero compact-hero reveal" data-section-surface="plain">
         <p class="eyebrow">Member Dashboard</p>
         <h1 id="dashboardTitle">Today’s Dominion</h1>
@@ -157,21 +164,6 @@
           </p>
         </div>
 
-        <div class="progression-badges">
-          <div class="progression-badges-heading">
-            <div>
-              <p class="eyebrow">Latest Badge</p>
-              <h3>Proof of the work</h3>
-            </div>
-            <span id="recentBadgeSummary">No badges yet</span>
-          </div>
-          <div class="progression-badge-grid" id="badgeShelf" aria-label="Latest earned badge"></div>
-        </div>
-        <a class="game-summary-rewards-link" href="./badges-rewards.html">
-          <span class="app-icon icon-crown" aria-hidden="true"></span>
-          <span><strong>View badges and rewards</strong><small>See every badge, point reward, and next unlock.</small></span>
-          <span aria-hidden="true">→</span>
-        </a>
       </section>
 
       <section class="dashboard-brand-panel reveal" data-section-surface="accent" aria-label="77 Dominion Challenge mark">
@@ -183,16 +175,6 @@
           alt="77 Dominion Challenge"
           decoding="async"
         />
-      </section>
-
-      <section class="community dashboard-section reveal" data-section-surface="plain" data-training-target="dashboard-community">
-        <div class="section-heading"><p class="eyebrow">Accountability</p><h2 id="completedToday">3 people completed today</h2></div>
-        <div id="feed"></div>
-        <a class="action-button with-icon dashboard-section-link" href="./community.html">
-          <span class="app-icon icon-users action-button-icon" aria-hidden="true"></span>
-          <span>Open Community</span>
-          <span aria-hidden="true">↗</span>
-        </a>
       </section>
 
     </main>

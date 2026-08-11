@@ -68,7 +68,7 @@ async function seedAccountACommunityState(page) {
 async function expectAccountACommunityState(page) {
   await page.goto('/community.html');
   await expect(page.locator('#crewTitle')).toHaveText(ACCOUNT_A_CREW);
-  await page.getByRole('tab', { name: 'Private Journal' }).click();
+  await page.goto('/private-journal.html');
   await expect(page.locator('#journalTimeline')).toContainText(ACCOUNT_A_JOURNAL);
 }
 
@@ -105,7 +105,7 @@ test('hybrid dev Auth preserves clean-URL header actions and first-challenge tra
 
   await expect(dialog).toBeHidden();
   await expect(page.getByRole('dialog', { name: 'Welcome to your Solo walkthrough' })).toBeVisible();
-  await expect(page.locator('#siteTrainingProgress')).toHaveText('Page 1 of 13 · Step 1 of 9');
+  await expect(page.locator('#siteTrainingProgress')).toHaveText('Page 1 of 14 · Step 1 of 9');
   expect(pageErrors).toEqual([]);
 });
 
@@ -151,7 +151,7 @@ test('hybrid dev Auth registers, persists, logs in, isolates UUID-owned state, a
   await page.goto('/community.html');
   await expect(page.locator('#crewTitle')).toHaveText('Create or join a crew.');
   await expect(page.locator('#activeCrewName')).not.toContainText(ACCOUNT_A_CREW);
-  await page.getByRole('tab', { name: 'Private Journal' }).click();
+  await page.goto('/private-journal.html');
   await expect(page.locator('#journalTimeline')).not.toContainText(ACCOUNT_A_JOURNAL);
   await expect(page.locator('#journalTimeline')).toContainText('Your private journal is ready.');
 

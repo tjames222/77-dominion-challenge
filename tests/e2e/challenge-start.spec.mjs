@@ -207,7 +207,7 @@ test('Solo confirmation activates once, claims training, and resumes after refre
   await expect(dialog).toBeHidden();
   const trainingDialog = page.getByRole('dialog', { name: 'Welcome to your Solo walkthrough' });
   await expect(trainingDialog).toBeVisible();
-  await expect(page.locator('#siteTrainingProgress')).toHaveText('Page 1 of 13 · Step 1 of 9');
+  await expect(page.locator('#siteTrainingProgress')).toHaveText('Page 1 of 14 · Step 1 of 9');
   await expect(page.locator('#siteTrainingTitle')).toBeFocused();
   await expect(page.locator('#challengeStartGate')).toBeHidden();
   await expect(page.locator('#challengeDay')).toHaveText('Day 1 of 77');
@@ -309,7 +309,7 @@ test('Cloudflare clean Dashboard URL keeps authenticated actions and launches fi
 
   await expect(dialog).toBeHidden();
   await expect(page.getByRole('dialog', { name: 'Welcome to your Solo walkthrough' })).toBeVisible();
-  await expect(page.locator('#siteTrainingProgress')).toHaveText('Page 1 of 13 · Step 1 of 9');
+  await expect(page.locator('#siteTrainingProgress')).toHaveText('Page 1 of 14 · Step 1 of 9');
   await expect(page.locator('.shared-header-share')).toBeEnabled();
   await expect(page.locator('.shared-header-streak')).toBeEnabled();
   app.assertNoRuntimeErrors();
@@ -324,7 +324,7 @@ test('future Solo start schedules once, keeps participation locked, and launches
   await expect(dialog).toBeHidden();
   const trainingDialog = page.getByRole('dialog', { name: 'Welcome to your Solo walkthrough' });
   await expect(trainingDialog).toBeVisible();
-  await expect(page.locator('#siteTrainingProgress')).toHaveText('Page 1 of 13 · Step 1 of 9');
+  await expect(page.locator('#siteTrainingProgress')).toHaveText('Page 1 of 14 · Step 1 of 9');
   await expect(page.locator('#challengeStartGate')).toBeHidden();
   await expect(page.locator('#challengePercent')).toHaveText('0%');
   await expect(page.locator('#challengeDay')).toHaveText('Scheduled');

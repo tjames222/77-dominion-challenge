@@ -347,6 +347,18 @@ export const APP_STATES = Object.freeze({
     },
     raw: baseMemberRaw(),
   },
+  communityAdmin: {
+    json: {
+      ...baseMemberJson(),
+      'dominion:mockCrews': [{ ...json(BASE_CREWS[0]), role: 'admin' }],
+      'dominion:mockCrewMembers': {
+        crew_e2e_alpha: BASE_CREW_MEMBERS.crew_e2e_alpha.map((member) => (
+          member.userId === FIXED_USER_ID ? { ...json(member), role: 'admin' } : json(member)
+        )),
+      },
+    },
+    raw: baseMemberRaw(),
+  },
   groupStartExisting: {
     json: {
       ...baseMemberJson(),

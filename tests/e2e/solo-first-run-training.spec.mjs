@@ -13,6 +13,7 @@ const SOLO_PAGES = Object.freeze([
   { path: '/workout-two.html', steps: 5 },
   { path: '/badges-rewards.html', steps: 6 },
   { path: '/community.html', steps: 7 },
+  { path: '/private-journal.html', steps: 4 },
   { path: '/profile.html', steps: 6 },
   { path: '/billing.html', steps: 4 },
   { path: '/science.html', steps: 6 },
@@ -83,7 +84,7 @@ async function installCrossRouteRequestIds(page) {
   await page.evaluate(install);
 }
 
-test('Solo first-run training completes all 13 routes without performing product actions', async ({ page, app }) => {
+test('Solo first-run training completes all 14 routes without performing product actions', async ({ page, app }) => {
   test.setTimeout(120_000);
   await app.open(ROUTE_BY_ID.dashboard, { state: 'activeSolo', theme: 'dominion-night' });
   await installCrossRouteRequestIds(page);
@@ -175,10 +176,10 @@ test('Solo first-run training completes all 13 routes without performing product
     },
     overall: {
       programId: 'solo-first-run',
-      programVersion: 1,
+      programVersion: 2,
       status: 'completed',
       currentPageId: 'science',
-      currentPageIndex: 12,
+      currentPageIndex: 13,
     },
   });
   await expect(page).toHaveURL(/\/science\.html$/);

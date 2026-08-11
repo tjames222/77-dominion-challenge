@@ -15,6 +15,7 @@ export const PRODUCTION_ENTRYPOINTS = Object.freeze({
   intentionalWalk: 'intentional-walk.html',
   workoutTwo: 'workout-two.html',
   community: 'community.html',
+  privateJournal: 'private-journal.html',
   profilePage: 'profile.html',
   science: 'science.html',
 });

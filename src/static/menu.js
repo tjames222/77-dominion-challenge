@@ -37,6 +37,7 @@ const loggedInLinks = [
   ['Badges & Rewards', './badges-rewards.html'],
   ['Billing', './billing.html'],
   ['Community', './community.html'],
+  ['Private Journal', './private-journal.html'],
   ['Check-In', './dashboard.html#check-in'],
   ['Profile', './profile.html'],
 ];
