@@ -292,6 +292,29 @@ test('Solo confirmation activates once, claims training, and resumes after refre
   app.assertNoRuntimeErrors();
 });
 
+test('Cloudflare clean Dashboard URL keeps authenticated actions and launches first-run training', async ({ page, app }) => {
+  await page.addInitScript(() => {
+    if (window.location.pathname.endsWith('.html')) {
+      window.history.replaceState(null, '', window.location.pathname.replace(/\.html$/, ''));
+    }
+  });
+  await app.open(ROUTE_BY_ID.dashboard, { state: 'notStarted' });
+
+  await expect(page).toHaveURL(/\/dashboard$/);
+  await expect(page.locator('.shared-header-share')).toHaveCount(1);
+  await expect(page.locator('.shared-header-streak')).toHaveCount(1);
+
+  const dialog = await reviewSoloStart(page, FIXED_TODAY);
+  await dialog.getByRole('button', { name: 'Confirm and start challenge' }).click();
+
+  await expect(dialog).toBeHidden();
+  await expect(page.getByRole('dialog', { name: 'Welcome to your Solo walkthrough' })).toBeVisible();
+  await expect(page.locator('#siteTrainingProgress')).toHaveText('Page 1 of 13 · Step 1 of 9');
+  await expect(page.locator('.shared-header-share')).toBeEnabled();
+  await expect(page.locator('.shared-header-streak')).toBeEnabled();
+  app.assertNoRuntimeErrors();
+});
+
 test('future Solo start schedules once, keeps participation locked, and launches safe training', async ({ page, app }) => {
   await app.open(ROUTE_BY_ID.dashboard, { state: 'notStarted' });
   const dialog = await reviewSoloStart(page, '2026-02-20');

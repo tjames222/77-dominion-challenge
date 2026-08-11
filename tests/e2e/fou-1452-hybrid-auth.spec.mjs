@@ -72,6 +72,43 @@ async function expectAccountACommunityState(page) {
   await expect(page.locator('#journalTimeline')).toContainText(ACCOUNT_A_JOURNAL);
 }
 
+test('hybrid dev Auth preserves clean-URL header actions and first-challenge training', async ({
+  context,
+  page,
+}) => {
+  await installFou1452SupabaseAuthStub(context);
+  const pageErrors = [];
+  page.on('pageerror', (error) => pageErrors.push(error));
+
+  await register(page, ACCOUNT_A);
+  await activatePreviewMembership(page);
+  await page.addInitScript(() => {
+    if (window.location.pathname.endsWith('.html')) {
+      window.history.replaceState(null, '', window.location.pathname.replace(/\.html$/, ''));
+    }
+  });
+  await page.goto('/dashboard.html');
+
+  await expect(page).toHaveURL(/\/dashboard$/);
+  await expect(page.locator('.shared-header-share')).toHaveCount(1);
+  await expect(page.locator('.shared-header-streak')).toHaveCount(1);
+  await expect(page.locator('#challengeStartGate')).toBeVisible();
+
+  await page.getByRole('button', { name: 'Start Challenge' }).click();
+  const dialog = page.getByRole('dialog', { name: 'Start Challenge' });
+  await dialog.getByRole('radio', { name: /^Solo/ }).check();
+  await dialog.getByRole('button', { name: 'Continue' }).click();
+  const today = await page.evaluate(() => new Date().toISOString().slice(0, 10));
+  await dialog.getByLabel('Challenge start date').fill(today);
+  await dialog.getByRole('button', { name: 'Review start' }).click();
+  await dialog.getByRole('button', { name: 'Confirm and start challenge' }).click();
+
+  await expect(dialog).toBeHidden();
+  await expect(page.getByRole('dialog', { name: 'Welcome to your Solo walkthrough' })).toBeVisible();
+  await expect(page.locator('#siteTrainingProgress')).toHaveText('Page 1 of 13 · Step 1 of 9');
+  expect(pageErrors).toEqual([]);
+});
+
 test('hybrid dev Auth registers, persists, logs in, isolates UUID-owned state, and fails closed', async ({
   context,
   page,

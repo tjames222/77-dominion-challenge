@@ -1,3 +1,5 @@
+import { canonicalHtmlRoutePath } from './route-path.mjs';
+
 export const SITE_TRAINING_SCHEMA_VERSION = 1;
 export const SITE_TRAINING_CATALOG_VERSION = 1;
 
@@ -403,7 +405,7 @@ export const SITE_TRAINING_REGISTRY = defineSiteTrainingRegistry({
 });
 
 export function siteTrainingPageForRoute(registry, pathname = '') {
-  const route = `/${String(pathname || '').split(/[?#]/, 1)[0].split('/').filter(Boolean).pop() || 'index.html'}`;
+  const route = canonicalHtmlRoutePath(pathname);
   return registry?.pages?.find((page) => page.route === route) || null;
 }
 

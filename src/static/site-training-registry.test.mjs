@@ -137,6 +137,8 @@ describe('site training registry', () => {
     });
     assert.equal(Object.isFrozen(registry.pages[0].steps[0]), true);
     assert.equal(siteTrainingPageForRoute(registry, '/nested/dashboard.html?training=1'), registry.pages[0]);
+    assert.equal(siteTrainingPageForRoute(registry, '/dashboard'), registry.pages[0]);
+    assert.equal(siteTrainingPageForRoute(registry, '/nested/dashboard/?training=1'), registry.pages[0]);
     assert.deepEqual(siteTrainingPageContract(registry.pages[0]), {
       pageId: 'framework-page',
       route: '/dashboard.html',
@@ -150,6 +152,34 @@ describe('site training registry', () => {
       audience: 'all',
       pages: [{ pageId: 'framework-page', contentVersion: 1 }],
     });
+  });
+
+  test('resolves every published training page on HTML and Cloudflare clean URLs', () => {
+    for (const trainingPage of SITE_TRAINING_REGISTRY.pages) {
+      const cleanRoute = trainingPage.route.replace(/\.html$/, '');
+      assert.equal(
+        siteTrainingPageForRoute(SITE_TRAINING_REGISTRY, trainingPage.route),
+        trainingPage,
+        trainingPage.route,
+      );
+      assert.equal(
+        siteTrainingPageForRoute(SITE_TRAINING_REGISTRY, cleanRoute),
+        trainingPage,
+        cleanRoute,
+      );
+      assert.equal(
+        siteTrainingPageForRoute(SITE_TRAINING_REGISTRY, `/nested${cleanRoute}/?training=1`),
+        trainingPage,
+        `${cleanRoute}/`,
+      );
+    }
+
+    for (const excludedRoute of SITE_TRAINING_EXCLUDED_ROUTES) {
+      assert.equal(siteTrainingPageForRoute(
+        SITE_TRAINING_REGISTRY,
+        excludedRoute.replace(/\.html$/, ''),
+      ), null, excludedRoute);
+    }
   });
 
   test('keeps capability-aware steps structurally stable and supplies accessible fallback copy', () => {

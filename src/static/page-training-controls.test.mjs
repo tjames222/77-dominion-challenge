@@ -242,28 +242,30 @@ describe('page training control model', () => {
 
   test('resolves and wires the matching page contract for every registered pathname', async () => {
     for (const page of SITE_TRAINING_REGISTRY.pages) {
-      const env = environment({ pathname: page.route });
-      const runtime = fakeRuntime(state('not_started', { page }), { page });
-      const primary = fakeControl();
-      const controller = createPageTrainingControls({
-        user: USER,
-        window: env.window,
-        document: env.document,
-        api: { getChallengeActivation: async () => ACTIVE_GROUP },
-        runtime,
-      });
-      controller.attachControls({
-        feedback: fakeControl(),
-        group: fakeControl(),
-        primary,
-        restart: fakeControl(),
-      });
-      await controller.refresh();
-      assert.equal(controller.available, true, page.route);
-      assert.equal(controller.page.id, page.id, page.route);
-      assert.equal(primary.hidden, false, page.route);
-      assert.equal(primary.textContent, 'Start page training', page.route);
-      controller.destroy();
+      for (const pathname of [page.route, page.route.replace(/\.html$/, '')]) {
+        const env = environment({ pathname });
+        const runtime = fakeRuntime(state('not_started', { page }), { page });
+        const primary = fakeControl();
+        const controller = createPageTrainingControls({
+          user: USER,
+          window: env.window,
+          document: env.document,
+          api: { getChallengeActivation: async () => ACTIVE_GROUP },
+          runtime,
+        });
+        controller.attachControls({
+          feedback: fakeControl(),
+          group: fakeControl(),
+          primary,
+          restart: fakeControl(),
+        });
+        await controller.refresh();
+        assert.equal(controller.available, true, pathname);
+        assert.equal(controller.page.id, page.id, pathname);
+        assert.equal(primary.hidden, false, pathname);
+        assert.equal(primary.textContent, 'Start page training', pathname);
+        controller.destroy();
+      }
     }
   });
 
