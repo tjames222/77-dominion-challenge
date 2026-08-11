@@ -1,3 +1,5 @@
+import { canonicalHtmlRouteFileName } from './route-path.mjs';
+
 export const AUTHENTICATED_HEADER_ROUTES = Object.freeze([
   'dashboard.html',
   'bible-reading.html',
@@ -12,14 +14,14 @@ export const AUTHENTICATED_HEADER_ROUTES = Object.freeze([
   'badges-rewards.html',
   'membership.html',
   'billing.html',
+  'science.html',
 ]);
 
 const AUTHENTICATED_HEADER_ROUTE_SET = new Set(AUTHENTICATED_HEADER_ROUTES);
 const DATE_KEY_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 
 export function routeFileName(pathname = '') {
-  const path = String(pathname || '').split(/[?#]/, 1)[0];
-  return path.split('/').filter(Boolean).pop() || 'index.html';
+  return canonicalHtmlRouteFileName(pathname);
 }
 
 export function isAuthenticatedHeaderRoute(pathname = '') {

@@ -4,7 +4,7 @@ import { AUTHENTICATED_HEADER_ROUTES } from '../../src/static/shared-header-stat
 import { PRODUCTION_ROUTES, ROUTE_BY_ID } from './support/routes.mjs';
 
 const authenticatedHeaderRoutes = PRODUCTION_ROUTES.filter((route) => (
-  route.access !== 'public' || route.id === 'membership'
+  route.access !== 'public' || ['membership', 'science'].includes(route.id)
 ));
 
 async function logInAsPreviewAccount(page, user, { logOutFirst = true } = {}) {

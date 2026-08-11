@@ -16,24 +16,35 @@ describe('authenticated shared header actions', () => {
   test('limits Share and App Streak to signed-in app routes', () => {
     const authenticatedUser = { authenticated: true, userId: 'member-1' };
     for (const route of AUTHENTICATED_HEADER_ROUTES) {
+      const cleanRoute = route.replace(/\.html$/, '');
       assert.equal(isAuthenticatedHeaderRoute(`/${route}`), true, route);
+      assert.equal(isAuthenticatedHeaderRoute(`/${cleanRoute}`), true, cleanRoute);
       assert.equal(shouldShowAuthenticatedHeaderActions({
         user: authenticatedUser,
         pathname: `/nested/${route}`,
       }), true, route);
-    }
-
-    for (const route of ['index.html', 'login.html', 'register.html', 'science.html', 'invite.html']) {
       assert.equal(shouldShowAuthenticatedHeaderActions({
         user: authenticatedUser,
-        pathname: `/${route}`,
-      }), false, route);
+        pathname: `/nested/${cleanRoute}/?from=cloudflare`,
+      }), true, cleanRoute);
+    }
+
+    for (const route of ['index', 'login', 'register', 'invite']) {
+      for (const pathname of [`/${route}`, `/${route}.html`]) {
+        assert.equal(shouldShowAuthenticatedHeaderActions({
+          user: authenticatedUser,
+          pathname,
+        }), false, pathname);
+      }
     }
     assert.equal(shouldShowAuthenticatedHeaderActions({
       user: { authenticated: false },
       pathname: '/dashboard.html',
     }), false);
     assert.equal(routeFileName('/nested/profile.html?from=menu#account'), 'profile.html');
+    assert.equal(routeFileName('/nested/profile/?from=menu#account'), 'profile.html');
+    assert.equal(routeFileName('/'), 'index.html');
+    assert.equal(routeFileName('/assets/app.css'), 'app.css');
   });
 
   test('loads the shared menu entrypoint on every supported route', async () => {

@@ -369,7 +369,7 @@ describe('Solo first-run orchestration', () => {
     controller.destroy();
   });
 
-  test('continues the final Science page even when authenticated header actions are absent', async () => {
+  test('continues the final Science page as part of the signed-in training route set', async () => {
     const env = browser({ pathname: '/science.html' });
     const runtime = fakeRuntimeFactory(trainingState({
       overallStatus: 'in_progress',
