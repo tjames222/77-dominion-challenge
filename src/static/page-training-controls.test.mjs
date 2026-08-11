@@ -205,8 +205,8 @@ function fakeConfirmationFactory(log) {
 }
 
 describe('page training control model', () => {
-  test('publishes the exact Start, Resume, Restart, and Replay labels on all 13 registered routes', () => {
-    assert.equal(SITE_TRAINING_REGISTRY.pages.length, 13);
+  test('publishes the exact Start, Resume, Restart, and Replay labels on all 14 registered routes', () => {
+    assert.equal(SITE_TRAINING_REGISTRY.pages.length, 14);
     for (const page of SITE_TRAINING_REGISTRY.pages) {
       assert.match(page.route, /^\/[a-z0-9-]+\.html$/);
       assert.deepEqual(pageTrainingControlModel({
@@ -542,10 +542,10 @@ describe('page training controller', () => {
     env.window.location.origin = 'https://dominion.test';
     const overall = {
       programId: 'solo-first-run',
-      programVersion: 1,
+      programVersion: 2,
       status: 'in_progress',
       currentPageId: 'dashboard',
-      currentPageContentVersion: 1,
+      currentPageContentVersion: SITE_TRAINING_REGISTRY.pages[0].contentVersion,
       currentPageIndex: 0,
       revision: 2,
     };

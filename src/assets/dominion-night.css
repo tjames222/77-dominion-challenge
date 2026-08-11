@@ -303,7 +303,7 @@
   color: var(--reward-accent);
 }
 
-:root[data-theme="dominion-night"] .community-tabs,
+:root[data-theme="dominion-night"] .member-tabs,
 :root[data-theme="dominion-night"] .leaderboard-toggle {
   background: color-mix(in srgb, var(--background-soft) 88%, transparent);
 }

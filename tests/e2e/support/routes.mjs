@@ -160,6 +160,16 @@ export const PRODUCTION_ROUTES = Object.freeze([
     surfaces: ['navigation', 'forms', 'actions', 'empty', 'error'],
   },
   {
+    id: 'privateJournal',
+    path: '/private-journal.html',
+    htmlEntry: 'private-journal.html',
+    title: 'Private Journal | Dominion',
+    access: 'member',
+    defaultState: 'member',
+    ready: '#journalTimeline',
+    surfaces: ['navigation', 'forms', 'actions', 'empty', 'error'],
+  },
+  {
     id: 'profile',
     path: '/profile.html',
     htmlEntry: 'profile.html',

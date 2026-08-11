@@ -243,7 +243,8 @@ test('contextual coachmarks remain onscreen on mobile', async ({ page, app }) =>
     await expect(page.locator('#crewTrainingProgress')).toHaveText(`Step ${step} of 7`);
     await expectTargetClearOfCoachmark(page, targetId);
   }
-  await page.getByRole('tab', { name: 'Private Journal' }).click();
+  await page.getByRole('link', { name: 'Private Journal', exact: true }).click();
+  await expect(page).toHaveURL(/\/private-journal\.html$/);
   await expect(page.locator('#crewTrainingLayer')).toBeHidden();
   await expect(page.locator('#journey')).toBeVisible();
 });

@@ -64,20 +64,21 @@ function trainingState({
   currentPageId = 'dashboard',
   currentPageIndex = 0,
 } = {}) {
+  const contentVersion = ['dashboard', 'community'].includes(currentPageId) ? 2 : 1;
   return {
     contractValid: true,
     actorId: USER.userId,
     page: {
       pageId: currentPageId,
-      contentVersion: 1,
+      contentVersion,
       status: pageStatus,
     },
     overall: {
       programId: 'solo-first-run',
-      programVersion: 1,
+      programVersion: 2,
       status: overallStatus,
       currentPageId,
-      currentPageContentVersion: 1,
+      currentPageContentVersion: contentVersion,
       currentPageIndex,
       revision: overallStatus === 'not_started' ? 0 : 1,
     },
@@ -375,7 +376,7 @@ describe('Solo first-run orchestration', () => {
       overallStatus: 'in_progress',
       pageStatus: 'in_progress',
       currentPageId: 'science',
-      currentPageIndex: 12,
+      currentPageIndex: 13,
     }));
     const controller = createSoloFirstRunTraining({
       user: USER,
@@ -394,7 +395,7 @@ describe('Solo first-run orchestration', () => {
         overallStatus: 'completed',
         pageStatus: 'completed',
         currentPageId: 'science',
-        currentPageIndex: 12,
+        currentPageIndex: 13,
       }),
       transition: { action: 'finish', applied: true, nextRoute: null },
     });
@@ -408,7 +409,7 @@ describe('Solo first-run orchestration', () => {
       overallStatus: 'in_progress',
       pageStatus: 'completed',
       currentPageId: 'profile',
-      currentPageIndex: 10,
+      currentPageIndex: 11,
     }));
     const navigations = [];
     const controller = createSoloFirstRunTraining({

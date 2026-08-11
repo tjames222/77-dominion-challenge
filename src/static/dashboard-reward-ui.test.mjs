@@ -39,10 +39,10 @@ describe('dashboard reward presentation', () => {
     assert.match(productCss, /var\(--celebration-(?:accent|strong|light|mid|dark)\)/);
   });
 
-  it('renders only the latest badge and preserves the full collection route', () => {
-    assert.match(dashboardHtml, />Latest Badge</);
-    assert.match(dashboardHtml, /id="badgeShelf" aria-label="Latest earned badge"/);
-    assert.match(dashboardHtml, /href="\.\/badges-rewards\.html"/);
+  it('removes the embedded badge shelf while preserving badge-aware celebrations', () => {
+    assert.doesNotMatch(dashboardHtml, />Latest Badge</);
+    assert.doesNotMatch(dashboardHtml, /id="badgeShelf" aria-label="Latest earned badge"/);
+    assert.match(dashboardHtml, /class="member-tab" href="\.\/badges-rewards\.html">Rewards/);
     assert.match(dashboardJs, /const latestBadge = selectLatestBadge\(badges\)/);
     assert.match(dashboardJs, /badgeShelf\.innerHTML = latestBadge/);
   });

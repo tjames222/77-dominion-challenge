@@ -40,7 +40,7 @@ describe('Group challenge start integration', () => {
     const submit = sourceBetween(
       community,
       "$('crewForm')?.addEventListener('submit'",
-      "$('journalDate')?.addEventListener",
+      'function scrubPrivateCommunityState()',
     );
     const combinedApi = sourceBetween(
       api,
@@ -90,7 +90,7 @@ describe('Group challenge start integration', () => {
     const submit = sourceBetween(
       community,
       "$('crewForm')?.addEventListener('submit'",
-      "$('journalDate')?.addEventListener",
+      'function scrubPrivateCommunityState()',
     );
     assert.match(submit, /crew\.createdNew[\s\S]*isCrewLeader\(\)[\s\S]*claimCrewTraining\(/);
     assert.doesNotMatch(invite, /claimCrewTraining|openCrewTraining/);

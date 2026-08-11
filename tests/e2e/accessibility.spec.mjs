@@ -32,9 +32,10 @@ test('Dashboard exposes one accessible header Share action without a local dupli
   assertNoBlockingAxeViolations(results);
 });
 
-test('community form tabs have no serious or critical automated violations', async ({ page, app }) => {
+test('Private Journal destination has no serious or critical automated violations', async ({ page, app }) => {
   await app.open(ROUTE_BY_ID.community);
-  await page.getByRole('tab', { name: 'Private Journal' }).click();
+  await page.getByRole('link', { name: 'Private Journal', exact: true }).click();
+  await expect(page).toHaveURL(/\/private-journal\.html$/);
   const results = await analyzeAccessibility(page);
   assertNoBlockingAxeViolations(results);
 });

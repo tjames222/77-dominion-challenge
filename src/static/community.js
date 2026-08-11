@@ -11,7 +11,6 @@ import {
   getCrewMembers,
   getCrewMemberProgressProfile,
   getCrewTrainingProgress,
-  getJournalEntries,
   getLeaderboard,
   getLocalOrSessionUser,
   hasSupabaseAuth,
@@ -19,7 +18,6 @@ import {
   leaveCrew,
   manageGroupIntegration,
   redirectToLogin,
-  saveJournalEntry,
   subscribeToAuthStateChanges,
 } from './api';
 import { newChallengeActivationRequestId } from './challenge-activation.mjs';
@@ -62,10 +60,9 @@ const GROUP_INTEGRATIONS_ENABLED = groupIntegrationsEnabled(
   import.meta.env.VITE_ENABLE_GROUP_INTEGRATIONS,
 );
 
-const tabs = Array.from(document.querySelectorAll('.community-tab'));
-const panels = Array.from(document.querySelectorAll('.community-panel'));
 const $ = (id) => document.getElementById(id);
 const todayKey = () => new Date().toISOString().slice(0, 10);
+const COMMUNITY_RETURN_PATH = './community.html';
 const escapeHtml = (value = '') => String(value).replace(/[&<>"']/g, (char) => ({
   '&': '&amp;',
   '<': '&lt;',
@@ -100,7 +97,6 @@ const state = {
     trigger: null,
     unavailable: false,
   },
-  journalEntries: [],
   integrations: [],
   integrationSetupToken: '',
   integrationSetup: null,
@@ -116,41 +112,6 @@ const state = {
   trainingBusy: false,
   trainingPositionFrame: 0,
 };
-
-function activateTab(tab, { focus = false } = {}) {
-  if (!tab) return;
-  const target = tab.dataset.tab;
-  if (target !== 'crew' && state.trainingOpen) {
-    closeCrewTraining({ restoreFocus: false, force: true });
-  }
-  tabs.forEach((item) => {
-    const selected = item === tab;
-    item.classList.toggle('active', selected);
-    item.setAttribute('aria-selected', String(selected));
-    item.tabIndex = selected ? 0 : -1;
-  });
-  panels.forEach((panel) => {
-    const selected = panel.id === target;
-    panel.classList.toggle('active', selected);
-    panel.hidden = !selected;
-  });
-  if (focus) tab.focus();
-}
-
-tabs.forEach((tab, index) => {
-  tab.tabIndex = tab.classList.contains('active') ? 0 : -1;
-  tab.addEventListener('click', () => activateTab(tab));
-  tab.addEventListener('keydown', (event) => {
-    let nextIndex = null;
-    if (event.key === 'ArrowRight') nextIndex = (index + 1) % tabs.length;
-    if (event.key === 'ArrowLeft') nextIndex = (index - 1 + tabs.length) % tabs.length;
-    if (event.key === 'Home') nextIndex = 0;
-    if (event.key === 'End') nextIndex = tabs.length - 1;
-    if (nextIndex === null) return;
-    event.preventDefault();
-    activateTab(tabs[nextIndex], { focus: true });
-  });
-});
 
 function setFeedback(message = '') {
   const feedback = $('communityFeedback');
@@ -1191,6 +1152,8 @@ function renderCrewShell() {
   const joinCrewButton = $('joinCrewButton');
   const createForm = $('crewForm');
   const manageCard = $('crewManageCard');
+  const settingsButton = $('crewSettingsButton');
+  const settingsCard = $('crewSettingsCard');
   const membersCard = $('crewMembersCard');
   const integrationsCard = $('crewIntegrationsCard');
   const lifecycleCard = $('crewLifecycleCard');
@@ -1211,6 +1174,8 @@ function renderCrewShell() {
       : 'Create Crew';
   }
   if (manageCard) manageCard.hidden = !view.showActiveCrew;
+  if (settingsButton) settingsButton.hidden = !crew || !isCrewLeader();
+  if (settingsCard) settingsCard.hidden = !crew;
   if (membersCard) membersCard.hidden = !crew;
   if (integrationsCard) integrationsCard.hidden = !crew || !GROUP_INTEGRATIONS_ENABLED;
   if (lifecycleCard) lifecycleCard.hidden = !crew;
@@ -1238,6 +1203,9 @@ function renderCrewShell() {
   $('crewDayCount').textContent = dayLabel(crew.challengeStartDate);
 
   const lifecycleAction = crewLifecycleAction(crew.role);
+  if ($('crewLifecycleEyebrow')) {
+    $('crewLifecycleEyebrow').textContent = 'Group Access';
+  }
   if ($('crewLifecycleTitle')) {
     $('crewLifecycleTitle').textContent = lifecycleAction === 'delete'
       ? 'Delete this group'
@@ -1549,35 +1517,6 @@ function renderMembers({ loading = false, error = '' } = {}) {
   `).join('');
 }
 
-function renderJournal() {
-  const timeline = $('journalTimeline');
-  if (!timeline) return;
-  if (!state.journalEntries.length) {
-    timeline.innerHTML = emptyCard('Your private journal is ready. Save a note and start building the record.');
-    return;
-  }
-
-  timeline.innerHTML = state.journalEntries.map((entry) => `
-    <article class="card timeline-note">
-      <span>${entry.day ? `Day ${entry.day}` : escapeHtml(entry.date)}</span>
-      <strong>${escapeHtml(entry.win || entry.mood || 'Private entry')}</strong>
-      ${entry.note ? `<p>${escapeHtml(entry.note)}</p>` : ''}
-      ${entry.prayer ? `<p>${escapeHtml(entry.prayer)}</p>` : ''}
-      ${entry.energy ? `<small>Energy: ${escapeHtml(entry.energy)}</small>` : ''}
-    </article>
-  `).join('');
-}
-
-function fillJournalFormForDate() {
-  const selectedDate = $('journalDate')?.value || todayKey();
-  const entry = state.journalEntries.find((item) => item.date === selectedDate);
-  $('journalNote').value = entry?.note || '';
-  $('journalWin').value = entry?.win || '';
-  $('journalPrayer').value = entry?.prayer || '';
-  $('journalMood').value = entry?.mood || '';
-  $('journalEnergy').value = entry?.energy || '';
-}
-
 async function refreshCrewRoster(requestedCrewId, { revalidateProfile = true } = {}) {
   state.crewMembers = [];
   renderMembers({ loading: true });
@@ -1616,12 +1555,6 @@ async function refreshCrew() {
   ]);
 }
 
-async function refreshJournal() {
-  state.journalEntries = await getJournalEntries();
-  renderJournal();
-  fillJournalFormForDate();
-}
-
 async function refreshCrews() {
   state.crews = await getCrews();
   state.crewsLoaded = true;
@@ -1642,20 +1575,23 @@ function continueLegacyInviteIfPresent() {
 }
 
 async function bootCommunity() {
+  if (new URLSearchParams(window.location.search).get('view') === 'journal') {
+    window.location.replace('./private-journal.html');
+    return;
+  }
   state.groupStartIntent = captureChallengeStartIntent(sessionStorage, window.location);
   continueLegacyInviteIfPresent();
   if (new URLSearchParams(window.location.search).has('invite')) return;
   $('crewStartDateInput').value = todayKey();
-  $('journalDate').value = todayKey();
 
   if (!hasSupabaseAuth() && !isLocalDemoMode()) {
-    redirectToLogin(state.groupStartIntent ? CHALLENGE_START_INTENT_PATH : './community.html');
+    redirectToLogin(state.groupStartIntent ? CHALLENGE_START_INTENT_PATH : COMMUNITY_RETURN_PATH);
     return;
   }
 
   state.billing = await getBillingState();
   if (!state.billing.authenticated) {
-    redirectToLogin(state.groupStartIntent ? CHALLENGE_START_INTENT_PATH : './community.html');
+    redirectToLogin(state.groupStartIntent ? CHALLENGE_START_INTENT_PATH : COMMUNITY_RETURN_PATH);
     return;
   }
   if (!state.billing.appAccess) {
@@ -1672,10 +1608,10 @@ async function bootCommunity() {
   takeIntegrationCallbackFragment();
   if (isLocalDemoMode()) {
     setFeedback(GROUP_INTEGRATIONS_ENABLED
-      ? 'Preview mode: groups, leaderboards, integrations, and journal entries use local mock data.'
-      : 'Preview mode: groups, leaderboards, and journal entries use local mock data. External channel connections are safely off.');
+      ? 'Preview mode: groups, leaderboards, and integrations use local mock data.'
+      : 'Preview mode: groups and leaderboards use local mock data. External channel connections are safely off.');
   }
-  await Promise.all([refreshCrews(), refreshJournal(), refreshChallengeActivation()]);
+  await Promise.all([refreshCrews(), refreshChallengeActivation()]);
   await loadIntegrationSetup();
   await resumeGroupChallengeStart();
 }
@@ -1691,6 +1627,13 @@ function setCrewFormOpen(open, { focus = true } = {}) {
 $('openCrewFormButton')?.addEventListener('click', () => setCrewFormOpen(true));
 $('joinCrewButton')?.addEventListener('click', () => {
   window.location.href = './invite.html';
+});
+$('crewSettingsButton')?.addEventListener('click', (event) => {
+  if (!activeCrew() || !isCrewLeader()) {
+    event.preventDefault();
+    return;
+  }
+  window.requestAnimationFrame(() => $('crewSettingsCard')?.focus({ preventScroll: true }));
 });
 $('cancelCrewFormButton')?.addEventListener('click', () => {
   $('crewForm')?.reset();
@@ -2008,34 +1951,6 @@ $('crewForm')?.addEventListener('submit', async (event) => {
     release();
   }
 });
-
-
-$('journalDate')?.addEventListener('change', fillJournalFormForDate);
-
-$('journalForm')?.addEventListener('submit', async (event) => {
-  event.preventDefault();
-  const release = setButtonBusy(event.submitter, 'Saving...');
-  try {
-    const crew = activeCrew();
-    await saveJournalEntry({
-      date: $('journalDate').value,
-      day: crew?.challengeStartDate ? Number(dayLabel(crew.challengeStartDate).replace('Day ', '')) : null,
-      note: $('journalNote').value.trim(),
-      win: $('journalWin').value.trim(),
-      prayer: $('journalPrayer').value.trim(),
-      mood: $('journalMood').value,
-      energy: $('journalEnergy').value,
-    });
-
-    setFeedback('Private journal entry saved.');
-    await refreshJournal();
-  } catch (error) {
-    window.alert(error?.message || 'Unable to save your journal entry right now.');
-  } finally {
-    release();
-  }
-});
-
 function scrubPrivateCommunityState() {
   clearMemberProgress({ reason: 'auth-change' });
   state.currentUser = null;
@@ -2048,14 +1963,11 @@ function scrubPrivateCommunityState() {
   state.crewMembers = [];
   state.leaderboard.rows = [];
   state.leaderboard.requestId += 1;
-  state.journalEntries = [];
   state.integrations = [];
   state.integrationSetup = null;
   state.integrationSetupToken = '';
   localStorage.removeItem('dominion:activeCrewId');
   renderCrewShell();
-  renderJournal();
-  fillJournalFormForDate();
 }
 
 const unsubscribeMemberProgressAuth = subscribeToAuthStateChanges(({ event, user }) => {
@@ -2068,7 +1980,7 @@ const unsubscribeMemberProgressAuth = subscribeToAuthStateChanges(({ event, user
   if (!signedOut && !accountChanged) return;
   scrubPrivateCommunityState();
   if (signedOut) {
-    redirectToLogin('./community.html');
+    redirectToLogin(COMMUNITY_RETURN_PATH);
   } else {
     window.location.reload();
   }

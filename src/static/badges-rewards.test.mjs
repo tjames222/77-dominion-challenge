@@ -202,11 +202,12 @@ describe('Badges & Rewards route integration', () => {
     assert.match(pageSource, /await startChallenge\(pendingRewardKey\)/);
   });
 
-  it('removes the Challenge Vault from Dashboard and adds the concise progress link', () => {
+  it('removes duplicate rewards content from Dashboard and keeps Rewards in the member navigation', () => {
     assert.doesNotMatch(dashboardHtml, /id="challengeVault"|Challenge Vault/);
     assert.doesNotMatch(dashboardSource, /data-start-challenge|challengeVault/);
-    assert.match(dashboardHtml, /href="\.\/badges-rewards\.html"/);
-    assert.match(dashboardHtml, />View badges and rewards</);
+    assert.match(dashboardHtml, /class="member-tab" href="\.\/badges-rewards\.html">Rewards</);
+    assert.doesNotMatch(dashboardHtml, />View badges and rewards</);
+    assert.doesNotMatch(dashboardHtml, /class="progression-badges"|id="badgeShelf"/);
   });
 
   it('replaces the authenticated Challenges destination with Badges & Rewards', () => {

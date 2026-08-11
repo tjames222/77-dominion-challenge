@@ -3,7 +3,7 @@ begin;
 create extension if not exists pgtap with schema extensions;
 set local search_path = public, extensions;
 
-select plan(48);
+select plan(52);
 
 create temporary table solo_training_test_results (
   key text primary key,
@@ -43,43 +43,50 @@ from (values
     'solo-training-isolated@example.test', 'Solo Training Isolated')
 ) as fixture(id, email, name);
 
--- 01-10: the production program contract is singular, current, Solo-only,
+-- The production program contract is singular, current, Solo-only,
 -- complete, and ordered exactly as the reviewed first-run experience.
 select is((
   select pg_catalog.count(*)::integer
   from private.site_training_program_versions program
   where program.program_id = 'solo-first-run'
-    and program.program_version = 1
-), 1, 'the Solo first-run program has one immutable version-1 definition');
+    and program.program_version = 2
+), 1, 'the Solo first-run program has one immutable version-2 definition');
 
 select is((
   select program.audience
   from private.site_training_program_versions program
   where program.program_id = 'solo-first-run'
-    and program.program_version = 1
+    and program.program_version = 2
 ), 'solo', 'the first-run program is restricted to the Solo audience');
 
 select ok((
   select program.is_current and program.retired_at is null
   from private.site_training_program_versions program
   where program.program_id = 'solo-first-run'
-    and program.program_version = 1
+    and program.program_version = 2
 ), 'the Solo first-run program is the current published version');
+
+select ok((
+  select not program.is_current and program.retired_at is not null
+  from private.site_training_program_versions program
+  where program.program_id = 'solo-first-run'
+    and program.program_version = 1
+), 'the immutable version-1 program remains retained and retired');
 
 select is((
   select pg_catalog.count(*)::integer
   from private.site_training_program_pages page
   where page.program_id = 'solo-first-run'
-    and page.program_version = 1
-), 13, 'the Solo first-run program publishes all thirteen reviewed pages');
+    and page.program_version = 2
+), 14, 'the Solo first-run program publishes all fourteen reviewed pages');
 
 select is((
   select pg_catalog.string_agg(page.page_id, ',' order by page.page_index)
   from private.site_training_program_pages page
   where page.program_id = 'solo-first-run'
-    and page.program_version = 1
+    and page.program_version = 2
 ),
-  'dashboard,bible-reading,morning-prayer,worship,evening-prayer,workout-one,intentional-walk,workout-two,badges-rewards,community,profile,billing,science',
+  'dashboard,bible-reading,morning-prayer,worship,evening-prayer,workout-one,intentional-walk,workout-two,badges-rewards,community,private-journal,profile,billing,science',
   'the program page IDs match the exact reviewed order');
 
 select is((
@@ -89,17 +96,17 @@ select is((
     on definition.page_id = page.page_id
    and definition.content_version = page.page_content_version
   where page.program_id = 'solo-first-run'
-    and page.program_version = 1
+    and page.program_version = 2
 ),
-  '/dashboard.html,/bible-reading.html,/morning-prayer.html,/worship.html,/evening-prayer.html,/workout-one.html,/intentional-walk.html,/workout-two.html,/badges-rewards.html,/community.html,/profile.html,/billing.html,/science.html',
+  '/dashboard.html,/bible-reading.html,/morning-prayer.html,/worship.html,/evening-prayer.html,/workout-one.html,/intentional-walk.html,/workout-two.html,/badges-rewards.html,/community.html,/private-journal.html,/profile.html,/billing.html,/science.html',
   'the program routes match the exact reviewed order');
 
 select is((
   select pg_catalog.array_agg(page.page_index order by page.page_index)
   from private.site_training_program_pages page
   where page.program_id = 'solo-first-run'
-    and page.program_version = 1
-), array[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12],
+    and page.program_version = 2
+), array[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13],
   'the program has contiguous zero-based page indexes');
 
 select ok(not exists (
@@ -109,9 +116,13 @@ select ok(not exists (
     on definition.page_id = page.page_id
    and definition.content_version = page.page_content_version
   where page.program_id = 'solo-first-run'
-    and page.program_version = 1
-    and (page.page_content_version <> 1 or not definition.is_current)
-), 'every program page pins current content version 1');
+    and page.program_version = 2
+    and (
+      not definition.is_current
+      or (page.page_id in ('dashboard', 'community') and page.page_content_version <> 2)
+      or (page.page_id not in ('dashboard', 'community') and page.page_content_version <> 1)
+    )
+), 'every program page pins its current immutable content version');
 
 select is((
   select pg_catalog.count(*)::integer
@@ -119,9 +130,47 @@ select is((
   where definition.page_id in (
     'dashboard', 'bible-reading', 'morning-prayer', 'worship',
     'evening-prayer', 'workout-one', 'intentional-walk', 'workout-two',
-    'badges-rewards', 'community', 'profile', 'billing', 'science'
-  ) and definition.content_version = 1
-), 13, 'all thirteen versioned page definitions were published');
+    'badges-rewards', 'community', 'private-journal', 'profile', 'billing', 'science'
+  ) and definition.is_current
+), 14, 'all fourteen current page definitions were published');
+
+select ok(not exists (
+  select 1
+  from private.site_training_page_versions definition
+  where definition.page_id in ('dashboard', 'community')
+    and definition.content_version = 1
+    and (definition.is_current or definition.retired_at is null)
+), 'the immutable Dashboard and Community version-1 definitions remain retained and retired');
+
+select ok(
+  (
+    select pg_catalog.string_agg(
+      page.page_id || ':' || page.page_content_version::text,
+      ',' order by page.page_index
+    )
+    from private.site_training_program_pages page
+    where page.program_id = 'solo-first-run'
+      and page.program_version = 1
+  ) = 'dashboard:1,bible-reading:1,morning-prayer:1,worship:1,evening-prayer:1,workout-one:1,intentional-walk:1,workout-two:1,badges-rewards:1,community:1,profile:1,billing:1,science:1'
+  and (
+    select definition.step_ids
+    from private.site_training_page_versions definition
+    where definition.page_id = 'dashboard' and definition.content_version = 1
+  ) = array[
+    'orientation', 'global-navigation', 'sharing', 'app-streak',
+    'progress-gauges', 'daily-standards', 'check-in', 'levels-points',
+    'community-entry'
+  ]::text[]
+  and (
+    select definition.step_ids
+    from private.site_training_page_versions definition
+    where definition.page_id = 'community' and definition.content_version = 1
+  ) = array[
+    'orientation', 'tabs', 'create-or-join', 'roles-and-roster',
+    'leaderboard', 'integrations', 'private-journal'
+  ]::text[],
+  'the retired version-1 program order and changed page contracts remain immutable'
+);
 
 select ok(not exists (
   select 1
@@ -130,14 +179,14 @@ select ok(not exists (
     on definition.page_id = page.page_id
    and definition.content_version = page.page_content_version
   where page.program_id = 'solo-first-run'
-    and page.program_version = 1
+    and page.program_version = 2
     and definition.step_ids[1] <> 'orientation'
 ), 'every page starts with an untargeted orientation step contract');
 
--- 11-23: each page publishes the exact stable step IDs mirrored by the client
+-- Each page publishes the exact stable step IDs mirrored by the client
 -- content registry. These assertions are the schema-drift tripwire.
 select is((select step_ids from private.site_training_page_versions
-  where page_id = 'dashboard' and content_version = 1),
+  where page_id = 'dashboard' and content_version = 2),
   array['orientation', 'global-navigation', 'sharing', 'app-streak',
     'progress-gauges', 'daily-standards', 'check-in', 'levels-points',
     'community-entry']::text[], 'Dashboard step IDs match the reviewed contract');
@@ -174,10 +223,14 @@ select is((select step_ids from private.site_training_page_versions
   array['orientation', 'tabs', 'next-unlock', 'reward-catalog', 'badges',
     'sharing']::text[], 'Badges & Rewards step IDs match the reviewed contract');
 select is((select step_ids from private.site_training_page_versions
-  where page_id = 'community' and content_version = 1),
+  where page_id = 'community' and content_version = 2),
   array['orientation', 'tabs', 'create-or-join', 'roles-and-roster',
     'leaderboard', 'integrations', 'private-journal']::text[],
   'Community step IDs match the reviewed contract');
+select is((select step_ids from private.site_training_page_versions
+  where page_id = 'private-journal' and content_version = 1),
+  array['orientation', 'navigation', 'entry', 'timeline']::text[],
+  'Private Journal step IDs match the reviewed contract');
 select is((select step_ids from private.site_training_page_versions
   where page_id = 'profile' and content_version = 1),
   array['orientation', 'account', 'challenge-status', 'integration-privacy',
@@ -191,7 +244,7 @@ select is((select step_ids from private.site_training_page_versions
   array['orientation', 'repetition', 'scripture', 'standards', 'sources',
     'training-complete']::text[], 'Science step IDs match the reviewed contract');
 
--- 24-27: definitions stay behind the authenticated RPC boundary, completion
+-- Definitions stay behind the authenticated RPC boundary, completion
 -- uniqueness is structural, and the first read is side-effect free.
 select ok(not has_table_privilege(
   'authenticated', 'private.site_training_page_versions', 'select'
@@ -217,7 +270,7 @@ set local "request.jwt.claims" =
 
 insert into solo_training_test_results (key, payload)
 values ('unclaimed', public.get_site_training_state(
-  'dashboard', 1, 'solo-first-run', 1,
+  'dashboard', 2, 'solo-first-run', 2,
   'f1000000-0000-4000-8000-000000000001'
 ));
 
@@ -229,7 +282,7 @@ select ok((select payload #>> '{page,status}' = 'not_started'
 
 select throws_ok(
   $$select public.get_site_training_state(
-    'dashboard', 1, 'solo-first-run', 1,
+    'dashboard', 2, 'solo-first-run', 2,
     'f2000000-0000-4000-8000-000000000002'
   )$$,
   '40001',
@@ -237,17 +290,17 @@ select throws_ok(
   'the catalog read fails closed when the expected account changes'
 );
 
--- 28-34: Start has exact replay semantics, CAS rejects stale tabs, and Stop /
+-- Start has exact replay semantics, CAS rejects stale tabs, and Stop /
 -- Resume preserve the durable Dashboard position.
 insert into solo_training_test_results (key, payload)
 values
   ('start', public.claim_site_training(
-    'overall', 'dashboard', 1, 'solo-first-run', 1, 'start',
+    'overall', 'dashboard', 2, 'solo-first-run', 2, 'start',
     'f1100000-0000-4000-8000-000000000001', 0, 0,
     'f1000000-0000-4000-8000-000000000001'
   )),
   ('start-replay', public.claim_site_training(
-    'overall', 'dashboard', 1, 'solo-first-run', 1, 'start',
+    'overall', 'dashboard', 2, 'solo-first-run', 2, 'start',
     'f1100000-0000-4000-8000-000000000001', 0, 0,
     'f1000000-0000-4000-8000-000000000001'
   ));
@@ -263,7 +316,7 @@ select is((select payload from solo_training_test_results where key = 'start-rep
 
 select throws_ok(
   $$select public.transition_site_training(
-    'overall', 'dashboard', 1, 'solo-first-run', 1, 'stop',
+    'overall', 'dashboard', 2, 'solo-first-run', 2, 'stop',
     'f1100000-0000-4000-8000-000000000002', 0, 0,
     'f1000000-0000-4000-8000-000000000001'
   )$$,
@@ -275,12 +328,12 @@ select throws_ok(
 insert into solo_training_test_results (key, payload)
 values
   ('stop', public.transition_site_training(
-    'overall', 'dashboard', 1, 'solo-first-run', 1, 'stop',
+    'overall', 'dashboard', 2, 'solo-first-run', 2, 'stop',
     'f1100000-0000-4000-8000-000000000003', 1, 1,
     'f1000000-0000-4000-8000-000000000001'
   )),
   ('resume', public.claim_site_training(
-    'overall', 'dashboard', 1, 'solo-first-run', 1, 'resume',
+    'overall', 'dashboard', 2, 'solo-first-run', 2, 'resume',
     'f1100000-0000-4000-8000-000000000004', 2, 2,
     'f1000000-0000-4000-8000-000000000001'
   ));
@@ -312,9 +365,9 @@ begin
     perform public.transition_site_training(
       'overall',
       'dashboard',
-      1,
+      2,
       'solo-first-run',
-      1,
+      2,
       'next',
       pg_catalog.format(
         'f1200000-0000-4000-8000-%s',
@@ -330,11 +383,11 @@ $$;
 
 insert into solo_training_test_results (key, payload)
 values ('dashboard-final-step', public.get_site_training_state(
-  'dashboard', 1, 'solo-first-run', 1,
+  'dashboard', 2, 'solo-first-run', 2,
   'f1000000-0000-4000-8000-000000000001'
 ));
 
--- 35-40: ordered movement reaches exactly the reviewed final Dashboard step;
+-- Ordered movement reaches exactly the reviewed final Dashboard step;
 -- Finish appends one immutable completion and advances to Bible Reading.
 select ok((select payload #>> '{page,currentStepId}' = 'community-entry'
     and (payload #>> '{page,currentStepIndex}')::integer = 8
@@ -345,12 +398,12 @@ select ok((select payload #>> '{page,currentStepId}' = 'community-entry'
 insert into solo_training_test_results (key, payload)
 values
   ('finish', public.transition_site_training(
-    'overall', 'dashboard', 1, 'solo-first-run', 1, 'finish',
+    'overall', 'dashboard', 2, 'solo-first-run', 2, 'finish',
     'f1300000-0000-4000-8000-000000000001', 11, 11,
     'f1000000-0000-4000-8000-000000000001'
   )),
   ('finish-replay', public.transition_site_training(
-    'overall', 'dashboard', 1, 'solo-first-run', 1, 'finish',
+    'overall', 'dashboard', 2, 'solo-first-run', 2, 'finish',
     'f1300000-0000-4000-8000-000000000001', 11, 11,
     'f1000000-0000-4000-8000-000000000001'
   ));
@@ -373,7 +426,7 @@ select is((
   from private.site_training_page_completions completion
   where completion.user_id = 'f1000000-0000-4000-8000-000000000001'
     and completion.page_id = 'dashboard'
-    and completion.content_version = 1
+    and completion.content_version = 2
 ), 1, 'Finish and its replay retain exactly one Dashboard completion');
 select is((
   select pg_catalog.count(*)::integer
@@ -387,10 +440,10 @@ select ok((
   from private.site_training_page_completions completion
   where completion.user_id = 'f1000000-0000-4000-8000-000000000001'
     and completion.page_id = 'dashboard'
-    and completion.content_version = 1
+    and completion.content_version = 2
 ), 'the immutable completion records the final stable step and first attempt');
 
--- 41-48: another actor sees a clean state, account deletion cascades only that
+-- Another actor sees a clean state, account deletion cascades only that
 -- actor's training rows, and training never writes product progress.
 set local role authenticated;
 set local "request.jwt.claim.sub" = 'f2000000-0000-4000-8000-000000000002';
@@ -399,7 +452,7 @@ set local "request.jwt.claims" =
 
 insert into solo_training_test_results (key, payload)
 values ('isolated-unclaimed', public.get_site_training_state(
-  'dashboard', 1, 'solo-first-run', 1,
+  'dashboard', 2, 'solo-first-run', 2,
   'f2000000-0000-4000-8000-000000000002'
 ));
 
@@ -411,7 +464,7 @@ select ok((select payload #>> '{page,status}' = 'not_started'
 
 insert into solo_training_test_results (key, payload)
 values ('isolated-start', public.claim_site_training(
-  'page', 'dashboard', 1, null, null, 'start',
+  'page', 'dashboard', 2, null, null, 'start',
   'f2100000-0000-4000-8000-000000000001', 0, 0,
   'f2000000-0000-4000-8000-000000000002'
 ));
@@ -425,7 +478,7 @@ select is((
   select pg_catalog.count(*)::integer
   from private.site_training_page_progress progress
   where progress.page_id = 'dashboard'
-    and progress.content_version = 1
+    and progress.content_version = 2
     and progress.user_id in (
       'f1000000-0000-4000-8000-000000000001',
       'f2000000-0000-4000-8000-000000000002'
@@ -482,7 +535,7 @@ select ok(not exists (
     on definition.page_id = page.page_id
    and definition.content_version = page.page_content_version
   where page.program_id = 'solo-first-run'
-    and page.program_version = 1
+    and page.program_version = 2
     and definition.page_id is null
 ), 'the published program has no dangling or drifted page-version references');
 

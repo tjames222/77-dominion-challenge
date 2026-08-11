@@ -46,11 +46,11 @@ describe('site training registry', () => {
     }), { valid: true, errors: [] });
   });
 
-  test('publishes the immutable Solo v1 program in its reviewed 13-page order', () => {
+  test('publishes the immutable Solo v2 program in its reviewed 14-page order', () => {
     const [program] = SITE_TRAINING_REGISTRY.programs;
     assert.deepEqual(
       { id: program.id, version: program.version, audience: program.audience },
-      { id: 'solo-first-run', version: 1, audience: 'solo' },
+      { id: 'solo-first-run', version: 2, audience: 'solo' },
     );
     assert.deepEqual(program.pages.map((entry) => entry.pageId), [
       'dashboard',
@@ -63,11 +63,15 @@ describe('site training registry', () => {
       'workout-two',
       'badges-rewards',
       'community',
+      'private-journal',
       'profile',
       'billing',
       'science',
     ]);
-    assert.equal(SITE_TRAINING_REGISTRY.pages.length, 13);
+    assert.deepEqual(program.pages.map((entry) => entry.contentVersion), [
+      2, 1, 1, 1, 1, 1, 1, 1, 1, 2, 1, 1, 1, 1,
+    ]);
+    assert.equal(SITE_TRAINING_REGISTRY.pages.length, 14);
     for (const publishedPage of SITE_TRAINING_REGISTRY.pages) {
       assert.equal(publishedPage.steps[0].id, 'orientation');
       assert.equal(publishedPage.steps[0].target, null);
@@ -77,6 +81,19 @@ describe('site training registry', () => {
       SITE_TRAINING_REGISTRY.pages.find((candidate) => candidate.id === 'community')
         .steps.map((candidate) => candidate.id),
       ['orientation', 'tabs', 'create-or-join', 'roles-and-roster', 'leaderboard', 'integrations', 'private-journal'],
+    );
+    assert.deepEqual(
+      SITE_TRAINING_REGISTRY.pages.find((candidate) => candidate.id === 'private-journal')
+        .steps.map((candidate) => candidate.id),
+      ['orientation', 'navigation', 'entry', 'timeline'],
+    );
+    assert.equal(
+      SITE_TRAINING_REGISTRY.pages.find((candidate) => candidate.id === 'dashboard').contentVersion,
+      2,
+    );
+    assert.equal(
+      SITE_TRAINING_REGISTRY.pages.find((candidate) => candidate.id === 'community').contentVersion,
+      2,
     );
   });
 
@@ -105,6 +122,7 @@ describe('site training registry', () => {
       'workout-two.html',
       'badges-rewards.html',
       'community.html',
+      'private-journal.html',
       'profile.html',
       'billing.html',
       'science.html',

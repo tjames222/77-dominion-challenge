@@ -4,12 +4,12 @@ import { describe, test } from 'node:test';
 
 import { normalizeJournalEntry, sortJournalEntries } from './journal-entry.mjs';
 
-const communityHtml = readFileSync(new URL('../../community.html', import.meta.url), 'utf8');
+const privateJournalHtml = readFileSync(new URL('../../private-journal.html', import.meta.url), 'utf8');
 const billingHtml = readFileSync(new URL('../../billing.html', import.meta.url), 'utf8');
 const membershipHtml = readFileSync(new URL('../../membership.html', import.meta.url), 'utf8');
 const communityCss = readFileSync(new URL('../assets/community.css', import.meta.url), 'utf8');
 const apiJs = readFileSync(new URL('./api.js', import.meta.url), 'utf8');
-const communityJs = readFileSync(new URL('./community.js', import.meta.url), 'utf8');
+const privateJournalJs = readFileSync(new URL('./private-journal.js', import.meta.url), 'utf8');
 const canonicalSchema = readFileSync(new URL('../../supabase/schema.sql', import.meta.url), 'utf8');
 const cleanupMigration = readFileSync(
   new URL('../../supabase/migrations/20260722152953_remove_journal_photo_infrastructure.sql', import.meta.url),
@@ -49,9 +49,9 @@ describe('text-only private journal', () => {
 
   test('preserves all six journal fields and their text-only API path', () => {
     ['journalDate', 'journalMood', 'journalEnergy', 'journalNote', 'journalWin', 'journalPrayer']
-      .forEach((id) => assert.match(communityHtml, new RegExp(`id=["']${id}["']`)));
-    assert.match(communityHtml, /id=["']journalForm["']/);
-    assert.match(communityHtml, /id=["']journalTimeline["']/);
+      .forEach((id) => assert.match(privateJournalHtml, new RegExp(`id=["']${id}["']`)));
+    assert.match(privateJournalHtml, /id=["']journalForm["']/);
+    assert.match(privateJournalHtml, /id=["']journalTimeline["']/);
     assert.match(apiJs, /\.from\('journal_entries'\)/);
     assert.match(apiJs, /readMockUserValue\(MOCK_JOURNAL_KEY, \[\]\)\.map\(normalizeJournalEntry\)/);
     assert.match(apiJs, /writeMockUserValue\(MOCK_JOURNAL_KEY, entries\)/);
@@ -67,7 +67,7 @@ describe('text-only private journal', () => {
       'journal-photos',
     ];
     for (const hook of retiredHooks) {
-      for (const source of [communityHtml, communityJs, apiJs, communityCss]) {
+      for (const source of [privateJournalHtml, privateJournalJs, apiJs, communityCss]) {
         assert.equal(source.includes(hook), false, `retired journal photo hook remains: ${hook}`);
       }
     }

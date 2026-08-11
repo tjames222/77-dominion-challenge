@@ -18,10 +18,9 @@ const privateSocialRetirementMigration = readFileSync(
 
 describe('private-only Community', () => {
   test('offers only the private group and private journal destinations', () => {
-    const tabNames = [...communityHtml.matchAll(/class="community-tab[^>]*>([^<]+)<\/button>/g)]
-      .map((match) => match[1].trim());
-
-    assert.deepEqual(tabNames, ['Private Group', 'Private Journal']);
+    assert.match(communityHtml, /href="\.\/community\.html" aria-current="page">Community<\/a>/);
+    assert.match(communityHtml, /href="\.\/private-journal\.html"[^>]*>Private Journal<\/a>/);
+    assert.doesNotMatch(communityHtml, /class="community-tab|role="tablist" aria-label="Private group and journal"/);
     assert.doesNotMatch(communityHtml, /id="global(?:-tab|Feed|Leaderboard|PostForm|PostBody)?"/);
     assert.doesNotMatch(communityHtml, /Global Community|Global Leaderboard|Post Globally/);
   });
@@ -40,7 +39,7 @@ describe('private-only Community', () => {
 });
 
 describe('simplified private groups', () => {
-  test('keeps group access, members, leaderboard, integrations, and the Private Journal', () => {
+  test('keeps group access, members, leaderboard, integrations, and the Private Journal destination', () => {
     for (const id of [
       'crewForm',
       'activeCrewName',
@@ -48,12 +47,13 @@ describe('simplified private groups', () => {
       'crewMemberList',
       'crewLeaderboard',
       'crewIntegrationsCard',
-      'journalForm',
-      'journalTimeline',
+      'crewSettingsButton',
+      'crewSettingsCard',
     ]) {
       assert.match(communityHtml, new RegExp(`id=["']${id}["']`));
     }
     assert.doesNotMatch(communityHtml, /id=["']crewSelect["']/);
+    assert.match(communityHtml, /id="crewSettingsButton"[\s\S]*?href="#crewSettingsCard"[\s\S]*?aria-label="Group settings"/);
     assert.match(communityHtml, /Use the connected Slack or Discord channel for conversation/);
   });
 

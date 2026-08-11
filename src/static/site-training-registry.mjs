@@ -1,7 +1,7 @@
 import { canonicalHtmlRoutePath } from './route-path.mjs';
 
 export const SITE_TRAINING_SCHEMA_VERSION = 1;
-export const SITE_TRAINING_CATALOG_VERSION = 1;
+export const SITE_TRAINING_CATALOG_VERSION = 2;
 
 const IDENTIFIER_PATTERN = /^[a-z][a-z0-9]*(?:[-_][a-z0-9]+)*$/;
 const ROUTE_PATTERN = /^\/[a-z0-9]+(?:-[a-z0-9]+)*\.html$/;
@@ -249,7 +249,7 @@ const orientation = (title, description) => step('orientation', title, descripti
 
 const PAGES = [
   {
-    id: 'dashboard', route: '/dashboard.html', contentVersion: 1, title: 'Dashboard',
+    id: 'dashboard', route: '/dashboard.html', contentVersion: 2, title: 'Dashboard',
     steps: [
       orientation('Welcome to your Solo walkthrough', 'This walkthrough explains Dominion without changing challenge entries, dates, sharing, or any other product data.'),
       step('global-navigation', 'Move through Dominion', 'The application menu keeps every signed-in destination together. Training navigation follows only the published walkthrough order.', 'global-navigation'),
@@ -258,8 +258,8 @@ const PAGES = [
       step('progress-gauges', 'Read today and the full challenge', 'These gauges separate today’s seven standards from progress across all 77 days.', 'dashboard-progress'),
       step('daily-standards', 'Your seven Daily Standards', 'The scorecard links Spirit, Mind, and Body practices and reflects today’s completion state.', 'dashboard-standards', ['daily-standards-open'], fallback('Your standards unlock on schedule', 'You can learn the full site now. Daily Standard controls become available when your scheduled Solo start date arrives.')),
       step('check-in', 'Post only after review', 'Check-In records the day only when you deliberately use the product control outside training. This walkthrough never posts it.', 'dashboard-check-in', ['daily-standards-open'], fallback('Check-In unlocks with today’s standards', 'Your scheduled challenge can be trained now; Check-In remains unavailable until its date arrives.')),
-      step('levels-points', 'Levels and points show momentum', 'Levels rise independently from point-unlocked rewards, while this card shows your current total, progress, and latest badge.', 'dashboard-levels'),
-      step('community-entry', 'Accountability has its own space', 'Community leads to private groups, leaderboards, integrations, and a private journal. Training does not open, create, or join anything.', 'dashboard-community'),
+      step('levels-points', 'Levels and points show momentum', 'Levels rise independently from point-unlocked rewards, while this card shows your current total and progress toward the next level.', 'dashboard-levels'),
+      step('community-entry', 'Accountability has its own space', 'Community leads to private groups, leaderboards, and integrations, while Private Journal stays one top-level destination away. Training does not open, create, or join anything.', 'dashboard-community'),
     ],
   },
   {
@@ -332,15 +332,24 @@ const PAGES = [
     ],
   },
   {
-    id: 'community', route: '/community.html', contentVersion: 1, title: 'Community',
+    id: 'community', route: '/community.html', contentVersion: 2, title: 'Community',
     steps: [
-      orientation('Community', 'Community contains private-group accountability and a separate private journal. This walkthrough never creates, joins, invites, connects, or saves content.'),
-      step('tabs', 'Group and journal stay separate', 'These tabs separate shared crew information from your private journal.', 'community-tabs'),
+      orientation('Community', 'Community contains private-group accountability, with Private Journal available as its own top-level destination. This walkthrough never creates, joins, invites, connects, or saves content.'),
+      step('tabs', 'Your core destinations stay in reach', 'Dashboard, Rewards, Community, and Private Journal remain available from this shared navigation.', 'community-tabs'),
       step('create-or-join', 'Create or join only by explicit choice', 'This area reflects whether you can create a crew or manage an existing one. Training never submits either flow.', 'community-create-or-join'),
       step('roles-and-roster', 'Roles protect group controls', 'Owners, admins, and members see only the roster and controls allowed for their role.', 'community-roster', ['has-active-crew'], fallback('Roster controls appear with a crew', 'You are not currently viewing an active crew roster. Roles and member controls remain unavailable until a crew exists.')),
       step('leaderboard', 'The leaderboard stays crew-scoped', 'Week and challenge views compare only members of the selected private group.', 'community-leaderboard'),
       step('integrations', 'External updates are safe-off', 'Slack and Discord require eligible group controls, a destination, and each member’s consent. Training never connects a provider.', 'community-integrations', ['group-integrations-enabled', 'crew-integration-authorized'], fallback('Group integrations are informational here', 'Slack and Discord controls stay hidden unless the feature, crew, and role are eligible. Training never enables or connects them.')),
-      step('private-journal', 'Your journal stays private', 'The Private Journal tab holds personal notes and reflections. Training never reads, reveals, or saves journal content.', 'community-private-journal'),
+      step('private-journal', 'Your journal stays private', 'Private Journal is a separate top-level destination for personal notes and reflections. Training never reads, reveals, or saves journal content.', 'community-private-journal'),
+    ],
+  },
+  {
+    id: 'private-journal', route: '/private-journal.html', contentVersion: 1, title: 'Private Journal',
+    steps: [
+      orientation('Private Journal', 'Private Journal keeps personal notes and reflections separate from Community. This walkthrough never reads, reveals, changes, or saves journal content.'),
+      step('navigation', 'Your core destinations stay in reach', 'Dashboard, Rewards, Community, and Private Journal remain available from this shared navigation.', 'private-journal-navigation'),
+      step('entry', 'A private entry stays under your control', 'Date, mood, energy, notes, wins, and prayer or reflection are saved only when you deliberately submit the form outside training.', 'private-journal-entry'),
+      step('timeline', 'Your record remains private', 'Saved entries appear in your personal timeline. Training never opens, edits, or exposes an entry.', 'private-journal-timeline'),
     ],
   },
   {
@@ -376,20 +385,21 @@ const PAGES = [
   },
 ];
 
-const PROGRAM_PAGE_IDS = [
-  'dashboard',
-  'bible-reading',
-  'morning-prayer',
-  'worship',
-  'evening-prayer',
-  'workout-one',
-  'intentional-walk',
-  'workout-two',
-  'badges-rewards',
-  'community',
-  'profile',
-  'billing',
-  'science',
+const PROGRAM_PAGES = [
+  { pageId: 'dashboard', contentVersion: 2 },
+  { pageId: 'bible-reading', contentVersion: 1 },
+  { pageId: 'morning-prayer', contentVersion: 1 },
+  { pageId: 'worship', contentVersion: 1 },
+  { pageId: 'evening-prayer', contentVersion: 1 },
+  { pageId: 'workout-one', contentVersion: 1 },
+  { pageId: 'intentional-walk', contentVersion: 1 },
+  { pageId: 'workout-two', contentVersion: 1 },
+  { pageId: 'badges-rewards', contentVersion: 1 },
+  { pageId: 'community', contentVersion: 2 },
+  { pageId: 'private-journal', contentVersion: 1 },
+  { pageId: 'profile', contentVersion: 1 },
+  { pageId: 'billing', contentVersion: 1 },
+  { pageId: 'science', contentVersion: 1 },
 ];
 
 export const SITE_TRAINING_REGISTRY = defineSiteTrainingRegistry({
@@ -397,10 +407,10 @@ export const SITE_TRAINING_REGISTRY = defineSiteTrainingRegistry({
   pages: PAGES,
   programs: [{
     id: 'solo-first-run',
-    version: 1,
+    version: 2,
     audience: 'solo',
     title: 'Solo first-run site training',
-    pages: PROGRAM_PAGE_IDS.map((pageId) => ({ pageId, contentVersion: 1 })),
+    pages: PROGRAM_PAGES,
   }],
 });
 

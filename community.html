@@ -22,20 +22,22 @@
         <span class="brand-name">Private Groups</span>
       </header>
 
+      <nav class="member-tabs" aria-label="Member sections" data-member-tabs data-training-target="community-tabs">
+        <a class="member-tab" href="./dashboard.html">Dashboard</a>
+        <a class="member-tab" href="./badges-rewards.html">Rewards</a>
+        <a class="member-tab" href="./community.html" aria-current="page">Community</a>
+        <a class="member-tab" href="./private-journal.html" data-training-target="community-private-journal">Private Journal</a>
+      </nav>
+
       <section class="community-hero reveal is-visible" data-section-surface="plain">
         <p class="eyebrow">77-Day Dominion Challenge</p>
         <h1>Walk together.</h1>
         <p class="lead">Stay accountable with the people you invited, compare private-group progress, and keep your own journey honest.</p>
       </section>
 
-      <nav class="community-tabs" role="tablist" aria-label="Private group and journal" data-training-target="community-tabs">
-        <button class="community-tab active" id="crew-tab" type="button" role="tab" aria-selected="true" aria-controls="crew" data-tab="crew">Private Group</button>
-        <button class="community-tab" id="journey-tab" type="button" role="tab" aria-selected="false" aria-controls="journey" data-tab="journey" data-training-target="community-private-journal">Private Journal</button>
-      </nav>
-
       <div class="community-feedback" id="communityFeedback" role="status" aria-live="polite"></div>
 
-      <section class="community-panel active" id="crew" data-section-surface="plain" data-section-cadence role="tabpanel" aria-labelledby="crew-tab">
+      <section class="community-view" id="crew" data-section-surface="plain" data-section-cadence aria-labelledby="crewTitle">
         <div class="community-summary" id="crewSummary" data-section-surface="plain">
           <span class="app-icon icon-users" aria-hidden="true"></span>
           <div>
@@ -90,6 +92,16 @@
                 <strong id="activeCrewName"></strong>
               </div>
               <div class="crew-toolbar-actions">
+                <a
+                  class="crew-settings-link"
+                  id="crewSettingsButton"
+                  href="#crewSettingsCard"
+                  aria-label="Group settings"
+                  title="Group settings"
+                  hidden
+                >
+                  <span class="app-icon icon-settings" aria-hidden="true"></span>
+                </a>
                 <button class="secondary crew-training-launch" id="crewTrainingButton" type="button" hidden>
                   Start Crew Training
                 </button>
@@ -106,7 +118,17 @@
           </section>
         </div>
 
-        <section class="group-integrations" id="crewIntegrationsCard" data-section-surface="plain" data-training-target="community-integrations" aria-labelledby="groupIntegrationsTitle" hidden>
+        <section class="group-settings-card card" id="crewSettingsCard" data-section-surface="plain" tabindex="-1" aria-labelledby="crewSettingsTitle" hidden>
+          <div class="section-heading-row">
+            <div>
+              <p class="eyebrow">Group Settings</p>
+              <h2 id="crewSettingsTitle">Manage this group.</h2>
+            </div>
+            <span class="privacy-badge">Role protected</span>
+          </div>
+          <p class="group-settings-description">Manage approved external destinations and the active group’s access controls without changing personal progress or journal entries.</p>
+
+          <section class="group-integrations" id="crewIntegrationsCard" data-section-surface="plain" data-training-target="community-integrations" aria-labelledby="groupIntegrationsTitle" hidden>
           <div class="section-heading-row">
             <div>
               <p class="eyebrow">External Updates</p>
@@ -159,6 +181,16 @@
               <button class="secondary" id="cancelIntegrationSetup" type="button">Cancel</button>
             </div>
           </form>
+          </section>
+
+          <section class="crew-lifecycle-card" id="crewLifecycleCard" data-section-surface="plain" hidden>
+            <div>
+              <p class="eyebrow" id="crewLifecycleEyebrow">Group Access</p>
+              <h3 id="crewLifecycleTitle">Manage group access</h3>
+              <p id="crewLifecycleDescription"></p>
+            </div>
+            <button class="secondary destructive" id="crewLifecycleButton" type="button"></button>
+          </section>
         </section>
 
         <div class="community-stats" id="crewStats" data-section-surface="plain">
@@ -191,72 +223,8 @@
           <div class="leaderboard-list" id="crewLeaderboard"></div>
         </section>
 
-        <section class="crew-lifecycle-card" id="crewLifecycleCard" data-section-surface="plain" hidden>
-          <div>
-            <p class="eyebrow">Group Access</p>
-            <h2 id="crewLifecycleTitle">Manage this group</h2>
-            <p id="crewLifecycleDescription"></p>
-          </div>
-          <button class="secondary destructive" id="crewLifecycleButton" type="button"></button>
-        </section>
-
       </section>
 
-      <section class="community-panel" id="journey" data-section-surface="plain" data-section-cadence role="tabpanel" aria-labelledby="journey-tab" hidden>
-        <div class="community-summary" data-section-surface="plain">
-          <span class="app-icon icon-book" aria-hidden="true"></span>
-          <div>
-            <p class="eyebrow">Private Journal</p>
-            <h2>My Journey</h2>
-            <p>Your personal record of check-ins, notes, verses, prayers, and what God is building in you over 77 days.</p>
-          </div>
-        </div>
-
-        <section class="composer-card card" data-section-surface="accent">
-          <p class="eyebrow">Today’s Note</p>
-          <form class="journal-form" id="journalForm">
-            <label>
-              <span>Date</span>
-              <input id="journalDate" type="date" required />
-            </label>
-            <label>
-              <span>Mood</span>
-              <select id="journalMood">
-                <option value="">Choose one</option>
-                <option>Steady</option>
-                <option>Focused</option>
-                <option>Tired</option>
-                <option>Tested</option>
-                <option>Grateful</option>
-              </select>
-            </label>
-            <label>
-              <span>Energy</span>
-              <select id="journalEnergy">
-                <option value="">Choose one</option>
-                <option>Low</option>
-                <option>Medium</option>
-                <option>High</option>
-              </select>
-            </label>
-            <label class="full-span">
-              <span>What did today reveal?</span>
-              <textarea id="journalNote" placeholder="What did today reveal about your discipline, prayer, body, or attention?"></textarea>
-            </label>
-            <label class="full-span">
-              <span>Win</span>
-              <input id="journalWin" type="text" placeholder="Name one concrete win from today." />
-            </label>
-            <label class="full-span">
-              <span>Prayer or reflection</span>
-              <textarea id="journalPrayer" placeholder="What are you praying through or surrendering?"></textarea>
-            </label>
-            <button class="primary" type="submit">Save Private Entry</button>
-          </form>
-        </section>
-
-        <div class="journey-timeline" id="journalTimeline" data-section-surface="plain"></div>
-      </section>
     </main>
 
     <div class="crew-training-layer" id="crewTrainingLayer" hidden>

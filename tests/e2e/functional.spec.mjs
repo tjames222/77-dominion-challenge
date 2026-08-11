@@ -135,18 +135,33 @@ test('Dominion Night keeps the disabled Dashboard action readable', async ({ pag
   await expect(checkIn).toHaveCSS('cursor', 'not-allowed');
 });
 
-test('community tablist follows arrow-key navigation', async ({ page, app }) => {
-  await app.open(ROUTE_BY_ID.community);
-  const crewTab = page.getByRole('tab', { name: 'Private Group' });
-  const journeyTab = page.getByRole('tab', { name: 'Private Journal' });
+test('member navigation promotes Dashboard, Rewards, Community, and Private Journal', async ({ page, app }) => {
+  await app.open(ROUTE_BY_ID.dashboard);
+  const navigation = page.getByRole('navigation', { name: 'Member sections' });
+  const links = navigation.getByRole('link');
 
-  await crewTab.focus();
-  await page.keyboard.press('ArrowRight');
-  await expect(journeyTab).toBeFocused();
-  await expect(journeyTab).toHaveAttribute('aria-selected', 'true');
+  await expect(links).toHaveCount(4);
+  await expect(links).toHaveText(['Dashboard', 'Rewards', 'Community', 'Private Journal']);
+  await expect(navigation.getByRole('link', { name: 'Dashboard', exact: true })).toHaveAttribute('aria-current', 'page');
+
+  await navigation.getByRole('link', { name: 'Private Journal', exact: true }).click();
+  await expect(page).toHaveURL(/\/private-journal\.html$/);
   await expect(page.locator('#journey')).toBeVisible();
-  await expect(page.getByRole('tab', { name: 'Global' })).toHaveCount(0);
-  await expect(page.getByRole('tab', { name: 'My Journey' })).toHaveCount(0);
+  await expect(page.locator('#crew')).toHaveCount(0);
+  await expect(page.getByRole('link', { name: 'Private Journal', exact: true })).toHaveAttribute('aria-current', 'page');
+
+  await page.goBack();
+  await expect(page).toHaveURL(/\/dashboard\.html$/);
+  await page.goForward();
+  await expect(page).toHaveURL(/\/private-journal\.html$/);
+  await expect(page.locator('#journey')).toBeVisible();
+  await page.goBack();
+  await expect(page).toHaveURL(/\/dashboard\.html$/);
+  await page.getByRole('link', { name: 'Community', exact: true }).click();
+  await expect(page).toHaveURL(/\/community\.html$/);
+  await expect(page.locator('#crew')).toBeVisible();
+  await expect(page.locator('#journey')).toBeHidden();
+  await expect(page.getByRole('tab', { name: 'Private Journal' })).toHaveCount(0);
   await expect(page.getByText('Post to Private Group')).toHaveCount(0);
   await expect(page.getByPlaceholder('Write a comment…')).toHaveCount(0);
 });
@@ -270,6 +285,38 @@ test('Community branded invite and provider actions retain their dedicated flows
   expect(discordBox?.height).toBe(slackBox?.height);
 });
 
+test('Community exposes group settings through an accessible owner gear link', async ({ page, app }) => {
+  await app.open(ROUTE_BY_ID.community);
+  const settings = page.getByRole('link', { name: 'Group settings' });
+
+  await expect(settings).toBeVisible();
+  await expect(settings).toHaveAttribute('href', '#crewSettingsCard');
+  await expect(settings.locator('.icon-settings')).toHaveCount(1);
+  const bounds = await settings.boundingBox();
+  expect(bounds?.width).toBeGreaterThanOrEqual(44);
+  expect(bounds?.height).toBeGreaterThanOrEqual(44);
+
+  await settings.click();
+  await expect(page).toHaveURL(/#crewSettingsCard$/);
+  await expect(page.locator('#crewSettingsCard')).toBeFocused();
+});
+
+test('Community hides group settings without an active crew', async ({ page, app }) => {
+  await app.open(ROUTE_BY_ID.community, { state: 'communityEmpty' });
+  await expect(page.getByRole('link', { name: 'Group settings' })).toHaveCount(0);
+});
+
+test('Community hides owner-only group settings from ordinary members', async ({ page, app }) => {
+  await app.open(ROUTE_BY_ID.community, { state: 'communityMember' });
+  await expect(page.getByRole('link', { name: 'Group settings' })).toHaveCount(0);
+});
+
+test('Community exposes group settings to group administrators', async ({ page, app }) => {
+  await app.open(ROUTE_BY_ID.community, { state: 'communityAdmin' });
+  await expect(page.getByRole('link', { name: 'Group settings' })).toBeVisible();
+  await expect(page.locator('#crewSettingsCard')).toBeVisible();
+});
+
 test('login form submits with the keyboard and honors a safe return path', async ({ page, app }) => {
   await app.seed('guest');
   await page.goto('/login.html?returnTo=./profile.html');
@@ -311,7 +358,7 @@ test('Dashboard links all seven standards to their dedicated pages', async ({ pa
     './intentional-walk.html',
     './workout-two.html',
   ]);
-  await expect(page.getByRole('link', { name: 'View badges and rewards' })).toHaveAttribute(
+  await expect(page.getByRole('link', { name: 'Rewards', exact: true })).toHaveAttribute(
     'href',
     './badges-rewards.html',
   );
@@ -387,9 +434,8 @@ test('Dashboard reward queue dismisses safely and advances to the earned tier', 
   await page.emulateMedia({ reducedMotion: 'reduce' });
   await app.open(ROUTE_BY_ID.dashboard);
 
-  await expect(page.getByText('Latest Badge', { exact: true })).toBeVisible();
-  await expect(page.locator('#badgeShelf .progression-badge-card')).toHaveCount(1);
-  await expect(page.locator('#badgeShelf')).toContainText('First Sweat');
+  await expect(page.getByText('Latest Badge', { exact: true })).toHaveCount(0);
+  await expect(page.locator('#badgeShelf')).toHaveCount(0);
 
   await page.locator('#selectAllActionsButton').click();
   const postButton = page.locator('#checkInButton');
@@ -440,33 +486,12 @@ test('Dashboard celebration replaces an open dialog and exclusively owns modal f
   await expect(page.locator('#checkInStatus')).toBeFocused();
 });
 
-test('Dashboard accountability keeps the newest three while counting the full feed', async ({ page, app }) => {
+test('Dashboard removes the duplicate Community preview while preserving its destination', async ({ page, app }) => {
   await app.open(ROUTE_BY_ID.dashboard);
-  await page.evaluate(() => {
-    const feed = Array.from({ length: 35 }, (_, index) => ({
-      id: `feed-${index + 1}`,
-      name: `Member ${index + 1}`,
-      day: 14,
-      status: 'complete',
-      completedCount: 7,
-      pointsAwarded: 7,
-      timestamp: 'Today',
-      createdAt: new Date(Date.UTC(2026, 1, 14, 16, index)).toISOString(),
-    }));
-    localStorage.setItem('dominion:feed', JSON.stringify(feed));
-  });
-  await page.reload({ waitUntil: 'networkidle' });
-
-  await expect(page.locator('#feed .feed-item')).toHaveCount(3);
-  await expect(page.locator('#feed .feed-item').nth(0)).toContainText('Member 35');
-  await expect(page.locator('#feed .feed-item').nth(1)).toContainText('Member 34');
-  await expect(page.locator('#feed .feed-item').nth(2)).toContainText('Member 33');
-  await expect(page.locator('#completedToday')).toHaveText('35 people completed today');
-
-  await page.evaluate(() => localStorage.setItem('dominion:feed', '[]'));
-  await page.reload({ waitUntil: 'networkidle' });
-  await expect(page.locator('#feed .feed-item')).toHaveCount(0);
-  await expect(page.locator('#completedToday')).toHaveText('0 people completed today');
+  await expect(page.locator('#feed')).toHaveCount(0);
+  await expect(page.locator('#completedToday')).toHaveCount(0);
+  await expect(page.locator('section.community')).toHaveCount(0);
+  await expect(page.getByRole('link', { name: 'Community', exact: true })).toHaveAttribute('href', './community.html');
 });
 
 test('a completed share grants +14 and the Sharing badge only once', async ({ page, app }) => {

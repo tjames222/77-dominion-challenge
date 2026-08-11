@@ -31,7 +31,8 @@ The deployed frontend is a Vite multi-page application (MPA). It has no client-s
 | `workout-one.html` | First workout Daily Standard | `src/static/daily-standard-page.js` |
 | `intentional-walk.html` | Intentional walk Daily Standard | `src/static/daily-standard-page.js` |
 | `workout-two.html` | Second workout Daily Standard | `src/static/daily-standard-page.js` |
-| `community.html` | Community, groups, and journal | `src/static/community.js` |
+| `community.html` | Private-group community | `src/static/community.js` |
+| `private-journal.html` | Private journal | `src/static/private-journal.js` |
 | `profile.html` | Account and appearance settings | `src/static/profile.js` |
 | `science.html` | Challenge background and sources | `src/static/science.js` |
 
