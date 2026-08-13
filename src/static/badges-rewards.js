@@ -19,6 +19,7 @@ import {
 import {
   buildBadgesRewardsPageModel,
   escapeHtml,
+  rewardViewModel,
 } from './badges-rewards.mjs';
 import { renderGameProgress } from './game-progress.mjs';
 import {
@@ -358,7 +359,10 @@ function invalidatePageActor(nextUser = null) {
 }
 
 async function openRewardDetail(rewardKey, trigger) {
-  const reward = catalog?.items?.find((item) => item.key === rewardKey);
+  const catalogReward = catalog?.items?.find((item) => item.key === rewardKey);
+  const reward = catalogReward
+    ? rewardViewModel(catalogReward, catalog?.nextUnlock?.key || catalog?.next_unlock?.key)
+    : null;
   const expectedUserId = pageActorId;
   if (!reward?.key || !reward.hasDetails || !rewardDetailDialog || !expectedUserId) return;
   const requestId = ++detailRequestId;
@@ -388,15 +392,19 @@ async function openRewardDetail(rewardKey, trigger) {
 }
 
 function closeRewardDetail() {
-  if (rewardDetailDialog?.open) rewardDetailDialog.close();
-  else scrubRewardDetail({ restoreFocus: true });
+  dismissAndScrubRewardDetail({ restoreFocus: true });
 }
 
 $('rewardDetailClose')?.addEventListener('click', closeRewardDetail);
 rewardDetailDialog?.addEventListener('click', (event) => {
   if (event.target === rewardDetailDialog) closeRewardDetail();
 });
+rewardDetailDialog?.addEventListener('cancel', (event) => {
+  event.preventDefault();
+  closeRewardDetail();
+});
 rewardDetailDialog?.addEventListener('close', () => {
+  if (rewardDetailDialog.open) return;
   scrubRewardDetail({ restoreFocus: true });
 });
 
@@ -577,6 +585,15 @@ rewardsList?.addEventListener('click', async (event) => {
 
 rewardsList?.addEventListener('keydown', async (event) => {
   if (!['Enter', ' '].includes(event.key)) return;
+  const detailCard = event.target.closest('[data-view-reward]');
+  if (!detailCard || event.target !== detailCard) return;
+  event.preventDefault();
+  if (event.key === ' ' || event.repeat) return;
+  await openRewardDetail(detailCard.dataset.viewReward, detailCard);
+});
+
+rewardsList?.addEventListener('keyup', async (event) => {
+  if (event.key !== ' ') return;
   const detailCard = event.target.closest('[data-view-reward]');
   if (!detailCard || event.target !== detailCard) return;
   event.preventDefault();
