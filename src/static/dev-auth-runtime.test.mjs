@@ -25,7 +25,7 @@ function memoryStorage(initial = {}) {
 }
 
 describe('dev authentication runtime', () => {
-  test('selects real Auth only for production-built mock previews or explicit local hybrid tests', () => {
+  test('selects real Auth for production or an explicitly enabled local hybrid test only', () => {
     assert.equal(shouldUseSupabaseAuthentication({ configured: false }), false);
     assert.equal(shouldUseSupabaseAuthentication({ configured: true, localDemo: false }), true);
     assert.equal(shouldUseSupabaseAuthentication({
@@ -33,7 +33,7 @@ describe('dev authentication runtime', () => {
       localDemo: true,
       mocksEnabled: true,
       productionBuild: true,
-    }), true);
+    }), false);
     assert.equal(shouldUseSupabaseAuthentication({
       configured: true,
       localDemo: true,
@@ -89,8 +89,7 @@ describe('dev authentication runtime', () => {
 
   test('keeps application tables mocked and gates redirect overrides to hybrid signup', async () => {
     const [api, auth] = await Promise.all([read('./api.js'), read('./auth.js')]);
-    assert.match(api, /export const supabase = isSupabaseConfigured\(\)\s*\? createClient/);
-    assert.doesNotMatch(api, /isSupabaseConfigured\(\) && !ENABLE_MOCKS/);
+    assert.match(api, /isSupabaseConfigured\(\) && \(!ENABLE_MOCKS \|\| ENABLE_LOCAL_HYBRID_AUTH\)/);
     assert.match(api, /data\.session\?\.access_token && hasSupabaseAuth\(\)/g);
     assert.match(api, /!isHybridAuthPreview\(\) \|\| typeof window === 'undefined'/);
     assert.match(auth, /if \(hasSupabaseAuthentication\(\)\)/);
@@ -98,15 +97,12 @@ describe('dev authentication runtime', () => {
 });
 
 describe('Cloudflare frontend environment gate', () => {
-  test('rejects canonical develop without real Auth configuration', () => {
+  test('accepts canonical develop without any hosted connection', () => {
     assert.deepEqual(frontendEnvironmentErrors({
       CF_PAGES: 'true',
       CF_PAGES_BRANCH: 'develop',
       VITE_ENABLE_MOCKS: 'true',
-    }), [
-      'VITE_SUPABASE_URL',
-      'VITE_SUPABASE_PUBLISHABLE_KEY',
-    ]);
+    }), []);
   });
 
   test('requires product mocks on canonical develop', () => {
@@ -117,6 +113,15 @@ describe('Cloudflare frontend environment gate', () => {
       VITE_SUPABASE_URL: 'https://project.supabase.co',
       VITE_SUPABASE_PUBLISHABLE_KEY: 'sb_publishable_example',
     }), ['VITE_ENABLE_MOCKS must be true on develop']);
+  });
+
+  test('rejects hybrid Supabase Auth on canonical develop', () => {
+    assert.deepEqual(frontendEnvironmentErrors({
+      CF_PAGES: 'true',
+      CF_PAGES_BRANCH: 'develop',
+      VITE_ENABLE_MOCKS: 'true',
+      VITE_ENABLE_SUPABASE_AUTH_IN_MOCKS: 'true',
+    }), ['VITE_ENABLE_SUPABASE_AUTH_IN_MOCKS must be false on develop']);
   });
 
   test('rejects mocks on main even when Supabase is configured', () => {
@@ -137,16 +142,9 @@ describe('Cloudflare frontend environment gate', () => {
     }), []);
   });
 
-  test('accepts configured canonical environments and rejects placeholders', () => {
+  test('requires valid hosted configuration only for main', () => {
     assert.deepEqual(frontendEnvironmentErrors({
       CF_PAGES: 'true',
-      CF_PAGES_BRANCH: 'develop',
-      VITE_ENABLE_MOCKS: 'true',
-      VITE_SUPABASE_URL: 'https://project.supabase.co',
-      VITE_SUPABASE_PUBLISHABLE_KEY: 'sb_publishable_example',
-    }), []);
-    assert.deepEqual(frontendEnvironmentErrors({
-      CF_PAGES: '1',
       CF_PAGES_BRANCH: 'main',
       VITE_ENABLE_MOCKS: 'false',
       VITE_SUPABASE_URL: 'https://YOUR_PROJECT.supabase.co',

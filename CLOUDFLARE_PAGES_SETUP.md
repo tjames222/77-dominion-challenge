@@ -20,15 +20,13 @@ Recommended settings:
 Preview environment variables:
 
 - VITE_ENABLE_MOCKS=true
-- VITE_SUPABASE_URL
-- VITE_SUPABASE_PUBLISHABLE_KEY
 
-Production-built previews use Supabase Auth for real login, registration, sessions, and logout whenever the public configuration is present. `VITE_ENABLE_MOCKS=true` isolates product data and billing in browser-local, UUID-scoped preview state, so preview testing cannot call Stripe or mutate Supabase application tables. These accounts are real rows in the configured Supabase Auth tenant even though their product data is local.
+Do not configure Supabase, Stripe, or provider values in the Preview environment. Production-built previews use browser-local identities and browser-local product data. The runtime refuses to construct a Supabase client while mock mode is active, even if a production variable is accidentally inherited.
 
 Branch workflow:
 
 - main = production with real Supabase Auth, Postgres, and Stripe billing
-- develop = prelaunch dev deployment with real Supabase Auth plus mock membership, community, journal, and other product state
+- develop = prelaunch dev deployment with mock identities, data, billing, and provider connections
 - feature branches = Cloudflare preview deployments when Pages preview-branch controls allow them
 
 ## Required production branch control
@@ -51,7 +49,7 @@ Function deployment, and backend smoke checks succeed. Configure these GitHub
 Do not re-enable automatic production deployments. A frontend-only rollback is a
 manual dispatch of the protected workflow from a known backend-compatible commit.
 
-Cloudflare Preview environment variables are shared by `develop` and feature previews. Configure **Builds → Branch control → Preview branch** to include only `develop`; otherwise feature previews inherit the same real Supabase Auth tenant. A feature build with no Supabase values intentionally falls back to local-only identities; canonical `develop` fails its build instead.
+Cloudflare Preview environment variables are shared by `develop` and feature previews. Configure **Builds → Branch control → Preview branch** to include only `develop`. Canonical `develop` requires mock mode and rejects the hybrid-Auth override; it does not require or use a hosted Supabase project.
 
 Supabase Auth must allow both production and preview callbacks:
 
@@ -71,6 +69,6 @@ Supabase Edge Functions allow the production host and Cloudflare preview subdoma
 - `STRIPE_WEBHOOK_SECRET`
 - `STRIPE_MEMBERSHIP_PRICE_ID`
 
-Authentication and challenge data are backed by Supabase Auth and Postgres in production. Preview builds set `VITE_ENABLE_MOCKS=true`, which keeps Supabase Auth enabled when public configuration is present while disabling Supabase application-data and Stripe calls. Production must leave mocks disabled.
+Authentication and challenge data are backed by Supabase Auth and Postgres only on `main`. Preview builds set `VITE_ENABLE_MOCKS=true`, which disables Supabase client construction and Stripe/provider calls. Production must leave mocks disabled.
 
 The canonical prelaunch dev URL is `https://develop.77-dominion-challenge.pages.dev`. The bare Pages hostname follows `main`; it is not the current dev target and must not be shared for prelaunch testing.

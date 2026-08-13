@@ -10,7 +10,7 @@ export function shouldUseSupabaseAuthentication({
 } = {}) {
   if (!configured) return false;
   if (!localDemo) return true;
-  return Boolean(mocksEnabled && (productionBuild || localHybridEnabled));
+  return Boolean(mocksEnabled && !productionBuild && localHybridEnabled);
 }
 
 export function previewAuthUser(authUser, { fallbackName = 'Member', profile = {} } = {}) {

@@ -7,6 +7,7 @@ const truthy = (value) => ['1', 'true', 'yes'].includes(
 export function frontendEnvironmentErrors(environment = {}) {
   const isCloudflareBuild = truthy(environment.CF_PAGES);
   const usesMockProductData = truthy(environment.VITE_ENABLE_MOCKS);
+  const enablesHybridAuth = truthy(environment.VITE_ENABLE_SUPABASE_AUTH_IN_MOCKS);
   const branch = String(environment.CF_PAGES_BRANCH || '').trim();
 
   if (!isCloudflareBuild) return [];
@@ -18,6 +19,13 @@ export function frontendEnvironmentErrors(environment = {}) {
   if (branch === 'develop' && !usesMockProductData) {
     errors.push('VITE_ENABLE_MOCKS must be true on develop');
   }
+  if (branch === 'develop' && enablesHybridAuth) {
+    errors.push('VITE_ENABLE_SUPABASE_AUTH_IN_MOCKS must be false on develop');
+  }
+
+  // Develop is a pure browser-local preview. It must not depend on the one
+  // hosted Supabase project or any other production connection.
+  if (branch === 'develop') return errors;
 
   const canonicalBranch = branch === 'main' || branch === 'develop';
   if (usesMockProductData && !canonicalBranch) return errors;

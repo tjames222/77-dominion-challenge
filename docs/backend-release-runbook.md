@@ -83,6 +83,16 @@ protect that environment with required reviewers, and restrict deployment to the
 `main` branch. Do not place production credentials in `.env` files, workflow
 YAML, pull-request logs, seeds, or test fixtures.
 
+The prelaunch environment model deliberately uses no paid staging project:
+
+- `develop` and its Cloudflare preview are pure mocks, including identity and
+  every backend/provider connection. They require `VITE_ENABLE_MOCKS=true` and
+  must not enable `VITE_ENABLE_SUPABASE_AUTH_IN_MOCKS`.
+- the one hosted Supabase project, Auth tenant, and Stripe configuration belong
+  only to the protected `main`/`production` environment;
+- local CI still replays the full schema and stubs external providers, so code is
+  validated without connecting `develop` to production.
+
 ### GitHub production secrets
 
 | Name | Purpose | Rotation owner |

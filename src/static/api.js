@@ -139,9 +139,12 @@ const ENABLE_MOCKS = String(import.meta.env.VITE_ENABLE_MOCKS || '').toLowerCase
 const ENABLE_SUPABASE_AUTH_IN_MOCKS = String(
   import.meta.env.VITE_ENABLE_SUPABASE_AUTH_IN_MOCKS || '',
 ).toLowerCase() === 'true';
+const ENABLE_LOCAL_HYBRID_AUTH = Boolean(
+  import.meta.env.DEV && ENABLE_MOCKS && ENABLE_SUPABASE_AUTH_IN_MOCKS,
+);
 const isPlaceholder = (value) => !value || value.includes('YOUR_');
 const isSupabaseConfigured = () => !isPlaceholder(SUPABASE_URL) && !isPlaceholder(SUPABASE_KEY);
-export const supabase = isSupabaseConfigured()
+export const supabase = isSupabaseConfigured() && (!ENABLE_MOCKS || ENABLE_LOCAL_HYBRID_AUTH)
   ? createClient(SUPABASE_URL, SUPABASE_KEY, {
       auth: {
         persistSession: true,
@@ -160,7 +163,7 @@ const usesSupabaseAuthentication = () => Boolean(supabase)
     localDemo: isLocalDemoMode(),
     mocksEnabled: ENABLE_MOCKS,
     productionBuild: import.meta.env.PROD,
-    localHybridEnabled: ENABLE_SUPABASE_AUTH_IN_MOCKS,
+    localHybridEnabled: ENABLE_LOCAL_HYBRID_AUTH,
   });
 const isHybridAuthPreview = () => isLocalDemoMode() && usesSupabaseAuthentication();
 const MEMBERSHIP_ACCESS_KEY = 'membership_active';
