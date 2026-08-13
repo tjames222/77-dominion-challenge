@@ -299,9 +299,9 @@ separately reviewed change and the exact restored-snapshot rehearsal passes:
    triggers, constraints, complete policy inventories, badge/configuration rows,
    and the application-owned Storage manifest with production. Classify every
    difference and explicitly allowlist Supabase platform-version noise.
-4. Before production use, update the unrecorded migrations 1–2 in reviewed
+4. Before production use, update the unrecorded migrations 1–3 in reviewed
    commits. Migration 1 must abort on any legacy purchase or non-membership
-   entitlement row and use `DROP TABLE ... RESTRICT`. Together the two versions
+   entitlement row and use `DROP TABLE ... RESTRICT`. Together migrations 1–2
    must canonicalize `postgres` default privileges for new public tables,
    sequences, and functions, then normalize the ACLs for every baseline and
    gamification table and function whose known legacy privilege would otherwise
@@ -314,10 +314,16 @@ separately reviewed change and the exact restored-snapshot rehearsal passes:
    preserve explicitly approved platform privileges and fail on every unknown
    state. Reconcile clean-checkpoint ACLs with audited runtime needs before
    editing SQL; Edge runtimes require explicit service access to profile and
-   billing data. These edits are allowed only because production has no migration
-   record for either file. Never rewrite a version after it is recorded. Rebuild
-   the clean checkpoints and rerun the complete validation after either hash
-   changes.
+   billing data. Remove the top-level `BEGIN`/`COMMIT` wrappers from migrations 2
+   and 3 and add a static gate rejecting transaction-control statements in every
+   unrecorded migration. With the pinned CLI, a migration file's statements and
+   the CLI-appended history write are submitted as one batch; a file-level
+   `COMMIT` can end that transaction before the history write. Prove the exact
+   pinned-runner semantics with a disposable failure injected after the final SQL
+   statement. These edits are allowed only because production has no migration
+   record for any of the three files. Never rewrite a version after it is
+   recorded. Rebuild the clean checkpoints and rerun the complete validation
+   after any hash changes.
 5. Restore the encrypted hosted roles, schema, and data into the isolated exact-
    version stack. Require its normalized source manifest to match the captured
    production source manifest. Then rehearse applying these three migrations
@@ -344,15 +350,19 @@ separately reviewed change and the exact restored-snapshot rehearsal passes:
    closed, take a fresh encrypted backup, and require the fresh production source
    manifest and destructive-data preflight to match the approved inputs. From the
    pinned three-migration worktree, apply migrations 1–3 through the normal linked
-   migration runner. Each version's transactional SQL and corresponding history
-   record must succeed together; do not assume the three-version batch is one
-   transaction. Do not use `migration repair`. Immediately require exactly those
+   migration runner. Do not assume the three-version batch is one transaction.
+   The rehearsed wrapper-free runner must leave each version's SQL and history
+   record both present or both absent; verify both after every version and stop on
+   a mismatch. Do not use `migration repair`. Immediately require exactly those
    three remote history records and the complete migration-3 application
    manifest; stop on any unexplained difference.
 7. Create a separate, hashed worktree containing exactly migrations 1–13. Its
    linked dry run must list exactly the following ten pending versions. Rehearse
-   the same push against the verified local restore, then apply those ten
-   migrations normally so their SQL and history records are created together:
+   the same push against the verified local restore. Before either push, remove
+   top-level transaction controls from every still-unrecorded migration in this
+   range, pass the static gate, and repeat the pinned-runner failure proof. Then
+   apply those ten migrations normally and verify SQL effects and history after
+   every version:
 
    ```text
    20260708160000
@@ -369,7 +379,9 @@ separately reviewed change and the exact restored-snapshot rehearsal passes:
 
 8. Return to the full release tree. `migration list` must show matching local and
    remote versions 1–13, and the full linked dry run must list exactly 39 pending
-   migrations, versions 14–52. Require the complete normalized migration-13
+   migrations, versions 14–52. No production release may run until every pending
+   file passes the transaction-control gate and the exact release tree passes the
+   pinned-runner failure proof. Require the complete normalized migration-13
    application manifest—including effective and default privileges—to match its
    clean exact-version checkpoint. Repeat the Storage query above against that
    checkpoint and production; both must now return all three buckets and all
