@@ -374,15 +374,15 @@ test('Dashboard places tracking and the scorecard around the countdown in docume
   expect(position('dashboard-hero')).toBeLessThan(position('dashboard-tracking'));
   expect(position('dashboard-tracking')).toBeLessThan(position('countdownCard'));
   expect(position('countdownCard')).toBeLessThan(position('dashboard-scorecard'));
-  expect(position('dashboard-scorecard')).toBeLessThan(position('gameSummaryCard'));
+  await expect(page.locator('#gameSummaryCard')).toHaveCount(0);
 
   await page.locator('#countdownCheckInButton').click();
   await expect(page.locator('#check-in')).toBeFocused();
   await expect(page.locator('#checklist [data-standard-card]')).toHaveCount(7);
 });
 
-test('Dashboard uses zero-point glass only outside the private-group podium', async ({ page, app }) => {
-  await app.open(ROUTE_BY_ID.dashboard);
+test('Rewards uses zero-point glass only outside the private-group podium', async ({ page, app }) => {
+  await app.open(ROUTE_BY_ID.badgesRewards);
   await page.evaluate(() => {
     const stats = JSON.parse(localStorage.getItem('dominion:gameStats') || '{}');
     localStorage.setItem('dominion:gameStats', JSON.stringify({

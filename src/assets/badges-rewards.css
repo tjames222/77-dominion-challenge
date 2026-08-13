@@ -38,8 +38,8 @@
 
 .badges-rewards-tabs {
   position: sticky;
-  top: calc(var(--topbar-sticky-height) + 8px);
-  z-index: 10;
+  top: calc(var(--topbar-sticky-height) + var(--member-tabs-sticky-height) + 14px);
+  z-index: 110;
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 6px;
@@ -48,6 +48,11 @@
   border-radius: 999px;
   background: color-mix(in srgb, var(--background) 88%, transparent);
   backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+}
+
+.rewards-game-summary {
+  scroll-margin-top: calc(var(--topbar-sticky-height) + var(--member-tabs-sticky-height) + 24px);
 }
 
 .badges-rewards-tab {

@@ -4,6 +4,9 @@ import { describe, it } from 'node:test';
 
 const dashboardHtml = readFileSync(new URL('../../dashboard.html', import.meta.url), 'utf8');
 const dashboardJs = readFileSync(new URL('./dashboard.js', import.meta.url), 'utf8');
+const rewardsHtml = readFileSync(new URL('../../badges-rewards.html', import.meta.url), 'utf8');
+const rewardsJs = readFileSync(new URL('./badges-rewards.js', import.meta.url), 'utf8');
+const gameProgressJs = readFileSync(new URL('./game-progress.mjs', import.meta.url), 'utf8');
 const productCss = readFileSync(new URL('../assets/product.css', import.meta.url), 'utf8');
 const stylesCss = readFileSync(new URL('../assets/styles.css', import.meta.url), 'utf8');
 
@@ -13,12 +16,13 @@ describe('dashboard progress document order', () => {
     const tracking = dashboardHtml.indexOf('class="progress dashboard-section dashboard-tracking');
     const countdown = dashboardHtml.indexOf('id="countdownCard"');
     const scorecard = dashboardHtml.indexOf('class="progress dashboard-section dashboard-scorecard');
-    const progressCard = dashboardHtml.indexOf('id="gameSummaryCard"');
+    const brandPanel = dashboardHtml.indexOf('class="dashboard-brand-panel');
 
     assert.ok(hero >= 0 && hero < tracking);
     assert.ok(tracking < countdown);
     assert.ok(countdown < scorecard);
-    assert.ok(scorecard < progressCard);
+    assert.ok(scorecard < brandPanel);
+    assert.equal(dashboardHtml.indexOf('id="gameSummaryCard"'), -1);
   });
 
   it('retains one of every id after splitting tracking from the scorecard', () => {
@@ -71,25 +75,31 @@ describe('dashboard progress document order', () => {
   });
 });
 
-describe('dashboard zero-point level coin integration', () => {
-  it('renders the shared fourteen-point level contract without a Dashboard-only formula', () => {
+describe('Rewards level and private-ranking coin integration', () => {
+  it('renders the shared fourteen-point level contract directly below the Rewards tabs', () => {
+    const tabs = rewardsHtml.indexOf('class="badges-rewards-tabs"');
+    const progress = rewardsHtml.indexOf('id="gameSummaryCard"');
+    const hero = rewardsHtml.indexOf('class="badges-rewards-hero');
+    assert.ok(tabs >= 0 && tabs < progress && progress < hero);
     assert.match(
-      dashboardJs,
+      gameProgressJs,
       /import \{ POINTS_PER_LEVEL, calculateLevelProgress \} from '\.\/point-economy\.mjs'/,
     );
-    assert.match(dashboardJs, /calculateLevelProgress\(gameStats\.totalPoints \?\? gameStats\.challengePoints \?\? 0\)/);
-    assert.match(dashboardJs, /setAttribute\('aria-valuemax', String\(POINTS_PER_LEVEL\)\)/);
-    assert.doesNotMatch(dashboardJs, /const POINTS_PER_LEVEL\s*=|getLevelProgress/);
-    assert.match(dashboardHtml, /id="gamePointsToNext">14 points to Level 2</);
-    assert.match(dashboardHtml, /aria-valuemax="14"/);
-    assert.doesNotMatch(dashboardHtml, /500 points to Level 2|aria-valuemax="500"/);
+    assert.match(gameProgressJs, /calculateLevelProgress\(totalPoints\)/);
+    assert.match(gameProgressJs, /setAttribute\('aria-valuemax', String\(POINTS_PER_LEVEL\)\)/);
+    assert.doesNotMatch(gameProgressJs, /const POINTS_PER_LEVEL\s*=|getLevelProgress/);
+    assert.match(rewardsHtml, /id="gamePointsToNext">14 points to Level 2</);
+    assert.match(rewardsHtml, /aria-valuemax="14"/);
+    assert.doesNotMatch(rewardsHtml, /500 points to Level 2|aria-valuemax="500"/);
+    assert.doesNotMatch(dashboardHtml, /gamePointsToNext|gameLevelEmblem/);
   });
 
   it('uses the private-group rank to preserve podium prestige', () => {
-    assert.match(dashboardJs, /prestigeRank:\s*leaderboardPositions\.privateRank/);
-    assert.match(dashboardJs, /zeroPointGlass\s*\?\s*resolveLeaderboardPrestige\(\{\}\)\s*:\s*resolvedPrestige/);
-    assert.match(dashboardJs, /if \(zeroPointGlass\) gameLevelEmblem\.dataset\.material = 'zero-glass'/);
-    assert.match(dashboardJs, /else delete gameLevelEmblem\.dataset\.material/);
+    assert.match(rewardsJs, /getLeaderboardPrestige\(\{/);
+    assert.match(rewardsJs, /privateRank:\s*leaderboardPositions\.privateRank/);
+    assert.match(gameProgressJs, /zeroPointGlass\s*\?\s*resolveLeaderboardPrestige\(\{\}\)\s*:\s*resolvedPrestige/);
+    assert.match(gameProgressJs, /if \(model\.zeroPointGlass\) emblem\.dataset\.material = 'zero-glass'/);
+    assert.match(gameProgressJs, /else delete emblem\.dataset\.material/);
   });
 
   it('defines readable glass materials for dark and light themes', () => {

@@ -5,6 +5,7 @@ import {
   getAllRewardCatalog,
   getBillingState,
   getEarnedBadges,
+  getLeaderboardPrestige,
   hasSupabaseAuth,
   isLocalDemoMode,
   redirectToLogin,
@@ -14,8 +15,11 @@ import {
   buildBadgesRewardsPageModel,
   escapeHtml,
 } from './badges-rewards.mjs';
+import { renderGameProgress } from './game-progress.mjs';
 
 const $ = (id) => document.getElementById(id);
+const ACTIVE_CREW_STORAGE_KEY = 'dominion:activeCrewId';
+const LEADERBOARD_PRESTIGE_WINDOW = 'week';
 const rewardNextPanel = $('rewardNextPanel');
 const rewardsList = $('rewardsList');
 const badgesGallery = $('badgesGallery');
@@ -27,6 +31,11 @@ let catalog = null;
 let earnedBadges = [];
 let pendingRewardKey = '';
 let loadRequestId = 0;
+let leaderboardPositions = {
+  privateRank: null,
+  crewId: null,
+  window: LEADERBOARD_PRESTIGE_WINDOW,
+};
 
 function activateTab(tab, { focus = false } = {}) {
   if (!tab) return;
@@ -142,6 +151,10 @@ function renderNextUnlock(model) {
 function renderPage() {
   if (!catalog) return;
   const model = buildBadgesRewardsPageModel({ catalog, badges: earnedBadges });
+  renderGameProgress(document, {
+    totalPoints: model.totalPoints,
+    privateRank: leaderboardPositions.privateRank,
+  });
   renderNextUnlock(model);
 
   if (rewardsList) {
@@ -194,13 +207,32 @@ async function loadBadgesAndRewards({ claimUnlocks = true } = {}) {
   const requestId = ++loadRequestId;
   setLoading();
   try {
-    const [nextBadges, nextCatalog] = await Promise.all([
+    const [badgesResult, catalogResult, prestigeResult] = await Promise.allSettled([
       getEarnedBadges(),
       getAllRewardCatalog(),
+      getLeaderboardPrestige({
+        crewId: localStorage.getItem(ACTIVE_CREW_STORAGE_KEY),
+        window: LEADERBOARD_PRESTIGE_WINDOW,
+      }),
     ]);
+    if (badgesResult.status === 'rejected') throw badgesResult.reason;
+    if (catalogResult.status === 'rejected') throw catalogResult.reason;
     if (requestId !== loadRequestId) return;
-    earnedBadges = nextBadges;
-    catalog = nextCatalog;
+    earnedBadges = badgesResult.value;
+    catalog = catalogResult.value;
+    if (prestigeResult.status === 'fulfilled') {
+      leaderboardPositions = prestigeResult.value;
+      if (leaderboardPositions.crewId) {
+        localStorage.setItem(ACTIVE_CREW_STORAGE_KEY, leaderboardPositions.crewId);
+      }
+    } else {
+      console.warn('Unable to load private-group ranking', prestigeResult.reason);
+      leaderboardPositions = {
+        privateRank: null,
+        crewId: null,
+        window: LEADERBOARD_PRESTIGE_WINDOW,
+      };
+    }
     renderPage();
 
     const feedback = $('rewardsCatalogFeedback');
@@ -261,6 +293,7 @@ window.addEventListener('storage', (event) => {
     'dominion:gameStats',
     'dominion:mockChallengeStates',
     'dominion:mockRewardEntitlements',
+    ACTIVE_CREW_STORAGE_KEY,
   ].includes(event.key)) loadBadgesAndRewards({ claimUnlocks: false });
 });
 

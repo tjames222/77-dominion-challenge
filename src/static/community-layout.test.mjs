@@ -19,8 +19,8 @@ const privateSocialRetirementMigration = readFileSync(
 
 describe('private-only Community', () => {
   test('offers only the private group and private journal destinations', () => {
-    assert.match(communityHtml, /href="\.\/community\.html" aria-current="page">Community<\/a>/);
-    assert.match(communityHtml, /href="\.\/private-journal\.html"[^>]*>Private Journal<\/a>/);
+    assert.match(communityHtml, /href="\.\/community\.html" aria-current="page">[\s\S]*?class="member-tab-label">Community<\/span>[\s\S]*?<\/a>/);
+    assert.match(communityHtml, /href="\.\/private-journal\.html"[^>]*>[\s\S]*?class="member-tab-label"><span class="member-tab-label-prefix">Private <\/span>Journal/);
     assert.doesNotMatch(communityHtml, /class="community-tab|role="tablist" aria-label="Private group and journal"/);
     assert.doesNotMatch(communityHtml, /id="global(?:-tab|Feed|Leaderboard|PostForm|PostBody)?"/);
     assert.doesNotMatch(communityHtml, /Global Community|Global Leaderboard|Post Globally/);

@@ -2,7 +2,7 @@
 <html lang="en" data-theme="dark">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
     <meta name="theme-color" content="#0e1116" />
     <script vite-ignore src="./theme-bootstrap.js" data-enable-dominion-night="false"></script>
     <title>Dominion Dashboard</title>
@@ -19,10 +19,10 @@
       </header>
 
       <nav class="member-tabs" aria-label="Member sections" data-member-tabs>
-        <a class="member-tab" href="./dashboard.html" aria-current="page">Dashboard</a>
-        <a class="member-tab" href="./badges-rewards.html">Rewards</a>
-        <a class="member-tab" href="./community.html" data-training-target="dashboard-community">Community</a>
-        <a class="member-tab" href="./private-journal.html">Private Journal</a>
+        <a class="member-tab" href="./dashboard.html" aria-current="page"><span class="member-tab-icon app-icon icon-home" aria-hidden="true"></span><span class="member-tab-label">Dashboard</span></a>
+        <a class="member-tab" href="./badges-rewards.html"><span class="member-tab-icon app-icon icon-gift" aria-hidden="true"></span><span class="member-tab-label">Rewards</span></a>
+        <a class="member-tab" href="./community.html" data-training-target="dashboard-community"><span class="member-tab-icon app-icon icon-users" aria-hidden="true"></span><span class="member-tab-label">Community</span></a>
+        <a class="member-tab" href="./private-journal.html"><span class="member-tab-icon app-icon icon-book" aria-hidden="true"></span><span class="member-tab-label"><span class="member-tab-label-prefix">Private </span>Journal</span></a>
       </nav>
 
       <section class="dashboard-hero compact-hero reveal" data-section-surface="plain">
@@ -114,56 +114,6 @@
             <p class="check-in-status" id="checkInStatus" role="status" aria-live="polite" aria-atomic="true" tabindex="-1"></p>
           </div>
         </div>
-      </section>
-
-      <section class="game-summary-card reveal" id="gameSummaryCard" data-section-surface="plain" data-training-target="dashboard-levels" aria-labelledby="gameSummaryEyebrow gameSummaryTitle">
-        <div class="game-summary-hero">
-          <div
-            class="game-level-emblem"
-            id="gameLevelEmblem"
-            data-prestige="default"
-            role="img"
-            aria-label="Level 1 — No top-three leaderboard placement"
-          >
-            <span class="game-prestige-orbit" aria-hidden="true"></span>
-            <span class="game-level-crown app-icon icon-crown" id="gameLevelCrown" aria-hidden="true" hidden></span>
-            <strong id="gameLevelNumber">1</strong>
-            <small>Level</small>
-          </div>
-          <div class="game-points-block">
-            <p class="eyebrow" id="gameSummaryEyebrow">Your Progress</p>
-            <h2 class="game-points-total" id="gameSummaryTitle">
-              <span id="gamePointsTotal">0</span>
-              <small>points</small>
-            </h2>
-            <p class="game-level-label" id="gameLevelLabel">Level 1</p>
-            <p class="sr-only" id="gamePrestigeStatus" role="status" aria-live="polite">No top-three leaderboard placement</p>
-          </div>
-        </div>
-
-        <div class="game-level-progress-panel">
-          <div class="game-level-progress-heading">
-            <span id="gameLevelProgressLabel">Level 1 progress</span>
-            <strong id="gamePointsToNext">14 points to Level 2</strong>
-          </div>
-          <div
-            class="game-level-progress-track"
-            id="gameLevelProgress"
-            role="progressbar"
-            aria-labelledby="gameLevelProgressLabel"
-            aria-valuemin="0"
-            aria-valuemax="14"
-            aria-valuenow="0"
-            aria-valuetext="0 of 14 points earned toward Level 2"
-          >
-            <span id="gameLevelProgressFill"></span>
-          </div>
-          <p class="game-momentum-message" role="status" aria-live="polite">
-            <span class="app-icon icon-spark" aria-hidden="true"></span>
-            <span id="gameMomentumMessage">Your first honest check-in starts the climb.</span>
-          </p>
-        </div>
-
       </section>
 
       <section class="dashboard-brand-panel reveal" data-section-surface="accent" aria-label="77 Dominion Challenge mark">

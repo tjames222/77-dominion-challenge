@@ -1,8 +1,9 @@
 :root {
   --topbar-sticky-height: calc(72px + env(safe-area-inset-top));
+  --member-tabs-sticky-height: 0px;
 }
 html {
-  scroll-padding-top: calc(var(--topbar-sticky-height) + 16px);
+  scroll-padding-top: calc(var(--topbar-sticky-height) + var(--member-tabs-sticky-height) + 24px);
   overflow-x: clip;
 }
 body {

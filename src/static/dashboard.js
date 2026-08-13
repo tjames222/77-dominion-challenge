@@ -7,7 +7,6 @@ import {
   getDailyStandardDraft,
   getDashboard,
   getGameSummary,
-  getLeaderboardPrestige,
   getLocalOrSessionUser,
   hasSupabaseAuth,
   isLocalDemoMode,
@@ -36,9 +35,6 @@ import {
   normalizeChallengeDays,
 } from './check-in.mjs';
 import { syncWorkoutDifficultyControls } from './workout-difficulty-controls.mjs';
-import { POINTS_PER_LEVEL, calculateLevelProgress } from './point-economy.mjs';
-import { resolveLeaderboardPrestige } from './leaderboard-prestige.mjs';
-import { shouldUseZeroPointGlass } from './dashboard-view-model.mjs';
 import { createCelebrationQueue } from './celebration-queue.mjs';
 import { createChallengeActivationState } from './challenge-activation.mjs';
 import { createChallengeStartFlow } from './challenge-start-flow.js';
@@ -53,7 +49,6 @@ import {
   completedTodayLabel,
   normalizeBadgeTier,
   selectLatestAccountabilityPosts,
-  selectLatestBadge,
 } from './dashboard-rewards.mjs';
 import {
   preserveBestStreaks,
@@ -125,7 +120,6 @@ const countdownCallouts = [
   'Do not negotiate with drift. Choose the standard and begin.',
   'You are training your future self right now.',
 ];
-const LEVEL_MOMENTUM_WINDOW_POINTS = 3;
 const CONFETTI_DURATION_MS = 10800;
 const REDUCED_CONFETTI_DURATION_MS = 2200;
 const REWARD_TOAST_DURATION_MS = 5200;
@@ -233,9 +227,6 @@ const calendarTodayKey = () => dateKeyForTimeZone(new Date(), userTimeZone);
 const ENTRY_STORAGE_KEY = 'dominion:entries';
 const CHECK_IN_DATES_STORAGE_KEY = 'dominion:checkInDates';
 const WORKOUT_DIFFICULTY_STORAGE_KEY = 'dominion:workoutDifficulty';
-const ACTIVE_CREW_STORAGE_KEY = 'dominion:activeCrewId';
-const LEADERBOARD_PRESTIGE_WINDOW = 'week';
-const LEADERBOARD_PRESTIGE_REFRESH_MS = 60_000;
 const load = (key, fallback) => JSON.parse(localStorage.getItem(key) || JSON.stringify(fallback));
 const save = (key, value) => localStorage.setItem(key, JSON.stringify(value));
 const workoutDifficultySelection = (value = {}) => ({
@@ -294,29 +285,6 @@ const badgeEarnedDisplay = (badge) => {
   if (Number.isNaN(date.getTime())) return { dateTime: '', label: 'Recently earned' };
   return { dateTime, label: `Earned ${badgeDateFormatter.format(date)}` };
 };
-const progressionBadgeCard = (badge) => {
-  const tier = safeBadgeTier(badge);
-  const tierLabel = `${tier.charAt(0).toUpperCase()}${tier.slice(1)} badge`;
-  const name = badge?.name || 'Badge';
-  const description = badge?.description || 'Earned through faithful progress.';
-  const earned = badgeEarnedDisplay(badge);
-  const earnedMarkup = earned.dateTime
-    ? `<time datetime="${escapeHtml(earned.dateTime)}">${escapeHtml(earned.label)}</time>`
-    : `<span>${escapeHtml(earned.label)}</span>`;
-
-  return `<article class="progression-badge-card ${tier}"><span class="progression-badge-icon app-icon ${badgeIconClass(badge)}" aria-hidden="true"></span><div class="progression-badge-copy"><div class="progression-badge-meta"><span>${escapeHtml(tierLabel)}</span>${earnedMarkup}</div><strong>${escapeHtml(name)}</strong><p>${escapeHtml(description)}</p></div></article>`;
-};
-const dayCountLabel = (value) => `${value} ${value === 1 ? 'day' : 'days'}`;
-const momentumMessageFor = ({ totalPoints, nextLevel, pointsToNext, appStreak, fullDayStreak, recentBadges }) => {
-  if (totalPoints === 0) return 'Your first honest check-in starts the climb.';
-  if (pointsToNext <= LEVEL_MOMENTUM_WINDOW_POINTS) return `Level ${nextLevel} is within reach—${pointsToNext} more points will get you there.`;
-  if (fullDayStreak >= 7) return `${dayCountLabel(fullDayStreak)} at the full standard. Protect the streak today.`;
-  if (fullDayStreak >= 3) return 'Momentum is taking shape. One more full-standard day keeps the chain alive.';
-  if (appStreak >= 7) return 'You keep showing up. Turn today’s visit into a full-standard day.';
-  if (appStreak >= 3) return 'The habit is forming. Carry today’s app streak into all seven actions.';
-  if (recentBadges.length) return `${recentBadges[0].name || 'Your latest badge'} is on your shelf. Keep stacking the standard.`;
-  return `${pointsToNext} points stand between you and Level ${nextLevel}.`;
-};
 const badgeExistsForDate = (date) => badges.some((badge) => badgeEarnedDate(badge) === date);
 const workoutBadgeCandidates = (entry) => {
   const candidates = [];
@@ -370,80 +338,6 @@ function awardLocalBadges(entry, status, nextFullStreak = 0, challengeDay = curr
   };
   badges.unshift(badge);
   return [badge];
-}
-function renderGameSummary() {
-  const gamePointsTotal = $('gamePointsTotal');
-  const gameLevelEmblem = $('gameLevelEmblem');
-  const gameLevelCrown = $('gameLevelCrown');
-  const gameLevelNumber = $('gameLevelNumber');
-  const gameLevelLabel = $('gameLevelLabel');
-  const gamePrestigeStatus = $('gamePrestigeStatus');
-  const gameLevelProgressLabel = $('gameLevelProgressLabel');
-  const gamePointsToNext = $('gamePointsToNext');
-  const gameLevelProgress = $('gameLevelProgress');
-  const gameLevelProgressFill = $('gameLevelProgressFill');
-  const gameMomentumMessage = $('gameMomentumMessage');
-  const recentBadgeSummary = $('recentBadgeSummary');
-  const badgeShelf = $('badgeShelf');
-  const levelProgress = calculateLevelProgress(gameStats.totalPoints ?? gameStats.challengePoints ?? 0);
-  const appStreak = Math.max(Number(gameStats.currentAppStreak) || 0, 0);
-  const fullDayStreak = Math.max(Number(gameStats.currentFullDayStreak) || 0, 0);
-  const latestBadge = selectLatestBadge(badges);
-  const recentBadges = latestBadge ? [latestBadge] : [];
-  const resolvedPrestige = resolveLeaderboardPrestige(leaderboardPositions);
-  const zeroPointGlass = shouldUseZeroPointGlass({
-    totalPoints: levelProgress.totalPoints,
-    prestigeRank: leaderboardPositions.privateRank,
-  });
-  const prestige = zeroPointGlass ? resolveLeaderboardPrestige({}) : resolvedPrestige;
-  const levelLabel = prestige.shortLabel
-    ? `Level ${levelProgress.level} · ${prestige.shortLabel}`
-    : `Level ${levelProgress.level}`;
-  const emblemLabel = `Level ${levelProgress.level} — ${zeroPointGlass ? 'Zero-point glass coin — ' : ''}${prestige.accessibleLabel}`;
-
-  if (gamePointsTotal) gamePointsTotal.textContent = levelProgress.totalPoints.toLocaleString();
-  if (gameLevelEmblem) {
-    gameLevelEmblem.dataset.prestige = prestige.key;
-    if (zeroPointGlass) gameLevelEmblem.dataset.material = 'zero-glass';
-    else delete gameLevelEmblem.dataset.material;
-    gameLevelEmblem.setAttribute('aria-label', emblemLabel);
-    gameLevelEmblem.title = emblemLabel;
-  }
-  if (gameLevelCrown) {
-    gameLevelCrown.hidden = !prestige.crown;
-    if (prestige.crown) gameLevelCrown.dataset.crown = prestige.crown;
-    else delete gameLevelCrown.dataset.crown;
-  }
-  if (gameLevelNumber) gameLevelNumber.textContent = String(levelProgress.level);
-  if (gameLevelLabel) gameLevelLabel.textContent = levelLabel;
-  if (gamePrestigeStatus && gamePrestigeStatus.textContent !== prestige.accessibleLabel) {
-    gamePrestigeStatus.textContent = prestige.accessibleLabel;
-  }
-  if (gameLevelProgressLabel) gameLevelProgressLabel.textContent = `Level ${levelProgress.level} progress`;
-  if (gamePointsToNext) gamePointsToNext.textContent = `${levelProgress.pointsToNext.toLocaleString()} points to Level ${levelProgress.nextLevel}`;
-  if (gameLevelProgress) {
-    gameLevelProgress.setAttribute('aria-valuemax', String(POINTS_PER_LEVEL));
-    gameLevelProgress.setAttribute('aria-valuenow', String(levelProgress.pointsIntoLevel));
-    gameLevelProgress.setAttribute('aria-valuetext', `${levelProgress.pointsIntoLevel} of ${POINTS_PER_LEVEL} points earned toward Level ${levelProgress.nextLevel}`);
-  }
-  if (gameLevelProgressFill) gameLevelProgressFill.style.setProperty('--level-progress', `${levelProgress.progressPercent}%`);
-  if (gameMomentumMessage) {
-    const momentumMessage = momentumMessageFor({
-      ...levelProgress,
-      appStreak,
-      fullDayStreak,
-      recentBadges,
-    });
-    if (gameMomentumMessage.textContent !== momentumMessage) gameMomentumMessage.textContent = momentumMessage;
-  }
-  if (recentBadgeSummary) recentBadgeSummary.textContent = latestBadge
-    ? badgeEarnedDisplay(latestBadge).label
-    : 'No badges yet';
-  if (badgeShelf) {
-    badgeShelf.innerHTML = latestBadge
-      ? progressionBadgeCard(latestBadge)
-      : '<article class="progression-badge-empty"><span class="app-icon icon-shield" aria-hidden="true"></span><div><strong>Your first badge is waiting.</strong><p>Complete an honest check-in to put proof of the work on your shelf.</p></div></article>';
-  }
 }
 const challengeIconClass = (challenge) => {
   const icon = String(challenge?.icon || '').replace(/[^a-z-]/g, '');
@@ -791,13 +685,6 @@ let workoutDifficulty = normalizeWorkoutDifficulty({});
 let selectedWorkoutDifficulty = workoutDifficultySelection({});
 let gameStats = preserveBestStreaks({}, {});
 let badges = [];
-let leaderboardPositions = {
-  privateRank: null,
-  crewId: null,
-  window: LEADERBOARD_PRESTIGE_WINDOW,
-};
-let leaderboardPrestigeRequestId = 0;
-let leaderboardPrestigeTimer = null;
 let countdownTimer = null;
 let activeCountdownCallout = '';
 let confettiTimer = null;
@@ -1318,7 +1205,9 @@ function renderChallengeStartGate() {
   gate.hidden = !gateState.showStartGate;
   startButton.hidden = gateState.showRetry;
   retryButton.hidden = !gateState.showRetry;
-  startButton.disabled = !gateState.canStart;
+  const startDisabled = !gateState.canStart;
+  startButton.disabled = startDisabled;
+  if (startDisabled && document.activeElement === startButton) startButton.blur();
   retryButton.disabled = !gateState.showRetry || !online;
 
   if (gateState.showRetry) {
@@ -1457,7 +1346,6 @@ function render() {
     }).join('');
   }
   if (completedToday) completedToday.textContent = completedTodayLabel(feed, completedTodayCount);
-  renderGameSummary();
   updateCountdownCard();
   if (finished && !finishCelebrated) {
     finishCelebrated = true;
@@ -1501,11 +1389,6 @@ function clearDashboardUserState() {
   selectedWorkoutDifficulty = workoutDifficultySelection({});
   gameStats = preserveBestStreaks({}, {});
   badges = [];
-  leaderboardPositions = {
-    privateRank: null,
-    crewId: null,
-    window: LEADERBOARD_PRESTIGE_WINDOW,
-  };
   pendingActionMutations.clear();
   pendingWorkoutMutations.clear();
   pendingDetailsNavigation = '';
@@ -1529,7 +1412,6 @@ function invalidateDashboardOwner(nextOwner = '') {
   challengeStartFlow?.closeForOwnerChange();
   authOwnerEpoch += 1;
   dashboardHydrationRequestId += 1;
-  leaderboardPrestigeRequestId += 1;
   observedAuthOwner = String(nextOwner || '');
   hydratedAuthOwner = '';
   clearDashboardUserState();
@@ -1673,50 +1555,22 @@ async function handleDashboardAuthOwnerChange(nextUser, { force = false } = {}) 
   }
 }
 
-async function refreshLeaderboardPrestige({ renderAfter = true } = {}) {
-  const requestId = ++leaderboardPrestigeRequestId;
-  try {
-    const positions = await getLeaderboardPrestige({
-      crewId: localStorage.getItem(ACTIVE_CREW_STORAGE_KEY),
-      window: LEADERBOARD_PRESTIGE_WINDOW,
-    });
-    if (requestId !== leaderboardPrestigeRequestId) return null;
-
-    leaderboardPositions = positions;
-    if (positions.crewId && localStorage.getItem(ACTIVE_CREW_STORAGE_KEY) !== positions.crewId) {
-      localStorage.setItem(ACTIVE_CREW_STORAGE_KEY, positions.crewId);
-    }
-    if (renderAfter) renderGameSummary();
-    return positions;
-  } catch (error) {
-    if (requestId !== leaderboardPrestigeRequestId) return null;
-    console.warn('Unable to refresh leaderboard prestige', error);
-    return null;
-  }
-}
-
-function startLeaderboardPrestigeRefresh() {
-  if (leaderboardPrestigeTimer) return;
-  const refreshIfVisible = () => {
-    if (document.hidden) return;
-    refreshLeaderboardPrestige();
-    if (hasSupabaseAuth()) hydrateDashboardFromApi();
-  };
-  leaderboardPrestigeTimer = window.setInterval(refreshIfVisible, LEADERBOARD_PRESTIGE_REFRESH_MS);
-  window.addEventListener('focus', refreshIfVisible);
-  document.addEventListener('visibilitychange', refreshIfVisible);
-}
-
 async function refreshGameSummary(previousBadgeKeys = new Set(), owner = captureMutationOwner()) {
   if (!hasSupabaseAuth() || !owner) return [];
-  const [summary] = await Promise.all([
-    getGameSummary(),
-    refreshLeaderboardPrestige({ renderAfter: false }),
-  ]);
+  const summary = await getGameSummary();
   if (!isCurrentMutationOwner(owner)) return [];
   gameStats = preserveBestStreaks(summary.gameStats, gameStats);
   badges = summary.badges || [];
   return badges.filter((badge) => !previousBadgeKeys.has(badge.key));
+}
+
+function startDashboardForegroundRefresh() {
+  const refreshIfVisible = () => {
+    if (document.hidden || !hasSupabaseAuth()) return;
+    void hydrateDashboardFromApi(observedAuthOwner);
+  };
+  window.addEventListener('focus', refreshIfVisible);
+  document.addEventListener('visibilitychange', refreshIfVisible);
 }
 
 async function recordDailyAppVisit() {
@@ -1960,9 +1814,6 @@ window.addEventListener('storage', (event) => {
   ].includes(event.key)) {
     void hydrateDashboardFromApi(observedAuthOwner);
     return;
-  } else if (event.key === ACTIVE_CREW_STORAGE_KEY) {
-    refreshLeaderboardPrestige();
-    return;
   } else return;
 });
 window.addEventListener('dominion:challenge-start-date-updated', (event) => {
@@ -2088,7 +1939,6 @@ if (checkInButton) checkInButton.addEventListener('click', async () => {
       feedItem.pointsAwarded = points;
       earnedBadges = awardLocalBadges(entry, status, nextStreak, submissionDay);
       if (simulatedPreviewPost) advanceCommittedPreviewPost(entry, submissionDay);
-      await refreshLeaderboardPrestige({ renderAfter: false });
     }
 
     if (!isCurrentMutationOwner(submissionOwner)) return;
@@ -2168,17 +2018,14 @@ async function bootDashboard() {
   }
 
   render();
-  await Promise.all([
-    hydrateDashboardFromApi(observedAuthOwner),
-    refreshLeaderboardPrestige({ renderAfter: false }),
-  ]);
+  await hydrateDashboardFromApi(observedAuthOwner);
   render();
   if (hasSupabaseAuth()) await recordDailyAppVisit();
   else if (canParticipateInChallenge()) {
     await refreshChallengeProgression({ claimCelebrations: true, celebrationDelay: 450 });
   }
   startCountdownCard();
-  startLeaderboardPrestigeRefresh();
+  startDashboardForegroundRefresh();
   requestAnimationFrame(() => initReveal());
 }
 

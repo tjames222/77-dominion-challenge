@@ -139,14 +139,16 @@ describe('Badges & Rewards route integration', () => {
     assert.match(pageHtml, /class="badges-rewards-panel active"[\s\S]*?id="rewards-panel"[\s\S]*?role="tabpanel"[\s\S]*?aria-labelledby="rewards-tab"/);
     assert.match(pageHtml, /class="badges-rewards-panel"[\s\S]*?id="badges-panel"[\s\S]*?role="tabpanel"[\s\S]*?aria-labelledby="badges-tab"[\s\S]*?hidden/);
 
-    const shareIndex = pageHtml.indexOf('data-share-kind="progress"');
     const tabsIndex = pageHtml.indexOf('class="badges-rewards-tabs"');
+    const progressIndex = pageHtml.indexOf('id="gameSummaryCard"');
+    const shareIndex = pageHtml.indexOf('data-share-kind="progress"');
     const nextUnlockIndex = pageHtml.indexOf('id="rewardNextPanel"');
     const rewardsCatalogIndex = pageHtml.indexOf('class="rewards-catalog-section');
     const badgesPanelIndex = pageHtml.indexOf('id="badges-panel"');
     const badgesGalleryIndex = pageHtml.indexOf('class="badges-gallery-section');
-    assert.ok(shareIndex < tabsIndex);
-    assert.ok(tabsIndex < nextUnlockIndex);
+    assert.ok(tabsIndex < progressIndex);
+    assert.ok(progressIndex < shareIndex);
+    assert.ok(shareIndex < nextUnlockIndex);
     assert.ok(nextUnlockIndex < rewardsCatalogIndex);
     assert.ok(rewardsCatalogIndex < badgesPanelIndex);
     assert.ok(badgesPanelIndex < badgesGalleryIndex);
@@ -205,9 +207,13 @@ describe('Badges & Rewards route integration', () => {
   it('removes duplicate rewards content from Dashboard and keeps Rewards in the member navigation', () => {
     assert.doesNotMatch(dashboardHtml, /id="challengeVault"|Challenge Vault/);
     assert.doesNotMatch(dashboardSource, /data-start-challenge|challengeVault/);
-    assert.match(dashboardHtml, /class="member-tab" href="\.\/badges-rewards\.html">Rewards</);
+    assert.match(dashboardHtml, /class="member-tab" href="\.\/badges-rewards\.html">[\s\S]*?class="member-tab-label">Rewards<\/span>/);
     assert.doesNotMatch(dashboardHtml, />View badges and rewards</);
     assert.doesNotMatch(dashboardHtml, /class="progression-badges"|id="badgeShelf"/);
+    assert.doesNotMatch(dashboardHtml, /id="gameSummaryCard"/);
+    assert.match(pageHtml, /id="gameSummaryCard"[\s\S]*?id="gameLevelEmblem"[\s\S]*?id="gameLevelProgress"/);
+    assert.match(pageSource, /renderGameProgress\(document/);
+    assert.match(pageSource, /getLeaderboardPrestige\(/);
   });
 
   it('replaces the authenticated Challenges destination with Badges & Rewards', () => {

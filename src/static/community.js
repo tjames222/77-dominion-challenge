@@ -461,15 +461,22 @@ function revealCrewTrainingTarget(target) {
     if (!state.trainingOpen || state.trainingTarget !== target) return;
     const bounds = target.getBoundingClientRect();
     const coachmarkBounds = $('crewTrainingCoachmark')?.getBoundingClientRect();
-    const safeTop = mobile ? 92 : 16;
+    const rootStyles = window.getComputedStyle?.(document.documentElement);
+    const stickyHeight = mobile && rootStyles
+      ? ['--topbar-sticky-height', '--member-tabs-sticky-height']
+        .reduce((sum, property) => sum + (Number.parseFloat(rootStyles.getPropertyValue(property)) || 0), 0)
+      : 0;
+    const safeTop = mobile ? Math.max(92, stickyHeight + 16) : 16;
     const safeBottom = mobile && coachmarkBounds
       ? coachmarkBounds.top - 48
       : window.innerHeight - 16;
-    const outsideVisibleContext = bounds.top < safeTop || bounds.bottom > safeBottom;
-    if (outsideVisibleContext) {
+    const scrollDelta = bounds.top < safeTop
+      ? bounds.top - safeTop
+      : Math.max(0, bounds.bottom - safeBottom);
+    if (scrollDelta) {
       const reduceMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
-      target.scrollIntoView?.({
-        block: mobile ? 'start' : 'center',
+      window.scrollBy?.({
+        top: scrollDelta,
         behavior: reduceMotion ? 'auto' : 'smooth',
       });
     }

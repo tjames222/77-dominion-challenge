@@ -18,8 +18,13 @@ function memberNavigation(source) {
 }
 
 function memberLinks(source) {
-  return [...memberNavigation(source).matchAll(/<a class="member-tab" href="([^"]+)"[^>]*>([^<]+)<\/a>/g)]
-    .map(([, href, label]) => ({ href, label: label.trim() }));
+  return [...memberNavigation(source).matchAll(/<a class="member-tab" href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/g)]
+    .map(([, href, content]) => ({
+      href,
+      label: content
+        .replace(/<[^>]+>/g, '')
+        .trim(),
+    }));
 }
 
 describe('FOU-1455 member destination navigation', () => {
@@ -53,10 +58,20 @@ describe('FOU-1455 member destination navigation', () => {
     assert.match(memberNavigation(dashboard), /data-training-target="dashboard-community"/);
   });
 
-  test('keeps the new destinations legible and touch-safe at narrow widths', () => {
+  test('keeps the four destinations on one sticky, touch-safe row with progressive labels', () => {
     assert.match(productCss, /\.member-tabs\s*\{[\s\S]*?grid-template-columns:\s*repeat\(4, minmax\(0, 1fr\)\)/);
+    assert.match(productCss, /\.member-tabs\s*\{[\s\S]*?position:\s*sticky/);
     assert.match(productCss, /\.member-tab\s*\{[\s\S]*?min-height:\s*44px/);
-    assert.match(productCss, /@media \(max-width: 640px\)[\s\S]*?\.member-tabs\s*\{[\s\S]*?grid-template-columns:\s*repeat\(2, minmax\(0, 1fr\)\)/);
+    assert.doesNotMatch(productCss, /@media \(max-width: 640px\)[\s\S]*?\.member-tabs\s*\{[\s\S]*?grid-template-columns:\s*repeat\(2/);
+    assert.match(productCss, /\.member-tab-label\s*\{[\s\S]*?clip:\s*rect\(0, 0, 0, 0\)/);
+    assert.match(productCss, /@media \(min-width: 480px\)[\s\S]*?\.member-tab-label\s*\{[\s\S]*?position:\s*static/);
+    assert.match(productCss, /\.member-tabs\.member-tabs-collapsed \.member-tab-label/);
+    for (const source of [dashboard, rewards, community, privateJournal]) {
+      assert.match(memberNavigation(source), /icon-home/);
+      assert.match(memberNavigation(source), /icon-gift/);
+      assert.match(memberNavigation(source), /icon-users/);
+      assert.match(memberNavigation(source), /icon-book/);
+    }
   });
 
   test('adds one accessible group settings gear and keeps role-gated controls on its own page', () => {
