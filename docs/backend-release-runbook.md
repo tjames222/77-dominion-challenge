@@ -30,7 +30,9 @@ pnpm run check:frontend
 Database validation starts from an empty local database, applies every migration,
 loads `supabase/seed.sql`, tests RLS and RPC invariants, exercises concurrent RPC
 requests, and compares the resulting application schema and Storage policies with
-`supabase/schema.sql`:
+`supabase/schema.sql`. `supabase/config.toml` pins the local stack to Postgres 17
+to match the one hosted project; the database runner fails if that major version
+drifts:
 
 ```bash
 pnpm run supabase:start
@@ -235,21 +237,75 @@ where schemaname = 'storage'
 order by policyname;
 ```
 
-If—and only if—the public structural diff is empty and the Storage verification
+If—and only if—the complete structural diff is empty and the Storage verification
 passes, use `supabase migration repair ... --status applied --linked` to record
-every local historical migration whose effect is already present, without
-executing its SQL. A project with empty history must reconcile the complete local
-history through `20260716163000`; a project with partial history must repair every
-missing version through that floor, not only the baseline and compatibility
-migration. Then rerun `migration list` and the dry-run. The production workflow
-checks every version through that floor and refuses to continue if any local and
-remote history cell does not match.
+each historical migration whose effect is proven present, without executing its
+SQL. A project that already matches the complete historical floor may repair the
+missing versions through `20260716163000`. A project with any missing effect must
+not use that shortcut.
 
-Record the exact repaired versions, backup identifier, structural-diff and Storage
-query output, project reference, operator, and UTC time in the release record.
-Never use `--include-all` to bypass an older missing migration in production. A
-non-empty or incomplete check requires a reviewed forward-fix or a separately
-approved, backed-up bootstrap plan.
+#### One-time pre-avatar checkpoint bootstrap
+
+The read-only 2026-08-13 production audit found an empty remote migration history,
+gamification infrastructure consistent with migration 6, and no
+`profiles.avatar_url` or `profile-photos` bucket from migration 7. That evidence
+strongly suggests that the hosted project is at the migration-6 checkpoint, but
+it is not sufficient by itself to alter migration history. Use this one-time
+bootstrap only after an exact comparison proves the checkpoint:
+
+1. Pin the release tree, Supabase CLI 2.109.0, and Postgres 17. Keep public signup
+   and all application writes closed.
+2. Create encrypted, off-repository dumps of roles, schema, and data. Include
+   Auth and Storage data and custom DDL, archive the empty
+   `supabase_migrations` schema, download or inventory every deployed Edge
+   Function, and record aggregate row/object counts. Storage blobs are not part
+   of a database dump; stop and export through the Storage API if the fresh
+   object count is nonzero. Checksum every artifact and test-restore the backup
+   locally before continuing.
+3. In an isolated worktree containing only migrations 1–6, build a clean local
+   checkpoint. Compare its `public` and `private` catalogs, grants, functions,
+   triggers, constraints, RLS, badge/configuration rows, and an explicit Storage
+   bucket/policy manifest with production. Require zero unexplained differences.
+   Stop, then write and rehearse a forward bridge if the comparison is not exact.
+4. Only after that proof, mark these six versions applied; repairing history runs
+   no migration SQL:
+
+   ```text
+   20260707170000
+   20260708154000
+   20260708155500
+   20260708160000
+   20260709163000
+   20260710120000
+   ```
+
+5. Create a separate, hashed worktree containing exactly migrations 1–13. Its
+   linked dry run must list exactly the following seven pending versions. Rehearse
+   the same push against the verified local restore, then apply those seven
+   migrations normally so their SQL and history records are created together:
+
+   ```text
+   20260710123000
+   20260713120000
+   20260714120000
+   20260715190000
+   20260716061500
+   20260716153000
+   20260716163000
+   ```
+
+6. Return to the full release tree. `migration list` must show matching local and
+   remote versions 1–13, and the full linked dry run must list exactly 39 pending
+   migrations, versions 14–52. This satisfies the workflow's historical gate;
+   it does not authorize the production release by itself.
+
+Record the exact repaired and applied versions, file hashes, backup and restore
+evidence, comparison output, Storage manifest, project reference, operator,
+approver, and UTC time in the release record. Never reset the hosted project,
+replay the baseline, use `--include-all`, mark a missing effect applied, or push
+the full 52-file tree immediately after repairing versions 1–6. If an applied
+migration later fails, stop and use a reviewed forward fix; do not rewrite it or
+mark it reverted.
 
 ### FOU-759 two-stage avatar and journal cutover
 
