@@ -299,18 +299,25 @@ separately reviewed change and the exact restored-snapshot rehearsal passes:
    triggers, constraints, complete policy inventories, badge/configuration rows,
    and the application-owned Storage manifest with production. Classify every
    difference and explicitly allowlist Supabase platform-version noise.
-4. Before production use, update migration 1 in a reviewed commit so it aborts on
-   any legacy purchase or non-membership entitlement row, uses
-   `DROP TABLE ... RESTRICT`, and normalizes every application-owned privilege
-   whose known legacy value would otherwise survive a narrower `GRANT`. At
-   minimum, revoke all `authenticated` table privileges on `profiles`,
-   `challenge_entries`, and `check_ins` before granting the migration-1 target
-   privileges. Classify function, table, sequence, schema, and default privileges
-   with effective catalog checks; preserve explicitly approved platform/service
-   privileges and fail on every unknown state. This is allowed only because
-   production has no migration record for that file. Never rewrite a version
-   after it is recorded. Rebuild the clean checkpoints and rerun the complete
-   validation after its hash changes.
+4. Before production use, update the unrecorded migrations 1–2 in reviewed
+   commits. Migration 1 must abort on any legacy purchase or non-membership
+   entitlement row and use `DROP TABLE ... RESTRICT`. Together the two versions
+   must canonicalize `postgres` default privileges for new public tables,
+   sequences, and functions, then normalize the ACLs for every baseline and
+   gamification table and function whose known legacy privilege would otherwise
+   survive `CREATE IF NOT EXISTS`, `CREATE OR REPLACE`, or a narrower `GRANT`.
+   This includes revoking all `authenticated` table privileges on `profiles`,
+   `challenge_entries`, and `check_ins` before granting the exact target access,
+   plus explicit reviewed runtime grants for `service_role` rather than either
+   preserving or stripping its legacy `ALL` grants wholesale. Classify function,
+   table, sequence, schema, and default privileges with effective catalog checks;
+   preserve explicitly approved platform privileges and fail on every unknown
+   state. Reconcile clean-checkpoint ACLs with audited runtime needs before
+   editing SQL; Edge runtimes require explicit service access to profile and
+   billing data. These edits are allowed only because production has no migration
+   record for either file. Never rewrite a version after it is recorded. Rebuild
+   the clean checkpoints and rerun the complete validation after either hash
+   changes.
 5. Restore the encrypted hosted roles, schema, and data into the isolated exact-
    version stack. Require its normalized source manifest to match the captured
    production source manifest. Then rehearse applying these three migrations
@@ -337,10 +344,11 @@ separately reviewed change and the exact restored-snapshot rehearsal passes:
    closed, take a fresh encrypted backup, and require the fresh production source
    manifest and destructive-data preflight to match the approved inputs. From the
    pinned three-migration worktree, apply migrations 1–3 through the normal linked
-   migration runner so the SQL and history records are created atomically. Do not
-   use `migration repair`. Immediately require exactly those three remote history
-   records and the complete migration-3 application manifest; stop on any
-   unexplained difference.
+   migration runner. Each version's transactional SQL and corresponding history
+   record must succeed together; do not assume the three-version batch is one
+   transaction. Do not use `migration repair`. Immediately require exactly those
+   three remote history records and the complete migration-3 application
+   manifest; stop on any unexplained difference.
 7. Create a separate, hashed worktree containing exactly migrations 1–13. Its
    linked dry run must list exactly the following ten pending versions. Rehearse
    the same push against the verified local restore, then apply those ten
@@ -361,11 +369,12 @@ separately reviewed change and the exact restored-snapshot rehearsal passes:
 
 8. Return to the full release tree. `migration list` must show matching local and
    remote versions 1–13, and the full linked dry run must list exactly 39 pending
-   migrations, versions 14–52. Repeat the Storage query above against the clean
-   local migration-13 checkpoint and production; both must now return all three
-   buckets and all eleven policies with identical definitions. This satisfies the
-   workflow's historical gate; it does not authorize the production release by
-   itself.
+   migrations, versions 14–52. Require the complete normalized migration-13
+   application manifest—including effective and default privileges—to match its
+   clean exact-version checkpoint. Repeat the Storage query above against that
+   checkpoint and production; both must now return all three buckets and all
+   eleven policies with identical definitions. This satisfies the workflow's
+   historical gate; it does not authorize the production release by itself.
 
 Record the exact applied versions, file hashes, backup and restore
 evidence, comparison output, Storage manifest, project reference, operator,
