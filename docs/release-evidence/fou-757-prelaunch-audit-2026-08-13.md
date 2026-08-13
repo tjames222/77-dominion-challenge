@@ -65,10 +65,12 @@ separate approval and complete secret set are recorded.
   point events: 0
 - Storage objects: 0 across all buckets
 
-This supports a prelaunch zero-social-data exception for FOU-765, but the product
-owner still must approve and timestamp that exception. It also makes a reviewed
-baseline/bootstrap safer; it does not replace the required backup, structural
-diff, migration reconciliation, or dry run.
+The product owner approved the prelaunch zero-social-data exception for FOU-765
+on 2026-08-13, and a fresh aggregate inventory reconfirmed all affected counts
+at zero. The decision and fail-closed release condition are recorded in
+[`fou-765-zero-data-exception-2026-08-13.md`](./fou-765-zero-data-exception-2026-08-13.md).
+This makes a reviewed baseline/bootstrap safer; it does not replace the required
+backup, structural diff, migration reconciliation, or dry run.
 
 ## Security and operational findings
 

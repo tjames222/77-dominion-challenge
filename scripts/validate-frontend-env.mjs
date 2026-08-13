@@ -25,7 +25,19 @@ export function frontendEnvironmentErrors(environment = {}) {
 
   // Develop is a pure browser-local preview. It must not depend on the one
   // hosted Supabase project or any other production connection.
-  if (branch === 'develop') return errors;
+  if (branch === 'develop') {
+    if (String(environment.VITE_SUPABASE_URL || '').trim()) {
+      errors.push('VITE_SUPABASE_URL must be unset on develop');
+    }
+    if (String(
+      environment.VITE_SUPABASE_PUBLISHABLE_KEY
+        || environment.VITE_SUPABASE_ANON_KEY
+        || '',
+    ).trim()) {
+      errors.push('VITE_SUPABASE_PUBLISHABLE_KEY must be unset on develop');
+    }
+    return errors;
+  }
 
   const canonicalBranch = branch === 'main' || branch === 'develop';
   if (usesMockProductData && !canonicalBranch) return errors;

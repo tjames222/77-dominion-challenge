@@ -110,8 +110,6 @@ describe('Cloudflare frontend environment gate', () => {
       CF_PAGES: 'true',
       CF_PAGES_BRANCH: 'develop',
       VITE_ENABLE_MOCKS: 'false',
-      VITE_SUPABASE_URL: 'https://project.supabase.co',
-      VITE_SUPABASE_PUBLISHABLE_KEY: 'sb_publishable_example',
     }), ['VITE_ENABLE_MOCKS must be true on develop']);
   });
 
@@ -122,6 +120,19 @@ describe('Cloudflare frontend environment gate', () => {
       VITE_ENABLE_MOCKS: 'true',
       VITE_ENABLE_SUPABASE_AUTH_IN_MOCKS: 'true',
     }), ['VITE_ENABLE_SUPABASE_AUTH_IN_MOCKS must be false on develop']);
+  });
+
+  test('rejects production Supabase values on canonical develop', () => {
+    assert.deepEqual(frontendEnvironmentErrors({
+      CF_PAGES: 'true',
+      CF_PAGES_BRANCH: 'develop',
+      VITE_ENABLE_MOCKS: 'true',
+      VITE_SUPABASE_URL: 'https://project.supabase.co',
+      VITE_SUPABASE_PUBLISHABLE_KEY: 'sb_publishable_example',
+    }), [
+      'VITE_SUPABASE_URL must be unset on develop',
+      'VITE_SUPABASE_PUBLISHABLE_KEY must be unset on develop',
+    ]);
   });
 
   test('rejects mocks on main even when Supabase is configured', () => {
