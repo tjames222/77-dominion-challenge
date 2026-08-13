@@ -322,7 +322,7 @@ test('a signed-out recipient can enter the code, authenticate through the fixed 
 test('the no-crew Join action opens a focused code form with mobile-size targets', async ({ page, app }) => {
   await page.setViewportSize({ width: 360, height: 800 });
   await app.open(ROUTE_BY_ID.community, { state: 'communityEmpty' });
-  const join = page.getByRole('button', { name: 'Join a Crew' });
+  const join = page.getByRole('button', { name: 'Join a Group' });
   const joinBox = await join.boundingBox();
   expect(joinBox.height).toBeGreaterThanOrEqual(44);
   await join.click();

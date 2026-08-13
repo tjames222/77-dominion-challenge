@@ -2,8 +2,8 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { describe, it } from 'node:test';
 
-const html = readFileSync(new URL('../../community.html', import.meta.url), 'utf8');
-const javascript = readFileSync(new URL('./community.js', import.meta.url), 'utf8');
+const html = readFileSync(new URL('../../group-settings.html', import.meta.url), 'utf8');
+const javascript = readFileSync(new URL('./group-settings.js', import.meta.url), 'utf8');
 const api = readFileSync(new URL('./api.js', import.meta.url), 'utf8');
 const css = readFileSync(new URL('../assets/community.css', import.meta.url), 'utf8');
 const connectionMigration = readFileSync(
@@ -15,15 +15,15 @@ const canonicalSchema = readFileSync(new URL('../../supabase/schema.sql', import
 describe('private-group provider connections', () => {
   it('explains the external-only conversation model and exposes both supported providers', () => {
     assert.match(html, /Conversations and replies stay in Slack or Discord/);
-    assert.match(html, /Daily Check-Ins, streak milestones, badge and reward unlocks/);
+    assert.match(html, /Daily Check-Ins, streak milestones, badges and rewards/);
     assert.match(html, /data-connect-provider="slack"/);
     assert.match(html, /data-connect-provider="discord"/);
-    assert.match(html, /id="integrationDestinationList"[^>]+aria-live="polite"/);
+    assert.match(html, /id="groupIntegrationDestinationList"[^>]+aria-live="polite"/);
     assert.match(html, /for="integrationChannelSelect"/);
   });
 
   it('shows members sanitized status while keeping management actions leader-only', () => {
-    assert.match(javascript, /const canManage = isCrewLeader\(\)/);
+    assert.match(javascript, /const canManage = Boolean\(state\.crew && isCrewAdmin\(state\.crew\.role\)\)/);
     assert.match(javascript, /destination\.canManage/);
     assert.match(javascript, /Connected/);
     assert.match(javascript, /Needs attention/);

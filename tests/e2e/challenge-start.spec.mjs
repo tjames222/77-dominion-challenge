@@ -318,7 +318,7 @@ test('Cloudflare clean Dashboard URL keeps authenticated actions and launches fi
 test('future Solo start schedules once, keeps participation locked, and launches safe training', async ({ page, app }) => {
   await app.open(ROUTE_BY_ID.dashboard, { state: 'notStarted' });
   const dialog = await reviewSoloStart(page, '2026-02-20');
-  await expect(dialog).toContainText('will be scheduled for this date');
+  await expect(dialog).toContainText('will start on this date');
   await dialog.getByRole('button', { name: 'Confirm and start challenge' }).click();
 
   await expect(dialog).toBeHidden();
@@ -336,7 +336,7 @@ test('future Solo start schedules once, keeps participation locked, and launches
 
   await page.locator('[data-training-action="next"]').click();
   await page.locator('[data-training-action="next"]').click();
-  await expect(page.locator('#siteTrainingTitle')).toHaveText('Sharing stays under your control');
+  await expect(page.locator('#siteTrainingTitle')).toHaveText('Sharing isn’t available yet');
   await expect(page.locator('#siteTrainingFallback')).toBeVisible();
 
   const result = await page.evaluate(({ activationKey, requestKey, trainingKey, userId }) => ({
@@ -363,11 +363,27 @@ test('future Solo start schedules once, keeps participation locked, and launches
 });
 
 test('offline setup stays non-mutating and recovers when connectivity returns', async ({ page, context, app }) => {
+  await page.setViewportSize({ width: 320, height: 720 });
   await app.open(ROUTE_BY_ID.dashboard, { state: 'notStarted' });
   const start = page.getByRole('button', { name: 'Start Challenge' });
+  await start.focus();
   await context.setOffline(true);
   await expect(start).toBeDisabled();
   await expect(page.locator('#challengeStartGateDescription')).toContainText('Reconnect');
+  const disabledFocus = await start.evaluate((button) => {
+    const style = getComputedStyle(button);
+    const buttonBounds = button.getBoundingClientRect();
+    const gateBounds = button.closest('#challengeStartGate').getBoundingClientRect();
+    return {
+      focused: document.activeElement === button,
+      outlineStyle: style.outlineStyle,
+      contained: buttonBounds.left >= gateBounds.left && buttonBounds.right <= gateBounds.right,
+    };
+  });
+  expect(disabledFocus.focused).toBe(false);
+  expect(disabledFocus.outlineStyle).toBe('none');
+  expect(disabledFocus.contained).toBe(true);
+  await expectNoHorizontalOverflow(page);
   expect(await page.evaluate((key) => localStorage.getItem(key), REQUEST_STORAGE_KEY)).toBeNull();
 
   await context.setOffline(false);

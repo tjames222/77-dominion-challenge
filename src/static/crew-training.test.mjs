@@ -24,10 +24,11 @@ test('the creator syllabus has seven stable, ordered steps', () => {
   assert.equal(steps[1].targetId, 'copyInviteButton');
   assert.equal(steps[2].targetId, 'crewMembersTitle');
   assert.equal(steps[3].targetId, 'crewLeaderboardTitle');
-  assert.equal(steps[4].targetId, 'groupIntegrationsTitle');
-  assert.equal(steps[6].targetId, 'crewLifecycleCard');
-  assert.match(steps[1].description, /never creates or copies/i);
-  assert.match(steps[6].description, /never selects/i);
+  assert.equal(steps[4].targetId, 'crewSettingsButton');
+  assert.equal(steps[5].targetId, 'crewSettingsButton');
+  assert.equal(steps[6].targetId, 'crewSettingsButton');
+  assert.match(steps[1].description, /won’t create or copy/i);
+  assert.match(steps[6].description, /won’t select either one/i);
 });
 
 test('safe-off mode keeps both provider lessons non-actionable and target-free', () => {
@@ -35,17 +36,17 @@ test('safe-off mode keeps both provider lessons non-actionable and target-free',
   const providerSteps = steps.slice(4, 6);
   assert.deepEqual(providerSteps.map((step) => step.targetId), [null, null]);
   assert.deepEqual(providerSteps.map((step) => step.actionable), [false, false]);
-  assert.match(providerSteps[0].description, /not currently available/i);
-  assert.match(providerSteps[1].description, /no authorization/i);
+  assert.match(providerSteps[0].description, /aren’t available right now/i);
+  assert.match(providerSteps[1].description, /no external channel to set up/i);
 });
 
 test('enabled provider lessons explain consent, authorization, verification, and lifecycle', () => {
   const steps = buildCrewTrainingSteps({ integrationsEnabled: true });
   assert.match(steps[4].description, /member consent/i);
   assert.match(steps[4].description, /never sync back/i);
-  assert.match(steps[5].description, /authorize/i);
-  assert.match(steps[5].description, /verify the status/i);
-  assert.match(steps[5].description, /reconnect and disconnect/i);
+  assert.match(steps[5].description, /connect Slack or Discord/i);
+  assert.match(steps[5].description, /check the selected channel/i);
+  assert.match(steps[5].description, /reconnect, or disconnect/i);
 });
 
 test('progress normalization accepts database keys and enforces monotonic bounds', () => {
@@ -76,8 +77,8 @@ test('progress normalization accepts database keys and enforces monotonic bounds
 });
 
 test('launch copy exposes start, resume, and replay states', () => {
-  assert.equal(crewTrainingActionLabel({ status: 'not_started' }), 'Start Crew Training');
-  assert.equal(crewTrainingActionLabel({ status: 'in_progress' }), 'Resume Crew Training');
-  assert.equal(crewTrainingActionLabel({ status: 'skipped' }), 'Resume Crew Training');
-  assert.equal(crewTrainingActionLabel({ status: 'completed' }), 'Replay Crew Training');
+  assert.equal(crewTrainingActionLabel({ status: 'not_started' }), 'Start Group Training');
+  assert.equal(crewTrainingActionLabel({ status: 'in_progress' }), 'Resume Group Training');
+  assert.equal(crewTrainingActionLabel({ status: 'skipped' }), 'Resume Group Training');
+  assert.equal(crewTrainingActionLabel({ status: 'completed' }), 'Replay Group Training');
 });

@@ -144,7 +144,7 @@ export function createChallengeStartFlow({
     id: 'challengeStartDialog',
     title: 'Start Challenge',
     eyebrow: 'Your 77 days',
-    description: 'Choose how you will participate, then confirm the timeline that Dominion will protect.',
+    description: 'Choose whether to start on your own or with a group, then confirm your start date.',
     presentation: 'responsive',
     content,
     initialFocus: () => content.querySelector('[data-challenge-start-step]:not([hidden]) input:not(:disabled), [data-challenge-start-step]:not([hidden]) button:not(:disabled)'),
@@ -276,7 +276,7 @@ export function createChallengeStartFlow({
         dialog.close('concurrent-activation');
         await onActivation(fresh, owner);
         if (isCurrentOwner(owner)) {
-          onStatus('Your challenge was updated in another session. The Dashboard now shows its authoritative timeline.', { focus: true });
+          onStatus('Your challenge was updated in another session. The Dashboard now shows the confirmed dates.', { focus: true });
         }
         return;
       }
@@ -298,7 +298,7 @@ export function createChallengeStartFlow({
         dialog.close('concurrent-activation');
         await onActivation(fresh, owner);
         if (isCurrentOwner(owner)) {
-          onStatus('Your challenge was updated in another session. The Dashboard now shows its authoritative timeline.', { focus: true });
+          onStatus('Your challenge was updated in another session. The Dashboard now shows the confirmed dates.', { focus: true });
         }
         return;
       }

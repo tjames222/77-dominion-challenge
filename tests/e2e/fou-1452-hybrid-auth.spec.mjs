@@ -149,7 +149,7 @@ test('hybrid dev Auth registers, persists, logs in, isolates UUID-owned state, a
   await register(page, ACCOUNT_B);
   await activatePreviewMembership(page);
   await page.goto('/community.html');
-  await expect(page.locator('#crewTitle')).toHaveText('Create or join a crew.');
+  await expect(page.locator('#crewTitle')).toHaveText('Create or join a private group.');
   await expect(page.locator('#activeCrewName')).not.toContainText(ACCOUNT_A_CREW);
   await page.goto('/private-journal.html');
   await expect(page.locator('#journalTimeline')).not.toContainText(ACCOUNT_A_JOURNAL);

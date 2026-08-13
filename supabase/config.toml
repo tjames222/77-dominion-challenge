@@ -78,7 +78,16 @@ verify_jwt = false
 [functions.process-retired-community-deletions]
 verify_jwt = false
 
+[functions.process-profile-photo-cleanup]
+verify_jwt = false
+
 [functions.retired-community-export]
+verify_jwt = true
+
+[functions.reward-download]
+verify_jwt = true
+
+[functions.upload-profile-photo]
 verify_jwt = true
 
 [functions.slack-oauth-callback]

@@ -4,7 +4,7 @@
 `dominion-night` theme registry entry. The rollout definition is active at
 exactly 56 total points, uses sort order 5, and does not require an active
 membership entitlement. The launch progression migration also aligns challenge
-rewards to 126, 210, 308, 420, and 532 points.
+rewards to 140, 336, 406, 469, and 532 points.
 
 ## Grant path
 
@@ -37,8 +37,8 @@ safe. Do not call this RPC from a browser or expose service credentials.
   'ownership'`, and `fulfillment_key = 'dominion-night'`.
 - Confirm every user at or above 56 has one ownership row and one grant audit
   event.
-- Confirm `claim_reward_entitlement_unlocks()` returns each pending ownership
-  celebration once.
+- Confirm `claim_reward_entitlement_unlocks(target_expected_actor_id)` returns
+  each pending ownership celebration once and rejects a different actor.
 - If the theme registry must be disabled, set the definition inactive and keep
   ownership rows. The catalog will return owned rows as inactive with no Start
   action, allowing Profile selection to fail closed without revoking rewards.

@@ -1,8 +1,8 @@
 import { currentFullDayStreakForDate } from './check-in.mjs';
 
 export const STREAK_METRIC_DEFINITIONS = Object.freeze([
-  Object.freeze({ key: 'currentFullStandardStreak', label: 'Full standard streak', kind: 'Current' }),
-  Object.freeze({ key: 'bestFullStandardStreak', label: 'Best full standard streak', kind: 'Personal best' }),
+  Object.freeze({ key: 'currentFullStandardStreak', label: 'Perfect-day streak', kind: 'Current' }),
+  Object.freeze({ key: 'bestFullStandardStreak', label: 'Best perfect-day streak', kind: 'Personal best' }),
   Object.freeze({ key: 'currentAppStreak', label: 'App streak', kind: 'Current' }),
   Object.freeze({ key: 'bestAppStreak', label: 'Best app streak', kind: 'Personal best' }),
 ]);

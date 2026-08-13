@@ -5,6 +5,7 @@ import {
   quietLogger,
   request,
   responseJson,
+  testEnv,
 } from "../_shared/test_helpers.ts";
 import { createHandler, resolveReturnUrl } from "./index.ts";
 
@@ -15,6 +16,7 @@ function portalHandler(overrides: Record<string, unknown> = {}) {
     getOrCreateStripeCustomer: async () => "cus_1",
     getSiteUrl: () => "https://app.example.com",
     stripeRequest: async () => ({ url: "https://billing.stripe.test/session" }),
+    env: testEnv,
     logger: quietLogger,
     ...overrides,
   } as any);

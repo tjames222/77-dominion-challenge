@@ -46,11 +46,11 @@ describe('site training registry', () => {
     }), { valid: true, errors: [] });
   });
 
-  test('publishes the immutable Solo v2 program in its reviewed 14-page order', () => {
+  test('publishes the immutable Solo v3 program in its reviewed 14-page order', () => {
     const [program] = SITE_TRAINING_REGISTRY.programs;
     assert.deepEqual(
       { id: program.id, version: program.version, audience: program.audience },
-      { id: 'solo-first-run', version: 2, audience: 'solo' },
+      { id: 'solo-first-run', version: 3, audience: 'solo' },
     );
     assert.deepEqual(program.pages.map((entry) => entry.pageId), [
       'dashboard',
@@ -69,7 +69,7 @@ describe('site training registry', () => {
       'science',
     ]);
     assert.deepEqual(program.pages.map((entry) => entry.contentVersion), [
-      2, 1, 1, 1, 1, 1, 1, 1, 1, 2, 1, 1, 1, 1,
+      3, 2, 2, 2, 2, 2, 2, 2, 2, 3, 2, 3, 2, 2,
     ]);
     assert.equal(SITE_TRAINING_REGISTRY.pages.length, 14);
     for (const publishedPage of SITE_TRAINING_REGISTRY.pages) {
@@ -89,11 +89,11 @@ describe('site training registry', () => {
     );
     assert.equal(
       SITE_TRAINING_REGISTRY.pages.find((candidate) => candidate.id === 'dashboard').contentVersion,
-      2,
+      3,
     );
     assert.equal(
       SITE_TRAINING_REGISTRY.pages.find((candidate) => candidate.id === 'community').contentVersion,
-      2,
+      3,
     );
   });
 

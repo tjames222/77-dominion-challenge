@@ -221,7 +221,7 @@ export function inviteStatusContent(status, preview = {}) {
     challenge_started: {
       eyebrow: 'Group challenge confirmed',
       title: `You are starting with ${group}.`,
-      message: 'Your challenge now uses the private group’s authoritative start date.',
+      message: 'Your challenge now uses the private group’s confirmed start date.',
       recoverable: false,
     },
     invalid: {

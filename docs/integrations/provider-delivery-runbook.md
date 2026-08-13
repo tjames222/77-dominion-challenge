@@ -6,21 +6,30 @@ secrets are present and a provider destination has been created by the secure
 connection flow. No provider credential belongs in the repository,
 browser bundle, logs, seed data, or CI fixtures.
 
+## Current launch decision: safe off
+
+The first production release keeps Slack and Discord unavailable.
+`VITE_ENABLE_GROUP_INTEGRATIONS=false` is hard-coded in the protected release
+workflow; provider credentials and Cron jobs are absent, the connection UI is
+hidden, and partial configuration fails closed. The provisioning steps below
+are a future rollout runbook, not a first-launch requirement.
+
 ## Environment isolation and ownership
 
-Create two Slack applications and two Discord applications. The non-production
-applications may serve local development and staging test destinations; the
-production applications may authorize only production callbacks and real
-customer destinations.
+For a future enabled rollout, create two Slack applications and two Discord
+applications. The non-production applications serve local development and
+owned test destinations; production applications authorize only production
+callbacks and customer-approved destinations.
 
 | Environment | Slack app | Discord app | Destinations | Secret owner |
 | --- | --- | --- | --- | --- |
-| Development/staging | `77 Dominion Updates Staging` | `77 Dominion Updates Staging` | Dedicated test workspace/server and channels | Integration administrator |
+| Local test | `77 Dominion Updates Test` | `77 Dominion Updates Test` | Dedicated owned test workspace/server and channels | Integration administrator |
 | Production | `77 Dominion Updates` | `77 Dominion Updates` | Customer-approved workspaces/servers and channels | Production integration administrator |
 
-Use a separate Supabase project and separate secrets for each environment. Do
-not install the production apps into test destinations or copy a staging bot
-token into production.
+Use local Supabase for non-production tests and the single protected hosted
+project only for the closed production canary and live service. Never place
+provider credentials on `develop`. Do not install production apps into general
+test destinations or copy a test bot token into production.
 
 ## Provider application registration
 
@@ -34,7 +43,7 @@ token into production.
    `https://PROJECT_REF.supabase.co/functions/v1/slack-oauth-callback`. Enable
    token rotation and keep Socket Mode, incoming webhooks, event
    subscriptions, and interactivity disabled.
-4. Install the staging app into an isolated test workspace. Add the bot only to
+4. Install the test app into an isolated owned workspace. Add the bot only to
    the public and private channels used for verification.
 5. Record the client ID, client secret, and signing secret in the environment's
    managed secret store. Never copy the bot access or refresh token out of the
@@ -54,7 +63,7 @@ token into production.
    `https://PROJECT_REF.supabase.co/functions/v1/discord-oauth-callback`. Use the
    returned guild ID only after validating the signed Dominion
    state and the installing user's current group-admin authority.
-4. Install the staging bot into an isolated test server and grant it access only
+4. Install the test bot into an isolated owned server and grant it access only
    to the verification channels. Channel-level overrides must preserve both
    required permissions.
 5. Store the client ID, client secret, public key, and bot token in the managed
@@ -183,12 +192,14 @@ members can read the sanitized flags so it is clear which activity may leave
 Dominion. Only `PUBLIC_SITE_URL` can supply the optional Dominion link; event
 payloads cannot choose a URL.
 
-## Staging acceptance exercise
+## Local acceptance and closed-canary exercise
 
-Complete this exercise once for Slack and once for Discord before production
-promotion:
+Complete this exercise once for Slack and once for Discord against local
+Supabase with the test apps. If an enabled rollout is later approved, repeat it
+with the production apps in isolated owned destinations during the closed
+production canary before exposing the connection UI:
 
-1. Use the group connection flow to authorize the staging provider app and select
+1. Use the group connection flow to authorize the applicable test/canary provider app and select
    the isolated test channel. Confirm the stored destination is server-only and
    its credential column is ciphertext with a 12-byte nonce and a current key
    version.
@@ -201,7 +212,7 @@ promotion:
    submission remains successful, and the next worker run succeeds.
 4. In a test-only row with `max_attempts=1`, force another retry. Confirm terminal
    `dead_letter` state, a redacted attempt record, and a non-zero health signal.
-5. Disconnect the staging destination and confirm new enqueue attempts fail and
+5. Disconnect the test/canary destination and confirm new enqueue attempts fail and
    no stale credential can send. Reconnect and run one final synthetic message.
 
 Never use production member progress as a synthetic payload.

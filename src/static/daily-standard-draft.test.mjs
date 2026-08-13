@@ -6,7 +6,7 @@ import {
   normalizeDailyStandardDraft,
 } from './daily-standard-draft.mjs';
 
-describe('atomic Daily Standard drafts', () => {
+describe('atomic Daily Action drafts', () => {
   it('merges independent action mutations without replacing unrelated actions', () => {
     const firstTab = applyActionMutation({ completed: ['bible'], version: 1 }, 'walk', true);
     const serverAfterSecondTab = applyActionMutation(firstTab, 'morningPrayer', true);
@@ -52,7 +52,7 @@ describe('atomic Daily Standard drafts', () => {
 
   it('drops unknown action IDs and rejects invalid mutations', () => {
     assert.deepEqual(normalizeDailyStandardDraft({ completed: ['bible', 'unknown'] }).completed, ['bible']);
-    assert.throws(() => applyActionMutation({}, 'unknown', true), /valid Daily Standard/);
+    assert.throws(() => applyActionMutation({}, 'unknown', true), /valid Daily Action/);
     assert.throws(() => applyWorkoutDifficultyMutation({}, 'one', 'impossible'), /valid workout difficulty/);
   });
 });

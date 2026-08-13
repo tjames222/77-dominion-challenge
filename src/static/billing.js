@@ -59,11 +59,11 @@ function renderStatus(state) {
   const isPreviewBilling = state.billingEnabled === false;
 
   if (billingHeroStep) billingHeroStep.textContent = state.subscriptionActive ? 'Membership active' : 'Step 2 of 2';
-  if (billingHeroTitle) billingHeroTitle.textContent = state.subscriptionActive ? 'You are signed up.' : 'Activate the rhythm.';
+  if (billingHeroTitle) billingHeroTitle.textContent = state.subscriptionActive ? 'Your membership is active.' : 'Activate your membership.';
   if (billingHeroLead) {
     billingHeroLead.textContent = state.subscriptionActive
-      ? 'Your Dominion membership is active. The dashboard, daily standard, community, journal, and member tools are open.'
-      : 'You are one step from the dashboard, the daily standard, and the accountability that helps discipline turn into a new normal.';
+      ? 'Your Dominion membership is active. You can use the dashboard, Daily Actions, private groups, journal, and other member tools.'
+      : 'Subscribe to open the dashboard, Daily Actions, private groups, and private journal.';
   }
 
   if (billingDashboardLink) {
@@ -95,8 +95,8 @@ function renderStatus(state) {
     billingStatusTitle.textContent = 'Preview membership checkout.';
     billingStatusCopy.textContent = 'Activate a mock $7/month membership to test the dashboard, daily actions, community, and journal without touching Stripe.';
   } else {
-    billingStatusTitle.textContent = 'Finish setup and start the work.';
-    billingStatusCopy.textContent = 'Activate membership for $7/month. You are one step from the tools that help daily decisions become lasting discipline.';
+    billingStatusTitle.textContent = 'Finish setting up your membership.';
+    billingStatusCopy.textContent = 'Activate membership for $7/month to use all member features.';
   }
 
   if (subscriptionButton) {

@@ -89,7 +89,7 @@ function createStreakDetailsContent(ownerDocument) {
     ownerDocument,
     'p',
     'global-streak-zero',
-    'No streak history yet. Open Dominion and complete the full standard to begin.',
+    'No streak history yet. Complete all seven Daily Actions to start a perfect-day streak.',
   );
   zeroState.dataset.globalStreakZero = '';
   zeroState.hidden = true;

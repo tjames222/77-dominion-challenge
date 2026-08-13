@@ -1,9 +1,11 @@
 import { createAdminClient } from "../_shared/supabase.ts";
 import {
+  type EnvReader,
   errorResponse,
   HttpError,
   jsonResponse,
   optionsResponse,
+  readEnv,
 } from "../_shared/http.ts";
 import {
   stripeRequest,
@@ -75,6 +77,7 @@ async function upsertSubscriptionEntitlement(
 
 type SyncDependencies = {
   stripeRequest: typeof stripeRequest;
+  env: EnvReader;
   now: () => Date;
 };
 
@@ -86,6 +89,8 @@ async function syncSubscriptionFromStripe(
   const subscription = await dependencies.stripeRequest(
     `/v1/subscriptions/${encodeURIComponent(subscriptionId)}`,
     "GET",
+    undefined,
+    { env: dependencies.env },
   ) as StripeSubscription;
   const stripeCustomerId = typeof subscription.customer === "string"
     ? subscription.customer
@@ -123,6 +128,7 @@ type Dependencies = {
   createAdminClient: typeof createAdminClient;
   stripeRequest: typeof stripeRequest;
   verifyStripeSignature: typeof verifyStripeSignature;
+  env: EnvReader;
   now: () => Date;
   logger: Pick<Console, "error">;
 };
@@ -131,6 +137,7 @@ const defaultDependencies: Dependencies = {
   createAdminClient,
   stripeRequest,
   verifyStripeSignature,
+  env: readEnv,
   now: () => new Date(),
   logger: console,
 };
@@ -143,9 +150,16 @@ export function createHandler(overrides: Partial<Dependencies> = {}) {
   const dependencies = { ...defaultDependencies, ...overrides };
 
   return async (req: Request) => {
-    if (req.method === "OPTIONS") return optionsResponse(req);
+    if (req.method === "OPTIONS") {
+      return optionsResponse(req, dependencies.env);
+    }
     if (req.method !== "POST") {
-      return jsonResponse({ error: "Method not allowed." }, 405, req);
+      return jsonResponse(
+        { error: "Method not allowed." },
+        405,
+        req,
+        dependencies.env,
+      );
     }
 
     const payload = await req.text();
@@ -154,6 +168,7 @@ export function createHandler(overrides: Partial<Dependencies> = {}) {
       const isValid = await dependencies.verifyStripeSignature(
         payload,
         req.headers.get("stripe-signature"),
+        { env: dependencies.env },
       );
       if (!isValid) throw new HttpError("Invalid Stripe signature.", 400);
 
@@ -207,12 +222,22 @@ export function createHandler(overrides: Partial<Dependencies> = {}) {
           break;
       }
 
-      return jsonResponse({ received: true }, 200, req);
+      return jsonResponse(
+        { received: true },
+        200,
+        req,
+        dependencies.env,
+      );
     } catch (error) {
       if (!(error instanceof HttpError) || error.status >= 500) {
         dependencies.logger.error(error);
       }
-      return errorResponse(error, "Webhook processing failed.", req);
+      return errorResponse(
+        error,
+        "Webhook processing failed.",
+        req,
+        dependencies.env,
+      );
     }
   };
 }

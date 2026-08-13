@@ -123,15 +123,16 @@ describe('shared branded secondary controls', () => {
   test('covers the production Invite, Community, Profile, and share-flow consumers', () => {
     const invite = read('../../invite.html');
     const community = read('../../community.html');
+    const groupSettings = read('../../group-settings.html');
     const profile = read('../../profile.html');
     const shareComposer = read('./share-composer.js');
 
-    [invite, community, profile].forEach((html) => {
+    [invite, community, groupSettings, profile].forEach((html) => {
       assert.match(html, /\.\/src\/assets\/product\.css/);
     });
     assert.match(invite, /class="secondary" id="leaveInviteLink"/);
     assert.match(community, /class="secondary crew-training-launch"/);
-    assert.match(community, /class="secondary destructive"/);
+    assert.match(groupSettings, /class="secondary destructive"/);
     assert.match(profile, /class="secondary" id="resetPreviewChallengeButton"/);
     assert.match(shareComposer, /'button', 'secondary', 'Copy share link'/);
   });

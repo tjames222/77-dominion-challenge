@@ -5,10 +5,12 @@ import {
   toIsoDateTime,
 } from "../_shared/stripe.ts";
 import {
+  type EnvReader,
   errorResponse,
   HttpError,
   jsonResponse,
   optionsResponse,
+  readEnv,
 } from "../_shared/http.ts";
 
 type StripeSubscription = {
@@ -52,6 +54,7 @@ type Dependencies = {
   requireUser: typeof requireUser;
   createAdminClient: typeof createAdminClient;
   stripeRequest: typeof stripeRequest;
+  env: EnvReader;
   now: () => Date;
   logger: Pick<Console, "error">;
 };
@@ -60,6 +63,7 @@ const defaultDependencies: Dependencies = {
   requireUser,
   createAdminClient,
   stripeRequest,
+  env: readEnv,
   now: () => new Date(),
   logger: console,
 };
@@ -68,9 +72,16 @@ export function createHandler(overrides: Partial<Dependencies> = {}) {
   const dependencies = { ...defaultDependencies, ...overrides };
 
   return async (req: Request) => {
-    if (req.method === "OPTIONS") return optionsResponse(req);
+    if (req.method === "OPTIONS") {
+      return optionsResponse(req, dependencies.env);
+    }
     if (req.method !== "POST") {
-      return jsonResponse({ error: "Method not allowed." }, 405, req);
+      return jsonResponse(
+        { error: "Method not allowed." },
+        405,
+        req,
+        dependencies.env,
+      );
     }
 
     try {
@@ -95,7 +106,12 @@ export function createHandler(overrides: Partial<Dependencies> = {}) {
           "canceled",
           dependencies.now,
         );
-        return jsonResponse({ canceled: false, accessRemoved: true }, 200, req);
+        return jsonResponse(
+          { canceled: false, accessRemoved: true },
+          200,
+          req,
+          dependencies.env,
+        );
       }
 
       const canceled = await dependencies.stripeRequest(
@@ -109,6 +125,7 @@ export function createHandler(overrides: Partial<Dependencies> = {}) {
           "cancellation_details[comment]":
             "Member canceled from the Dominion billing page.",
         }),
+        { env: dependencies.env },
       ) as StripeSubscription;
 
       const canceledAt = toIsoDateTime(canceled.canceled_at) ||
@@ -142,12 +159,18 @@ export function createHandler(overrides: Partial<Dependencies> = {}) {
         },
         200,
         req,
+        dependencies.env,
       );
     } catch (error) {
       if (!(error instanceof HttpError) || error.status >= 500) {
         dependencies.logger.error(error);
       }
-      return errorResponse(error, "Unable to cancel membership.", req);
+      return errorResponse(
+        error,
+        "Unable to cancel membership.",
+        req,
+        dependencies.env,
+      );
     }
   };
 }

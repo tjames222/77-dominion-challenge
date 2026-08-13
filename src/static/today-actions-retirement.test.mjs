@@ -7,14 +7,17 @@ const read = (path) => readFile(new URL(path, import.meta.url), 'utf8');
 
 describe('Today’s Actions retirement', () => {
   it('keeps the legacy URL as a minimal production-safe redirect', async () => {
-    const [developmentRedirect, productionRedirect, dashboardSource] = await Promise.all([
+    const [developmentRedirect, productionRedirect, redirectScript, dashboardSource] = await Promise.all([
       read('../../today-actions.html'),
       read('../../public/today-actions.html'),
+      read('../../public/today-actions-redirect.js'),
       read('./dashboard.js'),
     ]);
 
     assert.equal(developmentRedirect, productionRedirect);
-    assert.match(developmentRedirect, /window\.location\.replace\('\.\/dashboard\.html#daily-standards'\)/);
+    assert.match(developmentRedirect, /src="\.\/today-actions-redirect\.js"/);
+    assert.match(redirectScript, /window\.location\.replace\('\.\/dashboard\.html#daily-standards'\)/);
+    assert.doesNotMatch(developmentRedirect, /<script>(?:.|\n)*window\.location/);
     assert.doesNotMatch(developmentRedirect, /dashboard\.js|menu\.js|daily-actions|data-action-completion/);
     assert.match(dashboardSource, /getBillingState\(\)/);
     assert.match(dashboardSource, /redirectToLogin\(\)/);

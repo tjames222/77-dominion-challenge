@@ -2,7 +2,7 @@
 <html lang="en" data-theme="dark">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
     <meta name="theme-color" content="#0e1116" />
     <script vite-ignore src="./theme-bootstrap.js" data-enable-dominion-night="false"></script>
     <title>Badges &amp; Rewards | Dominion</title>
@@ -13,6 +13,7 @@
     <link rel="stylesheet" href="./src/assets/share-composer.css" />
     <link rel="stylesheet" href="./src/assets/menu.css" />
     <link rel="stylesheet" href="./src/assets/dominion-night.css" />
+    <link rel="stylesheet" href="./src/assets/dominion-platinum.css" />
   </head>
   <body>
     <main class="app-shell badges-rewards-shell">
@@ -21,20 +22,11 @@
       </header>
 
       <nav class="member-tabs" aria-label="Member sections" data-member-tabs>
-        <a class="member-tab" href="./dashboard.html">Dashboard</a>
-        <a class="member-tab" href="./badges-rewards.html" aria-current="page">Rewards</a>
-        <a class="member-tab" href="./community.html">Community</a>
-        <a class="member-tab" href="./private-journal.html">Private Journal</a>
+        <a class="member-tab" href="./dashboard.html"><span class="member-tab-icon app-icon icon-home" aria-hidden="true"></span><span class="member-tab-label">Dashboard</span></a>
+        <a class="member-tab" href="./badges-rewards.html" aria-current="page"><span class="member-tab-icon app-icon icon-gift" aria-hidden="true"></span><span class="member-tab-label">Rewards</span></a>
+        <a class="member-tab" href="./community.html"><span class="member-tab-icon app-icon icon-users" aria-hidden="true"></span><span class="member-tab-label">Community</span></a>
+        <a class="member-tab" href="./private-journal.html" aria-label="Private Journal"><span class="member-tab-icon app-icon icon-book" aria-hidden="true"></span><span class="member-tab-label"><span class="member-tab-label-prefix">Private </span>Journal</span></a>
       </nav>
-
-      <section class="badges-rewards-hero reveal is-visible" data-section-surface="plain" aria-labelledby="badgesRewardsTitle">
-        <p class="eyebrow">Your Progress</p>
-        <h1 id="badgesRewardsTitle">Badges &amp; Rewards</h1>
-        <p class="lead">See the proof you have earned, the rewards your points opened, and the next milestone ahead.</p>
-        <button class="share-entry-button" type="button" data-share-composer data-share-kind="progress" data-training-target="rewards-sharing">
-          Share my progress
-        </button>
-      </section>
 
       <nav class="badges-rewards-tabs" role="tablist" aria-label="Rewards and badges" aria-orientation="horizontal" data-training-target="rewards-tabs">
         <button
@@ -59,6 +51,65 @@
         >Badges</button>
       </nav>
 
+      <section class="game-summary-card rewards-game-summary reveal" id="gameSummaryCard" data-section-surface="accent" data-training-target="dashboard-levels" aria-labelledby="gameSummaryEyebrow gameSummaryTitle" aria-busy="true">
+        <div class="game-summary-hero">
+          <div
+            class="game-level-emblem"
+            id="gameLevelEmblem"
+            data-prestige="default"
+            data-material="zero-glass"
+            role="img"
+            aria-label="Level 1 — Zero-point glass coin — No top-three leaderboard placement"
+          >
+            <span class="game-prestige-orbit" aria-hidden="true"></span>
+            <span class="game-level-crown app-icon icon-crown" id="gameLevelCrown" aria-hidden="true" hidden></span>
+            <strong id="gameLevelNumber">1</strong>
+            <small>Level</small>
+          </div>
+          <div class="game-points-block">
+            <p class="eyebrow" id="gameSummaryEyebrow">Your Progress</p>
+            <h2 class="game-points-total" id="gameSummaryTitle">
+              <span id="gamePointsTotal">0</span>
+              <small>points</small>
+            </h2>
+            <p class="game-level-label" id="gameLevelLabel">Level 1</p>
+            <p class="sr-only" id="gamePrestigeStatus" role="status" aria-live="polite">No top-three leaderboard placement</p>
+          </div>
+        </div>
+
+        <div class="game-level-progress-panel">
+          <div class="game-level-progress-heading">
+            <span id="gameLevelProgressLabel">Level 1 progress</span>
+            <strong id="gamePointsToNext">14 points to Level 2</strong>
+          </div>
+          <div
+            class="game-level-progress-track"
+            id="gameLevelProgress"
+            role="progressbar"
+            aria-labelledby="gameLevelProgressLabel"
+            aria-valuemin="0"
+            aria-valuemax="14"
+            aria-valuenow="0"
+            aria-valuetext="0 of 14 points earned toward Level 2"
+          >
+            <span id="gameLevelProgressFill"></span>
+          </div>
+          <p class="game-momentum-message" role="status" aria-live="polite">
+            <span class="app-icon icon-spark" aria-hidden="true"></span>
+            <span id="gameMomentumMessage">Post your first check-in to start earning points.</span>
+          </p>
+        </div>
+      </section>
+
+      <section class="badges-rewards-hero reveal is-visible" data-section-surface="plain" aria-labelledby="badgesRewardsTitle">
+        <p class="eyebrow">Badges &amp; Rewards</p>
+        <h1 id="badgesRewardsTitle">Your rewards and badges</h1>
+        <p class="lead">See what you’ve earned and how many points you need for the next reward.</p>
+        <button class="share-entry-button" type="button" data-share-composer data-share-kind="progress" data-training-target="rewards-sharing">
+          Share my progress
+        </button>
+      </section>
+
       <section
         class="badges-rewards-panel active"
         id="rewards-panel"
@@ -68,10 +119,11 @@
       >
         <aside class="reward-unlock-notice" id="rewardUnlockNotice" role="status" aria-live="polite" aria-atomic="true" hidden>
           <span class="app-icon icon-spark" aria-hidden="true"></span>
+          <img class="reward-unlock-thumbnail" id="rewardUnlockNoticeImage" alt="" hidden />
           <div>
-            <p class="eyebrow">New Unlock</p>
-            <strong id="rewardUnlockNoticeTitle">A new reward is open.</strong>
-            <p id="rewardUnlockNoticeCopy">Your progress has been added below.</p>
+            <p class="eyebrow">New Reward</p>
+            <strong id="rewardUnlockNoticeTitle">You earned a new reward.</strong>
+            <p id="rewardUnlockNoticeCopy">See it in your rewards list below.</p>
           </div>
         </aside>
 
@@ -79,11 +131,11 @@
           <div class="reward-next-heading">
             <div>
               <p class="eyebrow" id="rewardNextEyebrow">Next unlock</p>
-              <h2 id="rewardNextTitle">Your reward progress is loading.</h2>
+              <h2 id="rewardNextTitle">Loading your next reward…</h2>
             </div>
             <strong id="rewardTotalPoints">0 points</strong>
           </div>
-          <p id="rewardNextCopy">We are checking your point total and permanent unlocks.</p>
+          <p id="rewardNextCopy">Checking your points and earned rewards…</p>
           <div
             class="reward-next-progress"
             id="rewardNextProgress"
@@ -101,14 +153,14 @@
         <section class="rewards-catalog-section reveal" data-section-surface="plain" data-training-target="rewards-catalog" aria-labelledby="rewardsCatalogTitle">
           <div class="badges-rewards-section-heading">
             <div>
-              <p class="eyebrow">Point Rewards</p>
-              <h2 id="rewardsCatalogTitle">Every path your points can open</h2>
+              <p class="eyebrow">Rewards by Points</p>
+              <h2 id="rewardsCatalogTitle">All rewards</h2>
             </div>
             <span id="rewardsCatalogSummary">Loading rewards</span>
           </div>
           <p class="badges-rewards-feedback" id="rewardsCatalogFeedback" role="status" aria-live="polite" aria-atomic="true"></p>
           <div class="rewards-list" id="rewardsList" aria-label="Point-based rewards" aria-busy="true">
-            <p class="badges-rewards-empty">Reward progression is loading.</p>
+            <p class="badges-rewards-empty">Loading rewards…</p>
           </div>
         </section>
       </section>
@@ -125,12 +177,12 @@
           <div class="badges-rewards-section-heading">
             <div>
               <p class="eyebrow">Earned Badges</p>
-              <h2 id="badgesGalleryTitle">Proof of the work</h2>
+              <h2 id="badgesGalleryTitle">Your badges</h2>
             </div>
             <span id="badgesGallerySummary">Loading badges</span>
           </div>
           <div class="badges-gallery" id="badgesGallery" aria-label="All earned badges" aria-busy="true">
-            <p class="badges-rewards-empty">Your badge shelf is loading.</p>
+            <p class="badges-rewards-empty">Loading badges…</p>
           </div>
         </section>
       </section>
@@ -140,6 +192,18 @@
         <p id="badgesRewardsErrorCopy">Please try again in a moment.</p>
         <button class="secondary-button" id="badgesRewardsRetry" type="button">Try again</button>
       </div>
+
+      <dialog class="reward-detail-dialog" id="rewardDetailDialog" aria-labelledby="rewardDetailTitle" aria-describedby="rewardDetailDescription">
+        <div class="reward-detail-dialog-inner">
+          <button class="reward-detail-close" id="rewardDetailClose" type="button" aria-label="Close reward details">×</button>
+          <p class="eyebrow" id="rewardDetailEyebrow">Reward details</p>
+          <h2 id="rewardDetailTitle">Reward details</h2>
+          <p class="reward-detail-description" id="rewardDetailDescription"></p>
+          <div class="reward-detail-content" id="rewardDetailContent" aria-busy="false"></div>
+          <p class="reward-detail-feedback" id="rewardDetailFeedback" role="status" aria-live="polite" aria-atomic="true"></p>
+          <div class="reward-detail-actions" id="rewardDetailActions"></div>
+        </div>
+      </dialog>
     </main>
 
     <script type="module" src="./src/static/menu.js"></script>

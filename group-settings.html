@@ -1,0 +1,169 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
+    <meta name="theme-color" content="#0e1116" />
+    <script vite-ignore src="./theme-bootstrap.js" data-enable-dominion-night="false"></script>
+    <title>Group Settings | Dominion</title>
+    <link rel="stylesheet" href="./src/assets/styles.css" />
+    <link rel="stylesheet" href="./src/assets/product.css" />
+    <link rel="stylesheet" href="./src/assets/dialog.css" />
+    <link rel="stylesheet" href="./src/assets/community.css" />
+    <link rel="stylesheet" href="./src/assets/menu.css" />
+    <link rel="stylesheet" href="./src/assets/dominion-night.css" />
+    <link rel="stylesheet" href="./src/assets/dominion-platinum.css" />
+  </head>
+  <body>
+    <main class="app-shell community-shell group-settings-shell">
+      <header class="topbar">
+        <a class="back-link" href="./community.html">Community</a>
+        <span class="brand-name">Group Settings</span>
+      </header>
+
+      <section class="community-hero reveal is-visible" data-section-surface="plain">
+        <p class="eyebrow">Private Group</p>
+        <h1>Group settings</h1>
+        <p class="lead">Manage sharing, connected channels, and your access to the group.</p>
+      </section>
+
+      <div class="community-feedback" id="groupSettingsFeedback" role="status" aria-live="polite"></div>
+
+      <section class="card reveal is-visible group-settings-overview" id="groupSettingsOverview" data-section-surface="accent" aria-labelledby="groupSettingsOverviewTitle">
+        <div class="section-heading-row">
+          <div>
+            <p class="eyebrow">Active Group</p>
+            <h2 id="groupSettingsOverviewTitle">Loading your group…</h2>
+            <p class="section-copy" id="groupSettingsOverviewCopy">Checking your role and permissions…</p>
+          </div>
+          <span class="privacy-badge" id="groupRoleBadge">Member</span>
+        </div>
+      </section>
+
+      <section class="card reveal is-visible" id="groupSettingsEmpty" data-section-surface="plain" hidden>
+        <p class="eyebrow">No Group Yet</p>
+        <h2>Create or join a private group first.</h2>
+        <p class="section-copy">Once you join a group, its sharing and access controls will appear here.</p>
+        <a class="primary" href="./community.html">Open Community</a>
+      </section>
+
+      <div id="groupSettingsContent" hidden>
+        <section class="card reveal is-visible profile-integration-consent" id="integrationPrivacy" data-section-surface="plain" aria-labelledby="integrationPrivacyTitle" hidden>
+          <p class="eyebrow">Sharing Privacy</p>
+          <h2 id="integrationPrivacyTitle">Choose which updates can be shared.</h2>
+          <p class="section-copy">Only you can change these choices. A group owner can’t opt in for you.</p>
+
+          <div id="integrationSafeOffNotice" class="integration-empty" hidden>
+            External Slack and Discord updates are off for launch. Nothing from your account will be sent outside Dominion.
+          </div>
+
+          <div class="integration-consent-content" id="integrationConsentContent" hidden>
+            <div class="integration-destinations" aria-labelledby="integrationConsentDestinationsTitle">
+              <div>
+                <p class="eyebrow">Connected Channels</p>
+                <h3 id="integrationConsentDestinationsTitle">Where updates can be sent</h3>
+              </div>
+              <ul class="integration-destination-list" id="integrationConsentDestinationList"></ul>
+              <p class="integration-destination-empty" id="integrationConsentDestinationEmpty">No Slack or Discord channel is connected for this group.</p>
+            </div>
+
+            <form class="integration-consent-form" id="integrationConsentForm">
+              <label class="integration-master-switch" for="integrationUpdatesEnabled">
+                <span>
+                  <strong>Allow group updates</strong>
+                  <small>This is off by default. Turn it off at any time to stop all updates below.</small>
+                </span>
+                <input id="integrationUpdatesEnabled" type="checkbox" role="switch" />
+              </label>
+
+              <fieldset class="integration-consent-fieldset">
+                <legend>How you appear</legend>
+                <label>
+                  <input type="radio" name="integrationPresentation" value="anonymous" checked />
+                  <span><strong>Anonymous</strong><small>The channel sees “A group member,” not your profile name.</small></span>
+                </label>
+                <label>
+                  <input type="radio" name="integrationPresentation" value="named" />
+                  <span><strong>Use my profile name</strong><small>Your current Dominion profile name is included.</small></span>
+                </label>
+              </fieldset>
+
+              <fieldset class="integration-consent-fieldset integration-event-options">
+                <legend>Updates you approve</legend>
+                <label><input id="integrationShareCheckIns" type="checkbox" /><span><strong>Daily Check-Ins</strong><small>Your challenge day, completion status, and completed action count.</small></span></label>
+                <label><input id="integrationShareStreaks" type="checkbox" /><span><strong>Streak milestones</strong><small>The streak type and milestone number you reached.</small></span></label>
+                <label><input id="integrationShareBadges" type="checkbox" /><span><strong>Badges and rewards</strong><small>The name of a badge or point reward you earn.</small></span></label>
+                <label><input id="integrationShareMembership" type="checkbox" /><span><strong>Group membership</strong><small>An update when you join the group. Leaving cancels pending updates.</small></span></label>
+              </fieldset>
+
+              <div class="integration-data-disclosure">
+                <h3>Before you opt in</h3>
+                <p>Approved data is sent outside Dominion to your group’s Slack workspace or Discord server and is then covered by that service’s settings and privacy practices.</p>
+                <p>Prayers, journal entries, action notes, email, and billing details are never included.</p>
+              </div>
+
+              <p class="integration-consent-feedback" id="integrationConsentFeedback" role="status" aria-live="polite"></p>
+              <button class="primary" id="saveIntegrationConsent" type="submit">Save my privacy choices</button>
+            </form>
+          </div>
+        </section>
+
+        <section class="card reveal is-visible group-integrations" id="groupIntegrations" data-section-surface="accent" aria-labelledby="groupIntegrationsTitle" hidden>
+          <div class="section-heading-row">
+            <div>
+              <p class="eyebrow">Connected Channels</p>
+              <h2 id="groupIntegrationsTitle">Slack &amp; Discord</h2>
+            </div>
+            <span class="privacy-badge" id="integrationPermissionBadge">Owner or admin</span>
+          </div>
+          <p class="integration-disclosure" id="groupIntegrationsDescription">Group members can see where approved updates go. Only owners and admins can change a connection.</p>
+          <p class="integration-conversation-note">Connected channels can receive approved Daily Check-Ins, streak milestones, badges and rewards, new-member notices, and an optional weekly leaderboard recap. Conversations and replies stay in Slack or Discord and aren’t copied back into Dominion.</p>
+          <div class="integration-destination-list" id="groupIntegrationDestinationList" aria-live="polite"></div>
+          <div class="integration-connect-actions" id="integrationConnectActions" hidden>
+            <button class="provider-button provider-slack" type="button" data-connect-provider="slack">
+              <span class="provider-mark provider-mark-slack" aria-hidden="true">
+                <svg viewBox="0 0 24 24" focusable="false">
+                  <rect x="9" y="1" width="5" height="11" rx="2.5" fill="#36c5f0"></rect>
+                  <rect x="12" y="9" width="11" height="5" rx="2.5" fill="#2eb67d"></rect>
+                  <rect x="10" y="12" width="5" height="11" rx="2.5" fill="#ecb22e"></rect>
+                  <rect x="1" y="10" width="11" height="5" rx="2.5" fill="#e01e5a"></rect>
+                </svg>
+              </span>
+              <span>Connect Slack</span>
+            </button>
+            <button class="provider-button provider-discord" type="button" data-connect-provider="discord">
+              <span class="provider-mark provider-mark-discord" aria-hidden="true">
+                <svg viewBox="0 0 28 24" focusable="false">
+                  <path d="M6.2 4.5c4.7-2.1 10.9-2.1 15.6 0 2.5 3.5 4 7.4 4.2 11.6-2.3 2.2-4.3 3.5-6.2 4.4l-1.5-2.1c.9-.4 1.8-.9 2.6-1.5-4.5 2.1-9.3 2.1-13.8 0 .8.6 1.7 1.1 2.6 1.5l-1.5 2.1c-1.9-.9-3.9-2.2-6.2-4.4.2-4.2 1.7-8.1 4.2-11.6Z" fill="#5865f2"></path>
+                  <circle cx="10.4" cy="12.3" r="1.8" fill="#fff"></circle>
+                  <circle cx="17.6" cy="12.3" r="1.8" fill="#fff"></circle>
+                </svg>
+              </span>
+              <span>Connect Discord</span>
+            </button>
+          </div>
+          <form class="integration-confirm" id="integrationConfirmForm" hidden>
+            <div><p class="eyebrow">Confirm Channel</p><h3 id="integrationConfirmTitle">Choose a channel</h3><p id="integrationConfirmWorkspace"></p></div>
+            <label for="integrationChannelSelect"><span>Channel</span><select id="integrationChannelSelect" required></select></label>
+            <div class="integration-confirm-actions">
+              <button class="primary" type="submit">Confirm channel</button>
+              <button class="secondary" id="cancelIntegrationSetup" type="button">Cancel</button>
+            </div>
+          </form>
+        </section>
+
+        <section class="card reveal is-visible crew-lifecycle-card" id="groupAccess" data-section-surface="plain" aria-labelledby="groupAccessTitle">
+          <div>
+            <p class="eyebrow">Group Access</p>
+            <h2 id="groupAccessTitle">Manage your access</h2>
+            <p id="groupAccessDescription"></p>
+          </div>
+          <button class="secondary destructive" id="groupAccessButton" type="button"></button>
+        </section>
+      </div>
+    </main>
+
+    <script type="module" src="./src/static/menu.js"></script>
+    <script type="module" src="./src/static/group-settings.js"></script>
+  </body>
+</html>

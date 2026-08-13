@@ -10,6 +10,8 @@
   var ROOT_ATTRIBUTE = 'data-theme';
   var DEFAULT_THEME_ID = 'dark';
   var CHANGE_EVENT = 'dominion:themechange';
+  var PENDING_ATTRIBUTE = 'data-theme-pending';
+  var PENDING_TIMEOUT_MS = 3000;
   var NIGHT_FEATURE_FLAG = 'VITE_ENABLE_DOMINION_NIGHT_THEME';
   var featureScript = global.document && global.document.currentScript;
   var entitledThemeIds = Object.create(null);
@@ -18,6 +20,7 @@
       featureScript.dataset &&
       featureScript.dataset.enableDominionNight === 'true',
   );
+  var pendingFallbackTimer = null;
 
   function freezeTheme(definition) {
     Object.freeze(definition.assets);
@@ -62,6 +65,19 @@
         kind: 'feature-flag',
         enabled: dominionNightEnabled,
         featureFlag: NIGHT_FEATURE_FLAG,
+        requiresEntitlement: true,
+      },
+    }),
+    freezeTheme({
+      id: 'dominion-platinum',
+      label: 'Dominion Platinum',
+      colorScheme: 'dark',
+      themeColor: '#090b11',
+      assets: { variant: 'dominion-platinum', fallback: 'dark' },
+      availability: {
+        kind: 'reward',
+        enabled: true,
+        featureFlag: null,
         requiresEntitlement: true,
       },
     }),
@@ -142,6 +158,39 @@
     return applyTheme(readStoredTheme(), options);
   }
 
+  function beginProtectedThemeHydration(themeId) {
+    var theme = getTheme(themeId);
+    if (!global.document || !theme || !theme.availability.requiresEntitlement) return false;
+    var root = global.document.documentElement;
+    root.setAttribute(PENDING_ATTRIBUTE, themeId);
+    root.style.colorScheme = theme.colorScheme;
+    root.style.backgroundColor = theme.themeColor;
+    syncBrowserChrome(theme);
+    if (typeof global.setTimeout === 'function') {
+      pendingFallbackTimer = global.setTimeout(function failClosedThemeHydration() {
+        pendingFallbackTimer = null;
+        applyTheme(DEFAULT_THEME_ID);
+        finishProtectedThemeHydration();
+      }, PENDING_TIMEOUT_MS);
+    }
+    return true;
+  }
+
+  function finishProtectedThemeHydration() {
+    if (!global.document) return;
+    if (pendingFallbackTimer !== null && typeof global.clearTimeout === 'function') {
+      global.clearTimeout(pendingFallbackTimer);
+    }
+    pendingFallbackTimer = null;
+    var root = global.document.documentElement;
+    if (typeof root.removeAttribute === 'function') root.removeAttribute(PENDING_ATTRIBUTE);
+    if (root.style && typeof root.style.removeProperty === 'function') {
+      root.style.removeProperty('background-color');
+    } else if (root.style) {
+      root.style.backgroundColor = '';
+    }
+  }
+
   function setTheme(themeId) {
     var resolvedId = resolveTheme(themeId);
     try {
@@ -152,13 +201,15 @@
     return applyTheme(resolvedId, { notify: true });
   }
 
-  function setThemeEntitlements(themeIds) {
+  function setThemeEntitlements(themeIds, options) {
     entitledThemeIds = Object.create(null);
     (Array.isArray(themeIds) ? themeIds : []).forEach(function allowTheme(themeId) {
       var theme = getTheme(themeId);
       if (theme && theme.availability.requiresEntitlement) entitledThemeIds[themeId] = true;
     });
-    return applyTheme(readPreferredTheme(), { notify: true });
+    var appliedTheme = applyTheme(readPreferredTheme(), { notify: true });
+    if (!(options && options.deferPending)) finishProtectedThemeHydration();
+    return appliedTheme;
   }
 
   function getActiveTheme() {
@@ -182,6 +233,7 @@
     version: 2,
     storageKey: STORAGE_KEY,
     rootAttribute: ROOT_ATTRIBUTE,
+    pendingAttribute: PENDING_ATTRIBUTE,
     changeEvent: CHANGE_EVENT,
     defaultThemeId: DEFAULT_THEME_ID,
     themes: themes,
@@ -192,6 +244,8 @@
     readStoredTheme: readStoredTheme,
     applyTheme: applyTheme,
     applyStoredTheme: applyStoredTheme,
+    beginProtectedThemeHydration: beginProtectedThemeHydration,
+    finishProtectedThemeHydration: finishProtectedThemeHydration,
     setTheme: setTheme,
     setThemeEntitlements: setThemeEntitlements,
     getActiveTheme: getActiveTheme,
@@ -206,5 +260,7 @@
     writable: false,
   });
 
+  var preferredTheme = readPreferredTheme();
   runtime.applyStoredTheme();
+  beginProtectedThemeHydration(preferredTheme);
 })(globalThis);

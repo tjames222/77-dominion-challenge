@@ -6,12 +6,12 @@ export const DEFAULT_CHALLENGE_DEFINITIONS = Object.freeze([
   {
     key: 'seven_day_reset',
     title: '7-Day Reset',
-    teaser: 'A focused week to rebuild rhythm and recover momentum.',
+    teaser: 'A focused week to rebuild your habits and get moving again.',
     type: 'reset',
     pointsRequired: REWARD_POINT_THRESHOLDS.seven_day_reset,
     durationDays: 7,
     icon: 'repeat',
-    sortOrder: 10,
+    sortOrder: 40,
   },
   {
     key: 'twenty_one_day_prayer',
@@ -21,7 +21,7 @@ export const DEFAULT_CHALLENGE_DEFINITIONS = Object.freeze([
     pointsRequired: REWARD_POINT_THRESHOLDS.twenty_one_day_prayer,
     durationDays: 21,
     icon: 'spark',
-    sortOrder: 20,
+    sortOrder: 70,
   },
   {
     key: 'thirty_day_strength',
@@ -31,17 +31,17 @@ export const DEFAULT_CHALLENGE_DEFINITIONS = Object.freeze([
     pointsRequired: REWARD_POINT_THRESHOLDS.thirty_day_strength,
     durationDays: 30,
     icon: 'dumbbell',
-    sortOrder: 30,
+    sortOrder: 80,
   },
   {
     key: 'forty_day_fast',
     title: '40-Day Fasting & Prayer Track',
-    teaser: 'Build a guided rhythm of fasting, prayer, and disciplined reflection.',
+    teaser: 'Follow a guided pattern of fasting, prayer, and reflection.',
     type: 'fasting',
     pointsRequired: REWARD_POINT_THRESHOLDS.forty_day_fast,
     durationDays: 40,
     icon: 'flame',
-    sortOrder: 40,
+    sortOrder: 90,
   },
   {
     key: 'bible_in_a_year',
@@ -51,7 +51,7 @@ export const DEFAULT_CHALLENGE_DEFINITIONS = Object.freeze([
     pointsRequired: REWARD_POINT_THRESHOLDS.bible_in_a_year,
     durationDays: 365,
     icon: 'book',
-    sortOrder: 50,
+    sortOrder: 100,
   },
 ]);
 

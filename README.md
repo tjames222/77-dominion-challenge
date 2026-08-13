@@ -20,6 +20,8 @@ The deployed frontend is a Vite multi-page application (MPA). It has no client-s
 | `membership.html` | Membership offer | `src/static/membership.js` |
 | `login.html` | Sign in | `src/static/auth.js` |
 | `register.html` | Registration | `src/static/auth.js` |
+| `forgot-password.html` | Password reset request | `src/static/password-recovery.js` |
+| `reset-password.html` | Password recovery completion | `src/static/password-recovery.js` |
 | `invite.html` | Private-group invitation confirmation | `src/static/invite.js` |
 | `billing.html` | Subscription management | `src/static/billing.js` |
 | `dashboard.html` | Daily challenge dashboard | `src/static/dashboard.js` |
@@ -32,9 +34,14 @@ The deployed frontend is a Vite multi-page application (MPA). It has no client-s
 | `intentional-walk.html` | Intentional walk Daily Standard | `src/static/daily-standard-page.js` |
 | `workout-two.html` | Second workout Daily Standard | `src/static/daily-standard-page.js` |
 | `community.html` | Private-group community | `src/static/community.js` |
+| `group-settings.html` | Private-group settings, privacy, and access | `src/static/group-settings.js` |
 | `private-journal.html` | Private journal | `src/static/private-journal.js` |
 | `profile.html` | Account and appearance settings | `src/static/profile.js` |
 | `science.html` | Challenge background and sources | `src/static/science.js` |
+| `privacy.html` | Privacy policy | `src/static/legal.js` |
+| `terms.html` | Terms of use | `src/static/legal.js` |
+| `cancellation-refunds.html` | Cancellation and refund policy | `src/static/legal.js` |
+| `support.html` | Support and contact paths | `src/static/legal.js` |
 
 Shared browser modules live in `src/static/`. Shared visual tokens and page styles live in `src/assets/`. `src/static/api.js` owns the browser-facing Supabase and preview-mock boundary. Supabase migrations, the cumulative schema, and Edge Functions live under `supabase/` and are deployed separately from the Vite bundle. The retired `today-actions.html` URL is served as a static redirect from `public/` and is intentionally excluded from the active Vite entry-point map.
 
@@ -45,30 +52,44 @@ pnpm install
 pnpm dev
 ```
 
-Local Vite development automatically uses the browser-local preview workflow. A production-built preview with `VITE_ENABLE_MOCKS=true` keeps product data and billing mocked; when valid Supabase public configuration is also present, login, registration, session persistence, and logout use Supabase Auth. Local `vite` sessions keep fake identities unless `VITE_ENABLE_SUPABASE_AUTH_IN_MOCKS=true` is explicitly set with the mock and Supabase variables.
+Local Vite development automatically uses the browser-local preview workflow. Any hosted build with `VITE_ENABLE_MOCKS=true` keeps identities, product data, billing, and provider connections browser-local even if production variables are accidentally visible to the build. Local `vite` sessions may exercise the isolated Auth fixture only when `VITE_ENABLE_SUPABASE_AUTH_IN_MOCKS=true` is explicitly set with mock Supabase values; that override is ignored by production builds.
 
 Slack and Discord connection controls fail closed unless `VITE_ENABLE_GROUP_INTEGRATIONS=true`. Keep the flag false until the complete provider rollout in FOU-764 is approved; when it is false, the browser does not expose provider controls or call provider-management functions.
 
 ## Supabase setup
 
 1. Create a Supabase project.
-2. Run `supabase/schema.sql` in the Supabase SQL editor.
-3. Copy `.env.example` to `.env`.
-4. Fill in `VITE_SUPABASE_URL` and `VITE_SUPABASE_PUBLISHABLE_KEY`.
-5. In Supabase Auth URL Configuration, set the Site URL to the Cloudflare Pages production URL for this app.
-6. Add redirect URLs for production, Cloudflare preview deployments, and local development:
-   - `https://77-dominion-challenge.pages.dev/**`
-   - `https://*.77-dominion-challenge.pages.dev/**`
-   - `http://localhost:5173/**`
-   - `http://127.0.0.1:5173/**`
-   - `http://localhost:4173/**`
-   - `http://127.0.0.1:4173/**`
+2. For local development, run `pnpm run supabase:start` and `pnpm run supabase:reset` so the versioned migration chain is applied from an empty database.
+3. For a hosted environment, follow the migration reconciliation and deployment steps in [`docs/backend-release-runbook.md`](docs/backend-release-runbook.md). Never run `supabase/schema.sql` manually or use `--include-all` against production.
+4. Copy `.env.example` to `.env`.
+5. Fill in `VITE_SUPABASE_URL` and `VITE_SUPABASE_PUBLISHABLE_KEY`.
+6. In the hosted Supabase Auth URL Configuration, set the Site URL to the exact Cloudflare Pages production URL for this app.
+7. Add only the exact password-recovery callback to the hosted project's
+   redirect allowlist:
+   - `https://77-dominion-challenge.pages.dev/reset-password.html`
+
+The local Supabase stack may keep localhost callbacks in its local configuration.
+Do not add `develop`, feature-preview, or localhost callbacks to the hosted
+production Auth tenant.
 
 The frontend uses Supabase Auth for login/register and writes directly to Supabase Postgres with Row Level Security policies.
 
+Password recovery always returns to the fixed same-origin `reset-password.html`
+route. Add that exact production path to the Auth redirect allowlist, verify
+custom SMTP delivery, and test expired, reused, and valid recovery links before
+launch. Recovery completion revokes the recovery session and requires a fresh
+login.
+
 ### Storage
 
-Supported profile-photo uploads are browser-normalized, center-cropped, and encoded as square WebP/JPEG thumbnails no larger than 256×256 pixels and 150 KiB; original camera files never reach Storage. Upload paths are immutable, and a durable lifecycle registry retries removal of non-canonical predecessors without allowing the current avatar to be deleted or a retired path to be reused. The Private Journal is text-only and does not require a `journal_photos` table or `journal-progress` bucket.
+The browser prepares supported profile photos, then an authenticated Edge
+Function independently decodes, center-crops, strips, and re-encodes them as
+square WebP thumbnails no larger than 256×256 pixels and 150 KiB. Only that
+trusted output can enter Storage; source camera bytes and direct browser uploads
+cannot. Upload paths are immutable, and a durable lifecycle registry retries
+removal of non-canonical predecessors without allowing the current avatar to be
+deleted or a retired path to be reused. The Private Journal is text-only and
+does not require a `journal_photos` table or `journal-progress` bucket.
 
 ### Point economy
 
@@ -86,10 +107,10 @@ Workout difficulty describes the work performed and never changes points. Histor
 
 - `main` is production and must use real Supabase Auth, Postgres, and Stripe billing.
 - `https://develop.77-dominion-challenge.pages.dev` is the canonical prelaunch dev URL. The bare `https://77-dominion-challenge.pages.dev` host follows `main` and must not be treated as the current dev deployment.
-- `develop` should set `VITE_ENABLE_MOCKS=true` together with `VITE_SUPABASE_URL` and `VITE_SUPABASE_PUBLISHABLE_KEY`. Supabase owns real login, registration, sessions, and logout; membership, billing, dashboard, community, and journal state remain browser-local previews and never call Stripe.
+- `develop` must set only `VITE_ENABLE_MOCKS=true` for backend selection. Login, registration, membership, billing, dashboard, community, journal, and provider connections remain browser-local and never call Supabase or Stripe.
 - Production must resolve `VITE_ENABLE_MOCKS` to `false`; `main` builds fail closed if mocks are enabled.
 - Local Vite dev on localhost enables browser-local product data for rapid UI testing. It uses local mock identities unless `VITE_ENABLE_MOCKS=true`, `VITE_ENABLE_SUPABASE_AUTH_IN_MOCKS=true`, and valid Supabase public configuration are all supplied explicitly.
-- Canonical `develop` and `main` Cloudflare builds fail before bundling when their required mode or Supabase URL/publishable key is missing.
+- Canonical `develop` builds fail unless mock mode is enabled and hybrid Auth is disabled. Canonical `main` builds fail unless mock mode is disabled and the production Supabase URL/publishable key are present.
 
 ### Feature-flagged Dominion Night theme
 
@@ -115,7 +136,6 @@ Stripe powers checkout, payment method updates, and membership cancellation. Sup
    - `STRIPE_WEBHOOK_SECRET`
    - `STRIPE_MEMBERSHIP_PRICE_ID`
    - `PUBLIC_SITE_URL`
-   - `CLOUDFLARE_PAGES_PROJECT_HOST`
    - `PUBLIC_ALLOWED_SITE_URLS`
 3. Configure the Stripe customer portal to allow payment method updates.
 4. Deploy the Edge Functions:
@@ -129,12 +149,13 @@ Stripe powers checkout, payment method updates, and membership cancellation. Sup
    - `customer.subscription.created`
    - `customer.subscription.updated`
    - `customer.subscription.deleted`
-6. Run the updated `supabase/schema.sql` before testing billing flows.
+6. Apply the reviewed migration chain through the release workflow before testing hosted billing flows. For local billing tests, reset the local Supabase stack so every migration is replayed.
 
 ## Data lifecycle decisions
 
 - [Retired Community social-data retention](docs/community-social-data-retention.md)
 - [Governed retired Community deletion runbook](docs/retired-community-deletion-runbook.md)
+- [Account lifecycle and policy release gate](docs/account-lifecycle-release.md)
 
 ## Validation and build
 

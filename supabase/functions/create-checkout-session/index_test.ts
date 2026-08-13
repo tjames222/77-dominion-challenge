@@ -5,6 +5,7 @@ import {
   quietLogger,
   request,
   responseJson,
+  testEnv,
 } from "../_shared/test_helpers.ts";
 import { createHandler } from "./index.ts";
 
@@ -31,6 +32,7 @@ function checkoutHandler(overrides: Record<string, unknown> = {}) {
     stripeRequest: async () => ({
       url: "https://checkout.stripe.test/session",
     }),
+    env: testEnv,
     logger: quietLogger,
     ...overrides,
   } as any);

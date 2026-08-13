@@ -33,6 +33,10 @@ describe('shared sticky menu', () => {
       classList: createClassList(),
       getBoundingClientRect: () => ({ height: 72 }),
     };
+    const memberTabs = {
+      classList: createClassList(),
+      getBoundingClientRect: () => ({ height: 56 }),
+    };
     const body = { classList: createClassList(), appendChild() {} };
     const listeners = new Map();
     const animationFrames = [];
@@ -52,6 +56,7 @@ describe('shared sticky menu', () => {
       documentElement: { style: { setProperty() {} } },
       querySelector(selector) {
         if (selector === '.topbar') return topbar;
+        if (selector === '[data-member-tabs]') return memberTabs;
         if (selector === '.global-menu') return {};
         return null;
       },
@@ -95,6 +100,8 @@ describe('shared sticky menu', () => {
       runScrollFrame(13);
       assert.equal(topbar.classList.contains('topbar-collapsed'), true);
       assert.equal(topbar.classList.contains('topbar-scrolled'), true);
+      assert.equal(memberTabs.classList.contains('member-tabs-collapsed'), true);
+      assert.equal(memberTabs.classList.contains('member-tabs-scrolled'), true);
 
       runScrollFrame(7);
       assert.equal(topbar.classList.contains('topbar-collapsed'), true, 'minor upward scrolling must not expand the menu');
@@ -102,10 +109,13 @@ describe('shared sticky menu', () => {
       runScrollFrame(0);
       assert.equal(topbar.classList.contains('topbar-collapsed'), false);
       assert.equal(topbar.classList.contains('topbar-scrolled'), false);
+      assert.equal(memberTabs.classList.contains('member-tabs-collapsed'), false);
+      assert.equal(memberTabs.classList.contains('member-tabs-scrolled'), false);
 
       body.classList.add('menu-open');
       runScrollFrame(40);
       assert.equal(topbar.classList.contains('topbar-collapsed'), false, 'the open navigation must remain full size');
+      assert.equal(memberTabs.classList.contains('member-tabs-collapsed'), false, 'the primary navigation must remain full size while the drawer is open');
     } finally {
       globalThis.window = originalWindow;
       globalThis.document = originalDocument;
@@ -133,8 +143,9 @@ describe('shared sticky menu', () => {
 
   test('uses the measured wrapped-header height for anchor and scorecard scrolling', () => {
     const productCss = readFileSync(new URL('../assets/product.css', import.meta.url), 'utf8');
-    assert.match(menuCss, /scroll-padding-top:\s*calc\(var\(--topbar-sticky-height\) \+ 16px\)/);
-    assert.match(productCss, /\.dashboard-scorecard\s*\{[\s\S]*scroll-margin-top:\s*calc\(var\(--topbar-sticky-height\) \+ 16px\)/);
+    assert.match(menuCss, /scroll-padding-top:\s*calc\(var\(--topbar-sticky-height\) \+ var\(--member-tabs-sticky-height\) \+ 24px\)/);
+    assert.match(menuJs, /root\.style\.setProperty\('--member-tabs-sticky-height'/);
+    assert.match(productCss, /\.dashboard-scorecard\s*\{[\s\S]*scroll-margin-top:\s*calc\(var\(--topbar-sticky-height\) \+ var\(--member-tabs-sticky-height\) \+ 24px\)/);
     assert.doesNotMatch(menuCss, /scroll-padding-top:\s*calc\((?:76|88)px/);
   });
 

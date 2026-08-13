@@ -15,11 +15,11 @@ test('theme choices reconcile with an authenticated server preference on every r
     read('src/static/menu.js'),
   ]);
 
-  assert.match(api, /client\.rpc\('get_theme_preference'\)/);
+  assert.match(api, /client\.rpc\('get_theme_preference', \{/);
   assert.match(api, /client\.rpc\('set_theme_preference'/);
   assert.match(hydration, /Promise\.all\(\[[\s\S]*getRewardCatalog[\s\S]*getThemePreference/);
   assert.match(hydration, /setThemeEntitlements[\s\S]*setTheme\(preferredTheme\)/);
-  assert.match(profile, /setTheme\(themeId\)[\s\S]*await setThemePreference\(themeId\)/);
+  assert.match(profile, /const selectedTheme = setTheme\(themeId\)[\s\S]*await setThemePreference\(themeId, \{ expectedUserId: owner\.userId \}\)/);
   assert.match(profile, /setTheme\(previousTheme\)/);
   assert.match(menu, /hydrateThemeEntitlementState\(\)/);
 });
@@ -28,7 +28,7 @@ test('logout clears the browser preference while mock server preferences stay us
   const api = await read('src/static/api.js');
 
   assert.match(api, /MOCK_THEME_PREFERENCES_KEY = 'dominion:mockThemePreferences'/);
-  assert.match(api, /preferences\[userId\] = preference/);
+  assert.match(api, /preferences\[actorId\] = preference/);
   assert.match(api, /clearAuthSession[\s\S]*localStorage\.removeItem\('dominion:theme'\)/);
   assert.match(api, /getLocalOrSessionUser[\s\S]*userId: getMockUserId\(\)/);
 });

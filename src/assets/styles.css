@@ -85,6 +85,16 @@
 
 :root[data-theme="dark"] { color-scheme: dark; }
 
+/*
+ * A stored protected-theme preference is not proof of entitlement. Keep the
+ * page out of view for the short server-authorization window so an entitled
+ * member never sees the fallback theme, while the bootstrap fails closed to
+ * Dark after a bounded timeout if authorization cannot complete.
+ */
+:root[data-theme-pending] body {
+  visibility: hidden;
+}
+
 * { box-sizing: border-box; }
 ::selection { background: var(--selection-background); color: var(--selection-text); }
 .sr-only {
@@ -98,10 +108,18 @@
   white-space: nowrap;
   border: 0;
 }
-html { background: var(--background); scroll-behavior: smooth; }
+html {
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  background: var(--background);
+  scroll-behavior: smooth;
+}
 body {
   margin: 0;
-  min-width: 320px;
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
   background: var(--background);
   color: var(--text);
   overflow-x: hidden;
@@ -109,7 +127,7 @@ body {
 a { color: inherit; text-decoration: none; }
 a:not([class]):hover { color: var(--link); }
 img, svg { max-width: 100%; }
-button, input, select { font: inherit; }
+button, input, select, textarea { font: inherit; }
 button { cursor: pointer; }
 input::placeholder,
 textarea::placeholder { color: var(--text-disabled); opacity: 1; }
@@ -123,6 +141,22 @@ textarea::placeholder { color: var(--text-disabled); opacity: 1; }
   width: min(100%, 720px);
   margin: 0 auto;
   padding: max(var(--shell-pad), env(safe-area-inset-top)) var(--shell-pad) max(72px, calc(72px + env(safe-area-inset-bottom)));
+}
+
+main,
+section,
+article,
+form,
+fieldset {
+  min-width: 0;
+}
+
+@media (max-width: 767px) {
+  input:not([type="checkbox"]):not([type="radio"]):not([type="range"]),
+  select,
+  textarea {
+    font-size: 16px !important;
+  }
 }
 
 .topbar {

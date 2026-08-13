@@ -1,6 +1,6 @@
 # Dominion point economy contract
 
-Status: launch contract after the FOU-846 progression rebalance. The database,
+Status: launch contract after the consolidated reward progression rebalance. The database,
 reward catalog, and user interface use the same thresholds.
 
 ## Principles
@@ -34,21 +34,28 @@ The original Dominion challenge is one 77-day challenge instance. A perfect inst
 After a challenge instance is completed, the user may start any available challenge definition. A completed definition may be started again as a new challenge instance. Each instance has its own dates, drafts, Check-Ins, completion state, and streak context; lifetime points and permanent rewards carry forward. Only one challenge instance may be active for a user at a time.
 
 Levels and rewards intentionally move at different speeds. A perfect participant
-levels up every two days, while reward gaps expand through the challenge. Every
-reward threshold lands exactly on a level boundary, but eligibility is evaluated
-from lifetime points rather than from the displayed level:
+levels up every two days, while reward gaps expand through the challenge. Reward
+eligibility is evaluated from points, never from the displayed level. The first
+reward is the sole exception to the lifetime-point source: its 21 points must all
+come from trusted Daily Standards, so the Sharing Bonus and adjustments cannot
+unlock it.
 
-| Reward | Lifetime points | Level entered | Perfect day without Sharing | Perfect day with the one-time Sharing Bonus |
+| Reward | Eligible points | Displayed level at threshold | Perfect day without Sharing | Perfect day with the one-time Sharing Bonus |
 | --- | ---: | ---: | ---: | ---: |
-| Dominion Night theme | 56 | 5 | 8 | 6 |
-| 7-Day Reset | 126 | 10 | 18 | 16 |
-| 21-Day Prayer Track | 210 | 16 | 30 | 28 |
-| 30-Day Strength Intensive | 308 | 23 | 44 | 42 |
-| 40-Day Fasting & Prayer Track | 420 | 31 | 60 | 58 |
-| Bible in a Year | 532 | 39 | 76 | 74 |
+| Gym Training Discount | 21 Daily Standards | 2 | 3 | 3 |
+| Dominion Night theme | 56 lifetime | 5 | 8 | 6 |
+| Nehemiah Leadership Handbook | 98 lifetime | 8 | 14 | 12 |
+| 7-Day Reset | 140 lifetime | 11 | 20 | 18 |
+| Dominion Platinum theme | 210 lifetime | 16 | 30 | 28 |
+| Big God Energy T-Shirt Discount | 273 lifetime | 20 | 39 | 37 |
+| 21-Day Prayer Track | 336 lifetime | 25 | 48 | 46 |
+| 30-Day Strength Intensive | 406 lifetime | 30 | 58 | 56 |
+| 40-Day Fasting & Prayer Track | 469 lifetime | 34 | 67 | 65 |
+| Bible in a Year | 532 lifetime | 39 | 76 | 74 |
 
-The Sharing Bonus accelerates these dates but is never required. A consistent
-four-standard day reaches the first reward on day 14 and four rewards by day 77;
+The Sharing Bonus accelerates lifetime-point dates but is never required and does
+not accelerate the Gym Training Discount. A consistent four-standard day reaches
+the first reward on day 6 and six rewards by day 77;
 sharing alone unlocks nothing. Repeatable challenge instances remain the
 long-term earning path after launch rewards have been earned.
 
@@ -74,8 +81,10 @@ Group leaderboards use lifetime points by default. A future time-boxed leaderboa
 * A share can grant at most one 14-point bonus per user.
 * App visits, streaks, statuses, and workout difficulty cannot add points.
 * Every active point reward is reachable through repeatable challenge instances.
-* Every active point reward requires at least 56 points and aligns to a 14-point level boundary.
-* The launch reward thresholds are 56, 126, 210, 308, 420, and 532 points.
+* Every active point reward requires at least 21 eligible points and thresholds are strictly increasing.
+* The launch reward thresholds are 21, 56, 98, 140, 210, 273, 336, 406, 469, and 532 points.
+* Only trusted Daily Standards count toward the 21-point Gym Training Discount; all other launch rewards use lifetime points.
+* Level boundaries do not grant rewards and reward boundaries do not need to align with a level boundary.
 
 The server/client shape that exposes these thresholds, lifecycle states, and
 permanent ownership is documented in [reward-catalog-contract.md](reward-catalog-contract.md).

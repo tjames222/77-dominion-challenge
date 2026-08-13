@@ -210,6 +210,27 @@ test('Badges & Rewards tabs preserve loaded state across pointer and keyboard na
   await expect(page.locator('#badgesGallery')).toHaveAttribute('aria-busy', 'false');
 });
 
+test('a fulfillment reward card is one keyboard-accessible dialog trigger', async ({ page, app }) => {
+  await app.open(ROUTE_BY_ID.badgesRewards, { state: 'rewardsLocked' });
+  const card = page.locator('[data-reward-key="gym_training_discount"]');
+  const dialog = page.getByRole('dialog', { name: /Gym Training Discount/i });
+
+  await expect(card).toHaveAttribute('role', 'button');
+  await expect(card).toHaveAttribute('tabindex', '0');
+  await card.click({ position: { x: 20, y: 20 } });
+  await expect(dialog).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(card).toBeFocused();
+
+  await page.keyboard.press('Enter');
+  await expect(dialog).toBeVisible();
+  await page.keyboard.press('Escape');
+  await page.keyboard.press('Space');
+  await expect(dialog).toBeVisible();
+  await page.keyboard.press('Escape');
+  app.assertNoRuntimeErrors();
+});
+
 test('single-crew setup expands, focuses, and safely cancels', async ({ page, app }) => {
   await app.open(ROUTE_BY_ID.community, { state: 'communityEmpty' });
   const openButton = page.locator('#openCrewFormButton');
@@ -218,7 +239,7 @@ test('single-crew setup expands, focuses, and safely cancels', async ({ page, ap
   await openButton.click();
   await expect(openButton).toHaveAttribute('aria-expanded', 'true');
   await expect(form).toBeVisible();
-  await expect(page.getByLabel('Crew name')).toBeFocused();
+  await expect(page.getByLabel('Group name')).toBeFocused();
 
   await page.getByRole('button', { name: 'Cancel' }).click();
   await expect(form).toBeHidden();
@@ -228,13 +249,15 @@ test('single-crew setup expands, focuses, and safely cancels', async ({ page, ap
 
 test('crew deletion requires an accessible confirmation and restores focus on Escape', async ({ page, app }) => {
   await app.open(ROUTE_BY_ID.community);
-  const trigger = page.getByRole('button', { name: 'Delete Crew' });
+  await page.getByRole('link', { name: 'Group settings' }).click();
+  await expect(page).toHaveURL(/\/group-settings\.html$/);
+  const trigger = page.getByRole('button', { name: 'Delete group' });
   await trigger.scrollIntoViewIfNeeded();
   await trigger.click();
 
-  const dialog = page.getByRole('alertdialog', { name: 'Are you sure?' });
+  const dialog = page.getByRole('alertdialog', { name: /Delete Steady Hands\?/ });
   await expect(dialog).toBeVisible();
-  await expect(dialog).toContainText('removes access for every member');
+  await expect(dialog).toContainText('Every member will lose group access');
   await expect(dialog.getByRole('button', { name: 'Cancel' })).toBeFocused();
   await page.keyboard.press('Escape');
   await expect(dialog).toBeHidden();
@@ -243,13 +266,16 @@ test('crew deletion requires an accessible confirmation and restores focus on Es
 
 test('non-admin members see Leave Group and retain personal data after confirmation', async ({ page, app }) => {
   await app.open(ROUTE_BY_ID.community, { state: 'communityMember' });
-  const trigger = page.getByRole('button', { name: 'Leave Group' });
+  await page.getByRole('link', { name: 'Group settings' }).click();
+  await expect(page).toHaveURL(/\/group-settings\.html$/);
+  const trigger = page.getByRole('button', { name: 'Leave group' });
   await trigger.scrollIntoViewIfNeeded();
   await trigger.click();
-  const dialog = page.getByRole('alertdialog', { name: 'Are you sure?' });
-  await expect(dialog).toContainText('removes only your membership');
-  await dialog.getByRole('button', { name: 'Leave Group' }).click();
-  await expect(page.getByRole('button', { name: 'Create a Crew' })).toBeVisible();
+  const dialog = page.getByRole('alertdialog', { name: /Leave Steady Hands\?/ });
+  await expect(dialog).toContainText('Only your membership will be removed');
+  await dialog.getByRole('button', { name: 'Leave group' }).click();
+  await expect(page).toHaveURL(/\/community\.html$/);
+  await expect(page.getByRole('button', { name: 'Create a Group' })).toBeVisible();
   await expect(page.locator('#communityFeedback')).toContainText('personal Dominion data was preserved');
   const personal = await page.evaluate(() => ({
     user: JSON.parse(localStorage.getItem('dominion:user') || 'null'),
@@ -274,6 +300,9 @@ test('Community branded invite and provider actions retain their dedicated flows
   await expect(page.getByRole('button', { name: 'Generate invitation' })).toBeEnabled();
   await page.keyboard.press('Escape');
 
+  await page.getByRole('link', { name: 'Group settings' }).click();
+  await expect(page).toHaveURL(/\/group-settings\.html$/);
+  await expect(page.locator('#groupSettingsContent')).toBeVisible();
   const slack = page.getByRole('button', { name: 'Connect Slack' });
   const discord = page.getByRole('button', { name: 'Connect Discord' });
   await expect(slack).toBeVisible();
@@ -285,20 +314,20 @@ test('Community branded invite and provider actions retain their dedicated flows
   expect(discordBox?.height).toBe(slackBox?.height);
 });
 
-test('Community exposes group settings through an accessible owner gear link', async ({ page, app }) => {
+test('Community exposes group settings through an accessible gear link', async ({ page, app }) => {
   await app.open(ROUTE_BY_ID.community);
   const settings = page.getByRole('link', { name: 'Group settings' });
 
   await expect(settings).toBeVisible();
-  await expect(settings).toHaveAttribute('href', '#crewSettingsCard');
+  await expect(settings).toHaveAttribute('href', './group-settings.html');
   await expect(settings.locator('.icon-settings')).toHaveCount(1);
   const bounds = await settings.boundingBox();
   expect(bounds?.width).toBeGreaterThanOrEqual(44);
   expect(bounds?.height).toBeGreaterThanOrEqual(44);
 
   await settings.click();
-  await expect(page).toHaveURL(/#crewSettingsCard$/);
-  await expect(page.locator('#crewSettingsCard')).toBeFocused();
+  await expect(page).toHaveURL(/\/group-settings\.html$/);
+  await expect(page.locator('#groupSettingsContent')).toBeVisible();
 });
 
 test('Community hides group settings without an active crew', async ({ page, app }) => {
@@ -306,15 +335,14 @@ test('Community hides group settings without an active crew', async ({ page, app
   await expect(page.getByRole('link', { name: 'Group settings' })).toHaveCount(0);
 });
 
-test('Community hides owner-only group settings from ordinary members', async ({ page, app }) => {
+test('Community exposes personal group settings to ordinary members', async ({ page, app }) => {
   await app.open(ROUTE_BY_ID.community, { state: 'communityMember' });
-  await expect(page.getByRole('link', { name: 'Group settings' })).toHaveCount(0);
+  await expect(page.getByRole('link', { name: 'Group settings' })).toBeVisible();
 });
 
 test('Community exposes group settings to group administrators', async ({ page, app }) => {
   await app.open(ROUTE_BY_ID.community, { state: 'communityAdmin' });
   await expect(page.getByRole('link', { name: 'Group settings' })).toBeVisible();
-  await expect(page.locator('#crewSettingsCard')).toBeVisible();
 });
 
 test('login form submits with the keyboard and honors a safe return path', async ({ page, app }) => {
@@ -375,15 +403,15 @@ test('Dashboard places tracking and the scorecard around the countdown in docume
   expect(position('dashboard-hero')).toBeLessThan(position('dashboard-tracking'));
   expect(position('dashboard-tracking')).toBeLessThan(position('countdownCard'));
   expect(position('countdownCard')).toBeLessThan(position('dashboard-scorecard'));
-  expect(position('dashboard-scorecard')).toBeLessThan(position('gameSummaryCard'));
+  await expect(page.locator('#gameSummaryCard')).toHaveCount(0);
 
   await page.locator('#countdownCheckInButton').click();
   await expect(page.locator('#check-in')).toBeFocused();
   await expect(page.locator('#checklist [data-standard-card]')).toHaveCount(7);
 });
 
-test('Dashboard uses zero-point glass only outside the private-group podium', async ({ page, app }) => {
-  await app.open(ROUTE_BY_ID.dashboard);
+test('Rewards uses zero-point glass only outside the private-group podium', async ({ page, app }) => {
+  await app.open(ROUTE_BY_ID.badgesRewards);
   await page.evaluate(() => {
     const stats = JSON.parse(localStorage.getItem('dominion:gameStats') || '{}');
     localStorage.setItem('dominion:gameStats', JSON.stringify({
@@ -424,8 +452,8 @@ test('Dashboard streak opens all four current and personal-best metrics', async 
 
   const dialog = page.getByRole('dialog', { name: 'App Streak' });
   await expect(dialog).toBeVisible();
-  await expect(dialog).toContainText('Full standard streak');
-  await expect(dialog).toContainText('Best full standard streak');
+  await expect(dialog).toContainText('Perfect-day streak');
+  await expect(dialog).toContainText('Best perfect-day streak');
   await expect(dialog).toContainText('App streak');
   await expect(dialog).toContainText('Best app streak');
 });
@@ -453,7 +481,7 @@ test('Dashboard reward queue dismisses safely and advances to the earned tier', 
   await expect(badge).toHaveAttribute('data-tier', 'silver');
   await expect(badge).toContainText('Silver Badge Earned');
 
-  await badge.getByRole('heading', { name: 'Two-Week Guard' }).click();
+  await badge.getByRole('heading', { name: 'Two Weeks Complete' }).click();
   await expect(badge).toBeVisible();
   await page.keyboard.press('Escape');
   await expect(badge).toBeHidden();

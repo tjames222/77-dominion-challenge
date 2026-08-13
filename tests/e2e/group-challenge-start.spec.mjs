@@ -84,8 +84,8 @@ test('create path atomically creates membership and starts the Group challenge',
   await openStartCommunity(page, app, 'groupStartEmpty');
   const form = page.locator('#crewForm');
   await expect(form).toBeVisible();
-  await page.getByLabel('Crew name').fill('New Start Crew');
-  await form.getByRole('button', { name: 'Create Crew and Start Challenge' }).click();
+  await page.getByLabel('Group name').fill('New Start Group');
+  await form.getByRole('button', { name: 'Create Group and Start Challenge' }).click();
   await expect(page.locator('#communityFeedback')).toContainText('Group challenge is confirmed');
   await expect(page).toHaveURL(/\/community\.html$/);
 
@@ -114,9 +114,9 @@ test('ordinary Community crew creation remains challenge-gated', async ({ page, 
     ready: '#crewLeaderboard',
     defaultState: 'groupStartEmpty',
   });
-  await page.getByRole('button', { name: 'Create a Crew' }).click();
-  await page.getByLabel('Crew name').fill('Ordinary Crew');
-  await page.locator('#crewForm').getByRole('button', { name: 'Create Crew' }).click();
+  await page.getByRole('button', { name: 'Create a Group' }).click();
+  await page.getByLabel('Group name').fill('Ordinary Group');
+  await page.locator('#crewForm').getByRole('button', { name: 'Create Group' }).click();
   const activation = await page.evaluate(() => (
     JSON.parse(localStorage.getItem('dominion:mockChallengeActivation') || '{}')
   ));

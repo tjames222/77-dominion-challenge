@@ -7,11 +7,11 @@ import {
 
 async function createCrew(page, app, name = 'North Star Crew', options = {}) {
   await app.open(ROUTE_BY_ID.community, { state: 'communityEmpty', ...options });
-  await page.getByRole('button', { name: 'Create a Crew', exact: true }).click();
-  await page.getByLabel('Crew name').fill(name);
+  await page.getByRole('button', { name: 'Create a Group', exact: true }).click();
+  await page.getByLabel('Group name').fill(name);
   await page.getByLabel('Challenge start date').fill('2026-02-14');
   await page.getByLabel('Description').fill('A deterministic crew training fixture.');
-  await page.getByRole('button', { name: 'Create Crew', exact: true }).click();
+  await page.getByRole('button', { name: 'Create Group', exact: true }).click();
   await expect(page.locator('#crewTrainingLayer')).toBeVisible();
   await expect(page.locator('#crewTrainingTitle')).toHaveText(`${name} is ready`);
 }
@@ -53,10 +53,10 @@ test('creator training claims once after create and never auto-opens on refresh'
   await expect(page.locator('#crewTrainingLayer')).toBeHidden();
   expect(await trainingRows(page)).toEqual([]);
 
-  await page.getByRole('button', { name: 'Create a Crew', exact: true }).click();
-  await page.getByLabel('Crew name').fill('Once Only Crew');
+  await page.getByRole('button', { name: 'Create a Group', exact: true }).click();
+  await page.getByLabel('Group name').fill('Once Only Group');
   await page.getByLabel('Challenge start date').fill('2026-02-14');
-  await page.getByRole('button', { name: 'Create Crew', exact: true }).click();
+  await page.getByRole('button', { name: 'Create Group', exact: true }).click();
 
   const layer = page.locator('#crewTrainingLayer');
   await expect(layer).toBeVisible();
@@ -75,12 +75,12 @@ test('creator training claims once after create and never auto-opens on refresh'
 
   await page.keyboard.press('Escape');
   await expect(layer).toBeHidden();
-  await expect(page.getByRole('button', { name: 'Resume Crew Training' })).toBeFocused();
+  await expect(page.getByRole('button', { name: 'Resume Group Training' })).toBeFocused();
 
   await page.reload({ waitUntil: 'networkidle' });
   await app.stable();
   await expect(layer).toBeHidden();
-  await expect(page.getByRole('button', { name: 'Resume Crew Training' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Resume Group Training' })).toBeVisible();
   expect((await trainingRows(page)).length).toBe(1);
 });
 
@@ -113,27 +113,27 @@ test('back, close, skip, resume, finish, and replay preserve non-training state'
   expect(await trainingRows(page)).toMatchObject([{ currentStep: 1, furthestStep: 1 }]);
   await page.locator('#crewTrainingNext').click();
   await page.locator('#crewTrainingClose').click();
-  await expect(page.getByRole('button', { name: 'Resume Crew Training' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Resume Group Training' })).toBeVisible();
 
-  await page.getByRole('button', { name: 'Resume Crew Training' }).click();
+  await page.getByRole('button', { name: 'Resume Group Training' }).click();
   await expect(page.locator('#crewTrainingProgress')).toHaveText('Step 2 of 7');
   await page.locator('#crewTrainingSkip').click();
   await expect(page.locator('#crewTrainingLayer')).toBeHidden();
-  await expect(page.getByRole('button', { name: 'Resume Crew Training' })).toBeFocused();
+  await expect(page.getByRole('button', { name: 'Resume Group Training' })).toBeFocused();
   expect(await trainingRows(page)).toMatchObject([{ status: 'skipped', currentStep: 1 }]);
 
-  await page.getByRole('button', { name: 'Resume Crew Training' }).click();
+  await page.getByRole('button', { name: 'Resume Group Training' }).click();
   expect(await trainingRows(page)).toMatchObject([{ status: 'in_progress', currentStep: 1 }]);
   for (let expectedStep = 3; expectedStep <= 7; expectedStep += 1) {
     await page.locator('#crewTrainingNext').click();
     await expect(page.locator('#crewTrainingProgress')).toHaveText(`Step ${expectedStep} of 7`);
   }
-  await expect(page.locator('#crewLifecycleCard')).toHaveClass(/crew-training-target/);
+  await expect(page.locator('#crewSettingsButton')).toHaveClass(/crew-training-target/);
   await expect(page.locator('#crewTrainingTitle')).toBeFocused();
-  await expect(page.getByRole('button', { name: 'Delete Crew' })).not.toBeFocused();
+  await expect(page.getByRole('link', { name: 'Group settings' })).not.toBeFocused();
   await page.locator('#crewTrainingNext').click();
   await expect(page.locator('#crewTrainingLayer')).toBeHidden();
-  await expect(page.getByRole('button', { name: 'Replay Crew Training' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Replay Group Training' })).toBeVisible();
   expect(await trainingRows(page)).toMatchObject([{
     status: 'completed',
     currentStep: 6,
@@ -142,7 +142,7 @@ test('back, close, skip, resume, finish, and replay preserve non-training state'
   expect(await sensitiveCrewState(page)).toEqual(sensitiveBefore);
 
   const completedProgress = await page.evaluate(() => localStorage.getItem('dominion:crewTraining'));
-  await page.getByRole('button', { name: 'Replay Crew Training' }).click();
+  await page.getByRole('button', { name: 'Replay Group Training' }).click();
   await expect(page.locator('#crewTrainingProgress')).toHaveText('Replay · Step 1 of 7');
   await expect(page.locator('#crewTrainingSkip')).toBeHidden();
   for (let expectedStep = 2; expectedStep <= 7; expectedStep += 1) {
@@ -157,7 +157,7 @@ test('back, close, skip, resume, finish, and replay preserve non-training state'
   await page.reload({ waitUntil: 'networkidle' });
   await app.stable();
   await expect(page.locator('#crewTrainingLayer')).toBeHidden();
-  await expect(page.getByRole('button', { name: 'Replay Crew Training' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Replay Group Training' })).toBeVisible();
   expect(await page.evaluate(() => localStorage.getItem('dominion:crewTraining'))).toBe(completedProgress);
 });
 
@@ -181,9 +181,8 @@ test('safe-off training completes in the light theme without provider controls',
     await page.locator('#crewTrainingNext').click();
     await expect(page.locator('#crewTrainingProgress')).toHaveText(`Step ${expectedStep} of 7`);
   }
-  await expect(page.locator('#crewTrainingTitle')).toHaveText('External updates are safely off');
+  await expect(page.locator('#crewTrainingTitle')).toHaveText('External updates are off');
   await expect(page.locator('#crewTrainingCoachmark')).toHaveAttribute('aria-modal', 'true');
-  await expect(page.locator('#crewIntegrationsCard')).toBeHidden();
   await expect(page.getByRole('button', { name: 'Connect Slack' })).toBeHidden();
   await expect(page.getByRole('button', { name: 'Connect Discord' })).toBeHidden();
   assertNoBlockingAxeViolations(await analyzeAccessibility(page));
@@ -207,14 +206,13 @@ test('activating a highlighted control closes training before its action continu
   await expect(page.locator('#crewTrainingLayer')).toBeHidden();
 });
 
-test('starting an unrelated workflow closes a contextual coachmark first', async ({ page, app }) => {
+test('opening group settings closes a contextual coachmark first', async ({ page, app }) => {
   await createCrew(page, app, 'Dialog Ownership Crew');
   await page.locator('#crewTrainingNext').click();
   await expect(page.locator('#copyInviteButton')).toHaveClass(/crew-training-target/);
-  await page.locator('#crewLifecycleButton').click();
-  await expect(page.locator('#crewTrainingLayer')).toBeHidden();
-  await expect(page.getByRole('alertdialog')).toBeVisible();
-  await page.keyboard.press('Escape');
+  await page.locator('#crewSettingsButton').click();
+  await expect(page).toHaveURL(/\/group-settings\.html$/);
+  await expect(page.locator('#groupSettingsContent')).toBeVisible();
 });
 
 test('contextual coachmarks remain onscreen on mobile', async ({ page, app }) => {
@@ -235,9 +233,9 @@ test('contextual coachmarks remain onscreen on mobile', async ({ page, app }) =>
   for (const [step, targetId] of [
     [3, 'crewMembersTitle'],
     [4, 'crewLeaderboardTitle'],
-    [5, 'groupIntegrationsTitle'],
-    [6, 'integrationConnectActions'],
-    [7, 'crewLifecycleCard'],
+    [5, 'crewSettingsButton'],
+    [6, 'crewSettingsButton'],
+    [7, 'crewSettingsButton'],
   ]) {
     await page.locator('#crewTrainingNext').click();
     await expect(page.locator('#crewTrainingProgress')).toHaveText(`Step ${step} of 7`);

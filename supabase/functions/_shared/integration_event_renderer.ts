@@ -139,7 +139,7 @@ function eventText(
     const challengeDay = integer(payload.challengeDay, "Challenge day", 1, 77);
     const completedCount = integer(
       payload.completedCount,
-      "Completed standard count",
+      "Completed action count",
       0,
       7,
     );
@@ -147,7 +147,7 @@ function eventText(
       throw new Error("Check-In status is invalid.");
     }
     const status = payload.status === "complete" ? "complete" : "partial";
-    return `${member} submitted a ${status} Daily Check-In for challenge day ${challengeDay} (${completedCount} of 7 standards).`;
+    return `${member} submitted a ${status} Daily Check-In for challenge day ${challengeDay} (${completedCount} of 7 actions).`;
   }
 
   if (delivery.event_type === "streak_milestone") {
@@ -158,7 +158,7 @@ function eventText(
     const milestone = integer(payload.milestone, "Streak milestone", 1, 10000);
     const streak = payload.streakType === "app"
       ? "app streak"
-      : "full-standard streak";
+      : "perfect-day streak";
     return `${member} reached a ${milestone}-day ${streak} milestone.`;
   }
 
@@ -194,11 +194,11 @@ function eventText(
     );
     const completedStandards = integer(
       payload.completedStandards,
-      "Completed standards",
+      "Completed actions",
       0,
       7000000,
     );
-    return `${period} recap: ${memberCount} group members submitted ${checkInCount} Check-Ins and completed ${completedStandards} standards.`;
+    return `${period} recap: ${memberCount} group members submitted ${checkInCount} Check-Ins and completed ${completedStandards} actions.`;
   }
 
   if (delivery.event_type === "synthetic.delivery") {

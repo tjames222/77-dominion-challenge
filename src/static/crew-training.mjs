@@ -54,44 +54,44 @@ export function normalizeCrewTrainingProgress(value = {}) {
 
 export function crewTrainingActionLabel(progress) {
   const status = normalizeCrewTrainingProgress(progress).status;
-  if (status === 'completed') return 'Replay Crew Training';
-  if (status === 'in_progress' || status === 'skipped') return 'Resume Crew Training';
-  return 'Start Crew Training';
+  if (status === 'completed') return 'Replay Group Training';
+  if (status === 'in_progress' || status === 'skipped') return 'Resume Group Training';
+  return 'Start Group Training';
 }
 
 export function buildCrewTrainingSteps({ integrationsEnabled = false, crewName = '' } = {}) {
-  const name = text(crewName, 'Your crew');
+  const name = text(crewName, 'Your group');
   const providerSteps = integrationsEnabled
     ? [
         {
           id: 'provider-purpose',
           title: 'Keep conversation in your channel',
-          description: 'Dominion manages the roster and accountability. Approved progress updates can go to Slack or Discord only with member consent; replies and conversation never sync back into Dominion.',
-          targetId: 'groupIntegrationsTitle',
+          description: 'Dominion manages the roster and accountability. Open Group Settings when you want to review Slack or Discord connections. Approved progress updates leave Dominion only with member consent; replies and conversation never sync back.',
+          targetId: 'crewSettingsButton',
           actionable: false,
           targetUnavailableDescription: 'External update guidance is informational until the integration area is available.',
         },
         {
           id: 'provider-connection',
-          title: 'Connect deliberately',
-          description: 'An authorized owner or admin can choose Slack, Discord, or both: authorize the provider, confirm the workspace or server and channel, return here, verify the status, then send a deliberate test. Reconnect and disconnect controls remain available for needs-attention states.',
-          targetId: 'integrationConnectActions',
-          actionable: true,
+          title: 'Connect a channel',
+          description: 'In Group Settings, an owner or admin can connect Slack or Discord, check the selected channel, send a test, reconnect, or disconnect.',
+          targetId: 'crewSettingsButton',
+          actionable: false,
           targetUnavailableDescription: 'Connection controls may be hidden when every provider is already configured. Review existing destinations in the integration area instead.',
         },
       ]
     : [
         {
           id: 'provider-purpose',
-          title: 'External updates are safely off',
-          description: 'Slack and Discord connections are not currently available. No crew update leaves Dominion through a provider, and core crew training works without an external channel.',
+          title: 'External updates are off',
+          description: 'Slack and Discord connections aren’t available right now. Group updates stay inside Dominion, and the rest of this walkthrough still works.',
           targetId: null,
           actionable: false,
         },
         {
           id: 'provider-connection',
           title: 'Nothing to connect right now',
-          description: 'There is no authorization, destination selection, callback, or test action in safe-off mode. Continue using the private roster and leaderboard inside Dominion.',
+          description: 'Continue using the private member list and leaderboard inside Dominion. There’s no external channel to set up right now.',
           targetId: null,
           actionable: false,
         },
@@ -101,14 +101,14 @@ export function buildCrewTrainingSteps({ integrationsEnabled = false, crewName =
     {
       id: 'crew-ready',
       title: `${name} is ready`,
-      description: 'This is your single active crew for the current product version. As its creator and owner/admin, you can manage invitations, enabled integrations, and safe crew lifecycle actions.',
+      description: 'This is your active private group. As its creator and owner or admin, you can manage invitations, connected channels, and group access.',
       targetId: 'crewSummary',
       actionable: false,
     },
     {
       id: 'invite-people',
       title: 'Invite people privately',
-      description: 'Invite links use the secure crew flow: they expire or rotate, and a recipient must review and confirm before joining. This crew is not public, and training never creates or copies an invitation.',
+      description: 'Private invitations expire or can be replaced. Each person reviews the invitation before joining. This walkthrough won’t create or copy one.',
       targetId: 'copyInviteButton',
       actionable: false,
       targetUnavailableDescription: 'Invitation guidance remains informational until the Invite People action is available.',
@@ -124,7 +124,7 @@ export function buildCrewTrainingSteps({ integrationsEnabled = false, crewName =
     {
       id: 'leaderboard-and-progress',
       title: 'Read progress without changing it',
-      description: 'Weekly and challenge views show points, placement, podium, and prestige for current crew activity. Rank can change as members progress, but it never rewrites anyone’s underlying personal points.',
+      description: 'Weekly and challenge views show each member’s points and rank. Rankings can change, but no one’s personal point total is changed by the leaderboard.',
       targetId: 'crewLeaderboardTitle',
       actionable: false,
       targetUnavailableDescription: 'Leaderboard guidance is informational until the crew leaderboard is available.',
@@ -132,9 +132,9 @@ export function buildCrewTrainingSteps({ integrationsEnabled = false, crewName =
     ...providerSteps,
     {
       id: 'safe-management',
-      title: 'Manage the crew safely',
-      description: 'Routine crew controls stay above this separated lifecycle area. Owners and admins see Delete Crew; regular members see Leave Group. Either action requires its own explicit confirmation, and training never selects it.',
-      targetId: 'crewLifecycleCard',
+      title: 'Manage group access',
+      description: 'Use Group Settings to leave or delete the group. Both actions ask for confirmation, and this walkthrough won’t select either one.',
+      targetId: 'crewSettingsButton',
       actionable: false,
       targetUnavailableDescription: 'Lifecycle guidance remains informational when the management area is unavailable.',
     },

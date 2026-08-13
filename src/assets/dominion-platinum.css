@@ -1,0 +1,289 @@
+/*
+ * Dominion Platinum — stable theme key: dominion-platinum
+ * Obsidian and cool platinum form the material system; Dominion gold remains
+ * the primary brand and action signal.
+ */
+
+:root[data-theme="dominion-platinum"] {
+  color-scheme: dark;
+  --background: #080a10;
+  --background-soft: #10141d;
+  --surface: #171c27;
+  --surface-elevated: #222936;
+  --glass: #1d2430;
+  --input: #111620;
+  --text: #f7f5ef;
+  --text-muted: #c1c7d0;
+  --text-disabled: #929aa7;
+  --text-inverse: #171006;
+  --border: #758091;
+  --divider: #424b59;
+  --accent: #d6aa43;
+  --accent-strong: #f4cd68;
+  --focus-ring: #ffe49a;
+  --selection-background: #725b25;
+  --selection-text: #ffffff;
+  --link: #f7d77e;
+  --success: #89cba0;
+  --warning: #f4cd68;
+  --danger: #ff9f9c;
+  --info: #a9c9ee;
+  --shadow-color: #000207;
+  --highlight-color: #f6fbff;
+  --scrim: #02030a;
+  --shadow: 0 26px 72px color-mix(in srgb, var(--shadow-color) 78%, transparent);
+  --overlay-background: color-mix(in srgb, var(--scrim) 82%, transparent);
+  --tooltip-background: #29313e;
+  --tooltip-text: #ffffff;
+  --button-primary-background: #d6aa43;
+  --button-primary-text: #171006;
+  --button-secondary-background: #252c38;
+  --button-secondary-text: #f7f5ef;
+  --button-danger-background: #572e36;
+  --button-danger-text: #fff5f3;
+  --button-disabled-background: #242a34;
+  --button-disabled-text: #a8afb9;
+  --button-disabled-border: #596373;
+  --progress-track: #121722;
+  --progress-fill-start: #b88725;
+  --progress-fill-end: #f4cd68;
+  --chart-1: #d6aa43;
+  --chart-2: #c8d1dc;
+  --chart-3: #89cba0;
+  --chart-4: #a9c9ee;
+  --streak-highlight: #efaa50;
+  --reward-accent: #f4cd68;
+  --badge-accent: #cbd4e0;
+  --workout-accent: #e8b653;
+  --workout-secondary-accent: #cbd4e0;
+  --walk-accent: #8fc7af;
+  --calendar-picker-filter: invert(94%) sepia(7%) saturate(269%) hue-rotate(178deg) brightness(104%);
+}
+
+:root[data-theme="dominion-platinum"],
+:root[data-theme="dominion-platinum"] body {
+  background-color: var(--background);
+}
+
+:root[data-theme="dominion-platinum"] body {
+  background-image:
+    linear-gradient(118deg, transparent 0 46%, color-mix(in srgb, #eaf2ff 4%, transparent) 48%, transparent 50% 100%),
+    radial-gradient(circle at 8% -10%, color-mix(in srgb, #dce7f5 13%, transparent), transparent 34rem),
+    radial-gradient(circle at 104% 22%, color-mix(in srgb, var(--accent) 10%, transparent), transparent 32rem);
+  background-attachment: fixed;
+}
+
+:root[data-theme="dominion-platinum"] ::selection {
+  background: var(--selection-background);
+  color: var(--selection-text);
+}
+
+:root[data-theme="dominion-platinum"] :where(a, button, input, select, textarea, summary, [tabindex]):focus-visible {
+  outline-color: var(--focus-ring);
+  box-shadow: 0 0 0 5px color-mix(in srgb, var(--focus-ring) 20%, transparent);
+}
+
+:root[data-theme="dominion-platinum"] :where(button, input, select, textarea):disabled {
+  color: var(--text-disabled);
+}
+
+:root[data-theme="dominion-platinum"] input,
+:root[data-theme="dominion-platinum"] select,
+:root[data-theme="dominion-platinum"] textarea {
+  border-color: color-mix(in srgb, #dbe5f1 48%, var(--border));
+  background: linear-gradient(145deg, color-mix(in srgb, #eef6ff 5%, var(--input)), var(--input));
+  color: var(--text);
+}
+
+:root[data-theme="dominion-platinum"] input:focus,
+:root[data-theme="dominion-platinum"] select:focus,
+:root[data-theme="dominion-platinum"] textarea:focus {
+  border-color: var(--accent-strong);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--focus-ring) 24%, transparent);
+}
+
+:root[data-theme="dominion-platinum"] .topbar {
+  background: transparent;
+  border-bottom-color: transparent;
+}
+
+:root[data-theme="dominion-platinum"] .topbar::before {
+  border-bottom-color: color-mix(in srgb, #dce7f5 28%, transparent);
+  background: color-mix(in srgb, #0b0e15 84%, transparent);
+  box-shadow: inset 0 1px 0 color-mix(in srgb, #ffffff 9%, transparent);
+}
+
+:root[data-theme="dominion-platinum"] .global-menu {
+  background:
+    linear-gradient(130deg, color-mix(in srgb, #ecf4ff 8%, transparent), transparent 36%),
+    radial-gradient(circle at top right, color-mix(in srgb, var(--accent) 16%, transparent), transparent 42%),
+    linear-gradient(180deg, #151a24, #080a10);
+}
+
+:root[data-theme="dominion-platinum"] :is(
+  .global-menu-links a,
+  .global-menu-logout,
+  .theme-toggle,
+  .back-link,
+  .secondary,
+  .secondary-button
+) {
+  border-color: color-mix(in srgb, #dce7f5 38%, var(--border));
+  background: linear-gradient(145deg, color-mix(in srgb, #edf5ff 9%, var(--surface-elevated)), var(--surface));
+  color: var(--text);
+}
+
+:root[data-theme="dominion-platinum"] :is(
+  .card,
+  blockquote,
+  .timeline article,
+  .standard-stack article,
+  .verse-grid article,
+  .landing-grid article,
+  .mini-proof-grid article,
+  .game-summary-card,
+  .challenge-vault-card,
+  .reward-next-panel,
+  .badges-gallery-section,
+  .leaderboard-card,
+  .billing-offer-flagship,
+  .membership-hero,
+  .profile-preview-tools,
+  .featured-card
+) {
+  border-color: color-mix(in srgb, #dce7f5 36%, var(--border));
+  background:
+    linear-gradient(128deg, color-mix(in srgb, #f4f9ff 10%, transparent), transparent 32%),
+    radial-gradient(circle at 100% 0, color-mix(in srgb, var(--accent) 10%, transparent), transparent 42%),
+    color-mix(in srgb, var(--surface) 92%, var(--background));
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, #ffffff 20%, transparent),
+    inset 1px 0 0 color-mix(in srgb, #dce7f5 8%, transparent),
+    0 24px 62px color-mix(in srgb, var(--shadow-color) 52%, transparent);
+  backdrop-filter: blur(18px) saturate(112%);
+}
+
+:root[data-theme="dominion-platinum"] .hero::after {
+  border-color: color-mix(in srgb, var(--accent) 30%, #dce7f5 8%);
+}
+
+:root[data-theme="dominion-platinum"] .dashboard-hero::before {
+  background:
+    linear-gradient(135deg, color-mix(in srgb, #dce7f5 16%, transparent), transparent 42%),
+    repeating-linear-gradient(90deg, color-mix(in srgb, var(--accent) 10%, transparent) 0 1px, transparent 1px 42px);
+}
+
+:root[data-theme="dominion-platinum"] .ring {
+  background: conic-gradient(var(--accent-strong) var(--value), var(--progress-track) 0);
+  box-shadow: 0 0 28px color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
+:root[data-theme="dominion-platinum"] :is(
+  .ring-inner,
+  .countdown-progress,
+  .game-level-progress-track,
+  .challenge-unlock-progress,
+  .reward-next-progress,
+  .reward-row-progress,
+  .pulse-bar
+) {
+  background: var(--progress-track);
+}
+
+:root[data-theme="dominion-platinum"] :is(
+  .countdown-progress span,
+  .game-level-progress-track > span,
+  .challenge-unlock-progress > span,
+  .reward-next-progress > span,
+  .reward-row-progress > span,
+  .pulse-bar span
+) {
+  background: linear-gradient(90deg, #a9771d, var(--accent-strong), #e6edf5);
+}
+
+:root[data-theme="dominion-platinum"] .game-level-emblem[data-prestige="default"] {
+  --coin-border: #dfe7f0;
+  --coin-highlight: color-mix(in srgb, #ffffff 30%, transparent);
+  --coin-mid: #8994a4;
+  --coin-depth: #242a35;
+  --coin-text: #fff6d7;
+  --coin-ring: color-mix(in srgb, var(--accent-strong) 42%, transparent);
+  --coin-aura: color-mix(in srgb, var(--accent) 20%, transparent);
+  --coin-inset-shadow: color-mix(in srgb, #000000 38%, transparent);
+  --coin-drop-shadow: color-mix(in srgb, #000000 56%, transparent);
+  --orbit-color: var(--accent-strong);
+}
+
+:root[data-theme="dominion-platinum"] :is(
+  .reward-backdrop,
+  .badge-celebration,
+  .reward-detail-backdrop,
+  dialog::backdrop
+) {
+  background:
+    radial-gradient(circle at 50% 42%, color-mix(in srgb, #e5edf7 16%, transparent), transparent 38%),
+    var(--overlay-background);
+}
+
+:root[data-theme="dominion-platinum"] :is(.reward-toast, .reward-detail-dialog) {
+  border-color: color-mix(in srgb, #e5edf7 54%, var(--accent));
+  background:
+    linear-gradient(128deg, color-mix(in srgb, #ffffff 11%, transparent), transparent 34%),
+    radial-gradient(circle at 100% 0, color-mix(in srgb, var(--accent) 18%, transparent), transparent 42%),
+    #171c27;
+  box-shadow: inset 0 1px 0 color-mix(in srgb, #ffffff 24%, transparent), var(--shadow);
+}
+
+:root[data-theme="dominion-platinum"] :is(
+  .badges-rewards-tabs,
+  .community-tabs,
+  .leaderboard-toggle
+) {
+  border-color: color-mix(in srgb, #dce7f5 34%, var(--border));
+  background: color-mix(in srgb, #111620 88%, transparent);
+}
+
+:root[data-theme="dominion-platinum"] :is(
+  .badges-rewards-tab.active,
+  .community-tab.active,
+  .leaderboard-toggle button.active,
+  .primary,
+  .reward-action-button
+) {
+  background: linear-gradient(135deg, #b88422, #f0ca68 58%, #c8942e);
+  color: var(--button-primary-text);
+  box-shadow: inset 0 1px 0 color-mix(in srgb, #fff6c8 55%, transparent);
+}
+
+:root[data-theme="dominion-platinum"] :is(
+  .badges-rewards-error,
+  .community-feedback.error,
+  .check-in-status.error,
+  .profile-feedback.error,
+  .billing-feedback.error
+) {
+  border-color: color-mix(in srgb, var(--danger) 58%, var(--border));
+  background: color-mix(in srgb, var(--danger) 11%, var(--surface));
+}
+
+:root[data-theme="dominion-platinum"] :is(.skeleton, [aria-busy="true"] .skeleton) {
+  background: linear-gradient(90deg, var(--surface), color-mix(in srgb, #e6eef8 14%, var(--surface-elevated)), var(--surface));
+  background-size: 220% 100%;
+}
+
+@media (max-width: 640px) {
+  :root[data-theme="dominion-platinum"] :is(.card, .reward-detail-dialog, .reward-next-panel) {
+    backdrop-filter: blur(12px) saturate(108%);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root[data-theme="dominion-platinum"] *,
+  :root[data-theme="dominion-platinum"] *::before,
+  :root[data-theme="dominion-platinum"] *::after {
+    animation-duration: .01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: .01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

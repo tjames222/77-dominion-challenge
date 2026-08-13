@@ -18,6 +18,8 @@ import {
   resolveMockIdentity,
 } from './mock-identity.mjs';
 import { normalizeDailyStandardDraft } from './daily-standard-draft.mjs';
+import { naturalizeDailyActionError } from './customer-copy.mjs';
+import { revokeRecoverySessions } from './account-recovery-session.mjs';
 import {
   buildMockChallengeActivation,
   buildMockLegacyChallengeActivation,
@@ -54,12 +56,11 @@ import { normalizeJournalEntry, sortJournalEntries } from './journal-entry.mjs';
 import {
   canonicalProfilePhotoUrl,
   commitProfileUpdateWithCompareAndSwap,
-  createProfilePhotoStoragePath,
   isPreparedProfilePhoto,
+  normalizeTrustedProfilePhotoUploadResponse,
   replaceProfilePhoto as replacePreparedProfilePhoto,
   syncProfileMetadataBestEffort,
 } from './profile-photo.mjs';
-import { registerProfilePhotoUploadWithRetry } from './profile-photo-registration.mjs';
 import {
   LEGACY_PROFILE_COLUMNS,
   PROFILE_COLUMNS,
@@ -111,6 +112,15 @@ import {
   reconcileSiteTrainingContentVersion,
   siteTrainingReadError,
 } from './site-training-state.mjs';
+import { passwordRecoveryRedirectUrl } from './account-recovery.mjs';
+import {
+  ACTIVE_ACCOUNT_REQUEST_STATUSES,
+  assertAccountRequestType,
+  isActiveAccountRequest,
+  isActiveAccountRequestConflict,
+  normalizeAccountLifecycleRequest,
+  normalizeAccountLifecycleRequests,
+} from './account-lifecycle.mjs';
 
 const SUPABASE_URL = (import.meta.env.VITE_SUPABASE_URL || '').replace(/\/$/, '');
 const SUPABASE_ORIGIN = (() => {
@@ -128,9 +138,12 @@ const ENABLE_MOCKS = String(import.meta.env.VITE_ENABLE_MOCKS || '').toLowerCase
 const ENABLE_SUPABASE_AUTH_IN_MOCKS = String(
   import.meta.env.VITE_ENABLE_SUPABASE_AUTH_IN_MOCKS || '',
 ).toLowerCase() === 'true';
+const ENABLE_LOCAL_HYBRID_AUTH = Boolean(
+  import.meta.env.DEV && ENABLE_MOCKS && ENABLE_SUPABASE_AUTH_IN_MOCKS,
+);
 const isPlaceholder = (value) => !value || value.includes('YOUR_');
 const isSupabaseConfigured = () => !isPlaceholder(SUPABASE_URL) && !isPlaceholder(SUPABASE_KEY);
-export const supabase = isSupabaseConfigured()
+export const supabase = isSupabaseConfigured() && (!ENABLE_MOCKS || ENABLE_LOCAL_HYBRID_AUTH)
   ? createClient(SUPABASE_URL, SUPABASE_KEY, {
       auth: {
         persistSession: true,
@@ -149,7 +162,7 @@ const usesSupabaseAuthentication = () => Boolean(supabase)
     localDemo: isLocalDemoMode(),
     mocksEnabled: ENABLE_MOCKS,
     productionBuild: import.meta.env.PROD,
-    localHybridEnabled: ENABLE_SUPABASE_AUTH_IN_MOCKS,
+    localHybridEnabled: ENABLE_LOCAL_HYBRID_AUTH,
   });
 const isHybridAuthPreview = () => isLocalDemoMode() && usesSupabaseAuthentication();
 const MEMBERSHIP_ACCESS_KEY = 'membership_active';
@@ -178,7 +191,8 @@ const MOCK_CHALLENGE_THRESHOLDS_VERSION_KEY = 'dominion:mockChallengeThresholdsV
 const MOCK_OUTBOUND_CONSENT_KEY = 'dominion:mockOutboundConsent';
 const MOCK_SHARING_REWARD_KEY = 'dominion:mockSharingReward';
 const MOCK_THEME_PREFERENCES_KEY = 'dominion:mockThemePreferences';
-const MOCK_CHALLENGE_THRESHOLDS_VERSION = 3;
+const MOCK_ACCOUNT_LIFECYCLE_REQUESTS_KEY = 'dominion:mockAccountLifecycleRequests';
+const MOCK_CHALLENGE_THRESHOLDS_VERSION = 4;
 const MOCK_MEDIA_DB_NAME = 'dominion-preview-media';
 const MOCK_MEDIA_STORE_NAME = 'community-post-images';
 const mockCommunityImageUrls = new Map();
@@ -567,43 +581,52 @@ const normalizeThemePreference = (preference = {}) => ({
   updatedAt: preference.updatedAt ?? preference.updated_at ?? null,
 });
 
-export async function getThemePreference() {
+export async function getThemePreference({ expectedUserId = '' } = {}) {
   if (isLocalDemoMode()) {
-    const userId = getMockUserId();
-    return normalizeThemePreference(readJson(MOCK_THEME_PREFERENCES_KEY, {})[userId]);
+    const actorId = requireMockRewardActor(expectedUserId);
+    const preference = normalizeThemePreference(readJson(MOCK_THEME_PREFERENCES_KEY, {})[actorId]);
+    requireMockRewardActor(actorId);
+    return preference;
   }
 
   const client = requireSupabase();
-  await requireUser();
-  const { data, error } = await client.rpc('get_theme_preference');
+  const actor = await requireUser(expectedUserId);
+  const { data, error } = await client.rpc('get_theme_preference', {
+    target_expected_actor_id: actor.id,
+  });
+  await requireUser(actor.id);
   if (error) throw error;
   return normalizeThemePreference(data);
 }
 
-export async function setThemePreference(themeKey) {
+export async function setThemePreference(themeKey, { expectedUserId = '' } = {}) {
   const normalizedThemeKey = String(themeKey || '').trim().toLowerCase();
-  if (!['dark', 'light', 'dominion-night'].includes(normalizedThemeKey)) {
+  if (!['dark', 'light', 'dominion-night', 'dominion-platinum'].includes(normalizedThemeKey)) {
     throw new Error('The requested theme is unavailable.');
   }
 
   if (isLocalDemoMode()) {
-    await requireHybridPreviewUser();
-    const userId = getMockUserId();
+    await requireHybridPreviewUser(expectedUserId);
+    const actorId = requireMockRewardActor(expectedUserId);
     const preferences = readJson(MOCK_THEME_PREFERENCES_KEY, {});
     const preference = {
       themeKey: normalizedThemeKey,
       updatedAt: new Date().toISOString(),
     };
-    preferences[userId] = preference;
+    preferences[actorId] = preference;
     writeJson(MOCK_THEME_PREFERENCES_KEY, preferences);
+    await requireHybridPreviewUser(actorId);
+    requireMockRewardActor(actorId);
     return preference;
   }
 
   const client = requireSupabase();
-  await requireUser();
+  const actor = await requireUser(expectedUserId);
   const { data, error } = await client.rpc('set_theme_preference', {
     target_theme_key: normalizedThemeKey,
+    target_expected_actor_id: actor.id,
   });
+  await requireUser(actor.id);
   if (error) throw error;
   return normalizeThemePreference(data);
 }
@@ -652,6 +675,143 @@ export async function signInWithPassword({ email, password }) {
   if (data.session?.access_token && hasSupabaseAuth()) await ensureProfile();
 
   return { session: data.session, user: data.user };
+}
+
+export async function requestPasswordRecovery(email) {
+  const normalizedEmail = String(email || '').trim();
+  if (!normalizedEmail) throw new TypeError('Enter your email address.');
+
+  if (isLocalDemoMode() && !usesSupabaseAuthentication()) {
+    return { requested: true, preview: true };
+  }
+
+  const client = requireSupabaseAuthentication();
+  const redirectTo = passwordRecoveryRedirectUrl(window.location);
+  const { error } = await client.auth.resetPasswordForEmail(normalizedEmail, { redirectTo });
+  if (error) throw error;
+  return { requested: true, preview: false };
+}
+
+export async function completePasswordRecovery(password) {
+  const value = String(password || '');
+  if (!value) throw new TypeError('Enter a new password.');
+
+  const client = requireSupabaseAuthentication();
+  const { data, error } = await client.auth.updateUser({ password: value });
+  if (error) throw error;
+
+  // A successful password update is final. Revoke the recovery session so a
+  // refreshed or replayed browser page cannot make another account mutation.
+  // Supabase's default sign-out scope is global. If that network request fails,
+  // the fallback must still confirm that this browser's recovery session ended.
+  const revocation = await revokeRecoverySessions(client.auth);
+  if (revocation.scope === 'local') {
+    console.warn(
+      'Password changed and the local recovery session ended, but global session revocation could not be confirmed.',
+      revocation.globalError,
+    );
+  }
+  clearLocalAuthenticatedIdentity();
+  if (typeof localStorage !== 'undefined') {
+    localStorage.removeItem('dominion:user');
+    localStorage.removeItem(MOCK_USER_ID_KEY);
+  }
+
+  return { user: data.user, completed: true, sessionsRevoked: revocation.scope };
+}
+
+const ACCOUNT_REQUEST_COLUMNS = [
+  'id',
+  'user_id',
+  'request_type',
+  'status',
+  'requested_at',
+  'updated_at',
+  'resolved_at',
+  'operator_note',
+].join(', ');
+
+const activeMockAccountRequest = (requests, userId, requestType) => requests.find((request) => (
+  request.userId === userId
+    && request.requestType === requestType
+    && isActiveAccountRequest(request)
+));
+
+export async function getAccountLifecycleRequests({ expectedUserId = '' } = {}) {
+  if (isLocalDemoMode()) {
+    await requireHybridPreviewUser(expectedUserId);
+    const userId = getMockUserId();
+    if (expectedUserId && userId !== expectedUserId) {
+      throw new Error('The signed-in account changed. Try again.');
+    }
+    return normalizeAccountLifecycleRequests(
+      readJson(MOCK_ACCOUNT_LIFECYCLE_REQUESTS_KEY, {})[userId],
+    );
+  }
+
+  const client = requireSupabase();
+  const user = await requireUser(expectedUserId);
+  const { data, error } = await client
+    .from('account_lifecycle_requests')
+    .select(ACCOUNT_REQUEST_COLUMNS)
+    .eq('user_id', user.id)
+    .order('requested_at', { ascending: false })
+    .order('id', { ascending: false });
+  if (error) throw error;
+  return normalizeAccountLifecycleRequests(data);
+}
+
+export async function createAccountLifecycleRequest({ requestType, expectedUserId = '' }) {
+  const normalizedType = assertAccountRequestType(requestType);
+
+  if (isLocalDemoMode()) {
+    await requireHybridPreviewUser(expectedUserId);
+    const userId = getMockUserId();
+    if (expectedUserId && userId !== expectedUserId) {
+      throw new Error('The signed-in account changed. Try again.');
+    }
+    const stored = readJson(MOCK_ACCOUNT_LIFECYCLE_REQUESTS_KEY, {});
+    const requests = normalizeAccountLifecycleRequests(stored[userId]);
+    const existing = activeMockAccountRequest(requests, userId, normalizedType);
+    if (existing) return { request: existing, reused: true };
+
+    const now = new Date().toISOString();
+    const request = normalizeAccountLifecycleRequest({
+      id: randomId('account_request'),
+      user_id: userId,
+      request_type: normalizedType,
+      status: 'requested',
+      requested_at: now,
+      updated_at: now,
+    });
+    stored[userId] = [request, ...requests];
+    writeJson(MOCK_ACCOUNT_LIFECYCLE_REQUESTS_KEY, stored);
+    return { request, reused: false };
+  }
+
+  const client = requireSupabase();
+  const user = await requireUser(expectedUserId);
+  const { data, error } = await client
+    .from('account_lifecycle_requests')
+    .insert({ user_id: user.id, request_type: normalizedType })
+    .select(ACCOUNT_REQUEST_COLUMNS)
+    .single();
+  if (!error) return { request: normalizeAccountLifecycleRequest(data), reused: false };
+  if (!isActiveAccountRequestConflict(error)) throw error;
+
+  const { data: existing, error: lookupError } = await client
+    .from('account_lifecycle_requests')
+    .select(ACCOUNT_REQUEST_COLUMNS)
+    .eq('user_id', user.id)
+    .eq('request_type', normalizedType)
+    .in('status', ACTIVE_ACCOUNT_REQUEST_STATUSES)
+    .order('requested_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (lookupError) throw lookupError;
+  const request = normalizeAccountLifecycleRequest(existing);
+  if (!request) throw error;
+  return { request, reused: true };
 }
 
 const mapProfile = (profile) => profile ? ({
@@ -806,11 +966,6 @@ export async function getProfile({ expectedUserId = '' } = {}) {
     ? mapProfile(result.data)
     : await ensureProfile({ expectedUserId: user.id });
   if (profile.userId !== user.id) throw new Error('Unable to verify the profile account.');
-  if (profile.profilePhotoAvailable) {
-    void drainProfilePhotoCleanupQueue({ expectedUserId: user.id }).catch((cleanupError) => {
-      console.warn('Profile-photo cleanup will retry later', cleanupError);
-    });
-  }
   return profile;
 }
 
@@ -1012,64 +1167,29 @@ export async function updateProfile(profile, { expectedUserId = '' } = {}) {
   return { ...savedProfile, emailChangeRequested, emailChangeError, metadataSyncError };
 }
 
-function profilePhotoRandomId() {
-  if (globalThis.crypto?.randomUUID) return globalThis.crypto.randomUUID().replaceAll('-', '');
+function profilePhotoUploadRequestId() {
+  if (globalThis.crypto?.randomUUID) return globalThis.crypto.randomUUID();
   const bytes = new Uint8Array(16);
   globalThis.crypto?.getRandomValues?.(bytes);
-  if (bytes.some(Boolean)) return Array.from(bytes, (value) => value.toString(16).padStart(2, '0')).join('');
-  return `${Math.random().toString(16).slice(2).padEnd(16, '0')}${Math.random().toString(16).slice(2).padEnd(16, '0')}`.slice(0, 32);
+  if (!bytes.some(Boolean)) throw new Error('This browser cannot create a secure upload request.');
+  bytes[6] = (bytes[6] & 0x0f) | 0x40;
+  bytes[8] = (bytes[8] & 0x3f) | 0x80;
+  const hex = Array.from(bytes, (value) => value.toString(16).padStart(2, '0')).join('');
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
 }
 
 function isUnavailableProfilePhotoCleanupRpc(error) {
   const message = `${error?.code || ''} ${error?.message || ''}`;
-  return /PGRST202|register_profile_photo_upload|commit_profile_photo_upload|abandon_profile_photo_upload|claim_profile_photo_cleanup/.test(message)
+  return /PGRST202|upload-profile-photo|reserve_profile_photo_upload_service|finalize_profile_photo_upload_service|commit_profile_photo_upload|abandon_profile_photo_upload|claim_profile_photo_cleanup/.test(message)
     && /not find|not found|schema cache|PGRST202/i.test(message);
 }
 
 export async function drainProfilePhotoCleanupQueue({ maxBatches = 8, expectedUserId = '' } = {}) {
-  if (isLocalDemoMode()) return { removed: 0 };
-  const client = requireSupabase();
-  await requireUser(expectedUserId);
-  let removed = 0;
-  const failures = [];
-
-  for (let batch = 0; batch < maxBatches; batch += 1) {
-    const { data: jobs, error: claimError } = await client.rpc('claim_profile_photo_cleanup', {
-      target_limit: 20,
-    });
-    if (claimError) {
-      // The frontend-only rollout intentionally precedes the hardening migration.
-      if (isUnavailableProfilePhotoCleanupRpc(claimError)) return { removed, available: false };
-      throw claimError;
-    }
-    if (!jobs?.length) break;
-
-    for (const job of jobs) {
-      const { error: removeError } = await client.storage
-        .from(PROFILE_PHOTO_BUCKET)
-        .remove([job.storage_path]);
-      if (removeError) {
-        failures.push(removeError);
-        continue;
-      }
-      const { data: confirmed, error: confirmError } = await client.rpc('confirm_profile_photo_cleanup', {
-        target_job_id: job.job_id,
-        target_claim_token: job.claim_token,
-      });
-      if (confirmError) failures.push(confirmError);
-      else if (confirmed !== true) {
-        failures.push(new Error('The profile-photo cleanup claim expired before confirmation.'));
-      } else removed += 1;
-    }
-    if (failures.length) break;
-  }
-
-  if (failures.length) {
-    const error = new Error('The profile saved, but old picture cleanup will retry on your next profile visit.');
-    error.cause = failures[0];
-    throw error;
-  }
-  return { removed, available: true };
+  void maxBatches;
+  if (!isLocalDemoMode()) await requireUser(expectedUserId);
+  // Cleanup is service-only and scheduled. Browsers never receive a delete
+  // lease or Storage DELETE permission.
+  return { removed: 0, available: true, scheduled: true };
 }
 
 export async function uploadProfilePhoto(preparedPhoto, { expectedUserId = '' } = {}) {
@@ -1086,56 +1206,31 @@ export async function uploadProfilePhoto(preparedPhoto, { expectedUserId = '' } 
 
   const client = requireSupabase();
   const user = await requireUser(expectedUserId);
-  const storagePath = createProfilePhotoStoragePath(
-    user.id,
-    preparedPhoto.extension,
-    Date.now(),
-    profilePhotoRandomId(),
-  );
-  let registrationId;
+  const requestId = profilePhotoUploadRequestId();
+  let result;
   try {
-    registrationId = await registerProfilePhotoUploadWithRetry({
-      storagePath,
-      register: (targetStoragePath) => client.rpc('register_profile_photo_upload', {
-        target_storage_path: targetStoragePath,
-      }),
+    result = await client.functions.invoke('upload-profile-photo', {
+      body: preparedPhoto.blob,
+      headers: {
+        'Content-Type': preparedPhoto.contentType,
+        'x-profile-user-id': user.id,
+        'x-profile-upload-request-id': requestId,
+      },
     });
-  } catch (registerError) {
-    if (isUnavailableProfilePhotoCleanupRpc(registerError)) {
+  } catch (uploadError) {
+    if (isUnavailableProfilePhotoCleanupRpc(uploadError)) {
       throw new Error('Profile pictures are temporarily unavailable while storage is upgraded.');
-    }
-    throw registerError;
-  }
-
-  const abandonUpload = async () => {
-    const { error } = await client.rpc('abandon_profile_photo_upload', {
-      target_storage_path: storagePath,
-    });
-    if (error) throw error;
-  };
-
-  const { error: uploadError } = await client.storage
-    .from(PROFILE_PHOTO_BUCKET)
-    .upload(storagePath, preparedPhoto.blob, {
-      cacheControl: '31536000',
-      contentType: preparedPhoto.contentType,
-      upsert: false,
-    });
-  if (uploadError) {
-    try {
-      await abandonUpload();
-      await drainProfilePhotoCleanupQueue({ expectedUserId });
-    } catch (cleanupError) {
-      uploadError.profilePhotoCleanupError = cleanupError;
     }
     throw uploadError;
   }
-
-  return {
-    avatarUrl: storagePath,
-    storagePath,
-    registrationId,
-  };
+  await requireUser(user.id);
+  if (result.error) {
+    if (isUnavailableProfilePhotoCleanupRpc(result.error)) {
+      throw new Error('Profile pictures are temporarily unavailable while storage is upgraded.');
+    }
+    throw result.error;
+  }
+  return normalizeTrustedProfilePhotoUploadResponse(result.data, user.id);
 }
 
 export async function replaceProfilePhoto({ preparedPhoto, profile }, { expectedUserId = '' } = {}) {
@@ -1324,7 +1419,7 @@ const mockSharePresentation = (kind) => {
       presentation: {
         eyebrow: 'Challenge progress',
         title: `Day ${currentDay} of the 77-Day Dominion Challenge`,
-        description: `A Dominion challenger is ${Math.round(currentDay / 77 * 100)}% through a disciplined rhythm of faith, fitness, and follow-through.`,
+        description: `A Dominion challenger is ${Math.round(currentDay / 77 * 100)}% through 77 days of faith, fitness, and follow-through.`,
         metric: `${currentDay}/77`,
         metricLabel: 'challenge days',
       },
@@ -1335,9 +1430,9 @@ const mockSharePresentation = (kind) => {
     kind: 'general',
     payload: { schemaVersion: 1, kind: 'general', challengeLength: 77, dailyStandards: 7 },
     presentation: {
-      eyebrow: 'Build the standard',
+      eyebrow: 'Build the habit',
       title: 'Take the 77-Day Dominion Challenge',
-      description: 'Commit to seven daily standards for 77 days and build a disciplined rhythm of faith, fitness, and follow-through.',
+      description: 'Complete seven daily actions for 77 days to build steady habits of faith, fitness, and follow-through.',
       metric: '77',
       metricLabel: 'days of dominion',
     },
@@ -1442,6 +1537,10 @@ export async function completeSharingReward(completionToken, { expectedUserId = 
 
 function getMockChallengeProgression() {
   const gameStats = readMockUserValue('dominion:gameStats', {});
+  const sharingGranted = Boolean(readMockUserValue(MOCK_SHARING_REWARD_KEY, null));
+  const eligibleDailyStandardPoints = Number.isFinite(Number(gameStats.dailyStandardsPoints))
+    ? Math.max(0, Math.floor(Number(gameStats.dailyStandardsPoints)))
+    : Math.max(0, Math.floor(Number(gameStats.totalPoints ?? gameStats.challengePoints ?? 0)) - (sharingGranted ? 14 : 0));
   let records = readMockUserValue(MOCK_CHALLENGE_STATES_KEY, []);
   const thresholdVersion = Number(readMockUserValue(MOCK_CHALLENGE_THRESHOLDS_VERSION_KEY, 0));
   if (!Number.isFinite(thresholdVersion) || thresholdVersion < MOCK_CHALLENGE_THRESHOLDS_VERSION) {
@@ -1459,6 +1558,7 @@ function getMockChallengeProgression() {
       totalPoints,
       now: migratedAt,
     });
+    migratedProgression.eligibleDailyStandardPoints = eligibleDailyStandardPoints;
     const ownershipRecords = backfillMockRewardEntitlements({
       progression: migratedProgression,
       ownershipRecords: readMockUserValue(MOCK_REWARD_ENTITLEMENTS_KEY, []),
@@ -1473,6 +1573,7 @@ function getMockChallengeProgression() {
     records: Array.isArray(records) ? records : [],
     totalPoints: gameStats.totalPoints ?? gameStats.challengePoints ?? 0,
   });
+  progression.eligibleDailyStandardPoints = eligibleDailyStandardPoints;
   writeMockUserValue(MOCK_CHALLENGE_STATES_KEY, progression.records);
   return progression;
 }
@@ -1496,23 +1597,31 @@ export async function getChallengeProgression() {
   return normalizeChallengeProgression(data || {});
 }
 
-export async function getRewardCatalog({ limit = 50, cursor = null } = {}) {
+export async function getRewardCatalog({ limit = 50, cursor = null, expectedUserId = '' } = {}) {
   if (isLocalDemoMode()) {
-    return getMockRewardCatalog();
+    const actorId = requireMockRewardActor(expectedUserId);
+    const result = getMockRewardCatalog();
+    requireMockRewardActor(actorId);
+    return result;
   }
 
   const client = requireSupabase();
-  await requireUser();
+  const actor = await requireUser(expectedUserId);
   const { data, error } = await client.rpc('get_reward_catalog', {
     target_page_size: limit,
     target_after_sort_order: cursor?.sortOrder ?? null,
     target_after_reward_key: cursor?.key || null,
+    target_expected_actor_id: actor.id,
   });
+  await requireUser(actor.id);
   if (error) throw error;
   return normalizeRewardCatalog(data || {});
 }
 
-export async function getAllRewardCatalog({ pageSize = 100 } = {}) {
+export async function getAllRewardCatalog({ pageSize = 100, expectedUserId = '' } = {}) {
+  const actorId = isLocalDemoMode()
+    ? requireMockRewardActor(expectedUserId)
+    : (await requireUser(expectedUserId)).id;
   const normalizedPageSize = Math.floor(Math.min(Math.max(Number(pageSize) || 100, 1), 100));
   const itemsByKey = new Map();
   const visitedCursors = new Set();
@@ -1521,7 +1630,7 @@ export async function getAllRewardCatalog({ pageSize = 100 } = {}) {
   let totalItems = 0;
 
   while (true) {
-    const page = await getRewardCatalog({ limit: normalizedPageSize, cursor });
+    const page = await getRewardCatalog({ limit: normalizedPageSize, cursor, expectedUserId: actorId });
     firstPage ||= page;
     totalItems = Math.max(totalItems, page.page.totalItems);
     for (const reward of page.items) itemsByKey.set(reward.key, reward);
@@ -1537,6 +1646,8 @@ export async function getAllRewardCatalog({ pageSize = 100 } = {}) {
   }
 
   const items = [...itemsByKey.values()];
+  if (isLocalDemoMode()) requireMockRewardActor(actorId);
+  else await requireUser(actorId);
   return normalizeRewardCatalog({
     ...(firstPage || {}),
     items,
@@ -1549,14 +1660,17 @@ export async function getAllRewardCatalog({ pageSize = 100 } = {}) {
   });
 }
 
-export async function claimRewardEntitlementUnlocks() {
+export async function claimRewardEntitlementUnlocks({ expectedUserId = '' } = {}) {
   if (isLocalDemoMode()) {
-    await requireHybridPreviewUser();
+    await requireHybridPreviewUser(expectedUserId);
+    const actorId = requireMockRewardActor(expectedUserId);
     const result = claimMockRewardEntitlementUnlocks({
       progression: getMockChallengeProgression(),
       ownershipRecords: readMockUserValue(MOCK_REWARD_ENTITLEMENTS_KEY, []),
     });
     writeMockUserValue(MOCK_REWARD_ENTITLEMENTS_KEY, result.ownershipRecords);
+    await requireHybridPreviewUser(actorId);
+    requireMockRewardActor(actorId);
     return {
       claimedUnlocks: result.claimedUnlocks,
       catalog: result.catalog,
@@ -1564,8 +1678,11 @@ export async function claimRewardEntitlementUnlocks() {
   }
 
   const client = requireSupabase();
-  await requireUser();
-  const { data, error } = await client.rpc('claim_reward_entitlement_unlocks');
+  const actor = await requireUser(expectedUserId);
+  const { data, error } = await client.rpc('claim_reward_entitlement_unlocks', {
+    target_expected_actor_id: actor.id,
+  });
+  await requireUser(actor.id);
   if (error) throw error;
   const catalog = normalizeRewardCatalog(data?.catalog || {});
   const claimedKeys = new Set(data?.claimedKeys || data?.claimed_keys || []);
@@ -1575,12 +1692,127 @@ export async function claimRewardEntitlementUnlocks() {
   };
 }
 
+function mockRewardFulfillment(rewardKey) {
+  const catalog = getMockRewardCatalog();
+  const reward = catalog.items.find((item) => item.key === rewardKey);
+  if (!reward || !['partner_discount', 'merch_discount', 'digital_download'].includes(reward.rewardType)) {
+    throw new Error('The requested reward fulfillment is unavailable.');
+  }
+  const owned = reward.status === 'owned';
+  if (reward.rewardType === 'digital_download') {
+    return {
+      preview: true,
+      rewardKey,
+      rewardType: reward.rewardType,
+      status: owned ? 'unavailable' : 'locked',
+      availability: 'unavailable',
+      currentPoints: reward.currentPoints,
+      pointsRequired: reward.pointsRequired,
+      pointsRemaining: reward.pointsRemaining,
+      format: 'PDF',
+      message: owned
+        ? 'You permanently own this reward. The approved handbook edition is being finalized.'
+        : '',
+    };
+  }
+
+  return {
+    preview: true,
+    rewardKey,
+    rewardType: reward.rewardType,
+    status: owned ? 'unavailable' : 'locked',
+    availability: 'unavailable',
+    currentPoints: reward.currentPoints,
+    pointsRequired: reward.pointsRequired,
+    pointsRemaining: reward.pointsRemaining,
+    message: owned
+      ? 'You permanently own this reward. Production fulfillment is not configured in preview mode.'
+      : '',
+  };
+}
+
+const requireMockRewardActor = (expectedUserId = '') => {
+  const user = readJson('dominion:user', null);
+  if (!user?.authenticated) throw new Error('You need to log in again.');
+  const actorId = getMockUserId();
+  if (expectedUserId && actorId !== expectedUserId) {
+    throw new Error('The signed-in account changed. Try again.');
+  }
+  return actorId;
+};
+
+export async function getRewardFulfillment(rewardKey, { expectedUserId = '' } = {}) {
+  if (isLocalDemoMode()) {
+    const actorId = requireMockRewardActor(expectedUserId);
+    const result = mockRewardFulfillment(rewardKey);
+    requireMockRewardActor(actorId);
+    return result;
+  }
+  const client = requireSupabase();
+  const actor = await requireUser(expectedUserId);
+  const { data, error } = await client.rpc('get_reward_fulfillment', {
+    target_reward_key: rewardKey,
+    target_expected_actor_id: actor.id,
+  });
+  await requireUser(actor.id);
+  if (error) throw error;
+  return data || {};
+}
+
+export async function claimRewardOffer(rewardKey, { expectedUserId = '' } = {}) {
+  if (isLocalDemoMode()) {
+    const actorId = requireMockRewardActor(expectedUserId);
+    const result = mockRewardFulfillment(rewardKey, { reveal: true });
+    requireMockRewardActor(actorId);
+    return result;
+  }
+  const client = requireSupabase();
+  const actor = await requireUser(expectedUserId);
+  const { data, error } = await client.rpc('claim_reward_offer', {
+    target_reward_key: rewardKey,
+    target_expected_actor_id: actor.id,
+  });
+  await requireUser(actor.id);
+  if (error) throw error;
+  return data || {};
+}
+
+export async function downloadRewardAsset(rewardKey, { expectedUserId = '' } = {}) {
+  if (isLocalDemoMode()) {
+    const actorId = requireMockRewardActor(expectedUserId);
+    const result = mockRewardFulfillment(rewardKey);
+    requireMockRewardActor(actorId);
+    return result;
+  }
+  const client = requireSupabase();
+  const actor = await requireUser(expectedUserId);
+  const { data, error, response } = await client.functions.invoke('reward-download', {
+    body: {
+      rewardKey,
+      expectedUserId: actor.id,
+    },
+  });
+  await requireUser(actor.id);
+  if (error) throw error;
+  if (!(data instanceof Blob) || data.type !== 'application/pdf' || data.size <= 0 || data.size > 52_428_800) {
+    throw new Error('The secure handbook response was invalid.');
+  }
+  const signature = new Uint8Array(await data.slice(0, 5).arrayBuffer());
+  if (String.fromCharCode(...signature) !== '%PDF-') {
+    throw new Error('The secure handbook response was invalid.');
+  }
+  await requireUser(actor.id);
+  const responseFilename = String(response?.headers?.get('x-reward-filename') || '').trim();
+  const filename = /^[A-Za-z0-9][A-Za-z0-9._ -]*\.pdf$/.test(responseFilename)
+    ? responseFilename
+    : 'Nehemiah-Leadership-Handbook.pdf';
+  return { blob: data, filename, contentType: 'application/pdf' };
+}
+
 export async function claimChallengeUnlocks({ expectedUserId = '' } = {}) {
   if (isLocalDemoMode()) {
     await requireHybridPreviewUser(expectedUserId);
-    if (expectedUserId && getMockUserId() !== expectedUserId) {
-      throw new Error('The signed-in account changed. Try again.');
-    }
+    const actorId = requireMockRewardActor(expectedUserId);
     const progression = getMockChallengeProgression();
     const claimedKeys = progression.unseenUnlocks.map((challenge) => challenge.key);
     const claimedKeySet = new Set(claimedKeys);
@@ -1593,6 +1825,8 @@ export async function claimChallengeUnlocks({ expectedUserId = '' } = {}) {
       records,
       totalPoints: progression.totalPoints,
     });
+    await requireHybridPreviewUser(actorId);
+    requireMockRewardActor(actorId);
     return {
       claimedUnlocks: progression.challenges.filter((challenge) => claimedKeySet.has(challenge.key)),
       progression: nextProgression,
@@ -1600,8 +1834,11 @@ export async function claimChallengeUnlocks({ expectedUserId = '' } = {}) {
   }
 
   const client = requireSupabase();
-  await requireUser(expectedUserId);
-  const { data, error } = await client.rpc('claim_challenge_unlocks');
+  const actor = await requireUser(expectedUserId);
+  const { data, error } = await client.rpc('claim_challenge_unlocks', {
+    target_expected_actor_id: actor.id,
+  });
+  await requireUser(actor.id);
   if (error) throw error;
   const progression = normalizeChallengeProgression(data?.progression || {});
   const claimedKeySet = new Set(data?.claimedKeys || data?.claimed_keys || []);
@@ -1611,26 +1848,32 @@ export async function claimChallengeUnlocks({ expectedUserId = '' } = {}) {
   };
 }
 
-export async function startChallenge(challengeKey) {
+export async function startChallenge(challengeKey, { expectedUserId = '' } = {}) {
   if (isLocalDemoMode()) {
-    await requireHybridPreviewUser();
+    await requireHybridPreviewUser(expectedUserId);
+    const actorId = requireMockRewardActor(expectedUserId);
     const progression = getMockChallengeProgression();
     const record = progression.records.find((item) => item.key === challengeKey);
     const nextRecord = transitionChallengeRecord(record, 'active');
     const records = progression.records.map((item) => item.key === challengeKey ? nextRecord : item);
     writeMockUserValue(MOCK_CHALLENGE_STATES_KEY, records);
-    return buildChallengeProgression({
+    const result = buildChallengeProgression({
       definitions: DEFAULT_CHALLENGE_DEFINITIONS,
       records,
       totalPoints: progression.totalPoints,
     });
+    await requireHybridPreviewUser(actorId);
+    requireMockRewardActor(actorId);
+    return result;
   }
 
   const client = requireSupabase();
-  await requireUser();
+  const actor = await requireUser(expectedUserId);
   const { data, error } = await client.rpc('start_challenge', {
     target_challenge_key: challengeKey,
+    target_expected_actor_id: actor.id,
   });
+  await requireUser(actor.id);
   if (error) throw error;
   return normalizeChallengeProgression(data || {});
 }
@@ -2585,15 +2828,19 @@ export async function transitionSiteTraining({
 }
 
 const rpcDraft = async (name, parameters, { expectedUserId = '', mutation = false } = {}) => {
-  const client = requireSupabase();
-  const user = await requireUser(expectedUserId);
-  await bootstrapDailyStandardTimeZone(client, user.id);
-  const rpcParameters = mutation
-    ? { ...parameters, target_expected_actor_id: user.id }
-    : parameters;
-  const { data, error } = await client.rpc(name, rpcParameters);
-  if (error) throw error;
-  return normalizeDailyStandardDraft(data, parameters.target_entry_date);
+  try {
+    const client = requireSupabase();
+    const user = await requireUser(expectedUserId);
+    await bootstrapDailyStandardTimeZone(client, user.id);
+    const rpcParameters = mutation
+      ? { ...parameters, target_expected_actor_id: user.id }
+      : parameters;
+    const { data, error } = await client.rpc(name, rpcParameters);
+    if (error) throw error;
+    return normalizeDailyStandardDraft(data, parameters.target_entry_date);
+  } catch (error) {
+    throw naturalizeDailyActionError(error);
+  }
 };
 
 export async function getDailyStandardDraft(entryDate, { expectedUserId = '' } = {}) {
@@ -2612,7 +2859,7 @@ export async function mutateDailyStandardDraft({
   expectedUserId = '',
 }) {
   if (typeof completed !== 'boolean') {
-    throw new TypeError('Daily Standard completion must be true or false.');
+    throw new TypeError('Daily Action completion must be true or false.');
   }
   return rpcDraft(
     'mutate_daily_standard_draft',
@@ -2749,13 +2996,16 @@ export async function getGameSummary() {
   };
 }
 
-export async function getEarnedBadges({ pageSize = 100 } = {}) {
+export async function getEarnedBadges({ pageSize = 100, expectedUserId = '' } = {}) {
   if (isLocalDemoMode()) {
-    return normalizeEarnedBadges(readMockUserValue('dominion:badges', []).map(mapBadge).filter(Boolean));
+    const actorId = requireMockRewardActor(expectedUserId);
+    const badges = normalizeEarnedBadges(readMockUserValue('dominion:badges', []).map(mapBadge).filter(Boolean));
+    requireMockRewardActor(actorId);
+    return badges;
   }
 
   const client = requireSupabase();
-  const user = await requireUser();
+  const user = await requireUser(expectedUserId);
   const normalizedPageSize = Math.floor(Math.min(Math.max(Number(pageSize) || 100, 25), 500));
   const badges = [];
   let offset = 0;
@@ -2777,6 +3027,7 @@ export async function getEarnedBadges({ pageSize = 100 } = {}) {
     offset += normalizedPageSize;
   }
 
+  await requireUser(user.id);
   return normalizeEarnedBadges(badges);
 }
 
@@ -2797,17 +3048,18 @@ export async function getLeaderboard({ crewId = null, window = 'week' } = {}) {
   return queryLeaderboard(client, { crewId, window });
 }
 
-export async function getLeaderboardPrestige({ crewId = null, window = 'week' } = {}) {
+export async function getLeaderboardPrestige({ crewId = null, window = 'week', expectedUserId = '' } = {}) {
   const rankingWindow = window === 'challenge' ? 'challenge' : 'week';
   let currentUserId;
   let crews;
 
   if (isLocalDemoMode()) {
-    currentUserId = getMockUserId();
+    await requireHybridPreviewUser(expectedUserId);
+    currentUserId = requireMockRewardActor(expectedUserId);
     crews = await getCrews();
   } else {
     const client = requireSupabase();
-    const user = await requireUser();
+    const user = await requireUser(expectedUserId);
     currentUserId = user.id;
     crews = await queryCrewsForUser(client, user.id);
   }
@@ -2825,6 +3077,13 @@ export async function getLeaderboardPrestige({ crewId = null, window = 'week' } 
   const rankForCurrentUser = (rows) => normalizeLeaderboardRank(
     rows.find((row) => row.userId === currentUserId)?.rank,
   );
+
+  if (isLocalDemoMode()) {
+    await requireHybridPreviewUser(currentUserId);
+    requireMockRewardActor(currentUserId);
+  } else {
+    await requireUser(currentUserId);
+  }
 
   return {
     privateRank: rankForCurrentUser(privateRows),
@@ -2937,17 +3196,17 @@ function clearMockCrewTraining(crewId, userId = getMockUserId()) {
 
 const MOCK_MEMBER_BADGES = Object.freeze([
   ['day_77_finisher', 'Day 77 Finisher', 'Finished the final day of the Dominion challenge.', 'gold', 'crown'],
-  ['full_streak_70', '70-Day Full Streak', 'Held the full standard for seventy days.', 'gold', 'flame'],
-  ['full_streak_63', '63-Day Full Streak', 'Held the full standard for sixty-three days.', 'gold', 'flame'],
-  ['full_streak_56', '56-Day Full Streak', 'Held the full standard for fifty-six days.', 'gold', 'flame'],
-  ['full_streak_49', '49-Day Full Streak', 'Held the full standard for forty-nine days.', 'gold', 'flame'],
-  ['full_streak_42', '42-Day Full Streak', 'Held the full standard for forty-two days.', 'gold', 'flame'],
-  ['full_streak_35', '35-Day Full Streak', 'Held the full standard for thirty-five days.', 'silver', 'shield'],
-  ['full_streak_28', '28-Day Full Streak', 'Held the full standard for twenty-eight days.', 'silver', 'shield'],
-  ['full_streak_21', '21-Day Full Streak', 'Held the full standard for twenty-one days.', 'silver', 'shield'],
-  ['full_streak_14', '14-Day Full Streak', 'Held the full standard for fourteen days.', 'silver', 'shield'],
-  ['seven_sealed', 'Seven Sealed', 'Held a seven-day full-standard streak.', 'gold', 'repeat'],
-  ['iron_standard', 'Iron Standard', 'Completed all seven daily actions in one day.', 'silver', 'dumbbell'],
+  ['full_streak_70', '70-Day Perfect Streak', 'Completed all seven daily actions for seventy days.', 'gold', 'flame'],
+  ['full_streak_63', '63-Day Perfect Streak', 'Completed all seven daily actions for sixty-three days.', 'gold', 'flame'],
+  ['full_streak_56', '56-Day Perfect Streak', 'Completed all seven daily actions for fifty-six days.', 'gold', 'flame'],
+  ['full_streak_49', '49-Day Perfect Streak', 'Completed all seven daily actions for forty-nine days.', 'gold', 'flame'],
+  ['full_streak_42', '42-Day Perfect Streak', 'Completed all seven daily actions for forty-two days.', 'gold', 'flame'],
+  ['full_streak_35', '35-Day Perfect Streak', 'Completed all seven daily actions for thirty-five days.', 'silver', 'shield'],
+  ['full_streak_28', '28-Day Perfect Streak', 'Completed all seven daily actions for twenty-eight days.', 'silver', 'shield'],
+  ['full_streak_21', '21-Day Perfect Streak', 'Completed all seven daily actions for twenty-one days.', 'silver', 'shield'],
+  ['full_streak_14', '14-Day Perfect Streak', 'Completed all seven daily actions for fourteen days.', 'silver', 'shield'],
+  ['seven_sealed', 'Seven Sealed', 'Completed all seven daily actions for seven days in a row.', 'gold', 'repeat'],
+  ['iron_standard', 'Seven for Seven', 'Completed all seven daily actions in one day.', 'silver', 'dumbbell'],
   ['first_sweat', 'First Sweat', 'Completed the first training action.', 'bronze', 'spark'],
   ['faithful_start', 'Faithful Start', 'Posted the first honest check-in.', 'bronze', 'shield'],
 ].map(([key, name, description, tier, icon], index) => Object.freeze({
@@ -4102,33 +4361,50 @@ export async function getJournalEntries() {
     .from('journal_entries')
     .select('id, user_id, entry_date, challenge_day, note, win, prayer, mood, energy, created_at, updated_at')
     .order('entry_date', { ascending: false })
-    .limit(30);
+    .order('created_at', { ascending: false })
+    .order('id', { ascending: false });
 
   if (error) throw error;
-  return (entries || []).map(normalizeJournalEntry);
+  return sortJournalEntries((entries || []).map(normalizeJournalEntry));
 }
 
-export async function saveJournalEntry(entry) {
+function journalEntryWritePayload(entry) {
+  return {
+    entry_date: entry.date,
+    challenge_day: entry.day ?? null,
+    note: entry.note || '',
+    win: entry.win || '',
+    prayer: entry.prayer || '',
+    mood: entry.mood || '',
+    energy: entry.energy || '',
+  };
+}
+
+export async function createJournalEntry(entry) {
   if (isLocalDemoMode()) {
     await requireHybridPreviewUser();
     const entries = readMockUserValue(MOCK_JOURNAL_KEY, []).map(normalizeJournalEntry);
-    const existingIndex = entries.findIndex((item) => item.date === entry.date);
-    const existing = existingIndex >= 0 ? entries[existingIndex] : {};
     const now = new Date().toISOString();
+    const baseId = randomId('preview_journal');
+    let nextId = baseId;
+    let collisionSuffix = 2;
+    while (entries.some((item) => item.id === nextId)) {
+      nextId = `${baseId}_${collisionSuffix}`;
+      collisionSuffix += 1;
+    }
     const nextEntry = {
-      id: existing.id || randomId('preview_journal'),
+      id: nextId,
       date: entry.date,
-      day: entry.day || null,
+      day: entry.day ?? null,
       note: entry.note || '',
       win: entry.win || '',
       prayer: entry.prayer || '',
       mood: entry.mood || '',
       energy: entry.energy || '',
-      createdAt: existing.createdAt || now,
+      createdAt: now,
       updatedAt: now,
     };
-    if (existingIndex >= 0) entries[existingIndex] = nextEntry;
-    else entries.unshift(nextEntry);
+    entries.unshift(nextEntry);
     writeMockUserValue(MOCK_JOURNAL_KEY, sortJournalEntries(entries));
     return nextEntry;
   }
@@ -4137,19 +4413,60 @@ export async function saveJournalEntry(entry) {
   const user = await requireUser();
   const { data, error } = await client
     .from('journal_entries')
-    .upsert({
+    .insert({
       user_id: user.id,
-      entry_date: entry.date,
-      challenge_day: entry.day || null,
-      note: entry.note || '',
-      win: entry.win || '',
-      prayer: entry.prayer || '',
-      mood: entry.mood || '',
-      energy: entry.energy || '',
-    }, { onConflict: 'user_id,entry_date' })
+      ...journalEntryWritePayload(entry),
+    })
     .select('id, user_id, entry_date, challenge_day, note, win, prayer, mood, energy, created_at, updated_at')
     .single();
 
   if (error) throw error;
   return normalizeJournalEntry(data);
+}
+
+export async function updateJournalEntry(entryId, entry) {
+  const targetId = String(entryId || '').trim();
+  if (!targetId) throw new TypeError('A journal entry id is required.');
+
+  if (isLocalDemoMode()) {
+    await requireHybridPreviewUser();
+    const entries = readMockUserValue(MOCK_JOURNAL_KEY, []).map(normalizeJournalEntry);
+    const existingIndex = entries.findIndex((item) => item.id === targetId);
+    if (existingIndex < 0) throw new Error('This journal entry is no longer available.');
+
+    const existing = entries[existingIndex];
+    const nextEntry = {
+      ...existing,
+      date: entry.date,
+      day: entry.day ?? null,
+      note: entry.note || '',
+      win: entry.win || '',
+      prayer: entry.prayer || '',
+      mood: entry.mood || '',
+      energy: entry.energy || '',
+      updatedAt: new Date().toISOString(),
+    };
+    entries[existingIndex] = nextEntry;
+    writeMockUserValue(MOCK_JOURNAL_KEY, sortJournalEntries(entries));
+    return nextEntry;
+  }
+
+  const client = requireSupabase();
+  const user = await requireUser();
+  const { data, error } = await client
+    .from('journal_entries')
+    .update(journalEntryWritePayload(entry))
+    .eq('id', targetId)
+    .eq('user_id', user.id)
+    .select('id, user_id, entry_date, challenge_day, note, win, prayer, mood, energy, created_at, updated_at')
+    .single();
+
+  if (error) throw error;
+  return normalizeJournalEntry(data);
+}
+
+// Keep the existing import surface for older clients. Saving now always means
+// creating a new row; edits use updateJournalEntry() with an immutable id.
+export async function saveJournalEntry(entry) {
+  return createJournalEntry(entry);
 }

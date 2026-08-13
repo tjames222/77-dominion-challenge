@@ -10,6 +10,8 @@ import {
 
 const communityHtml = readFileSync(new URL('../../community.html', import.meta.url), 'utf8');
 const communityJs = readFileSync(new URL('./community.js', import.meta.url), 'utf8');
+const groupSettingsHtml = readFileSync(new URL('../../group-settings.html', import.meta.url), 'utf8');
+const groupSettingsJs = readFileSync(new URL('./group-settings.js', import.meta.url), 'utf8');
 const apiJs = readFileSync(new URL('./api.js', import.meta.url), 'utf8');
 const communityCss = readFileSync(new URL('../assets/community.css', import.meta.url), 'utf8');
 
@@ -44,7 +46,8 @@ test('crew UI starts collapsed and shows one active crew without a switcher', ()
   assert.match(communityHtml, /id="cancelCrewFormButton"/);
   assert.match(communityHtml, /id="activeCrewName"/);
   assert.doesNotMatch(communityHtml, /id="crewSelect"/);
-  assert.match(communityHtml, /id="crewLifecycleCard"/);
+  assert.match(communityHtml, /id="crewSettingsButton"[\s\S]*?href="\.\/group-settings\.html"/);
+  assert.match(groupSettingsHtml, /id="groupAccess"/);
 });
 
 test('all lifecycle writes use hardened RPCs and retry-stable request IDs', () => {
@@ -56,11 +59,11 @@ test('all lifecycle writes use hardened RPCs and retry-stable request IDs', () =
 });
 
 test('destructive flow uses the shared accessible confirmation pattern', () => {
-  assert.match(communityJs, /createConfirmationDialog\(\{/);
-  assert.match(communityJs, /title: 'Are you sure\?'/);
-  assert.match(communityJs, /cancelLabel: 'Cancel'/);
-  assert.match(communityJs, /destructive: true/);
-  assert.match(communityJs, /alert: true/);
+  assert.match(groupSettingsJs, /createConfirmationDialog\(\{/);
+  assert.match(groupSettingsJs, /title: deleting \? `Delete \$\{crew\.name\}\?` : `Leave \$\{crew\.name\}\?`/);
+  assert.match(groupSettingsJs, /cancelLabel: 'Cancel'/);
+  assert.match(groupSettingsJs, /destructive: true/);
+  assert.match(groupSettingsJs, /alert: true/);
   assert.match(communityCss, /button\.destructive/);
   assert.match(communityCss, /min-height: 44px/);
 });

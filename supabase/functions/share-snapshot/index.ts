@@ -151,7 +151,7 @@ export function sharePresentation(snapshot: ShareSnapshot) {
       eyebrow: "Consistency in motion",
       title: `${appStreak}-day Dominion app streak`,
       description: fullStandardStreak > 0
-        ? `A Dominion challenger has shown up ${appStreak} days and completed every standard ${fullStandardStreak} days in a row.`
+        ? `A Dominion challenger has shown up ${appStreak} days and completed all seven actions ${fullStandardStreak} days in a row.`
         : `A Dominion challenger has shown up ${appStreak} days in a row.`,
       metric: String(appStreak),
       metricLabel: "day app streak",
@@ -166,17 +166,17 @@ export function sharePresentation(snapshot: ShareSnapshot) {
       title: `Day ${currentDay} of the ${length}-Day Dominion Challenge`,
       description: `A Dominion challenger is ${
         Math.round(currentDay / length * 100)
-      }% through a disciplined rhythm of faith, fitness, and follow-through.`,
+      }% through 77 days of faith, fitness, and follow-through.`,
       metric: `${currentDay}/${length}`,
       metricLabel: "challenge days",
     };
   }
 
   return {
-    eyebrow: "Build the standard",
+    eyebrow: "Build the habit",
     title: "Take the 77-Day Dominion Challenge",
     description:
-      "Commit to seven daily standards for 77 days and build a disciplined rhythm of faith, fitness, and follow-through.",
+      "Complete seven daily actions for 77 days to build steady habits of faith, fitness, and follow-through.",
     metric: "77",
     metricLabel: "days of dominion",
   };

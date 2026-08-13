@@ -83,7 +83,7 @@ function assertAccentCadence(sections, label) {
 
 describe('app-wide section surface cadence', () => {
   test('audits every active Vite HTML input without route exceptions', () => {
-    assert.equal(activeRoutes.length, 19);
+    assert.equal(activeRoutes.length, 26);
     for (const route of activeRoutes) {
       const source = readFileSync(new URL(`../../${route}`, import.meta.url), 'utf8');
       const sections = directPageSections(source);
@@ -132,7 +132,7 @@ describe('app-wide section surface cadence', () => {
       assert.match(source, /id="actionCompletionToggle"/);
       assert.match(source, /class="action-page-content"[^>]*data-section-surface="plain"/);
     }
-    for (const route of ['login.html', 'register.html']) {
+    for (const route of ['login.html', 'register.html', 'forgot-password.html', 'reset-password.html']) {
       const source = readFileSync(new URL(`../../${route}`, import.meta.url), 'utf8');
       assert.match(source, /class="card auth-card" data-section-surface="accent"/);
       assert.match(source, /<form/);

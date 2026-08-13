@@ -20,20 +20,20 @@ describe('challenge point progression', () => {
     assert.deepEqual(
       DEFAULT_CHALLENGE_DEFINITIONS.map(({ key, pointsRequired }) => [key, pointsRequired]),
       [
-        ['seven_day_reset', 126],
-        ['twenty_one_day_prayer', 210],
-        ['thirty_day_strength', 308],
-        ['forty_day_fast', 420],
+        ['seven_day_reset', 140],
+        ['twenty_one_day_prayer', 336],
+        ['thirty_day_strength', 406],
+        ['forty_day_fast', 469],
         ['bible_in_a_year', 532],
       ],
     );
 
-    const below = buildChallengeProgression({ totalPoints: 125, now: timestamp });
-    const exact = buildChallengeProgression({ totalPoints: 126, now: timestamp });
+    const below = buildChallengeProgression({ totalPoints: 139, now: timestamp });
+    const exact = buildChallengeProgression({ totalPoints: 140, now: timestamp });
 
     assert.equal(below.nextUnlock.key, 'seven_day_reset');
     assert.equal(below.nextUnlock.pointsRemaining, 1);
-    assert.equal(below.nextUnlock.progressPercent, 125 / 126 * 100);
+    assert.equal(below.nextUnlock.progressPercent, 139 / 140 * 100);
     assert.equal(below.newlyUnlocked.length, 0);
     assert.deepEqual(exact.newlyUnlocked.map((challenge) => challenge.key), ['seven_day_reset']);
 

@@ -54,7 +54,7 @@ export function normalizeEarnedBadges(badges = []) {
     const normalized = {
       key,
       name: String(badge?.name || 'Badge'),
-      description: String(badge?.description || 'Earned through faithful progress.'),
+      description: String(badge?.description || 'Earned through challenge progress.'),
       category: safeKey(badge?.category) || 'challenge',
       tier: BADGE_TIERS.has(String(badge?.tier || '').toLowerCase())
         ? String(badge.tier).toLowerCase()
@@ -80,6 +80,11 @@ const safeAppRoute = (value) => {
   const route = String(value || '').trim();
   if (!/^(?:\.\/)?[a-z0-9-]+\.html(?:#[a-z0-9_-]+)?$/i.test(route)) return null;
   return route.startsWith('./') ? route : `./${route}`;
+};
+
+const safeAssetRoute = (value) => {
+  const route = String(value || '').trim();
+  return /^\.\/images\/[a-z0-9._-]+\.(?:jpg|jpeg|png|webp)$/i.test(route) ? route : null;
 };
 
 const readableDate = (value) => {
@@ -165,6 +170,12 @@ export function rewardViewModel(reward = {}, nextRewardKey = '') {
       ? safeAppRoute(metadata.selectionRoute || metadata.selection_route)
       : null,
     selectionLabel: String(metadata.selectionLabel || metadata.selection_label || 'Select in Profile'),
+    thumbnailUrl: safeAssetRoute(metadata.thumbnailUrl || metadata.thumbnail_url),
+    thumbnailAlt: String(metadata.thumbnailAlt || metadata.thumbnail_alt || ''),
+    hasDetails: ['partner_discount', 'merch_discount', 'digital_download'].includes(
+      safeKey(reward.rewardType || reward.reward_type),
+    ),
+    fulfillment: reward.fulfillment && typeof reward.fulfillment === 'object' ? reward.fulfillment : {},
     metadata,
     active: reward.active ?? reward.isActive ?? reward.is_active ?? true,
   };
@@ -180,7 +191,7 @@ export function badgeViewModel(badge = {}) {
   const completedCount = safeWholeNumber(metadata.completedCount ?? metadata.completed_count);
   if (challengeDay) details.push(`Challenge Day ${challengeDay}`);
   if (streak) details.push(`${streak}-day streak`);
-  if (completedCount) details.push(`${completedCount} of 7 standards`);
+  if (completedCount) details.push(`${completedCount} of 7 actions`);
 
   return {
     ...normalized,

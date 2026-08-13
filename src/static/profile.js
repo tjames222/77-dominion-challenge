@@ -1,5 +1,7 @@
 import { initReveal } from './reveal';
 import {
+  createAccountLifecycleRequest,
+  getAccountLifecycleRequests,
   getBillingState,
   getCrews,
   getLocalOrSessionUser,
@@ -16,6 +18,12 @@ import {
   updateProfile,
   updateOutboundUpdateConsent,
 } from './api';
+import {
+  ACCOUNT_REQUEST_TYPES,
+  accountRequestStatusLabel,
+  isActiveAccountRequest,
+  latestAccountRequestsByType,
+} from './account-lifecycle.mjs';
 import { prepareProfilePhoto } from './profile-photo.mjs';
 import {
   PREVIEW_CHALLENGE_STORAGE_KEY,
@@ -29,7 +37,10 @@ import {
   readPreviewUserValue,
   writePreviewUserValue,
 } from './preview-user-state.mjs';
-import { hydrateThemeEntitlementState } from './theme-entitlement-state';
+import {
+  clearThemeEntitlementState,
+  hydrateThemeEntitlementState,
+} from './theme-entitlement-state';
 import { buildThemeOptionModels } from './theme-entitlements.mjs';
 import {
   getActiveTheme,
@@ -50,6 +61,9 @@ const themeSelectionStatus = document.getElementById('themeSelectionStatus');
 const dominionNightStatus = document.getElementById('dominionNightStatus');
 const dominionNightProgress = document.getElementById('dominionNightProgress');
 const dominionNightProgressLabel = document.getElementById('dominionNightProgressLabel');
+const dominionPlatinumStatus = document.getElementById('dominionPlatinumStatus');
+const dominionPlatinumProgress = document.getElementById('dominionPlatinumProgress');
+const dominionPlatinumProgressLabel = document.getElementById('dominionPlatinumProgressLabel');
 let themeModelsById = new Map(
   buildThemeOptionModels(null, getThemeRegistry()).map((model) => [model.themeId, model]),
 );
@@ -111,10 +125,35 @@ function renderThemeOptions(catalog, { error = false } = {}) {
           : night.reason || 'Theme ownership could not be verified.';
   }
 
+  const platinum = themeModelsById.get('dominion-platinum');
+  if (dominionPlatinumStatus && platinum) {
+    dominionPlatinumStatus.textContent = platinum.available
+      ? 'Unlocked reward'
+      : error
+        ? 'Ownership could not be verified'
+        : `Locked · ${platinum.currentPoints} of ${platinum.pointsRequired} points`;
+  }
+  if (dominionPlatinumProgress && platinum) {
+    const progress = Math.round(platinum.progressPercent);
+    dominionPlatinumProgress.setAttribute('aria-valuenow', String(progress));
+    dominionPlatinumProgress.style.setProperty('--theme-progress', `${progress}%`);
+  }
+  if (dominionPlatinumProgressLabel && platinum) {
+    dominionPlatinumProgressLabel.textContent = platinum.available
+      ? 'Dominion Platinum is unlocked.'
+      : platinum.locked && !error
+        ? `${Math.round(platinum.progressPercent)}% complete. ${platinum.pointsRemaining} points to unlock.`
+        : platinum.reason || 'Theme ownership could not be verified.';
+  }
+
   if (error) {
     setThemeSelectionStatus('Theme reward ownership could not be verified. Dark and Light remain available.', 'error');
+  } else if (night?.available && platinum?.available) {
+    setThemeSelectionStatus('Dominion Night and Dominion Platinum are unlocked and ready to use.');
+  } else if (platinum?.available) {
+    setThemeSelectionStatus('Dominion Platinum is unlocked and ready to use.');
   } else if (night?.available) {
-    setThemeSelectionStatus('Dominion Night is unlocked and ready to use.');
+    setThemeSelectionStatus(`Dominion Night is unlocked. Earn ${platinum?.pointsRemaining || 0} more points for Dominion Platinum.`);
   } else if (!night?.featureEnabled) {
     setThemeSelectionStatus('Dominion Night is unavailable in this release.');
   } else if (night?.locked) {
@@ -127,7 +166,7 @@ function renderThemeOptions(catalog, { error = false } = {}) {
 
 async function hydrateThemeOptions(owner = captureProfileOwner()) {
   if (!owner) return;
-  const result = await hydrateThemeEntitlementState();
+  const result = await hydrateThemeEntitlementState({ expectedUserId: owner.userId });
   if (!isCurrentProfileOwner(owner)) return;
   if (result.error) console.warn('Unable to verify theme reward ownership', result.error);
   renderThemeOptions(result.catalog, { error: Boolean(result.error) || !result.authenticated });
@@ -136,6 +175,11 @@ async function hydrateThemeOptions(owner = captureProfileOwner()) {
 themeOptions.forEach((option) => {
   option.addEventListener('click', async () => {
     if (themePreferenceSaving) return;
+    const owner = captureProfileOwner();
+    if (!owner) {
+      setThemeSelectionStatus('The signed-in account changed. Reload this page.', 'error');
+      return;
+    }
     const themeId = option.dataset.themeMode || 'dark';
     const model = themeModelsById.get(themeId);
     if (!model?.available) {
@@ -153,15 +197,19 @@ themeOptions.forEach((option) => {
     option.setAttribute('aria-busy', 'true');
     setThemeSelectionStatus(`Saving ${model.label} theme...`);
     try {
-      await setThemePreference(themeId);
+      await setThemePreference(themeId, { expectedUserId: owner.userId });
+      if (!isCurrentProfileOwner(owner)) return;
       setThemeSelectionStatus(`${model.label} theme selected.`);
     } catch (error) {
+      if (!isCurrentProfileOwner(owner)) return;
       setTheme(previousTheme);
       setThemeSelectionStatus(error?.message || 'Unable to save that theme right now.', 'error');
     } finally {
       themePreferenceSaving = false;
-      option.removeAttribute('aria-busy');
-      syncThemeOptions();
+      if (isCurrentProfileOwner(owner)) {
+        option.removeAttribute('aria-busy');
+        syncThemeOptions();
+      }
     }
   });
 });
@@ -184,6 +232,11 @@ const profilePreviewTools = document.getElementById('profilePreviewTools');
 const profilePreviewChallengeSwitch = document.getElementById('profilePreviewChallengeSwitch');
 const profilePreviewStatus = document.getElementById('profilePreviewStatus');
 const resetPreviewChallengeButton = document.getElementById('resetPreviewChallengeButton');
+const requestDataExportButton = document.getElementById('requestDataExportButton');
+const requestAccountDeletionButton = document.getElementById('requestAccountDeletionButton');
+const dataExportRequestStatus = document.getElementById('dataExportRequestStatus');
+const accountDeletionRequestStatus = document.getElementById('accountDeletionRequestStatus');
+const accountRequestFeedback = document.getElementById('accountRequestFeedback');
 const integrationConsentCrew = document.getElementById('integrationConsentCrew');
 const integrationConsentNoGroups = document.getElementById('integrationConsentNoGroups');
 const integrationConsentContent = document.getElementById('integrationConsentContent');
@@ -274,6 +327,9 @@ function invalidateProfileOwner(nextOwner = '') {
   profileHydrationRequestId += 1;
   observedProfileOwner = String(nextOwner || '');
   hydratedProfileOwner = '';
+  clearThemeEntitlementState();
+  themePreferenceSaving = false;
+  themeOptions.forEach((option) => option.removeAttribute('aria-busy'));
   currentPreviewOwnerId = '';
   previewChallengeState = normalizePreviewChallengeState({}, localDateKey());
   selectedPhotoFile = null;
@@ -310,6 +366,8 @@ function invalidateProfileOwner(nextOwner = '') {
   renderIntegrationDestinations([]);
   setIntegrationConsentFeedback('Loading update privacy…');
   renderThemeOptions(null, { error: true });
+  renderAccountLifecycleRequests([]);
+  setAccountRequestFeedback('Loading account request status...');
   renderPreviewChallengeTools();
   profileForm?.querySelectorAll('input, button').forEach((control) => { control.disabled = true; });
   integrationConsentForm?.querySelectorAll('input, button').forEach((control) => { control.disabled = true; });
@@ -397,6 +455,99 @@ function setProfileFeedback(message, tone = '') {
   profileFeedback.classList.toggle('error', tone === 'error');
 }
 
+function formatRequestDate(value) {
+  if (!value) return '';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '';
+  return new Intl.DateTimeFormat('en', {
+    month: 'short', day: 'numeric', year: 'numeric',
+  }).format(date);
+}
+
+function setAccountRequestFeedback(message, tone = '') {
+  if (!accountRequestFeedback) return;
+  accountRequestFeedback.textContent = message;
+  accountRequestFeedback.classList.toggle('error', tone === 'error');
+}
+
+function renderAccountRequestStatus(element, request, emptyLabel) {
+  if (!element) return;
+  if (!request) {
+    element.textContent = emptyLabel;
+    return;
+  }
+  const date = formatRequestDate(request.requestedAt);
+  const note = request.operatorNote ? ` ${request.operatorNote}` : '';
+  element.textContent = `${accountRequestStatusLabel(request.status)}${date ? ` · ${date}` : ''}.${note}`;
+}
+
+function renderAccountLifecycleRequests(requests) {
+  const latest = latestAccountRequestsByType(requests);
+  const exportRequest = latest.get(ACCOUNT_REQUEST_TYPES.DATA_EXPORT);
+  const deletionRequest = latest.get(ACCOUNT_REQUEST_TYPES.ACCOUNT_DELETION);
+  renderAccountRequestStatus(dataExportRequestStatus, exportRequest, 'No export request yet.');
+  renderAccountRequestStatus(accountDeletionRequestStatus, deletionRequest, 'No deletion request yet.');
+  if (requestDataExportButton) {
+    requestDataExportButton.disabled = !captureProfileOwner() || isActiveAccountRequest(exportRequest);
+    requestDataExportButton.textContent = isActiveAccountRequest(exportRequest)
+      ? 'Export request active'
+      : 'Request data export';
+  }
+  if (requestAccountDeletionButton) {
+    requestAccountDeletionButton.disabled = !captureProfileOwner() || isActiveAccountRequest(deletionRequest);
+    requestAccountDeletionButton.textContent = isActiveAccountRequest(deletionRequest)
+      ? 'Deletion request active'
+      : 'Request account deletion';
+  }
+}
+
+async function hydrateAccountLifecycleRequests(owner = captureProfileOwner()) {
+  if (!owner) return;
+  try {
+    const requests = await getAccountLifecycleRequests({ expectedUserId: owner.userId });
+    if (!isCurrentProfileOwner(owner)) return;
+    renderAccountLifecycleRequests(requests);
+    setAccountRequestFeedback('');
+  } catch (error) {
+    if (!isCurrentProfileOwner(owner)) return;
+    console.warn('Unable to load account lifecycle requests', error);
+    renderAccountLifecycleRequests([]);
+    setAccountRequestFeedback('Unable to load account request status right now.', 'error');
+  }
+}
+
+async function submitAccountLifecycleRequest(requestType, button) {
+  const owner = captureProfileOwner();
+  if (!owner || !button) return;
+  const deletion = requestType === ACCOUNT_REQUEST_TYPES.ACCOUNT_DELETION;
+  if (deletion && !window.confirm(
+    'Request permanent account deletion? This does not cancel billing by itself. The request will be tracked and reviewed before deletion is fulfilled.',
+  )) return;
+
+  const idleLabel = button.textContent;
+  button.disabled = true;
+  button.textContent = 'Sending...';
+  setAccountRequestFeedback(deletion ? 'Sending account deletion request...' : 'Sending data export request...');
+  try {
+    const result = await createAccountLifecycleRequest({
+      requestType,
+      expectedUserId: owner.userId,
+    });
+    if (!isCurrentProfileOwner(owner)) return;
+    await hydrateAccountLifecycleRequests(owner);
+    if (!isCurrentProfileOwner(owner)) return;
+    setAccountRequestFeedback(result.reused
+      ? 'That request is already active. Its current status is shown above.'
+      : 'Request received. Return here to check its status.');
+  } catch (error) {
+    if (!isCurrentProfileOwner(owner)) return;
+    console.warn('Unable to submit account lifecycle request', error);
+    setAccountRequestFeedback(error?.message || 'Unable to send that request right now.', 'error');
+    button.disabled = false;
+    button.textContent = idleLabel;
+  }
+}
+
 function setProfileFormBusy(isBusy, label = 'Save profile') {
   const submitButton = profileForm?.querySelector('button[type="submit"]');
   if (profilePhotoInput) profilePhotoInput.disabled = isBusy || !profilePhotoAvailable;
@@ -425,7 +576,7 @@ function updateBillingSummary(state) {
     : 'Subscription needed';
   document.getElementById('profileBillingCopy').textContent = state.subscriptionActive
     ? 'Your $7/month subscription is active, so the dashboard, daily actions, community, journal, and future member content stay open.'
-    : 'Subscribe for $7/month to unlock the dashboard, daily action page, community, journal, and full tracking flow.';
+    : 'Subscribe for $7/month to use the dashboard, Daily Actions, private groups, journal, and progress tracking.';
   document.getElementById('profileSubscriptionPill').textContent = state.subscriptionActive ? 'Subscription active' : 'Subscription needed';
 }
 
@@ -805,6 +956,17 @@ integrationConsentForm?.addEventListener('submit', async (event) => {
   }
 });
 
+requestDataExportButton?.addEventListener('click', () => {
+  void submitAccountLifecycleRequest(ACCOUNT_REQUEST_TYPES.DATA_EXPORT, requestDataExportButton);
+});
+
+requestAccountDeletionButton?.addEventListener('click', () => {
+  void submitAccountLifecycleRequest(
+    ACCOUNT_REQUEST_TYPES.ACCOUNT_DELETION,
+    requestAccountDeletionButton,
+  );
+});
+
 window.addEventListener('storage', (event) => {
   if (localPreviewMode && event.key === 'dominion:user') {
     invalidateProfileOwner('');
@@ -831,8 +993,11 @@ async function hydratePage(expectedOwnerId = observedProfileOwner) {
   const authenticated = await hydrateProfile(expectedOwnerId);
   const owner = captureProfileOwner();
   const themeHydration = hydrateThemeOptions(owner);
+  const accountRequestHydration = authenticated && owner
+    ? hydrateAccountLifecycleRequests(owner)
+    : Promise.resolve();
   if (authenticated && owner) await hydrateIntegrationConsent(owner);
-  await themeHydration;
+  await Promise.all([themeHydration, accountRequestHydration]);
 }
 
 async function bootProfilePage() {

@@ -1,8 +1,3 @@
-const localOrigins = new Set([
-  "http://localhost:5173",
-  "http://127.0.0.1:5173",
-]);
-
 export type EnvReader = (name: string) => string | undefined;
 
 export const readEnv: EnvReader = (name) => Deno.env.get(name);
@@ -41,19 +36,7 @@ export function isAllowedOrigin(
 ) {
   const normalized = normalizeOrigin(origin);
   if (!normalized) return false;
-  if (localOrigins.has(normalized)) return true;
-  if (configuredOrigins(env).includes(normalized)) return true;
-
-  try {
-    const url = new URL(normalized);
-    const projectPagesHost = env("CLOUDFLARE_PAGES_PROJECT_HOST") ||
-      "77-dominion-challenge.pages.dev";
-    return url.protocol === "https:" &&
-      (url.hostname === projectPagesHost ||
-        url.hostname.endsWith(`.${projectPagesHost}`));
-  } catch {
-    return false;
-  }
+  return configuredOrigins(env).includes(normalized);
 }
 
 export function resolveSiteOrigin(req: Request, env: EnvReader = readEnv) {
@@ -79,7 +62,7 @@ export function corsHeaders(req?: Request, env: EnvReader = readEnv) {
   const origin = req?.headers.get("origin");
   const headers: Record<string, string> = {
     "Access-Control-Allow-Headers":
-      "authorization, x-client-info, apikey, content-type, stripe-signature",
+      "authorization, x-client-info, apikey, content-type, stripe-signature, x-profile-user-id, x-profile-upload-request-id",
     "Access-Control-Allow-Methods": "POST, OPTIONS",
     "Vary": "Origin",
   };

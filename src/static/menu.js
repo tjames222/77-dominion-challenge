@@ -20,6 +20,7 @@ import {
 import { createPageTrainingControls } from './page-training-controls.mjs';
 
 const topbar = document.querySelector('.topbar');
+const memberTabs = document.querySelector('[data-member-tabs]');
 const TOPBAR_COMPACT_SCROLL_Y = 12;
 const TOPBAR_TOP_SCROLL_Y = 2;
 
@@ -166,11 +167,14 @@ function initScrollResponsiveTopbar() {
 
     if (menuIsOpen || currentScrollY <= TOPBAR_TOP_SCROLL_Y) {
       topbar.classList.remove('topbar-collapsed');
+      memberTabs?.classList.remove('member-tabs-collapsed');
     } else if (currentScrollY > TOPBAR_COMPACT_SCROLL_Y) {
       topbar.classList.add('topbar-collapsed');
+      memberTabs?.classList.add('member-tabs-collapsed');
     }
 
     topbar.classList.toggle('topbar-scrolled', currentScrollY > TOPBAR_TOP_SCROLL_Y);
+    memberTabs?.classList.toggle('member-tabs-scrolled', currentScrollY > TOPBAR_TOP_SCROLL_Y);
     ticking = false;
   };
 
@@ -190,22 +194,30 @@ function initTopbarStickyOffset() {
   if (!topbar) return;
 
   const root = document.documentElement;
-  let previousHeight = 0;
+  let previousTopbarHeight = 0;
+  let previousMemberTabsHeight = -1;
 
-  const syncTopbarHeight = () => {
-    const height = topbar.getBoundingClientRect().height;
-    if (!Number.isFinite(height) || height <= 0 || Math.abs(height - previousHeight) < 0.1) return;
+  const syncStickyHeights = () => {
+    const topbarHeight = topbar.getBoundingClientRect().height;
+    const memberTabsHeight = memberTabs?.getBoundingClientRect().height || 0;
+    if (Number.isFinite(topbarHeight) && topbarHeight > 0 && Math.abs(topbarHeight - previousTopbarHeight) >= 0.1) {
+      previousTopbarHeight = topbarHeight;
+      root.style.setProperty('--topbar-sticky-height', `${topbarHeight.toFixed(2)}px`);
+    }
 
-    previousHeight = height;
-    root.style.setProperty('--topbar-sticky-height', `${height.toFixed(2)}px`);
+    if (Number.isFinite(memberTabsHeight) && memberTabsHeight >= 0 && Math.abs(memberTabsHeight - previousMemberTabsHeight) >= 0.1) {
+      previousMemberTabsHeight = memberTabsHeight;
+      root.style.setProperty('--member-tabs-sticky-height', `${memberTabsHeight.toFixed(2)}px`);
+    }
   };
 
-  syncTopbarHeight();
-  window.addEventListener('resize', syncTopbarHeight, { passive: true });
+  syncStickyHeights();
+  window.addEventListener('resize', syncStickyHeights, { passive: true });
 
   if ('ResizeObserver' in window) {
-    const observer = new ResizeObserver(syncTopbarHeight);
+    const observer = new ResizeObserver(syncStickyHeights);
     observer.observe(topbar, { box: 'border-box' });
+    if (memberTabs) observer.observe(memberTabs, { box: 'border-box' });
   }
 }
 
@@ -278,6 +290,12 @@ async function buildMenu() {
     </div>
     <nav class="global-menu-links" aria-label="Global navigation" data-training-target="global-navigation">
       ${links.map(([label, href]) => `<a href="${href}">${label}</a>`).join('')}
+    </nav>
+    <nav class="global-menu-policy-links" aria-label="Policies and support">
+      <a href="./privacy.html">Privacy</a>
+      <a href="./terms.html">Terms</a>
+      <a href="./cancellation-refunds.html">Cancellation &amp; Refunds</a>
+      <a href="./support.html">Support</a>
     </nav>
     ${isLoggedIn ? `
       <section class="global-menu-training-section" aria-label="Training" hidden>
@@ -418,7 +436,7 @@ subscribeToAuthStateChanges(({ event, user }) => {
   window.setTimeout(() => {
     void buildMenu();
     if (ownerChanged || event === 'USER_UPDATED') {
-      void hydrateThemeEntitlementState().then(({ error }) => {
+      void hydrateThemeEntitlementState({ expectedUserId: nextOwner }).then(({ error }) => {
         if (error) console.warn('Unable to verify theme reward ownership', error);
       });
     }
@@ -426,8 +444,21 @@ subscribeToAuthStateChanges(({ event, user }) => {
 });
 
 window.addEventListener('storage', (event) => {
-  if (event.key === 'dominion:user') {
-    void buildMenu();
+  if (['dominion:user', 'dominion:mockUserId', 'dominion:mockUserIdsByIdentity'].includes(event.key)) {
+    menuHydrationRequest += 1;
+    closeShareComposer('storage-account-change');
+    sharedHeaderActions?.destroy();
+    sharedHeaderActions = null;
+    destroyTrainingControllers();
+    currentMenuOwner = '';
+    clearThemeEntitlementState();
+    closeMenu();
+    void buildMenu().then(async () => {
+      const user = await getLocalOrSessionUser();
+      if (!user?.authenticated || !user.userId) return;
+      const result = await hydrateThemeEntitlementState({ expectedUserId: user.userId });
+      if (result.error) console.warn('Unable to verify theme reward ownership', result.error);
+    });
     return;
   }
   if (event.key === SOLO_TRAINING_LAUNCH_STORAGE_KEY) {

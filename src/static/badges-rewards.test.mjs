@@ -26,7 +26,7 @@ describe('Badges & Rewards page model', () => {
   it('deduplicates an unbounded badge collection with stable newest-first ordering', () => {
     const badges = normalizeEarnedBadges([
       { key: 'faithful_start', name: 'Old copy', earnedAt: '2026-07-01T00:00:00Z' },
-      { key: 'iron_standard', name: 'Iron Standard', earnedAt: '2026-07-03T00:00:00Z' },
+      { key: 'iron_standard', name: 'Seven for Seven', earnedAt: '2026-07-03T00:00:00Z' },
       { key: 'faithful_start', name: 'Faithful Start', earnedAt: '2026-07-02T00:00:00Z' },
     ]);
 
@@ -139,14 +139,16 @@ describe('Badges & Rewards route integration', () => {
     assert.match(pageHtml, /class="badges-rewards-panel active"[\s\S]*?id="rewards-panel"[\s\S]*?role="tabpanel"[\s\S]*?aria-labelledby="rewards-tab"/);
     assert.match(pageHtml, /class="badges-rewards-panel"[\s\S]*?id="badges-panel"[\s\S]*?role="tabpanel"[\s\S]*?aria-labelledby="badges-tab"[\s\S]*?hidden/);
 
-    const shareIndex = pageHtml.indexOf('data-share-kind="progress"');
     const tabsIndex = pageHtml.indexOf('class="badges-rewards-tabs"');
+    const progressIndex = pageHtml.indexOf('id="gameSummaryCard"');
+    const shareIndex = pageHtml.indexOf('data-share-kind="progress"');
     const nextUnlockIndex = pageHtml.indexOf('id="rewardNextPanel"');
     const rewardsCatalogIndex = pageHtml.indexOf('class="rewards-catalog-section');
     const badgesPanelIndex = pageHtml.indexOf('id="badges-panel"');
     const badgesGalleryIndex = pageHtml.indexOf('class="badges-gallery-section');
-    assert.ok(shareIndex < tabsIndex);
-    assert.ok(tabsIndex < nextUnlockIndex);
+    assert.ok(tabsIndex < progressIndex);
+    assert.ok(progressIndex < shareIndex);
+    assert.ok(shareIndex < nextUnlockIndex);
     assert.ok(nextUnlockIndex < rewardsCatalogIndex);
     assert.ok(rewardsCatalogIndex < badgesPanelIndex);
     assert.ok(badgesPanelIndex < badgesGalleryIndex);
@@ -176,8 +178,35 @@ describe('Badges & Rewards route integration', () => {
     assert.match(pageHtml, /src\/static\/badges-rewards\.js/);
     assert.match(pageSource, /redirectToLogin\('\.\/badges-rewards\.html'\)/);
     assert.match(pageSource, /getBillingState\(\)/);
-    assert.match(pageSource, /getAllRewardCatalog\(\)/);
+    assert.match(pageSource, /getAllRewardCatalog\(\{ expectedUserId \}\)/);
     assert.match(pageSource, /window\.addEventListener\('storage'/);
+  });
+
+  it('binds secure fulfillment to one page actor and scrubs account-bound details', () => {
+    for (const apiName of ['getRewardFulfillment', 'claimRewardOffer', 'downloadRewardAsset']) {
+      const functionSource = apiSource.match(
+        new RegExp(`export async function ${apiName}\\([\\s\\S]*?\\n}`),
+      )?.[0] || '';
+      assert.match(functionSource, /expectedUserId/);
+      assert.match(functionSource, /requireMockRewardActor\(expectedUserId\)/);
+      assert.match(functionSource, /requireMockRewardActor\(actorId\)/);
+      if (apiName !== 'downloadRewardAsset') {
+        assert.match(functionSource, /const actor = await requireUser\(expectedUserId\)/);
+        assert.match(functionSource, /await requireUser\(actor\.id\)/);
+      }
+    }
+
+    assert.match(pageSource, /getLocalOrSessionUser\(\)/);
+    assert.match(pageSource, /subscribeToAuthStateChanges/);
+    assert.match(pageSource, /getRewardFulfillment\(reward\.key, \{ expectedUserId \}\)/);
+    assert.match(pageSource, /claimRewardOffer\(activeReward\.key, \{ expectedUserId \}\)/);
+    assert.match(pageSource, /downloadRewardAsset\(activeReward\.key, \{ expectedUserId \}\)/);
+    assert.match(pageSource, /function scrubRewardDetail[\s\S]*?activeFulfillment = \{}[\s\S]*?replaceChildren\(\)/);
+    assert.match(pageSource, /function scrubAccountBoundPage[\s\S]*?replaceChildren\(\)/);
+    assert.match(pageSource, /window\.addEventListener\('pagehide'[\s\S]*?scrubAccountBoundPage\(\)/);
+    assert.match(pageSource, /window\.addEventListener\('storage'[\s\S]*?dismissAndScrubRewardDetail\(\)/);
+    assert.match(pageSource, /renderRewardDetail\(\{ busy: true \}\)/);
+    assert.match(pageSource, /rewardDetailContent\.setAttribute\('aria-busy', String\(busy\)\)/);
   });
 
   it('loads all earned badges by page instead of reusing the 12-badge Dashboard shelf', () => {
@@ -196,18 +225,34 @@ describe('Badges & Rewards route integration', () => {
   });
 
   it('claims one-time unlocks and keeps Start actions on the rewards page', () => {
-    assert.match(pageSource, /claimRewardEntitlementUnlocks\(\)/);
-    assert.match(pageSource, /claimChallengeUnlocks\(\)/);
+    assert.match(pageSource, /claimRewardEntitlementUnlocks\(\{ expectedUserId \}\)/);
+    assert.match(pageSource, /claimChallengeUnlocks\(\{ expectedUserId \}\)/);
     assert.match(pageSource, /data-start-reward/);
-    assert.match(pageSource, /await startChallenge\(pendingRewardKey\)/);
+    assert.match(pageSource, /await startChallenge\(pendingRewardKey, \{ expectedUserId \}\)/);
+  });
+
+  it('downloads verified PDF bytes without navigating to a signed storage URL', () => {
+    assert.match(pageSource, /result\?\.blob instanceof Blob/);
+    assert.match(pageSource, /URL\.createObjectURL\(result\.blob\)/);
+    assert.match(pageSource, /URL\.revokeObjectURL\(objectUrl\)/);
+    assert.doesNotMatch(pageSource, /window\.location\.assign\(result\.url\)/);
+    const functionSource = apiSource.match(/export async function downloadRewardAsset[\s\S]*?\n}\n/)?.[0] || '';
+    assert.match(functionSource, /client\.functions\.invoke\('reward-download'/);
+    assert.match(functionSource, /data instanceof Blob/);
+    assert.match(functionSource, /String\.fromCharCode\(\.\.\.signature\) !== '%PDF-'/);
+    assert.doesNotMatch(functionSource, /data\?\.url|new URL\(data\.url\)/);
   });
 
   it('removes duplicate rewards content from Dashboard and keeps Rewards in the member navigation', () => {
     assert.doesNotMatch(dashboardHtml, /id="challengeVault"|Challenge Vault/);
     assert.doesNotMatch(dashboardSource, /data-start-challenge|challengeVault/);
-    assert.match(dashboardHtml, /class="member-tab" href="\.\/badges-rewards\.html">Rewards</);
+    assert.match(dashboardHtml, /class="member-tab" href="\.\/badges-rewards\.html">[\s\S]*?class="member-tab-label">Rewards<\/span>/);
     assert.doesNotMatch(dashboardHtml, />View badges and rewards</);
     assert.doesNotMatch(dashboardHtml, /class="progression-badges"|id="badgeShelf"/);
+    assert.doesNotMatch(dashboardHtml, /id="gameSummaryCard"/);
+    assert.match(pageHtml, /id="gameSummaryCard"[\s\S]*?id="gameLevelEmblem"[\s\S]*?id="gameLevelProgress"/);
+    assert.match(pageSource, /renderGameProgress\(document/);
+    assert.match(pageSource, /getLeaderboardPrestige\(/);
   });
 
   it('replaces the authenticated Challenges destination with Badges & Rewards', () => {

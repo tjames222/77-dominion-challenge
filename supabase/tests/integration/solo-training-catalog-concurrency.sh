@@ -56,7 +56,7 @@ claim_overall_training() {
     set local role authenticated;
     set local \"request.jwt.claim.sub\" = '$user_id';
     select public.claim_site_training(
-      'overall', 'dashboard', 2, 'solo-first-run', 2, 'start',
+      'overall', 'dashboard', 3, 'solo-first-run', 3, 'start',
       '$request_id', 0, 0, '$user_id'
     )::text;
     commit;
@@ -118,7 +118,7 @@ mutate_overall_training() {
     set local role authenticated;
     set local \"request.jwt.claim.sub\" = '$primary_user';
     select public.transition_site_training(
-      'overall', 'dashboard', 2, 'solo-first-run', 2, '$action',
+      'overall', 'dashboard', 3, 'solo-first-run', 3, '$action',
       '$request_id', 1, 1, '$primary_user'
     )::text;
     commit;
@@ -158,10 +158,10 @@ read -r page_revision page_index page_status program_revision program_status req
       join private.site_training_program_progress program
         on program.user_id = page.user_id
        and program.program_id = 'solo-first-run'
-       and program.program_version = 2
+       and program.program_version = 3
       where page.user_id = '$primary_user'
         and page.page_id = 'dashboard'
-        and page.content_version = 2;
+        and page.content_version = 3;
     "
 )"
 valid_winner=false
