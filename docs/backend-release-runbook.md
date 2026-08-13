@@ -125,8 +125,7 @@ The prelaunch environment model deliberately uses no paid staging project:
 | `SUPABASE_PROJECT_REF` | Yes | Production Supabase project targeted by the release |
 | `PUBLIC_SITE_URL` | Yes | Canonical HTTPS origin returned by billing flows |
 | `PUBLIC_SHARE_URL` | Optional | Custom HTTPS route for public share snapshots; defaults to the Edge Function URL |
-| `PUBLIC_ALLOWED_SITE_URLS` | Recommended | Comma-separated exact preview or secondary origins |
-| `CLOUDFLARE_PAGES_PROJECT_HOST` | When Cloudflare previews are used | Allows the configured Pages host and its preview subdomains |
+| `PUBLIC_ALLOWED_SITE_URLS` | Recommended | Comma-separated exact approved production or custom origins |
 | `VITE_SUPABASE_URL` | Yes | Public Supabase URL baked into the frontend |
 | `VITE_SUPABASE_PUBLISHABLE_KEY` | Yes | Public publishable key baked into the frontend |
 | `VITE_YOUVERSION_VERSE_URL` | Optional | Configured daily-verse source |
@@ -140,6 +139,9 @@ workflow. `VITE_ENABLE_GROUP_INTEGRATIONS` is deliberately hard-coded to `false`
 for the safe-off launch path. Treat any future `VITE_*` release toggle as a build-time feature gate:
 document its safe default here, leave it disabled until its backend is deployed
 and verified, and record who approved enabling it.
+
+`PUBLIC_ALLOWED_SITE_URLS` is an exact-origin allowlist. Do not add `develop`,
+feature-preview, or localhost origins to the production value.
 
 Supabase injects `SUPABASE_URL`, `SUPABASE_ANON_KEY`, and
 `SUPABASE_SERVICE_ROLE_KEY` into deployed functions. Never duplicate those values
@@ -259,7 +261,14 @@ FOU-752/753 must not use the normal backend-first order for their first producti
 4. Verify normal sign-in, profile text editing, dashboard challenge-date synchronization, and journal create/edit/reload behavior in production. The profile-photo control must remain disabled, and all six journal text fields must work without a journal-photo request. Leave the previous database and empty bucket in place during this verification window.
 5. Rerun the zero-data inventory. Stop on any nonzero result; export or explicitly disposition user data and use the Storage API for object deletion.
 6. Dispatch the exact same reviewed ref with `release_scope=full`. The backend stage now applies the avatar lifecycle registry and policies first and the fail-closed journal cleanup second, then rebuilds the frontend.
-7. Reload the profile after the full release. Verify the photo control is enabled, a selected image becomes a square thumbnail no larger than 256×256 and 150 KiB, replacement removes the predecessor, and profile text edits survive avatar-only saves. Then verify the final state with the queries below. A cached legacy avatar client can no longer upload a timestamp-only path, reactivate a predecessor, or delete the canonical object; rejection is the intended fail-safe.
+7. Reload the profile after the full release. Verify the photo control is
+   enabled and the authenticated upload Function independently turns a selected
+   JPEG/WebP into a stripped square WebP thumbnail no larger than 256×256 and
+   150 KiB. Confirm replacement removes the predecessor and profile text edits
+   survive avatar-only saves. Then verify the final state with the queries
+   below. A cached or custom browser client can no longer write Storage,
+   reactivate a predecessor, or delete the canonical object; rejection is the
+   intended fail-safe.
 
 ```sql
 select id, public, file_size_limit, allowed_mime_types
@@ -267,20 +276,19 @@ from storage.buckets
 where id in ('profile-photos', 'community-post-images', 'journal-progress')
 order by id;
 
--- Exactly profile-photos (153600; JPEG/WebP) and community-post-images remain.
+-- Exactly profile-photos (153600; WebP only) and community-post-images remain.
 select policyname, cmd, permissive
 from pg_policies
 where schemaname = 'storage' and tablename = 'objects'
 order by policyname;
 
--- Exactly seven policies remain:
+-- The exact reviewed policies remain, with no permissive browser INSERT policy:
 -- Canonical profile photos cannot be deleted (DELETE, restrictive)
 -- Pending account erasure blocks personal asset deletes (DELETE, restrictive)
--- Pending account erasure blocks personal asset uploads (INSERT, restrictive)
 -- Pending account erasure freezes personal asset updates (UPDATE, restrictive)
 -- Users can delete own profile photo objects (DELETE, permissive)
 -- Users can read own profile photo objects (SELECT, permissive)
--- Users can upload own profile photo objects (INSERT, permissive)
+-- Only the service role can insert a trusted profile-photo object.
 
 select
   to_regclass('public.journal_photos') is null as journal_photos_retired,
@@ -312,7 +320,7 @@ select public.profile_photo_registration_health();
 ```
 
 Unattended expiry and deletion are operated separately. Complete the Vault,
-Cron, health-alert, and staging proof in
+Cron, health-alert, and closed production-canary proof in
 [`profile-photo-cleanup-runbook.md`](./profile-photo-cleanup-runbook.md) before
 production promotion; a successful Function deployment without the Cron job is
 not completion evidence for FOU-802.
@@ -411,11 +419,11 @@ the release or incident record.
    subscription/entitlement transition and no duplicate transition on replay.
 6. When the integration runtime is enabled, invoke health with the worker secret,
    confirm Cron history is healthy, and deliver one non-sensitive synthetic event
-   to each staging-approved provider before enabling connection UI.
+   to each canary-approved provider destination before enabling connection UI.
 7. When provider connections are enabled, use a current group owner/admin to
-   connect and confirm one staging channel per provider. Confirm a group member
-   sees status but no management actions; then test, disconnect, and verify queued
-   sends are canceled before reconnecting.
+   connect and confirm one isolated canary channel per provider. Confirm a group
+   member sees status but no management actions; then test, disconnect, and
+   verify queued sends are canceled before reconnecting.
 8. Load the production frontend in a fresh browser profile. Confirm it targets
    the production Supabase project, mock identities are unavailable, and core
    Dashboard, Check-In, billing, and sign-out flows work.

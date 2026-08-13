@@ -129,6 +129,7 @@ describe('Cloudflare frontend environment gate', () => {
       VITE_ENABLE_MOCKS: 'true',
       VITE_SUPABASE_URL: 'https://project.supabase.co',
       VITE_SUPABASE_PUBLISHABLE_KEY: 'sb_publishable_example',
+      SUPABASE_PROJECT_REF: 'project',
     }), [
       'VITE_SUPABASE_URL must be unset on develop',
       'VITE_SUPABASE_PUBLISHABLE_KEY must be unset on develop',
@@ -142,6 +143,7 @@ describe('Cloudflare frontend environment gate', () => {
       VITE_ENABLE_MOCKS: 'true',
       VITE_SUPABASE_URL: 'https://project.supabase.co',
       VITE_SUPABASE_PUBLISHABLE_KEY: 'sb_publishable_example',
+      SUPABASE_PROJECT_REF: 'project',
     }), ['VITE_ENABLE_MOCKS must be false on main']);
   });
 
@@ -160,9 +162,21 @@ describe('Cloudflare frontend environment gate', () => {
       VITE_ENABLE_MOCKS: 'false',
       VITE_SUPABASE_URL: 'https://YOUR_PROJECT.supabase.co',
       VITE_SUPABASE_PUBLISHABLE_KEY: 'YOUR_PUBLISHABLE_KEY',
+      SUPABASE_PROJECT_REF: 'project',
     }), [
       'VITE_SUPABASE_URL',
       'VITE_SUPABASE_PUBLISHABLE_KEY',
     ]);
+  });
+
+  test('requires main to target the same Supabase project as migrations', () => {
+    assert.deepEqual(frontendEnvironmentErrors({
+      CF_PAGES: 'true',
+      CF_PAGES_BRANCH: 'main',
+      VITE_ENABLE_MOCKS: 'false',
+      VITE_SUPABASE_URL: 'https://frontend-project.supabase.co',
+      VITE_SUPABASE_PUBLISHABLE_KEY: 'sb_publishable_example',
+      SUPABASE_PROJECT_REF: 'migration-project',
+    }), ['VITE_SUPABASE_URL must match SUPABASE_PROJECT_REF']);
   });
 });

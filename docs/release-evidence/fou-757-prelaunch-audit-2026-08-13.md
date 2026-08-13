@@ -95,8 +95,9 @@ the following are attached to the Linear release record:
 
 1. Backup/PITR identifier and UTC verification time.
 2. Reconciled migration history plus reviewed dry-run output.
-3. Real staging run against the exact candidate with two-account isolation and
-   rollback evidence.
+3. Clean local full-stack rehearsal, followed by a closed canary on the single
+   hosted production project with Stripe test mode, two-account isolation, and
+   rollback/forward-fix evidence. Public signup and launch traffic stay closed.
 4. Supabase Auth sender/redirect/password configuration and delivered email tests.
 5. Owner-approved customer policies and account lifecycle operator.
 6. Stripe live configuration and controlled webhook replay evidence.

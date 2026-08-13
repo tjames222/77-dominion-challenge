@@ -139,15 +139,80 @@ insert into public.profiles (
 SQL
 }
 
-register_and_upload() {
+reserve_profile_photo_upload() {
   local user_id="$1"
-  local storage_path="$2"
-  local object_id="$3"
-  authenticated_sql "$user_id" "
-select public.register_profile_photo_upload('$storage_path');
-insert into storage.objects (id, bucket_id, name, owner)
-values ('$object_id', 'profile-photos', '$storage_path', '$user_id');
-"
+  local request_id="$2"
+  local source_sha256="$3"
+
+  service_sql "
+select
+  reservation.result ->> 'registrationId',
+  reservation.result ->> 'storagePath'
+from (
+  select public.reserve_profile_photo_upload_service(
+    '$user_id',
+    '$request_id',
+    '$source_sha256'
+  ) as result
+) reservation;
+" | tail -n 1
+}
+
+upload_and_finalize_profile_photo() {
+  local user_id="$1"
+  local registration_id="$2"
+  local storage_path="$3"
+  local object_id="$4"
+  local output_sha256="$5"
+  local size_bytes="$6"
+
+  service_sql "
+insert into storage.objects (id, bucket_id, name, owner, metadata)
+values (
+  '$object_id',
+  'profile-photos',
+  '$storage_path',
+  '$user_id',
+  jsonb_build_object('mimetype', 'image/webp', 'size', $size_bytes)
+);
+select public.finalize_profile_photo_upload_service(
+  '$user_id',
+  '$registration_id',
+  '$storage_path',
+  '$output_sha256',
+  $size_bytes,
+  32,
+  32
+);
+" >/dev/null
+}
+
+reserve_upload_and_finalize_profile_photo() {
+  local user_id="$1"
+  local request_id="$2"
+  local source_sha256="$3"
+  local object_id="$4"
+  local output_sha256="$5"
+  local size_bytes="$6"
+  local reservation_id
+  local storage_path
+
+  read -r reservation_id storage_path <<<"$(
+    reserve_profile_photo_upload "$user_id" "$request_id" "$source_sha256"
+  )"
+  [[ "$reservation_id" =~ ^[0-9a-f-]{36}$ ]] \
+    || fail "The trusted reservation did not return a UUID."
+  [[ "$storage_path" =~ ^${user_id}/avatar-[0-9]{13}-[a-f0-9]{32}[.]webp$ ]] \
+    || fail "The trusted reservation did not return an owned immutable WebP path."
+
+  upload_and_finalize_profile_photo \
+    "$user_id" \
+    "$reservation_id" \
+    "$storage_path" \
+    "$object_id" \
+    "$output_sha256" \
+    "$size_bytes"
+  printf '%s %s\n' "$reservation_id" "$storage_path"
 }
 
 wait_for_advisory_barrier() {
@@ -179,8 +244,11 @@ wait_for_advisory_barrier() {
   fail "Timed out waiting for concurrency barrier $barrier_key."
 }
 
-read -r same_path_user same_path_hash cap_user cap_seed_hash_one \
-  cap_seed_hash_two cap_race_hash_one cap_race_hash_two <<<"$(
+read -r same_request_user same_request_id same_source_sha256 \
+  same_conflicting_sha256 legacy_path_hash cap_user cap_seed_request_one \
+  cap_seed_request_two cap_race_request_one cap_race_request_two \
+  cap_seed_source_one cap_seed_source_two cap_race_source_one \
+  cap_race_source_two <<<"$(
     psql "$database_url" \
       --set=ON_ERROR_STOP=1 \
       --tuples-only \
@@ -190,73 +258,141 @@ read -r same_path_user same_path_hash cap_user cap_seed_hash_one \
       --command "
         select
           gen_random_uuid(),
+          gen_random_uuid(),
+          encode(gen_random_bytes(32), 'hex'),
+          encode(gen_random_bytes(32), 'hex'),
           encode(gen_random_bytes(16), 'hex'),
           gen_random_uuid(),
-          encode(gen_random_bytes(16), 'hex'),
-          encode(gen_random_bytes(16), 'hex'),
-          encode(gen_random_bytes(16), 'hex'),
-          encode(gen_random_bytes(16), 'hex');
+          gen_random_uuid(),
+          gen_random_uuid(),
+          gen_random_uuid(),
+          gen_random_uuid(),
+          encode(gen_random_bytes(32), 'hex'),
+          encode(gen_random_bytes(32), 'hex'),
+          encode(gen_random_bytes(32), 'hex'),
+          encode(gen_random_bytes(32), 'hex');
       "
   )"
 
-same_path="$same_path_user/avatar-1734000000001-$same_path_hash.webp"
-create_profile_fixture "$same_path_user"
+create_profile_fixture "$same_request_user"
 
-same_path_barrier=80000101
-same_path_call_one=$(cat <<SQL
-begin;
-set local statement_timeout = '10s';
-set local lock_timeout = '5s';
-set local role authenticated;
-set local "request.jwt.claim.sub" = '$same_path_user';
-set local "request.jwt.claims" = '{"sub":"$same_path_user","role":"authenticated","email":"profile-photo-race@example.test"}';
-select user_id from public.profiles where user_id = '$same_path_user' for update;
-select pg_advisory_xact_lock($same_path_barrier);
-select pg_sleep(1);
-select public.register_profile_photo_upload('$same_path');
-commit;
-SQL
-)
-same_path_call_two=$(cat <<SQL
-begin;
-set local statement_timeout = '10s';
-set local lock_timeout = '5s';
-set local role authenticated;
-set local "request.jwt.claim.sub" = '$same_path_user';
-set local "request.jwt.claims" = '{"sub":"$same_path_user","role":"authenticated","email":"profile-photo-race@example.test"}';
-select public.register_profile_photo_upload('$same_path');
-commit;
-SQL
-)
-
-psql "$database_url" --set=ON_ERROR_STOP=1 --tuples-only --no-align --quiet \
-  --command "$same_path_call_one" >"$test_directory/register-same-one.log" 2>&1 &
-same_path_one_pid=$!
-wait_for_advisory_barrier "$same_path_barrier"
-psql "$database_url" --set=ON_ERROR_STOP=1 --tuples-only --no-align --quiet \
-  --command "$same_path_call_two" >"$test_directory/register-same-two.log" 2>&1 &
-same_path_two_pid=$!
-
-same_path_one_status=0
-same_path_two_status=0
-wait "$same_path_one_pid" || same_path_one_status=$?
-wait "$same_path_two_pid" || same_path_two_status=$?
-if (( same_path_one_status != 0 || same_path_two_status != 0 )); then
-  cat "$test_directory/register-same-one.log" >&2
-  cat "$test_directory/register-same-two.log" >&2
-  fail "Concurrent same-path registrations did not both complete without a deadlock."
+legacy_path="$same_request_user/avatar-1734000000001-$legacy_path_hash.webp"
+legacy_registration_status=0
+authenticated_sql "$same_request_user" \
+  "select public.register_profile_photo_upload('$legacy_path');" \
+  >"$test_directory/register-legacy-authenticated.log" 2>&1 \
+  || legacy_registration_status=$?
+if (( legacy_registration_status == 0 )); then
+  fail "An authenticated caller used the retired direct-upload reservation RPC."
+fi
+if ! grep -q 'permission denied for function register_profile_photo_upload' \
+  "$test_directory/register-legacy-authenticated.log"; then
+  cat "$test_directory/register-legacy-authenticated.log" >&2
+  fail "The retired authenticated reservation RPC failed for an unexpected reason."
 fi
 
-same_path_id_one="$(tail -n 1 "$test_directory/register-same-one.log" | tr -d '[:space:]')"
-same_path_id_two="$(tail -n 1 "$test_directory/register-same-two.log" | tr -d '[:space:]')"
-[[ "$same_path_id_one" =~ ^[0-9a-f-]{36}$ ]] \
-  || fail "The first same-path registration did not return a UUID."
-[[ "$same_path_id_two" =~ ^[0-9a-f-]{36}$ ]] \
-  || fail "The second same-path registration did not return a UUID."
-expect_equal "$same_path_id_two" "$same_path_id_one" \
-  "Concurrent same-path registration must return one stable lifecycle ID."
+same_request_barrier=80000101
+same_request_call_one=$(cat <<SQL
+begin;
+set local statement_timeout = '10s';
+set local lock_timeout = '5s';
+set local role service_role;
+set local "request.jwt.claim.sub" = '';
+set local "request.jwt.claims" = '{"role":"service_role"}';
+select pg_advisory_xact_lock($same_request_barrier);
+select pg_sleep(1);
+select concat(
+  reservation.result ->> 'registrationId',
+  ' ',
+  reservation.result ->> 'storagePath'
+)
+from (
+  select public.reserve_profile_photo_upload_service(
+    '$same_request_user',
+    '$same_request_id',
+    '$same_source_sha256'
+  ) as result
+) reservation;
+commit;
+SQL
+)
+same_request_call_two=$(cat <<SQL
+begin;
+set local statement_timeout = '10s';
+set local lock_timeout = '5s';
+set local role service_role;
+set local "request.jwt.claim.sub" = '';
+set local "request.jwt.claims" = '{"role":"service_role"}';
+select concat(
+  reservation.result ->> 'registrationId',
+  ' ',
+  reservation.result ->> 'storagePath'
+)
+from (
+  select public.reserve_profile_photo_upload_service(
+    '$same_request_user',
+    '$same_request_id',
+    '$same_source_sha256'
+  ) as result
+) reservation;
+commit;
+SQL
+)
 
-read -r same_path_lifecycle_count same_path_tombstone_count <<<"$(
+psql "$database_url" --set=ON_ERROR_STOP=1 --tuples-only --no-align --quiet \
+  --command "$same_request_call_one" >"$test_directory/reserve-same-one.log" 2>&1 &
+same_request_one_pid=$!
+wait_for_advisory_barrier "$same_request_barrier"
+psql "$database_url" --set=ON_ERROR_STOP=1 --tuples-only --no-align --quiet \
+  --command "$same_request_call_two" >"$test_directory/reserve-same-two.log" 2>&1 &
+same_request_two_pid=$!
+
+same_request_one_status=0
+same_request_two_status=0
+wait "$same_request_one_pid" || same_request_one_status=$?
+wait "$same_request_two_pid" || same_request_two_status=$?
+if (( same_request_one_status != 0 || same_request_two_status != 0 )); then
+  cat "$test_directory/reserve-same-one.log" >&2
+  cat "$test_directory/reserve-same-two.log" >&2
+  fail "Concurrent same-request reservations did not both complete without a deadlock."
+fi
+
+read -r same_request_id_one same_request_path_one <<<"$(
+  tail -n 1 "$test_directory/reserve-same-one.log"
+)"
+read -r same_request_id_two same_request_path_two <<<"$(
+  tail -n 1 "$test_directory/reserve-same-two.log"
+)"
+[[ "$same_request_id_one" =~ ^[0-9a-f-]{36}$ ]] \
+  || fail "The first same-request reservation did not return a UUID."
+[[ "$same_request_id_two" =~ ^[0-9a-f-]{36}$ ]] \
+  || fail "The second same-request reservation did not return a UUID."
+[[ "$same_request_path_one" =~ ^${same_request_user}/avatar-[0-9]{13}-[a-f0-9]{32}[.]webp$ ]] \
+  || fail "The first same-request reservation returned an invalid path."
+expect_equal "$same_request_id_two" "$same_request_id_one" \
+  "Concurrent same-request reservation must return one stable lifecycle ID."
+expect_equal "$same_request_path_two" "$same_request_path_one" \
+  "Concurrent same-request reservation must return one stable Storage path."
+
+same_request_mismatch_status=0
+service_sql "
+select public.reserve_profile_photo_upload_service(
+  '$same_request_user',
+  '$same_request_id',
+  '$same_conflicting_sha256'
+);
+" >"$test_directory/reserve-same-mismatched-bytes.log" 2>&1 \
+  || same_request_mismatch_status=$?
+if (( same_request_mismatch_status == 0 )); then
+  fail "A trusted request ID was reused for different source bytes."
+fi
+if ! grep -q 'A profile-photo request ID cannot be reused for different bytes.' \
+  "$test_directory/reserve-same-mismatched-bytes.log"; then
+  cat "$test_directory/reserve-same-mismatched-bytes.log" >&2
+  fail "The mismatched request retry failed for an unexpected reason."
+fi
+
+read -r same_request_lifecycle_count same_request_tombstone_count <<<"$(
   psql "$database_url" \
     --set=ON_ERROR_STOP=1 \
     --tuples-only \
@@ -266,39 +402,45 @@ read -r same_path_lifecycle_count same_path_tombstone_count <<<"$(
     --command "
       select
         (select count(*) from private.profile_photo_objects
-          where user_id = '$same_path_user'
-            and storage_path = '$same_path'),
+          where user_id = '$same_request_user'
+            and upload_request_id = '$same_request_id'
+            and storage_path = '$same_request_path_one'
+            and source_sha256 = '$same_source_sha256'),
         (select count(*) from private.profile_photo_path_tombstones
-          where path_sha256 = private.profile_photo_path_sha256('$same_path'));
+          where path_sha256 =
+            private.profile_photo_path_sha256('$same_request_path_one'));
     "
 )"
-expect_equal "$same_path_lifecycle_count" "1" \
-  "Concurrent same-path registration must create one lifecycle row."
-expect_equal "$same_path_tombstone_count" "1" \
-  "Concurrent same-path registration must create one permanent tombstone."
+expect_equal "$same_request_lifecycle_count" "1" \
+  "Concurrent same-request reservation must create one lifecycle row."
+expect_equal "$same_request_tombstone_count" "1" \
+  "Concurrent same-request reservation must create one permanent tombstone."
 
-cap_seed_path_one="$cap_user/avatar-1735000000001-$cap_seed_hash_one.webp"
-cap_seed_path_two="$cap_user/avatar-1735000000002-$cap_seed_hash_two.jpg"
-cap_race_path_one="$cap_user/avatar-1735000000003-$cap_race_hash_one.webp"
-cap_race_path_two="$cap_user/avatar-1735000000004-$cap_race_hash_two.webp"
 create_profile_fixture "$cap_user"
-authenticated_sql "$cap_user" \
-  "select public.register_profile_photo_upload('$cap_seed_path_one');" >/dev/null
-authenticated_sql "$cap_user" \
-  "select public.register_profile_photo_upload('$cap_seed_path_two');" >/dev/null
+cap_tombstones_before="$(
+  psql "$database_url" --set=ON_ERROR_STOP=1 --tuples-only --no-align --quiet \
+    --command "select count(*) from private.profile_photo_path_tombstones;"
+)"
+reserve_profile_photo_upload \
+  "$cap_user" "$cap_seed_request_one" "$cap_seed_source_one" >/dev/null
+reserve_profile_photo_upload \
+  "$cap_user" "$cap_seed_request_two" "$cap_seed_source_two" >/dev/null
 
 cap_barrier=80000102
 cap_call_one=$(cat <<SQL
 begin;
 set local statement_timeout = '10s';
 set local lock_timeout = '5s';
-set local role authenticated;
-set local "request.jwt.claim.sub" = '$cap_user';
-set local "request.jwt.claims" = '{"sub":"$cap_user","role":"authenticated","email":"profile-photo-race@example.test"}';
-select user_id from public.profiles where user_id = '$cap_user' for update;
+set local role service_role;
+set local "request.jwt.claim.sub" = '';
+set local "request.jwt.claims" = '{"role":"service_role"}';
 select pg_advisory_xact_lock($cap_barrier);
 select pg_sleep(1);
-select public.register_profile_photo_upload('$cap_race_path_one');
+select public.reserve_profile_photo_upload_service(
+  '$cap_user',
+  '$cap_race_request_one',
+  '$cap_race_source_one'
+);
 commit;
 SQL
 )
@@ -306,10 +448,14 @@ cap_call_two=$(cat <<SQL
 begin;
 set local statement_timeout = '10s';
 set local lock_timeout = '5s';
-set local role authenticated;
-set local "request.jwt.claim.sub" = '$cap_user';
-set local "request.jwt.claims" = '{"sub":"$cap_user","role":"authenticated","email":"profile-photo-race@example.test"}';
-select public.register_profile_photo_upload('$cap_race_path_two');
+set local role service_role;
+set local "request.jwt.claim.sub" = '';
+set local "request.jwt.claims" = '{"role":"service_role"}';
+select public.reserve_profile_photo_upload_service(
+  '$cap_user',
+  '$cap_race_request_two',
+  '$cap_race_source_two'
+);
 commit;
 SQL
 )
@@ -336,27 +482,25 @@ fi
 if (( cap_success_count != 1 )); then
   cat "$test_directory/register-cap-one.log" >&2
   cat "$test_directory/register-cap-two.log" >&2
-  fail "Exactly one of two concurrent new paths must be admitted at the pending boundary."
+  fail "Exactly one of two concurrent trusted requests must be admitted at the pending boundary."
 fi
 
 if (( cap_one_status == 0 )); then
-  cap_rejected_path="$cap_race_path_two"
+  cap_rejected_request="$cap_race_request_two"
   cap_rejected_log="$test_directory/register-cap-two.log"
 else
-  cap_rejected_path="$cap_race_path_one"
+  cap_rejected_request="$cap_race_request_one"
   cap_rejected_log="$test_directory/register-cap-one.log"
 fi
-if ! grep -q \
-  'Too many profile-photo uploads are pending. Wait for one to expire or finish before retrying.' \
-  "$cap_rejected_log"; then
+if ! grep -q 'Too many profile-photo uploads are pending.' "$cap_rejected_log"; then
   cat "$test_directory/register-cap-one.log" >&2
   cat "$test_directory/register-cap-two.log" >&2
-  fail "The losing concurrent new path failed for an unexpected reason."
+  fail "The losing concurrent trusted request failed for an unexpected reason."
 fi
 
 read -r cap_lifecycle_count cap_pending_count cap_race_admitted_count \
-  cap_rejected_lifecycle_count cap_tombstone_count \
-  cap_rejected_tombstone_count <<<"$(
+  cap_rejected_lifecycle_count cap_joined_tombstone_count \
+  cap_tombstone_delta <<<"$(
     psql "$database_url" \
       --set=ON_ERROR_STOP=1 \
       --tuples-only \
@@ -371,20 +515,21 @@ read -r cap_lifecycle_count cap_pending_count cap_race_admitted_count \
             where user_id = '$cap_user' and state = 'pending_upload'),
           (select count(*) from private.profile_photo_objects
             where user_id = '$cap_user'
-              and storage_path in ('$cap_race_path_one', '$cap_race_path_two')),
+              and upload_request_id in (
+                '$cap_race_request_one',
+                '$cap_race_request_two'
+              )),
           (select count(*) from private.profile_photo_objects
             where user_id = '$cap_user'
-              and storage_path = '$cap_rejected_path'),
-          (select count(*) from private.profile_photo_path_tombstones
-            where path_sha256 in (
-              private.profile_photo_path_sha256('$cap_seed_path_one'),
-              private.profile_photo_path_sha256('$cap_seed_path_two'),
-              private.profile_photo_path_sha256('$cap_race_path_one'),
-              private.profile_photo_path_sha256('$cap_race_path_two')
-            )),
-          (select count(*) from private.profile_photo_path_tombstones
-            where path_sha256 =
-              private.profile_photo_path_sha256('$cap_rejected_path'));
+              and upload_request_id = '$cap_rejected_request'),
+          (select count(*)
+            from private.profile_photo_objects registry
+            join private.profile_photo_path_tombstones tombstone
+              on tombstone.path_sha256 =
+                private.profile_photo_path_sha256(registry.storage_path)
+            where registry.user_id = '$cap_user'),
+          (select count(*) from private.profile_photo_path_tombstones)
+            - $cap_tombstones_before;
       "
   )"
 expect_equal "$cap_lifecycle_count" "3" \
@@ -392,16 +537,18 @@ expect_equal "$cap_lifecycle_count" "3" \
 expect_equal "$cap_pending_count" "3" \
   "The concurrent pending-boundary race must leave exactly three pending rows."
 expect_equal "$cap_race_admitted_count" "1" \
-  "Exactly one concurrent new path must have a lifecycle row."
+  "Exactly one concurrent trusted request must have a lifecycle row."
 expect_equal "$cap_rejected_lifecycle_count" "0" \
-  "The rejected concurrent path must create no lifecycle row."
-expect_equal "$cap_tombstone_count" "3" \
-  "The concurrent pending-boundary race must reserve only admitted paths."
-expect_equal "$cap_rejected_tombstone_count" "0" \
-  "The rejected concurrent path must create no tombstone."
+  "The rejected concurrent trusted request must create no lifecycle row."
+expect_equal "$cap_joined_tombstone_count" "3" \
+  "Every admitted trusted request must have exactly one path tombstone."
+expect_equal "$cap_tombstone_delta" "3" \
+  "The rejected concurrent trusted request must leak no generated tombstone."
 
-read -r commit_user commit_object_one commit_object_two cleanup_reinsert_object \
-  commit_hash_one commit_hash_two <<<"$(
+read -r commit_user commit_object_one commit_object_two cleanup_object \
+  cleanup_reinsert_object commit_request_one commit_request_two \
+  cleanup_request commit_source_one commit_source_two cleanup_source \
+  commit_output_one commit_output_two commit_conflicting_output <<<"$(
     psql "$database_url" \
       --set=ON_ERROR_STOP=1 \
       --tuples-only \
@@ -414,17 +561,76 @@ read -r commit_user commit_object_one commit_object_two cleanup_reinsert_object 
           gen_random_uuid(),
           gen_random_uuid(),
           gen_random_uuid(),
-          encode(gen_random_bytes(16), 'hex'),
-          encode(gen_random_bytes(16), 'hex');
+          gen_random_uuid(),
+          gen_random_uuid(),
+          gen_random_uuid(),
+          gen_random_uuid(),
+          encode(gen_random_bytes(32), 'hex'),
+          encode(gen_random_bytes(32), 'hex'),
+          encode(gen_random_bytes(32), 'hex'),
+          encode(gen_random_bytes(32), 'hex'),
+          encode(gen_random_bytes(32), 'hex'),
+          encode(gen_random_bytes(32), 'hex');
       "
   )"
 
-commit_path_one="$commit_user/avatar-1720000001001-$commit_hash_one.webp"
-commit_path_two="$commit_user/avatar-1720000001002-$commit_hash_two.jpg"
-
 create_profile_fixture "$commit_user"
-register_and_upload "$commit_user" "$commit_path_one" "$commit_object_one"
-register_and_upload "$commit_user" "$commit_path_two" "$commit_object_two"
+read -r commit_registration_one commit_path_one <<<"$(
+  reserve_upload_and_finalize_profile_photo \
+    "$commit_user" \
+    "$commit_request_one" \
+    "$commit_source_one" \
+    "$commit_object_one" \
+    "$commit_output_one" \
+    512
+)"
+read -r commit_registration_two commit_path_two <<<"$(
+  reserve_upload_and_finalize_profile_photo \
+    "$commit_user" \
+    "$commit_request_two" \
+    "$commit_source_two" \
+    "$commit_object_two" \
+    "$commit_output_two" \
+    640
+)"
+
+finalize_retry_result="$(
+  service_sql "
+select public.finalize_profile_photo_upload_service(
+  '$commit_user',
+  '$commit_registration_one',
+  '$commit_path_one',
+  '$commit_output_one',
+  512,
+  32,
+  32
+) ->> 'finalized';
+" | tail -n 1
+)"
+expect_equal "$finalize_retry_result" "true" \
+  "An exact trusted finalization retry must remain idempotent."
+
+finalize_mismatch_status=0
+service_sql "
+select public.finalize_profile_photo_upload_service(
+  '$commit_user',
+  '$commit_registration_one',
+  '$commit_path_one',
+  '$commit_conflicting_output',
+  512,
+  32,
+  32
+);
+" >"$test_directory/finalize-mismatched-metadata.log" 2>&1 \
+  || finalize_mismatch_status=$?
+if (( finalize_mismatch_status == 0 )); then
+  fail "A trusted finalization retry changed immutable output metadata."
+fi
+if ! grep -q 'Verified profile-photo metadata is immutable.' \
+  "$test_directory/finalize-mismatched-metadata.log"; then
+  cat "$test_directory/finalize-mismatched-metadata.log" >&2
+  fail "The mismatched finalization retry failed for an unexpected reason."
+fi
 
 commit_expected_at="$(
   psql "$database_url" \
@@ -539,37 +745,80 @@ expect_equal "$pointer_matches" "1" \
 expect_equal "$object_count" "2" \
   "The stale commit must not delete either uploaded object."
 
-cleanup_path="$(
+read -r cleanup_registration cleanup_path <<<"$(
+  reserve_profile_photo_upload \
+    "$commit_user" "$cleanup_request" "$cleanup_source"
+)"
+service_sql "
+insert into storage.objects (id, bucket_id, name, owner, metadata)
+values (
+  '$cleanup_object',
+  'profile-photos',
+  '$cleanup_path',
+  '$commit_user',
+  jsonb_build_object('mimetype', 'image/webp', 'size', 384)
+);
+" >/dev/null
+
+cleanup_abandon_result="$(
+  service_sql "
+select public.abandon_profile_photo_upload_service(
+  '$commit_user',
+  '$cleanup_registration'
+);
+" | tail -n 1
+)"
+expect_equal "$cleanup_abandon_result" "t" \
+  "The trusted service must durably abandon an unverified uploaded object."
+
+cleanup_abandon_retry="$(
+  service_sql "
+select public.abandon_profile_photo_upload_service(
+  '$commit_user',
+  '$cleanup_registration'
+);
+" | tail -n 1
+)"
+expect_equal "$cleanup_abandon_retry" "f" \
+  "A repeated trusted abandon must make no second lifecycle transition."
+
+read -r abandoned_state abandoned_object_matches abandoned_is_unverified <<<"$(
   psql "$database_url" \
     --set=ON_ERROR_STOP=1 \
     --tuples-only \
     --no-align \
+    --field-separator=' ' \
     --quiet \
     --command "
-      select storage_path
+      select
+        state,
+        (storage_object_id = '$cleanup_object')::integer,
+        (verified_at is null)::integer
       from private.profile_photo_objects
-      where user_id = '$commit_user'
-        and state = 'pending_upload';
+      where id = '$cleanup_registration';
     "
 )"
-
-authenticated_sql "$commit_user" "
-select public.abandon_profile_photo_upload('$cleanup_path');
-" >/dev/null
+expect_equal "$abandoned_state" "cleanup" \
+  "The trusted abandon must make the reservation cleanup-eligible."
+expect_equal "$abandoned_object_matches" "1" \
+  "The abandoned lifecycle row must retain the exact Storage identity."
+expect_equal "$abandoned_is_unverified" "1" \
+  "The trusted abandon must cover only unverified output."
 
 read -r cleanup_job_id claimed_cleanup_path cleanup_token <<<"$(
   service_sql "
-select job_id, storage_path, claim_token
-from public.claim_profile_photo_cleanup_service(20);
+select claimed.job_id, claimed.storage_path, claimed.claim_token
+from public.claim_profile_photo_cleanup_service(100) claimed
+where claimed.storage_path = '$cleanup_path';
 " | tail -n 1
 )"
 
 [[ "$cleanup_job_id" =~ ^[0-9a-f-]{36}$ ]] \
-  || fail "The stale upload did not yield a cleanup job."
+  || fail "The abandoned trusted upload did not yield a cleanup job."
 [[ "$cleanup_token" =~ ^[0-9a-f-]{36}$ ]] \
-  || fail "The stale upload cleanup job did not yield a claim token."
+  || fail "The abandoned trusted upload cleanup job did not yield a claim token."
 expect_equal "$claimed_cleanup_path" "$cleanup_path" \
-  "Cleanup claiming must return the abandoned stale upload path."
+  "Cleanup claiming must return the abandoned trusted upload path."
 
 service_sql "
 select public.verify_profile_photo_cleanup_service(
@@ -690,21 +939,33 @@ expect_equal "$reinserted_count" "0" \
 expect_equal "$canonical_after_cleanup" "1" \
   "Cleanup confirmation must leave the canonical profile photo untouched."
 
-read -r commit_first_user commit_first_object commit_first_hash <<<"$(
-  psql "$database_url" \
-    --set=ON_ERROR_STOP=1 \
+read -r commit_first_user commit_first_object commit_first_request \
+  commit_first_source commit_first_output <<<"$(
+    psql "$database_url" \
+      --set=ON_ERROR_STOP=1 \
     --tuples-only \
     --no-align \
-    --field-separator=' ' \
-    --quiet \
-    --command "
-      select gen_random_uuid(), gen_random_uuid(),
-        encode(gen_random_bytes(16), 'hex');
+      --field-separator=' ' \
+      --quiet \
+      --command "
+      select
+        gen_random_uuid(),
+        gen_random_uuid(),
+        gen_random_uuid(),
+        encode(gen_random_bytes(32), 'hex'),
+        encode(gen_random_bytes(32), 'hex');
     "
 )"
-commit_first_path="$commit_first_user/avatar-1720000002001-$commit_first_hash.webp"
 create_profile_fixture "$commit_first_user"
-register_and_upload "$commit_first_user" "$commit_first_path" "$commit_first_object"
+read -r commit_first_registration commit_first_path <<<"$(
+  reserve_upload_and_finalize_profile_photo \
+    "$commit_first_user" \
+    "$commit_first_request" \
+    "$commit_first_source" \
+    "$commit_first_object" \
+    "$commit_first_output" \
+    704
+)"
 commit_first_expected_at="$(
   psql "$database_url" --set=ON_ERROR_STOP=1 --tuples-only --no-align --quiet \
     --command "select updated_at from public.profiles where user_id = '$commit_first_user';"
@@ -803,21 +1064,33 @@ expect_equal "$commit_first_work" "1" \
 expect_equal "$commit_first_pending" "1" \
   "The commit-first race must finish with account erasure pending."
 
-read -r seal_first_user seal_first_object seal_first_hash <<<"$(
-  psql "$database_url" \
-    --set=ON_ERROR_STOP=1 \
+read -r seal_first_user seal_first_object seal_first_request \
+  seal_first_source seal_first_output <<<"$(
+    psql "$database_url" \
+      --set=ON_ERROR_STOP=1 \
     --tuples-only \
     --no-align \
-    --field-separator=' ' \
-    --quiet \
-    --command "
-      select gen_random_uuid(), gen_random_uuid(),
-        encode(gen_random_bytes(16), 'hex');
+      --field-separator=' ' \
+      --quiet \
+      --command "
+      select
+        gen_random_uuid(),
+        gen_random_uuid(),
+        gen_random_uuid(),
+        encode(gen_random_bytes(32), 'hex'),
+        encode(gen_random_bytes(32), 'hex');
     "
 )"
-seal_first_path="$seal_first_user/avatar-1720000003001-$seal_first_hash.jpg"
 create_profile_fixture "$seal_first_user"
-register_and_upload "$seal_first_user" "$seal_first_path" "$seal_first_object"
+read -r seal_first_registration seal_first_path <<<"$(
+  reserve_upload_and_finalize_profile_photo \
+    "$seal_first_user" \
+    "$seal_first_request" \
+    "$seal_first_source" \
+    "$seal_first_object" \
+    "$seal_first_output" \
+    832
+)"
 seal_first_expected_at="$(
   psql "$database_url" --set=ON_ERROR_STOP=1 --tuples-only --no-align --quiet \
     --command "select updated_at from public.profiles where user_id = '$seal_first_user';"

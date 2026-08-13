@@ -28,12 +28,14 @@ the live user reference but keeps the non-identifying outcome row.
   `cancellation-refunds.html`. They are behavior-based drafts, not legal advice.
 - `support@77dominion.com` is provisioned, monitored, and tested from an external
   mailbox. Update the page before launch if a different address is chosen.
-- Production Supabase Auth Site URL and redirect allowlist include the exact
-  production `reset-password.html` path and approved Cloudflare preview paths.
+- Production Supabase Auth Site URL is the exact production origin, and its
+  redirect allowlist includes only the exact production `reset-password.html`
+  path. Localhost stays in local Supabase; the hosted tenant does not allow
+  `develop` or feature-preview callbacks.
 - Custom SMTP sender, SPF, DKIM, DMARC, rate limits, and inbox/spam delivery are
   verified. Do not claim password recovery is launch-ready from local tests.
 - Run one real valid-link recovery, one expired-link recovery, and one reused-link
-  recovery in the production-like environment. Confirm a successful password
+  recovery during the closed production canary. Confirm a successful password
   change signs out the recovery session and requires a fresh login.
 - Exercise one export and one deletion request with two different accounts.
   Confirm RLS blocks cross-account reads and writes, the duplicate submit is

@@ -6,10 +6,12 @@ import {
   stripeRequest,
 } from "../_shared/stripe.ts";
 import {
+  type EnvReader,
   errorResponse,
   HttpError,
   jsonResponse,
   optionsResponse,
+  readEnv,
 } from "../_shared/http.ts";
 
 const allowedFlows = new Set(["payment_method_update"]);
@@ -33,6 +35,7 @@ type Dependencies = {
   getOrCreateStripeCustomer: typeof getOrCreateStripeCustomer;
   getSiteUrl: typeof getSiteUrl;
   stripeRequest: typeof stripeRequest;
+  env: EnvReader;
   logger: Pick<Console, "error">;
 };
 
@@ -42,6 +45,7 @@ const defaultDependencies: Dependencies = {
   getOrCreateStripeCustomer,
   getSiteUrl,
   stripeRequest,
+  env: readEnv,
   logger: console,
 };
 
@@ -49,9 +53,16 @@ export function createHandler(overrides: Partial<Dependencies> = {}) {
   const dependencies = { ...defaultDependencies, ...overrides };
 
   return async (req: Request) => {
-    if (req.method === "OPTIONS") return optionsResponse(req);
+    if (req.method === "OPTIONS") {
+      return optionsResponse(req, dependencies.env);
+    }
     if (req.method !== "POST") {
-      return jsonResponse({ error: "Method not allowed." }, 405, req);
+      return jsonResponse(
+        { error: "Method not allowed." },
+        405,
+        req,
+        dependencies.env,
+      );
     }
 
     try {
@@ -88,7 +99,7 @@ export function createHandler(overrides: Partial<Dependencies> = {}) {
       const fallbackPath = flow === "payment_method_update"
         ? "/billing.html?payment=updated"
         : "/profile.html#billing";
-      const siteUrl = dependencies.getSiteUrl(req);
+      const siteUrl = dependencies.getSiteUrl(req, dependencies.env);
       const admin = dependencies.createAdminClient();
       const stripeCustomerId = await dependencies.getOrCreateStripeCustomer(
         admin,
@@ -112,14 +123,25 @@ export function createHandler(overrides: Partial<Dependencies> = {}) {
         "/v1/billing_portal/sessions",
         "POST",
         sessionBody,
+        { env: dependencies.env },
       );
 
-      return jsonResponse({ url: session.url }, 200, req);
+      return jsonResponse(
+        { url: session.url },
+        200,
+        req,
+        dependencies.env,
+      );
     } catch (error) {
       if (!(error instanceof HttpError) || error.status >= 500) {
         dependencies.logger.error(error);
       }
-      return errorResponse(error, "Unable to open billing portal.", req);
+      return errorResponse(
+        error,
+        "Unable to open billing portal.",
+        req,
+        dependencies.env,
+      );
     }
   };
 }

@@ -56,12 +56,11 @@ import { normalizeJournalEntry, sortJournalEntries } from './journal-entry.mjs';
 import {
   canonicalProfilePhotoUrl,
   commitProfileUpdateWithCompareAndSwap,
-  createProfilePhotoStoragePath,
   isPreparedProfilePhoto,
+  normalizeTrustedProfilePhotoUploadResponse,
   replaceProfilePhoto as replacePreparedProfilePhoto,
   syncProfileMetadataBestEffort,
 } from './profile-photo.mjs';
-import { registerProfilePhotoUploadWithRetry } from './profile-photo-registration.mjs';
 import {
   LEGACY_PROFILE_COLUMNS,
   PROFILE_COLUMNS,
@@ -1168,17 +1167,20 @@ export async function updateProfile(profile, { expectedUserId = '' } = {}) {
   return { ...savedProfile, emailChangeRequested, emailChangeError, metadataSyncError };
 }
 
-function profilePhotoRandomId() {
-  if (globalThis.crypto?.randomUUID) return globalThis.crypto.randomUUID().replaceAll('-', '');
+function profilePhotoUploadRequestId() {
+  if (globalThis.crypto?.randomUUID) return globalThis.crypto.randomUUID();
   const bytes = new Uint8Array(16);
   globalThis.crypto?.getRandomValues?.(bytes);
-  if (bytes.some(Boolean)) return Array.from(bytes, (value) => value.toString(16).padStart(2, '0')).join('');
-  return `${Math.random().toString(16).slice(2).padEnd(16, '0')}${Math.random().toString(16).slice(2).padEnd(16, '0')}`.slice(0, 32);
+  if (!bytes.some(Boolean)) throw new Error('This browser cannot create a secure upload request.');
+  bytes[6] = (bytes[6] & 0x0f) | 0x40;
+  bytes[8] = (bytes[8] & 0x3f) | 0x80;
+  const hex = Array.from(bytes, (value) => value.toString(16).padStart(2, '0')).join('');
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
 }
 
 function isUnavailableProfilePhotoCleanupRpc(error) {
   const message = `${error?.code || ''} ${error?.message || ''}`;
-  return /PGRST202|register_profile_photo_upload|commit_profile_photo_upload|abandon_profile_photo_upload|claim_profile_photo_cleanup/.test(message)
+  return /PGRST202|upload-profile-photo|reserve_profile_photo_upload_service|finalize_profile_photo_upload_service|commit_profile_photo_upload|abandon_profile_photo_upload|claim_profile_photo_cleanup/.test(message)
     && /not find|not found|schema cache|PGRST202/i.test(message);
 }
 
@@ -1204,56 +1206,31 @@ export async function uploadProfilePhoto(preparedPhoto, { expectedUserId = '' } 
 
   const client = requireSupabase();
   const user = await requireUser(expectedUserId);
-  const storagePath = createProfilePhotoStoragePath(
-    user.id,
-    preparedPhoto.extension,
-    Date.now(),
-    profilePhotoRandomId(),
-  );
-  let registrationId;
+  const requestId = profilePhotoUploadRequestId();
+  let result;
   try {
-    registrationId = await registerProfilePhotoUploadWithRetry({
-      storagePath,
-      register: (targetStoragePath) => client.rpc('register_profile_photo_upload', {
-        target_storage_path: targetStoragePath,
-      }),
+    result = await client.functions.invoke('upload-profile-photo', {
+      body: preparedPhoto.blob,
+      headers: {
+        'Content-Type': preparedPhoto.contentType,
+        'x-profile-user-id': user.id,
+        'x-profile-upload-request-id': requestId,
+      },
     });
-  } catch (registerError) {
-    if (isUnavailableProfilePhotoCleanupRpc(registerError)) {
+  } catch (uploadError) {
+    if (isUnavailableProfilePhotoCleanupRpc(uploadError)) {
       throw new Error('Profile pictures are temporarily unavailable while storage is upgraded.');
-    }
-    throw registerError;
-  }
-
-  const abandonUpload = async () => {
-    const { error } = await client.rpc('abandon_profile_photo_upload', {
-      target_storage_path: storagePath,
-    });
-    if (error) throw error;
-  };
-
-  const { error: uploadError } = await client.storage
-    .from(PROFILE_PHOTO_BUCKET)
-    .upload(storagePath, preparedPhoto.blob, {
-      cacheControl: '31536000',
-      contentType: preparedPhoto.contentType,
-      upsert: false,
-    });
-  if (uploadError) {
-    try {
-      await abandonUpload();
-      await drainProfilePhotoCleanupQueue({ expectedUserId });
-    } catch (cleanupError) {
-      uploadError.profilePhotoCleanupError = cleanupError;
     }
     throw uploadError;
   }
-
-  return {
-    avatarUrl: storagePath,
-    storagePath,
-    registrationId,
-  };
+  await requireUser(user.id);
+  if (result.error) {
+    if (isUnavailableProfilePhotoCleanupRpc(result.error)) {
+      throw new Error('Profile pictures are temporarily unavailable while storage is upgraded.');
+    }
+    throw result.error;
+  }
+  return normalizeTrustedProfilePhotoUploadResponse(result.data, user.id);
 }
 
 export async function replaceProfilePhoto({ preparedPhoto, profile }, { expectedUserId = '' } = {}) {

@@ -58,6 +58,15 @@ export function frontendEnvironmentErrors(environment = {}) {
     try {
       const parsed = new URL(supabaseUrl);
       if (parsed.protocol !== 'https:') errors.push('VITE_SUPABASE_URL must use HTTPS');
+      const projectRef = String(environment.SUPABASE_PROJECT_REF || '').trim();
+      if (branch === 'main' && !projectRef) {
+        errors.push('SUPABASE_PROJECT_REF');
+      } else if (
+        branch === 'main'
+        && parsed.origin !== `https://${projectRef}.supabase.co`
+      ) {
+        errors.push('VITE_SUPABASE_URL must match SUPABASE_PROJECT_REF');
+      }
     } catch {
       errors.push('VITE_SUPABASE_URL must be a valid URL');
     }

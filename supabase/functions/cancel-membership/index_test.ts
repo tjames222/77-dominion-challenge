@@ -5,6 +5,7 @@ import {
   quietLogger,
   request,
   responseJson,
+  testEnv,
 } from "../_shared/test_helpers.ts";
 import { createHandler } from "./index.ts";
 
@@ -79,6 +80,7 @@ function cancelHandler(
         current_period_start: 1_799_900_000,
         current_period_end: 1_800_100_000,
       }),
+      env: testEnv,
       now: () => new Date("2027-01-15T08:00:00.000Z"),
       logger: quietLogger,
       ...overrides,

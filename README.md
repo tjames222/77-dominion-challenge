@@ -63,26 +63,33 @@ Slack and Discord connection controls fail closed unless `VITE_ENABLE_GROUP_INTE
 3. For a hosted environment, follow the migration reconciliation and deployment steps in [`docs/backend-release-runbook.md`](docs/backend-release-runbook.md). Never run `supabase/schema.sql` manually or use `--include-all` against production.
 4. Copy `.env.example` to `.env`.
 5. Fill in `VITE_SUPABASE_URL` and `VITE_SUPABASE_PUBLISHABLE_KEY`.
-6. In Supabase Auth URL Configuration, set the Site URL to the Cloudflare Pages production URL for this app.
-7. Add redirect URLs for production, Cloudflare preview deployments, and local development:
-   - `https://77-dominion-challenge.pages.dev/**`
-   - `https://*.77-dominion-challenge.pages.dev/**`
-   - `http://localhost:5173/**`
-   - `http://127.0.0.1:5173/**`
-   - `http://localhost:4173/**`
-   - `http://127.0.0.1:4173/**`
+6. In the hosted Supabase Auth URL Configuration, set the Site URL to the exact Cloudflare Pages production URL for this app.
+7. Add only the exact password-recovery callback to the hosted project's
+   redirect allowlist:
+   - `https://77-dominion-challenge.pages.dev/reset-password.html`
+
+The local Supabase stack may keep localhost callbacks in its local configuration.
+Do not add `develop`, feature-preview, or localhost callbacks to the hosted
+production Auth tenant.
 
 The frontend uses Supabase Auth for login/register and writes directly to Supabase Postgres with Row Level Security policies.
 
 Password recovery always returns to the fixed same-origin `reset-password.html`
-route. Add that production and preview path to the Auth redirect allowlist, verify
+route. Add that exact production path to the Auth redirect allowlist, verify
 custom SMTP delivery, and test expired, reused, and valid recovery links before
 launch. Recovery completion revokes the recovery session and requires a fresh
 login.
 
 ### Storage
 
-Supported profile-photo uploads are browser-normalized, center-cropped, and encoded as square WebP/JPEG thumbnails no larger than 256×256 pixels and 150 KiB; original camera files never reach Storage. Upload paths are immutable, and a durable lifecycle registry retries removal of non-canonical predecessors without allowing the current avatar to be deleted or a retired path to be reused. The Private Journal is text-only and does not require a `journal_photos` table or `journal-progress` bucket.
+The browser prepares supported profile photos, then an authenticated Edge
+Function independently decodes, center-crops, strips, and re-encodes them as
+square WebP thumbnails no larger than 256×256 pixels and 150 KiB. Only that
+trusted output can enter Storage; source camera bytes and direct browser uploads
+cannot. Upload paths are immutable, and a durable lifecycle registry retries
+removal of non-canonical predecessors without allowing the current avatar to be
+deleted or a retired path to be reused. The Private Journal is text-only and
+does not require a `journal_photos` table or `journal-progress` bucket.
 
 ### Point economy
 
@@ -129,7 +136,6 @@ Stripe powers checkout, payment method updates, and membership cancellation. Sup
    - `STRIPE_WEBHOOK_SECRET`
    - `STRIPE_MEMBERSHIP_PRICE_ID`
    - `PUBLIC_SITE_URL`
-   - `CLOUDFLARE_PAGES_PROJECT_HOST`
    - `PUBLIC_ALLOWED_SITE_URLS`
 3. Configure the Stripe customer portal to allow payment method updates.
 4. Deploy the Edge Functions:

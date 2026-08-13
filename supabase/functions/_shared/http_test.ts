@@ -9,17 +9,17 @@ import {
 
 const env = (values: Record<string, string>) => (name: string) => values[name];
 
-Deno.test("HTTP origin policy accepts configured and Pages preview origins", () => {
+Deno.test("HTTP origin policy accepts exact configured origins only", () => {
   const read = env({
     PUBLIC_ALLOWED_SITE_URLS:
-      "https://app.example.com,https://members.example.com/path",
-    CLOUDFLARE_PAGES_PROJECT_HOST: "dominion.pages.dev",
+      "https://app.example.com,https://members.example.com/path,http://localhost:5173",
   });
 
   assert(isAllowedOrigin("https://app.example.com", read));
   assert(isAllowedOrigin("https://members.example.com", read));
-  assert(isAllowedOrigin("https://feature.dominion.pages.dev", read));
-  assert(!isAllowedOrigin("http://feature.dominion.pages.dev", read));
+  assert(isAllowedOrigin("http://localhost:5173", read));
+  assert(!isAllowedOrigin("https://feature.app.example.com", read));
+  assert(!isAllowedOrigin("http://127.0.0.1:5173", read));
   assert(!isAllowedOrigin("https://attacker.example", read));
 });
 

@@ -45,3 +45,8 @@ export function request(
 }
 
 export const quietLogger = { error: () => undefined };
+
+export const testEnv = (name: string) => ({
+  PUBLIC_SITE_URL: "http://localhost:5173",
+  PUBLIC_ALLOWED_SITE_URLS: "http://localhost:5173",
+}[name]);

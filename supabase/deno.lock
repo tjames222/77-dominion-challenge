@@ -2,6 +2,7 @@
   "version": "5",
   "specifiers": {
     "jsr:@supabase/supabase-js@2.110.7": "2.110.7",
+    "npm:@imagemagick/magick-wasm@0.0.41": "0.0.41",
     "npm:@supabase/auth-js@2.110.7": "2.110.7",
     "npm:@supabase/functions-js@2.110.7": "2.110.7",
     "npm:@supabase/postgrest-js@2.110.7": "2.110.7",
@@ -21,6 +22,9 @@
     }
   },
   "npm": {
+    "@imagemagick/magick-wasm@0.0.41": {
+      "integrity": "sha512-ywIISf4/8/6k9lLfHUIE/uGuZCJfDG+NEcHJ7OHvzr2w+uLCoK5cIBsp6KlpQfq/EppYiNM+NqKXFiUSbJvHZA=="
+    },
     "@supabase/auth-js@2.110.7": {
       "integrity": "sha512-M5Bpl4hCv6kHcOO/xM06Dyfg1mYLHljMkp1plhzG9IRZPc3czvyMsSN1XpL5+GKisOKM3lSN59zhpcm6sMVXfA==",
       "dependencies": [

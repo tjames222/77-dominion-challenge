@@ -12,10 +12,9 @@ Recommended settings:
 - Build command: npm run build
 - Build output directory: dist
 - Root directory: /
-- Production environment variables:
-  - VITE_SUPABASE_URL
-  - VITE_SUPABASE_PUBLISHABLE_KEY
-  - VITE_ENABLE_MOCKS=false
+- Production environment variables: none. The protected GitHub `production`
+  environment supplies public production configuration while building the
+  immutable artifact.
 
 Preview environment variables:
 
@@ -38,6 +37,10 @@ from publishing the frontend as soon as `main` moves, before migrations and Edge
 Functions have passed verification. Keep preview deployment controls limited to
 `develop`.
 
+Remove any production `VITE_*` variables from Cloudflare itself. If automatic
+Git deployment is accidentally re-enabled, a `main` build then fails closed
+instead of publishing before backend verification.
+
 The protected GitHub `Release production` workflow builds one immutable artifact
 and deploys it to this existing Pages project only after validation, migrations,
 Function deployment, and backend smoke checks succeed. Configure these GitHub
@@ -51,19 +54,18 @@ manual dispatch of the protected workflow from a known backend-compatible commit
 
 Cloudflare Preview environment variables are shared by `develop` and feature previews. Configure **Builds → Branch control → Preview branch** to include only `develop`. Canonical `develop` requires mock mode and rejects the hybrid-Auth override; it does not require or use a hosted Supabase project.
 
-Supabase Auth must allow both production and preview callbacks:
+Set the hosted Supabase Auth Site URL to
+`https://77-dominion-challenge.pages.dev` and allow only this production
+password-recovery callback:
 
-- `https://77-dominion-challenge.pages.dev/**`
-- `https://*.77-dominion-challenge.pages.dev/**`
-- `http://localhost:5173/**`
-- `http://127.0.0.1:5173/**`
-- `http://localhost:4173/**`
-- `http://127.0.0.1:4173/**`
+- `https://77-dominion-challenge.pages.dev/reset-password.html`
 
-Supabase Edge Functions allow the production host and Cloudflare preview subdomains for this Pages project. Set these function secrets:
+Keep localhost callbacks only in the local Supabase stack. Do not allow
+`develop`, feature-preview, or localhost callbacks in the hosted Auth tenant.
+
+Supabase Edge Functions allow only exact origins configured below. Set these function secrets:
 
 - `PUBLIC_SITE_URL=https://77-dominion-challenge.pages.dev`
-- `CLOUDFLARE_PAGES_PROJECT_HOST=77-dominion-challenge.pages.dev`
 - `PUBLIC_ALLOWED_SITE_URLS=https://77-dominion-challenge.pages.dev`
 - `STRIPE_SECRET_KEY`
 - `STRIPE_WEBHOOK_SECRET`

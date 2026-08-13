@@ -87,6 +87,9 @@ verify_jwt = true
 [functions.reward-download]
 verify_jwt = true
 
+[functions.upload-profile-photo]
+verify_jwt = true
+
 [functions.slack-oauth-callback]
 verify_jwt = false
 

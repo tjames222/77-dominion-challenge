@@ -3,6 +3,7 @@ import {
   quietLogger,
   request,
   responseJson,
+  testEnv,
 } from "../_shared/test_helpers.ts";
 import { createHandler } from "./index.ts";
 
@@ -105,6 +106,7 @@ function webhookHandler(
       verifyStripeSignature: async () => true,
       createAdminClient: () => fixture.admin,
       stripeRequest: async () => stripeSubscription(),
+      env: testEnv,
       now: () => new Date("2027-01-15T08:00:00.000Z"),
       logger: quietLogger,
       ...overrides,

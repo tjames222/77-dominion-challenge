@@ -38,8 +38,8 @@ select ok(has_table_privilege('authenticated', 'public.journal_entries', 'select
 select is((select file_size_limit from storage.buckets where id = 'profile-photos'), 153600::bigint,
   'profile-photo objects are capped at 150 KiB');
 select is((select allowed_mime_types from storage.buckets where id = 'profile-photos'),
-  array['image/jpeg', 'image/webp']::text[],
-  'only encoded JPEG and WebP avatar outputs are accepted');
+  array['image/webp']::text[],
+  'only trusted WebP avatar outputs are accepted');
 select ok(not exists (select 1 from pg_policies
   where schemaname = 'storage' and tablename = 'objects'
     and policyname = 'Profile photos are publicly readable'),
@@ -118,9 +118,9 @@ select is((
 ), 5, 'cleanup leases and durable retry state are persisted');
 select ok(to_regclass('private.profile_photo_objects_service_cleanup_idx') is not null,
   'ready cleanup work has a bounded worker scan index');
-select ok(has_function_privilege('authenticated',
+select ok(not has_function_privilege('authenticated',
   'public.register_profile_photo_upload(text)', 'execute'),
-  'authenticated owners can pre-register an immutable upload');
+  'authenticated owners cannot use the retired browser reservation RPC');
 select ok(has_function_privilege('authenticated',
   'public.commit_profile_photo_upload(text,timestamp with time zone,boolean,text,text)', 'execute'),
   'authenticated owners can atomically activate a registered upload');
@@ -302,14 +302,40 @@ select throws_ok($$
 $$, '42501', 'permission denied for table profiles',
   'column grants reject an authenticated profile INSERT that supplies an avatar');
 
-select lives_ok($$
+select throws_ok($$
   select public.register_profile_photo_upload(
     '10000000-0000-4000-8000-000000000001/avatar-1720000000000-0123456789abcdef0123456789abcdef.webp'
   )
-$$, 'an owner can pre-register a strict immutable path');
+$$, '42501', 'permission denied for function register_profile_photo_upload',
+  'a browser cannot use the retired direct-upload reservation RPC');
 reset role;
 set local "request.jwt.claim.sub" = '';
 set local "request.jwt.claims" = '{}';
+
+insert into private.profile_photo_path_tombstones (path_sha256, reason)
+values (
+  private.profile_photo_path_sha256(
+    '10000000-0000-4000-8000-000000000001/avatar-1720000000000-0123456789abcdef0123456789abcdef.webp'
+  ),
+  'registered'
+);
+insert into private.profile_photo_objects (
+  id,
+  user_id,
+  storage_path,
+  state,
+  upload_expires_at,
+  upload_request_id,
+  source_sha256
+) values (
+  'f8010000-0000-4000-8000-000000000101',
+  '10000000-0000-4000-8000-000000000001',
+  '10000000-0000-4000-8000-000000000001/avatar-1720000000000-0123456789abcdef0123456789abcdef.webp',
+  'pending_upload',
+  clock_timestamp() + interval '15 minutes',
+  'f8010000-0000-4000-8000-000000000111',
+  repeat('a', 64)
+);
 select is((select count(*)::integer
   from public.claim_profile_photo_cleanup_service(20)), 0,
   'an active pending upload cannot be claimed by the service worker');
@@ -341,15 +367,31 @@ select throws_ok($$
 $$, '42501', 'Profile-photo Storage owner does not match its path owner.',
   'Storage INSERT rejects ownership metadata that disagrees with the path owner');
 
+reset role;
+set local "request.jwt.claim.sub" = '';
+set local "request.jwt.claims" = '{}';
 select lives_ok($$
-  insert into storage.objects (id, bucket_id, name, owner) values (
+  insert into storage.objects (id, bucket_id, name, owner, metadata) values (
     'f7520000-0000-4000-8000-000000000001',
     'profile-photos',
     '10000000-0000-4000-8000-000000000001/avatar-1720000000000-0123456789abcdef0123456789abcdef.webp',
-    '10000000-0000-4000-8000-000000000001'
-  )
-$$, 'the registered pending object can be uploaded');
+    '10000000-0000-4000-8000-000000000001',
+    '{"mimetype":"image/webp","size":512}'::jsonb
+  );
+  select public.finalize_profile_photo_upload_service(
+    '10000000-0000-4000-8000-000000000001',
+    'f8010000-0000-4000-8000-000000000101',
+    '10000000-0000-4000-8000-000000000001/avatar-1720000000000-0123456789abcdef0123456789abcdef.webp',
+    repeat('c', 64),
+    512,
+    32,
+    32
+  );
+$$, 'the trusted service uploads and verifies the registered object');
 
+set local role authenticated;
+set local "request.jwt.claim.sub" = '10000000-0000-4000-8000-000000000001';
+set local "request.jwt.claims" = '{"sub":"10000000-0000-4000-8000-000000000001","role":"authenticated","email":"alice@example.test"}';
 select is((
   public.commit_profile_photo_upload(
     '10000000-0000-4000-8000-000000000001/avatar-1720000000000-0123456789abcdef0123456789abcdef.webp',
@@ -401,25 +443,58 @@ select throws_ok($$
   select public.register_profile_photo_upload(
     '10000000-0000-4000-8000-000000000001/avatar-1720000000000-0123456789abcdef0123456789abcdef.webp'
   )
-$$, '55000', 'Profile-photo paths are immutable and cannot be reused.',
-  'a canonical path cannot be registered again');
+$$, '42501', 'permission denied for function register_profile_photo_upload',
+  'the retired browser reservation RPC remains unavailable after commit');
 
+reset role;
+set local "request.jwt.claim.sub" = '';
+set local "request.jwt.claims" = '{}';
 select lives_ok($$
-  select public.register_profile_photo_upload(
-    '10000000-0000-4000-8000-000000000001/avatar-1720000000001-fedcba9876543210fedcba9876543210.jpg'
-  )
-$$, 'a second immutable upload can be registered');
+  insert into private.profile_photo_path_tombstones (path_sha256, reason)
+  values (
+    private.profile_photo_path_sha256(
+      '10000000-0000-4000-8000-000000000001/avatar-1720000000001-fedcba9876543210fedcba9876543210.webp'
+    ),
+    'registered'
+  );
+  insert into private.profile_photo_objects (
+    id, user_id, storage_path, state, upload_expires_at,
+    upload_request_id, source_sha256
+  ) values (
+    'f8010000-0000-4000-8000-000000000102',
+    '10000000-0000-4000-8000-000000000001',
+    '10000000-0000-4000-8000-000000000001/avatar-1720000000001-fedcba9876543210fedcba9876543210.webp',
+    'pending_upload',
+    clock_timestamp() + interval '15 minutes',
+    'f8010000-0000-4000-8000-000000000112',
+    repeat('b', 64)
+  );
+$$, 'the trusted service can stage a second immutable reservation');
 select lives_ok($$
-  insert into storage.objects (id, bucket_id, name, owner) values (
+  insert into storage.objects (id, bucket_id, name, owner, metadata) values (
     'f7520000-0000-4000-8000-000000000002',
     'profile-photos',
-    '10000000-0000-4000-8000-000000000001/avatar-1720000000001-fedcba9876543210fedcba9876543210.jpg',
-    '10000000-0000-4000-8000-000000000001'
-  )
-$$, 'the second registered object can be uploaded');
+    '10000000-0000-4000-8000-000000000001/avatar-1720000000001-fedcba9876543210fedcba9876543210.webp',
+    '10000000-0000-4000-8000-000000000001',
+    '{"mimetype":"image/webp","size":640}'::jsonb
+  );
+  select public.finalize_profile_photo_upload_service(
+    '10000000-0000-4000-8000-000000000001',
+    'f8010000-0000-4000-8000-000000000102',
+    '10000000-0000-4000-8000-000000000001/avatar-1720000000001-fedcba9876543210fedcba9876543210.webp',
+    repeat('d', 64),
+    640,
+    32,
+    32
+  );
+$$, 'the trusted service uploads and verifies the second object');
+
+set local role authenticated;
+set local "request.jwt.claim.sub" = '10000000-0000-4000-8000-000000000001';
+set local "request.jwt.claims" = '{"sub":"10000000-0000-4000-8000-000000000001","role":"authenticated","email":"alice@example.test"}';
 select is((
   public.commit_profile_photo_upload(
-    '10000000-0000-4000-8000-000000000001/avatar-1720000000001-fedcba9876543210fedcba9876543210.jpg',
+    '10000000-0000-4000-8000-000000000001/avatar-1720000000001-fedcba9876543210fedcba9876543210.webp',
     (select updated_at from public.profiles
       where user_id = '10000000-0000-4000-8000-000000000001'),
     true,
@@ -438,7 +513,7 @@ select is((select state from private.profile_photo_objects
   'cleanup',
   'the predecessor moves to cleanup state');
 select is((select state from private.profile_photo_objects
-  where storage_path like '%fedcba9876543210fedcba9876543210.jpg'),
+  where storage_path like '%fedcba9876543210fedcba9876543210.webp'),
   'canonical',
   'the replacement is the only canonical object');
 
@@ -448,7 +523,7 @@ create temp table claimed_profile_cleanup as
 select * from public.claim_profile_photo_cleanup_service(20);
 select ok((select count(*) = 1
   and min(storage_path) like '%0123456789abcdef0123456789abcdef.webp'
-  and bool_and(storage_path not like '%fedcba9876543210fedcba9876543210.jpg')
+  and bool_and(storage_path not like '%fedcba9876543210fedcba9876543210.webp')
   from claimed_profile_cleanup),
   'claim returns the predecessor and excludes the canonical object');
 select is((select public.confirm_profile_photo_cleanup_service(
@@ -469,14 +544,14 @@ set local storage.allow_delete_query = 'true';
 select lives_ok($$
   delete from storage.objects
   where bucket_id = 'profile-photos'
-    and name like '%fedcba9876543210fedcba9876543210.jpg'
+    and name like '%fedcba9876543210fedcba9876543210.webp'
 $$, 'deleting the canonical object is a harmless no-op through Storage RLS');
 reset role;
 reset storage.allow_delete_query;
 select ok(exists (
   select 1 from storage.objects
   where bucket_id = 'profile-photos'
-    and name like '%fedcba9876543210fedcba9876543210.jpg'
+    and name like '%fedcba9876543210fedcba9876543210.webp'
 ), 'the canonical object remains after the restricted delete');
 set local "request.jwt.claim.sub" = '';
 set local "request.jwt.claims" = '{}';
@@ -528,14 +603,36 @@ select throws_ok($$
   select public.register_profile_photo_upload(
     '10000000-0000-4000-8000-000000000001/avatar-1720000000000-0123456789abcdef0123456789abcdef.webp'
   )
-$$, '55000', 'Profile-photo paths are immutable and cannot be reused.',
-  'a retired path can never be re-registered');
+$$, '42501', 'permission denied for function register_profile_photo_upload',
+  'a browser cannot use the retired reservation path after cleanup');
 
+reset role;
+set local "request.jwt.claim.sub" = '';
+set local "request.jwt.claims" = '{}';
 select lives_ok($$
-  select public.register_profile_photo_upload(
-    '10000000-0000-4000-8000-000000000001/avatar-1720000000002-11111111111111111111111111111111.webp'
-  )
-$$, 'an ambiguous third upload can be registered');
+  insert into private.profile_photo_path_tombstones (path_sha256, reason)
+  values (
+    private.profile_photo_path_sha256(
+      '10000000-0000-4000-8000-000000000001/avatar-1720000000002-11111111111111111111111111111111.webp'
+    ),
+    'registered'
+  );
+  insert into private.profile_photo_objects (
+    id, user_id, storage_path, state, upload_expires_at,
+    upload_request_id, source_sha256
+  ) values (
+    'f8010000-0000-4000-8000-000000000103',
+    '10000000-0000-4000-8000-000000000001',
+    '10000000-0000-4000-8000-000000000001/avatar-1720000000002-11111111111111111111111111111111.webp',
+    'pending_upload',
+    clock_timestamp() + interval '15 minutes',
+    'f8010000-0000-4000-8000-000000000113',
+    repeat('e', 64)
+  );
+$$, 'the trusted service can stage an ambiguous third upload');
+set local role authenticated;
+set local "request.jwt.claim.sub" = '10000000-0000-4000-8000-000000000001';
+set local "request.jwt.claims" = '{"sub":"10000000-0000-4000-8000-000000000001","role":"authenticated","email":"alice@example.test"}';
 select is(public.abandon_profile_photo_upload(
   '10000000-0000-4000-8000-000000000001/avatar-1720000000002-11111111111111111111111111111111.webp'
 ), true, 'an uncommitted registration can be abandoned durably');
@@ -574,7 +671,7 @@ select ok((select result ? 'ready'
 
 select is((select avatar_url from public.profiles
   where user_id = '10000000-0000-4000-8000-000000000001'),
-  '10000000-0000-4000-8000-000000000001/avatar-1720000000001-fedcba9876543210fedcba9876543210.jpg',
+  '10000000-0000-4000-8000-000000000001/avatar-1720000000001-fedcba9876543210fedcba9876543210.webp',
   'cleanup and abandonment never change the canonical profile');
 
 insert into private.profile_photo_path_tombstones (path_sha256, reason)

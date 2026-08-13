@@ -1,5 +1,8 @@
 # Profile-photo cleanup worker
 
+The trusted upload boundary and its closed-canary checklist are documented in
+[`profile-photo-upload-security.md`](./profile-photo-upload-security.md).
+
 FOU-802 replaces best-effort browser deletion with a service-only worker. The
 database owns eligibility, exact object identity, leases, stale-lease recovery,
 backoff, and terminal tombstones. The Edge Function only uses the Storage API
@@ -48,7 +51,8 @@ select cron.schedule(
 ```
 
 Supabase records runs in `cron.job_run_details`. Keep the job at five-minute
-intervals unless staging load evidence supports a change; claims are capped at
+intervals unless local rehearsal and closed-canary load evidence support a
+change; claims are capped at
 100 and leased for five minutes, and database backoff reaches six hours.
 
 ## Health and alerting
@@ -76,10 +80,12 @@ Investigate Edge Function structured events, Storage availability, database
 health, and `cron.job_run_details`. A failed object is released to exponential
 database backoff; do not delete it manually or bypass the exact-object trigger.
 
-## Staging release proof
+## Local rehearsal and closed-canary proof
 
-Before production promotion, register and upload a disposable profile photo,
-abandon it, and then leave the Profile page. Record evidence that:
+First run this proof against the clean local full stack. Repeat it during the
+closed canary on the single hosted production project before public signup is
+opened: register and upload a disposable profile photo, abandon it, and then
+leave the Profile page. Record evidence that:
 
 1. Cron invokes the worker without a member session.
 2. The exact Storage object becomes absent.

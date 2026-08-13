@@ -7,10 +7,12 @@ import {
   stripeRequest,
 } from "../_shared/stripe.ts";
 import {
+  type EnvReader,
   errorResponse,
   HttpError,
   jsonResponse,
   optionsResponse,
+  readEnv,
 } from "../_shared/http.ts";
 
 const subscriptionProductKey = "dominion_membership";
@@ -28,6 +30,7 @@ type Dependencies = {
   getSiteUrl: typeof getSiteUrl;
   getPriceId: typeof getPriceId;
   stripeRequest: typeof stripeRequest;
+  env: EnvReader;
   logger: Pick<Console, "error">;
 };
 
@@ -38,6 +41,7 @@ const defaultDependencies: Dependencies = {
   getSiteUrl,
   getPriceId,
   stripeRequest,
+  env: readEnv,
   logger: console,
 };
 
@@ -45,9 +49,16 @@ export function createHandler(overrides: Partial<Dependencies> = {}) {
   const dependencies = { ...defaultDependencies, ...overrides };
 
   return async (req: Request) => {
-    if (req.method === "OPTIONS") return optionsResponse(req);
+    if (req.method === "OPTIONS") {
+      return optionsResponse(req, dependencies.env);
+    }
     if (req.method !== "POST") {
-      return jsonResponse({ error: "Method not allowed." }, 405, req);
+      return jsonResponse(
+        { error: "Method not allowed." },
+        405,
+        req,
+        dependencies.env,
+      );
     }
 
     try {
@@ -87,11 +98,14 @@ export function createHandler(overrides: Partial<Dependencies> = {}) {
       if (subscriptionActive) {
         return jsonResponse(
           {
-            url: `${dependencies.getSiteUrl(req)}/dashboard.html`,
+            url: `${
+              dependencies.getSiteUrl(req, dependencies.env)
+            }/dashboard.html`,
             alreadyOwned: true,
           },
           200,
           req,
+          dependencies.env,
         );
       }
 
@@ -99,8 +113,8 @@ export function createHandler(overrides: Partial<Dependencies> = {}) {
         admin,
         user,
       );
-      const siteUrl = dependencies.getSiteUrl(req);
-      const priceId = dependencies.getPriceId(productKey);
+      const siteUrl = dependencies.getSiteUrl(req, dependencies.env);
+      const priceId = dependencies.getPriceId(productKey, dependencies.env);
       const successUrl = `${siteUrl}/billing.html?checkout=success&product=${
         encodeURIComponent(productKey)
       }`;
@@ -128,13 +142,24 @@ export function createHandler(overrides: Partial<Dependencies> = {}) {
         "/v1/checkout/sessions",
         "POST",
         sessionBody,
+        { env: dependencies.env },
       );
-      return jsonResponse({ url: session.url }, 200, req);
+      return jsonResponse(
+        { url: session.url },
+        200,
+        req,
+        dependencies.env,
+      );
     } catch (error) {
       if (!(error instanceof HttpError) || error.status >= 500) {
         dependencies.logger.error(error);
       }
-      return errorResponse(error, "Unable to create checkout session.", req);
+      return errorResponse(
+        error,
+        "Unable to create checkout session.",
+        req,
+        dependencies.env,
+      );
     }
   };
 }

@@ -69,7 +69,6 @@ jobs:
       PUBLIC_SITE_URL: ${{ vars.PUBLIC_SITE_URL }}
       PUBLIC_SHARE_URL: ${{ vars.PUBLIC_SHARE_URL }}
       PUBLIC_ALLOWED_SITE_URLS: ${{ vars.PUBLIC_ALLOWED_SITE_URLS }}
-      CLOUDFLARE_PAGES_PROJECT_HOST: ${{ vars.CLOUDFLARE_PAGES_PROJECT_HOST }}
       VITE_SUPABASE_URL: ${{ vars.VITE_SUPABASE_URL }}
       VITE_SUPABASE_PUBLISHABLE_KEY: ${{ vars.VITE_SUPABASE_PUBLISHABLE_KEY }}
       SUPABASE_TELEMETRY_DISABLED: "1"
@@ -101,6 +100,15 @@ jobs:
               exit 1
             fi
           done
+          expected_supabase_url="https://${SUPABASE_PROJECT_REF}.supabase.co"
+          if [[ "${VITE_SUPABASE_URL%/}" != "${expected_supabase_url}" ]]; then
+            echo "::error::The frontend Supabase URL must target the same project migrated by this release."
+            exit 1
+          fi
+          if [[ "${PUBLIC_SITE_URL}" != https://* ]]; then
+            echo "::error::PUBLIC_SITE_URL must be an HTTPS production origin."
+            exit 1
+          fi
       - name: Link production Supabase project
         run: supabase link --project-ref "$SUPABASE_PROJECT_REF" --password "$SUPABASE_DB_PASSWORD"
       - name: Require reconciled historical migration records
@@ -165,9 +173,6 @@ jobs:
           fi
           if [[ -n "${PUBLIC_ALLOWED_SITE_URLS:-}" ]]; then
             function_secrets+=("PUBLIC_ALLOWED_SITE_URLS=${PUBLIC_ALLOWED_SITE_URLS}")
-          fi
-          if [[ -n "${CLOUDFLARE_PAGES_PROJECT_HOST:-}" ]]; then
-            function_secrets+=("CLOUDFLARE_PAGES_PROJECT_HOST=${CLOUDFLARE_PAGES_PROJECT_HOST}")
           fi
           integration_runtime_enabled=false
           if [[ -n "${INTEGRATION_WORKER_SECRET:-}" ]]; then
@@ -258,7 +263,9 @@ jobs:
           supabase functions deploy cancel-membership --project-ref "$SUPABASE_PROJECT_REF"
           supabase functions deploy create-checkout-session --project-ref "$SUPABASE_PROJECT_REF"
           supabase functions deploy create-customer-portal-session --project-ref "$SUPABASE_PROJECT_REF"
+          supabase functions deploy reward-download --project-ref "$SUPABASE_PROJECT_REF"
           supabase functions deploy retired-community-export --project-ref "$SUPABASE_PROJECT_REF"
+          supabase functions deploy upload-profile-photo --project-ref "$SUPABASE_PROJECT_REF"
       - name: Deploy Stripe webhook
         run: supabase functions deploy stripe-webhook --project-ref "$SUPABASE_PROJECT_REF" --no-verify-jwt
       - name: Deploy public share renderer
@@ -309,6 +316,34 @@ jobs:
             "${VITE_SUPABASE_URL}/functions/v1/retired-community-export")"
           if [[ "$export_status" != "401" ]]; then
             echo "::error::Expected the unauthenticated retired Community export smoke test to return 401; received ${export_status}."
+            exit 1
+          fi
+
+          profile_upload_response="${RUNNER_TEMP}/profile-photo-upload-response.json"
+          profile_upload_status="$(curl --silent --show-error --output "$profile_upload_response" --write-out '%{http_code}' \
+            --request POST \
+            --header "apikey: ${VITE_SUPABASE_PUBLISHABLE_KEY}" \
+            --header "Origin: ${PUBLIC_SITE_URL}" \
+            --header "Content-Type: image/webp" \
+            --header "x-profile-user-id: 00000000-0000-4000-8000-000000000000" \
+            --header "x-profile-upload-request-id: 00000000-0000-4000-8000-000000000001" \
+            --data-binary 'unauthenticated' \
+            "${VITE_SUPABASE_URL}/functions/v1/upload-profile-photo")"
+          if [[ "$profile_upload_status" != "401" ]]; then
+            echo "::error::Expected the unauthenticated profile-picture upload smoke test to return 401; received ${profile_upload_status}."
+            exit 1
+          fi
+
+          reward_download_response="${RUNNER_TEMP}/reward-download-response.json"
+          reward_download_status="$(curl --silent --show-error --output "$reward_download_response" --write-out '%{http_code}' \
+            --request POST \
+            --header "apikey: ${VITE_SUPABASE_PUBLISHABLE_KEY}" \
+            --header "Origin: ${PUBLIC_SITE_URL}" \
+            --header "Content-Type: application/json" \
+            --data '{"rewardKey":"nehemiah_leadership_handbook","expectedUserId":"00000000-0000-4000-8000-000000000000"}' \
+            "${VITE_SUPABASE_URL}/functions/v1/reward-download")"
+          if [[ "$reward_download_status" != "401" ]]; then
+            echo "::error::Expected the unauthenticated reward-download smoke test to return 401; received ${reward_download_status}."
             exit 1
           fi
 
@@ -384,6 +419,9 @@ jobs:
     timeout-minutes: 15
     environment: production
     env:
+      CF_PAGES: "1"
+      CF_PAGES_BRANCH: main
+      SUPABASE_PROJECT_REF: ${{ vars.SUPABASE_PROJECT_REF }}
       VITE_SUPABASE_URL: ${{ vars.VITE_SUPABASE_URL }}
       VITE_SUPABASE_PUBLISHABLE_KEY: ${{ vars.VITE_SUPABASE_PUBLISHABLE_KEY }}
       VITE_ENABLE_MOCKS: "false"
@@ -421,6 +459,11 @@ jobs:
           fi
           if [[ "${VITE_ENABLE_GROUP_INTEGRATIONS}" != "false" ]]; then
             echo "::error::Slack and Discord must remain safely off until FOU-764's enabled-path approval is complete."
+            exit 1
+          fi
+          expected_supabase_url="https://${SUPABASE_PROJECT_REF}.supabase.co"
+          if [[ "${VITE_SUPABASE_URL%/}" != "${expected_supabase_url}" ]]; then
+            echo "::error::The frontend Supabase URL must target the same project migrated by this release."
             exit 1
           fi
       - name: Build production frontend

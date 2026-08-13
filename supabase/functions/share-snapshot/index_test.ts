@@ -30,7 +30,7 @@ function request(method: string, body?: unknown, path = "share-snapshot") {
     method,
     headers: {
       Authorization: "Bearer test-token",
-      Origin: "http://localhost:5173",
+      Origin: "https://dominion.example",
       ...(body === undefined ? {} : { "Content-Type": "application/json" }),
     },
     body: body === undefined ? undefined : JSON.stringify(body),

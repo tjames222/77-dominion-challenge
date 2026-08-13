@@ -18,7 +18,7 @@ select is(
     from public.reward_definitions
     where reward_type = 'challenge'
   ),
-  array[126, 210, 308, 420, 532],
+  array[140, 336, 406, 469, 532],
   'the launch challenge thresholds are paced across the first challenge'
 );
 select ok(
@@ -104,42 +104,57 @@ set local "request.jwt.claim.sub" = '10000000-0000-4000-8000-000000000001';
 set local "request.jwt.claims" = '{"sub":"10000000-0000-4000-8000-000000000001","role":"authenticated"}';
 
 select is(
-  jsonb_array_length(public.get_reward_catalog() -> 'items'),
-  7,
+  jsonb_array_length(public.get_reward_catalog(
+    50, null, null, '10000000-0000-4000-8000-000000000001'
+  ) -> 'items'),
+  11,
   'the authenticated read contract returns challenges and cosmetics together'
 );
 select is(
-  public.get_reward_catalog() #>> '{items,2,status}',
+  public.get_reward_catalog(
+    50, null, null, '10000000-0000-4000-8000-000000000001'
+  ) #>> '{items,4,status}',
   'available',
   'the existing unlocked challenge stays available'
 );
 select is(
-  public.get_reward_catalog() #>> '{items,2,allowedActions,0}',
+  public.get_reward_catalog(
+    50, null, null, '10000000-0000-4000-8000-000000000001'
+  ) #>> '{items,4,allowedActions,0}',
   'start',
   'only the available challenge exposes its existing Start action'
 );
 select is(
-  public.get_reward_catalog() #>> '{items,0,status}',
+  public.get_reward_catalog(
+    50, null, null, '10000000-0000-4000-8000-000000000001'
+  ) #>> '{items,0,status}',
   'owned',
   'the cosmetic uses owned instead of challenge lifecycle states'
 );
-select ok(
-  public.get_reward_catalog() -> 'nextUnlock' = 'null'::jsonb,
-  'a user above every launch threshold has no next locked reward'
+select is(
+  public.get_reward_catalog(
+    50, null, null, '10000000-0000-4000-8000-000000000001'
+  ) #>> '{nextUnlock,key}',
+  'gym_training_discount',
+  'lifetime points cannot bypass the gym reward Daily Standards requirement'
 );
 select is(
-  (public.get_reward_catalog(2) #>> '{page,hasMore}')::boolean,
+  (public.get_reward_catalog(
+    2, null, null, '10000000-0000-4000-8000-000000000001'
+  ) #>> '{page,hasMore}')::boolean,
   true,
   'the catalog exposes bounded pagination'
 );
 select is(
-  public.get_reward_catalog(2) #>> '{page,nextCursor,key}',
-  'dominion_night_theme',
+  public.get_reward_catalog(
+    2, null, null, '10000000-0000-4000-8000-000000000001'
+  ) #>> '{page,nextCursor,key}',
+  'gym_training_discount',
   'the stable cursor points after the last returned reward'
 );
 select is(
   (select count(*)::integer from public.user_reward_entitlements),
-  2,
+  5,
   'RLS exposes only the current user reward entitlements'
 );
 select throws_ok(
@@ -156,24 +171,28 @@ set local "request.jwt.claim.sub" = '20000000-0000-4000-8000-000000000002';
 set local "request.jwt.claims" = '{"sub":"20000000-0000-4000-8000-000000000002","role":"authenticated"}';
 select is(
   (select count(*)::integer from public.user_reward_entitlements),
-  1,
+  4,
   'another user sees only their own earned reward ownership'
 );
 select is(
-  public.get_reward_catalog() #>> '{nextUnlock,key}',
-  'forty_day_fast',
-  'the nearest locked reward is calculated from the current user points'
+  public.get_reward_catalog(
+    50, null, null, '20000000-0000-4000-8000-000000000002'
+  ) #>> '{nextUnlock,key}',
+  'gym_training_discount',
+  'the nearest locked reward respects its independent eligibility source'
 );
 select is(
-  (public.get_reward_catalog() #>> '{nextUnlock,pointsRemaining}')::integer,
-  20,
-  'next-unlock progress uses the authoritative point total'
+  (public.get_reward_catalog(
+    50, null, null, '20000000-0000-4000-8000-000000000002'
+  ) #>> '{nextUnlock,pointsRemaining}')::integer,
+  21,
+  'gym next-unlock progress uses trusted Daily Standards points'
 );
 
 reset role;
 set local role anon;
 select throws_ok(
-  $$ select public.get_reward_catalog() $$,
+  $$ select public.get_reward_catalog(50, null, null, null) $$,
   '42501',
   'permission denied for function get_reward_catalog',
   'anonymous users cannot read the reward contract'
@@ -199,7 +218,7 @@ select is(
       '30000000-0000-4000-8000-000000000003', 100, null, null
     ) #>> '{nextUnlock,pointsRemaining}'
   )::integer,
-  56,
+  21,
   'a new user sees the complete points remaining'
 );
 
@@ -295,12 +314,16 @@ set local role authenticated;
 set local "request.jwt.claim.sub" = '30000000-0000-4000-8000-000000000003';
 set local "request.jwt.claims" = '{"sub":"30000000-0000-4000-8000-000000000003","role":"authenticated"}';
 select is(
-  jsonb_array_length(public.claim_reward_entitlement_unlocks() -> 'claimedKeys'),
-  2,
+  jsonb_array_length(public.claim_reward_entitlement_unlocks(
+    '30000000-0000-4000-8000-000000000003'
+  ) -> 'claimedKeys'),
+  5,
   'each newly earned cosmetic unlock celebration is claimed once'
 );
 select is(
-  jsonb_array_length(public.claim_reward_entitlement_unlocks() -> 'claimedKeys'),
+  jsonb_array_length(public.claim_reward_entitlement_unlocks(
+    '30000000-0000-4000-8000-000000000003'
+  ) -> 'claimedKeys'),
   0,
   'claim retries never replay a cosmetic unlock celebration'
 );
@@ -341,7 +364,7 @@ select is(
 select is(
   has_function_privilege(
     'authenticated',
-    'public.get_reward_catalog(integer,integer,text)',
+    'public.get_reward_catalog(integer,integer,text,uuid)',
     'EXECUTE'
   ),
   true,

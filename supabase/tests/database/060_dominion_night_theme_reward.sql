@@ -10,6 +10,9 @@ select plan(56);
 delete from public.user_reward_entitlements
 where user_id = '20000000-0000-4000-8000-000000000002'
   and reward_key = 'dominion_night_theme';
+update public.user_reward_entitlements
+set celebration_seen_at = coalesce(celebration_seen_at, now())
+where user_id = '20000000-0000-4000-8000-000000000002';
 update public.user_game_stats
 set total_points = 55
 where user_id = '20000000-0000-4000-8000-000000000002';
@@ -60,17 +63,17 @@ select is(
     order by points_required, sort_order, reward_key
     limit 1
   ),
-  'dominion_night_theme',
-  'Dominion Night is the lowest active point reward'
+  'gym_training_discount',
+  'the trusted Daily Standards gym reward is the first active reward'
 );
 select ok(
-  not exists (
+  exists (
     select 1
     from public.reward_definitions
-    where reward_key <> 'dominion_night_theme'
-      and points_required < 126
+    where reward_key = 'nehemiah_leadership_handbook'
+      and points_required = 98
   ),
-  'the next reward remains meaningfully separated from Dominion Night'
+  'the handbook follows Dominion Night at the final launch threshold'
 );
 select throws_ok(
   $$
@@ -87,14 +90,14 @@ select throws_ok(
       'cosmetic',
       'ownership',
       'Too Cheap',
-      55,
+      20,
       'too-cheap-fixture',
       true
     )
   $$,
   '23514',
-  'Active point rewards must require at least 56 points and align to a 14-point level boundary.',
-  'the trusted catalog rejects an active reward below Dominion Night'
+  'Active point rewards must require at least 21 eligible points.',
+  'the trusted catalog rejects an active reward below the launch floor'
 );
 select is(
   (
@@ -102,7 +105,7 @@ select is(
     from public.reward_definitions
     where reward_type = 'challenge'
   ),
-  array[126, 210, 308, 420, 532],
+  array[140, 336, 406, 469, 532],
   'challenge thresholds are paced across the first challenge'
 );
 
@@ -133,8 +136,8 @@ select is(
     where reward_key = 'dominion_night_theme'
       and event_type = 'reward_definition_configured'
   ),
-  3,
-  'the initial, launch, and natural-language configurations are each audited once'
+  4,
+  'the initial, launch, natural-language, and final configurations are audited once'
 );
 select is(
   (
@@ -182,7 +185,7 @@ select is(
 select is(
   public.reward_catalog_for_user(
     '20000000-0000-4000-8000-000000000002', 100, null, null
-  ) #>> '{items,0,status}',
+  ) #>> '{items,1,status}',
   'locked',
   'the server reports the theme locked without an entitlement row'
 );
@@ -190,7 +193,7 @@ select is(
   (
     public.reward_catalog_for_user(
       '20000000-0000-4000-8000-000000000002', 100, null, null
-    ) #>> '{items,0,currentPoints}'
+    ) #>> '{items,1,currentPoints}'
   )::integer,
   55,
   'locked progress uses the authoritative overall point total'
@@ -199,7 +202,7 @@ select is(
   (
     public.reward_catalog_for_user(
       '20000000-0000-4000-8000-000000000002', 100, null, null
-    ) #>> '{items,0,pointsRemaining}'
+    ) #>> '{items,1,pointsRemaining}'
   )::integer,
   1,
   'locked progress reports accurate points remaining'
@@ -208,8 +211,8 @@ select is(
   public.reward_catalog_for_user(
     '20000000-0000-4000-8000-000000000002', 100, null, null
   ) #>> '{nextUnlock,key}',
-  'dominion_night_theme',
-  'Dominion Night is emphasized as the nearest locked reward'
+  'gym_training_discount',
+  'the lower-threshold gym reward remains the nearest locked reward'
 );
 
 update public.user_game_stats
@@ -229,7 +232,7 @@ select is(
   (
     public.reward_catalog_for_user(
       '20000000-0000-4000-8000-000000000002', 100, null, null
-    ) #>> '{items,0,pointsRemaining}'
+    ) #>> '{items,1,pointsRemaining}'
   )::integer,
   1,
   'the boundary contract reports one point remaining at 55'
@@ -317,7 +320,7 @@ select is(
 select is(
   public.reward_catalog_for_user(
     '20000000-0000-4000-8000-000000000002', 100, null, null
-  ) #>> '{items,0,status}',
+  ) #>> '{items,1,status}',
   'owned',
   'the read contract trusts persisted ownership after point and membership changes'
 );
@@ -326,12 +329,16 @@ set local role authenticated;
 set local "request.jwt.claim.sub" = '20000000-0000-4000-8000-000000000002';
 set local "request.jwt.claims" = '{"sub":"20000000-0000-4000-8000-000000000002","role":"authenticated"}';
 select is(
-  jsonb_array_length(public.claim_reward_entitlement_unlocks() -> 'claimedKeys'),
+  jsonb_array_length(public.claim_reward_entitlement_unlocks(
+    '20000000-0000-4000-8000-000000000002'
+  ) -> 'claimedKeys'),
   1,
   'the new ownership produces one unlock celebration'
 );
 select is(
-  jsonb_array_length(public.claim_reward_entitlement_unlocks() -> 'claimedKeys'),
+  jsonb_array_length(public.claim_reward_entitlement_unlocks(
+    '20000000-0000-4000-8000-000000000002'
+  ) -> 'claimedKeys'),
   0,
   'the unlock celebration never replays across claims'
 );
@@ -515,7 +522,7 @@ select is(
     where reward_key = 'dominion_night_theme'
       and event_type = 'reward_definition_configured'
   ),
-  4,
+  5,
   'configuration auditing is immutable and deduplicates a restored definition'
 );
 select is(
@@ -530,7 +537,7 @@ where reward_key = 'dominion_night_theme';
 select is(
   public.reward_catalog_for_user(
     '10000000-0000-4000-8000-000000000001', 100, null, null
-  ) #>> '{items,0,active}',
+  ) #>> '{items,1,active}',
   'false',
   'unavailable reward configuration fails closed for UI activation'
 );
@@ -538,7 +545,7 @@ select is(
   jsonb_array_length(
     public.reward_catalog_for_user(
       '10000000-0000-4000-8000-000000000001', 100, null, null
-    ) #> '{items,0,allowedActions}'
+    ) #> '{items,1,allowedActions}'
   ),
   0,
   'a cosmetic never exposes a challenge Start action'
@@ -546,7 +553,7 @@ select is(
 select is(
   public.reward_catalog_for_user(
     '10000000-0000-4000-8000-000000000001', 100, null, null
-  ) #>> '{items,0,status}',
+  ) #>> '{items,1,status}',
   'owned',
   'temporary configuration unavailability preserves stored ownership'
 );

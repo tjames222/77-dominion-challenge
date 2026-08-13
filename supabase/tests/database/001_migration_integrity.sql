@@ -3,7 +3,7 @@ begin;
 create extension if not exists pgtap with schema extensions;
 set local search_path = public, extensions;
 
-select plan(74);
+select plan(76);
 
 select ok(
   exists (
@@ -174,6 +174,24 @@ select ok(
     where version = '20260813162042'
   ),
   'the multiple-daily-journal migration was replayed'
+);
+
+select ok(
+  exists (
+    select 1
+    from supabase_migrations.schema_migrations
+    where version = '20260813192939'
+  ),
+  'the trusted launch reward catalog migration was replayed'
+);
+
+select ok(
+  exists (
+    select 1
+    from supabase_migrations.schema_migrations
+    where version = '20260813193158'
+  ),
+  'the trusted profile-photo upload migration was replayed'
 );
 
 select ok(to_regclass('public.profiles') is not null, 'profiles exists');

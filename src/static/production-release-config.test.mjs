@@ -41,10 +41,43 @@ describe('production release configuration', () => {
   });
 
   test('fails production closed for mocks and provider connections', () => {
+    assert.match(workflow, /CF_PAGES: "1"/);
+    assert.match(workflow, /CF_PAGES_BRANCH: main/);
     assert.match(workflow, /VITE_ENABLE_MOCKS: "false"/);
     assert.match(workflow, /VITE_ENABLE_GROUP_INTEGRATIONS: "false"/);
     assert.match(workflow, /Slack and Discord must remain safely off/);
     assert.match(setup, /turn off[\s\S]*Enable automatic production branch deployments/i);
+  });
+
+  test('builds the frontend for the same Supabase project migrated by the backend', () => {
+    assert.match(workflow, /SUPABASE_PROJECT_REF: \$\{\{ vars\.SUPABASE_PROJECT_REF \}\}/);
+    assert.equal(
+      workflow.match(/expected_supabase_url="https:\/\/\$\{SUPABASE_PROJECT_REF\}\.supabase\.co"/g)?.length,
+      2,
+      'backend and frontend must both reject a cross-project configuration',
+    );
+    assert.match(workflow, /VITE_SUPABASE_URL%\//);
+    assert.match(workflow, /PUBLIC_SITE_URL must be an HTTPS production origin/);
+  });
+
+  test('deploys and smoke-tests every authenticated release function', () => {
+    for (const functionName of [
+      'cancel-membership',
+      'create-checkout-session',
+      'create-customer-portal-session',
+      'reward-download',
+      'retired-community-export',
+      'upload-profile-photo',
+    ]) {
+      assert.match(
+        workflow,
+        new RegExp(`supabase functions deploy ${functionName} --project-ref`),
+      );
+    }
+    assert.match(workflow, /functions\/v1\/reward-download/);
+    assert.match(workflow, /reward_download_status[\s\S]*?!= "401"/);
+    assert.match(workflow, /functions\/v1\/upload-profile-photo/);
+    assert.match(workflow, /profile_upload_status[\s\S]*?!= "401"/);
   });
 
   test('ships restrictive Cloudflare security headers', () => {

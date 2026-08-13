@@ -21,6 +21,7 @@ const OUTPUT_QUALITIES = [0.88, 0.82, 0.76, 0.68, 0.58, 0.48, 0.38];
 const OUTPUT_SCALES = [1, 0.875, 0.75, 0.625, 0.5];
 const NEW_PROFILE_PHOTO_FILENAME = /^avatar-[0-9]{13}-[a-f0-9]{32}\.(?:jpg|webp)$/;
 const OWNED_PROFILE_PHOTO_FILENAME = /^avatar-[a-z0-9_-]+\.(?:jpe?g|png|webp|heic|heif)$/i;
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 const fileExtension = (file) => {
   const name = String(file?.name || '').trim().toLowerCase();
@@ -235,6 +236,38 @@ export function isNewProfilePhotoPath(storagePath, userId) {
   return pathParts.length === 2
     && pathParts[0] === String(userId || '')
     && NEW_PROFILE_PHOTO_FILENAME.test(pathParts[1]);
+}
+
+export function normalizeTrustedProfilePhotoUploadResponse(value, userId) {
+  const response = value && typeof value === 'object' ? value : {};
+  const storagePath = String(response.storagePath || '');
+  const registrationId = String(response.registrationId || '');
+  if (
+    !isNewProfilePhotoPath(storagePath, userId)
+    || !storagePath.endsWith('.webp')
+    || String(response.avatarUrl || '') !== storagePath
+    || !UUID_PATTERN.test(registrationId)
+    || response.contentType !== 'image/webp'
+    || !Number.isInteger(response.sizeBytes)
+    || response.sizeBytes < 1
+    || response.sizeBytes > PROFILE_PHOTO_MAX_OUTPUT_BYTES
+    || !Number.isInteger(response.width)
+    || !Number.isInteger(response.height)
+    || response.width < 1
+    || response.height < 1
+    || response.width > PROFILE_PHOTO_MAX_DIMENSION
+    || response.height > PROFILE_PHOTO_MAX_DIMENSION
+    || response.width !== response.height
+    || response.width * response.height > PROFILE_PHOTO_MAX_DIMENSION ** 2
+  ) {
+    throw new Error('The secure profile-picture response was invalid.');
+  }
+
+  return {
+    avatarUrl: storagePath,
+    storagePath,
+    registrationId,
+  };
 }
 
 export function isOwnedProfilePhotoPath(storagePath, userId) {

@@ -11,6 +11,7 @@ import {
   decodeProfilePhoto,
   isNewProfilePhotoPath,
   isPreparedProfilePhoto,
+  normalizeTrustedProfilePhotoUploadResponse,
   ownedProfilePhotoPathFromUrl,
   prepareProfilePhoto,
   replaceProfilePhoto,
@@ -180,6 +181,30 @@ test('new paths are immutable, strict, owned, and canonicalized to this project'
   assert.equal(ownedProfilePhotoPathFromUrl(external, '20000000-0000-4000-8000-000000000002'), '');
 });
 
+test('trusted upload responses require an exact square WebP result', () => {
+  const userId = '10000000-0000-4000-8000-000000000001';
+  const storagePath = `${userId}/avatar-1786500000000-0123456789abcdef0123456789abcdef.webp`;
+  const response = {
+    avatarUrl: storagePath,
+    storagePath,
+    registrationId: '40000000-0000-4000-8000-000000000004',
+    contentType: 'image/webp',
+    sizeBytes: 2048,
+    width: 64,
+    height: 64,
+  };
+
+  assert.deepEqual(normalizeTrustedProfilePhotoUploadResponse(response, userId), {
+    avatarUrl: storagePath,
+    storagePath,
+    registrationId: response.registrationId,
+  });
+  assert.throws(
+    () => normalizeTrustedProfilePhotoUploadResponse({ ...response, height: 32 }, userId),
+    /secure profile-picture response was invalid/i,
+  );
+});
+
 test('intentional text edits conflict instead of overwriting a newer profile', async () => {
   let attempts = 0;
   await assert.rejects(
@@ -274,7 +299,7 @@ test('replacement drains durable cleanup after both success and profile failure'
   assert.deepEqual(failedEvents, ['upload', 'save', 'abandon', 'cleanup']);
 });
 
-test('client source negotiates the legacy schema and uses registered atomic photo commits', () => {
+test('client source negotiates the legacy schema and uses the trusted Edge photo pipeline', () => {
   const apiSource = readFileSync(new URL('./api.js', import.meta.url), 'utf8');
   const profileStoreSource = readFileSync(new URL('./profile-store.mjs', import.meta.url), 'utf8');
   const profileSource = readFileSync(new URL('./profile.js', import.meta.url), 'utf8');
@@ -285,16 +310,14 @@ test('client source negotiates the legacy schema and uses registered atomic phot
   assert.match(profileStoreSource, /profile_photo_available: false/);
   assert.match(apiSource, /ensureProfileRecord/);
   assert.match(apiSource, /\.update\(patch\)/);
-  assert.match(apiSource, /register_profile_photo_upload/);
-  assert.ok(
-    apiSource.indexOf("register_profile_photo_upload")
-      < apiSource.indexOf(".upload(storagePath, preparedPhoto.blob"),
-  );
+  assert.match(apiSource, /client\.functions\.invoke\('upload-profile-photo'/);
+  assert.match(apiSource, /'Content-Type': preparedPhoto\.contentType/);
+  assert.match(apiSource, /'x-profile-user-id': user\.id/);
+  assert.match(apiSource, /'x-profile-upload-request-id': requestId/);
+  assert.match(apiSource, /normalizeTrustedProfilePhotoUploadResponse\(result\.data, user\.id\)/);
   assert.match(apiSource, /commit_profile_photo_upload/);
   assert.match(apiSource, /abandon_profile_photo_upload/);
-  assert.match(apiSource, /\.upload\(storagePath, preparedPhoto\.blob/);
-  assert.match(apiSource, /contentType: preparedPhoto\.contentType/);
-  assert.match(apiSource, /upsert: false/);
+  assert.doesNotMatch(apiSource, /\.from\(PROFILE_PHOTO_BUCKET\)[\s\S]{0,100}\.upload\(/);
   assert.match(apiSource, /target_expected_updated_at: expectedUpdatedAt/);
   assert.match(apiSource, /avatarOnly/);
   assert.match(apiSource, /return \{ userId: user\.id \|\| '', name, email, avatarUrl: ''/);
@@ -329,4 +352,19 @@ test('database hardening uses an immutable lifecycle registry and never SQL-dele
   assert.match(migration, /grant update \(name, email, challenge_start_date, time_zone\)/);
   assert.match(migration, /avatar-\[0-9\]\{13\}-\[a-f0-9\]\{32\}/);
   assert.doesNotMatch(migration, /delete\s+from\s+storage\.objects/i);
+});
+
+test('trusted upload migration removes browser Storage writes and grants exact service RPCs', () => {
+  const migration = readFileSync(
+    new URL('../../supabase/migrations/20260813193158_trusted_profile_photo_upload_pipeline.sql', import.meta.url),
+    'utf8',
+  );
+  assert.match(migration, /drop policy if exists "Users can upload own profile photo objects"/);
+  assert.match(migration, /reserve_profile_photo_upload_service/);
+  assert.match(migration, /finalize_profile_photo_upload_service/);
+  assert.match(migration, /abandon_profile_photo_upload_service/);
+  assert.match(migration, /grant execute[\s\S]*to service_role/);
+  assert.doesNotMatch(migration, /grant execute[\s\S]{0,120}to authenticated/);
+  assert.match(migration, /allowed_mime_types = array\['image\/webp'\]/);
+  assert.match(migration, /verified_output_sha256/);
 });

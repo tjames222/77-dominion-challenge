@@ -7,6 +7,8 @@ import { createHandler } from "./index.ts";
 
 const env = (name: string) => ({
   SUPABASE_URL: "https://project.supabase.co",
+  PUBLIC_SITE_URL: "http://localhost:5173",
+  PUBLIC_ALLOWED_SITE_URLS: "http://localhost:5173",
 }[name]);
 const validPdf = "%PDF-1.7\nfixture\n%%EOF";
 const validPdfChecksum =
