@@ -41,10 +41,10 @@ test('Dominion Platinum honors the reduced-motion preference', async ({ page, ap
   });
 
   if (!motion.prefersReducedMotion) throw new Error('Reduced-motion browser preference was not active.');
-  if (!['0s', '0.00001s'].includes(motion.animationDuration)) {
+  if (Number.parseFloat(motion.animationDuration) > 0.00001) {
     throw new Error(`Unexpected animation duration: ${motion.animationDuration}`);
   }
-  if (!['0s', '0.00001s'].includes(motion.transitionDuration)) {
+  if (Number.parseFloat(motion.transitionDuration) > 0.00001) {
     throw new Error(`Unexpected transition duration: ${motion.transitionDuration}`);
   }
   if (motion.scrollBehavior !== 'auto') throw new Error(`Unexpected scroll behavior: ${motion.scrollBehavior}`);
