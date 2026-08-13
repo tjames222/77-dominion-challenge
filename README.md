@@ -53,11 +53,12 @@ Slack and Discord connection controls fail closed unless `VITE_ENABLE_GROUP_INTE
 ## Supabase setup
 
 1. Create a Supabase project.
-2. Run `supabase/schema.sql` in the Supabase SQL editor.
-3. Copy `.env.example` to `.env`.
-4. Fill in `VITE_SUPABASE_URL` and `VITE_SUPABASE_PUBLISHABLE_KEY`.
-5. In Supabase Auth URL Configuration, set the Site URL to the Cloudflare Pages production URL for this app.
-6. Add redirect URLs for production, Cloudflare preview deployments, and local development:
+2. For local development, run `pnpm run supabase:start` and `pnpm run supabase:reset` so the versioned migration chain is applied from an empty database.
+3. For a hosted environment, follow the migration reconciliation and deployment steps in [`docs/backend-release-runbook.md`](docs/backend-release-runbook.md). Never run `supabase/schema.sql` manually or use `--include-all` against production.
+4. Copy `.env.example` to `.env`.
+5. Fill in `VITE_SUPABASE_URL` and `VITE_SUPABASE_PUBLISHABLE_KEY`.
+6. In Supabase Auth URL Configuration, set the Site URL to the Cloudflare Pages production URL for this app.
+7. Add redirect URLs for production, Cloudflare preview deployments, and local development:
    - `https://77-dominion-challenge.pages.dev/**`
    - `https://*.77-dominion-challenge.pages.dev/**`
    - `http://localhost:5173/**`
@@ -130,7 +131,7 @@ Stripe powers checkout, payment method updates, and membership cancellation. Sup
    - `customer.subscription.created`
    - `customer.subscription.updated`
    - `customer.subscription.deleted`
-6. Run the updated `supabase/schema.sql` before testing billing flows.
+6. Apply the reviewed migration chain through the release workflow before testing hosted billing flows. For local billing tests, reset the local Supabase stack so every migration is replayed.
 
 ## Data lifecycle decisions
 
