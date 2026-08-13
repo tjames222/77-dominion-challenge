@@ -19,6 +19,7 @@ import {
 } from './mock-identity.mjs';
 import { normalizeDailyStandardDraft } from './daily-standard-draft.mjs';
 import { naturalizeDailyActionError } from './customer-copy.mjs';
+import { revokeRecoverySessions } from './account-recovery-session.mjs';
 import {
   buildMockChallengeActivation,
   buildMockLegacyChallengeActivation,
@@ -690,21 +691,14 @@ export async function completePasswordRecovery(password) {
 
   // A successful password update is final. Revoke the recovery session so a
   // refreshed or replayed browser page cannot make another account mutation.
-  try {
-    // Supabase's default sign-out scope is global, which revokes every refresh
-    // token for the account after a recovery password change. If the remote
-    // revocation request fails, still remove this browser's recovery session.
-    const { error: globalSignOutError } = await client.auth.signOut();
-    if (globalSignOutError) {
-      const { error: localSignOutError } = await client.auth.signOut({ scope: 'local' });
-      if (localSignOutError) throw localSignOutError;
-      console.warn(
-        'Password changed and the local recovery session ended, but global session revocation could not be confirmed.',
-        globalSignOutError,
-      );
-    }
-  } catch (signOutError) {
-    console.warn('Password changed, but session revocation could not be confirmed.', signOutError);
+  // Supabase's default sign-out scope is global. If that network request fails,
+  // the fallback must still confirm that this browser's recovery session ended.
+  const revocation = await revokeRecoverySessions(client.auth);
+  if (revocation.scope === 'local') {
+    console.warn(
+      'Password changed and the local recovery session ended, but global session revocation could not be confirmed.',
+      revocation.globalError,
+    );
   }
   clearLocalAuthenticatedIdentity();
   if (typeof localStorage !== 'undefined') {
@@ -712,7 +706,7 @@ export async function completePasswordRecovery(password) {
     localStorage.removeItem(MOCK_USER_ID_KEY);
   }
 
-  return { user: data.user, completed: true };
+  return { user: data.user, completed: true, sessionsRevoked: revocation.scope };
 }
 
 const ACCOUNT_REQUEST_COLUMNS = [

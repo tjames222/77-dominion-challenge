@@ -126,12 +126,17 @@ resetForm?.addEventListener('submit', async (event) => {
   setFormBusy(resetForm, true, 'Saving...');
   setFeedback(resetFeedback, 'Saving your new password...');
   try {
-    await completePasswordRecovery(resetPassword.value);
+    const result = await completePasswordRecovery(resetPassword.value);
     resetCompleted = true;
     resetForm.reset();
     resetForm.hidden = true;
     if (resetComplete) resetComplete.hidden = false;
-    setFeedback(resetFeedback, 'Password changed. For security, all sessions were signed out.');
+    setFeedback(
+      resetFeedback,
+      result.sessionsRevoked === 'global'
+        ? 'Password changed. For security, all sessions were signed out.'
+        : 'Password changed and this browser was signed out. We couldn’t confirm sign-out on your other devices.',
+    );
   } catch (error) {
     console.warn('Unable to complete password recovery', error);
     setFeedback(resetFeedback, error?.message || 'Unable to change the password. Request a new link and try again.', 'error');

@@ -8,6 +8,14 @@ const headers = read('../../public/_headers');
 const setup = read('../../CLOUDFLARE_PAGES_SETUP.md');
 
 describe('production release configuration', () => {
+  test('requires an explicit release from the protected main branch', () => {
+    assert.match(workflow, /on:\s*\n\s*workflow_dispatch:/);
+    assert.doesNotMatch(workflow, /\n\s+push:\s*\n/);
+    assert.match(workflow, /GITHUB_REF[\s\S]*?refs\/heads\/main/);
+    assert.match(workflow, /if: inputs\.release_scope == 'full'/);
+    assert.match(workflow, /inputs\.release_scope == 'frontend-only'/);
+  });
+
   test('uses one protected Cloudflare deployment after backend verification', () => {
     assert.match(workflow, /needs:\s*frontend[\s\S]*?environment: production/);
     assert.match(workflow, /cloudflare\/wrangler-action@v3/);

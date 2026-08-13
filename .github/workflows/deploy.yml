@@ -1,9 +1,6 @@
 name: Release production
 
 on:
-  push:
-    branches:
-      - main
   workflow_dispatch:
     inputs:
       release_scope:
@@ -24,14 +21,28 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  authorize:
+    name: Authorize manual production release
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Require the protected main branch
+        shell: bash
+        run: |
+          if [[ "${GITHUB_REF}" != "refs/heads/main" ]]; then
+            echo "::error::Production releases must be dispatched from the protected main branch."
+            exit 1
+          fi
+
   validation:
     name: Validate release candidate
+    needs: authorize
     uses: ./.github/workflows/ci.yml
 
   backend:
     name: Migrate, deploy, and verify backend
     needs: validation
-    if: github.event_name != 'workflow_dispatch' || inputs.release_scope == 'full'
+    if: inputs.release_scope == 'full'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     environment: production
@@ -61,8 +72,6 @@ jobs:
       CLOUDFLARE_PAGES_PROJECT_HOST: ${{ vars.CLOUDFLARE_PAGES_PROJECT_HOST }}
       VITE_SUPABASE_URL: ${{ vars.VITE_SUPABASE_URL }}
       VITE_SUPABASE_PUBLISHABLE_KEY: ${{ vars.VITE_SUPABASE_PUBLISHABLE_KEY }}
-      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
       SUPABASE_TELEMETRY_DISABLED: "1"
     steps:
       - name: Checkout
@@ -85,8 +94,6 @@ jobs:
             PUBLIC_SITE_URL
             VITE_SUPABASE_URL
             VITE_SUPABASE_PUBLISHABLE_KEY
-            CLOUDFLARE_API_TOKEN
-            CLOUDFLARE_ACCOUNT_ID
           )
           for name in "${required[@]}"; do
             if [[ -z "${!name:-}" ]]; then
@@ -372,7 +379,7 @@ jobs:
       always() &&
       needs.validation.result == 'success' &&
       (needs.backend.result == 'success' ||
-        (github.event_name == 'workflow_dispatch' && inputs.release_scope == 'frontend-only' && needs.backend.result == 'skipped'))
+        (inputs.release_scope == 'frontend-only' && needs.backend.result == 'skipped'))
     runs-on: ubuntu-latest
     timeout-minutes: 15
     environment: production

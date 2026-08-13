@@ -172,6 +172,10 @@ Before approving the GitHub `production` environment deployment, confirm:
    default until the backing migration and functions pass verification.
 7. Cloudflare automatic production-branch deployment is disabled. The GitHub
    workflow is the only process allowed to publish `main` after backend checks.
+8. Merging `main` does not deploy production. An authorized operator manually
+   dispatches **Release production** from the protected `main` branch and selects
+   the reviewed release scope. This keeps the first two-stage cutover and every
+   later production mutation explicit.
 
 ### One-time migration-history reconciliation
 
