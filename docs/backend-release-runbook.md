@@ -300,11 +300,17 @@ separately reviewed change and the exact restored-snapshot rehearsal passes:
    and the application-owned Storage manifest with production. Classify every
    difference and explicitly allowlist Supabase platform-version noise.
 4. Before production use, update migration 1 in a reviewed commit so it aborts on
-   any legacy purchase or non-membership entitlement row and uses
-   `DROP TABLE ... RESTRICT`. This is allowed only because production has no
-   migration record for that file. Never rewrite a version after it is recorded.
-   Rebuild the clean checkpoints and rerun the complete validation after its hash
-   changes.
+   any legacy purchase or non-membership entitlement row, uses
+   `DROP TABLE ... RESTRICT`, and normalizes every application-owned privilege
+   whose known legacy value would otherwise survive a narrower `GRANT`. At
+   minimum, revoke all `authenticated` table privileges on `profiles`,
+   `challenge_entries`, and `check_ins` before granting the migration-1 target
+   privileges. Classify function, table, sequence, schema, and default privileges
+   with effective catalog checks; preserve explicitly approved platform/service
+   privileges and fail on every unknown state. This is allowed only because
+   production has no migration record for that file. Never rewrite a version
+   after it is recorded. Rebuild the clean checkpoints and rerun the complete
+   validation after its hash changes.
 5. Restore the encrypted hosted roles, schema, and data into the isolated exact-
    version stack. Require its normalized source manifest to match the captured
    production source manifest. Then rehearse applying these three migrations
@@ -316,13 +322,26 @@ separately reviewed change and the exact restored-snapshot rehearsal passes:
    20260708155500
    ```
 
-   Rehearse the successful path once against an exact legacy-source copy, then
-   exercise each fail-closed case separately against disposable copies: a
-   purchase row, an external dependency, a legacy entitlement, a changed
-   function, policy, or ACL, lock contention, and a forced rollback. The
-   successful copy must match the clean migration-3 application manifest and
-   have exactly these three history records.
-6. Create a separate, hashed worktree containing exactly migrations 1–13. Its
+   Rehearse the successful path once against an exact legacy-source copy. Then
+   prove that the hardened migration aborts and rolls back completely for a
+   purchase row, an external dependency, a legacy entitlement, an unknown
+   privilege state, lock contention, and a forced error. Separately prove that
+   the normalized source-manifest gate rejects a changed function, policy,
+   relation, constraint, trigger, or privilege before the migration runner
+   starts. The successful copy must match the clean migration-3 application
+   manifest, including effective privileges, and have exactly these three
+   history records.
+6. Only after the backup, restore, source-manifest comparison, successful
+   rehearsal, failure rehearsals, code review, and release approval all pass,
+   open a production maintenance window. Keep signup and application writes
+   closed, take a fresh encrypted backup, and require the fresh production source
+   manifest and destructive-data preflight to match the approved inputs. From the
+   pinned three-migration worktree, apply migrations 1–3 through the normal linked
+   migration runner so the SQL and history records are created atomically. Do not
+   use `migration repair`. Immediately require exactly those three remote history
+   records and the complete migration-3 application manifest; stop on any
+   unexplained difference.
+7. Create a separate, hashed worktree containing exactly migrations 1–13. Its
    linked dry run must list exactly the following ten pending versions. Rehearse
    the same push against the verified local restore, then apply those ten
    migrations normally so their SQL and history records are created together:
@@ -340,7 +359,7 @@ separately reviewed change and the exact restored-snapshot rehearsal passes:
    20260716163000
    ```
 
-7. Return to the full release tree. `migration list` must show matching local and
+8. Return to the full release tree. `migration list` must show matching local and
    remote versions 1–13, and the full linked dry run must list exactly 39 pending
    migrations, versions 14–52. Repeat the Storage query above against the clean
    local migration-13 checkpoint and production; both must now return all three
