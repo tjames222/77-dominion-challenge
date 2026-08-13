@@ -47,51 +47,58 @@
         </div>
 
         <section class="composer-card card" data-section-surface="accent">
-          <p class="eyebrow">Today’s Note</p>
-          <form class="journal-form" id="journalForm" data-training-target="private-journal-entry">
-            <label>
-              <span>Date</span>
-              <input id="journalDate" type="date" required />
-            </label>
-            <label>
-              <span>Mood</span>
-              <select id="journalMood">
-                <option value="">Choose one</option>
-                <option>Steady</option>
-                <option>Focused</option>
-                <option>Tired</option>
-                <option>Tested</option>
-                <option>Grateful</option>
-              </select>
-            </label>
-            <label>
-              <span>Energy</span>
-              <select id="journalEnergy">
-                <option value="">Choose one</option>
-                <option>Low</option>
-                <option>Medium</option>
-                <option>High</option>
-              </select>
-            </label>
-            <label class="full-span">
-              <span>What did today reveal?</span>
-              <textarea id="journalNote" placeholder="What did today reveal about your discipline, prayer, body, or attention?"></textarea>
-            </label>
-            <label class="full-span">
-              <span>Win</span>
-              <input id="journalWin" type="text" placeholder="Name one concrete win from today." />
-            </label>
-            <label class="full-span">
-              <span>Prayer or reflection</span>
-              <textarea id="journalPrayer" placeholder="What are you praying through or surrendering?"></textarea>
-            </label>
-            <button class="primary" type="submit">Save Private Entry</button>
-          </form>
+          <p class="eyebrow">New Entry</p>
+          <div id="journalCreateFormMount" data-training-target="private-journal-entry"></div>
         </section>
 
         <div class="journey-timeline" id="journalTimeline" data-section-surface="plain" data-training-target="private-journal-timeline"></div>
       </section>
     </main>
+
+    <template id="journalFormTemplate">
+      <form class="journal-form">
+        <label>
+          <span>Date</span>
+          <input name="date" type="date" required />
+        </label>
+        <label>
+          <span>Mood</span>
+          <select name="mood">
+            <option value="">Choose one</option>
+            <option>Steady</option>
+            <option>Focused</option>
+            <option>Tired</option>
+            <option>Tested</option>
+            <option>Grateful</option>
+          </select>
+        </label>
+        <label>
+          <span>Energy</span>
+          <select name="energy">
+            <option value="">Choose one</option>
+            <option>Low</option>
+            <option>Medium</option>
+            <option>High</option>
+          </select>
+        </label>
+        <label class="full-span">
+          <span>What did today reveal?</span>
+          <textarea name="note" placeholder="What did today reveal about your discipline, prayer, body, or attention?"></textarea>
+        </label>
+        <label class="full-span">
+          <span>Win</span>
+          <input name="win" type="text" placeholder="Name one concrete win from today." />
+        </label>
+        <label class="full-span">
+          <span>Prayer or reflection</span>
+          <textarea name="prayer" placeholder="What are you praying through or surrendering?"></textarea>
+        </label>
+        <div class="journal-form-actions full-span">
+          <button class="secondary" type="button" data-journal-cancel hidden>Cancel</button>
+          <button class="primary" type="submit" data-journal-submit>Save Private Entry</button>
+        </div>
+      </form>
+    </template>
 
     <script type="module" src="./src/static/menu.js"></script>
     <script type="module" src="./src/static/private-journal.js"></script>

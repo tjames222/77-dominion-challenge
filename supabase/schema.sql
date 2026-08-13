@@ -13890,3 +13890,4 @@ revoke execute on function public.grant_sharing_reward_after_invite_redemption()
 \ir migrations/20260805055359_crew_member_progress_profile.sql
 \ir migrations/20260811012059_add_secure_crew_invite_codes.sql
 \ir migrations/20260811130000_publish_member_navigation_training_v2.sql
+\ir migrations/20260813162042_allow_multiple_daily_journal_entries.sql

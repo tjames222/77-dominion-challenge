@@ -4102,33 +4102,50 @@ export async function getJournalEntries() {
     .from('journal_entries')
     .select('id, user_id, entry_date, challenge_day, note, win, prayer, mood, energy, created_at, updated_at')
     .order('entry_date', { ascending: false })
-    .limit(30);
+    .order('created_at', { ascending: false })
+    .order('id', { ascending: false });
 
   if (error) throw error;
-  return (entries || []).map(normalizeJournalEntry);
+  return sortJournalEntries((entries || []).map(normalizeJournalEntry));
 }
 
-export async function saveJournalEntry(entry) {
+function journalEntryWritePayload(entry) {
+  return {
+    entry_date: entry.date,
+    challenge_day: entry.day ?? null,
+    note: entry.note || '',
+    win: entry.win || '',
+    prayer: entry.prayer || '',
+    mood: entry.mood || '',
+    energy: entry.energy || '',
+  };
+}
+
+export async function createJournalEntry(entry) {
   if (isLocalDemoMode()) {
     await requireHybridPreviewUser();
     const entries = readMockUserValue(MOCK_JOURNAL_KEY, []).map(normalizeJournalEntry);
-    const existingIndex = entries.findIndex((item) => item.date === entry.date);
-    const existing = existingIndex >= 0 ? entries[existingIndex] : {};
     const now = new Date().toISOString();
+    const baseId = randomId('preview_journal');
+    let nextId = baseId;
+    let collisionSuffix = 2;
+    while (entries.some((item) => item.id === nextId)) {
+      nextId = `${baseId}_${collisionSuffix}`;
+      collisionSuffix += 1;
+    }
     const nextEntry = {
-      id: existing.id || randomId('preview_journal'),
+      id: nextId,
       date: entry.date,
-      day: entry.day || null,
+      day: entry.day ?? null,
       note: entry.note || '',
       win: entry.win || '',
       prayer: entry.prayer || '',
       mood: entry.mood || '',
       energy: entry.energy || '',
-      createdAt: existing.createdAt || now,
+      createdAt: now,
       updatedAt: now,
     };
-    if (existingIndex >= 0) entries[existingIndex] = nextEntry;
-    else entries.unshift(nextEntry);
+    entries.unshift(nextEntry);
     writeMockUserValue(MOCK_JOURNAL_KEY, sortJournalEntries(entries));
     return nextEntry;
   }
@@ -4137,19 +4154,60 @@ export async function saveJournalEntry(entry) {
   const user = await requireUser();
   const { data, error } = await client
     .from('journal_entries')
-    .upsert({
+    .insert({
       user_id: user.id,
-      entry_date: entry.date,
-      challenge_day: entry.day || null,
-      note: entry.note || '',
-      win: entry.win || '',
-      prayer: entry.prayer || '',
-      mood: entry.mood || '',
-      energy: entry.energy || '',
-    }, { onConflict: 'user_id,entry_date' })
+      ...journalEntryWritePayload(entry),
+    })
     .select('id, user_id, entry_date, challenge_day, note, win, prayer, mood, energy, created_at, updated_at')
     .single();
 
   if (error) throw error;
   return normalizeJournalEntry(data);
+}
+
+export async function updateJournalEntry(entryId, entry) {
+  const targetId = String(entryId || '').trim();
+  if (!targetId) throw new TypeError('A journal entry id is required.');
+
+  if (isLocalDemoMode()) {
+    await requireHybridPreviewUser();
+    const entries = readMockUserValue(MOCK_JOURNAL_KEY, []).map(normalizeJournalEntry);
+    const existingIndex = entries.findIndex((item) => item.id === targetId);
+    if (existingIndex < 0) throw new Error('This journal entry is no longer available.');
+
+    const existing = entries[existingIndex];
+    const nextEntry = {
+      ...existing,
+      date: entry.date,
+      day: entry.day ?? null,
+      note: entry.note || '',
+      win: entry.win || '',
+      prayer: entry.prayer || '',
+      mood: entry.mood || '',
+      energy: entry.energy || '',
+      updatedAt: new Date().toISOString(),
+    };
+    entries[existingIndex] = nextEntry;
+    writeMockUserValue(MOCK_JOURNAL_KEY, sortJournalEntries(entries));
+    return nextEntry;
+  }
+
+  const client = requireSupabase();
+  const user = await requireUser();
+  const { data, error } = await client
+    .from('journal_entries')
+    .update(journalEntryWritePayload(entry))
+    .eq('id', targetId)
+    .eq('user_id', user.id)
+    .select('id, user_id, entry_date, challenge_day, note, win, prayer, mood, energy, created_at, updated_at')
+    .single();
+
+  if (error) throw error;
+  return normalizeJournalEntry(data);
+}
+
+// Keep the existing import surface for older clients. Saving now always means
+// creating a new row; edits use updateJournalEntry() with an immutable id.
+export async function saveJournalEntry(entry) {
+  return createJournalEntry(entry);
 }
