@@ -214,9 +214,12 @@ function attributes and bodies, triggers, constraints, RLS policy expressions,
 or Storage configuration. Export normalized catalog manifests for both `public`
 and `private` from the isolated local checkpoint and production and compare all
 of those object classes. Also run these read-only queries in the production
-Supabase SQL editor. They must return all three expected buckets and all eleven
-application policies with identical commands, roles, `qual`, and `with_check`
-expressions:
+Supabase SQL editor. Compare the result exactly with the version-bounded local
+checkpoint manifest, including commands, roles, `qual`, and `with_check`
+expressions. For the migration-3 checkpoint below, the only expected result is
+`journal-progress` and its four `Users can ... journal photo objects` policies;
+`profile-photos`, `community-post-images`, and their seven policies must be
+absent:
 
 ```sql
 select id, name, public, file_size_limit, allowed_mime_types
@@ -307,8 +310,11 @@ comparison proves every net effect through migration 3:
 
 6. Return to the full release tree. `migration list` must show matching local and
    remote versions 1–13, and the full linked dry run must list exactly 39 pending
-   migrations, versions 14–52. This satisfies the workflow's historical gate;
-   it does not authorize the production release by itself.
+   migrations, versions 14–52. Repeat the Storage query above against the clean
+   local migration-13 checkpoint and production; both must now return all three
+   buckets and all eleven policies with identical definitions. This satisfies the
+   workflow's historical gate; it does not authorize the production release by
+   itself.
 
 Record the exact repaired and applied versions, file hashes, backup and restore
 evidence, comparison output, Storage manifest, project reference, operator,
