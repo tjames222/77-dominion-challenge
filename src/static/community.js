@@ -425,6 +425,15 @@ function positionCrewTrainingCoachmark() {
   if (window.matchMedia?.('(max-width: 520px)').matches) {
     coachmark.style.removeProperty('--crew-training-left');
     coachmark.style.removeProperty('--crew-training-top');
+    if (!layer.classList.contains('crew-training-mobile-top')
+      && !layer.classList.contains('crew-training-mobile-bottom')) {
+      const targetBounds = state.trainingTarget.getBoundingClientRect();
+      layer.classList.add(
+        targetBounds.top + (targetBounds.height / 2) > window.innerHeight * 0.52
+          ? 'crew-training-mobile-top'
+          : 'crew-training-mobile-bottom',
+      );
+    }
     return;
   }
 
@@ -466,8 +475,13 @@ function revealCrewTrainingTarget(target) {
       ? ['--topbar-sticky-height', '--member-tabs-sticky-height']
         .reduce((sum, property) => sum + (Number.parseFloat(rootStyles.getPropertyValue(property)) || 0), 0)
       : 0;
-    const safeTop = mobile ? Math.max(92, stickyHeight + 16) : 16;
-    const safeBottom = mobile && coachmarkBounds
+    const coachmarkAbove = mobile
+      && coachmarkBounds
+      && $('crewTrainingLayer')?.classList.contains('crew-training-mobile-top');
+    const safeTop = coachmarkAbove
+      ? coachmarkBounds.bottom + 48
+      : (mobile ? Math.max(92, stickyHeight + 16) : 16);
+    const safeBottom = mobile && coachmarkBounds && !coachmarkAbove
       ? coachmarkBounds.top - 48
       : window.innerHeight - 16;
     const scrollDelta = bounds.top < safeTop
@@ -514,6 +528,7 @@ function renderCrewTrainingStep({ focus = false } = {}) {
 
   layer.hidden = false;
   layer.setAttribute('aria-hidden', 'false');
+  layer.classList.remove('crew-training-mobile-top', 'crew-training-mobile-bottom');
   layer.classList.toggle('is-modal', modal);
   if (modal) coachmark.setAttribute('aria-modal', 'true');
   else coachmark.removeAttribute('aria-modal');
@@ -553,7 +568,10 @@ function renderCrewTrainingStep({ focus = false } = {}) {
     releaseCrewTrainingDialog();
   }
 
-  if (target) revealCrewTrainingTarget(target);
+  if (target) {
+    positionCrewTrainingCoachmark();
+    revealCrewTrainingTarget(target);
+  }
   if (focus) {
     window.requestAnimationFrame?.(() => {
       if (!state.trainingOpen) return;
@@ -1574,11 +1592,26 @@ function continueLegacyInviteIfPresent() {
   window.location.replace(`./invite.html#invite=${encodeURIComponent(token)}`);
 }
 
+function consumeGroupAccessOutcome() {
+  const locationUrl = new URL(window.location.href);
+  const outcome = locationUrl.searchParams.get('groupAccess');
+  if (!['deleted', 'left'].includes(outcome)) return '';
+
+  locationUrl.searchParams.delete('groupAccess');
+  window.history.replaceState(
+    {},
+    '',
+    `${locationUrl.pathname}${locationUrl.search}${locationUrl.hash}`,
+  );
+  return outcome;
+}
+
 async function bootCommunity() {
   if (new URLSearchParams(window.location.search).get('view') === 'journal') {
     window.location.replace('./private-journal.html');
     return;
   }
+  const groupAccessOutcome = consumeGroupAccessOutcome();
   state.groupStartIntent = captureChallengeStartIntent(sessionStorage, window.location);
   continueLegacyInviteIfPresent();
   if (new URLSearchParams(window.location.search).has('invite')) return;
@@ -1611,6 +1644,11 @@ async function bootCommunity() {
       : 'Preview mode: groups and leaderboards use local mock data. External channel connections are safely off.');
   }
   await Promise.all([refreshCrews(), refreshChallengeActivation()]);
+  if (groupAccessOutcome === 'left') {
+    setFeedback('You left the group. Your personal Dominion data was preserved.');
+  } else if (groupAccessOutcome === 'deleted') {
+    setFeedback('The group was deleted. Personal Dominion data was preserved.');
+  }
   await resumeGroupChallengeStart();
 }
 

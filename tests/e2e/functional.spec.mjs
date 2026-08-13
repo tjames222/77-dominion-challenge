@@ -228,13 +228,15 @@ test('single-crew setup expands, focuses, and safely cancels', async ({ page, ap
 
 test('crew deletion requires an accessible confirmation and restores focus on Escape', async ({ page, app }) => {
   await app.open(ROUTE_BY_ID.community);
-  const trigger = page.getByRole('button', { name: 'Delete Crew' });
+  await page.getByRole('link', { name: 'Group settings' }).click();
+  await expect(page).toHaveURL(/\/group-settings\.html$/);
+  const trigger = page.getByRole('button', { name: 'Delete group' });
   await trigger.scrollIntoViewIfNeeded();
   await trigger.click();
 
-  const dialog = page.getByRole('alertdialog', { name: 'Are you sure?' });
+  const dialog = page.getByRole('alertdialog', { name: /Delete Steady Hands\?/ });
   await expect(dialog).toBeVisible();
-  await expect(dialog).toContainText('removes access for every member');
+  await expect(dialog).toContainText('Every member will lose group access');
   await expect(dialog.getByRole('button', { name: 'Cancel' })).toBeFocused();
   await page.keyboard.press('Escape');
   await expect(dialog).toBeHidden();
@@ -243,12 +245,15 @@ test('crew deletion requires an accessible confirmation and restores focus on Es
 
 test('non-admin members see Leave Group and retain personal data after confirmation', async ({ page, app }) => {
   await app.open(ROUTE_BY_ID.community, { state: 'communityMember' });
-  const trigger = page.getByRole('button', { name: 'Leave Group' });
+  await page.getByRole('link', { name: 'Group settings' }).click();
+  await expect(page).toHaveURL(/\/group-settings\.html$/);
+  const trigger = page.getByRole('button', { name: 'Leave group' });
   await trigger.scrollIntoViewIfNeeded();
   await trigger.click();
-  const dialog = page.getByRole('alertdialog', { name: 'Are you sure?' });
-  await expect(dialog).toContainText('removes only your membership');
-  await dialog.getByRole('button', { name: 'Leave Group' }).click();
+  const dialog = page.getByRole('alertdialog', { name: /Leave Steady Hands\?/ });
+  await expect(dialog).toContainText('Only your membership will be removed');
+  await dialog.getByRole('button', { name: 'Leave group' }).click();
+  await expect(page).toHaveURL(/\/community\.html$/);
   await expect(page.getByRole('button', { name: 'Create a Crew' })).toBeVisible();
   await expect(page.locator('#communityFeedback')).toContainText('personal Dominion data was preserved');
   const personal = await page.evaluate(() => ({
@@ -274,6 +279,9 @@ test('Community branded invite and provider actions retain their dedicated flows
   await expect(page.getByRole('button', { name: 'Generate invitation' })).toBeEnabled();
   await page.keyboard.press('Escape');
 
+  await page.getByRole('link', { name: 'Group settings' }).click();
+  await expect(page).toHaveURL(/\/group-settings\.html$/);
+  await expect(page.locator('#groupSettingsContent')).toBeVisible();
   const slack = page.getByRole('button', { name: 'Connect Slack' });
   const discord = page.getByRole('button', { name: 'Connect Discord' });
   await expect(slack).toBeVisible();

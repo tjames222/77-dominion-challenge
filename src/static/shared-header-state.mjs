@@ -10,6 +10,7 @@ export const AUTHENTICATED_HEADER_ROUTES = Object.freeze([
   'intentional-walk.html',
   'workout-two.html',
   'community.html',
+  'group-settings.html',
   'private-journal.html',
   'profile.html',
   'badges-rewards.html',

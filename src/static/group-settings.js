@@ -421,7 +421,7 @@ $('groupAccessButton')?.addEventListener('click', (event) => {
       if (deleting) await deleteCrew({ crewId: crew.id, requestId });
       else await leaveCrew({ crewId: crew.id, requestId });
       localStorage.removeItem('dominion:activeCrewId');
-      window.location.replace('./community.html');
+      window.location.replace(`./community.html?groupAccess=${deleting ? 'deleted' : 'left'}`);
     },
     onClose: () => dialog.destroy(),
   });

@@ -47,7 +47,7 @@ describe('FOU-1455 member destination navigation', () => {
     assert.match(memberNavigation(dashboard), /href="\.\/dashboard\.html" aria-current="page"/);
     assert.match(memberNavigation(rewards), /href="\.\/badges-rewards\.html" aria-current="page"/);
     assert.match(memberNavigation(community), /href="\.\/community\.html" aria-current="page"/);
-    assert.match(memberNavigation(privateJournal), /href="\.\/private-journal\.html" aria-current="page"/);
+    assert.match(memberNavigation(privateJournal), /href="\.\/private-journal\.html"[^>]*aria-current="page"/);
     assert.match(communityJs, /get\('view'\) === 'journal'[\s\S]*?window\.location\.replace\('\.\/private-journal\.html'\)/);
     assert.match(privateJournalJs, /const RETURN_PATH = '\.\/private-journal\.html'/);
   });
@@ -71,6 +71,7 @@ describe('FOU-1455 member destination navigation', () => {
       assert.match(memberNavigation(source), /icon-gift/);
       assert.match(memberNavigation(source), /icon-users/);
       assert.match(memberNavigation(source), /icon-book/);
+      assert.match(memberNavigation(source), /href="\.\/private-journal\.html"[^>]*aria-label="Private Journal"/);
     }
   });
 

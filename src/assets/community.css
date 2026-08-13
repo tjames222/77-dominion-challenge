@@ -1405,6 +1405,9 @@
     width: auto;
     max-height: min(72dvh, 560px);
   }
+  .crew-training-layer:not(.is-modal).crew-training-mobile-top .crew-training-coachmark {
+    inset: calc(var(--topbar-sticky-height, 56px) + var(--member-tabs-sticky-height, 56px) + 12px) 12px auto;
+  }
   .crew-training-layer.is-modal { padding: 12px; }
   .crew-training-coachmark {
     width: min(100%, 390px);
