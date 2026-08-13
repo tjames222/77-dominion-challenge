@@ -26,7 +26,7 @@ function delivery(
     provider_workspace_id: "workspace-1",
     provider_destination_id: "channel-1",
     event_type: "synthetic.delivery",
-    payload: { text: "Keep the standard." },
+    payload: { text: "Keep going." },
     attempt_number: 1,
     max_attempts: 5,
     credential_ciphertext: new Uint8Array(17),
@@ -119,7 +119,7 @@ Deno.test("Slack delivery uses the channel contract without returning content", 
   assertEquals(authorization, "Bearer slack-token");
   assertEquals(requestBody, {
     channel: "channel-1",
-    text: "Keep the standard.",
+    text: "Keep going.",
     link_names: false,
     mrkdwn: false,
   });
@@ -176,7 +176,7 @@ Deno.test("Discord delivery targets the selected channel with bot authentication
   );
   assert(url.endsWith("/channels/channel-1/messages"));
   assertEquals(body, {
-    content: "Keep the standard.",
+    content: "Keep going.",
     allowed_mentions: { parse: [] },
   });
   assertEquals(authorization, "Bot discord-token");

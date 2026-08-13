@@ -208,12 +208,12 @@ function openGroupStartConfirmation(crew, { continuation = false } = {}) {
   const startDate = crew.challengeStartDate || 'the group’s selected date';
   const dialog = createConfirmationDialog({
     id: 'group-challenge-start-confirmation',
-    title: continuation ? 'Finish starting your Group challenge?' : `Start with ${crew.name}?`,
+    title: continuation ? 'Finish starting your group challenge?' : `Start with ${crew.name}?`,
     description: continuation
       ? `Your membership in ${crew.name} is ready. Continue to bind your challenge to its ${startDate} start date.`
       : `${crew.name} starts on ${startDate}. Your challenge will use that group-owned date and cannot later switch to Solo mode.`,
     cancelLabel: 'Cancel',
-    confirmLabel: continuation ? 'Continue Starting' : 'Confirm Group Start',
+    confirmLabel: continuation ? 'Continue starting' : 'Confirm group start',
     pendingLabel: 'Starting challenge…',
     closeOnBackdrop: false,
     onCancel: () => abandonGroupChallengeStart(),
@@ -324,7 +324,7 @@ async function resumeGroupChallengeStart() {
 function crewTrainingSteps() {
   return buildCrewTrainingSteps({
     integrationsEnabled: GROUP_INTEGRATIONS_ENABLED,
-    crewName: activeCrew()?.name || 'Your crew',
+    crewName: activeCrew()?.name || 'Your group',
   });
 }
 
@@ -542,7 +542,7 @@ function renderCrewTrainingStep({ focus = false } = {}) {
   );
   if (targetNote) {
     targetNote.textContent = step.targetUnavailableDescription
-      || 'This step is informational because its on-page target is not currently available.';
+      || 'This step explains a feature that isn’t available on this screen right now.';
     targetNote.hidden = !unavailable;
   }
   coachmark.setAttribute(
@@ -602,7 +602,7 @@ async function loadCrewTrainingProgress() {
     return progress;
   } catch (error) {
     if (state.trainingRequestId !== requestId || activeCrew()?.id !== crew.id) return null;
-    console.warn('Crew training is unavailable for this member', error);
+    console.warn('Group training is unavailable for this member', error);
     state.trainingProgress = null;
     renderCrewTrainingLaunch();
     return null;
@@ -646,7 +646,7 @@ async function openCrewTraining({ trigger = $('crewTrainingButton'), progress = 
     renderCrewTrainingStep({ focus: true });
     return true;
   } catch (error) {
-    setFeedback(error?.message || 'Crew training is unavailable right now.');
+    setFeedback(error?.message || 'Group training is unavailable right now.');
     return false;
   } finally {
     release();
@@ -790,7 +790,7 @@ function memberProgressBadgeMarkup(badge) {
       <div>
         <p class="member-progress-badge-tier">${escapeHtml(tier)} badge</p>
         <h4>${escapeHtml(badge.name || 'Badge')}</h4>
-        <p>${escapeHtml(badge.description || 'Earned through faithful progress.')}</p>
+        <p>${escapeHtml(badge.description || 'Earned through challenge progress.')}</p>
       </div>
     </article>
   `;
@@ -1096,7 +1096,7 @@ function renderLeaderboard() {
 
   const crew = activeCrew();
   if (!crew) {
-    container.innerHTML = '<article class="leaderboard-empty">Create or join a crew to unlock a private leaderboard.</article>';
+    container.innerHTML = '<article class="leaderboard-empty">Create or join a group to see its private leaderboard.</article>';
     return;
   }
 
@@ -1192,8 +1192,8 @@ function renderCrewShell() {
   const createSubmit = createForm?.querySelector('button[type="submit"]');
   if (createSubmit) {
     createSubmit.textContent = state.groupStartIntent
-      ? 'Create Crew and Start Challenge'
-      : 'Create Crew';
+      ? 'Create Group and Start Challenge'
+      : 'Create Group';
   }
   if (manageCard) manageCard.hidden = !view.showActiveCrew;
   if (settingsButton) settingsButton.hidden = !crew;
@@ -1204,8 +1204,8 @@ function renderCrewShell() {
     state.trainingProgress = null;
     if (state.trainingOpen) closeCrewTraining({ restoreFocus: false, force: true });
     renderCrewTrainingLaunch();
-    if (title) title.textContent = 'Create or join a crew.';
-    if (description) description.textContent = 'Private crews keep accountability close: one start date, one channel, and people you actually know.';
+    if (title) title.textContent = 'Create or join a private group.';
+    if (description) description.textContent = 'Everyone in a group shares one challenge start date.';
     $('crewMemberCount').textContent = '0';
     $('crewDayCount').textContent = 'Day 1';
     $('crewMemberList').innerHTML = '';
@@ -1236,7 +1236,7 @@ function renderCrewShell() {
       : 'Remove only your membership. Your profile, progress, points, badges, and journal stay yours.';
   }
   if ($('crewLifecycleButton')) {
-    $('crewLifecycleButton').textContent = lifecycleAction === 'delete' ? 'Delete Crew' : 'Leave Group';
+    $('crewLifecycleButton').textContent = lifecycleAction === 'delete' ? 'Delete Group' : 'Leave Group';
     $('crewLifecycleButton').dataset.lifecycleAction = lifecycleAction;
   }
   renderCrewTrainingLaunch();
@@ -1641,7 +1641,7 @@ async function bootCommunity() {
   if (isLocalDemoMode()) {
     setFeedback(GROUP_INTEGRATIONS_ENABLED
       ? 'Preview mode: groups, leaderboards, and integrations use local mock data.'
-      : 'Preview mode: groups and leaderboards use local mock data. External channel connections are safely off.');
+      : 'Preview mode: groups and leaderboards use local mock data. External channel connections are disabled.');
   }
   await Promise.all([refreshCrews(), refreshChallengeActivation()]);
   if (groupAccessOutcome === 'left') {
@@ -1739,7 +1739,7 @@ $('crewLifecycleButton')?.addEventListener('click', (event) => {
       ? `Deleting ${crew.name} removes access for every member, revokes invitations, stops external delivery, and begins the retained deletion process. Personal profiles, progress, points, badges, and journals are not deleted.`
       : `Leaving ${crew.name} removes only your membership. You will lose access to its roster, leaderboard, invitations, and integrations. Your profile, progress, points, badges, and journal remain yours.`,
     cancelLabel: 'Cancel',
-    confirmLabel: isDelete ? 'Delete Crew' : 'Leave Group',
+    confirmLabel: isDelete ? 'Delete Group' : 'Leave Group',
     pendingLabel: isDelete ? 'Deleting…' : 'Leaving…',
     destructive: true,
     alert: true,
@@ -1948,7 +1948,7 @@ $('crewForm')?.addEventListener('submit', async (event) => {
         crewIds: state.crews.map((item) => item.id),
       });
       if (outcome !== 'complete') {
-        throw new Error('The group was created, but its challenge start could not be verified. Refresh to continue safely.');
+        throw new Error('The group was created, but its challenge start could not be verified. Refresh to continue.');
       }
       clearChallengeStartIntent(sessionStorage);
       clearChallengeStartIntentMarker(window);
@@ -1975,7 +1975,7 @@ $('crewForm')?.addEventListener('submit', async (event) => {
       }
     }
   } catch (error) {
-    window.alert(error?.message || 'Unable to create that crew right now.');
+    window.alert(error?.message || 'Unable to create that group right now.');
   } finally {
     release();
   }

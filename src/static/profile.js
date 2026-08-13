@@ -533,7 +533,7 @@ function updateBillingSummary(state) {
     : 'Subscription needed';
   document.getElementById('profileBillingCopy').textContent = state.subscriptionActive
     ? 'Your $7/month subscription is active, so the dashboard, daily actions, community, journal, and future member content stay open.'
-    : 'Subscribe for $7/month to unlock the dashboard, daily action page, community, journal, and full tracking flow.';
+    : 'Subscribe for $7/month to use the dashboard, Daily Actions, private groups, journal, and progress tracking.';
   document.getElementById('profileSubscriptionPill').textContent = state.subscriptionActive ? 'Subscription active' : 'Subscription needed';
 }
 

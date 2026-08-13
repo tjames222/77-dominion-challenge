@@ -28,7 +28,7 @@
       <section class="dashboard-hero compact-hero reveal" data-section-surface="plain">
         <p class="eyebrow">Member Dashboard</p>
         <h1 id="dashboardTitle">Today’s Dominion</h1>
-        <p class="lead" id="dashboardLead">Track your standards, post your check-in, and stay honest.</p>
+        <p class="lead" id="dashboardLead">Track today’s actions and post your check-in.</p>
       </section>
 
       <section
@@ -40,8 +40,8 @@
       >
         <div class="challenge-start-gate-copy">
           <p class="eyebrow">Challenge Setup</p>
-          <h2 id="challengeStartGateTitle">Your 77 days begin with one clear choice.</h2>
-          <p id="challengeStartGateDescription">Choose whether you will take the challenge Solo or With a group, then confirm the timeline Dominion will protect.</p>
+          <h2 id="challengeStartGateTitle">Choose how you want to take the challenge.</h2>
+          <p id="challengeStartGateDescription">Start on your own or with a private group, then choose your start date.</p>
         </div>
         <div class="challenge-start-gate-actions">
           <button
@@ -68,16 +68,16 @@
 
       <section class="challenge-complete-panel reveal" id="challengeCompletePanel" data-section-surface="plain" hidden>
         <p class="eyebrow">77 Days Complete</p>
-        <h2>Your next challenge is ready.</h2>
-        <p>You finished the Dominion Challenge. Hold the ground you gained and choose the next path from Badges &amp; Rewards.</p>
+        <h2>You finished the Dominion Challenge.</h2>
+        <p>Review your rewards and choose another challenge when you’re ready.</p>
       </section>
 
       <section class="countdown-card spotlight-panel reveal" id="countdownCard" data-section-surface="accent">
         <div class="countdown-topline">
           <span class="app-icon icon-clock countdown-icon" aria-hidden="true"></span>
           <div>
-            <p class="eyebrow">Daily Countdown</p>
-            <h2>Today is moving</h2>
+            <p class="eyebrow">Time Left Today</p>
+            <h2>Finish today’s actions</h2>
           </div>
         </div>
         <div class="countdown-display">
@@ -87,7 +87,7 @@
         <div class="countdown-progress" aria-hidden="true">
           <span id="countdownProgress"></span>
         </div>
-        <p class="countdown-callout" id="countdownCallout" aria-live="polite">A fresh challenge reminder will load here.</p>
+        <p class="countdown-callout" id="countdownCallout" aria-live="polite">Loading today’s reminder…</p>
         <div class="countdown-meta">
           <span id="countdownProgressLabel">0% of the day used</span>
           <span id="countdownActionsLabel">0 of 7 actions complete</span>
@@ -100,7 +100,7 @@
           <div class="section-heading"><p class="eyebrow">Today's Scorecard</p><h2 id="todaysScorecardTitle">Mind, Spirit, Body</h2></div>
           <div class="scorecard-checklist-heading">
             <div>
-              <p>Daily standards</p>
+              <p>Daily actions</p>
               <span id="scorecardSelectionStatus" role="status" aria-live="polite" aria-atomic="true">0 of 7 complete</span>
             </div>
             <button class="scorecard-select-all" id="selectAllActionsButton" type="button" aria-controls="checklist" disabled>
@@ -134,8 +134,8 @@
       <div class="reward-toast" id="rewardToast" role="dialog" aria-modal="true" aria-live="polite" aria-atomic="true" aria-labelledby="rewardTitle" aria-describedby="rewardCopy" hidden>
         <button class="celebration-close" type="button" data-dismiss-celebration aria-label="Dismiss day complete celebration"><span aria-hidden="true">×</span></button>
         <p class="eyebrow">Day Complete</p>
-        <h2 id="rewardTitle">Dominion earned.</h2>
-        <p id="rewardCopy">Points and badges are being tallied.</p>
+        <h2 id="rewardTitle">Your day is complete.</h2>
+        <p id="rewardCopy">Updating your points and badges…</p>
         <div class="badge-shelf" id="rewardBadges"></div>
       </div>
     </div>
@@ -155,8 +155,8 @@
         <button class="celebration-close" type="button" data-dismiss-celebration aria-label="Dismiss challenge unlock celebration"><span aria-hidden="true">×</span></button>
         <span class="badge-medal-icon app-icon icon-spark" id="challengeUnlockIcon" aria-hidden="true"></span>
         <p class="eyebrow">Challenge Unlocked</p>
-        <h2 id="challengeUnlockTitle">A new path is open.</h2>
-        <p id="challengeUnlockCopy">Your points opened another Dominion challenge.</p>
+        <h2 id="challengeUnlockTitle">You earned a new challenge.</h2>
+        <p id="challengeUnlockCopy">You can find it on the Rewards page.</p>
       </article>
     </div>
     <script type="module" src="./src/static/menu.js"></script>

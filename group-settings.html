@@ -23,7 +23,7 @@
       <section class="community-hero reveal is-visible" data-section-surface="plain">
         <p class="eyebrow">Private Group</p>
         <h1>Group settings</h1>
-        <p class="lead">Manage your privacy, connected channels, and group access in one place.</p>
+        <p class="lead">Manage sharing, connected channels, and your access to the group.</p>
       </section>
 
       <div class="community-feedback" id="groupSettingsFeedback" role="status" aria-live="polite"></div>
@@ -33,7 +33,7 @@
           <div>
             <p class="eyebrow">Active Group</p>
             <h2 id="groupSettingsOverviewTitle">Loading your group…</h2>
-            <p class="section-copy" id="groupSettingsOverviewCopy">Checking your membership and permissions.</p>
+            <p class="section-copy" id="groupSettingsOverviewCopy">Checking your role and permissions…</p>
           </div>
           <span class="privacy-badge" id="groupRoleBadge">Member</span>
         </div>
@@ -42,15 +42,15 @@
       <section class="card reveal is-visible" id="groupSettingsEmpty" data-section-surface="plain" hidden>
         <p class="eyebrow">No Group Yet</p>
         <h2>Create or join a private group first.</h2>
-        <p class="section-copy">Once you belong to a group, its privacy and access controls will appear here.</p>
+        <p class="section-copy">Once you join a group, its sharing and access controls will appear here.</p>
         <a class="primary" href="./community.html">Open Community</a>
       </section>
 
       <div id="groupSettingsContent" hidden>
         <section class="card reveal is-visible profile-integration-consent" id="integrationPrivacy" data-section-surface="plain" aria-labelledby="integrationPrivacyTitle" hidden>
-          <p class="eyebrow">My Update Privacy</p>
-          <h2 id="integrationPrivacyTitle">Choose what your group can share.</h2>
-          <p class="section-copy">These choices belong to you. A group owner cannot opt in on your behalf.</p>
+          <p class="eyebrow">Sharing Privacy</p>
+          <h2 id="integrationPrivacyTitle">Choose which updates can be shared.</h2>
+          <p class="section-copy">Only you can change these choices. A group owner can’t opt in for you.</p>
 
           <div id="integrationSafeOffNotice" class="integration-empty" hidden>
             External Slack and Discord updates are off for launch. Nothing from your account will be sent outside Dominion.
@@ -60,7 +60,7 @@
             <div class="integration-destinations" aria-labelledby="integrationConsentDestinationsTitle">
               <div>
                 <p class="eyebrow">Connected Channels</p>
-                <h3 id="integrationConsentDestinationsTitle">Where your approved updates can go</h3>
+                <h3 id="integrationConsentDestinationsTitle">Where updates can be sent</h3>
               </div>
               <ul class="integration-destination-list" id="integrationConsentDestinationList"></ul>
               <p class="integration-destination-empty" id="integrationConsentDestinationEmpty">No Slack or Discord channel is connected for this group.</p>
@@ -70,7 +70,7 @@
               <label class="integration-master-switch" for="integrationUpdatesEnabled">
                 <span>
                   <strong>Allow group updates</strong>
-                  <small>Off is the default. Turning this off blocks every category below.</small>
+                  <small>This is off by default. Turn it off at any time to stop all updates below.</small>
                 </span>
                 <input id="integrationUpdatesEnabled" type="checkbox" role="switch" />
               </label>
@@ -116,7 +116,7 @@
             <span class="privacy-badge" id="integrationPermissionBadge">Owner or admin</span>
           </div>
           <p class="integration-disclosure" id="groupIntegrationsDescription">Group members can see where approved updates go. Only owners and admins can change a connection.</p>
-          <p class="integration-conversation-note">Connected channels can receive approved Daily Check-Ins, streak milestones, badge and reward unlocks, new-member notices, and an optional weekly leaderboard recap. Conversations and replies stay in Slack or Discord and are not copied back into Dominion.</p>
+          <p class="integration-conversation-note">Connected channels can receive approved Daily Check-Ins, streak milestones, badges and rewards, new-member notices, and an optional weekly leaderboard recap. Conversations and replies stay in Slack or Discord and aren’t copied back into Dominion.</p>
           <div class="integration-destination-list" id="groupIntegrationDestinationList" aria-live="polite"></div>
           <div class="integration-connect-actions" id="integrationConnectActions" hidden>
             <button class="provider-button provider-slack" type="button" data-connect-provider="slack">

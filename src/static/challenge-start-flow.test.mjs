@@ -160,7 +160,8 @@ describe('Solo date validation', () => {
     });
     assert.equal(future.status, 'scheduled');
     assert.equal(future.challengeDay, null);
-    assert.match(soloChallengeStartSummary(future), /scheduled/i);
+    assert.match(soloChallengeStartSummary(future), /will start on this date/i);
+    assert.match(soloChallengeStartSummary(future), /Daily Actions/);
   });
 
   test('uses the selected time zone as the authoritative date boundary', () => {

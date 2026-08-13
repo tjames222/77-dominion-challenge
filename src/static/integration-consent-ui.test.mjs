@@ -32,7 +32,7 @@ describe('member outbound update privacy surface', () => {
     });
     assert.match(settingsHtml, /value="anonymous" checked/);
     assert.match(settingsHtml, /data is sent outside Dominion/i);
-    assert.match(settingsHtml, /group owner cannot opt in on your behalf/i);
+    assert.match(settingsHtml, /group owner can’t opt in for you/i);
   });
 
   test('loads and saves preferences only after the authenticated profile hydrates', () => {

@@ -52,7 +52,7 @@ Deno.test("renderer supports each strict provider-neutral event contract", () =>
     {
       event_type: "streak_milestone",
       payload: { streakType: "full_standard", milestone: 14 },
-      expected: "14-day full-standard streak milestone",
+      expected: "14-day perfect-day streak milestone",
     },
     {
       event_type: "badge_reward",

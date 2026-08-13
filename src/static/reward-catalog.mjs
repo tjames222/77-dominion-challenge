@@ -9,7 +9,7 @@ export const DOMINION_NIGHT_THEME_REWARD = Object.freeze({
   rewardType: 'cosmetic',
   stateModel: 'ownership',
   title: 'Dominion Night',
-  description: 'Unlock a distinct dark app theme, then select it from Profile.',
+  description: 'Earn a dark app theme, then select it from Profile.',
   pointsRequired: REWARD_POINT_THRESHOLDS.dominion_night_theme,
   fulfillmentKey: 'dominion-night',
   icon: 'palette',

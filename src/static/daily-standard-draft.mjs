@@ -50,9 +50,9 @@ export function normalizeDailyStandardDraft(draft = {}, fallbackDate = '') {
 }
 
 export function applyActionMutation(draft, actionId, completed) {
-  if (!isDailyStandardActionId(actionId)) throw new TypeError('Choose a valid Daily Standard.');
+  if (!isDailyStandardActionId(actionId)) throw new TypeError('Choose a valid Daily Action.');
   const normalized = normalizeDailyStandardDraft(draft);
-  if (normalized.locked || normalized.submitted) throw new Error('This Daily Standards draft is locked.');
+  if (normalized.locked || normalized.submitted) throw new Error('Today’s Daily Actions are locked.');
   const nextCompleted = new Set(normalized.completed);
   if (completed) nextCompleted.add(actionId);
   else nextCompleted.delete(actionId);
@@ -67,7 +67,7 @@ export function applyWorkoutDifficultyMutation(draft, workoutId, difficulty) {
   if (!validWorkoutIds.has(workoutId)) throw new TypeError('Choose a valid workout.');
   if (!validDifficulties.has(difficulty)) throw new TypeError('Choose a valid workout difficulty.');
   const normalized = normalizeDailyStandardDraft(draft);
-  if (normalized.locked || normalized.submitted) throw new Error('This Daily Standards draft is locked.');
+  if (normalized.locked || normalized.submitted) throw new Error('Today’s Daily Actions are locked.');
   return normalizeDailyStandardDraft({
     ...normalized,
     workoutDifficulty: { ...normalized.workoutDifficulty, [workoutId]: difficulty },

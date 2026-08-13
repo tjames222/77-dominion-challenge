@@ -113,7 +113,7 @@ function renderNextUnlock(model) {
 
   if (model.nextUnlock) {
     const next = model.nextUnlock;
-    if (eyebrow) eyebrow.textContent = 'Next unlock';
+    if (eyebrow) eyebrow.textContent = 'Next reward';
     if (title) title.textContent = next.title;
     if (copy) copy.textContent = `${formatPoints(next.pointsRemaining)} to go · ${model.totalPoints.toLocaleString()} of ${next.pointsRequired.toLocaleString()} earned`;
     if (progress) {
@@ -136,7 +136,7 @@ function renderNextUnlock(model) {
   if (model.summaryMode === 'complete') {
     if (eyebrow) eyebrow.textContent = 'Progress complete';
     if (title) title.textContent = 'Every configured reward is open.';
-    if (copy) copy.textContent = 'Keep building your lifetime total. New rewards will appear here when they are added.';
+    if (copy) copy.textContent = 'Your points will keep adding up. New rewards will appear here when they’re available.';
   } else if (model.summaryMode === 'access') {
     if (eyebrow) eyebrow.textContent = 'Access needed';
     if (title) title.textContent = 'A locked reward needs membership access.';
@@ -188,7 +188,7 @@ function showUnlockNotice(unlocks = []) {
   const copy = $('rewardUnlockNoticeCopy');
   if (title) title.textContent = names.length === 1 ? names[0] : `${names.length} new rewards are open`;
   if (copy) copy.textContent = names.length === 1
-    ? 'Your progress opened this reward. Its current state is shown below.'
+    ? 'You earned this reward. See its current status below.'
     : `${names.join(', ')} are now reflected in your reward progression.`;
   notice.hidden = false;
   notice.scrollIntoView({ behavior: window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth', block: 'nearest' });
@@ -276,7 +276,7 @@ rewardsList?.addEventListener('click', async (event) => {
   try {
     await startChallenge(pendingRewardKey);
     catalog = await getAllRewardCatalog();
-    if (feedback) feedback.textContent = 'Challenge started. Your reward progression is updated.';
+    if (feedback) feedback.textContent = 'Challenge started. Your rewards are up to date.';
   } catch (error) {
     if (feedback) feedback.textContent = error?.message || 'Unable to start that challenge right now.';
   } finally {

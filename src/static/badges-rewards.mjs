@@ -54,7 +54,7 @@ export function normalizeEarnedBadges(badges = []) {
     const normalized = {
       key,
       name: String(badge?.name || 'Badge'),
-      description: String(badge?.description || 'Earned through faithful progress.'),
+      description: String(badge?.description || 'Earned through challenge progress.'),
       category: safeKey(badge?.category) || 'challenge',
       tier: BADGE_TIERS.has(String(badge?.tier || '').toLowerCase())
         ? String(badge.tier).toLowerCase()
@@ -180,7 +180,7 @@ export function badgeViewModel(badge = {}) {
   const completedCount = safeWholeNumber(metadata.completedCount ?? metadata.completed_count);
   if (challengeDay) details.push(`Challenge Day ${challengeDay}`);
   if (streak) details.push(`${streak}-day streak`);
-  if (completedCount) details.push(`${completedCount} of 7 standards`);
+  if (completedCount) details.push(`${completedCount} of 7 actions`);
 
   return {
     ...normalized,

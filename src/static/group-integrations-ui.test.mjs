@@ -15,7 +15,7 @@ const canonicalSchema = readFileSync(new URL('../../supabase/schema.sql', import
 describe('private-group provider connections', () => {
   it('explains the external-only conversation model and exposes both supported providers', () => {
     assert.match(html, /Conversations and replies stay in Slack or Discord/);
-    assert.match(html, /Daily Check-Ins, streak milestones, badge and reward unlocks/);
+    assert.match(html, /Daily Check-Ins, streak milestones, badges and rewards/);
     assert.match(html, /data-connect-provider="slack"/);
     assert.match(html, /data-connect-provider="discord"/);
     assert.match(html, /id="groupIntegrationDestinationList"[^>]+aria-live="polite"/);

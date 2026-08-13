@@ -6,7 +6,7 @@ export const DEFAULT_CHALLENGE_DEFINITIONS = Object.freeze([
   {
     key: 'seven_day_reset',
     title: '7-Day Reset',
-    teaser: 'A focused week to rebuild rhythm and recover momentum.',
+    teaser: 'A focused week to rebuild your habits and get moving again.',
     type: 'reset',
     pointsRequired: REWARD_POINT_THRESHOLDS.seven_day_reset,
     durationDays: 7,
@@ -36,7 +36,7 @@ export const DEFAULT_CHALLENGE_DEFINITIONS = Object.freeze([
   {
     key: 'forty_day_fast',
     title: '40-Day Fasting & Prayer Track',
-    teaser: 'Build a guided rhythm of fasting, prayer, and disciplined reflection.',
+    teaser: 'Follow a guided pattern of fasting, prayer, and reflection.',
     type: 'fasting',
     pointsRequired: REWARD_POINT_THRESHOLDS.forty_day_fast,
     durationDays: 40,

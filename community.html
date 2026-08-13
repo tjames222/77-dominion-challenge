@@ -31,8 +31,8 @@
 
       <section class="community-hero reveal is-visible" data-section-surface="plain">
         <p class="eyebrow">77-Day Dominion Challenge</p>
-        <h1>Walk together.</h1>
-        <p class="lead">Stay accountable with the people you invited, compare private-group progress, and keep your own journey honest.</p>
+        <h1>Private groups</h1>
+        <p class="lead">Invite people you know, track progress together, and help each other stay accountable.</p>
       </section>
 
       <div class="community-feedback" id="communityFeedback" role="status" aria-live="polite"></div>
@@ -42,8 +42,8 @@
           <span class="app-icon icon-users" aria-hidden="true"></span>
           <div>
             <p class="eyebrow">Private Group</p>
-            <h2 id="crewTitle">Create or join a crew.</h2>
-            <p id="crewDescription">Private groups keep accountability close: one start date and people you actually know.</p>
+            <h2 id="crewTitle">Create or join a private group.</h2>
+            <p id="crewDescription">Everyone in a group shares one challenge start date.</p>
           </div>
         </div>
 
@@ -51,8 +51,8 @@
           <section class="community-tools crew-create-empty" id="crewCreateCard" hidden>
             <div class="crew-create-heading">
               <div>
-              <p class="eyebrow">Start a Crew</p>
-              <h2>Build your accountability group.</h2>
+              <p class="eyebrow">Start a Group</p>
+              <h2>Create a private group.</h2>
               </div>
               <div class="crew-empty-actions">
                 <button
@@ -61,13 +61,13 @@
                   type="button"
                   aria-expanded="false"
                   aria-controls="crewForm"
-                >Create a Crew</button>
-                <button class="secondary" id="joinCrewButton" type="button">Join a Crew</button>
+                >Create a Group</button>
+                <button class="secondary" id="joinCrewButton" type="button">Join a Group</button>
               </div>
             </div>
             <form class="community-form" id="crewForm" hidden>
               <label>
-                <span>Crew name</span>
+                <span>Group name</span>
                 <input id="crewNameInput" name="name" type="text" maxlength="80" placeholder="San Marcos Men" required />
               </label>
               <label>
@@ -76,10 +76,10 @@
               </label>
               <label class="full-span">
                 <span>Description</span>
-                <textarea id="crewDescriptionInput" name="description" rows="3" placeholder="Who is this crew for?"></textarea>
+                <textarea id="crewDescriptionInput" name="description" rows="3" placeholder="Who is this group for?"></textarea>
               </label>
               <div class="crew-form-actions full-span">
-                <button class="primary" type="submit">Create Crew</button>
+                <button class="primary" type="submit">Create Group</button>
                 <button class="secondary" id="cancelCrewFormButton" type="button">Cancel</button>
               </div>
             </form>
@@ -88,7 +88,7 @@
           <section class="community-tools" id="crewManageCard" hidden>
             <div class="crew-toolbar">
               <div class="active-crew-identity">
-                <span>Active crew</span>
+                <span>Active group</span>
                 <strong id="activeCrewName"></strong>
               </div>
               <div class="crew-toolbar-actions">
@@ -104,7 +104,7 @@
                   <span class="app-icon icon-settings" aria-hidden="true"></span>
                 </a>
                 <button class="secondary crew-training-launch" id="crewTrainingButton" type="button" hidden>
-                  Start Crew Training
+                  Start Group Training
                 </button>
                 <button
                   class="invite-people-button"
@@ -128,7 +128,7 @@
           <div class="section-heading-row">
             <div>
               <p class="eyebrow">Group Activity</p>
-              <h2 id="crewMembersTitle">Your people, in the room.</h2>
+              <h2 id="crewMembersTitle">Members in this group</h2>
             </div>
             <span class="privacy-badge">Members only</span>
           </div>
@@ -138,10 +138,10 @@
         <section class="leaderboard-card card" data-section-surface="accent" data-training-target="community-leaderboard" id="crewLeaderboardCard">
           <div class="leaderboard-header">
             <div>
-              <p class="eyebrow">Crew Leaderboard</p>
-              <h2 id="crewLeaderboardTitle">Standards stacked together.</h2>
+              <p class="eyebrow">Group Leaderboard</p>
+              <h2 id="crewLeaderboardTitle">Progress together</h2>
             </div>
-            <div class="leaderboard-toggle" role="group" aria-label="Crew leaderboard range">
+            <div class="leaderboard-toggle" role="group" aria-label="Group leaderboard range">
               <button class="active" type="button" data-leaderboard-scope="crew" data-leaderboard-window="week">Week</button>
               <button type="button" data-leaderboard-scope="crew" data-leaderboard-window="challenge">Challenge</button>
             </div>
@@ -165,12 +165,12 @@
       >
         <header class="crew-training-header">
           <p class="eyebrow" id="crewTrainingProgress" role="status" aria-live="polite">Step 1 of 7</p>
-          <button class="crew-training-close" id="crewTrainingClose" type="button" aria-label="Close crew training">×</button>
+          <button class="crew-training-close" id="crewTrainingClose" type="button" aria-label="Close group training">×</button>
         </header>
-        <h2 id="crewTrainingTitle" tabindex="-1">Your crew is ready</h2>
+        <h2 id="crewTrainingTitle" tabindex="-1">Your group is ready</h2>
         <p id="crewTrainingDescription"></p>
         <p class="crew-training-target-note" id="crewTrainingTargetNote" hidden>
-          This step is informational because its on-page target is not currently available.
+          This step explains a feature that isn’t available on this screen right now.
         </p>
         <p class="crew-training-error" id="crewTrainingError" role="alert" hidden></p>
         <div class="crew-training-actions">

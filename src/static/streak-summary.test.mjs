@@ -58,7 +58,7 @@ describe('Dashboard streak summary', () => {
     });
   });
 
-  test('maps the existing full-day source to Full standard terminology', () => {
+  test('maps the existing full-day source to perfect-day terminology', () => {
     const active = buildStreakSummary({
       currentAppStreak: 5,
       bestAppStreak: 7,
@@ -95,8 +95,8 @@ describe('Dashboard streak summary', () => {
 
   test('keeps all four modal metrics in the required order', () => {
     assert.deepEqual(STREAK_METRIC_DEFINITIONS.map(({ label, kind }) => [label, kind]), [
-      ['Full standard streak', 'Current'],
-      ['Best full standard streak', 'Personal best'],
+      ['Perfect-day streak', 'Current'],
+      ['Best perfect-day streak', 'Personal best'],
       ['App streak', 'Current'],
       ['Best app streak', 'Personal best'],
     ]);

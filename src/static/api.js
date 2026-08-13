@@ -18,6 +18,7 @@ import {
   resolveMockIdentity,
 } from './mock-identity.mjs';
 import { normalizeDailyStandardDraft } from './daily-standard-draft.mjs';
+import { naturalizeDailyActionError } from './customer-copy.mjs';
 import {
   buildMockChallengeActivation,
   buildMockLegacyChallengeActivation,
@@ -1435,7 +1436,7 @@ const mockSharePresentation = (kind) => {
       presentation: {
         eyebrow: 'Challenge progress',
         title: `Day ${currentDay} of the 77-Day Dominion Challenge`,
-        description: `A Dominion challenger is ${Math.round(currentDay / 77 * 100)}% through a disciplined rhythm of faith, fitness, and follow-through.`,
+        description: `A Dominion challenger is ${Math.round(currentDay / 77 * 100)}% through 77 days of faith, fitness, and follow-through.`,
         metric: `${currentDay}/77`,
         metricLabel: 'challenge days',
       },
@@ -1446,9 +1447,9 @@ const mockSharePresentation = (kind) => {
     kind: 'general',
     payload: { schemaVersion: 1, kind: 'general', challengeLength: 77, dailyStandards: 7 },
     presentation: {
-      eyebrow: 'Build the standard',
+      eyebrow: 'Build the habit',
       title: 'Take the 77-Day Dominion Challenge',
-      description: 'Commit to seven daily standards for 77 days and build a disciplined rhythm of faith, fitness, and follow-through.',
+      description: 'Complete seven daily actions for 77 days to build steady habits of faith, fitness, and follow-through.',
       metric: '77',
       metricLabel: 'days of dominion',
     },
@@ -2696,15 +2697,19 @@ export async function transitionSiteTraining({
 }
 
 const rpcDraft = async (name, parameters, { expectedUserId = '', mutation = false } = {}) => {
-  const client = requireSupabase();
-  const user = await requireUser(expectedUserId);
-  await bootstrapDailyStandardTimeZone(client, user.id);
-  const rpcParameters = mutation
-    ? { ...parameters, target_expected_actor_id: user.id }
-    : parameters;
-  const { data, error } = await client.rpc(name, rpcParameters);
-  if (error) throw error;
-  return normalizeDailyStandardDraft(data, parameters.target_entry_date);
+  try {
+    const client = requireSupabase();
+    const user = await requireUser(expectedUserId);
+    await bootstrapDailyStandardTimeZone(client, user.id);
+    const rpcParameters = mutation
+      ? { ...parameters, target_expected_actor_id: user.id }
+      : parameters;
+    const { data, error } = await client.rpc(name, rpcParameters);
+    if (error) throw error;
+    return normalizeDailyStandardDraft(data, parameters.target_entry_date);
+  } catch (error) {
+    throw naturalizeDailyActionError(error);
+  }
 };
 
 export async function getDailyStandardDraft(entryDate, { expectedUserId = '' } = {}) {
@@ -2723,7 +2728,7 @@ export async function mutateDailyStandardDraft({
   expectedUserId = '',
 }) {
   if (typeof completed !== 'boolean') {
-    throw new TypeError('Daily Standard completion must be true or false.');
+    throw new TypeError('Daily Action completion must be true or false.');
   }
   return rpcDraft(
     'mutate_daily_standard_draft',
@@ -3048,17 +3053,17 @@ function clearMockCrewTraining(crewId, userId = getMockUserId()) {
 
 const MOCK_MEMBER_BADGES = Object.freeze([
   ['day_77_finisher', 'Day 77 Finisher', 'Finished the final day of the Dominion challenge.', 'gold', 'crown'],
-  ['full_streak_70', '70-Day Full Streak', 'Held the full standard for seventy days.', 'gold', 'flame'],
-  ['full_streak_63', '63-Day Full Streak', 'Held the full standard for sixty-three days.', 'gold', 'flame'],
-  ['full_streak_56', '56-Day Full Streak', 'Held the full standard for fifty-six days.', 'gold', 'flame'],
-  ['full_streak_49', '49-Day Full Streak', 'Held the full standard for forty-nine days.', 'gold', 'flame'],
-  ['full_streak_42', '42-Day Full Streak', 'Held the full standard for forty-two days.', 'gold', 'flame'],
-  ['full_streak_35', '35-Day Full Streak', 'Held the full standard for thirty-five days.', 'silver', 'shield'],
-  ['full_streak_28', '28-Day Full Streak', 'Held the full standard for twenty-eight days.', 'silver', 'shield'],
-  ['full_streak_21', '21-Day Full Streak', 'Held the full standard for twenty-one days.', 'silver', 'shield'],
-  ['full_streak_14', '14-Day Full Streak', 'Held the full standard for fourteen days.', 'silver', 'shield'],
-  ['seven_sealed', 'Seven Sealed', 'Held a seven-day full-standard streak.', 'gold', 'repeat'],
-  ['iron_standard', 'Iron Standard', 'Completed all seven daily actions in one day.', 'silver', 'dumbbell'],
+  ['full_streak_70', '70-Day Perfect Streak', 'Completed all seven daily actions for seventy days.', 'gold', 'flame'],
+  ['full_streak_63', '63-Day Perfect Streak', 'Completed all seven daily actions for sixty-three days.', 'gold', 'flame'],
+  ['full_streak_56', '56-Day Perfect Streak', 'Completed all seven daily actions for fifty-six days.', 'gold', 'flame'],
+  ['full_streak_49', '49-Day Perfect Streak', 'Completed all seven daily actions for forty-nine days.', 'gold', 'flame'],
+  ['full_streak_42', '42-Day Perfect Streak', 'Completed all seven daily actions for forty-two days.', 'gold', 'flame'],
+  ['full_streak_35', '35-Day Perfect Streak', 'Completed all seven daily actions for thirty-five days.', 'silver', 'shield'],
+  ['full_streak_28', '28-Day Perfect Streak', 'Completed all seven daily actions for twenty-eight days.', 'silver', 'shield'],
+  ['full_streak_21', '21-Day Perfect Streak', 'Completed all seven daily actions for twenty-one days.', 'silver', 'shield'],
+  ['full_streak_14', '14-Day Perfect Streak', 'Completed all seven daily actions for fourteen days.', 'silver', 'shield'],
+  ['seven_sealed', 'Seven Sealed', 'Completed all seven daily actions for seven days in a row.', 'gold', 'repeat'],
+  ['iron_standard', 'Seven for Seven', 'Completed all seven daily actions in one day.', 'silver', 'dumbbell'],
   ['first_sweat', 'First Sweat', 'Completed the first training action.', 'bronze', 'spark'],
   ['faithful_start', 'Faithful Start', 'Posted the first honest check-in.', 'bronze', 'shield'],
 ].map(([key, name, description, tier, icon], index) => Object.freeze({

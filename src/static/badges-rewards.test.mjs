@@ -26,7 +26,7 @@ describe('Badges & Rewards page model', () => {
   it('deduplicates an unbounded badge collection with stable newest-first ordering', () => {
     const badges = normalizeEarnedBadges([
       { key: 'faithful_start', name: 'Old copy', earnedAt: '2026-07-01T00:00:00Z' },
-      { key: 'iron_standard', name: 'Iron Standard', earnedAt: '2026-07-03T00:00:00Z' },
+      { key: 'iron_standard', name: 'Seven for Seven', earnedAt: '2026-07-03T00:00:00Z' },
       { key: 'faithful_start', name: 'Faithful Start', earnedAt: '2026-07-02T00:00:00Z' },
     ]);
 

@@ -232,7 +232,7 @@ function createWorkoutContent() {
     title: action.title,
     lead: action.workoutId === 'one'
       ? 'Move with intention. The goal is discipline, not ego.'
-      : 'Finish the physical standard with patience and resolve.',
+      : 'Finish this action at a steady pace.',
     linkLabel: 'Open Apple Fitness',
     linkHref: APPLE_FITNESS_URL,
   });
@@ -268,8 +268,8 @@ function createWorkoutContent() {
 
 function createWalkContent() {
   const content = contentTemplate({
-    eyebrow: 'Intentional reset',
-    title: 'Get outside and break the drift',
+    eyebrow: 'Walk Break',
+    title: 'Step outside and reset',
     lead: 'Walk with purpose. Breathe, notice what is around you, and give your mind room to reset.',
     steps: [
       'Leave the screen behind when you can.',
@@ -437,7 +437,7 @@ function render() {
           : challengeActivation.readState === 'error'
             ? 'Challenge activation could not be confirmed. Refresh to try again.'
           : challengeActivation.status === 'not_started'
-            ? 'Start your challenge before tracking this Daily Standard.'
+            ? 'Start your challenge before tracking this Daily Action.'
           : challengeActivation.status === 'scheduled'
             ? `Your challenge is scheduled to begin ${challengeActivation.startDate}.`
           : isLocked ? 'This day is finalized. Completion can no longer be changed.'
@@ -517,7 +517,7 @@ async function hydrate(expectedOwnerId = observedAuthOwner) {
     if (hasSupabaseAuth()) {
       const dashboard = await getDashboard();
       dashboardOwner = String(dashboard?.profile?.userId || '');
-      if (!dashboardOwner) throw new Error('Unable to verify the Daily Standard account.');
+      if (!dashboardOwner) throw new Error('We couldn’t verify the account for this Daily Action.');
       if ((requestedOwner && requestedOwner !== dashboardOwner)
         || (observedAuthOwner && observedAuthOwner !== dashboardOwner)) return;
       nextActivation = dashboard?.activation || createChallengeActivationState('error');

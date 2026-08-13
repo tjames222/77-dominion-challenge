@@ -20,12 +20,12 @@ export function buildGameProgressModel({ totalPoints = 0, privateRank = null } =
     ? `Level ${level.level} · ${prestige.shortLabel}`
     : `Level ${level.level}`;
   const emblemLabel = `Level ${level.level} — ${zeroPointGlass ? 'Zero-point glass coin — ' : ''}${prestige.accessibleLabel}`;
-  let momentumMessage = `${level.pointsToNext.toLocaleString()} points stand between you and Level ${level.nextLevel}.`;
+  let momentumMessage = `${level.pointsToNext.toLocaleString()} points to Level ${level.nextLevel}.`;
 
   if (level.totalPoints === 0) {
-    momentumMessage = 'Your first honest check-in starts the climb.';
+    momentumMessage = 'Post your first check-in to start earning points.';
   } else if (level.pointsToNext <= 3) {
-    momentumMessage = `Level ${level.nextLevel} is within reach. ${level.pointsToNext} more ${level.pointsToNext === 1 ? 'point' : 'points'} will get you there.`;
+    momentumMessage = `${level.pointsToNext} more ${level.pointsToNext === 1 ? 'point' : 'points'} to reach Level ${level.nextLevel}.`;
   }
 
   return {

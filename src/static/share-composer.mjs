@@ -2,7 +2,7 @@ export const SHARE_FLOWS = Object.freeze({
   streak: Object.freeze({
     kind: 'streak',
     label: 'App streak',
-    description: 'Share your current app and full-standard streaks.',
+    description: 'Share your current app and perfect-day streaks.',
   }),
   progress: Object.freeze({
     kind: 'progress',
@@ -12,7 +12,7 @@ export const SHARE_FLOWS = Object.freeze({
   general: Object.freeze({
     kind: 'general',
     label: 'The Dominion challenge',
-    description: 'Invite someone to learn about the seven daily standards.',
+    description: 'Invite someone to learn about the seven daily actions.',
   }),
 });
 
@@ -52,7 +52,7 @@ export function shareCopy({ presentation = {}, url = '', kind = 'general', group
     title: String(presentation.title || fallbackTitle),
     text: String(
       presentation.description
-      || 'Build a disciplined rhythm of faith, fitness, and follow-through.',
+      || 'Build steady habits of faith, fitness, and follow-through.',
     ),
     url: String(url || ''),
   };

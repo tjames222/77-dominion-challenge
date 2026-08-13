@@ -73,10 +73,10 @@ export function validateSoloChallengeStartDate({
 export function soloChallengeStartSummary(validation) {
   if (!validation?.valid) return '';
   if (validation.status === 'scheduled') {
-    return 'Your challenge will be scheduled for this date. Training can begin now, and Daily Standards unlock when the date arrives.';
+    return 'Your challenge will start on this date. You can begin the walkthrough now, and Daily Actions will become available on your start date.';
   }
   if (validation.challengeDay === 1) {
-    return 'Your challenge starts today. Day 1 and today\'s Daily Standards become available after confirmation.';
+    return 'Your challenge starts today. Confirm to begin Day 1 and open today\'s Daily Actions.';
   }
   return `Your challenge timeline will begin on this date, making today Day ${validation.challengeDay} of 77.`;
 }

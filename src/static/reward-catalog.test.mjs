@@ -86,7 +86,7 @@ describe('typed reward catalog', () => {
       challenges: [{
         key: 'reset',
         title: 'Reset',
-        teaser: 'Rebuild rhythm.',
+        teaser: 'Rebuild your habits.',
         type: 'reset',
         pointsRequired: 1000,
         durationDays: 7,
