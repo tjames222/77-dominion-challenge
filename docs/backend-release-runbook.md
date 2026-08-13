@@ -262,10 +262,15 @@ repeats definitions already present in the checked-in migration 2, so this prove
 its net effect but cannot prove it was historically executed. Definitive
 migration-4 markers are absent: `user_badges.id` and `earned_date` remain,
 `entry_date` is absent, `user_game_stats.created_at` remains, and the point-event
-ledger still uses the earlier per-user idempotency constraint. The only viable
-net-state checkpoint candidate is therefore migration 3. This audit alone does
-not authorize a history change. Use this one-time bootstrap only after an exact
-comparison proves every net effect through migration 3:
+ledger still uses the earlier per-user idempotency constraint.
+
+The full baseline does **not** currently match migration 1: the hosted project
+still has the empty legacy `public.purchases` table that migration 1 drops, and
+the four hosted journal-object policies omit migration 1's active-entitlement
+predicate. Therefore no migration version is currently authorized for repair.
+Migration 3 is only the candidate checkpoint after a reviewed bridge reconciles
+every baseline difference and a new exact comparison proves every net effect
+through migration 3:
 
 1. Pin the release tree, Supabase CLI 2.109.0, and Postgres 17. Keep public signup
    and all application writes closed.
@@ -277,12 +282,25 @@ comparison proves every net effect through migration 3:
    object count is nonzero. Checksum every artifact and test-restore the backup
    locally before continuing.
 3. In an isolated worktree containing only migrations 1–3, build a clean local
-   checkpoint. Compare its `public` and `private` catalogs, grants, functions,
-   triggers, constraints, RLS, badge/configuration rows, and an explicit Storage
+   checkpoint without the final-schema seed:
+
+   ```bash
+   supabase db reset --local --version 20260708155500 --no-seed
+   ```
+
+   Compare its `public` and `private` catalogs, grants, functions, triggers,
+   constraints, RLS, badge/configuration rows, and an explicit Storage
    bucket/policy manifest with production. Require zero unexplained differences.
-   Stop, then write and rehearse a forward bridge if the comparison is not exact.
-4. Only after that proof, mark these three versions applied; repairing history runs
-   no migration SQL:
+4. If the comparison is not exact, stop. Inventory every difference and create
+   the smallest reviewed, idempotent bridge. At minimum, the current evidence
+   requires a fail-closed empty/dependency check before removing
+   `public.purchases` and exact recreation of the four journal-object policies.
+   Rehearse the bridge against the verified local restore, apply it only during
+   an approved maintenance window, and repeat the complete comparison. A nonzero
+   `purchases` row count, dependency count, or unexplained difference stops the
+   bridge.
+5. Only after a zero-diff proof, mark these three versions applied; repairing
+   history runs no migration SQL:
 
    ```text
    20260707170000
@@ -290,7 +308,7 @@ comparison proves every net effect through migration 3:
    20260708155500
    ```
 
-5. Create a separate, hashed worktree containing exactly migrations 1–13. Its
+6. Create a separate, hashed worktree containing exactly migrations 1–13. Its
    linked dry run must list exactly the following ten pending versions. Rehearse
    the same push against the verified local restore, then apply those ten
    migrations normally so their SQL and history records are created together:
@@ -308,7 +326,7 @@ comparison proves every net effect through migration 3:
    20260716163000
    ```
 
-6. Return to the full release tree. `migration list` must show matching local and
+7. Return to the full release tree. `migration list` must show matching local and
    remote versions 1–13, and the full linked dry run must list exactly 39 pending
    migrations, versions 14–52. Repeat the Storage query above against the clean
    local migration-13 checkpoint and production; both must now return all three
