@@ -26,7 +26,10 @@ postgres_version_file="$repository_root/supabase/.temp/postgres-version"
 postgres_image_version="$(tr -d '\r\n' <"$postgres_version_file")"
 [[ "$postgres_image_version" == "17.6.1.141" ]] \
   || fail "expected Postgres image 17.6.1.141, found $postgres_image_version."
-expected_postgres_image_ref="public.ecr.aws/supabase/postgres:$postgres_image_version"
+postgres_image_registry="${SUPABASE_INTERNAL_IMAGE_REGISTRY:-public.ecr.aws}"
+postgres_image_registry="${postgres_image_registry%/}"
+[[ -n "$postgres_image_registry" ]] || fail "Postgres image registry cannot be empty."
+expected_postgres_image_ref="$postgres_image_registry/supabase/postgres:$postgres_image_version"
 
 project_id="$(sed -n 's/^project_id = "\([^"]*\)"/\1/p' \
   "$repository_root/supabase/config.toml" | head -n 1)"

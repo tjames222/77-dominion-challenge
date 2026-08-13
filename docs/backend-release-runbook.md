@@ -221,10 +221,11 @@ SQL. A fresh `pnpm run supabase:start` first starts only the database from a
 temporary config with migrations and seed disabled, retains that empty database
 volume, and starts the remaining services from the real repository so Edge
 Functions mount the live source. Before application SQL runs, it verifies the
-exact pinned Postgres image
-(`public.ecr.aws/supabase/postgres:17.6.1.141`) and proves the full start recorded
-no migration history and created no late application object. Its temporary
-config is removed immediately. The start command then applies pending
+exact pinned Postgres image (default
+`public.ecr.aws/supabase/postgres:17.6.1.141`, or the same repository and tag
+under `SUPABASE_INTERNAL_IMAGE_REGISTRY`) and proves the full start recorded no
+migration history and created no late application object. Its temporary config
+is removed immediately. The start command then applies pending
 application SQL with the pinned `migration up` executor and loads stable fixtures
 in one `psql --single-transaction` call, leaving an immediately usable local
 stack.

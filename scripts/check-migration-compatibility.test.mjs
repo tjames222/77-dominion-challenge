@@ -185,7 +185,7 @@ test("local start does not mutate a pre-existing wrong-version stack", async () 
     );
     await writeFile(
       fakeDocker,
-      "#!/usr/bin/env bash\nprintf '%s\\n' \"$*\" >>\"$FAKE_DOCKER_LOG\"\nif [[ \"${1:-}\" == \"inspect\" && \"${2:-}\" == \"supabase_db_77-dominion-challenge\" ]]; then\n  if [[ \"$*\" == *--format* ]]; then echo public.ecr.aws/supabase/postgres:17.6.1.140; fi\n  exit 0\nfi\nif [[ \"${1:-}\" == \"volume\" && \"${2:-}\" == \"inspect\" ]]; then exit 0; fi\nexit 91\n",
+      "#!/usr/bin/env bash\nprintf '%s\\n' \"$*\" >>\"$FAKE_DOCKER_LOG\"\nif [[ \"${1:-}\" == \"inspect\" && \"${2:-}\" == \"supabase_db_77-dominion-challenge\" ]]; then\n  if [[ \"$*\" == *--format* ]]; then echo ghcr.io/supabase/postgres:17.6.1.140; fi\n  exit 0\nfi\nif [[ \"${1:-}\" == \"volume\" && \"${2:-}\" == \"inspect\" ]]; then exit 0; fi\nexit 91\n",
     );
     await chmod(fakeCli, 0o755);
     await chmod(fakeDocker, 0o755);
@@ -202,12 +202,16 @@ test("local start does not mutate a pre-existing wrong-version stack", async () 
           DOCKER_BIN: fakeDocker,
           FAKE_CLI_LOG: cliLog,
           FAKE_DOCKER_LOG: dockerLog,
+          SUPABASE_INTERNAL_IMAGE_REGISTRY: "ghcr.io/",
         },
       },
     );
 
     assert.notEqual(result.status, 0);
-    assert.match(result.stderr, /existing stack uses .*17\.6\.1\.140/);
+    assert.match(
+      result.stderr,
+      /existing stack uses ghcr\.io\/supabase\/postgres:17\.6\.1\.140; expected ghcr\.io\/supabase\/postgres:17\.6\.1\.141/,
+    );
     assert.match(result.stderr, /It was not changed/);
     assert.equal((await readFile(cliLog, "utf8")).trim(), "--version");
     assert.doesNotMatch(await readFile(dockerLog, "utf8"), /\bexec\b|\brm\b/);
@@ -234,6 +238,10 @@ test("package, CI, and production deploy run the gate before migrations", async 
   );
   const startHelper = await readFile(
     path.join(repositoryRoot, "scripts", "start-local-database.sh"),
+    "utf8",
+  );
+  const runtimeVerifier = await readFile(
+    path.join(repositoryRoot, "scripts", "verify-local-supabase-runtime.sh"),
     "utf8",
   );
   const postgresVersion = await readFile(
@@ -290,6 +298,17 @@ test("package, CI, and production deploy run the gate before migrations", async 
   assert.match(startHelper, /migration up --local --workdir "\$repository_root"/);
   assert.match(startHelper, /run-local-sql\.sh/);
   assert.match(startHelper, /17\.6\.1\.141/);
+  for (const helper of [startHelper, resetHelper, runtimeVerifier]) {
+    assert.match(
+      helper,
+      /SUPABASE_INTERNAL_IMAGE_REGISTRY:-public\.ecr\.aws/,
+    );
+    assert.match(helper, /postgres_image_registry%\//);
+    assert.match(
+      helper,
+      /\$postgres_image_registry\/supabase\/postgres:\$[a-z_]+/,
+    );
+  }
   assert.match(startHelper, /docker_cli inspect "\$database_container"/);
   assert.match(startHelper, /verify-local-supabase-runtime\.sh/);
   assert.match(startHelper, /exit_status != 0.*owns_database/s);
