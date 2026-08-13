@@ -208,8 +208,15 @@ supabase db diff --from migrations --to linked --schema public
 supabase db push --linked --dry-run
 ```
 
-Also run these read-only queries in the production Supabase SQL editor. They must
-return all three expected buckets and all eleven named application policies:
+The `db diff --schema public` output is a preliminary signal, not a complete
+checkpoint proof. It does not cover the `private` schema or prove complete grants,
+function attributes and bodies, triggers, constraints, RLS policy expressions,
+or Storage configuration. Export normalized catalog manifests for both `public`
+and `private` from the isolated local checkpoint and production and compare all
+of those object classes. Also run these read-only queries in the production
+Supabase SQL editor. They must return all three expected buckets and all eleven
+application policies with identical commands, roles, `qual`, and `with_check`
+expressions:
 
 ```sql
 select id, name, public, file_size_limit, allowed_mime_types
@@ -217,7 +224,7 @@ from storage.buckets
 where id in ('profile-photos', 'community-post-images', 'journal-progress')
 order by id;
 
-select policyname
+select policyname, cmd, roles, qual, with_check
 from pg_policies
 where schemaname = 'storage'
   and tablename = 'objects'
@@ -237,21 +244,25 @@ where schemaname = 'storage'
 order by policyname;
 ```
 
-If—and only if—the complete structural diff is empty and the Storage verification
-passes, use `supabase migration repair ... --status applied --linked` to record
-each historical migration whose effect is proven present, without executing its
-SQL. A project that already matches the complete historical floor may repair the
-missing versions through `20260716163000`. A project with any missing effect must
-not use that shortcut.
+Only the exact, version-bounded checkpoint comparison below may authorize
+`supabase migration repair ... --status applied --linked`. Repair records history
+without executing SQL, so every repaired migration's complete net effect must be
+proven present. Never infer a wider repair range from a partial catalog diff,
+object names, or later-looking objects.
 
 #### One-time pre-avatar checkpoint bootstrap
 
-The read-only 2026-08-13 production audit found an empty remote migration history,
-gamification infrastructure consistent with migration 6, and no
-`profiles.avatar_url` or `profile-photos` bucket from migration 7. That evidence
-strongly suggests that the hosted project is at the migration-6 checkpoint, but
-it is not sufficient by itself to alter migration history. Use this one-time
-bootstrap only after an exact comparison proves the checkpoint:
+The read-only 2026-08-13 production audit found an empty remote migration history
+and the migration-2 gamification table shapes. The two functions touched by
+migration 3 have the expected definitions and `search_path=public`; migration 3
+repeats definitions already present in the checked-in migration 2, so this proves
+its net effect but cannot prove it was historically executed. Definitive
+migration-4 markers are absent: `user_badges.id` and `earned_date` remain,
+`entry_date` is absent, `user_game_stats.created_at` remains, and the point-event
+ledger still uses the earlier per-user idempotency constraint. The only viable
+net-state checkpoint candidate is therefore migration 3. This audit alone does
+not authorize a history change. Use this one-time bootstrap only after an exact
+comparison proves every net effect through migration 3:
 
 1. Pin the release tree, Supabase CLI 2.109.0, and Postgres 17. Keep public signup
    and all application writes closed.
@@ -262,29 +273,29 @@ bootstrap only after an exact comparison proves the checkpoint:
    of a database dump; stop and export through the Storage API if the fresh
    object count is nonzero. Checksum every artifact and test-restore the backup
    locally before continuing.
-3. In an isolated worktree containing only migrations 1–6, build a clean local
+3. In an isolated worktree containing only migrations 1–3, build a clean local
    checkpoint. Compare its `public` and `private` catalogs, grants, functions,
    triggers, constraints, RLS, badge/configuration rows, and an explicit Storage
    bucket/policy manifest with production. Require zero unexplained differences.
    Stop, then write and rehearse a forward bridge if the comparison is not exact.
-4. Only after that proof, mark these six versions applied; repairing history runs
+4. Only after that proof, mark these three versions applied; repairing history runs
    no migration SQL:
 
    ```text
    20260707170000
    20260708154000
    20260708155500
-   20260708160000
-   20260709163000
-   20260710120000
    ```
 
 5. Create a separate, hashed worktree containing exactly migrations 1–13. Its
-   linked dry run must list exactly the following seven pending versions. Rehearse
-   the same push against the verified local restore, then apply those seven
+   linked dry run must list exactly the following ten pending versions. Rehearse
+   the same push against the verified local restore, then apply those ten
    migrations normally so their SQL and history records are created together:
 
    ```text
+   20260708160000
+   20260709163000
+   20260710120000
    20260710123000
    20260713120000
    20260714120000
@@ -303,7 +314,7 @@ Record the exact repaired and applied versions, file hashes, backup and restore
 evidence, comparison output, Storage manifest, project reference, operator,
 approver, and UTC time in the release record. Never reset the hosted project,
 replay the baseline, use `--include-all`, mark a missing effect applied, or push
-the full 52-file tree immediately after repairing versions 1–6. If an applied
+the full 52-file tree immediately after repairing versions 1–3. If an applied
 migration later fails, stop and use a reviewed forward fix; do not rewrite it or
 mark it reverted.
 
