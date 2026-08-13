@@ -133,8 +133,8 @@ select is(
     where reward_key = 'dominion_night_theme'
       and event_type = 'reward_definition_configured'
   ),
-  2,
-  'the initial and launch reward configurations are each audited once'
+  3,
+  'the initial, launch, and natural-language configurations are each audited once'
 );
 select is(
   (
@@ -515,7 +515,7 @@ select is(
     where reward_key = 'dominion_night_theme'
       and event_type = 'reward_definition_configured'
   ),
-  3,
+  4,
   'configuration auditing is immutable and deduplicates a restored definition'
 );
 select is(

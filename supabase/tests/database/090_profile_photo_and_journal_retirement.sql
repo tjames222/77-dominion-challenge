@@ -596,7 +596,7 @@ create temp table claimed_expired_profile_upload as
 select * from public.claim_profile_photo_cleanup_service(20)
 where storage_path like '%22222222222222222222222222222222.webp';
 select is((select count(*)::integer from claimed_expired_profile_upload), 1,
-  'the service worker atomically expires and claims a stale upload');
+  'one service call atomically expires and claims a stale upload');
 select is((select public.confirm_profile_photo_cleanup_service(job_id, claim_token)
   from claimed_expired_profile_upload), true,
   'an absent stale upload can be permanently retired immediately');
