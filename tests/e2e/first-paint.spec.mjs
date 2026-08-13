@@ -5,6 +5,7 @@ const themes = [
   { id: 'light', colorScheme: 'light' },
   { id: 'dark', colorScheme: 'dark' },
   { id: 'dominion-night', colorScheme: 'dark', entitlementGated: true },
+  { id: 'dominion-platinum', colorScheme: 'dark', entitlementGated: true },
 ];
 
 const strictBootstrap = process.env.E2E_STRICT_THEME_BOOTSTRAP === 'true';

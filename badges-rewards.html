@@ -13,6 +13,7 @@
     <link rel="stylesheet" href="./src/assets/share-composer.css" />
     <link rel="stylesheet" href="./src/assets/menu.css" />
     <link rel="stylesheet" href="./src/assets/dominion-night.css" />
+    <link rel="stylesheet" href="./src/assets/dominion-platinum.css" />
   </head>
   <body>
     <main class="app-shell badges-rewards-shell">
@@ -118,6 +119,7 @@
       >
         <aside class="reward-unlock-notice" id="rewardUnlockNotice" role="status" aria-live="polite" aria-atomic="true" hidden>
           <span class="app-icon icon-spark" aria-hidden="true"></span>
+          <img class="reward-unlock-thumbnail" id="rewardUnlockNoticeImage" alt="" hidden />
           <div>
             <p class="eyebrow">New Reward</p>
             <strong id="rewardUnlockNoticeTitle">You earned a new reward.</strong>
@@ -190,6 +192,18 @@
         <p id="badgesRewardsErrorCopy">Please try again in a moment.</p>
         <button class="secondary-button" id="badgesRewardsRetry" type="button">Try again</button>
       </div>
+
+      <dialog class="reward-detail-dialog" id="rewardDetailDialog" aria-labelledby="rewardDetailTitle" aria-describedby="rewardDetailDescription">
+        <div class="reward-detail-dialog-inner">
+          <button class="reward-detail-close" id="rewardDetailClose" type="button" aria-label="Close reward details">×</button>
+          <p class="eyebrow" id="rewardDetailEyebrow">Reward details</p>
+          <h2 id="rewardDetailTitle">Reward details</h2>
+          <p class="reward-detail-description" id="rewardDetailDescription"></p>
+          <div class="reward-detail-content" id="rewardDetailContent" aria-busy="false"></div>
+          <p class="reward-detail-feedback" id="rewardDetailFeedback" role="status" aria-live="polite" aria-atomic="true"></p>
+          <div class="reward-detail-actions" id="rewardDetailActions"></div>
+        </div>
+      </dialog>
     </main>
 
     <script type="module" src="./src/static/menu.js"></script>

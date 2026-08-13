@@ -13,6 +13,12 @@ function runBootstrap({ storedTheme = null, dominionNightEnabled = false, storag
   const writes = [];
   const events = [];
   let themeColor = '#0e1116';
+  const timeouts = [];
+  const style = {
+    removeProperty(name) {
+      if (name === 'background-color') this.backgroundColor = '';
+    },
+  };
 
   const context = {
     localStorage: {
@@ -30,9 +36,12 @@ function runBootstrap({ storedTheme = null, dominionNightEnabled = false, storag
         dataset: { enableDominionNight: String(dominionNightEnabled) },
       },
       documentElement: {
-        style: {},
+        style,
         setAttribute(name, value) {
           attributes.set(name, value);
+        },
+        removeAttribute(name) {
+          attributes.delete(name);
         },
         getAttribute(name) {
           return attributes.get(name) || null;
@@ -57,6 +66,11 @@ function runBootstrap({ storedTheme = null, dominionNightEnabled = false, storag
       events.push(event);
       return true;
     },
+    setTimeout(callback) {
+      timeouts.push(callback);
+      return timeouts.length;
+    },
+    clearTimeout() {},
   };
 
   vm.runInNewContext(bootstrapSource, context, { filename: 'theme-bootstrap.js' });
@@ -65,9 +79,11 @@ function runBootstrap({ storedTheme = null, dominionNightEnabled = false, storag
     runtime: context.DominionThemeRuntime,
     root: context.document.documentElement,
     activeTheme: () => attributes.get('data-theme'),
+    attribute: (name) => attributes.get(name) || null,
     themeColor: () => themeColor,
     writes,
     events,
+    runPendingTimeout: () => timeouts.at(-1)?.(),
   };
 }
 
@@ -89,7 +105,7 @@ test('registry exposes stable theme metadata and dark asset fallback', () => {
 
   assert.deepEqual(
     Array.from(runtime.themes, (theme) => theme.id),
-    ['dark', 'light', 'dominion-night'],
+    ['dark', 'light', 'dominion-night', 'dominion-platinum'],
   );
   assert.equal(night.label, 'Dominion Night');
   assert.equal(night.colorScheme, 'dark');
@@ -98,6 +114,45 @@ test('registry exposes stable theme metadata and dark asset fallback', () => {
   assert.equal(night.availability.featureFlag, 'VITE_ENABLE_DOMINION_NIGHT_THEME');
   assert.equal(night.availability.requiresEntitlement, true);
   assert.deepEqual(Array.from(runtime.getAssetVariants(night.id)), ['dark']);
+
+  const platinum = runtime.getTheme('dominion-platinum');
+  assert.equal(platinum.label, 'Dominion Platinum');
+  assert.equal(platinum.colorScheme, 'dark');
+  assert.equal(platinum.assets.variant, 'dominion-platinum');
+  assert.equal(platinum.assets.fallback, 'dark');
+  assert.equal(platinum.availability.kind, 'reward');
+  assert.equal(platinum.availability.requiresEntitlement, true);
+  assert.deepEqual(Array.from(runtime.getAssetVariants(platinum.id)), ['dark']);
+});
+
+test('Dominion Platinum is available only after its permanent entitlement loads', () => {
+  const result = runBootstrap({ storedTheme: JSON.stringify('dominion-platinum') });
+  assert.equal(result.activeTheme(), 'dark');
+  assert.equal(result.runtime.readPreferredTheme(), 'dominion-platinum');
+  assert.equal(result.attribute('data-theme-pending'), 'dominion-platinum');
+  assert.equal(result.root.style.backgroundColor, '#090b11');
+  assert.equal(result.themeColor(), '#090b11');
+
+  result.runtime.setThemeEntitlements(['dominion-platinum']);
+  assert.equal(result.runtime.isThemeAvailable('dominion-platinum'), true);
+  assert.equal(result.activeTheme(), 'dominion-platinum');
+  assert.equal(result.attribute('data-theme-pending'), null);
+  assert.equal(result.root.style.backgroundColor, '');
+  assert.deepEqual(
+    Array.from(result.runtime.getAssetVariants('dominion-platinum')),
+    ['dominion-platinum', 'dark'],
+  );
+});
+
+test('protected-theme first paint stays covered until authorization and fails closed on timeout', () => {
+  const pending = runBootstrap({ storedTheme: JSON.stringify('dominion-platinum') });
+  assert.equal(pending.runtime.isThemeAvailable('dominion-platinum'), false);
+  assert.equal(pending.attribute(pending.runtime.pendingAttribute), 'dominion-platinum');
+
+  pending.runPendingTimeout();
+  assert.equal(pending.activeTheme(), 'dark');
+  assert.equal(pending.attribute(pending.runtime.pendingAttribute), null);
+  assert.equal(pending.themeColor(), '#0e1116');
 });
 
 test('Dominion Night requires both its release flag and an in-memory entitlement', () => {
@@ -176,8 +231,17 @@ test('every HTML entry blocks on the shared bootstrap before stylesheets', async
     assert.ok(themeMetaIndex < bootstrapIndex, `${file} must define theme-color before bootstrap`);
     assert.ok(bootstrapIndex < stylesheetIndex, `${file} must bootstrap before loading CSS`);
     assert.equal(html.match(/src="\.\/theme-bootstrap\.js"/g)?.length, 1, `${file} must bootstrap once`);
+    assert.equal(html.match(/href="\.\/src\/assets\/dominion-platinum\.css"/g)?.length, 1, `${file} must load Dominion Platinum once`);
     assert.doesNotMatch(html, /localStorage\.getItem\(['"]dominion:theme/);
   }
+
+  const styles = await readFile(resolve(repoRoot, 'src/assets/styles.css'), 'utf8');
+  const platinumStyles = await readFile(resolve(repoRoot, 'src/assets/dominion-platinum.css'), 'utf8');
+  assert.match(styles, /:root\[data-theme-pending\] body\s*\{[\s\S]*?visibility:\s*hidden/);
+  assert.match(platinumStyles, /:root\[data-theme="dominion-platinum"\][\s\S]*?--focus-ring:/);
+  assert.match(platinumStyles, /:focus-visible/);
+  assert.match(platinumStyles, /@media \(max-width: 640px\)/);
+  assert.match(platinumStyles, /@media \(prefers-reduced-motion: reduce\)[\s\S]*?animation-duration:\s*\.01ms !important/);
 });
 
 test('page modules no longer own independent binary theme state', async () => {

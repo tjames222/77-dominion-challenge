@@ -11,6 +11,7 @@
     <link rel="stylesheet" href="./src/assets/dialog.css" />
     <link rel="stylesheet" href="./src/assets/menu.css" />
     <link rel="stylesheet" href="./src/assets/dominion-night.css" />
+    <link rel="stylesheet" href="./src/assets/dominion-platinum.css" />
   </head>
   <body>
     <main class="app-shell dashboard-shell">
@@ -145,6 +146,34 @@
               aria-valuenow="0"
               ><i></i></div>
               <span class="appearance-progress-label" id="dominionNightProgressLabel">Reward progress is loading.</span>
+            </div>
+          </div>
+          <div class="appearance-reward-choice">
+            <button
+              class="appearance-option appearance-option-reward is-loading"
+              type="button"
+              data-theme-mode="dominion-platinum"
+              aria-pressed="false"
+              aria-disabled="true"
+              aria-describedby="dominionPlatinumStatus dominionPlatinumProgressLabel"
+            >
+              <span class="appearance-swatch appearance-swatch-platinum" aria-hidden="true"><i></i><i></i><i></i></span>
+              <span class="appearance-option-copy">
+                <strong>Dominion Platinum</strong>
+                <small id="dominionPlatinumStatus">Locked reward · checking ownership…</small>
+              </span>
+            </button>
+            <div class="appearance-reward-progress">
+              <div
+              class="appearance-progress"
+              id="dominionPlatinumProgress"
+              role="progressbar"
+              aria-labelledby="dominionPlatinumProgressLabel"
+              aria-valuemin="0"
+              aria-valuemax="100"
+              aria-valuenow="0"
+              ><i></i></div>
+              <span class="appearance-progress-label" id="dominionPlatinumProgressLabel">Reward progress is loading.</span>
             </div>
           </div>
         </div>

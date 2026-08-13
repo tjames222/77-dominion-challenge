@@ -37,7 +37,10 @@ import {
   readPreviewUserValue,
   writePreviewUserValue,
 } from './preview-user-state.mjs';
-import { hydrateThemeEntitlementState } from './theme-entitlement-state';
+import {
+  clearThemeEntitlementState,
+  hydrateThemeEntitlementState,
+} from './theme-entitlement-state';
 import { buildThemeOptionModels } from './theme-entitlements.mjs';
 import {
   getActiveTheme,
@@ -58,6 +61,9 @@ const themeSelectionStatus = document.getElementById('themeSelectionStatus');
 const dominionNightStatus = document.getElementById('dominionNightStatus');
 const dominionNightProgress = document.getElementById('dominionNightProgress');
 const dominionNightProgressLabel = document.getElementById('dominionNightProgressLabel');
+const dominionPlatinumStatus = document.getElementById('dominionPlatinumStatus');
+const dominionPlatinumProgress = document.getElementById('dominionPlatinumProgress');
+const dominionPlatinumProgressLabel = document.getElementById('dominionPlatinumProgressLabel');
 let themeModelsById = new Map(
   buildThemeOptionModels(null, getThemeRegistry()).map((model) => [model.themeId, model]),
 );
@@ -119,10 +125,35 @@ function renderThemeOptions(catalog, { error = false } = {}) {
           : night.reason || 'Theme ownership could not be verified.';
   }
 
+  const platinum = themeModelsById.get('dominion-platinum');
+  if (dominionPlatinumStatus && platinum) {
+    dominionPlatinumStatus.textContent = platinum.available
+      ? 'Unlocked reward'
+      : error
+        ? 'Ownership could not be verified'
+        : `Locked · ${platinum.currentPoints} of ${platinum.pointsRequired} points`;
+  }
+  if (dominionPlatinumProgress && platinum) {
+    const progress = Math.round(platinum.progressPercent);
+    dominionPlatinumProgress.setAttribute('aria-valuenow', String(progress));
+    dominionPlatinumProgress.style.setProperty('--theme-progress', `${progress}%`);
+  }
+  if (dominionPlatinumProgressLabel && platinum) {
+    dominionPlatinumProgressLabel.textContent = platinum.available
+      ? 'Dominion Platinum is unlocked.'
+      : platinum.locked && !error
+        ? `${Math.round(platinum.progressPercent)}% complete. ${platinum.pointsRemaining} points to unlock.`
+        : platinum.reason || 'Theme ownership could not be verified.';
+  }
+
   if (error) {
     setThemeSelectionStatus('Theme reward ownership could not be verified. Dark and Light remain available.', 'error');
+  } else if (night?.available && platinum?.available) {
+    setThemeSelectionStatus('Dominion Night and Dominion Platinum are unlocked and ready to use.');
+  } else if (platinum?.available) {
+    setThemeSelectionStatus('Dominion Platinum is unlocked and ready to use.');
   } else if (night?.available) {
-    setThemeSelectionStatus('Dominion Night is unlocked and ready to use.');
+    setThemeSelectionStatus(`Dominion Night is unlocked. Earn ${platinum?.pointsRemaining || 0} more points for Dominion Platinum.`);
   } else if (!night?.featureEnabled) {
     setThemeSelectionStatus('Dominion Night is unavailable in this release.');
   } else if (night?.locked) {
@@ -135,7 +166,7 @@ function renderThemeOptions(catalog, { error = false } = {}) {
 
 async function hydrateThemeOptions(owner = captureProfileOwner()) {
   if (!owner) return;
-  const result = await hydrateThemeEntitlementState();
+  const result = await hydrateThemeEntitlementState({ expectedUserId: owner.userId });
   if (!isCurrentProfileOwner(owner)) return;
   if (result.error) console.warn('Unable to verify theme reward ownership', result.error);
   renderThemeOptions(result.catalog, { error: Boolean(result.error) || !result.authenticated });
@@ -144,6 +175,11 @@ async function hydrateThemeOptions(owner = captureProfileOwner()) {
 themeOptions.forEach((option) => {
   option.addEventListener('click', async () => {
     if (themePreferenceSaving) return;
+    const owner = captureProfileOwner();
+    if (!owner) {
+      setThemeSelectionStatus('The signed-in account changed. Reload this page.', 'error');
+      return;
+    }
     const themeId = option.dataset.themeMode || 'dark';
     const model = themeModelsById.get(themeId);
     if (!model?.available) {
@@ -161,15 +197,19 @@ themeOptions.forEach((option) => {
     option.setAttribute('aria-busy', 'true');
     setThemeSelectionStatus(`Saving ${model.label} theme...`);
     try {
-      await setThemePreference(themeId);
+      await setThemePreference(themeId, { expectedUserId: owner.userId });
+      if (!isCurrentProfileOwner(owner)) return;
       setThemeSelectionStatus(`${model.label} theme selected.`);
     } catch (error) {
+      if (!isCurrentProfileOwner(owner)) return;
       setTheme(previousTheme);
       setThemeSelectionStatus(error?.message || 'Unable to save that theme right now.', 'error');
     } finally {
       themePreferenceSaving = false;
-      option.removeAttribute('aria-busy');
-      syncThemeOptions();
+      if (isCurrentProfileOwner(owner)) {
+        option.removeAttribute('aria-busy');
+        syncThemeOptions();
+      }
     }
   });
 });
@@ -287,6 +327,9 @@ function invalidateProfileOwner(nextOwner = '') {
   profileHydrationRequestId += 1;
   observedProfileOwner = String(nextOwner || '');
   hydratedProfileOwner = '';
+  clearThemeEntitlementState();
+  themePreferenceSaving = false;
+  themeOptions.forEach((option) => option.removeAttribute('aria-busy'));
   currentPreviewOwnerId = '';
   previewChallengeState = normalizePreviewChallengeState({}, localDateKey());
   selectedPhotoFile = null;

@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url';
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const read = (path) => readFile(resolve(repoRoot, path), 'utf8');
 
-test('Profile exposes public themes and a fail-closed Dominion Night reward option', async () => {
+test('Profile exposes public themes and fail-closed reward theme options', async () => {
   const html = await read('profile.html');
   const profile = await read('src/static/profile.js');
 
@@ -15,11 +15,12 @@ test('Profile exposes public themes and a fail-closed Dominion Night reward opti
   assert.match(html, /data-theme-mode="dark"/);
   assert.match(html, /data-theme-mode="light"/);
   assert.match(html, /data-theme-mode="dominion-night"[\s\S]*aria-disabled="true"/);
+  assert.match(html, /data-theme-mode="dominion-platinum"[\s\S]*aria-disabled="true"/);
   assert.match(html, /role="progressbar"[\s\S]*aria-valuemin="0"[\s\S]*aria-valuemax="100"/);
   assert.match(html, /id="themeSelectionStatus"[^>]*role="status"[^>]*aria-live="polite"/);
 
   assert.match(profile, /buildThemeOptionModels\(catalog, registry\)/);
-  assert.match(profile, /hydrateThemeEntitlementState\(\)/);
+  assert.match(profile, /hydrateThemeEntitlementState\(\{ expectedUserId: owner\.userId \}\)/);
   assert.match(profile, /setAttribute\('aria-disabled', String\(!model\?\.available\)\)/);
   assert.match(profile, /setTheme\(themeId\)/);
   assert.doesNotMatch(profile, /(?:points|totalPoints)\s*>=\s*500/);
@@ -32,8 +33,9 @@ test('all routes hydrate authoritative theme ownership and clear it on logout', 
   assert.match(menu, /hydrateThemeEntitlementState\(\)/);
   assert.match(menu, /clearThemeEntitlementState\(\)[\s\S]*clearAuthSession\(\)/);
   assert.match(hydration, /getLocalOrSessionUser\(\)/);
-  assert.match(hydration, /getRewardCatalog\(\{ limit: 100 \}\)/);
+  assert.match(hydration, /getRewardCatalog\(\{ limit: 100, expectedUserId: initialActorId \}\)/);
   assert.match(hydration, /const registry = getThemeRegistry\(\)[\s\S]*deriveAuthorizedThemeIds\(catalog, registry\)/);
   assert.match(hydration, /setThemeEntitlements\(\[\]\)/);
+  assert.match(hydration, /finishProtectedThemeHydration\(\)/);
   assert.doesNotMatch(hydration, /localStorage|sessionStorage/);
 });

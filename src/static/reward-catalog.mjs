@@ -13,7 +13,7 @@ export const DOMINION_NIGHT_THEME_REWARD = Object.freeze({
   pointsRequired: REWARD_POINT_THRESHOLDS.dominion_night_theme,
   fulfillmentKey: 'dominion-night',
   icon: 'palette',
-  sortOrder: 5,
+  sortOrder: 20,
   active: true,
   metadata: Object.freeze({
     themeKey: 'dominion-night',
@@ -23,6 +23,87 @@ export const DOMINION_NIGHT_THEME_REWARD = Object.freeze({
     selectionLabel: 'Select in Profile',
   }),
 });
+
+export const GYM_TRAINING_DISCOUNT_REWARD = Object.freeze({
+  key: 'gym_training_discount',
+  rewardType: 'partner_discount',
+  stateModel: 'ownership',
+  title: 'Gym Training Discount',
+  description: 'Earn a configurable partner offer to support training in a properly equipped gym.',
+  pointsRequired: REWARD_POINT_THRESHOLDS.gym_training_discount,
+  fulfillmentKey: 'gym-training-discount',
+  icon: 'dumbbell',
+  sortOrder: 10,
+  active: true,
+  metadata: Object.freeze({
+    eligibilitySource: 'daily_standard',
+    fulfillmentAvailability: 'unavailable',
+    encouragement: 'Complete challenge workouts at a properly equipped gym whenever practical so you can train safely and consistently.',
+  }),
+});
+
+export const NEHEMIAH_HANDBOOK_REWARD = Object.freeze({
+  key: 'nehemiah_leadership_handbook',
+  rewardType: 'digital_download',
+  stateModel: 'ownership',
+  title: 'Nehemiah Leadership Handbook',
+  description: 'A faith-centered leadership resource for the rest of your challenge.',
+  pointsRequired: REWARD_POINT_THRESHOLDS.nehemiah_leadership_handbook,
+  fulfillmentKey: 'nehemiah-leadership-handbook',
+  icon: 'book',
+  sortOrder: 30,
+  active: true,
+  metadata: Object.freeze({
+    format: 'PDF',
+    fulfillmentAvailability: 'unavailable',
+  }),
+});
+
+export const DOMINION_PLATINUM_THEME_REWARD = Object.freeze({
+  key: 'dominion_platinum',
+  rewardType: 'cosmetic',
+  stateModel: 'ownership',
+  title: 'Dominion Platinum',
+  description: 'Unlock a rare obsidian, platinum-glass, and Dominion gold app theme.',
+  pointsRequired: REWARD_POINT_THRESHOLDS.dominion_platinum,
+  fulfillmentKey: 'dominion-platinum',
+  icon: 'crown',
+  sortOrder: 50,
+  active: true,
+  metadata: Object.freeze({
+    themeKey: 'dominion-platinum',
+    preview: 'dominion-platinum',
+    colorScheme: 'dark',
+    selectionRoute: 'profile.html#appearance',
+    selectionLabel: 'Select in Profile',
+  }),
+});
+
+export const BIG_GOD_ENERGY_TSHIRT_REWARD = Object.freeze({
+  key: 'big_god_energy_tshirt_discount',
+  rewardType: 'merch_discount',
+  stateModel: 'ownership',
+  title: 'Big God Energy T-Shirt Discount',
+  description: 'Earn a configurable discount toward the Big God Energy T-shirt.',
+  pointsRequired: REWARD_POINT_THRESHOLDS.big_god_energy_tshirt_discount,
+  fulfillmentKey: 'big-god-energy-tshirt-discount',
+  icon: 'gift',
+  sortOrder: 60,
+  active: true,
+  metadata: Object.freeze({
+    thumbnailUrl: './images/big-god-energy-tshirt.jpg',
+    thumbnailAlt: 'Black Big God Energy T-shirt with white lettering.',
+    fulfillmentAvailability: 'unavailable',
+  }),
+});
+
+export const DEFAULT_OWNERSHIP_REWARD_DEFINITIONS = Object.freeze([
+  GYM_TRAINING_DISCOUNT_REWARD,
+  DOMINION_NIGHT_THEME_REWARD,
+  NEHEMIAH_HANDBOOK_REWARD,
+  DOMINION_PLATINUM_THEME_REWARD,
+  BIG_GOD_ENERGY_TSHIRT_REWARD,
+]);
 
 const safeWholeNumber = (value, fallback = 0) => {
   const number = Number(value);
@@ -82,6 +163,7 @@ export function normalizeReward(reward = {}) {
     sortOrder: Number(reward.sortOrder ?? reward.sort_order) || 0,
     active: reward.active ?? reward.isActive ?? reward.is_active ?? true,
     metadata: reward.metadata && typeof reward.metadata === 'object' ? reward.metadata : {},
+    fulfillment: reward.fulfillment && typeof reward.fulfillment === 'object' ? reward.fulfillment : {},
     canAccess,
     accessReason: reward.accessReason || reward.access_reason || null,
     allowedActions,
@@ -187,7 +269,11 @@ const normalizeOwnershipRecords = (records = []) => {
 export function buildMockRewardCatalog({
   progression = {},
   ownershipRecords = [],
-  rewardDefinitions = [DOMINION_NIGHT_THEME_REWARD],
+  rewardDefinitions = DEFAULT_OWNERSHIP_REWARD_DEFINITIONS,
+  eligibleDailyStandardPoints = progression.eligibleDailyStandardPoints
+    ?? progression.eligible_daily_standard_points
+    ?? progression.totalPoints
+    ?? progression.total_points,
   now,
 } = {}) {
   const challengeCatalog = challengeProgressionToRewardCatalog(progression);
@@ -198,7 +284,10 @@ export function buildMockRewardCatalog({
   for (const definition of rewardDefinitions) {
     const key = safeKey(definition?.key);
     if (!key || recordsByKey.has(key) || definition.active === false) continue;
-    if (totalPoints >= safeWholeNumber(definition.pointsRequired)) {
+    const eligiblePoints = key === GYM_TRAINING_DISCOUNT_REWARD.key
+      ? safeWholeNumber(eligibleDailyStandardPoints)
+      : totalPoints;
+    if (eligiblePoints >= safeWholeNumber(definition.pointsRequired)) {
       recordsByKey.set(key, {
         key,
         ownedAt: timestamp,
@@ -207,17 +296,20 @@ export function buildMockRewardCatalog({
     }
   }
 
-  const cosmeticItems = rewardDefinitions.map((definition) => {
+  const ownershipItems = rewardDefinitions.map((definition) => {
     const ownership = recordsByKey.get(safeKey(definition?.key));
+    const currentPoints = definition.key === GYM_TRAINING_DISCOUNT_REWARD.key
+      ? safeWholeNumber(eligibleDailyStandardPoints)
+      : totalPoints;
     return normalizeReward({
       ...definition,
       status: ownership ? 'owned' : 'locked',
-      currentPoints: totalPoints,
+      currentPoints,
       ownedAt: ownership?.ownedAt || null,
       celebrationSeenAt: ownership?.celebrationSeenAt || null,
     });
   });
-  const items = [...cosmeticItems, ...challengeCatalog.items]
+  const items = [...ownershipItems, ...challengeCatalog.items]
     .sort((left, right) => (
       left.sortOrder - right.sortOrder || left.key.localeCompare(right.key)
     ));
@@ -251,7 +343,8 @@ export function buildMockRewardCatalog({
 export function backfillMockRewardEntitlements({
   progression = {},
   ownershipRecords = [],
-  rewardDefinitions = [DOMINION_NIGHT_THEME_REWARD],
+  rewardDefinitions = DEFAULT_OWNERSHIP_REWARD_DEFINITIONS,
+  eligibleDailyStandardPoints,
   now,
 } = {}) {
   const timestamp = resolveTimestamp(now);
@@ -260,6 +353,7 @@ export function backfillMockRewardEntitlements({
     progression,
     ownershipRecords,
     rewardDefinitions,
+    eligibleDailyStandardPoints,
     now: timestamp,
   });
 
@@ -273,7 +367,8 @@ export function backfillMockRewardEntitlements({
 export function claimMockRewardEntitlementUnlocks({
   progression = {},
   ownershipRecords = [],
-  rewardDefinitions = [DOMINION_NIGHT_THEME_REWARD],
+  rewardDefinitions = DEFAULT_OWNERSHIP_REWARD_DEFINITIONS,
+  eligibleDailyStandardPoints,
   now,
 } = {}) {
   const timestamp = resolveTimestamp(now);
@@ -281,6 +376,7 @@ export function claimMockRewardEntitlementUnlocks({
     progression,
     ownershipRecords,
     rewardDefinitions,
+    eligibleDailyStandardPoints,
     now: timestamp,
   });
   const claimedKeySet = new Set(
@@ -297,6 +393,7 @@ export function claimMockRewardEntitlementUnlocks({
     progression,
     ownershipRecords: nextRecords,
     rewardDefinitions,
+    eligibleDailyStandardPoints,
     now: timestamp,
   });
 

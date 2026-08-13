@@ -116,6 +116,7 @@ function expectOneTouchTargetRow(geometry) {
 const mobileHeaderCases = [
   { name: '390px dark Daily Standards', width: 390, route: ROUTE_BY_ID.bibleReading, theme: 'dark', expectFullBackLabel: true },
   { name: '390px Dominion Night community', width: 390, route: ROUTE_BY_ID.community, theme: 'dominion-night', expectFullBackLabel: true },
+  { name: '390px Dominion Platinum rewards', width: 390, route: ROUTE_BY_ID.badgesRewards, state: 'rewardsUnlocked', theme: 'dominion-platinum', expectFullBackLabel: true },
   { name: '360px dark Dashboard', width: 360, route: ROUTE_BY_ID.dashboard, theme: 'dark', expectFullBackLabel: true },
   { name: '320px light Daily Standards', width: 320, route: ROUTE_BY_ID.bibleReading, theme: 'light', expectFullBackLabel: true },
   { name: '390px signed-in Membership', width: 390, route: ROUTE_BY_ID.membership, state: 'member', theme: 'light', expectFullBackLabel: true, verifyReload: true },
@@ -507,6 +508,35 @@ test('authenticated header clears stale controls and composer state across accou
   await expect(page).toHaveURL(/\/index\.html$/);
   await expect(page.locator('.shared-header-share')).toHaveCount(0);
   await expect(page.locator('.shared-header-streak')).toHaveCount(0);
+});
+
+test('cross-tab preview account switch clears an owned Dominion Night theme for an unentitled account', async ({ page, context, app }) => {
+  await app.open(ROUTE_BY_ID.dashboard, { state: 'rewardsUnlocked', theme: 'dominion-night' });
+  await expect(page.locator('html')).toHaveAttribute('data-theme', 'dominion-night');
+  expect(await page.evaluate(() => window.DominionThemeRuntime.isThemeAvailable('dominion-night'))).toBe(true);
+
+  const accountTab = await context.newPage();
+  await accountTab.goto('/index.html', { waitUntil: 'domcontentloaded' });
+  const secondUserId = await accountTab.evaluate(async () => {
+    const api = await import('/src/static/api.js');
+    const user = api.saveLocalMockUser({
+      name: 'Unentitled Member',
+      email: 'unentitled.theme@example.test',
+      avatarUrl: '',
+      authenticated: true,
+    });
+    await api.createCheckoutSession('dominion_membership');
+    return user.userId;
+  });
+  expect(secondUserId).not.toBe(FIXED_USER_ID);
+
+  await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
+  await expect.poll(() => page.evaluate(() => (
+    window.DominionThemeRuntime.isThemeAvailable('dominion-night')
+  ))).toBe(false);
+  await expect(page.locator('.global-menu-member')).toContainText('Unentitled Member');
+  await accountTab.close();
+  app.assertNoRuntimeErrors();
 });
 
 test('preview account switches preserve stable identities and lock stale Dashboard mutations', async ({ page, app }) => {

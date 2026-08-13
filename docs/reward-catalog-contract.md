@@ -29,12 +29,13 @@ and Start behavior remain authoritative. Ownership definitions are evaluated
 against `user_game_stats.total_points`, which is the cached total of the
 idempotent point ledger.
 
-The first ownership definition is `dominion_night_theme`. It unlocks at 56
-total points and fulfills the stable `dominion-night` theme key. It is a
-`cosmetic` with the `ownership` state model, sorts before every challenge, and
-remains owned after point corrections or membership changes.
-Its display metadata links the customer to `profile.html#appearance`; theme
-selection still must verify the trusted entitlement and active theme registry.
+The catalog includes two cosmetic ownership definitions:
+`dominion_night_theme` at 56 lifetime points and `dominion_platinum` at 210
+lifetime points. They fulfill the stable `dominion-night` and
+`dominion-platinum` theme keys. Each remains owned after point corrections or
+membership changes. Display metadata links the customer to
+`profile.html#appearance`; theme selection still verifies the trusted
+entitlement and active theme registry.
 
 ### Theme-selection runtime
 
@@ -44,34 +45,40 @@ derives theme authorization only from an active `ownership` item whose status is
 `owned`, and keeps that authorization in memory for the current page. It is
 never written to local storage and is cleared on catalog failure or logout.
 
-Local storage holds only the user's preferred theme key. If Dominion Night was
-previously selected, first paint safely uses Dark; the preference is applied
-after ownership is verified. Losing runtime authorization immediately returns
-the page to Dark without erasing the preference. The Profile appearance section
-uses the same catalog response to show authoritative locked progress and never
-unlocks a theme by calculating from client-side points.
+Local storage holds only the user's preferred theme key; it is never treated as
+proof of ownership. For a stored protected-theme preference, the synchronous
+bootstrap keeps page content covered with the protected theme's neutral
+background while trusted ownership and the server preference load. It then
+reveals the authorized theme without showing a wrong-theme first paint. Missing
+authentication, an authorization error, or a bounded hydration timeout fails
+closed to Dark. Losing runtime authorization immediately returns the page to
+Dark without erasing the preference. The Profile appearance section uses the
+same catalog response to show authoritative locked progress and never unlocks a
+theme by calculating from client-side points.
 
-`VITE_ENABLE_DOMINION_NIGHT_THEME=true` is also required. The feature flag can
-disable rollout but cannot grant ownership.
+`VITE_ENABLE_DOMINION_NIGHT_THEME=true` is also required for Dominion Night.
+The feature flag can disable rollout but cannot grant ownership. Dominion
+Platinum is reward-gated and has no client-side grant flag.
 
 ## Authenticated read
 
 Call `get_reward_catalog(target_page_size, target_after_sort_order,
-target_after_reward_key)`. The RPC always uses `auth.uid()`; the user-selectable
-internal helper is not executable by browser roles.
+target_after_reward_key, target_expected_actor_id)`. The RPC still derives the
+actor from `auth.uid()` and rejects the request when the expected actor differs;
+the user-selectable internal helper is not executable by browser roles.
 
 The response contains:
 
 ```json
 {
   "schemaVersion": 1,
-  "catalogVersion": 7,
-  "totalPoints": 1200,
+  "catalogVersion": 10,
+  "totalPoints": 210,
   "items": [],
   "nextUnlock": null,
   "page": {
     "limit": 50,
-    "totalItems": 5,
+    "totalItems": 10,
     "hasMore": false,
     "nextCursor": null
   }
@@ -101,7 +108,7 @@ ownership rows automatically. `grant_reward_entitlement` and
 threshold increases, membership lapses, and configuration changes never delete
 an earned row.
 
-`claim_reward_entitlement_unlocks()` atomically marks unseen ownership
+`claim_reward_entitlement_unlocks(target_expected_actor_id)` atomically marks unseen ownership
 celebrations and returns each stable key once. Challenge celebrations continue
 to use the existing `claim_challenge_unlocks()` contract.
 

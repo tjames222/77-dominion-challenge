@@ -210,6 +210,27 @@ test('Badges & Rewards tabs preserve loaded state across pointer and keyboard na
   await expect(page.locator('#badgesGallery')).toHaveAttribute('aria-busy', 'false');
 });
 
+test('a fulfillment reward card is one keyboard-accessible dialog trigger', async ({ page, app }) => {
+  await app.open(ROUTE_BY_ID.badgesRewards, { state: 'rewardsLocked' });
+  const card = page.locator('[data-reward-key="gym_training_discount"]');
+  const dialog = page.getByRole('dialog', { name: /Gym Training Discount/i });
+
+  await expect(card).toHaveAttribute('role', 'button');
+  await expect(card).toHaveAttribute('tabindex', '0');
+  await card.click({ position: { x: 20, y: 20 } });
+  await expect(dialog).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(card).toBeFocused();
+
+  await page.keyboard.press('Enter');
+  await expect(dialog).toBeVisible();
+  await page.keyboard.press('Escape');
+  await page.keyboard.press('Space');
+  await expect(dialog).toBeVisible();
+  await page.keyboard.press('Escape');
+  app.assertNoRuntimeErrors();
+});
+
 test('single-crew setup expands, focuses, and safely cancels', async ({ page, app }) => {
   await app.open(ROUTE_BY_ID.community, { state: 'communityEmpty' });
   const openButton = page.locator('#openCrewFormButton');

@@ -6,14 +6,21 @@ export const PERFECT_CHALLENGE_POINTS = MAX_DAILY_STANDARD_POINTS * DEFAULT_CHAL
 export const SHARING_BONUS_POINTS = 14;
 export const POINTS_PER_LEVEL = 14;
 export const REWARD_POINT_THRESHOLDS = Object.freeze({
+  gym_training_discount: 21,
   dominion_night_theme: 56,
-  seven_day_reset: 126,
-  twenty_one_day_prayer: 210,
-  thirty_day_strength: 308,
-  forty_day_fast: 420,
+  nehemiah_leadership_handbook: 98,
+  seven_day_reset: 140,
+  dominion_platinum: 210,
+  big_god_energy_tshirt_discount: 273,
+  twenty_one_day_prayer: 336,
+  thirty_day_strength: 406,
+  forty_day_fast: 469,
   bible_in_a_year: 532,
 });
-export const LOWEST_REWARD_THRESHOLD = REWARD_POINT_THRESHOLDS.dominion_night_theme;
+export const REWARD_CURVE = Object.freeze(Object.entries(REWARD_POINT_THRESHOLDS).map(
+  ([key, pointsRequired], sortOrder) => Object.freeze({ key, pointsRequired, sortOrder }),
+));
+export const LOWEST_REWARD_THRESHOLD = REWARD_POINT_THRESHOLDS.gym_training_discount;
 
 export const POINT_SOURCE_POLICY = Object.freeze({
   daily_standard: Object.freeze({
@@ -116,10 +123,10 @@ export function validateRewardThresholds(rewards = []) {
       key: String(reward?.key || '').trim(),
       pointsRequired: safeWholeNumber(reward?.pointsRequired ?? reward?.points_required),
     }));
-  const invalid = normalized.filter((reward) => (
+  const invalid = normalized.filter((reward, index) => (
     !reward.key
     || reward.pointsRequired < LOWEST_REWARD_THRESHOLD
-    || reward.pointsRequired % POINTS_PER_LEVEL !== 0
+    || (index > 0 && reward.pointsRequired <= normalized[index - 1].pointsRequired)
   ));
 
   return {

@@ -208,7 +208,7 @@ export const test = base.extend({
       async open(route, options = {}) {
         const theme = options.theme || testInfo.project.metadata.theme || 'dark';
         const requestedState = options.state || route.defaultState;
-        const state = theme === 'dominion-night' && requestedState === 'guest'
+        const state = ['dominion-night', 'dominion-platinum'].includes(theme) && requestedState === 'guest'
           ? 'member'
           : requestedState;
         await seedPage(page, state, theme);

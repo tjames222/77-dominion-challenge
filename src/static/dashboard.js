@@ -1936,6 +1936,7 @@ if (checkInButton) checkInButton.addEventListener('click', async () => {
       }
       gameStats.totalPoints = (gameStats.totalPoints || 0) + points;
       gameStats.challengePoints = (gameStats.challengePoints || 0) + points;
+      gameStats.dailyStandardsPoints = (gameStats.dailyStandardsPoints || 0) + points;
       feedItem.pointsAwarded = points;
       earnedBadges = awardLocalBadges(entry, status, nextStreak, submissionDay);
       if (simulatedPreviewPost) advanceCommittedPreviewPost(entry, submissionDay);

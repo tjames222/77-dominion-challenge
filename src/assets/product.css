@@ -3232,6 +3232,11 @@ body.challenge-finished .reward-backdrop {
   --swatch-two: #10272b;
   --swatch-three: #63d2bf;
 }
+.appearance-swatch-platinum {
+  --swatch-one: #080a10;
+  --swatch-two: #cbd4e0;
+  --swatch-three: #d6aa43;
+}
 .appearance-reward-choice {
   display: grid;
   align-content: start;

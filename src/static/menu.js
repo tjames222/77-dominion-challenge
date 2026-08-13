@@ -436,7 +436,7 @@ subscribeToAuthStateChanges(({ event, user }) => {
   window.setTimeout(() => {
     void buildMenu();
     if (ownerChanged || event === 'USER_UPDATED') {
-      void hydrateThemeEntitlementState().then(({ error }) => {
+      void hydrateThemeEntitlementState({ expectedUserId: nextOwner }).then(({ error }) => {
         if (error) console.warn('Unable to verify theme reward ownership', error);
       });
     }
@@ -444,8 +444,21 @@ subscribeToAuthStateChanges(({ event, user }) => {
 });
 
 window.addEventListener('storage', (event) => {
-  if (event.key === 'dominion:user') {
-    void buildMenu();
+  if (['dominion:user', 'dominion:mockUserId', 'dominion:mockUserIdsByIdentity'].includes(event.key)) {
+    menuHydrationRequest += 1;
+    closeShareComposer('storage-account-change');
+    sharedHeaderActions?.destroy();
+    sharedHeaderActions = null;
+    destroyTrainingControllers();
+    currentMenuOwner = '';
+    clearThemeEntitlementState();
+    closeMenu();
+    void buildMenu().then(async () => {
+      const user = await getLocalOrSessionUser();
+      if (!user?.authenticated || !user.userId) return;
+      const result = await hydrateThemeEntitlementState({ expectedUserId: user.userId });
+      if (result.error) console.warn('Unable to verify theme reward ownership', result.error);
+    });
     return;
   }
   if (event.key === SOLO_TRAINING_LAUNCH_STORAGE_KEY) {

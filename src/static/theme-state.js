@@ -35,8 +35,12 @@ export function setTheme(themeId) {
   return runtime().setTheme(themeId);
 }
 
-export function setThemeEntitlements(themeIds) {
-  return runtime().setThemeEntitlements(themeIds);
+export function setThemeEntitlements(themeIds, options) {
+  return runtime().setThemeEntitlements(themeIds, options);
+}
+
+export function finishProtectedThemeHydration() {
+  return runtime().finishProtectedThemeHydration();
 }
 
 export function toggleTheme() {

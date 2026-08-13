@@ -82,6 +82,11 @@ const safeAppRoute = (value) => {
   return route.startsWith('./') ? route : `./${route}`;
 };
 
+const safeAssetRoute = (value) => {
+  const route = String(value || '').trim();
+  return /^\.\/images\/[a-z0-9._-]+\.(?:jpg|jpeg|png|webp)$/i.test(route) ? route : null;
+};
+
 const readableDate = (value) => {
   if (!value) return '';
   const date = new Date(value);
@@ -165,6 +170,12 @@ export function rewardViewModel(reward = {}, nextRewardKey = '') {
       ? safeAppRoute(metadata.selectionRoute || metadata.selection_route)
       : null,
     selectionLabel: String(metadata.selectionLabel || metadata.selection_label || 'Select in Profile'),
+    thumbnailUrl: safeAssetRoute(metadata.thumbnailUrl || metadata.thumbnail_url),
+    thumbnailAlt: String(metadata.thumbnailAlt || metadata.thumbnail_alt || ''),
+    hasDetails: ['partner_discount', 'merch_discount', 'digital_download'].includes(
+      safeKey(reward.rewardType || reward.reward_type),
+    ),
+    fulfillment: reward.fulfillment && typeof reward.fulfillment === 'object' ? reward.fulfillment : {},
     metadata,
     active: reward.active ?? reward.isActive ?? reward.is_active ?? true,
   };

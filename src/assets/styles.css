@@ -85,6 +85,16 @@
 
 :root[data-theme="dark"] { color-scheme: dark; }
 
+/*
+ * A stored protected-theme preference is not proof of entitlement. Keep the
+ * page out of view for the short server-authorization window so an entitled
+ * member never sees the fallback theme, while the bootstrap fails closed to
+ * Dark after a bounded timeout if authorization cannot complete.
+ */
+:root[data-theme-pending] body {
+  visibility: hidden;
+}
+
 * { box-sizing: border-box; }
 ::selection { background: var(--selection-background); color: var(--selection-text); }
 .sr-only {

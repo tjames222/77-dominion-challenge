@@ -40,7 +40,7 @@ test('Private Journal destination has no serious or critical automated violation
   assertNoBlockingAxeViolations(results);
 });
 
-for (const theme of ['light', 'dark', 'dominion-night']) {
+for (const theme of ['light', 'dark', 'dominion-night', 'dominion-platinum']) {
   test('Dashboard has no blocking violations in ' + theme, async ({ page, app }) => {
     await app.open(ROUTE_BY_ID.dashboard, { theme });
     const results = await analyzeAccessibility(page);

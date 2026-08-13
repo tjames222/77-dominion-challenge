@@ -18,4 +18,20 @@ if (!license.includes('SIL OPEN FONT LICENSE Version 1.1')) {
   throw new Error('The production build is missing the Inter SIL Open Font License.');
 }
 
-console.log(`Verified production Inter font and license (${brandFonts[0]}).`);
+const forbiddenRewardPlaceholders = [
+  'Preview Gym Partner',
+  'TEST-ONLY-GYM-21',
+  'gym-partner.example.test',
+  'Preview Dominion Shop',
+  'TEST-ONLY-SHIRT-273',
+  'dominion-shop.example.test',
+];
+const builtFiles = (await readdir(distRoot, { recursive: true }))
+  .filter((name) => /\.(?:css|html|js|json|map|txt)$/i.test(name));
+for (const name of builtFiles) {
+  const contents = await readFile(new URL(name, distRoot), 'utf8');
+  const leaked = forbiddenRewardPlaceholders.find((placeholder) => contents.includes(placeholder));
+  if (leaked) throw new Error(`Production build contains forbidden reward placeholder "${leaked}" in ${name}.`);
+}
+
+console.log(`Verified production Inter font, license, and reward placeholder audit (${brandFonts[0]}).`);

@@ -11,7 +11,7 @@ export const DEFAULT_CHALLENGE_DEFINITIONS = Object.freeze([
     pointsRequired: REWARD_POINT_THRESHOLDS.seven_day_reset,
     durationDays: 7,
     icon: 'repeat',
-    sortOrder: 10,
+    sortOrder: 40,
   },
   {
     key: 'twenty_one_day_prayer',
@@ -21,7 +21,7 @@ export const DEFAULT_CHALLENGE_DEFINITIONS = Object.freeze([
     pointsRequired: REWARD_POINT_THRESHOLDS.twenty_one_day_prayer,
     durationDays: 21,
     icon: 'spark',
-    sortOrder: 20,
+    sortOrder: 70,
   },
   {
     key: 'thirty_day_strength',
@@ -31,7 +31,7 @@ export const DEFAULT_CHALLENGE_DEFINITIONS = Object.freeze([
     pointsRequired: REWARD_POINT_THRESHOLDS.thirty_day_strength,
     durationDays: 30,
     icon: 'dumbbell',
-    sortOrder: 30,
+    sortOrder: 80,
   },
   {
     key: 'forty_day_fast',
@@ -41,7 +41,7 @@ export const DEFAULT_CHALLENGE_DEFINITIONS = Object.freeze([
     pointsRequired: REWARD_POINT_THRESHOLDS.forty_day_fast,
     durationDays: 40,
     icon: 'flame',
-    sortOrder: 40,
+    sortOrder: 90,
   },
   {
     key: 'bible_in_a_year',
@@ -51,7 +51,7 @@ export const DEFAULT_CHALLENGE_DEFINITIONS = Object.freeze([
     pointsRequired: REWARD_POINT_THRESHOLDS.bible_in_a_year,
     durationDays: 365,
     icon: 'book',
-    sortOrder: 50,
+    sortOrder: 100,
   },
 ]);
 

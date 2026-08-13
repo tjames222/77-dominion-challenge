@@ -190,7 +190,7 @@ const MOCK_OUTBOUND_CONSENT_KEY = 'dominion:mockOutboundConsent';
 const MOCK_SHARING_REWARD_KEY = 'dominion:mockSharingReward';
 const MOCK_THEME_PREFERENCES_KEY = 'dominion:mockThemePreferences';
 const MOCK_ACCOUNT_LIFECYCLE_REQUESTS_KEY = 'dominion:mockAccountLifecycleRequests';
-const MOCK_CHALLENGE_THRESHOLDS_VERSION = 3;
+const MOCK_CHALLENGE_THRESHOLDS_VERSION = 4;
 const MOCK_MEDIA_DB_NAME = 'dominion-preview-media';
 const MOCK_MEDIA_STORE_NAME = 'community-post-images';
 const mockCommunityImageUrls = new Map();
@@ -579,43 +579,52 @@ const normalizeThemePreference = (preference = {}) => ({
   updatedAt: preference.updatedAt ?? preference.updated_at ?? null,
 });
 
-export async function getThemePreference() {
+export async function getThemePreference({ expectedUserId = '' } = {}) {
   if (isLocalDemoMode()) {
-    const userId = getMockUserId();
-    return normalizeThemePreference(readJson(MOCK_THEME_PREFERENCES_KEY, {})[userId]);
+    const actorId = requireMockRewardActor(expectedUserId);
+    const preference = normalizeThemePreference(readJson(MOCK_THEME_PREFERENCES_KEY, {})[actorId]);
+    requireMockRewardActor(actorId);
+    return preference;
   }
 
   const client = requireSupabase();
-  await requireUser();
-  const { data, error } = await client.rpc('get_theme_preference');
+  const actor = await requireUser(expectedUserId);
+  const { data, error } = await client.rpc('get_theme_preference', {
+    target_expected_actor_id: actor.id,
+  });
+  await requireUser(actor.id);
   if (error) throw error;
   return normalizeThemePreference(data);
 }
 
-export async function setThemePreference(themeKey) {
+export async function setThemePreference(themeKey, { expectedUserId = '' } = {}) {
   const normalizedThemeKey = String(themeKey || '').trim().toLowerCase();
-  if (!['dark', 'light', 'dominion-night'].includes(normalizedThemeKey)) {
+  if (!['dark', 'light', 'dominion-night', 'dominion-platinum'].includes(normalizedThemeKey)) {
     throw new Error('The requested theme is unavailable.');
   }
 
   if (isLocalDemoMode()) {
-    await requireHybridPreviewUser();
-    const userId = getMockUserId();
+    await requireHybridPreviewUser(expectedUserId);
+    const actorId = requireMockRewardActor(expectedUserId);
     const preferences = readJson(MOCK_THEME_PREFERENCES_KEY, {});
     const preference = {
       themeKey: normalizedThemeKey,
       updatedAt: new Date().toISOString(),
     };
-    preferences[userId] = preference;
+    preferences[actorId] = preference;
     writeJson(MOCK_THEME_PREFERENCES_KEY, preferences);
+    await requireHybridPreviewUser(actorId);
+    requireMockRewardActor(actorId);
     return preference;
   }
 
   const client = requireSupabase();
-  await requireUser();
+  const actor = await requireUser(expectedUserId);
   const { data, error } = await client.rpc('set_theme_preference', {
     target_theme_key: normalizedThemeKey,
+    target_expected_actor_id: actor.id,
   });
+  await requireUser(actor.id);
   if (error) throw error;
   return normalizeThemePreference(data);
 }
@@ -1548,6 +1557,10 @@ export async function completeSharingReward(completionToken, { expectedUserId = 
 
 function getMockChallengeProgression() {
   const gameStats = readMockUserValue('dominion:gameStats', {});
+  const sharingGranted = Boolean(readMockUserValue(MOCK_SHARING_REWARD_KEY, null));
+  const eligibleDailyStandardPoints = Number.isFinite(Number(gameStats.dailyStandardsPoints))
+    ? Math.max(0, Math.floor(Number(gameStats.dailyStandardsPoints)))
+    : Math.max(0, Math.floor(Number(gameStats.totalPoints ?? gameStats.challengePoints ?? 0)) - (sharingGranted ? 14 : 0));
   let records = readMockUserValue(MOCK_CHALLENGE_STATES_KEY, []);
   const thresholdVersion = Number(readMockUserValue(MOCK_CHALLENGE_THRESHOLDS_VERSION_KEY, 0));
   if (!Number.isFinite(thresholdVersion) || thresholdVersion < MOCK_CHALLENGE_THRESHOLDS_VERSION) {
@@ -1565,6 +1578,7 @@ function getMockChallengeProgression() {
       totalPoints,
       now: migratedAt,
     });
+    migratedProgression.eligibleDailyStandardPoints = eligibleDailyStandardPoints;
     const ownershipRecords = backfillMockRewardEntitlements({
       progression: migratedProgression,
       ownershipRecords: readMockUserValue(MOCK_REWARD_ENTITLEMENTS_KEY, []),
@@ -1579,6 +1593,7 @@ function getMockChallengeProgression() {
     records: Array.isArray(records) ? records : [],
     totalPoints: gameStats.totalPoints ?? gameStats.challengePoints ?? 0,
   });
+  progression.eligibleDailyStandardPoints = eligibleDailyStandardPoints;
   writeMockUserValue(MOCK_CHALLENGE_STATES_KEY, progression.records);
   return progression;
 }
@@ -1602,23 +1617,31 @@ export async function getChallengeProgression() {
   return normalizeChallengeProgression(data || {});
 }
 
-export async function getRewardCatalog({ limit = 50, cursor = null } = {}) {
+export async function getRewardCatalog({ limit = 50, cursor = null, expectedUserId = '' } = {}) {
   if (isLocalDemoMode()) {
-    return getMockRewardCatalog();
+    const actorId = requireMockRewardActor(expectedUserId);
+    const result = getMockRewardCatalog();
+    requireMockRewardActor(actorId);
+    return result;
   }
 
   const client = requireSupabase();
-  await requireUser();
+  const actor = await requireUser(expectedUserId);
   const { data, error } = await client.rpc('get_reward_catalog', {
     target_page_size: limit,
     target_after_sort_order: cursor?.sortOrder ?? null,
     target_after_reward_key: cursor?.key || null,
+    target_expected_actor_id: actor.id,
   });
+  await requireUser(actor.id);
   if (error) throw error;
   return normalizeRewardCatalog(data || {});
 }
 
-export async function getAllRewardCatalog({ pageSize = 100 } = {}) {
+export async function getAllRewardCatalog({ pageSize = 100, expectedUserId = '' } = {}) {
+  const actorId = isLocalDemoMode()
+    ? requireMockRewardActor(expectedUserId)
+    : (await requireUser(expectedUserId)).id;
   const normalizedPageSize = Math.floor(Math.min(Math.max(Number(pageSize) || 100, 1), 100));
   const itemsByKey = new Map();
   const visitedCursors = new Set();
@@ -1627,7 +1650,7 @@ export async function getAllRewardCatalog({ pageSize = 100 } = {}) {
   let totalItems = 0;
 
   while (true) {
-    const page = await getRewardCatalog({ limit: normalizedPageSize, cursor });
+    const page = await getRewardCatalog({ limit: normalizedPageSize, cursor, expectedUserId: actorId });
     firstPage ||= page;
     totalItems = Math.max(totalItems, page.page.totalItems);
     for (const reward of page.items) itemsByKey.set(reward.key, reward);
@@ -1643,6 +1666,8 @@ export async function getAllRewardCatalog({ pageSize = 100 } = {}) {
   }
 
   const items = [...itemsByKey.values()];
+  if (isLocalDemoMode()) requireMockRewardActor(actorId);
+  else await requireUser(actorId);
   return normalizeRewardCatalog({
     ...(firstPage || {}),
     items,
@@ -1655,14 +1680,17 @@ export async function getAllRewardCatalog({ pageSize = 100 } = {}) {
   });
 }
 
-export async function claimRewardEntitlementUnlocks() {
+export async function claimRewardEntitlementUnlocks({ expectedUserId = '' } = {}) {
   if (isLocalDemoMode()) {
-    await requireHybridPreviewUser();
+    await requireHybridPreviewUser(expectedUserId);
+    const actorId = requireMockRewardActor(expectedUserId);
     const result = claimMockRewardEntitlementUnlocks({
       progression: getMockChallengeProgression(),
       ownershipRecords: readMockUserValue(MOCK_REWARD_ENTITLEMENTS_KEY, []),
     });
     writeMockUserValue(MOCK_REWARD_ENTITLEMENTS_KEY, result.ownershipRecords);
+    await requireHybridPreviewUser(actorId);
+    requireMockRewardActor(actorId);
     return {
       claimedUnlocks: result.claimedUnlocks,
       catalog: result.catalog,
@@ -1670,8 +1698,11 @@ export async function claimRewardEntitlementUnlocks() {
   }
 
   const client = requireSupabase();
-  await requireUser();
-  const { data, error } = await client.rpc('claim_reward_entitlement_unlocks');
+  const actor = await requireUser(expectedUserId);
+  const { data, error } = await client.rpc('claim_reward_entitlement_unlocks', {
+    target_expected_actor_id: actor.id,
+  });
+  await requireUser(actor.id);
   if (error) throw error;
   const catalog = normalizeRewardCatalog(data?.catalog || {});
   const claimedKeys = new Set(data?.claimedKeys || data?.claimed_keys || []);
@@ -1681,12 +1712,127 @@ export async function claimRewardEntitlementUnlocks() {
   };
 }
 
+function mockRewardFulfillment(rewardKey) {
+  const catalog = getMockRewardCatalog();
+  const reward = catalog.items.find((item) => item.key === rewardKey);
+  if (!reward || !['partner_discount', 'merch_discount', 'digital_download'].includes(reward.rewardType)) {
+    throw new Error('The requested reward fulfillment is unavailable.');
+  }
+  const owned = reward.status === 'owned';
+  if (reward.rewardType === 'digital_download') {
+    return {
+      preview: true,
+      rewardKey,
+      rewardType: reward.rewardType,
+      status: owned ? 'unavailable' : 'locked',
+      availability: 'unavailable',
+      currentPoints: reward.currentPoints,
+      pointsRequired: reward.pointsRequired,
+      pointsRemaining: reward.pointsRemaining,
+      format: 'PDF',
+      message: owned
+        ? 'You permanently own this reward. The approved handbook edition is being finalized.'
+        : '',
+    };
+  }
+
+  return {
+    preview: true,
+    rewardKey,
+    rewardType: reward.rewardType,
+    status: owned ? 'unavailable' : 'locked',
+    availability: 'unavailable',
+    currentPoints: reward.currentPoints,
+    pointsRequired: reward.pointsRequired,
+    pointsRemaining: reward.pointsRemaining,
+    message: owned
+      ? 'You permanently own this reward. Production fulfillment is not configured in preview mode.'
+      : '',
+  };
+}
+
+const requireMockRewardActor = (expectedUserId = '') => {
+  const user = readJson('dominion:user', null);
+  if (!user?.authenticated) throw new Error('You need to log in again.');
+  const actorId = getMockUserId();
+  if (expectedUserId && actorId !== expectedUserId) {
+    throw new Error('The signed-in account changed. Try again.');
+  }
+  return actorId;
+};
+
+export async function getRewardFulfillment(rewardKey, { expectedUserId = '' } = {}) {
+  if (isLocalDemoMode()) {
+    const actorId = requireMockRewardActor(expectedUserId);
+    const result = mockRewardFulfillment(rewardKey);
+    requireMockRewardActor(actorId);
+    return result;
+  }
+  const client = requireSupabase();
+  const actor = await requireUser(expectedUserId);
+  const { data, error } = await client.rpc('get_reward_fulfillment', {
+    target_reward_key: rewardKey,
+    target_expected_actor_id: actor.id,
+  });
+  await requireUser(actor.id);
+  if (error) throw error;
+  return data || {};
+}
+
+export async function claimRewardOffer(rewardKey, { expectedUserId = '' } = {}) {
+  if (isLocalDemoMode()) {
+    const actorId = requireMockRewardActor(expectedUserId);
+    const result = mockRewardFulfillment(rewardKey, { reveal: true });
+    requireMockRewardActor(actorId);
+    return result;
+  }
+  const client = requireSupabase();
+  const actor = await requireUser(expectedUserId);
+  const { data, error } = await client.rpc('claim_reward_offer', {
+    target_reward_key: rewardKey,
+    target_expected_actor_id: actor.id,
+  });
+  await requireUser(actor.id);
+  if (error) throw error;
+  return data || {};
+}
+
+export async function downloadRewardAsset(rewardKey, { expectedUserId = '' } = {}) {
+  if (isLocalDemoMode()) {
+    const actorId = requireMockRewardActor(expectedUserId);
+    const result = mockRewardFulfillment(rewardKey);
+    requireMockRewardActor(actorId);
+    return result;
+  }
+  const client = requireSupabase();
+  const actor = await requireUser(expectedUserId);
+  const { data, error, response } = await client.functions.invoke('reward-download', {
+    body: {
+      rewardKey,
+      expectedUserId: actor.id,
+    },
+  });
+  await requireUser(actor.id);
+  if (error) throw error;
+  if (!(data instanceof Blob) || data.type !== 'application/pdf' || data.size <= 0 || data.size > 52_428_800) {
+    throw new Error('The secure handbook response was invalid.');
+  }
+  const signature = new Uint8Array(await data.slice(0, 5).arrayBuffer());
+  if (String.fromCharCode(...signature) !== '%PDF-') {
+    throw new Error('The secure handbook response was invalid.');
+  }
+  await requireUser(actor.id);
+  const responseFilename = String(response?.headers?.get('x-reward-filename') || '').trim();
+  const filename = /^[A-Za-z0-9][A-Za-z0-9._ -]*\.pdf$/.test(responseFilename)
+    ? responseFilename
+    : 'Nehemiah-Leadership-Handbook.pdf';
+  return { blob: data, filename, contentType: 'application/pdf' };
+}
+
 export async function claimChallengeUnlocks({ expectedUserId = '' } = {}) {
   if (isLocalDemoMode()) {
     await requireHybridPreviewUser(expectedUserId);
-    if (expectedUserId && getMockUserId() !== expectedUserId) {
-      throw new Error('The signed-in account changed. Try again.');
-    }
+    const actorId = requireMockRewardActor(expectedUserId);
     const progression = getMockChallengeProgression();
     const claimedKeys = progression.unseenUnlocks.map((challenge) => challenge.key);
     const claimedKeySet = new Set(claimedKeys);
@@ -1699,6 +1845,8 @@ export async function claimChallengeUnlocks({ expectedUserId = '' } = {}) {
       records,
       totalPoints: progression.totalPoints,
     });
+    await requireHybridPreviewUser(actorId);
+    requireMockRewardActor(actorId);
     return {
       claimedUnlocks: progression.challenges.filter((challenge) => claimedKeySet.has(challenge.key)),
       progression: nextProgression,
@@ -1706,8 +1854,11 @@ export async function claimChallengeUnlocks({ expectedUserId = '' } = {}) {
   }
 
   const client = requireSupabase();
-  await requireUser(expectedUserId);
-  const { data, error } = await client.rpc('claim_challenge_unlocks');
+  const actor = await requireUser(expectedUserId);
+  const { data, error } = await client.rpc('claim_challenge_unlocks', {
+    target_expected_actor_id: actor.id,
+  });
+  await requireUser(actor.id);
   if (error) throw error;
   const progression = normalizeChallengeProgression(data?.progression || {});
   const claimedKeySet = new Set(data?.claimedKeys || data?.claimed_keys || []);
@@ -1717,26 +1868,32 @@ export async function claimChallengeUnlocks({ expectedUserId = '' } = {}) {
   };
 }
 
-export async function startChallenge(challengeKey) {
+export async function startChallenge(challengeKey, { expectedUserId = '' } = {}) {
   if (isLocalDemoMode()) {
-    await requireHybridPreviewUser();
+    await requireHybridPreviewUser(expectedUserId);
+    const actorId = requireMockRewardActor(expectedUserId);
     const progression = getMockChallengeProgression();
     const record = progression.records.find((item) => item.key === challengeKey);
     const nextRecord = transitionChallengeRecord(record, 'active');
     const records = progression.records.map((item) => item.key === challengeKey ? nextRecord : item);
     writeMockUserValue(MOCK_CHALLENGE_STATES_KEY, records);
-    return buildChallengeProgression({
+    const result = buildChallengeProgression({
       definitions: DEFAULT_CHALLENGE_DEFINITIONS,
       records,
       totalPoints: progression.totalPoints,
     });
+    await requireHybridPreviewUser(actorId);
+    requireMockRewardActor(actorId);
+    return result;
   }
 
   const client = requireSupabase();
-  await requireUser();
+  const actor = await requireUser(expectedUserId);
   const { data, error } = await client.rpc('start_challenge', {
     target_challenge_key: challengeKey,
+    target_expected_actor_id: actor.id,
   });
+  await requireUser(actor.id);
   if (error) throw error;
   return normalizeChallengeProgression(data || {});
 }
@@ -2859,13 +3016,16 @@ export async function getGameSummary() {
   };
 }
 
-export async function getEarnedBadges({ pageSize = 100 } = {}) {
+export async function getEarnedBadges({ pageSize = 100, expectedUserId = '' } = {}) {
   if (isLocalDemoMode()) {
-    return normalizeEarnedBadges(readMockUserValue('dominion:badges', []).map(mapBadge).filter(Boolean));
+    const actorId = requireMockRewardActor(expectedUserId);
+    const badges = normalizeEarnedBadges(readMockUserValue('dominion:badges', []).map(mapBadge).filter(Boolean));
+    requireMockRewardActor(actorId);
+    return badges;
   }
 
   const client = requireSupabase();
-  const user = await requireUser();
+  const user = await requireUser(expectedUserId);
   const normalizedPageSize = Math.floor(Math.min(Math.max(Number(pageSize) || 100, 25), 500));
   const badges = [];
   let offset = 0;
@@ -2887,6 +3047,7 @@ export async function getEarnedBadges({ pageSize = 100 } = {}) {
     offset += normalizedPageSize;
   }
 
+  await requireUser(user.id);
   return normalizeEarnedBadges(badges);
 }
 
@@ -2907,17 +3068,18 @@ export async function getLeaderboard({ crewId = null, window = 'week' } = {}) {
   return queryLeaderboard(client, { crewId, window });
 }
 
-export async function getLeaderboardPrestige({ crewId = null, window = 'week' } = {}) {
+export async function getLeaderboardPrestige({ crewId = null, window = 'week', expectedUserId = '' } = {}) {
   const rankingWindow = window === 'challenge' ? 'challenge' : 'week';
   let currentUserId;
   let crews;
 
   if (isLocalDemoMode()) {
-    currentUserId = getMockUserId();
+    await requireHybridPreviewUser(expectedUserId);
+    currentUserId = requireMockRewardActor(expectedUserId);
     crews = await getCrews();
   } else {
     const client = requireSupabase();
-    const user = await requireUser();
+    const user = await requireUser(expectedUserId);
     currentUserId = user.id;
     crews = await queryCrewsForUser(client, user.id);
   }
@@ -2935,6 +3097,13 @@ export async function getLeaderboardPrestige({ crewId = null, window = 'week' } 
   const rankForCurrentUser = (rows) => normalizeLeaderboardRank(
     rows.find((row) => row.userId === currentUserId)?.rank,
   );
+
+  if (isLocalDemoMode()) {
+    await requireHybridPreviewUser(currentUserId);
+    requireMockRewardActor(currentUserId);
+  } else {
+    await requireUser(currentUserId);
+  }
 
   return {
     privateRank: rankForCurrentUser(privateRows),
