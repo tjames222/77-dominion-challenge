@@ -94,6 +94,7 @@ YAML, pull-request logs, seeds, or test fixtures.
 | `STRIPE_MEMBERSHIP_PRICE_ID` | Selects the approved recurring membership price | Billing owner |
 | `CLOUDFLARE_API_TOKEN` | Deploys the verified immutable frontend artifact to the single Pages project | Cloudflare administrator |
 | `CLOUDFLARE_ACCOUNT_ID` | Selects the account that owns the production Pages project | Cloudflare administrator |
+| `PROFILE_PHOTO_WORKER_SECRET` | Authorizes only the unattended expired profile-photo cleanup worker | Security administrator |
 | `INTEGRATION_WORKER_SECRET` | Authorizes the private Cron-to-worker request when integrations are enabled | Integration administrator |
 | `INTEGRATION_CREDENTIAL_KEYS` | Versioned AES-256-GCM key ring for provider credentials when integrations are enabled | Security administrator |
 | `INTEGRATION_OAUTH_STATE_SECRET` | Signs short-lived, one-use provider authorization state | Security administrator |
