@@ -47,6 +47,7 @@ jobs:
       INTEGRATION_OAUTH_STATE_SECRET: ${{ secrets.INTEGRATION_OAUTH_STATE_SECRET }}
       RETIRED_COMMUNITY_WORKER_SECRET: ${{ secrets.RETIRED_COMMUNITY_WORKER_SECRET }}
       RETIRED_COMMUNITY_DR_HMAC_SECRET: ${{ secrets.RETIRED_COMMUNITY_DR_HMAC_SECRET }}
+      PROFILE_PHOTO_WORKER_SECRET: ${{ secrets.PROFILE_PHOTO_WORKER_SECRET }}
       SLACK_CLIENT_ID: ${{ secrets.SLACK_CLIENT_ID }}
       SLACK_CLIENT_SECRET: ${{ secrets.SLACK_CLIENT_SECRET }}
       SLACK_SIGNING_SECRET: ${{ secrets.SLACK_SIGNING_SECRET }}
@@ -80,6 +81,7 @@ jobs:
             STRIPE_SECRET_KEY
             STRIPE_WEBHOOK_SECRET
             STRIPE_MEMBERSHIP_PRICE_ID
+            PROFILE_PHOTO_WORKER_SECRET
             PUBLIC_SITE_URL
             VITE_SUPABASE_URL
             VITE_SUPABASE_PUBLISHABLE_KEY
@@ -137,6 +139,20 @@ jobs:
             "STRIPE_MEMBERSHIP_PRICE_ID=${STRIPE_MEMBERSHIP_PRICE_ID}"
             "PUBLIC_SITE_URL=${PUBLIC_SITE_URL}"
           )
+          if (( ${#PROFILE_PHOTO_WORKER_SECRET} < 32 )); then
+            echo "::error::PROFILE_PHOTO_WORKER_SECRET must contain at least 32 characters."
+            exit 1
+          fi
+          for existing_secret in \
+            "${INTEGRATION_WORKER_SECRET:-}" \
+            "${RETIRED_COMMUNITY_WORKER_SECRET:-}" \
+            "${RETIRED_COMMUNITY_DR_HMAC_SECRET:-}"; do
+            if [[ -n "$existing_secret" && "$PROFILE_PHOTO_WORKER_SECRET" == "$existing_secret" ]]; then
+              echo "::error::PROFILE_PHOTO_WORKER_SECRET must be distinct from every other worker or DR secret."
+              exit 1
+            fi
+          done
+          function_secrets+=("PROFILE_PHOTO_WORKER_SECRET=${PROFILE_PHOTO_WORKER_SECRET}")
           if [[ -n "${PUBLIC_SHARE_URL:-}" ]]; then
             function_secrets+=("PUBLIC_SHARE_URL=${PUBLIC_SHARE_URL}")
           fi
@@ -246,6 +262,8 @@ jobs:
       - name: Deploy retired Community deletion worker
         if: steps.function-secrets.outputs.retention_runtime_enabled == 'true'
         run: supabase functions deploy process-retired-community-deletions --project-ref "$SUPABASE_PROJECT_REF" --no-verify-jwt
+      - name: Deploy profile-photo cleanup worker
+        run: supabase functions deploy process-profile-photo-cleanup --project-ref "$SUPABASE_PROJECT_REF" --no-verify-jwt
       - name: Deploy provider connection functions
         if: steps.function-secrets.outputs.provider_connections_enabled == 'true'
         run: |
@@ -313,6 +331,18 @@ jobs:
               echo "::error::Expected the retired Community worker health check to return 200; received ${retention_status}."
               exit 1
             fi
+          fi
+
+          profile_photo_cleanup_response="${RUNNER_TEMP}/profile-photo-cleanup-health-response.json"
+          profile_photo_cleanup_status="$(curl --silent --show-error --output "$profile_photo_cleanup_response" --write-out '%{http_code}' \
+            --request POST \
+            --header "Content-Type: application/json" \
+            --header "x-dominion-worker-key: ${PROFILE_PHOTO_WORKER_SECRET}" \
+            --data '{"mode":"health"}' \
+            "${VITE_SUPABASE_URL}/functions/v1/process-profile-photo-cleanup")"
+          if [[ "$profile_photo_cleanup_status" != "200" ]]; then
+            echo "::error::Expected the profile-photo cleanup health check to return 200; received ${profile_photo_cleanup_status}."
+            exit 1
           fi
 
           if [[ "${{ steps.function-secrets.outputs.provider_connections_enabled }}" == "true" ]]; then

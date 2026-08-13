@@ -806,11 +806,6 @@ export async function getProfile({ expectedUserId = '' } = {}) {
     ? mapProfile(result.data)
     : await ensureProfile({ expectedUserId: user.id });
   if (profile.userId !== user.id) throw new Error('Unable to verify the profile account.');
-  if (profile.profilePhotoAvailable) {
-    void drainProfilePhotoCleanupQueue({ expectedUserId: user.id }).catch((cleanupError) => {
-      console.warn('Profile-photo cleanup will retry later', cleanupError);
-    });
-  }
   return profile;
 }
 
@@ -1027,49 +1022,11 @@ function isUnavailableProfilePhotoCleanupRpc(error) {
 }
 
 export async function drainProfilePhotoCleanupQueue({ maxBatches = 8, expectedUserId = '' } = {}) {
-  if (isLocalDemoMode()) return { removed: 0 };
-  const client = requireSupabase();
-  await requireUser(expectedUserId);
-  let removed = 0;
-  const failures = [];
-
-  for (let batch = 0; batch < maxBatches; batch += 1) {
-    const { data: jobs, error: claimError } = await client.rpc('claim_profile_photo_cleanup', {
-      target_limit: 20,
-    });
-    if (claimError) {
-      // The frontend-only rollout intentionally precedes the hardening migration.
-      if (isUnavailableProfilePhotoCleanupRpc(claimError)) return { removed, available: false };
-      throw claimError;
-    }
-    if (!jobs?.length) break;
-
-    for (const job of jobs) {
-      const { error: removeError } = await client.storage
-        .from(PROFILE_PHOTO_BUCKET)
-        .remove([job.storage_path]);
-      if (removeError) {
-        failures.push(removeError);
-        continue;
-      }
-      const { data: confirmed, error: confirmError } = await client.rpc('confirm_profile_photo_cleanup', {
-        target_job_id: job.job_id,
-        target_claim_token: job.claim_token,
-      });
-      if (confirmError) failures.push(confirmError);
-      else if (confirmed !== true) {
-        failures.push(new Error('The profile-photo cleanup claim expired before confirmation.'));
-      } else removed += 1;
-    }
-    if (failures.length) break;
-  }
-
-  if (failures.length) {
-    const error = new Error('The profile saved, but old picture cleanup will retry on your next profile visit.');
-    error.cause = failures[0];
-    throw error;
-  }
-  return { removed, available: true };
+  void maxBatches;
+  if (!isLocalDemoMode()) await requireUser(expectedUserId);
+  // Cleanup is service-only and scheduled. Browsers never receive a delete
+  // lease or Storage DELETE permission.
+  return { removed: 0, available: true, scheduled: true };
 }
 
 export async function uploadProfilePhoto(preparedPhoto, { expectedUserId = '' } = {}) {

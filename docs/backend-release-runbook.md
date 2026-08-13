@@ -296,6 +296,12 @@ Use the service role to read aggregate admission health:
 select public.profile_photo_registration_health();
 ```
 
+Unattended expiry and deletion are operated separately. Complete the Vault,
+Cron, health-alert, and staging proof in
+[`profile-photo-cleanup-runbook.md`](./profile-photo-cleanup-runbook.md) before
+production promotion; a successful Function deployment without the Cron job is
+not completion evidence for FOU-802.
+
 The result contains thresholds; active-pending, expired-pending, actual-cleanup,
 and effective-cleanup lifecycle and Storage-object counts; oldest timestamps;
 and counts of users at each effective limit. It contains no user IDs, paths, or

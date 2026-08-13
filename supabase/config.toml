@@ -78,6 +78,9 @@ verify_jwt = false
 [functions.process-retired-community-deletions]
 verify_jwt = false
 
+[functions.process-profile-photo-cleanup]
+verify_jwt = false
+
 [functions.retired-community-export]
 verify_jwt = true
 

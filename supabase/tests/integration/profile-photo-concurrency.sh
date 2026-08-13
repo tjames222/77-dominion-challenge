@@ -57,6 +57,25 @@ commit;
 SQL
 }
 
+service_sql() {
+  local sql="$1"
+  psql "$database_url" \
+    --set=ON_ERROR_STOP=1 \
+    --tuples-only \
+    --no-align \
+    --field-separator=' ' \
+    --quiet <<SQL
+begin;
+set local statement_timeout = '10s';
+set local lock_timeout = '5s';
+set local role service_role;
+set local "request.jwt.claim.sub" = '';
+set local "request.jwt.claims" = '{"role":"service_role"}';
+$sql
+commit;
+SQL
+}
+
 create_profile_fixture() {
   local user_id="$1"
   psql "$database_url" --set=ON_ERROR_STOP=1 --quiet <<SQL
@@ -534,11 +553,14 @@ cleanup_path="$(
     "
 )"
 
-read -r cleanup_job_id claimed_cleanup_path cleanup_token <<<"$(
-  authenticated_sql "$commit_user" "
+authenticated_sql "$commit_user" "
 select public.abandon_profile_photo_upload('$cleanup_path');
+" >/dev/null
+
+read -r cleanup_job_id claimed_cleanup_path cleanup_token <<<"$(
+  service_sql "
 select job_id, storage_path, claim_token
-from public.claim_profile_photo_cleanup(20);
+from public.claim_profile_photo_cleanup_service(20);
 " | tail -n 1
 )"
 
@@ -549,12 +571,16 @@ from public.claim_profile_photo_cleanup(20);
 expect_equal "$claimed_cleanup_path" "$cleanup_path" \
   "Cleanup claiming must return the abandoned stale upload path."
 
-authenticated_sql "$commit_user" "
+service_sql "
+select public.verify_profile_photo_cleanup_service(
+  '$cleanup_job_id',
+  '$cleanup_token'
+);
 set local storage.allow_delete_query = 'true';
 delete from storage.objects
 where bucket_id = 'profile-photos'
   and name = '$cleanup_path';
-"
+" >/dev/null
 
 cleanup_object_count="$(
   psql "$database_url" \
@@ -576,10 +602,10 @@ confirm_call=$(cat <<SQL
 begin;
 set local statement_timeout = '10s';
 set local lock_timeout = '5s';
-set local role authenticated;
-set local "request.jwt.claim.sub" = '$commit_user';
-set local "request.jwt.claims" = '{"sub":"$commit_user","role":"authenticated","email":"profile-photo-race@example.test"}';
-select public.confirm_profile_photo_cleanup(
+set local role service_role;
+set local "request.jwt.claim.sub" = '';
+set local "request.jwt.claims" = '{"role":"service_role"}';
+select public.confirm_profile_photo_cleanup_service(
   '$cleanup_job_id',
   '$cleanup_token'
 );
