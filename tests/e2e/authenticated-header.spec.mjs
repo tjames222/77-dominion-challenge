@@ -530,11 +530,16 @@ test('cross-tab preview account switch clears an owned Dominion Night theme for 
   });
   expect(secondUserId).not.toBe(FIXED_USER_ID);
 
+  await expect(page).toHaveURL(/\/billing\.html(?:\?|$)/);
+  await page.waitForLoadState('networkidle');
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
   await expect.poll(() => page.evaluate(() => (
     window.DominionThemeRuntime.isThemeAvailable('dominion-night')
   ))).toBe(false);
-  await expect(page.locator('.global-menu-member')).toContainText('Unentitled Member');
+  await expect.poll(() => page.evaluate(async () => {
+    const api = await import('/src/static/api.js');
+    return (await api.getLocalOrSessionUser())?.name || '';
+  })).toBe('Unentitled Member');
   await accountTab.close();
   app.assertNoRuntimeErrors();
 });
