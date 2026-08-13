@@ -134,11 +134,11 @@ test('Solo first-run training completes all 14 routes without performing product
           `Page ${pageIndex + 1} of ${SOLO_PAGES.length} · Step ${stepIndex + 2} of ${lesson.steps}`,
         );
         if (pageIndex === 9 && stepIndex === 2) {
-          await expect(page.locator('#siteTrainingTitle')).toHaveText('Roster controls appear with a crew');
+          await expect(page.locator('#siteTrainingTitle')).toHaveText('Member controls appear after you join a group');
           await expect(page.locator('#siteTrainingFallback')).toBeVisible();
         }
         if (pageIndex === 9 && stepIndex === 4) {
-          await expect(page.locator('#siteTrainingTitle')).toHaveText('Group integrations are informational here');
+          await expect(page.locator('#siteTrainingTitle')).toHaveText('External updates aren’t available');
           await expect(page.locator('#siteTrainingFallback')).toBeVisible();
         }
         continue;
@@ -176,7 +176,7 @@ test('Solo first-run training completes all 14 routes without performing product
     },
     overall: {
       programId: 'solo-first-run',
-      programVersion: 2,
+      programVersion: 3,
       status: 'completed',
       currentPageId: 'science',
       currentPageIndex: 13,

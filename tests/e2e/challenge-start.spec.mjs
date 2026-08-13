@@ -318,7 +318,7 @@ test('Cloudflare clean Dashboard URL keeps authenticated actions and launches fi
 test('future Solo start schedules once, keeps participation locked, and launches safe training', async ({ page, app }) => {
   await app.open(ROUTE_BY_ID.dashboard, { state: 'notStarted' });
   const dialog = await reviewSoloStart(page, '2026-02-20');
-  await expect(dialog).toContainText('will be scheduled for this date');
+  await expect(dialog).toContainText('will start on this date');
   await dialog.getByRole('button', { name: 'Confirm and start challenge' }).click();
 
   await expect(dialog).toBeHidden();
@@ -336,7 +336,7 @@ test('future Solo start schedules once, keeps participation locked, and launches
 
   await page.locator('[data-training-action="next"]').click();
   await page.locator('[data-training-action="next"]').click();
-  await expect(page.locator('#siteTrainingTitle')).toHaveText('Sharing stays under your control');
+  await expect(page.locator('#siteTrainingTitle')).toHaveText('Sharing isn’t available yet');
   await expect(page.locator('#siteTrainingFallback')).toBeVisible();
 
   const result = await page.evaluate(({ activationKey, requestKey, trainingKey, userId }) => ({

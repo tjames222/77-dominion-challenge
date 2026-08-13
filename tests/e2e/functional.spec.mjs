@@ -218,7 +218,7 @@ test('single-crew setup expands, focuses, and safely cancels', async ({ page, ap
   await openButton.click();
   await expect(openButton).toHaveAttribute('aria-expanded', 'true');
   await expect(form).toBeVisible();
-  await expect(page.getByLabel('Crew name')).toBeFocused();
+  await expect(page.getByLabel('Group name')).toBeFocused();
 
   await page.getByRole('button', { name: 'Cancel' }).click();
   await expect(form).toBeHidden();
@@ -254,7 +254,7 @@ test('non-admin members see Leave Group and retain personal data after confirmat
   await expect(dialog).toContainText('Only your membership will be removed');
   await dialog.getByRole('button', { name: 'Leave group' }).click();
   await expect(page).toHaveURL(/\/community\.html$/);
-  await expect(page.getByRole('button', { name: 'Create a Crew' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Create a Group' })).toBeVisible();
   await expect(page.locator('#communityFeedback')).toContainText('personal Dominion data was preserved');
   const personal = await page.evaluate(() => ({
     user: JSON.parse(localStorage.getItem('dominion:user') || 'null'),
@@ -431,8 +431,8 @@ test('Dashboard streak opens all four current and personal-best metrics', async 
 
   const dialog = page.getByRole('dialog', { name: 'App Streak' });
   await expect(dialog).toBeVisible();
-  await expect(dialog).toContainText('Full standard streak');
-  await expect(dialog).toContainText('Best full standard streak');
+  await expect(dialog).toContainText('Perfect-day streak');
+  await expect(dialog).toContainText('Best perfect-day streak');
   await expect(dialog).toContainText('App streak');
   await expect(dialog).toContainText('Best app streak');
 });
@@ -460,7 +460,7 @@ test('Dashboard reward queue dismisses safely and advances to the earned tier', 
   await expect(badge).toHaveAttribute('data-tier', 'silver');
   await expect(badge).toContainText('Silver Badge Earned');
 
-  await badge.getByRole('heading', { name: 'Two-Week Guard' }).click();
+  await badge.getByRole('heading', { name: 'Two Weeks Complete' }).click();
   await expect(badge).toBeVisible();
   await page.keyboard.press('Escape');
   await expect(badge).toBeHidden();
