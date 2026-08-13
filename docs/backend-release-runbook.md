@@ -30,7 +30,9 @@ pnpm run check:frontend
 Database validation starts from an empty local database, applies every migration,
 loads `supabase/seed.sql`, tests RLS and RPC invariants, exercises concurrent RPC
 requests, and compares the resulting application schema and Storage policies with
-`supabase/schema.sql`:
+`supabase/schema.sql`. `supabase/config.toml` pins the local stack to Postgres 17
+to match the one hosted project; the database runner fails if that major version
+drifts:
 
 ```bash
 pnpm run supabase:start
@@ -206,8 +208,22 @@ supabase db diff --from migrations --to linked --schema public
 supabase db push --linked --dry-run
 ```
 
-Also run these read-only queries in the production Supabase SQL editor. They must
-return all three expected buckets and all eleven named application policies:
+The `db diff --schema public` output is a preliminary signal, not a complete
+checkpoint proof. It does not cover the `private` schema or prove complete grants,
+function attributes and bodies, triggers, constraints, RLS policy expressions,
+or Storage configuration. In the 2026-08-13 audit, a three-schema CLI diff even
+returned empty while direct dumps proved application-owned differences, so an
+empty CLI diff never authorizes repair. Export direct schema dumps and normalized
+catalog manifests for `public`, `private`, and the application-owned parts of
+`storage` from the isolated local checkpoint and production. Compare all of those
+object classes, classifying platform-version noise through an explicit reviewed
+allowlist rather than silently discarding it. Also run these read-only queries in
+the production Supabase SQL editor. Compare the result exactly with the
+version-bounded local checkpoint manifest, including commands, roles, `qual`,
+and `with_check` expressions. For the migration-3 checkpoint below, the only
+expected result is `journal-progress` and its four
+`Users can ... journal photo objects` policies; `profile-photos`,
+`community-post-images`, and their seven policies must be absent:
 
 ```sql
 select id, name, public, file_size_limit, allowed_mime_types
@@ -215,7 +231,7 @@ from storage.buckets
 where id in ('profile-photos', 'community-post-images', 'journal-progress')
 order by id;
 
-select policyname
+select policyname, cmd, roles, qual, with_check
 from pg_policies
 where schemaname = 'storage'
   and tablename = 'objects'
@@ -235,21 +251,150 @@ where schemaname = 'storage'
 order by policyname;
 ```
 
-If—and only if—the public structural diff is empty and the Storage verification
-passes, use `supabase migration repair ... --status applied --linked` to record
-every local historical migration whose effect is already present, without
-executing its SQL. A project with empty history must reconcile the complete local
-history through `20260716163000`; a project with partial history must repair every
-missing version through that floor, not only the baseline and compatibility
-migration. Then rerun `migration list` and the dry-run. The production workflow
-checks every version through that floor and refuses to continue if any local and
-remote history cell does not match.
+Migration repair records history without executing SQL. Never repair a version
+whose complete net effect is not already present, and never infer a repair range
+from a partial catalog diff, object names, or later-looking objects. The audited
+project below has application drift owned by migrations 1 and 2, so repair is not
+the approved reconciliation mechanism.
 
-Record the exact repaired versions, backup identifier, structural-diff and Storage
-query output, project reference, operator, and UTC time in the release record.
-Never use `--include-all` to bypass an older missing migration in production. A
-non-empty or incomplete check requires a reviewed forward-fix or a separately
-approved, backed-up bootstrap plan.
+#### One-time pre-avatar checkpoint bootstrap
+
+The read-only 2026-08-13 production audit found an empty remote migration history
+and the migration-2 gamification table shapes. The two functions touched by
+migration 3 have the expected definitions and `search_path=public`; migration 3
+repeats definitions already present in the checked-in migration 2, so this proves
+its net effect but cannot prove it was historically executed. Definitive
+migration-4 markers are absent: `user_badges.id` and `earned_date` remain,
+`entry_date` is absent, `user_game_stats.created_at` remains, and the point-event
+ledger still uses the earlier per-user idempotency constraint.
+
+The full baseline does **not** currently match migration 1. Direct schema dumps
+found the empty legacy `public.purchases` table, the legacy entitlement-key
+constraint, three application function-body differences, 31 public/Storage RLS
+policy differences, and security-significant privilege differences. Therefore no
+migration version is currently authorized for repair. Because the application
+drift is owned by the checked-in migrations 1 and 2, prefer an actual, normally
+recorded execution of migrations 1–3 over a hand-copied bridge plus repaired
+history—but only after the destructive statements are made fail-closed in a
+separately reviewed change and the exact restored-snapshot rehearsal passes:
+
+1. Pin the release tree, Supabase CLI 2.109.0, and Postgres 17. Keep public signup
+   and all application writes closed.
+2. Create encrypted, off-repository dumps of roles, schema, and data. Include
+   Auth and Storage data and custom DDL, archive the empty
+   `supabase_migrations` schema, download or inventory every deployed Edge
+   Function, and record aggregate row/object counts. Storage blobs are not part
+   of a database dump; stop and export through the Storage API if the fresh
+   object count is nonzero. Checksum every artifact and test-restore the backup
+   locally before continuing.
+3. In an isolated worktree containing only migrations 1–3, pin the exact hosted
+   Postgres image (`17.6.1.141`) and build a clean checkpoint without the
+   final-schema seed:
+
+   ```bash
+   supabase db reset --local --version 20260708155500 --no-seed
+   ```
+
+   Compare its `public` and `private` catalogs, effective grants, functions,
+   triggers, constraints, complete policy inventories, badge/configuration rows,
+   and the application-owned Storage manifest with production. Classify every
+   difference and explicitly allowlist Supabase platform-version noise.
+4. Before production use, update the unrecorded migrations 1–3 in reviewed
+   commits. Migration 1 must abort on any legacy purchase or non-membership
+   entitlement row and use `DROP TABLE ... RESTRICT`. Together migrations 1–2
+   must canonicalize `postgres` default privileges for new public tables,
+   sequences, and functions, then normalize the ACLs for every baseline and
+   gamification table and function whose known legacy privilege would otherwise
+   survive `CREATE IF NOT EXISTS`, `CREATE OR REPLACE`, or a narrower `GRANT`.
+   This includes revoking all `authenticated` table privileges on `profiles`,
+   `challenge_entries`, and `check_ins` before granting the exact target access,
+   plus explicit reviewed runtime grants for `service_role` rather than either
+   preserving or stripping its legacy `ALL` grants wholesale. Classify function,
+   table, sequence, schema, and default privileges with effective catalog checks;
+   preserve explicitly approved platform privileges and fail on every unknown
+   state. Reconcile clean-checkpoint ACLs with audited runtime needs before
+   editing SQL; Edge runtimes require explicit service access to profile and
+   billing data. Remove the top-level `BEGIN`/`COMMIT` wrappers from migrations 2
+   and 3 and add a static gate rejecting transaction-control statements in every
+   unrecorded migration. With the pinned CLI, a migration file's statements and
+   the CLI-appended history write are submitted as one batch; a file-level
+   `COMMIT` can end that transaction before the history write. Prove the exact
+   pinned-runner semantics with a disposable failure injected after the final SQL
+   statement. These edits are allowed only because production has no migration
+   record for any of the three files. Never rewrite a version after it is
+   recorded. Rebuild the clean checkpoints and rerun the complete validation
+   after any hash changes.
+5. Restore the encrypted hosted roles, schema, and data into the isolated exact-
+   version stack. Require its normalized source manifest to match the captured
+   production source manifest. Then rehearse applying these three migrations
+   normally, not through `migration repair`:
+
+   ```text
+   20260707170000
+   20260708154000
+   20260708155500
+   ```
+
+   Rehearse the successful path once against an exact legacy-source copy. Then
+   prove that the hardened migration aborts and rolls back completely for a
+   purchase row, an external dependency, a legacy entitlement, an unknown
+   privilege state, lock contention, and a forced error. Separately prove that
+   the normalized source-manifest gate rejects a changed function, policy,
+   relation, constraint, trigger, or privilege before the migration runner
+   starts. The successful copy must match the clean migration-3 application
+   manifest, including effective privileges, and have exactly these three
+   history records.
+6. Only after the backup, restore, source-manifest comparison, successful
+   rehearsal, failure rehearsals, code review, and release approval all pass,
+   open a production maintenance window. Keep signup and application writes
+   closed, take a fresh encrypted backup, and require the fresh production source
+   manifest and destructive-data preflight to match the approved inputs. From the
+   pinned three-migration worktree, apply migrations 1–3 through the normal linked
+   migration runner. Do not assume the three-version batch is one transaction.
+   The rehearsed wrapper-free runner must leave each version's SQL and history
+   record both present or both absent; verify both after every version and stop on
+   a mismatch. Do not use `migration repair`. Immediately require exactly those
+   three remote history records and the complete migration-3 application
+   manifest; stop on any unexplained difference.
+7. Create a separate, hashed worktree containing exactly migrations 1–13. Its
+   linked dry run must list exactly the following ten pending versions. Rehearse
+   the same push against the verified local restore. Before either push, remove
+   top-level transaction controls from every still-unrecorded migration in this
+   range, pass the static gate, and repeat the pinned-runner failure proof. Then
+   apply those ten migrations normally and verify SQL effects and history after
+   every version:
+
+   ```text
+   20260708160000
+   20260709163000
+   20260710120000
+   20260710123000
+   20260713120000
+   20260714120000
+   20260715190000
+   20260716061500
+   20260716153000
+   20260716163000
+   ```
+
+8. Return to the full release tree. `migration list` must show matching local and
+   remote versions 1–13, and the full linked dry run must list exactly 39 pending
+   migrations, versions 14–52. No production release may run until every pending
+   file passes the transaction-control gate and the exact release tree passes the
+   pinned-runner failure proof. Require the complete normalized migration-13
+   application manifest—including effective and default privileges—to match its
+   clean exact-version checkpoint. Repeat the Storage query above against that
+   checkpoint and production; both must now return all three buckets and all
+   eleven policies with identical definitions. This satisfies the workflow's
+   historical gate; it does not authorize the production release by itself.
+
+Record the exact applied versions, file hashes, backup and restore
+evidence, comparison output, Storage manifest, project reference, operator,
+approver, and UTC time in the release record. Never reset the hosted project,
+use `--include-all`, mark a missing effect applied, manually execute migration
+SQL outside the approved three-version runner, or push the full 52-file tree
+before the checkpoint passes. If an applied migration later fails, stop and use
+a reviewed forward fix; do not rewrite it or mark it reverted.
 
 ### FOU-759 two-stage avatar and journal cutover
 

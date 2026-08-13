@@ -29,6 +29,11 @@ const activationMigrationPath = path.join(
   "migrations",
   "20260804200019_challenge_activation_lifecycle.sql",
 );
+const supabaseConfigPath = path.join(
+  repositoryRoot,
+  "supabase",
+  "config.toml",
+);
 
 const fakeCliSource = `#!/usr/bin/env bash
 set -euo pipefail
@@ -145,6 +150,13 @@ async function runFixture(mode) {
 }
 
 test("the database inventory and latest lifecycle foundations stay complete", async () => {
+  const supabaseConfig = await readFile(supabaseConfigPath, "utf8");
+  assert.match(
+    supabaseConfig,
+    /\[db\][\s\S]*?major_version\s*=\s*17(?:\s|$)/,
+    "the local database major version must match the production Postgres 17 project",
+  );
+
   const inventory = await currentDatabaseInventory();
   assert.equal(inventory.length, 31);
   assert.ok(inventory.includes("095_profile_photo_registration_limits.sql"));
