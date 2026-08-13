@@ -111,6 +111,15 @@ import {
   reconcileSiteTrainingContentVersion,
   siteTrainingReadError,
 } from './site-training-state.mjs';
+import { passwordRecoveryRedirectUrl } from './account-recovery.mjs';
+import {
+  ACTIVE_ACCOUNT_REQUEST_STATUSES,
+  assertAccountRequestType,
+  isActiveAccountRequest,
+  isActiveAccountRequestConflict,
+  normalizeAccountLifecycleRequest,
+  normalizeAccountLifecycleRequests,
+} from './account-lifecycle.mjs';
 
 const SUPABASE_URL = (import.meta.env.VITE_SUPABASE_URL || '').replace(/\/$/, '');
 const SUPABASE_ORIGIN = (() => {
@@ -178,6 +187,7 @@ const MOCK_CHALLENGE_THRESHOLDS_VERSION_KEY = 'dominion:mockChallengeThresholdsV
 const MOCK_OUTBOUND_CONSENT_KEY = 'dominion:mockOutboundConsent';
 const MOCK_SHARING_REWARD_KEY = 'dominion:mockSharingReward';
 const MOCK_THEME_PREFERENCES_KEY = 'dominion:mockThemePreferences';
+const MOCK_ACCOUNT_LIFECYCLE_REQUESTS_KEY = 'dominion:mockAccountLifecycleRequests';
 const MOCK_CHALLENGE_THRESHOLDS_VERSION = 3;
 const MOCK_MEDIA_DB_NAME = 'dominion-preview-media';
 const MOCK_MEDIA_STORE_NAME = 'community-post-images';
@@ -652,6 +662,150 @@ export async function signInWithPassword({ email, password }) {
   if (data.session?.access_token && hasSupabaseAuth()) await ensureProfile();
 
   return { session: data.session, user: data.user };
+}
+
+export async function requestPasswordRecovery(email) {
+  const normalizedEmail = String(email || '').trim();
+  if (!normalizedEmail) throw new TypeError('Enter your email address.');
+
+  if (isLocalDemoMode() && !usesSupabaseAuthentication()) {
+    return { requested: true, preview: true };
+  }
+
+  const client = requireSupabaseAuthentication();
+  const redirectTo = passwordRecoveryRedirectUrl(window.location);
+  const { error } = await client.auth.resetPasswordForEmail(normalizedEmail, { redirectTo });
+  if (error) throw error;
+  return { requested: true, preview: false };
+}
+
+export async function completePasswordRecovery(password) {
+  const value = String(password || '');
+  if (!value) throw new TypeError('Enter a new password.');
+
+  const client = requireSupabaseAuthentication();
+  const { data, error } = await client.auth.updateUser({ password: value });
+  if (error) throw error;
+
+  // A successful password update is final. Revoke the recovery session so a
+  // refreshed or replayed browser page cannot make another account mutation.
+  try {
+    // Supabase's default sign-out scope is global, which revokes every refresh
+    // token for the account after a recovery password change. If the remote
+    // revocation request fails, still remove this browser's recovery session.
+    const { error: globalSignOutError } = await client.auth.signOut();
+    if (globalSignOutError) {
+      const { error: localSignOutError } = await client.auth.signOut({ scope: 'local' });
+      if (localSignOutError) throw localSignOutError;
+      console.warn(
+        'Password changed and the local recovery session ended, but global session revocation could not be confirmed.',
+        globalSignOutError,
+      );
+    }
+  } catch (signOutError) {
+    console.warn('Password changed, but session revocation could not be confirmed.', signOutError);
+  }
+  clearLocalAuthenticatedIdentity();
+  if (typeof localStorage !== 'undefined') {
+    localStorage.removeItem('dominion:user');
+    localStorage.removeItem(MOCK_USER_ID_KEY);
+  }
+
+  return { user: data.user, completed: true };
+}
+
+const ACCOUNT_REQUEST_COLUMNS = [
+  'id',
+  'user_id',
+  'request_type',
+  'status',
+  'requested_at',
+  'updated_at',
+  'resolved_at',
+  'operator_note',
+].join(', ');
+
+const activeMockAccountRequest = (requests, userId, requestType) => requests.find((request) => (
+  request.userId === userId
+    && request.requestType === requestType
+    && isActiveAccountRequest(request)
+));
+
+export async function getAccountLifecycleRequests({ expectedUserId = '' } = {}) {
+  if (isLocalDemoMode()) {
+    await requireHybridPreviewUser(expectedUserId);
+    const userId = getMockUserId();
+    if (expectedUserId && userId !== expectedUserId) {
+      throw new Error('The signed-in account changed. Try again.');
+    }
+    return normalizeAccountLifecycleRequests(
+      readJson(MOCK_ACCOUNT_LIFECYCLE_REQUESTS_KEY, {})[userId],
+    );
+  }
+
+  const client = requireSupabase();
+  const user = await requireUser(expectedUserId);
+  const { data, error } = await client
+    .from('account_lifecycle_requests')
+    .select(ACCOUNT_REQUEST_COLUMNS)
+    .eq('user_id', user.id)
+    .order('requested_at', { ascending: false })
+    .order('id', { ascending: false });
+  if (error) throw error;
+  return normalizeAccountLifecycleRequests(data);
+}
+
+export async function createAccountLifecycleRequest({ requestType, expectedUserId = '' }) {
+  const normalizedType = assertAccountRequestType(requestType);
+
+  if (isLocalDemoMode()) {
+    await requireHybridPreviewUser(expectedUserId);
+    const userId = getMockUserId();
+    if (expectedUserId && userId !== expectedUserId) {
+      throw new Error('The signed-in account changed. Try again.');
+    }
+    const stored = readJson(MOCK_ACCOUNT_LIFECYCLE_REQUESTS_KEY, {});
+    const requests = normalizeAccountLifecycleRequests(stored[userId]);
+    const existing = activeMockAccountRequest(requests, userId, normalizedType);
+    if (existing) return { request: existing, reused: true };
+
+    const now = new Date().toISOString();
+    const request = normalizeAccountLifecycleRequest({
+      id: randomId('account_request'),
+      user_id: userId,
+      request_type: normalizedType,
+      status: 'requested',
+      requested_at: now,
+      updated_at: now,
+    });
+    stored[userId] = [request, ...requests];
+    writeJson(MOCK_ACCOUNT_LIFECYCLE_REQUESTS_KEY, stored);
+    return { request, reused: false };
+  }
+
+  const client = requireSupabase();
+  const user = await requireUser(expectedUserId);
+  const { data, error } = await client
+    .from('account_lifecycle_requests')
+    .insert({ user_id: user.id, request_type: normalizedType })
+    .select(ACCOUNT_REQUEST_COLUMNS)
+    .single();
+  if (!error) return { request: normalizeAccountLifecycleRequest(data), reused: false };
+  if (!isActiveAccountRequestConflict(error)) throw error;
+
+  const { data: existing, error: lookupError } = await client
+    .from('account_lifecycle_requests')
+    .select(ACCOUNT_REQUEST_COLUMNS)
+    .eq('user_id', user.id)
+    .eq('request_type', normalizedType)
+    .in('status', ACTIVE_ACCOUNT_REQUEST_STATUSES)
+    .order('requested_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (lookupError) throw lookupError;
+  const request = normalizeAccountLifecycleRequest(existing);
+  if (!request) throw error;
+  return { request, reused: true };
 }
 
 const mapProfile = (profile) => profile ? ({

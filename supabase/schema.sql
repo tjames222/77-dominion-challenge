@@ -13892,3 +13892,4 @@ revoke execute on function public.grant_sharing_reward_after_invite_redemption()
 \ir migrations/20260811130000_publish_member_navigation_training_v2.sql
 \ir migrations/20260813120000_operate_profile_photo_cleanup.sql
 \ir migrations/20260813162042_allow_multiple_daily_journal_entries.sql
+\ir migrations/20260813163428_add_account_lifecycle_requests.sql

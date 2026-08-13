@@ -291,6 +291,12 @@ async function buildMenu() {
     <nav class="global-menu-links" aria-label="Global navigation" data-training-target="global-navigation">
       ${links.map(([label, href]) => `<a href="${href}">${label}</a>`).join('')}
     </nav>
+    <nav class="global-menu-policy-links" aria-label="Policies and support">
+      <a href="./privacy.html">Privacy</a>
+      <a href="./terms.html">Terms</a>
+      <a href="./cancellation-refunds.html">Cancellation &amp; Refunds</a>
+      <a href="./support.html">Support</a>
+    </nav>
     ${isLoggedIn ? `
       <section class="global-menu-training-section" aria-label="Training" hidden>
         <p class="eyebrow">Training</p>

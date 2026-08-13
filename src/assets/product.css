@@ -3657,6 +3657,120 @@ body.challenge-finished .reward-backdrop {
 }
 .auth-note { color: var(--text-muted); text-align: center; }
 .auth-note a { color: var(--accent-strong); font-weight: 900; }
+.auth-legal-note {
+  margin: 14px 0 0;
+  color: var(--text-muted);
+  font-size: .82rem;
+  line-height: 1.5;
+  text-align: center;
+}
+.auth-legal-note a,
+.policy-link-row a,
+.legal-content a,
+.support-options a {
+  color: var(--accent-strong);
+  font-weight: 900;
+}
+.auth-complete { margin-top: 18px; }
+.auth-complete .primary { width: 100%; }
+.legal-shell {
+  display: grid;
+  gap: clamp(24px, 5vw, 44px);
+  width: min(100%, 880px);
+}
+.legal-hero,
+.legal-content {
+  display: grid;
+  gap: 14px;
+}
+.legal-hero { padding-block: clamp(12px, 3vw, 24px); }
+.legal-hero h1 {
+  max-width: 17ch;
+  font-size: clamp(2.25rem, 8vw, 4.5rem);
+  line-height: .95;
+}
+.legal-content { padding: clamp(22px, 5vw, 36px); }
+.legal-content h2:not(:first-child) { margin-top: 18px; }
+.legal-content p,
+.support-options p {
+  margin: 0;
+  color: var(--text-muted);
+  line-height: 1.65;
+}
+.support-options {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr));
+  gap: 14px;
+  padding: clamp(18px, 4vw, 28px);
+}
+.support-options article {
+  display: grid;
+  align-content: start;
+  gap: 13px;
+  padding: 18px;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  background: color-mix(in srgb, var(--surface-elevated) 76%, transparent);
+}
+.support-options .secondary-button {
+  width: 100%;
+  margin-top: auto;
+}
+.policy-link-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 18px;
+  align-items: center;
+}
+.policy-link-row a {
+  min-height: 44px;
+  display: inline-flex;
+  align-items: center;
+}
+.billing-policy-card,
+.membership-policy-links,
+.account-data-card {
+  display: grid;
+  gap: 16px;
+}
+.membership-policy-links { align-items: center; }
+.membership-policy-links p {
+  margin: 0;
+  color: var(--text-muted);
+  line-height: 1.5;
+}
+.account-request-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 260px), 1fr));
+  gap: 14px;
+}
+.account-request-grid article {
+  display: grid;
+  align-content: start;
+  gap: 12px;
+  padding: 18px;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  background: color-mix(in srgb, var(--surface-elevated) 72%, transparent);
+}
+.account-request-grid article > p {
+  margin: 0;
+  color: var(--text-muted);
+  line-height: 1.5;
+}
+.account-request-grid button {
+  width: 100%;
+  margin-top: auto;
+}
+.account-request-status {
+  min-height: 2.8em;
+  color: var(--accent-strong) !important;
+  font-size: .82rem;
+  font-weight: 850;
+}
+.account-deletion-option {
+  border-color: color-mix(in srgb, var(--danger) 40%, var(--border)) !important;
+}
 .compact-hero h1 { font-size: 2.25rem; }
 @media (min-width: 560px) {
   .challenge-start-gate {
@@ -3798,6 +3912,9 @@ body.challenge-finished .reward-backdrop {
   }
   .membership-final {
     grid-template-columns: 1fr auto;
+  }
+  .membership-policy-links {
+    grid-template-columns: minmax(0, 1fr) auto;
   }
   .membership-hero h1 {
     font-size: 4.4rem;

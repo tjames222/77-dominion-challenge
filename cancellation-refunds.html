@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#0e1116" />
+    <script vite-ignore src="./theme-bootstrap.js" data-enable-dominion-night="false"></script>
+    <title>Cancellation and Refunds | Dominion</title>
+    <link rel="stylesheet" href="./src/assets/styles.css" />
+    <link rel="stylesheet" href="./src/assets/product.css" />
+    <link rel="stylesheet" href="./src/assets/dialog.css" />
+    <link rel="stylesheet" href="./src/assets/menu.css" />
+    <link rel="stylesheet" href="./src/assets/dominion-night.css" />
+  </head>
+  <body>
+    <!-- FOU-761 release gate: owner/legal counsel must approve this behavior-based draft before production launch. -->
+    <main class="app-shell legal-shell">
+      <header class="topbar"><a class="back-link" href="./membership.html">Membership</a></header>
+      <section class="legal-hero reveal is-visible" data-section-surface="plain">
+        <p class="eyebrow">Billing Policy</p>
+        <h1>Cancellation and refunds.</h1>
+        <p class="lead">Last updated August 13, 2026. Here is what happens when a Dominion membership is canceled.</p>
+      </section>
+      <section class="card legal-content reveal" data-section-surface="accent">
+        <h2>Cancel anytime</h2>
+        <p>Open <a href="./billing.html">Billing</a> while signed in and choose Cancel membership. Dominion asks for confirmation before sending the cancellation to Stripe.</p>
+        <p>Under the current product flow, a confirmed cancellation ends the Stripe subscription and removes paid Dominion access immediately. Your account remains available for login, but member-only challenge pages stay locked unless membership is activated again.</p>
+
+        <h2>Refunds</h2>
+        <p>Membership charges are generally nonrefundable once processed, except where required by law. If you believe a charge was duplicated, unauthorized, or caused by a technical error, contact Support promptly so it can be reviewed. A request does not guarantee a refund.</p>
+
+        <h2>Account data</h2>
+        <p>Canceling membership does not delete your profile, journal, progress, group membership, or account. Signed-in members can separately request a data export or account deletion from <a href="./profile.html#account-data">Profile</a>.</p>
+      </section>
+      <section class="legal-content reveal" data-section-surface="plain">
+        <h2>Need help?</h2>
+        <p>Visit <a href="./support.html">Support</a> for billing help. Include only the email on your Dominion account and a short description; never send full payment-card details.</p>
+      </section>
+    </main>
+    <script type="module" src="./src/static/menu.js"></script>
+    <script type="module" src="./src/static/legal.js"></script>
+  </body>
+</html>

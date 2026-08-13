@@ -1,5 +1,7 @@
 import { initReveal } from './reveal';
 import {
+  createAccountLifecycleRequest,
+  getAccountLifecycleRequests,
   getBillingState,
   getCrews,
   getLocalOrSessionUser,
@@ -16,6 +18,12 @@ import {
   updateProfile,
   updateOutboundUpdateConsent,
 } from './api';
+import {
+  ACCOUNT_REQUEST_TYPES,
+  accountRequestStatusLabel,
+  isActiveAccountRequest,
+  latestAccountRequestsByType,
+} from './account-lifecycle.mjs';
 import { prepareProfilePhoto } from './profile-photo.mjs';
 import {
   PREVIEW_CHALLENGE_STORAGE_KEY,
@@ -184,6 +192,11 @@ const profilePreviewTools = document.getElementById('profilePreviewTools');
 const profilePreviewChallengeSwitch = document.getElementById('profilePreviewChallengeSwitch');
 const profilePreviewStatus = document.getElementById('profilePreviewStatus');
 const resetPreviewChallengeButton = document.getElementById('resetPreviewChallengeButton');
+const requestDataExportButton = document.getElementById('requestDataExportButton');
+const requestAccountDeletionButton = document.getElementById('requestAccountDeletionButton');
+const dataExportRequestStatus = document.getElementById('dataExportRequestStatus');
+const accountDeletionRequestStatus = document.getElementById('accountDeletionRequestStatus');
+const accountRequestFeedback = document.getElementById('accountRequestFeedback');
 const integrationConsentCrew = document.getElementById('integrationConsentCrew');
 const integrationConsentNoGroups = document.getElementById('integrationConsentNoGroups');
 const integrationConsentContent = document.getElementById('integrationConsentContent');
@@ -310,6 +323,8 @@ function invalidateProfileOwner(nextOwner = '') {
   renderIntegrationDestinations([]);
   setIntegrationConsentFeedback('Loading update privacy…');
   renderThemeOptions(null, { error: true });
+  renderAccountLifecycleRequests([]);
+  setAccountRequestFeedback('Loading account request status...');
   renderPreviewChallengeTools();
   profileForm?.querySelectorAll('input, button').forEach((control) => { control.disabled = true; });
   integrationConsentForm?.querySelectorAll('input, button').forEach((control) => { control.disabled = true; });
@@ -395,6 +410,99 @@ function setProfileFeedback(message, tone = '') {
   if (!profileFeedback) return;
   profileFeedback.textContent = message;
   profileFeedback.classList.toggle('error', tone === 'error');
+}
+
+function formatRequestDate(value) {
+  if (!value) return '';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '';
+  return new Intl.DateTimeFormat('en', {
+    month: 'short', day: 'numeric', year: 'numeric',
+  }).format(date);
+}
+
+function setAccountRequestFeedback(message, tone = '') {
+  if (!accountRequestFeedback) return;
+  accountRequestFeedback.textContent = message;
+  accountRequestFeedback.classList.toggle('error', tone === 'error');
+}
+
+function renderAccountRequestStatus(element, request, emptyLabel) {
+  if (!element) return;
+  if (!request) {
+    element.textContent = emptyLabel;
+    return;
+  }
+  const date = formatRequestDate(request.requestedAt);
+  const note = request.operatorNote ? ` ${request.operatorNote}` : '';
+  element.textContent = `${accountRequestStatusLabel(request.status)}${date ? ` · ${date}` : ''}.${note}`;
+}
+
+function renderAccountLifecycleRequests(requests) {
+  const latest = latestAccountRequestsByType(requests);
+  const exportRequest = latest.get(ACCOUNT_REQUEST_TYPES.DATA_EXPORT);
+  const deletionRequest = latest.get(ACCOUNT_REQUEST_TYPES.ACCOUNT_DELETION);
+  renderAccountRequestStatus(dataExportRequestStatus, exportRequest, 'No export request yet.');
+  renderAccountRequestStatus(accountDeletionRequestStatus, deletionRequest, 'No deletion request yet.');
+  if (requestDataExportButton) {
+    requestDataExportButton.disabled = !captureProfileOwner() || isActiveAccountRequest(exportRequest);
+    requestDataExportButton.textContent = isActiveAccountRequest(exportRequest)
+      ? 'Export request active'
+      : 'Request data export';
+  }
+  if (requestAccountDeletionButton) {
+    requestAccountDeletionButton.disabled = !captureProfileOwner() || isActiveAccountRequest(deletionRequest);
+    requestAccountDeletionButton.textContent = isActiveAccountRequest(deletionRequest)
+      ? 'Deletion request active'
+      : 'Request account deletion';
+  }
+}
+
+async function hydrateAccountLifecycleRequests(owner = captureProfileOwner()) {
+  if (!owner) return;
+  try {
+    const requests = await getAccountLifecycleRequests({ expectedUserId: owner.userId });
+    if (!isCurrentProfileOwner(owner)) return;
+    renderAccountLifecycleRequests(requests);
+    setAccountRequestFeedback('');
+  } catch (error) {
+    if (!isCurrentProfileOwner(owner)) return;
+    console.warn('Unable to load account lifecycle requests', error);
+    renderAccountLifecycleRequests([]);
+    setAccountRequestFeedback('Unable to load account request status right now.', 'error');
+  }
+}
+
+async function submitAccountLifecycleRequest(requestType, button) {
+  const owner = captureProfileOwner();
+  if (!owner || !button) return;
+  const deletion = requestType === ACCOUNT_REQUEST_TYPES.ACCOUNT_DELETION;
+  if (deletion && !window.confirm(
+    'Request permanent account deletion? This does not cancel billing by itself. The request will be tracked and reviewed before deletion is fulfilled.',
+  )) return;
+
+  const idleLabel = button.textContent;
+  button.disabled = true;
+  button.textContent = 'Sending...';
+  setAccountRequestFeedback(deletion ? 'Sending account deletion request...' : 'Sending data export request...');
+  try {
+    const result = await createAccountLifecycleRequest({
+      requestType,
+      expectedUserId: owner.userId,
+    });
+    if (!isCurrentProfileOwner(owner)) return;
+    await hydrateAccountLifecycleRequests(owner);
+    if (!isCurrentProfileOwner(owner)) return;
+    setAccountRequestFeedback(result.reused
+      ? 'That request is already active. Its current status is shown above.'
+      : 'Request received. Return here to check its status.');
+  } catch (error) {
+    if (!isCurrentProfileOwner(owner)) return;
+    console.warn('Unable to submit account lifecycle request', error);
+    setAccountRequestFeedback(error?.message || 'Unable to send that request right now.', 'error');
+    button.disabled = false;
+    button.textContent = idleLabel;
+  }
 }
 
 function setProfileFormBusy(isBusy, label = 'Save profile') {
@@ -805,6 +913,17 @@ integrationConsentForm?.addEventListener('submit', async (event) => {
   }
 });
 
+requestDataExportButton?.addEventListener('click', () => {
+  void submitAccountLifecycleRequest(ACCOUNT_REQUEST_TYPES.DATA_EXPORT, requestDataExportButton);
+});
+
+requestAccountDeletionButton?.addEventListener('click', () => {
+  void submitAccountLifecycleRequest(
+    ACCOUNT_REQUEST_TYPES.ACCOUNT_DELETION,
+    requestAccountDeletionButton,
+  );
+});
+
 window.addEventListener('storage', (event) => {
   if (localPreviewMode && event.key === 'dominion:user') {
     invalidateProfileOwner('');
@@ -831,8 +950,11 @@ async function hydratePage(expectedOwnerId = observedProfileOwner) {
   const authenticated = await hydrateProfile(expectedOwnerId);
   const owner = captureProfileOwner();
   const themeHydration = hydrateThemeOptions(owner);
+  const accountRequestHydration = authenticated && owner
+    ? hydrateAccountLifecycleRequests(owner)
+    : Promise.resolve();
   if (authenticated && owner) await hydrateIntegrationConsent(owner);
-  await themeHydration;
+  await Promise.all([themeHydration, accountRequestHydration]);
 }
 
 async function bootProfilePage() {

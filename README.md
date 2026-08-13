@@ -20,6 +20,8 @@ The deployed frontend is a Vite multi-page application (MPA). It has no client-s
 | `membership.html` | Membership offer | `src/static/membership.js` |
 | `login.html` | Sign in | `src/static/auth.js` |
 | `register.html` | Registration | `src/static/auth.js` |
+| `forgot-password.html` | Password reset request | `src/static/password-recovery.js` |
+| `reset-password.html` | Password recovery completion | `src/static/password-recovery.js` |
 | `invite.html` | Private-group invitation confirmation | `src/static/invite.js` |
 | `billing.html` | Subscription management | `src/static/billing.js` |
 | `dashboard.html` | Daily challenge dashboard | `src/static/dashboard.js` |
@@ -36,6 +38,10 @@ The deployed frontend is a Vite multi-page application (MPA). It has no client-s
 | `private-journal.html` | Private journal | `src/static/private-journal.js` |
 | `profile.html` | Account and appearance settings | `src/static/profile.js` |
 | `science.html` | Challenge background and sources | `src/static/science.js` |
+| `privacy.html` | Privacy policy | `src/static/legal.js` |
+| `terms.html` | Terms of use | `src/static/legal.js` |
+| `cancellation-refunds.html` | Cancellation and refund policy | `src/static/legal.js` |
+| `support.html` | Support and contact paths | `src/static/legal.js` |
 
 Shared browser modules live in `src/static/`. Shared visual tokens and page styles live in `src/assets/`. `src/static/api.js` owns the browser-facing Supabase and preview-mock boundary. Supabase migrations, the cumulative schema, and Edge Functions live under `supabase/` and are deployed separately from the Vite bundle. The retired `today-actions.html` URL is served as a static redirect from `public/` and is intentionally excluded from the active Vite entry-point map.
 
@@ -67,6 +73,12 @@ Slack and Discord connection controls fail closed unless `VITE_ENABLE_GROUP_INTE
    - `http://127.0.0.1:4173/**`
 
 The frontend uses Supabase Auth for login/register and writes directly to Supabase Postgres with Row Level Security policies.
+
+Password recovery always returns to the fixed same-origin `reset-password.html`
+route. Add that production and preview path to the Auth redirect allowlist, verify
+custom SMTP delivery, and test expired, reused, and valid recovery links before
+launch. Recovery completion revokes the recovery session and requires a fresh
+login.
 
 ### Storage
 
@@ -137,6 +149,7 @@ Stripe powers checkout, payment method updates, and membership cancellation. Sup
 
 - [Retired Community social-data retention](docs/community-social-data-retention.md)
 - [Governed retired Community deletion runbook](docs/retired-community-deletion-runbook.md)
+- [Account lifecycle and policy release gate](docs/account-lifecycle-release.md)
 
 ## Validation and build
 

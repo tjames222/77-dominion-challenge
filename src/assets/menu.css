@@ -515,6 +515,24 @@ body {
   font-size: 1.35rem;
   line-height: 1;
 }
+.global-menu-policy-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 14px;
+  padding: 4px;
+}
+.global-menu-policy-links a {
+  min-height: 44px;
+  display: inline-flex;
+  align-items: center;
+  color: var(--text-muted);
+  font-size: .78rem;
+  font-weight: 850;
+  line-height: 1.25;
+}
+.global-menu-policy-links a:hover {
+  color: var(--accent-strong);
+}
 .global-menu-logout {
   width: 100%;
   justify-content: center;
