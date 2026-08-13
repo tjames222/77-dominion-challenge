@@ -17,8 +17,7 @@ on:
 
 permissions:
   contents: read
-  pages: write
-  id-token: write
+  deployments: write
 
 concurrency:
   group: production-release
@@ -61,6 +60,8 @@ jobs:
       CLOUDFLARE_PAGES_PROJECT_HOST: ${{ vars.CLOUDFLARE_PAGES_PROJECT_HOST }}
       VITE_SUPABASE_URL: ${{ vars.VITE_SUPABASE_URL }}
       VITE_SUPABASE_PUBLISHABLE_KEY: ${{ vars.VITE_SUPABASE_PUBLISHABLE_KEY }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
       SUPABASE_TELEMETRY_DISABLED: "1"
     steps:
       - name: Checkout
@@ -82,6 +83,8 @@ jobs:
             PUBLIC_SITE_URL
             VITE_SUPABASE_URL
             VITE_SUPABASE_PUBLISHABLE_KEY
+            CLOUDFLARE_API_TOKEN
+            CLOUDFLARE_ACCOUNT_ID
           )
           for name in "${required[@]}"; do
             if [[ -z "${!name:-}" ]]; then
@@ -347,6 +350,7 @@ jobs:
       VITE_SUPABASE_URL: ${{ vars.VITE_SUPABASE_URL }}
       VITE_SUPABASE_PUBLISHABLE_KEY: ${{ vars.VITE_SUPABASE_PUBLISHABLE_KEY }}
       VITE_ENABLE_MOCKS: "false"
+      VITE_ENABLE_GROUP_INTEGRATIONS: "false"
       VITE_YOUVERSION_VERSE_URL: ${{ vars.VITE_YOUVERSION_VERSE_URL }}
       VITE_YOUVERSION_APP_URL: ${{ vars.VITE_YOUVERSION_APP_URL }}
       VITE_YOUVERSION_PRAYER_URL: ${{ vars.VITE_YOUVERSION_PRAYER_URL }}
@@ -378,23 +382,51 @@ jobs:
             echo "::error::Production builds must disable mock data."
             exit 1
           fi
+          if [[ "${VITE_ENABLE_GROUP_INTEGRATIONS}" != "false" ]]; then
+            echo "::error::Slack and Discord must remain safely off until FOU-764's enabled-path approval is complete."
+            exit 1
+          fi
       - name: Build production frontend
         run: pnpm run build
-      - name: Setup Pages
-        uses: actions/configure-pages@v5
       - name: Upload frontend artifact
-        uses: actions/upload-pages-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
+          name: production-frontend-${{ github.sha }}
           path: ./dist
+          if-no-files-found: error
+          retention-days: 7
 
   deploy:
-    name: Deploy frontend
+    name: Deploy frontend to Cloudflare Pages
     needs: frontend
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
+    environment: production
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
-      - name: Deploy to GitHub Pages
+      - name: Download immutable frontend artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: production-frontend-${{ github.sha }}
+          path: ./dist
+      - name: Deploy to Cloudflare Pages
         id: deployment
-        uses: actions/deploy-pages@v4
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: >-
+            pages deploy dist
+            --project-name=77-dominion-challenge
+            --branch=main
+            --commit-hash=${{ github.sha }}
+          gitHubToken: ${{ secrets.GITHUB_TOKEN }}
+      - name: Record production deployment
+        env:
+          DEPLOYMENT_URL: ${{ steps.deployment.outputs.deployment-url }}
+        run: |
+          if [[ -z "${DEPLOYMENT_URL:-}" ]]; then
+            echo "::error::Cloudflare did not return a deployment URL."
+            exit 1
+          fi
+          echo "Cloudflare deployment: ${DEPLOYMENT_URL}" >> "$GITHUB_STEP_SUMMARY"
+          echo "Release commit: ${{ github.sha }}" >> "$GITHUB_STEP_SUMMARY"

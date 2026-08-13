@@ -92,6 +92,8 @@ YAML, pull-request logs, seeds, or test fixtures.
 | `STRIPE_SECRET_KEY` | Calls Stripe from Edge Functions | Stripe administrator |
 | `STRIPE_WEBHOOK_SECRET` | Verifies Stripe webhook signatures | Stripe administrator |
 | `STRIPE_MEMBERSHIP_PRICE_ID` | Selects the approved recurring membership price | Billing owner |
+| `CLOUDFLARE_API_TOKEN` | Deploys the verified immutable frontend artifact to the single Pages project | Cloudflare administrator |
+| `CLOUDFLARE_ACCOUNT_ID` | Selects the account that owns the production Pages project | Cloudflare administrator |
 | `INTEGRATION_WORKER_SECRET` | Authorizes the private Cron-to-worker request when integrations are enabled | Integration administrator |
 | `INTEGRATION_CREDENTIAL_KEYS` | Versioned AES-256-GCM key ring for provider credentials when integrations are enabled | Security administrator |
 | `INTEGRATION_OAUTH_STATE_SECRET` | Signs short-lived, one-use provider authorization state | Security administrator |
@@ -123,7 +125,8 @@ YAML, pull-request logs, seeds, or test fixtures.
 | `VITE_WALK_ALARM_URL` | Optional | Supported walk-alarm destination |
 
 `VITE_ENABLE_MOCKS` is deliberately hard-coded to `false` by the production
-workflow. Treat any future `VITE_*` release toggle as a build-time feature gate:
+workflow. `VITE_ENABLE_GROUP_INTEGRATIONS` is deliberately hard-coded to `false`
+for the safe-off launch path. Treat any future `VITE_*` release toggle as a build-time feature gate:
 document its safe default here, leave it disabled until its backend is deployed
 and verified, and record who approved enabling it.
 
@@ -166,6 +169,8 @@ Before approving the GitHub `production` environment deployment, confirm:
    test is explicitly approved.
 6. Mock mode is disabled and new frontend feature flags remain at their safe
    default until the backing migration and functions pass verification.
+7. Cloudflare automatic production-branch deployment is disabled. The GitHub
+   workflow is the only process allowed to publish `main` after backend checks.
 
 ### One-time migration-history reconciliation
 
@@ -356,8 +361,9 @@ next stage when one fails:
    before releasing the frontend build. Keep mock mode off and leave new
    customer-facing flags disabled until the remaining checks below pass.
 5. **Build and deploy frontend:** build with production public configuration,
-   upload the immutable Pages artifact, and deploy it only after every backend
-   stage succeeds.
+   upload an immutable workflow artifact, and deploy it to Cloudflare Pages with
+   the least-privilege token only after every backend stage succeeds. GitHub
+   Pages is not a production target.
 
 The workflow is intentionally non-concurrent. Do not cancel a running production
 release while a migration may be in progress.

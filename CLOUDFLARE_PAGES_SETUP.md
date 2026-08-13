@@ -1,6 +1,8 @@
 # Cloudflare Pages Setup
 
-Connect this repo to Cloudflare Pages for the production frontend and develop-branch preview testing.
+Cloudflare Pages is the only frontend host for this app. GitHub Actions owns the
+production release order; the Cloudflare Git integration remains useful for the
+`develop` preview only.
 
 Recommended settings:
 
@@ -29,7 +31,27 @@ Branch workflow:
 - develop = prelaunch dev deployment with real Supabase Auth plus mock membership, community, journal, and other product state
 - feature branches = Cloudflare preview deployments when Pages preview-branch controls allow them
 
-Cloudflare Preview environment variables are shared by `develop` and feature previews. Either configure **Builds & deployments → Preview branch controls** to include only `develop`, or expect feature previews to inherit the same real Supabase Auth tenant. A feature build with no Supabase values intentionally falls back to local-only identities; canonical `develop` fails its build instead.
+## Required production branch control
+
+Before merging the first release to `main`, open **Workers & Pages →
+77-dominion-challenge → Settings → Builds → Branch control** and turn off
+**Enable automatic production branch deployments**. This prevents Cloudflare
+from publishing the frontend as soon as `main` moves, before migrations and Edge
+Functions have passed verification. Keep preview deployment controls limited to
+`develop`.
+
+The protected GitHub `Release production` workflow builds one immutable artifact
+and deploys it to this existing Pages project only after validation, migrations,
+Function deployment, and backend smoke checks succeed. Configure these GitHub
+`production` environment secrets:
+
+- `CLOUDFLARE_API_TOKEN` — least-privilege token allowed to deploy this Pages project
+- `CLOUDFLARE_ACCOUNT_ID` — account that owns the Pages project
+
+Do not re-enable automatic production deployments. A frontend-only rollback is a
+manual dispatch of the protected workflow from a known backend-compatible commit.
+
+Cloudflare Preview environment variables are shared by `develop` and feature previews. Configure **Builds → Branch control → Preview branch** to include only `develop`; otherwise feature previews inherit the same real Supabase Auth tenant. A feature build with no Supabase values intentionally falls back to local-only identities; canonical `develop` fails its build instead.
 
 Supabase Auth must allow both production and preview callbacks:
 
