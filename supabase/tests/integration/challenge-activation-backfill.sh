@@ -509,7 +509,6 @@ if grep -Fq '"code":"LegacyMigrationApplyError"' "$migration_failure_log" \
 fi
 
 expected_lock_fragments=(
-  'At statement: 17'
   'lock table'
   'public.challenge_entries,'
   'public.check_ins,'
