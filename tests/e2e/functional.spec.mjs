@@ -285,20 +285,20 @@ test('Community branded invite and provider actions retain their dedicated flows
   expect(discordBox?.height).toBe(slackBox?.height);
 });
 
-test('Community exposes group settings through an accessible owner gear link', async ({ page, app }) => {
+test('Community exposes group settings through an accessible gear link', async ({ page, app }) => {
   await app.open(ROUTE_BY_ID.community);
   const settings = page.getByRole('link', { name: 'Group settings' });
 
   await expect(settings).toBeVisible();
-  await expect(settings).toHaveAttribute('href', '#crewSettingsCard');
+  await expect(settings).toHaveAttribute('href', './group-settings.html');
   await expect(settings.locator('.icon-settings')).toHaveCount(1);
   const bounds = await settings.boundingBox();
   expect(bounds?.width).toBeGreaterThanOrEqual(44);
   expect(bounds?.height).toBeGreaterThanOrEqual(44);
 
   await settings.click();
-  await expect(page).toHaveURL(/#crewSettingsCard$/);
-  await expect(page.locator('#crewSettingsCard')).toBeFocused();
+  await expect(page).toHaveURL(/\/group-settings\.html$/);
+  await expect(page.locator('#groupSettingsContent')).toBeVisible();
 });
 
 test('Community hides group settings without an active crew', async ({ page, app }) => {
@@ -306,15 +306,14 @@ test('Community hides group settings without an active crew', async ({ page, app
   await expect(page.getByRole('link', { name: 'Group settings' })).toHaveCount(0);
 });
 
-test('Community hides owner-only group settings from ordinary members', async ({ page, app }) => {
+test('Community exposes personal group settings to ordinary members', async ({ page, app }) => {
   await app.open(ROUTE_BY_ID.community, { state: 'communityMember' });
-  await expect(page.getByRole('link', { name: 'Group settings' })).toHaveCount(0);
+  await expect(page.getByRole('link', { name: 'Group settings' })).toBeVisible();
 });
 
 test('Community exposes group settings to group administrators', async ({ page, app }) => {
   await app.open(ROUTE_BY_ID.community, { state: 'communityAdmin' });
   await expect(page.getByRole('link', { name: 'Group settings' })).toBeVisible();
-  await expect(page.locator('#crewSettingsCard')).toBeVisible();
 });
 
 test('login form submits with the keyboard and honors a safe return path', async ({ page, app }) => {

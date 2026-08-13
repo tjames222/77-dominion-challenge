@@ -160,6 +160,16 @@ export const PRODUCTION_ROUTES = Object.freeze([
     surfaces: ['navigation', 'forms', 'actions', 'empty', 'error'],
   },
   {
+    id: 'groupSettings',
+    path: '/group-settings.html',
+    htmlEntry: 'group-settings.html',
+    title: 'Group Settings | Dominion',
+    access: 'member',
+    defaultState: 'member',
+    ready: '#groupSettingsOverviewTitle',
+    surfaces: ['navigation', 'forms', 'actions', 'empty', 'error'],
+  },
+  {
     id: 'privateJournal',
     path: '/private-journal.html',
     htmlEntry: 'private-journal.html',

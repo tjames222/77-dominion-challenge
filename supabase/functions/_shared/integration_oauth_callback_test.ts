@@ -38,7 +38,7 @@ function handler(
         consume_integration_oauth_state: [{
           user_id: "10000000-0000-4000-8000-000000000001",
           crew_id: "20000000-0000-4000-8000-000000000002",
-          return_path: "/community.html",
+          return_path: "/group-settings.html",
         }],
         create_pending_integration_connection:
           "30000000-0000-4000-8000-000000000003",
@@ -82,7 +82,7 @@ Deno.test("successful callback consumes state and stores only encrypted pending 
   assertEquals(response.status, 302);
   const location = new URL(response.headers.get("location") || "");
   assertEquals(location.origin, "https://app.example.com");
-  assertEquals(location.pathname, "/community.html");
+  assertEquals(location.pathname, "/group-settings.html");
   const fragment = new URLSearchParams(location.hash.slice(1));
   assertEquals(
     fragment.get("integration-setup"),

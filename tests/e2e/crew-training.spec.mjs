@@ -128,9 +128,9 @@ test('back, close, skip, resume, finish, and replay preserve non-training state'
     await page.locator('#crewTrainingNext').click();
     await expect(page.locator('#crewTrainingProgress')).toHaveText(`Step ${expectedStep} of 7`);
   }
-  await expect(page.locator('#crewLifecycleCard')).toHaveClass(/crew-training-target/);
+  await expect(page.locator('#crewSettingsButton')).toHaveClass(/crew-training-target/);
   await expect(page.locator('#crewTrainingTitle')).toBeFocused();
-  await expect(page.getByRole('button', { name: 'Delete Crew' })).not.toBeFocused();
+  await expect(page.getByRole('link', { name: 'Group settings' })).not.toBeFocused();
   await page.locator('#crewTrainingNext').click();
   await expect(page.locator('#crewTrainingLayer')).toBeHidden();
   await expect(page.getByRole('button', { name: 'Replay Crew Training' })).toBeVisible();
@@ -183,7 +183,6 @@ test('safe-off training completes in the light theme without provider controls',
   }
   await expect(page.locator('#crewTrainingTitle')).toHaveText('External updates are safely off');
   await expect(page.locator('#crewTrainingCoachmark')).toHaveAttribute('aria-modal', 'true');
-  await expect(page.locator('#crewIntegrationsCard')).toBeHidden();
   await expect(page.getByRole('button', { name: 'Connect Slack' })).toBeHidden();
   await expect(page.getByRole('button', { name: 'Connect Discord' })).toBeHidden();
   assertNoBlockingAxeViolations(await analyzeAccessibility(page));
@@ -207,14 +206,13 @@ test('activating a highlighted control closes training before its action continu
   await expect(page.locator('#crewTrainingLayer')).toBeHidden();
 });
 
-test('starting an unrelated workflow closes a contextual coachmark first', async ({ page, app }) => {
+test('opening group settings closes a contextual coachmark first', async ({ page, app }) => {
   await createCrew(page, app, 'Dialog Ownership Crew');
   await page.locator('#crewTrainingNext').click();
   await expect(page.locator('#copyInviteButton')).toHaveClass(/crew-training-target/);
-  await page.locator('#crewLifecycleButton').click();
-  await expect(page.locator('#crewTrainingLayer')).toBeHidden();
-  await expect(page.getByRole('alertdialog')).toBeVisible();
-  await page.keyboard.press('Escape');
+  await page.locator('#crewSettingsButton').click();
+  await expect(page).toHaveURL(/\/group-settings\.html$/);
+  await expect(page.locator('#groupSettingsContent')).toBeVisible();
 });
 
 test('contextual coachmarks remain onscreen on mobile', async ({ page, app }) => {
@@ -235,9 +233,9 @@ test('contextual coachmarks remain onscreen on mobile', async ({ page, app }) =>
   for (const [step, targetId] of [
     [3, 'crewMembersTitle'],
     [4, 'crewLeaderboardTitle'],
-    [5, 'groupIntegrationsTitle'],
-    [6, 'integrationConnectActions'],
-    [7, 'crewLifecycleCard'],
+    [5, 'crewSettingsButton'],
+    [6, 'crewSettingsButton'],
+    [7, 'crewSettingsButton'],
   ]) {
     await page.locator('#crewTrainingNext').click();
     await expect(page.locator('#crewTrainingProgress')).toHaveText(`Step ${step} of 7`);

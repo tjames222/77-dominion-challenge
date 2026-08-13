@@ -7,6 +7,8 @@ import { groupIntegrationsEnabled } from './group-integration-launch.mjs';
 const html = readFileSync(new URL('../../community.html', import.meta.url), 'utf8');
 const css = readFileSync(new URL('../assets/community.css', import.meta.url), 'utf8');
 const javascript = readFileSync(new URL('./community.js', import.meta.url), 'utf8');
+const settingsHtml = readFileSync(new URL('../../group-settings.html', import.meta.url), 'utf8');
+const settingsJavascript = readFileSync(new URL('./group-settings.js', import.meta.url), 'utf8');
 const inviteDialog = readFileSync(new URL('./crew-invite-dialog.js', import.meta.url), 'utf8');
 const inviteCss = readFileSync(new URL('../assets/crew-invite.css', import.meta.url), 'utf8');
 const envExample = readFileSync(new URL('../../.env.example', import.meta.url), 'utf8');
@@ -34,14 +36,13 @@ describe('branded Community actions', () => {
   });
 
   test('uses recognizable local provider marks and complete lifecycle states', () => {
-    assert.match(html, /provider-mark-slack[\s\S]*?<svg[\s\S]*?Connect Slack/);
-    assert.match(html, /provider-mark-discord[\s\S]*?<svg[\s\S]*?Connect Discord/);
-    assert.match(javascript, /providerMark\(provider\)/);
-    assert.match(javascript, /Test \$\{providerName\}/);
-    assert.match(javascript, /Reconnect \$\{providerName\}/);
-    assert.match(javascript, /provider-disconnect[\s\S]*?Disconnect/);
-    assert.match(javascript, /data-integration-status/);
-    assert.match(javascript, /setAttribute\('aria-busy', 'true'\)/);
+    assert.match(settingsHtml, /provider-mark-slack[\s\S]*?<svg[\s\S]*?Connect Slack/);
+    assert.match(settingsHtml, /provider-mark-discord[\s\S]*?<svg[\s\S]*?Connect Discord/);
+    assert.match(settingsJavascript, /Test \$\{providerName\}/);
+    assert.match(settingsJavascript, /Reconnect \$\{providerName\}/);
+    assert.match(settingsJavascript, /provider-disconnect[\s\S]*?Disconnect/);
+    assert.match(settingsJavascript, /data-integration-status/);
+    assert.match(settingsJavascript, /setAttribute\('aria-busy', 'true'\)/);
     assert.match(css, /\.provider-button\s*\{[\s\S]*?min-height:\s*48px/);
     assert.match(css, /\.provider-button\.provider-secondary\s*\{[\s\S]*?min-height:\s*44px/);
     assert.match(css, /grid-template-columns:\s*repeat\(2, minmax\(0, 1fr\)\)/);
@@ -56,11 +57,11 @@ describe('branded Community actions', () => {
     assert.equal(groupIntegrationsEnabled(' true '), true);
     assert.equal(groupIntegrationsEnabled(true), true);
     assert.match(envExample, /VITE_ENABLE_GROUP_INTEGRATIONS=false/);
-    assert.match(html, /id="crewIntegrationsCard"[^>]+hidden/);
-    assert.match(javascript, /GROUP_INTEGRATIONS_ENABLED = groupIntegrationsEnabled/);
-    assert.match(javascript, /integrationsCard\.hidden = !crew \|\| !GROUP_INTEGRATIONS_ENABLED/);
-    assert.match(javascript, /if \(!GROUP_INTEGRATIONS_ENABLED \|\| !crew\)/);
-    assert.match(javascript, /if \(!GROUP_INTEGRATIONS_ENABLED\) return;[\s\S]*?data-connect-provider/);
-    assert.match(javascript, /window\.history\.replaceState[\s\S]*?if \(!GROUP_INTEGRATIONS_ENABLED\)/);
+    assert.match(settingsHtml, /id="groupIntegrations"[^>]+hidden/);
+    assert.match(settingsJavascript, /GROUP_INTEGRATIONS_ENABLED = groupIntegrationsEnabled/);
+    assert.match(settingsJavascript, /\$\('groupIntegrations'\)\.hidden = !crew \|\| !GROUP_INTEGRATIONS_ENABLED/);
+    assert.match(settingsJavascript, /if \(!GROUP_INTEGRATIONS_ENABLED \|\| !state\.crew\)/);
+    assert.match(settingsJavascript, /if \(!GROUP_INTEGRATIONS_ENABLED\) return;[\s\S]*?data-connect-provider/);
+    assert.match(settingsJavascript, /window\.history\.replaceState[\s\S]*?if \(!GROUP_INTEGRATIONS_ENABLED\)/);
   });
 });

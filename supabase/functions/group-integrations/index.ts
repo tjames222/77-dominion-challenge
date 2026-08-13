@@ -262,7 +262,7 @@ async function beginAuthorization(
     target_crew_id: crewId,
     target_provider: selectedProvider,
     target_nonce_hash: oauthState.nonceHash,
-    target_return_path: "/community.html",
+    target_return_path: "/group-settings.html",
     target_expires_at: oauthState.expiresAt.toISOString(),
   });
   return dependencies.providerAuthorizationUrl(

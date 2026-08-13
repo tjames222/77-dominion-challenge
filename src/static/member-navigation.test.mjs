@@ -7,6 +7,7 @@ const dashboard = read('../../dashboard.html');
 const rewards = read('../../badges-rewards.html');
 const community = read('../../community.html');
 const privateJournal = read('../../private-journal.html');
+const groupSettings = read('../../group-settings.html');
 const communityJs = read('./community.js');
 const privateJournalJs = read('./private-journal.js');
 const productCss = read('../assets/product.css');
@@ -58,12 +59,13 @@ describe('FOU-1455 member destination navigation', () => {
     assert.match(productCss, /@media \(max-width: 640px\)[\s\S]*?\.member-tabs\s*\{[\s\S]*?grid-template-columns:\s*repeat\(2, minmax\(0, 1fr\)\)/);
   });
 
-  test('adds one accessible, role-gated group settings gear linked to the existing settings surface', () => {
-    assert.match(community, /id="crewSettingsButton"[\s\S]*?href="#crewSettingsCard"[\s\S]*?aria-label="Group settings"[\s\S]*?title="Group settings"/);
-    assert.match(community, /id="crewSettingsCard"[\s\S]*?tabindex="-1"[\s\S]*?aria-labelledby="crewSettingsTitle"[^>]*hidden/);
-    assert.match(communityJs, /settingsButton\.hidden = !crew \|\| !isCrewLeader\(\)/);
-    assert.match(communityJs, /\$\('crewSettingsCard'\)\?\.focus\(\{ preventScroll: true \}\)/);
+  test('adds one accessible group settings gear and keeps role-gated controls on its own page', () => {
+    assert.match(community, /id="crewSettingsButton"[\s\S]*?href="\.\/group-settings\.html"[\s\S]*?aria-label="Group settings"[\s\S]*?title="Group settings"/);
+    assert.match(communityJs, /settingsButton\.hidden = !crew/);
+    assert.match(groupSettings, /id="groupSettingsContent"[^>]*hidden/);
+    assert.match(groupSettings, /id="integrationPrivacy"/);
+    assert.match(groupSettings, /id="groupIntegrations"/);
+    assert.match(groupSettings, /id="groupAccess"/);
     assert.match(communityCss, /\.crew-settings-link\s*\{[\s\S]*?min-width:\s*48px;[\s\S]*?min-height:\s*48px/);
-    assert.match(communityCss, /\.group-settings-card:focus-visible/);
   });
 });

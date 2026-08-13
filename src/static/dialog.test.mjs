@@ -22,6 +22,7 @@ const pageNames = [
   'billing.html',
   'bible-reading.html',
   'community.html',
+  'group-settings.html',
   'dashboard.html',
   'evening-prayer.html',
   'index.html',

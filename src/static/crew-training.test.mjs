@@ -24,8 +24,9 @@ test('the creator syllabus has seven stable, ordered steps', () => {
   assert.equal(steps[1].targetId, 'copyInviteButton');
   assert.equal(steps[2].targetId, 'crewMembersTitle');
   assert.equal(steps[3].targetId, 'crewLeaderboardTitle');
-  assert.equal(steps[4].targetId, 'groupIntegrationsTitle');
-  assert.equal(steps[6].targetId, 'crewLifecycleCard');
+  assert.equal(steps[4].targetId, 'crewSettingsButton');
+  assert.equal(steps[5].targetId, 'crewSettingsButton');
+  assert.equal(steps[6].targetId, 'crewSettingsButton');
   assert.match(steps[1].description, /never creates or copies/i);
   assert.match(steps[6].description, /never selects/i);
 });

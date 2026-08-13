@@ -6,6 +6,7 @@ const communityHtml = readFileSync(new URL('../../community.html', import.meta.u
 const billingHtml = readFileSync(new URL('../../billing.html', import.meta.url), 'utf8');
 const communityCss = readFileSync(new URL('../assets/community.css', import.meta.url), 'utf8');
 const communityJs = readFileSync(new URL('./community.js', import.meta.url), 'utf8');
+const groupSettingsHtml = readFileSync(new URL('../../group-settings.html', import.meta.url), 'utf8');
 const apiJs = readFileSync(new URL('./api.js', import.meta.url), 'utf8');
 const retirementMigration = readFileSync(
   new URL('../../supabase/migrations/20260719100000_remove_global_community.sql', import.meta.url),
@@ -39,22 +40,22 @@ describe('private-only Community', () => {
 });
 
 describe('simplified private groups', () => {
-  test('keeps group access, members, leaderboard, integrations, and the Private Journal destination', () => {
+  test('keeps group access, members, leaderboard, and the Private Journal destination', () => {
     for (const id of [
       'crewForm',
       'activeCrewName',
       'copyInviteButton',
       'crewMemberList',
       'crewLeaderboard',
-      'crewIntegrationsCard',
       'crewSettingsButton',
-      'crewSettingsCard',
     ]) {
       assert.match(communityHtml, new RegExp(`id=["']${id}["']`));
     }
     assert.doesNotMatch(communityHtml, /id=["']crewSelect["']/);
-    assert.match(communityHtml, /id="crewSettingsButton"[\s\S]*?href="#crewSettingsCard"[\s\S]*?aria-label="Group settings"/);
-    assert.match(communityHtml, /Use the connected Slack or Discord channel for conversation/);
+    assert.match(communityHtml, /id="crewSettingsButton"[\s\S]*?href="\.\/group-settings\.html"[\s\S]*?aria-label="Group settings"/);
+    assert.match(groupSettingsHtml, /id="groupAccess"/);
+    assert.match(groupSettingsHtml, /id="groupIntegrations"/);
+    assert.match(groupSettingsHtml, /Conversations and replies stay in Slack or Discord/);
   });
 
   test('removes every private social surface and its client state and handlers', () => {

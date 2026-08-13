@@ -2,8 +2,8 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { describe, test } from 'node:test';
 
-const profileHtml = readFileSync(new URL('../../profile.html', import.meta.url), 'utf8');
-const profileJs = readFileSync(new URL('./profile.js', import.meta.url), 'utf8');
+const settingsHtml = readFileSync(new URL('../../group-settings.html', import.meta.url), 'utf8');
+const settingsJs = readFileSync(new URL('./group-settings.js', import.meta.url), 'utf8');
 const apiJs = readFileSync(new URL('./api.js', import.meta.url), 'utf8');
 const migrationSql = readFileSync(
   new URL('../../supabase/migrations/20260720100000_outbound_update_consent.sql', import.meta.url),
@@ -19,8 +19,8 @@ const integrationNotes = readFileSync(new URL('../../docs/outbound-update-consen
 describe('member outbound update privacy surface', () => {
   test('exposes per-group opt-in, presentation, event, and destination controls', () => {
     [
-      'integrationConsentCrew',
-      'integrationDestinationList',
+      'integrationPrivacy',
+      'integrationConsentDestinationList',
       'integrationUpdatesEnabled',
       'integrationShareCheckIns',
       'integrationShareStreaks',
@@ -28,18 +28,18 @@ describe('member outbound update privacy surface', () => {
       'integrationShareMembership',
       'saveIntegrationConsent',
     ].forEach((id) => {
-      assert.match(profileHtml, new RegExp(`id=["']${id}["']`), `missing privacy control: ${id}`);
+      assert.match(settingsHtml, new RegExp(`id=["']${id}["']`), `missing privacy control: ${id}`);
     });
-    assert.match(profileHtml, /value="anonymous" checked/);
-    assert.match(profileHtml, /data is sent outside Dominion/i);
-    assert.match(profileHtml, /Group owners cannot opt in for you/i);
+    assert.match(settingsHtml, /value="anonymous" checked/);
+    assert.match(settingsHtml, /data is sent outside Dominion/i);
+    assert.match(settingsHtml, /group owner cannot opt in on your behalf/i);
   });
 
   test('loads and saves preferences only after the authenticated profile hydrates', () => {
-    assert.match(profileJs, /getOutboundUpdateConsent\(crewId\)/);
-    assert.match(profileJs, /updateOutboundUpdateConsent\(crewId/);
-    assert.match(profileJs, /if \(authenticated && owner\) await hydrateIntegrationConsent\(owner\)/);
-    assert.match(profileJs, /if \(!isCurrentProfileOwner\(owner\)\) return/);
+    assert.match(settingsJs, /getOutboundUpdateConsent\(state\.crew\.id\)/);
+    assert.match(settingsJs, /updateOutboundUpdateConsent\(state\.crew\.id/);
+    assert.match(settingsJs, /if \(GROUP_INTEGRATIONS_ENABLED && state\.crew\)/);
+    assert.match(settingsJs, /state\.crew = crews\.find/);
     assert.match(apiJs, /target_event_type: null/);
     assert.match(apiJs, /target_share_membership_events: settings\.events\.membership/);
   });

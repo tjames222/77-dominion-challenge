@@ -14,7 +14,7 @@ const SOLO_PAGES = Object.freeze([
   { path: '/badges-rewards.html', steps: 6 },
   { path: '/community.html', steps: 7 },
   { path: '/private-journal.html', steps: 4 },
-  { path: '/profile.html', steps: 6 },
+  { path: '/profile.html', steps: 5 },
   { path: '/billing.html', steps: 4 },
   { path: '/science.html', steps: 6 },
 ]);

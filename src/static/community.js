@@ -1153,10 +1153,7 @@ function renderCrewShell() {
   const createForm = $('crewForm');
   const manageCard = $('crewManageCard');
   const settingsButton = $('crewSettingsButton');
-  const settingsCard = $('crewSettingsCard');
   const membersCard = $('crewMembersCard');
-  const integrationsCard = $('crewIntegrationsCard');
-  const lifecycleCard = $('crewLifecycleCard');
   const title = $('crewTitle');
   const description = $('crewDescription');
 
@@ -1174,11 +1171,8 @@ function renderCrewShell() {
       : 'Create Crew';
   }
   if (manageCard) manageCard.hidden = !view.showActiveCrew;
-  if (settingsButton) settingsButton.hidden = !crew || !isCrewLeader();
-  if (settingsCard) settingsCard.hidden = !crew;
+  if (settingsButton) settingsButton.hidden = !crew;
   if (membersCard) membersCard.hidden = !crew;
-  if (integrationsCard) integrationsCard.hidden = !crew || !GROUP_INTEGRATIONS_ENABLED;
-  if (lifecycleCard) lifecycleCard.hidden = !crew;
 
   if (!crew) {
     state.trainingCrewId = '';
@@ -1550,7 +1544,6 @@ async function refreshCrew() {
   await Promise.all([
     membersPromise,
     refreshLeaderboard(),
-    loadCrewIntegrations(),
     loadCrewTrainingProgress(),
   ]);
 }
@@ -1605,14 +1598,12 @@ async function bootCommunity() {
     state.currentUser?.userId,
   );
 
-  takeIntegrationCallbackFragment();
   if (isLocalDemoMode()) {
     setFeedback(GROUP_INTEGRATIONS_ENABLED
       ? 'Preview mode: groups, leaderboards, and integrations use local mock data.'
       : 'Preview mode: groups and leaderboards use local mock data. External channel connections are safely off.');
   }
   await Promise.all([refreshCrews(), refreshChallengeActivation()]);
-  await loadIntegrationSetup();
   await resumeGroupChallengeStart();
 }
 
@@ -1627,13 +1618,6 @@ function setCrewFormOpen(open, { focus = true } = {}) {
 $('openCrewFormButton')?.addEventListener('click', () => setCrewFormOpen(true));
 $('joinCrewButton')?.addEventListener('click', () => {
   window.location.href = './invite.html';
-});
-$('crewSettingsButton')?.addEventListener('click', (event) => {
-  if (!activeCrew() || !isCrewLeader()) {
-    event.preventDefault();
-    return;
-  }
-  window.requestAnimationFrame(() => $('crewSettingsCard')?.focus({ preventScroll: true }));
 });
 $('cancelCrewFormButton')?.addEventListener('click', () => {
   $('crewForm')?.reset();

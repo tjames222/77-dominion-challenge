@@ -95,9 +95,10 @@
                 <a
                   class="crew-settings-link"
                   id="crewSettingsButton"
-                  href="#crewSettingsCard"
+                  href="./group-settings.html"
                   aria-label="Group settings"
                   title="Group settings"
+                  data-training-target="community-integrations"
                   hidden
                 >
                   <span class="app-icon icon-settings" aria-hidden="true"></span>
@@ -117,81 +118,6 @@
             </div>
           </section>
         </div>
-
-        <section class="group-settings-card card" id="crewSettingsCard" data-section-surface="plain" tabindex="-1" aria-labelledby="crewSettingsTitle" hidden>
-          <div class="section-heading-row">
-            <div>
-              <p class="eyebrow">Group Settings</p>
-              <h2 id="crewSettingsTitle">Manage this group.</h2>
-            </div>
-            <span class="privacy-badge">Role protected</span>
-          </div>
-          <p class="group-settings-description">Manage approved external destinations and the active group’s access controls without changing personal progress or journal entries.</p>
-
-          <section class="group-integrations" id="crewIntegrationsCard" data-section-surface="plain" data-training-target="community-integrations" aria-labelledby="groupIntegrationsTitle" hidden>
-          <div class="section-heading-row">
-            <div>
-              <p class="eyebrow">External Updates</p>
-              <h2 id="groupIntegrationsTitle">Slack &amp; Discord</h2>
-            </div>
-            <span class="privacy-badge">Group scoped</span>
-          </div>
-          <p class="integration-disclosure">
-            Connected channels can receive approved Daily Check-Ins, streak milestones, badge and reward unlocks, new-member notices, and an optional weekly leaderboard recap. Conversations and replies stay in Slack or Discord and are not synchronized back into Dominion.
-          </p>
-          <p class="integration-conversation-note">
-            Dominion keeps the roster and leaderboard here. Use the connected Slack or Discord channel for conversation.
-          </p>
-          <div class="integration-destination-list" id="integrationDestinationList" aria-live="polite"></div>
-          <div class="integration-connect-actions" id="integrationConnectActions" hidden>
-            <button class="provider-button provider-slack" type="button" data-connect-provider="slack">
-              <span class="provider-mark provider-mark-slack" aria-hidden="true">
-                <svg viewBox="0 0 24 24" focusable="false">
-                  <rect x="9" y="1" width="5" height="11" rx="2.5" fill="#36c5f0"></rect>
-                  <rect x="12" y="9" width="11" height="5" rx="2.5" fill="#2eb67d"></rect>
-                  <rect x="10" y="12" width="5" height="11" rx="2.5" fill="#ecb22e"></rect>
-                  <rect x="1" y="10" width="11" height="5" rx="2.5" fill="#e01e5a"></rect>
-                </svg>
-              </span>
-              <span>Connect Slack</span>
-            </button>
-            <button class="provider-button provider-discord" type="button" data-connect-provider="discord">
-              <span class="provider-mark provider-mark-discord" aria-hidden="true">
-                <svg viewBox="0 0 28 24" focusable="false">
-                  <path d="M6.2 4.5c4.7-2.1 10.9-2.1 15.6 0 2.5 3.5 4 7.4 4.2 11.6-2.3 2.2-4.3 3.5-6.2 4.4l-1.5-2.1c.9-.4 1.8-.9 2.6-1.5-4.5 2.1-9.3 2.1-13.8 0 .8.6 1.7 1.1 2.6 1.5l-1.5 2.1c-1.9-.9-3.9-2.2-6.2-4.4.2-4.2 1.7-8.1 4.2-11.6Z" fill="#5865f2"></path>
-                  <circle cx="10.4" cy="12.3" r="1.8" fill="#fff"></circle>
-                  <circle cx="17.6" cy="12.3" r="1.8" fill="#fff"></circle>
-                </svg>
-              </span>
-              <span>Connect Discord</span>
-            </button>
-          </div>
-          <form class="integration-confirm" id="integrationConfirmForm" hidden>
-            <div>
-              <p class="eyebrow">Confirm Destination</p>
-              <h3 id="integrationConfirmTitle">Choose a channel</h3>
-              <p id="integrationConfirmWorkspace"></p>
-            </div>
-            <label for="integrationChannelSelect">
-              <span>Channel</span>
-              <select id="integrationChannelSelect" required></select>
-            </label>
-            <div class="integration-confirm-actions">
-              <button class="primary" type="submit">Confirm channel</button>
-              <button class="secondary" id="cancelIntegrationSetup" type="button">Cancel</button>
-            </div>
-          </form>
-          </section>
-
-          <section class="crew-lifecycle-card" id="crewLifecycleCard" data-section-surface="plain" hidden>
-            <div>
-              <p class="eyebrow" id="crewLifecycleEyebrow">Group Access</p>
-              <h3 id="crewLifecycleTitle">Manage group access</h3>
-              <p id="crewLifecycleDescription"></p>
-            </div>
-            <button class="secondary destructive" id="crewLifecycleButton" type="button"></button>
-          </section>
-        </section>
 
         <div class="community-stats" id="crewStats" data-section-surface="plain">
           <article><strong id="crewMemberCount">0</strong><span>Members</span></article>

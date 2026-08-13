@@ -64,7 +64,7 @@ function trainingState({
   currentPageId = 'dashboard',
   currentPageIndex = 0,
 } = {}) {
-  const contentVersion = ['dashboard', 'community'].includes(currentPageId) ? 2 : 1;
+  const contentVersion = ['dashboard', 'community', 'profile'].includes(currentPageId) ? 2 : 1;
   return {
     contractValid: true,
     actorId: USER.userId,

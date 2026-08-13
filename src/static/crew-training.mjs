@@ -66,17 +66,17 @@ export function buildCrewTrainingSteps({ integrationsEnabled = false, crewName =
         {
           id: 'provider-purpose',
           title: 'Keep conversation in your channel',
-          description: 'Dominion manages the roster and accountability. Approved progress updates can go to Slack or Discord only with member consent; replies and conversation never sync back into Dominion.',
-          targetId: 'groupIntegrationsTitle',
+          description: 'Dominion manages the roster and accountability. Open Group Settings when you want to review Slack or Discord connections. Approved progress updates leave Dominion only with member consent; replies and conversation never sync back.',
+          targetId: 'crewSettingsButton',
           actionable: false,
           targetUnavailableDescription: 'External update guidance is informational until the integration area is available.',
         },
         {
           id: 'provider-connection',
           title: 'Connect deliberately',
-          description: 'An authorized owner or admin can choose Slack, Discord, or both: authorize the provider, confirm the workspace or server and channel, return here, verify the status, then send a deliberate test. Reconnect and disconnect controls remain available for needs-attention states.',
-          targetId: 'integrationConnectActions',
-          actionable: true,
+          description: 'The Group Settings page lets an owner or admin choose and authorize Slack, Discord, or both, verify the status of the selected channel, send a deliberate test, and reconnect and disconnect when needed.',
+          targetId: 'crewSettingsButton',
+          actionable: false,
           targetUnavailableDescription: 'Connection controls may be hidden when every provider is already configured. Review existing destinations in the integration area instead.',
         },
       ]
@@ -133,8 +133,8 @@ export function buildCrewTrainingSteps({ integrationsEnabled = false, crewName =
     {
       id: 'safe-management',
       title: 'Manage the crew safely',
-      description: 'Routine crew controls stay above this separated lifecycle area. Owners and admins see Delete Crew; regular members see Leave Group. Either action requires its own explicit confirmation, and training never selects it.',
-      targetId: 'crewLifecycleCard',
+      description: 'Use Group Settings for access controls. Owners and admins can delete the group; regular members can leave it. Either action requires an explicit confirmation, and training never selects it.',
+      targetId: 'crewSettingsButton',
       actionable: false,
       targetUnavailableDescription: 'Lifecycle guidance remains informational when the management area is unavailable.',
     },

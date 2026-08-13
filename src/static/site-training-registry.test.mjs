@@ -69,7 +69,7 @@ describe('site training registry', () => {
       'science',
     ]);
     assert.deepEqual(program.pages.map((entry) => entry.contentVersion), [
-      2, 1, 1, 1, 1, 1, 1, 1, 1, 2, 1, 1, 1, 1,
+      2, 1, 1, 1, 1, 1, 1, 1, 1, 2, 1, 2, 1, 1,
     ]);
     assert.equal(SITE_TRAINING_REGISTRY.pages.length, 14);
     for (const publishedPage of SITE_TRAINING_REGISTRY.pages) {

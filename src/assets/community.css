@@ -481,6 +481,15 @@
   color: var(--text-muted);
   line-height: 1.55;
 }
+.group-settings-shell #groupSettingsContent:not([hidden]) {
+  display: grid;
+  gap: 18px;
+}
+.group-settings-overview,
+.group-settings-shell #groupAccess {
+  display: grid;
+  gap: 16px;
+}
 .crew-training-launch {
   border-color: color-mix(in srgb, var(--accent) 48%, var(--border));
   background: color-mix(in srgb, var(--accent) 9%, var(--button-secondary-background));

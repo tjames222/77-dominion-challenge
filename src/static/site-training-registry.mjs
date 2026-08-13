@@ -353,12 +353,11 @@ const PAGES = [
     ],
   },
   {
-    id: 'profile', route: '/profile.html', contentVersion: 1, title: 'Profile',
+    id: 'profile', route: '/profile.html', contentVersion: 2, title: 'Profile',
     steps: [
-      orientation('Profile', 'Profile brings account identity, challenge status, privacy, billing access, and appearance together.'),
+      orientation('Profile', 'Profile brings account identity, challenge status, billing access, and appearance together.'),
       step('account', 'Account details remain editable by you', 'The account card manages your name, email, and profile picture outside training. Training never edits or uploads anything.', 'profile-account'),
       step('challenge-status', 'Check your challenge status', 'This card summarizes the current challenge and participation context without changing it.', 'profile-challenge-status'),
-      step('integration-privacy', 'Outbound updates start off', 'Per-group consent controls what approved activity may reach connected services. Training never changes consent.', 'profile-integration-privacy', ['has-active-crew'], fallback('Integration privacy is safe-off', 'No eligible private group is available, so outbound update consent remains unavailable and no data leaves Dominion.')),
       step('billing', 'Billing access has one home', 'This link leads to subscription status and management. Training never opens checkout or changes membership.', 'profile-billing'),
       step('themes', 'Choose an available theme', 'Dark and Light are available; earned themes appear with their unlock status. Training never changes appearance.', 'profile-themes', ['themes-available'], fallback('Theme controls are unavailable', 'Appearance remains unchanged while theme availability is being verified.')),
     ],
@@ -397,7 +396,7 @@ const PROGRAM_PAGES = [
   { pageId: 'badges-rewards', contentVersion: 1 },
   { pageId: 'community', contentVersion: 2 },
   { pageId: 'private-journal', contentVersion: 1 },
-  { pageId: 'profile', contentVersion: 1 },
+  { pageId: 'profile', contentVersion: 2 },
   { pageId: 'billing', contentVersion: 1 },
   { pageId: 'science', contentVersion: 1 },
 ];

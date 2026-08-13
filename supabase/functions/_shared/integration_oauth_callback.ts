@@ -148,7 +148,7 @@ export function createOAuthCallbackHandler(
       });
     }
 
-    let returnPath = "/community.html";
+    let returnPath = "/group-settings.html";
     try {
       const url = new URL(req.url);
       const serializedState = url.searchParams.get("state") || "";
