@@ -1,5 +1,3 @@
-begin;
-
 create extension if not exists pgcrypto with schema extensions;
 
 -- The legacy RPC joined immediately from a reusable plaintext token. Remove it
@@ -661,5 +659,3 @@ grant execute on function public.preview_crew_invite(text, text) to authenticate
 revoke execute on function public.confirm_crew_invite(text) from public;
 revoke execute on function public.confirm_crew_invite(text) from anon;
 grant execute on function public.confirm_crew_invite(text) to authenticated;
-
-commit;

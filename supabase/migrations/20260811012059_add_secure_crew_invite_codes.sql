@@ -1,8 +1,6 @@
 -- FOU-1445: add one-time human-readable codes to the hardened crew invite
 -- lifecycle. Link, Code, and QR are representations of the same invite row.
 
-begin;
-
 set local lock_timeout = '10s';
 set local statement_timeout = '120s';
 
@@ -1178,5 +1176,3 @@ grant execute on function public.preview_crew_invite_code(text)
 revoke execute on function public.confirm_crew_invite(text)
   from public, anon, authenticated, service_role;
 grant execute on function public.confirm_crew_invite(text) to authenticated;
-
-commit;

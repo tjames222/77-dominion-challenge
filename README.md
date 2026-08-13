@@ -59,7 +59,7 @@ Slack and Discord connection controls fail closed unless `VITE_ENABLE_GROUP_INTE
 ## Supabase setup
 
 1. Create a Supabase project.
-2. For local development, run `pnpm run supabase:start` and `pnpm run supabase:reset` so the versioned migration chain is applied from an empty database.
+2. For local development, run `pnpm run supabase:start`; it starts the exact pinned local stack, applies pending migrations atomically, and loads the stable fixtures. Use `pnpm run supabase:reset` only when you explicitly need a clean rebuild from the full migration chain.
 3. For a hosted environment, follow the migration reconciliation and deployment steps in [`docs/backend-release-runbook.md`](docs/backend-release-runbook.md). Never run `supabase/schema.sql` manually or use `--include-all` against production.
 4. Copy `.env.example` to `.env`.
 5. Fill in `VITE_SUPABASE_URL` and `VITE_SUPABASE_PUBLISHABLE_KEY`.

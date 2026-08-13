@@ -22,15 +22,6 @@ for command_name in psql createdb dropdb; do
   fi
 done
 
-if [[ -x "$repository_root/node_modules/.bin/supabase" ]]; then
-  supabase_cli="$repository_root/node_modules/.bin/supabase"
-elif command -v supabase >/dev/null 2>&1; then
-  supabase_cli="$(command -v supabase)"
-else
-  echo "Supabase CLI is required for the schema-drift check." >&2
-  exit 2
-fi
-
 work_directory="$(mktemp -d)"
 temp_database="schema_drift_${RANDOM}_$$"
 database_url_without_query="${database_url%%\?*}"
@@ -51,7 +42,7 @@ trap cleanup EXIT
 
 # Reset first so the source snapshot is always the result of a clean migration
 # replay, not a developer's manually modified local database.
-"$supabase_cli" db reset --local
+bash "$repository_root/scripts/reset-local-database.sh"
 
 createdb --maintenance-db="$database_url" --template=template0 "$temp_database"
 temp_database_created=1

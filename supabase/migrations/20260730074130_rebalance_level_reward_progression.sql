@@ -1,5 +1,3 @@
-begin;
-
 -- Active rewards remain independent point thresholds, but every launch reward
 -- lands on the same 14-point cadence used by the display-only level system.
 create or replace function public.enforce_reward_point_floor()
@@ -159,5 +157,3 @@ $$;
 
 revoke all on function public.enforce_reward_point_floor()
   from public, anon, authenticated;
-
-commit;

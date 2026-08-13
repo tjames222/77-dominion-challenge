@@ -1,7 +1,6 @@
 -- FOU-1451: a minimum, crew-scoped read boundary for another member's
 -- lifetime level and earned-badge presentation data. Direct reads of the
 -- underlying self-only tables remain unchanged.
-begin;
 
 create or replace function private.lifetime_level_from_points(
   target_total_points integer
@@ -248,5 +247,3 @@ revoke all on function public.get_crew_member_progress_profile(
 grant execute on function public.get_crew_member_progress_profile(
   uuid, uuid, timestamptz, text, integer
 ) to authenticated;
-
-commit;

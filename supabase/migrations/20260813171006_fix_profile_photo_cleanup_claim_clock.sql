@@ -2,8 +2,6 @@
 -- after expiring pending uploads. The worker can therefore claim an upload
 -- made ready by the same call instead of waiting for a later sweep.
 
-begin;
-
 set local lock_timeout = '5s';
 set local statement_timeout = '30s';
 
@@ -84,5 +82,3 @@ grant execute on function public.claim_profile_photo_cleanup_service(integer)
 
 comment on function public.claim_profile_photo_cleanup_service(integer) is
   'Claims bounded, expiring service cleanup leases, including stale uploads expired by the same call.';
-
-commit;

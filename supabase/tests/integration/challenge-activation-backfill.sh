@@ -74,7 +74,7 @@ restore_current_schema() {
   [[ -z "$migration_failure_log" ]] || rm -f "$migration_failure_log"
   echo "Restoring the current local schema and seed..."
   set +e
-  "$supabase_cli" db reset --local
+  bash "$repository_root/scripts/reset-local-database.sh"
   restore_status=$?
   set -e
 
@@ -89,7 +89,9 @@ trap 'exit 143' TERM
 trap restore_current_schema EXIT
 
 echo "Resetting the local database to the final pre-activation migration..."
-"$supabase_cli" db reset --local --version 20260731193250 --no-seed
+bash "$repository_root/scripts/reset-local-database.sh" \
+  --version 20260731193250 \
+  --no-seed
 
 echo "Installing legacy contradiction and malformed-evidence fixtures..."
 run_psql --set=ON_ERROR_STOP=1 --quiet <<'SQL'

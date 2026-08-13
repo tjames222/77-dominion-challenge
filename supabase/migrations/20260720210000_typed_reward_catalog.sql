@@ -1,5 +1,3 @@
-begin;
-
 create table if not exists public.reward_catalog_meta (
   catalog_key text primary key check (catalog_key = 'primary'),
   catalog_version bigint not null default 1 check (catalog_version > 0),
@@ -826,5 +824,3 @@ grant execute on function public.grant_reward_entitlement(uuid, text, text, text
 grant execute on function public.reconcile_user_reward_entitlements(uuid, boolean) to service_role;
 grant execute on function public.get_reward_catalog(integer, integer, text) to authenticated;
 grant execute on function public.claim_reward_entitlement_unlocks() to authenticated;
-
-commit;

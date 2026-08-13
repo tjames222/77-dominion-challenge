@@ -1,5 +1,3 @@
-begin;
-
 insert into public.badge_definitions (badge_key, name, description, category, tier, icon, sort_order)
 values
   ('seven_sealed', 'Seven Sealed', 'Held a seven-day full-standard streak.', 'streak', 'gold', 'repeat', 70),
@@ -252,5 +250,3 @@ begin
   return new;
 end;
 $$;
-
-commit;

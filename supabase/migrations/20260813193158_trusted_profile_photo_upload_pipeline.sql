@@ -1,8 +1,6 @@
 -- FOU-801: authenticated clients submit a small prepared JPEG/WebP to an Edge
 -- Function. Only that trusted service can write the stripped WebP object.
 
-begin;
-
 set local lock_timeout = '5s';
 set local statement_timeout = '30s';
 
@@ -604,5 +602,3 @@ comment on function public.abandon_profile_photo_upload_service(uuid, uuid) is
   'Service-only fail-safe that makes an unverified reservation immediately eligible for cleanup.';
 comment on function public.register_profile_photo_upload(text) is
   'Deprecated browser reservation entry point. Execution is revoked after the trusted Edge upload cutover.';
-
-commit;

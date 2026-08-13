@@ -6,7 +6,10 @@ dist/
 .env
 .env.*
 !.env.example
-supabase/.temp/
+supabase/.temp/*
+!supabase/.temp/postgres-version
+supabase/.branches/
+.atomic-proof/
 playwright-report/
 test-results/
 blob-report/

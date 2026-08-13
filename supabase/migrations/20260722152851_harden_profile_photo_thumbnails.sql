@@ -1,5 +1,3 @@
-begin;
-
 set local lock_timeout = '5s';
 set local statement_timeout = '30s';
 
@@ -1201,5 +1199,3 @@ comment on function public.confirm_profile_photo_cleanup(uuid, uuid) is
   'Retires a claimed path permanently only after its Storage metadata row is absent.';
 comment on function public.expire_profile_photo_uploads(integer) is
   'Service-only transition from expired pending uploads to cleanup; it never claims or deletes them.';
-
-commit;

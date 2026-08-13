@@ -1,5 +1,3 @@
-begin;
-
 set local lock_timeout = '5s';
 set local statement_timeout = '30s';
 
@@ -308,5 +306,3 @@ comment on function public.register_profile_photo_upload(text) is
   'Idempotently reserves one immutable path under per-user pending, cleanup, hourly, and daily admission limits.';
 comment on function public.profile_photo_registration_health() is
   'Service-only aggregate profile-photo admission and cleanup health without user IDs, object paths, or member content.';
-
-commit;

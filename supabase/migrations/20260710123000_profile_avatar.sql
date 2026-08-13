@@ -1,5 +1,3 @@
-begin;
-
 alter table public.profiles
   add column if not exists avatar_url text not null default '';
 
@@ -56,5 +54,3 @@ create policy "Users can delete own profile photo objects"
     bucket_id = 'profile-photos'
     and (storage.foldername(name))[1] = (select auth.uid())::text
   );
-
-commit;

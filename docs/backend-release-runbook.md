@@ -208,6 +208,38 @@ supabase db diff --from migrations --to linked --schema public
 supabase db push --linked --dry-run
 ```
 
+`db push --dry-run` is a read-only plan preview only. With pinned CLI 2.109.0,
+actual application must use `supabase migration up`: that TypeScript executor
+opens a transaction, runs one migration's compatible statements, inserts the
+same version into `supabase_migrations.schema_migrations`, and commits. The
+Go-backed `db push` and `db reset` execution paths use a pgx pipeline instead;
+pipeline rollback is not an explicit PostgreSQL transaction context, so
+transaction-only statements such as `LOCK TABLE`, `SET LOCAL`, and temporary
+tables with `ON COMMIT` behavior do not have the required semantics without a
+file wrapper. Do not use either Go-backed command to apply application migration
+SQL. A fresh `pnpm run supabase:start` first starts only the database from a
+temporary config with migrations and seed disabled, retains that empty database
+volume, and starts the remaining services from the real repository so Edge
+Functions mount the live source. Before application SQL runs, it verifies the
+exact pinned Postgres image
+(`public.ecr.aws/supabase/postgres:17.6.1.141`) and proves the full start recorded
+no migration history and created no late application object. Its temporary
+config is removed immediately. The start command then applies pending
+application SQL with the pinned `migration up` executor and loads stable fixtures
+in one `psql --single-transaction` call, leaving an immediately usable local
+stack.
+Local rebuilds use `scripts/reset-local-database.sh`, which runs
+`db reset --no-seed` from a staged project with an empty migration directory
+only to recreate the Supabase-managed platform schemas, then copies in the gated
+application migrations, applies them with `migration up`, and loads local
+fixtures in one `psql --single-transaction` call. CLI 2.109.0 rejects
+the superficially similar `db reset --version 0` because no `0_*.sql` migration
+exists, so do not use that unsupported shortcut.
+
+The reset helper checks the CLI version before touching the database and fails
+closed unless it is exactly 2.109.0. This protects the executor assumptions
+above in local, schema-drift, and historical-checkpoint test paths.
+
 The `db diff --schema public` output is a preliminary signal, not a complete
 checkpoint proof. It does not cover the `private` schema or prove complete grants,
 function attributes and bodies, triggers, constraints, RLS policy expressions,
@@ -292,7 +324,9 @@ separately reviewed change and the exact restored-snapshot rehearsal passes:
    final-schema seed:
 
    ```bash
-   supabase db reset --local --version 20260708155500 --no-seed
+   bash scripts/reset-local-database.sh \
+     --version 20260708155500 \
+     --no-seed
    ```
 
    Compare its `public` and `private` catalogs, effective grants, functions,
@@ -314,20 +348,24 @@ separately reviewed change and the exact restored-snapshot rehearsal passes:
    preserve explicitly approved platform privileges and fail on every unknown
    state. Reconcile clean-checkpoint ACLs with audited runtime needs before
    editing SQL; Edge runtimes require explicit service access to profile and
-   billing data. Remove the top-level `BEGIN`/`COMMIT` wrappers from migrations 2
-   and 3 and add a static gate rejecting transaction-control statements in every
-   unrecorded migration. With the pinned CLI, a migration file's statements and
-   the CLI-appended history write are submitted as one batch; a file-level
-   `COMMIT` can end that transaction before the history write. Prove the exact
-   pinned-runner semantics with a disposable failure injected after the final SQL
-   statement. These edits are allowed only because production has no migration
-   record for any of the three files. Never rewrite a version after it is
-   recorded. Rebuild the clean checkpoints and rerun the complete validation
-   after any hash changes.
+   billing data. Remove the top-level `BEGIN`/`COMMIT` wrappers from every
+   still-unrecorded migration and pass `pnpm run check:migrations`, which rejects
+   top-level transaction control and every statement that would force the pinned
+   `migration up` executor outside its transaction (`CREATE [UNIQUE] INDEX
+   CONCURRENTLY`, `REINDEX ... CONCURRENTLY`, `VACUUM`, `ALTER SYSTEM`, and
+   `CLUSTER`). With CLI 2.109.0, `migration up` explicitly begins a transaction,
+   runs one migration's statements, inserts its history row, and commits; a
+   file-level `COMMIT` can end that transaction before the history write. Prove
+   the exact pinned executor with a disposable history-insert failure after the
+   final migration statement and require both SQL and history to be absent.
+   These edits are allowed only because production has no migration record for
+   any migration file. Never rewrite a version after it is recorded. Rebuild the
+   clean checkpoints and rerun the complete validation after any hash changes.
 5. Restore the encrypted hosted roles, schema, and data into the isolated exact-
    version stack. Require its normalized source manifest to match the captured
    production source manifest. Then rehearse applying these three migrations
-   normally, not through `migration repair`:
+   with pinned `supabase migration up`, not through `db push` or
+   `migration repair`:
 
    ```text
    20260707170000
@@ -349,20 +387,22 @@ separately reviewed change and the exact restored-snapshot rehearsal passes:
    open a production maintenance window. Keep signup and application writes
    closed, take a fresh encrypted backup, and require the fresh production source
    manifest and destructive-data preflight to match the approved inputs. From the
-   pinned three-migration worktree, apply migrations 1–3 through the normal linked
-   migration runner. Do not assume the three-version batch is one transaction.
-   The rehearsed wrapper-free runner must leave each version's SQL and history
-   record both present or both absent; verify both after every version and stop on
-   a mismatch. Do not use `migration repair`. Immediately require exactly those
+   pinned three-migration worktree, apply migrations 1–3 with
+   `supabase migration up --linked`. Do not assume the three-version sequence is
+   one transaction. The rehearsed wrapper-free executor must leave each version's
+   SQL and history record both present or both absent; verify both after every
+   version and stop on a mismatch. Do not use `migration repair`. Immediately
+   require exactly those
    three remote history records and the complete migration-3 application
    manifest; stop on any unexplained difference.
 7. Create a separate, hashed worktree containing exactly migrations 1–13. Its
    linked dry run must list exactly the following ten pending versions. Rehearse
    the same push against the verified local restore. Before either push, remove
    top-level transaction controls from every still-unrecorded migration in this
-   range, pass the static gate, and repeat the pinned-runner failure proof. Then
-   apply those ten migrations normally and verify SQL effects and history after
-   every version:
+   range, pass the static gate, and repeat the pinned-runner failure proof. The
+   linked `db push --dry-run` is only the reviewed plan; apply those ten
+   migrations with `supabase migration up --linked` and verify SQL effects and
+   history after every version:
 
    ```text
    20260708160000
@@ -514,8 +554,9 @@ next stage when one fails:
    available in this stage.
 2. **Migrate:** link the intended project, preview with
    `supabase db push --linked --dry-run`, and apply only migrations that follow the
-   reconciled remote history. Never use `--include-all` or run
-   `supabase/schema.sql` manually in production.
+   reconciled remote history with pinned `supabase migration up --linked`. The
+   dry-run is a plan only; `db push` must never perform the actual mutation.
+   Never use `--include-all` or run `supabase/schema.sql` manually in production.
 3. **Synchronize secrets and deploy functions:** update Function Secrets, deploy
    the three JWT-protected billing functions and the JWT-protected
    `retired-community-export`, then deploy `stripe-webhook` with JWT verification

@@ -1,8 +1,6 @@
 -- FOU-1464: publish natural customer-facing language without changing stable
 -- challenge, badge, reward, training, API, or analytics identifiers.
 
-begin;
-
 set local lock_timeout = '10s';
 set local statement_timeout = '120s';
 
@@ -149,5 +147,3 @@ values
   ('solo-first-run', 3, 'profile', 3, 11),
   ('solo-first-run', 3, 'billing', 2, 12),
   ('solo-first-run', 3, 'science', 2, 13);
-
-commit;

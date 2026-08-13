@@ -1,5 +1,3 @@
-begin;
-
 create table if not exists public.workout_difficulty_point_values (
   difficulty text primary key check (difficulty in ('easy', 'medium', 'hard', 'extreme')),
   points integer not null check (points >= 0),
@@ -70,5 +68,3 @@ grant update (points) on public.workout_difficulty_point_values to service_role;
 revoke execute on function public.workout_difficulty_points(text) from public;
 revoke execute on function public.workout_difficulty_points(text) from anon;
 revoke execute on function public.workout_difficulty_points(text) from authenticated;
-
-commit;

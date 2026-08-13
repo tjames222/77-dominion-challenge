@@ -1,5 +1,3 @@
-begin;
-
 create or replace function public.workout_difficulty_points(target_difficulty text)
 returns integer
 language sql
@@ -30,5 +28,3 @@ as $$
     else 0
   end;
 $$;
-
-commit;

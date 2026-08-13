@@ -1,5 +1,3 @@
-begin;
-
 set local lock_timeout = '5s';
 set local statement_timeout = '30s';
 
@@ -618,5 +616,3 @@ comment on function public.verify_profile_photo_cleanup_service(uuid, uuid) is
   'Rechecks an exact service lease, canonical pointer, and account-erasure state immediately before Storage deletion.';
 comment on function public.profile_photo_cleanup_health() is
   'Service-only aggregate cleanup health without member IDs, object paths, or content.';
-
-commit;
