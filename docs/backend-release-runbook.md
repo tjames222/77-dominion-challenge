@@ -211,15 +211,19 @@ supabase db push --linked --dry-run
 The `db diff --schema public` output is a preliminary signal, not a complete
 checkpoint proof. It does not cover the `private` schema or prove complete grants,
 function attributes and bodies, triggers, constraints, RLS policy expressions,
-or Storage configuration. Export normalized catalog manifests for both `public`
-and `private` from the isolated local checkpoint and production and compare all
-of those object classes. Also run these read-only queries in the production
-Supabase SQL editor. Compare the result exactly with the version-bounded local
-checkpoint manifest, including commands, roles, `qual`, and `with_check`
-expressions. For the migration-3 checkpoint below, the only expected result is
-`journal-progress` and its four `Users can ... journal photo objects` policies;
-`profile-photos`, `community-post-images`, and their seven policies must be
-absent:
+or Storage configuration. In the 2026-08-13 audit, a three-schema CLI diff even
+returned empty while direct dumps proved application-owned differences, so an
+empty CLI diff never authorizes repair. Export direct schema dumps and normalized
+catalog manifests for `public`, `private`, and the application-owned parts of
+`storage` from the isolated local checkpoint and production. Compare all of those
+object classes, classifying platform-version noise through an explicit reviewed
+allowlist rather than silently discarding it. Also run these read-only queries in
+the production Supabase SQL editor. Compare the result exactly with the
+version-bounded local checkpoint manifest, including commands, roles, `qual`,
+and `with_check` expressions. For the migration-3 checkpoint below, the only
+expected result is `journal-progress` and its four
+`Users can ... journal photo objects` policies; `profile-photos`,
+`community-post-images`, and their seven policies must be absent:
 
 ```sql
 select id, name, public, file_size_limit, allowed_mime_types
@@ -247,11 +251,11 @@ where schemaname = 'storage'
 order by policyname;
 ```
 
-Only the exact, version-bounded checkpoint comparison below may authorize
-`supabase migration repair ... --status applied --linked`. Repair records history
-without executing SQL, so every repaired migration's complete net effect must be
-proven present. Never infer a wider repair range from a partial catalog diff,
-object names, or later-looking objects.
+Migration repair records history without executing SQL. Never repair a version
+whose complete net effect is not already present, and never infer a repair range
+from a partial catalog diff, object names, or later-looking objects. The audited
+project below has application drift owned by migrations 1 and 2, so repair is not
+the approved reconciliation mechanism.
 
 #### One-time pre-avatar checkpoint bootstrap
 
@@ -264,13 +268,15 @@ migration-4 markers are absent: `user_badges.id` and `earned_date` remain,
 `entry_date` is absent, `user_game_stats.created_at` remains, and the point-event
 ledger still uses the earlier per-user idempotency constraint.
 
-The full baseline does **not** currently match migration 1: the hosted project
-still has the empty legacy `public.purchases` table that migration 1 drops, and
-the four hosted journal-object policies omit migration 1's active-entitlement
-predicate. Therefore no migration version is currently authorized for repair.
-Migration 3 is only the candidate checkpoint after a reviewed bridge reconciles
-every baseline difference and a new exact comparison proves every net effect
-through migration 3:
+The full baseline does **not** currently match migration 1. Direct schema dumps
+found the empty legacy `public.purchases` table, the legacy entitlement-key
+constraint, three application function-body differences, 31 public/Storage RLS
+policy differences, and security-significant privilege differences. Therefore no
+migration version is currently authorized for repair. Because the application
+drift is owned by the checked-in migrations 1 and 2, prefer an actual, normally
+recorded execution of migrations 1–3 over a hand-copied bridge plus repaired
+history—but only after the destructive statements are made fail-closed in a
+separately reviewed change and the exact restored-snapshot rehearsal passes:
 
 1. Pin the release tree, Supabase CLI 2.109.0, and Postgres 17. Keep public signup
    and all application writes closed.
@@ -281,26 +287,28 @@ through migration 3:
    of a database dump; stop and export through the Storage API if the fresh
    object count is nonzero. Checksum every artifact and test-restore the backup
    locally before continuing.
-3. In an isolated worktree containing only migrations 1–3, build a clean local
-   checkpoint without the final-schema seed:
+3. In an isolated worktree containing only migrations 1–3, pin the exact hosted
+   Postgres image (`17.6.1.141`) and build a clean checkpoint without the
+   final-schema seed:
 
    ```bash
    supabase db reset --local --version 20260708155500 --no-seed
    ```
 
-   Compare its `public` and `private` catalogs, grants, functions, triggers,
-   constraints, RLS, badge/configuration rows, and an explicit Storage
-   bucket/policy manifest with production. Require zero unexplained differences.
-4. If the comparison is not exact, stop. Inventory every difference and create
-   the smallest reviewed, idempotent bridge. At minimum, the current evidence
-   requires a fail-closed empty/dependency check before removing
-   `public.purchases` and exact recreation of the four journal-object policies.
-   Rehearse the bridge against the verified local restore, apply it only during
-   an approved maintenance window, and repeat the complete comparison. A nonzero
-   `purchases` row count, dependency count, or unexplained difference stops the
-   bridge.
-5. Only after a zero-diff proof, mark these three versions applied; repairing
-   history runs no migration SQL:
+   Compare its `public` and `private` catalogs, effective grants, functions,
+   triggers, constraints, complete policy inventories, badge/configuration rows,
+   and the application-owned Storage manifest with production. Classify every
+   difference and explicitly allowlist Supabase platform-version noise.
+4. Before production use, update migration 1 in a reviewed commit so it aborts on
+   any legacy purchase or non-membership entitlement row and uses
+   `DROP TABLE ... RESTRICT`. This is allowed only because production has no
+   migration record for that file. Never rewrite a version after it is recorded.
+   Rebuild the clean checkpoints and rerun the complete validation after its hash
+   changes.
+5. Restore the encrypted hosted roles, schema, and data into the isolated exact-
+   version stack. Require its normalized source manifest to match the captured
+   production source manifest. Then rehearse applying these three migrations
+   normally, not through `migration repair`:
 
    ```text
    20260707170000
@@ -308,6 +316,12 @@ through migration 3:
    20260708155500
    ```
 
+   Rehearse the successful path once against an exact legacy-source copy, then
+   exercise each fail-closed case separately against disposable copies: a
+   purchase row, an external dependency, a legacy entitlement, a changed
+   function, policy, or ACL, lock contention, and a forced rollback. The
+   successful copy must match the clean migration-3 application manifest and
+   have exactly these three history records.
 6. Create a separate, hashed worktree containing exactly migrations 1–13. Its
    linked dry run must list exactly the following ten pending versions. Rehearse
    the same push against the verified local restore, then apply those ten
@@ -334,13 +348,13 @@ through migration 3:
    workflow's historical gate; it does not authorize the production release by
    itself.
 
-Record the exact repaired and applied versions, file hashes, backup and restore
+Record the exact applied versions, file hashes, backup and restore
 evidence, comparison output, Storage manifest, project reference, operator,
 approver, and UTC time in the release record. Never reset the hosted project,
-replay the baseline, use `--include-all`, mark a missing effect applied, or push
-the full 52-file tree immediately after repairing versions 1–3. If an applied
-migration later fails, stop and use a reviewed forward fix; do not rewrite it or
-mark it reverted.
+use `--include-all`, mark a missing effect applied, manually execute migration
+SQL outside the approved three-version runner, or push the full 52-file tree
+before the checkpoint passes. If an applied migration later fails, stop and use
+a reviewed forward fix; do not rewrite it or mark it reverted.
 
 ### FOU-759 two-stage avatar and journal cutover
 
