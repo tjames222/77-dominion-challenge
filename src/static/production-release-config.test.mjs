@@ -4,6 +4,11 @@ import { describe, test } from 'node:test';
 
 const read = (path) => readFileSync(new URL(path, import.meta.url), 'utf8');
 const workflow = read('../../.github/workflows/deploy.yml');
+const workflows = [
+  workflow,
+  read('../../.github/workflows/ci.yml'),
+  read('../../.github/workflows/browser-quality.yml'),
+];
 const headers = read('../../public/_headers');
 const setup = read('../../CLOUDFLARE_PAGES_SETUP.md');
 
@@ -16,9 +21,19 @@ describe('production release configuration', () => {
     assert.match(workflow, /inputs\.release_scope == 'frontend-only'/);
   });
 
+  test('pins every third-party workflow action to an immutable commit', () => {
+    for (const source of workflows) {
+      const externalActions = [...source.matchAll(/^\s*uses:\s+(?!\.\/)([^@\s]+)@([^\s#]+)/gm)];
+      assert.ok(externalActions.length > 0);
+      for (const [, action, reference] of externalActions) {
+        assert.match(reference, /^[0-9a-f]{40}$/, `${action} must use an immutable commit SHA`);
+      }
+    }
+  });
+
   test('uses one protected Cloudflare deployment after backend verification', () => {
     assert.match(workflow, /needs:\s*frontend[\s\S]*?environment: production/);
-    assert.match(workflow, /cloudflare\/wrangler-action@v3/);
+    assert.match(workflow, /cloudflare\/wrangler-action@[0-9a-f]{40} # v3/);
     assert.match(workflow, /pages deploy dist[\s\S]*?--project-name=77-dominion-challenge[\s\S]*?--branch=main/);
     assert.match(workflow, /CLOUDFLARE_API_TOKEN/);
     assert.match(workflow, /CLOUDFLARE_ACCOUNT_ID/);
