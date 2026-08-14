@@ -170,23 +170,32 @@ test('hybrid dev Auth registers, persists, logs in, isolates UUID-owned state, a
   ));
   const loginRedirect = page.waitForURL(/\/login\.html\?returnTo=/);
 
-  // Start the stale write without awaiting it in the page context. The Auth
-  // state listener intentionally redirects as soon as getUser fails, so an
-  // awaited page.evaluate can be destroyed by that successful navigation.
-  await page.evaluate((journalNote) => {
-    window.setTimeout(() => {
-      void import('/src/static/api.js')
-        .then((api) => api.saveJournalEntry({
+  // Arm the stale write behind a Node-controlled gate. Releasing it only after
+  // evaluate has returned proves that a successful Auth redirect cannot destroy
+  // the command used to start the assertion.
+  let releaseStaleWrite;
+  const staleWriteRelease = new Promise((resolve) => {
+    releaseStaleWrite = resolve;
+  });
+  await page.exposeFunction('waitForFou1452StaleWriteRelease', () => staleWriteRelease);
+  const staleWriteArmed = await page.evaluate((journalNote) => {
+    void window.waitForFou1452StaleWriteRelease()
+      .then(async () => {
+        const api = await import('/src/static/api.js');
+        await api.saveJournalEntry({
           date: '2026-08-11',
           note: journalNote,
           win: '',
           prayer: '',
           mood: 'Tested',
           energy: 'Low',
-        }))
-        .catch(() => {});
-    }, 0);
+        });
+      })
+      .catch(() => {});
+    return true;
   }, STALE_JOURNAL);
+  expect(staleWriteArmed).toBe(true);
+  releaseStaleWrite();
 
   const [failedUserCheck] = await Promise.all([invalidSessionResponse, loginRedirect]);
   expect(await failedUserCheck.json()).toMatchObject({ error_code: 'session_not_found' });
