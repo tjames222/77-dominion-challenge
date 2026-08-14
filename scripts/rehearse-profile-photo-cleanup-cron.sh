@@ -6,10 +6,56 @@ fail() {
   exit 1
 }
 
+fault_phases=(
+  tracking_ready
+  fixtures_ready
+  first_upload_stored
+  runtime_created
+  readiness_queued
+  cron_scheduled
+  worker_completed
+  health_queued
+  teardown_started
+  cleanup_queued
+)
+
+is_fault_phase() {
+  local candidate="$1"
+  local known_phase
+  for known_phase in "${fault_phases[@]}"; do
+    [[ "$candidate" == "$known_phase" ]] && return 0
+  done
+  return 1
+}
+
+maybe_inject_fault() {
+  local phase="$1"
+  if [[ "${FOU802_REHEARSAL_FAULT_AFTER:-}" == "$phase" ]]; then
+    echo "FOU-802 local rehearsal: injected failure after ${phase}." >&2
+    return 86
+  fi
+}
+
+# This internal mode executes the same fault dispatcher without touching
+# Docker, Supabase, or the filesystem. The Node regression test invokes every
+# supported phase so renamed/dead checkpoints fail CI.
+if [[ "${FOU802_REHEARSAL_FAULT_SELF_TEST:-}" == "1" ]]; then
+  [[ "$#" -eq 1 ]] || fail "the fault self-test requires exactly one phase."
+  is_fault_phase "$1" || fail "the fault self-test received an unknown phase."
+  FOU802_REHEARSAL_FAULT_AFTER="$1"
+  maybe_inject_fault "$1"
+  fail "the fault self-test did not inject its failure."
+fi
+
 if [[ "$#" -ne 1 || "$1" != "--confirm-local-reset" ]]; then
   echo "FOU-802 local rehearsal: this proof destroys and rebuilds only the pinned local Supabase database." >&2
   echo "Re-run with --confirm-local-reset after confirming no local data must be kept." >&2
   exit 2
+fi
+
+if [[ -n "${FOU802_REHEARSAL_FAULT_AFTER:-}" ]] \
+  && ! is_fault_phase "$FOU802_REHEARSAL_FAULT_AFTER"; then
+  fail "FOU802_REHEARSAL_FAULT_AFTER names an unsupported checkpoint."
 fi
 
 script_directory="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
@@ -19,12 +65,14 @@ database_container="supabase_db_${project_id}"
 edge_container="supabase_edge_runtime_${project_id}"
 storage_container="supabase_storage_${project_id}"
 kong_container="supabase_kong_${project_id}"
+rest_container="supabase_rest_${project_id}"
 network_name="supabase_network_${project_id}"
 runtime_container="fou802-profile-photo-cleanup-rehearsal"
 runtime_alias="fou802-profile-photo-cleanup-worker"
 expected_edge_image="public.ecr.aws/supabase/edge-runtime:v1.74.2"
 expected_storage_image="public.ecr.aws/supabase/storage-api:v1.61.7"
 expected_kong_image="public.ecr.aws/supabase/kong:2.8.1"
+expected_rest_image="public.ecr.aws/supabase/postgrest:v14.14"
 local_api_origin="http://127.0.0.1:54321"
 container_api_origin="http://${kong_container}:8000"
 cron_job_name="fou802-profile-photo-cleanup-local"
@@ -66,6 +114,11 @@ config_project_id="$(sed -n 's/^project_id = "\([^"]*\)"/\1/p' \
   || fail "the local project ID is not the pinned rehearsal project."
 grep -Eq '^port = 54322$' "$repository_root/supabase/config.toml" \
   || fail "the local database port is not pinned to 54322."
+config_api_port="$(sed -n \
+  '/^\[api\]$/,/^\[/s/^port = \([0-9][0-9]*\)$/\1/p' \
+  "$repository_root/supabase/config.toml" | head -n 1)"
+[[ "$config_api_port" == "54321" ]] \
+  || fail "the local API port is not pinned to 54321."
 grep -Eq '^\[functions\.process-profile-photo-cleanup\]$' \
   "$repository_root/supabase/config.toml" \
   || fail "the cleanup Function configuration is missing."
@@ -113,6 +166,62 @@ assert_local_container "$database_container" "$expected_postgres_image"
 assert_local_container "$edge_container" "$expected_edge_image"
 assert_local_container "$storage_container" "$expected_storage_image"
 assert_local_container "$kong_container" "$expected_kong_image"
+assert_local_container "$rest_container" "$expected_rest_image"
+
+kong_api_ports="$(inspect_value "$kong_container" \
+  '{{range (index .NetworkSettings.Ports "8000/tcp")}}{{println .HostPort}}{{end}}')"
+[[ "$kong_api_ports" == "$config_api_port" ]] \
+  || fail "Kong port 8000 is not published only on the pinned local API port."
+
+assert_pg_net_alias_bypasses_proxy() {
+  local environment_line
+  local proxy_configured=false
+  local no_proxy_values=","
+  while IFS= read -r environment_line; do
+    case "$environment_line" in
+      HTTP_PROXY=?*|HTTPS_PROXY=?*|ALL_PROXY=?*|http_proxy=?*|https_proxy=?*|all_proxy=?*)
+        proxy_configured=true
+        ;;
+      NO_PROXY=*|no_proxy=*)
+        no_proxy_values+="${environment_line#*=},"
+        ;;
+    esac
+  done < <(inspect_value "$database_container" \
+    '{{range .Config.Env}}{{println .}}{{end}}')
+  if [[ "$proxy_configured" == "true" \
+    && "$no_proxy_values" != *",${runtime_alias},"* ]]; then
+    fail "the database proxy configuration does not bypass the exact pg_net runtime alias."
+  fi
+}
+
+assert_pg_net_alias_bypasses_proxy
+
+umask 077
+lock_directory="${TMPDIR:-/tmp}/fou802-${project_id}.lock"
+lock_owner_file="$lock_directory/owner"
+if ! mkdir "$lock_directory" 2>/dev/null; then
+  fail "another FOU-802 rehearsal owns the exact local-project lock."
+fi
+printf '%s\n' "$$" >"$lock_owner_file"
+
+release_lock() {
+  if [[ -f "$lock_owner_file" \
+    && "$(tr -d '\r\n' <"$lock_owner_file" 2>/dev/null)" == "$$" ]]; then
+    rm -f -- "$lock_owner_file"
+    rmdir "$lock_directory" 2>/dev/null
+  fi
+}
+
+early_cleanup() {
+  local test_status=$?
+  trap - EXIT INT TERM
+  set +e
+  release_lock
+  exit "$test_status"
+}
+trap early_cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 export SUPABASE_TELEMETRY_DISABLED=1
 DOCKER_BIN="$docker_cli" SUPABASE_CLI_BIN="$supabase_cli" \
@@ -123,6 +232,12 @@ assert_local_container "$database_container" "$expected_postgres_image"
 assert_local_container "$edge_container" "$expected_edge_image"
 assert_local_container "$storage_container" "$expected_storage_image"
 assert_local_container "$kong_container" "$expected_kong_image"
+assert_local_container "$rest_container" "$expected_rest_image"
+kong_api_ports="$(inspect_value "$kong_container" \
+  '{{range (index .NetworkSettings.Ports "8000/tcp")}}{{println .HostPort}}{{end}}')"
+[[ "$kong_api_ports" == "$config_api_port" ]] \
+  || fail "Kong changed its exact local API port during reset."
+assert_pg_net_alias_bypasses_proxy
 
 db_exec() {
   "$docker_cli" exec -i "$database_container" \
@@ -140,93 +255,261 @@ runtime_env="$temporary_root/runtime.env"
 curl_config="$temporary_root/curl.conf"
 upload_response="$temporary_root/upload-response.json"
 payload_file="$temporary_root/profile-photo.webp"
+stdout_capture="$temporary_root/stdout.log"
+stderr_capture="$temporary_root/stderr.log"
 cron_job_id=""
-cron_was_installed=false
-runtime_started=false
-fixtures_created=false
-fixtures_cleaned=false
+cron_extension_state="unknown"
+cron_installed_by_rehearsal=false
 cleanup_request_id=""
 readiness_request_id=""
 worker_request_id=""
+health_request_id=""
+worker_secret=""
+service_role_key=""
+cleanup_failed=false
+capture_active=false
+
+if command -v curl >/dev/null 2>&1; then
+  curl_cli="$(command -v curl)"
+else
+  fail "curl is required for exact local Storage cleanup."
+fi
+
+mark_cleanup_failure() {
+  cleanup_failed=true
+}
+
+tracking_table_exists() {
+  [[ "$(db_query --command \
+    "select to_regclass('${secret_table}') is not null;" 2>/dev/null)" == "t" ]]
+}
+
+fixture_table_exists() {
+  [[ "$(db_query --command \
+    "select to_regclass('${fixture_table}') is not null;" 2>/dev/null)" == "t" ]]
+}
+
+storage_curl() {
+  "$curl_cli" --disable --config "$curl_config" \
+    --noproxy '*' \
+    --proxy '' \
+    --proto '=http' \
+    --proto-redir '=http' \
+    --max-redirs 0 \
+    --connect-timeout 5 \
+    --max-time 20 \
+    --fail-with-body \
+    --silent \
+    --show-error \
+    "$@"
+}
+
+remove_exact_runtime_container() {
+  local runtime_label
+  if "$docker_cli" inspect "$runtime_container" >/dev/null 2>&1; then
+    runtime_label="$(inspect_value "$runtime_container" \
+      '{{index .Config.Labels "fou802.rehearsal"}}' 2>/dev/null)"
+    if [[ "$runtime_label" == "true" ]]; then
+      "$docker_cli" rm --force "$runtime_container" >/dev/null 2>&1 \
+        || mark_cleanup_failure
+    else
+      echo "FOU-802 local rehearsal: refusing to remove an unrelated runtime container." >&2
+      mark_cleanup_failure
+    fi
+  fi
+}
+
+tracked_job_ids() {
+  local named_ids=""
+  local recorded_id=""
+  named_ids="$(db_query --command "
+    select coalesce(string_agg(jobid::text, ',' order by jobid), '')
+    from cron.job where jobname = '${cron_job_name}';
+  " 2>/dev/null)"
+  if tracking_table_exists; then
+    recorded_id="$(db_query --command \
+      "select coalesce(cron_job_id::text, '') from ${secret_table} where singleton;" \
+      2>/dev/null)"
+  fi
+  if [[ -n "$named_ids" && -n "$recorded_id" ]]; then
+    printf '%s,%s\n' "$named_ids" "$recorded_id"
+  else
+    printf '%s%s\n' "$named_ids" "$recorded_id"
+  fi
+}
+
+unschedule_and_drain_rehearsal_jobs() {
+  local job_ids
+  local job_id
+  local active_count=""
+  local attempt
+  if [[ "$(db_query --command \
+    "select exists (select 1 from pg_extension where extname = 'pg_cron');" \
+    2>/dev/null)" != "t" ]]; then
+    return 0
+  fi
+  job_ids="$(tracked_job_ids)"
+  [[ -z "$job_ids" ]] && return 0
+  if [[ ! "$job_ids" =~ ^[0-9]+(,[0-9]+)*$ ]]; then
+    mark_cleanup_failure
+    return 0
+  fi
+  IFS=',' read -r -a job_id_values <<<"$job_ids"
+  for job_id in "${job_id_values[@]}"; do
+    db_query --command \
+      "select cron.unschedule(${job_id}) where exists (select 1 from cron.job where jobid = ${job_id});" \
+      >/dev/null 2>&1 || mark_cleanup_failure
+  done
+  for attempt in $(seq 1 150); do
+    active_count="$(db_query --command "
+      select count(*) from cron.job_run_details
+      where jobid in (${job_ids}) and status in ('starting', 'running');
+    " 2>/dev/null)"
+    [[ "$active_count" == "0" ]] && break
+    sleep 0.1
+  done
+  if [[ "$active_count" != "0" ]]; then
+    mark_cleanup_failure
+    return 0
+  fi
+  db_exec --command \
+    "delete from cron.job_run_details where jobid in (${job_ids});" \
+    >/dev/null 2>&1 || mark_cleanup_failure
+  if [[ "$(db_query --command \
+    "select count(*) from cron.job_run_details where jobid in (${job_ids});" \
+    2>/dev/null)" != "0" ]]; then
+    mark_cleanup_failure
+  fi
+}
+
+tracked_request_ids() {
+  local recorded_ids=""
+  local shell_ids=""
+  if tracking_table_exists; then
+    recorded_ids="$(db_query --command "
+      select coalesce(string_agg(request_id::text, ',' order by request_id), '')
+      from (
+        select distinct unnest(array_remove(array[
+          readiness_request_id,
+          worker_request_id,
+          health_request_id,
+          cleanup_request_id
+        ], null)) as request_id
+        from ${secret_table}
+        where singleton
+      ) tracked;
+    " 2>/dev/null)"
+  fi
+  for shell_request_id in \
+    "$readiness_request_id" "$worker_request_id" \
+    "$health_request_id" "$cleanup_request_id"; do
+    [[ "$shell_request_id" =~ ^[0-9]+$ ]] || continue
+    if [[ ",$recorded_ids,$shell_ids," != *",${shell_request_id},"* ]]; then
+      shell_ids="${shell_ids:+${shell_ids},}${shell_request_id}"
+    fi
+  done
+  if [[ -n "$recorded_ids" && -n "$shell_ids" ]]; then
+    printf '%s,%s\n' "$recorded_ids" "$shell_ids"
+  else
+    printf '%s%s\n' "$recorded_ids" "$shell_ids"
+  fi
+}
+
+drain_and_delete_tracked_requests() {
+  local request_ids
+  local expected_count
+  local visible_count=""
+  local residue_count=""
+  local attempt
+  request_ids="$(tracked_request_ids)"
+  [[ -z "$request_ids" ]] && return 0
+  if [[ ! "$request_ids" =~ ^[0-9]+(,[0-9]+)*$ ]]; then
+    mark_cleanup_failure
+    return 0
+  fi
+  expected_count="$(tr ',' '\n' <<<"$request_ids" | LC_ALL=C sort -u | wc -l | tr -d ' ')"
+  for attempt in $(seq 1 150); do
+    visible_count="$(db_query --command "
+      select count(distinct id) from (
+        select id from net.http_request_queue where id in (${request_ids})
+        union all
+        select id from net._http_response where id in (${request_ids})
+      ) visible;
+    " 2>/dev/null)"
+    [[ "$visible_count" == "$expected_count" ]] && break
+    sleep 0.1
+  done
+  [[ "$visible_count" == "$expected_count" ]] || mark_cleanup_failure
+  db_exec >/dev/null 2>&1 <<SQL || mark_cleanup_failure
+delete from net.http_request_queue where id in (${request_ids});
+delete from net._http_response where id in (${request_ids});
+SQL
+  for attempt in $(seq 1 20); do
+    residue_count="$(db_query --command "
+      select
+        (select count(*) from net.http_request_queue where id in (${request_ids}))
+        + (select count(*) from net._http_response where id in (${request_ids}));
+    " 2>/dev/null)"
+    [[ "$residue_count" == "0" ]] && break
+    db_exec >/dev/null 2>&1 <<SQL
+delete from net.http_request_queue where id in (${request_ids});
+delete from net._http_response where id in (${request_ids});
+SQL
+    sleep 0.1
+  done
+  [[ "$residue_count" == "0" ]] || mark_cleanup_failure
+}
 
 best_effort_database_cleanup() {
   local cleanup_path
-  set +e
-  if [[ -n "$cron_job_id" ]]; then
-    db_query --command \
-      "select cron.unschedule(${cron_job_id}) where exists (select 1 from cron.job where jobid = ${cron_job_id});" \
-      >/dev/null 2>&1
-  fi
-  # Authorize exact fixture paths before asking the Storage API to remove the
-  # bytes. This keeps failure cleanup from leaving orphan files in the local
-  # Storage volume; no volume-level command is ever used.
-  db_exec >/dev/null 2>&1 <<'SQL'
-insert into private.retired_community_deletion_ledger (
-  batch_id, event_type, actor, event_at, details
-)
-select
-  fixture.erasure_batch_id,
-  'cancelled',
-  'fou802-local-rehearsal',
-  clock_timestamp(),
-  jsonb_build_object('reason', 'failed_local_rehearsal_cleanup')
-from private.fou802_profile_photo_cleanup_fixtures fixture
-where fixture.erasure_batch_id is not null
-  and not exists (
-    select 1 from private.retired_community_deletion_ledger terminal
-    where terminal.batch_id = fixture.erasure_batch_id
-      and terminal.event_type in ('cancelled', 'executed')
-  );
-update public.profiles profile
-set avatar_url = ''
-from private.fou802_profile_photo_cleanup_fixtures fixture
-where profile.user_id = fixture.user_id
-  and coalesce(profile.avatar_url, '') <> '';
-set session_replication_role = replica;
-update private.profile_photo_objects registry
-set
-  storage_object_id = fixture.actual_object_id,
-  state = case when registry.state = 'retired' then 'retired' else 'cleanup' end,
-  upload_expires_at = null,
-  claim_token = null,
-  claim_expires_at = null,
-  claim_actor = null,
-  delete_authorized_at = null,
-  next_attempt_at = clock_timestamp(),
-  retired_at = case when registry.state = 'retired' then registry.retired_at else null end,
-  updated_at = clock_timestamp()
-from private.fou802_profile_photo_cleanup_fixtures fixture
-where registry.id = fixture.registration_id
-  and fixture.actual_object_id is not null;
-set session_replication_role = origin;
-select public.claim_profile_photo_cleanup_service(100);
-select public.verify_profile_photo_cleanup_service(
-  registry.id,
-  registry.claim_token
-)
-from private.profile_photo_objects registry
-join private.fou802_profile_photo_cleanup_fixtures fixture
-  on fixture.registration_id = registry.id
-where registry.state = 'cleanup'
-  and registry.claim_actor = 'service';
-SQL
+  local object_residue=""
+  local drop_rehearsal_cron="$cron_installed_by_rehearsal"
+  unschedule_and_drain_rehearsal_jobs
+  drain_and_delete_tracked_requests
 
-  if [[ -f "$curl_config" ]]; then
+  if tracking_table_exists; then
+    [[ "$(db_query --command \
+      "select pg_cron_installed_by_rehearsal from ${secret_table} where singleton;" \
+      2>/dev/null)" == "t" ]] && drop_rehearsal_cron=true
+  fi
+
+  if fixture_table_exists; then
+    # The upload can commit before the happy-path shell records its object ID.
+    # Recover only the exact object at the already-recorded bucket/path.
+    db_exec >/dev/null 2>&1 <<'SQL' || mark_cleanup_failure
+update private.fou802_profile_photo_cleanup_fixtures fixture
+set actual_object_id = object_row.id
+from storage.objects object_row
+where object_row.bucket_id = 'profile-photos'
+  and object_row.name = fixture.storage_path
+  and fixture.actual_object_id is distinct from object_row.id;
+SQL
+  fi
+
+  if [[ -f "$curl_config" ]] && fixture_table_exists; then
     while IFS= read -r cleanup_path; do
       [[ "$cleanup_path" =~ ^[0-9a-f-]{36}/avatar-[0-9]{13}-[a-f0-9]{32}\.webp$ ]] \
-        || continue
-      curl --config "$curl_config" \
+        || { mark_cleanup_failure; continue; }
+      storage_curl \
         --request DELETE \
-        --data "{\"prefixes\":[\"${cleanup_path}\"]}" \
+        --header 'Content-Type: application/json' \
+        --json "{\"prefixes\":[\"${cleanup_path}\"]}" \
         "${local_api_origin}/storage/v1/object/profile-photos" \
-        >/dev/null 2>&1
+        >/dev/null 2>&1 || mark_cleanup_failure
     done < <(db_query --command \
       'select storage_path from private.fou802_profile_photo_cleanup_fixtures order by fixture_kind;' \
       2>/dev/null)
+    object_residue="$(db_query --command "
+      select count(*)
+      from storage.objects object_row
+      join ${fixture_table} fixture
+        on object_row.bucket_id = 'profile-photos'
+       and object_row.name = fixture.storage_path;
+    " 2>/dev/null)"
+    [[ "$object_residue" == "0" ]] || mark_cleanup_failure
   fi
 
-  db_exec >/dev/null 2>&1 <<'SQL'
-set session_replication_role = replica;
+  db_exec >/dev/null 2>&1 <<'SQL' || mark_cleanup_failure
 do $$
 declare target_batch_ids uuid[];
 begin
@@ -239,6 +522,7 @@ begin
   into target_batch_ids
   from private.fou802_profile_photo_cleanup_fixtures;
 
+  perform set_config('session_replication_role', 'replica', true);
   delete from private.retired_community_deletion_ledger
   where batch_id = any(target_batch_ids);
   delete from private.retired_community_storage_work
@@ -247,74 +531,122 @@ begin
   where batch_id = any(target_batch_ids);
   delete from private.retired_community_deletion_items
   where batch_id = any(target_batch_ids);
+  delete from private.retired_community_deletion_batches
+  where id = any(target_batch_ids);
+  delete from private.profile_photo_objects registry
+  where exists (
+    select 1 from private.fou802_profile_photo_cleanup_fixtures fixture
+    where fixture.user_id = registry.user_id
+  );
+  delete from private.profile_photo_path_tombstones tombstone
+  where exists (
+    select 1
+    from private.fou802_profile_photo_cleanup_fixtures fixture
+    where tombstone.path_sha256 = private.profile_photo_path_sha256(
+      fixture.storage_path
+    )
+  );
+  perform set_config('session_replication_role', 'origin', true);
+  delete from auth.users user_row
+  where exists (
+    select 1 from private.fou802_profile_photo_cleanup_fixtures fixture
+    where fixture.user_id = user_row.id
+  );
+
+  if exists (
+      select 1 from auth.users user_row
+      join private.fou802_profile_photo_cleanup_fixtures fixture
+        on fixture.user_id = user_row.id
+    )
+    or exists (
+      select 1 from public.profiles profile
+      join private.fou802_profile_photo_cleanup_fixtures fixture
+        on fixture.user_id = profile.user_id
+    )
+    or exists (
+      select 1 from private.profile_photo_objects registry
+      join private.fou802_profile_photo_cleanup_fixtures fixture
+        on fixture.user_id = registry.user_id
+    )
+    or exists (
+      select 1 from private.retired_community_deletion_batches batch_row
+      join private.fou802_profile_photo_cleanup_fixtures fixture
+        on fixture.erasure_batch_id = batch_row.id
+    )
+  then
+    raise exception 'FOU-802 lifecycle fixture rows remained during cleanup.';
+  end if;
 end;
 $$;
-delete from private.retired_community_deletion_batches
-where id in (
-  select erasure_batch_id
-  from private.fou802_profile_photo_cleanup_fixtures
-  where erasure_batch_id is not null
-);
-set session_replication_role = origin;
-delete from private.profile_photo_objects
-where user_id in (
-  select user_id from private.fou802_profile_photo_cleanup_fixtures
-);
-delete from private.profile_photo_path_tombstones tombstone
-where exists (
-  select 1
-  from private.fou802_profile_photo_cleanup_fixtures fixture
-  where tombstone.path_sha256 = private.profile_photo_path_sha256(
-    fixture.storage_path
-  )
-);
-delete from auth.users
-where id in (
-  select user_id from private.fou802_profile_photo_cleanup_fixtures
-);
 drop table if exists private.fou802_profile_photo_cleanup_fixtures;
-drop table if exists private.fou802_profile_photo_cleanup_rehearsal;
 SQL
-  if [[ "$cron_was_installed" == "false" ]]; then
-    db_exec --command 'drop extension if exists pg_cron;' >/dev/null 2>&1
+
+  db_exec --command \
+    'drop table if exists private.fou802_profile_photo_cleanup_rehearsal;' \
+    >/dev/null 2>&1 || mark_cleanup_failure
+  if [[ "$drop_rehearsal_cron" == "true" ]]; then
+    if db_exec --command 'drop extension if exists pg_cron;' >/dev/null 2>&1; then
+      cron_installed_by_rehearsal=false
+    else
+      mark_cleanup_failure
+    fi
   fi
-  set -e
+  if [[ "$cleanup_failed" == "false" ]]; then
+    cron_job_id=""
+    readiness_request_id=""
+    worker_request_id=""
+    health_request_id=""
+    cleanup_request_id=""
+  fi
 }
 
 cleanup() {
   local test_status=$?
+  local leaked=false
   trap - EXIT INT TERM
   set +e
 
-  if [[ "$fixtures_created" == "true" && "$fixtures_cleaned" != "true" ]]; then
-    best_effort_database_cleanup
+  remove_exact_runtime_container
+  best_effort_database_cleanup
+
+  if [[ "$capture_active" == "true" ]]; then
+    exec 1>&3 2>&4
+    capture_active=false
+  fi
+  for sensitive_value in "$worker_secret" "$service_role_key"; do
+    [[ -n "$sensitive_value" ]] || continue
+    grep -Fq -- "$sensitive_value" "$stdout_capture" 2>/dev/null && leaked=true
+    grep -Fq -- "$sensitive_value" "$stderr_capture" 2>/dev/null && leaked=true
+  done
+  if [[ "$leaked" == "true" ]]; then
+    echo "FOU-802 local rehearsal: captured diagnostics contained a protected secret and were suppressed." >&2
+    cleanup_failed=true
   else
-    if [[ -n "$cron_job_id" ]]; then
-      db_query --command \
-        "select cron.unschedule(${cron_job_id}) where exists (select 1 from cron.job where jobid = ${cron_job_id});" \
-        >/dev/null 2>&1
-    fi
-    db_exec --command \
-      'drop table if exists private.fou802_profile_photo_cleanup_rehearsal;' \
-      >/dev/null 2>&1
-    if [[ "$cron_was_installed" == "false" ]]; then
-      db_exec --command 'drop extension if exists pg_cron;' >/dev/null 2>&1
-    fi
+    [[ -f "$stdout_capture" ]] && cat "$stdout_capture"
+    [[ -f "$stderr_capture" ]] && cat "$stderr_capture" >&2
   fi
 
-  if [[ "$runtime_started" == "true" ]]; then
-    "$docker_cli" rm --force "$runtime_container" >/dev/null 2>&1
-  fi
   rm -rf -- "$temporary_root"
-  set -e
+  release_lock
 
+  if [[ "$cleanup_failed" == "true" ]]; then
+    echo "FOU-802 local rehearsal: cleanup could not prove that every tracked disposable resource was removed." >&2
+  fi
   if (( test_status != 0 )); then
     exit "$test_status"
   fi
+  if [[ "$cleanup_failed" == "true" ]]; then
+    exit 1
+  fi
 }
-trap cleanup EXIT INT TERM
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
-service_role_key=""
+exec 3>&1 4>&2
+exec >"$stdout_capture" 2>"$stderr_capture"
+capture_active=true
+
 while IFS= read -r environment_line; do
   case "$environment_line" in
     SUPABASE_SERVICE_ROLE_KEY=*)
@@ -323,50 +655,64 @@ while IFS= read -r environment_line; do
   esac
 done < <(inspect_value "$edge_container" \
   '{{range .Config.Env}}{{println .}}{{end}}')
-[[ "${#service_role_key}" -ge 32 ]] \
+[[ "${#service_role_key}" -ge 32 \
+  && "$service_role_key" =~ ^[A-Za-z0-9._-]+$ ]] \
   || fail "the exact local Edge Runtime did not expose a usable service key."
-
-worker_secret="$(node --input-type=module --eval \
-  "import { randomBytes } from 'node:crypto'; process.stdout.write(randomBytes(32).toString('hex'));" \
-)"
-[[ "$worker_secret" =~ ^[0-9a-f]{64}$ ]] \
-  || fail "the disposable worker secret was not generated safely."
 
 cron_installed_value="$(db_query --command \
   "select exists (select 1 from pg_extension where extname = 'pg_cron');")"
 if [[ "$cron_installed_value" == "t" ]]; then
-  cron_was_installed=true
-elif [[ "$cron_installed_value" != "f" ]]; then
-  fail "could not determine local pg_cron state."
+  cron_extension_state="preexisting"
+elif [[ "$cron_installed_value" == "f" ]]; then
+  cron_extension_state="absent"
+  # Set the ownership flag before creation so even a signal in the
+  # command/assignment gap cannot cause us to retain an extension that the
+  # rehearsal proved was absent beforehand.
+  cron_installed_by_rehearsal=true
+  db_exec --command 'create extension pg_cron;' >/dev/null
+else
+  fail "could not determine local pg_cron state without changing it."
 fi
 
+unschedule_and_drain_rehearsal_jobs
+[[ "$cleanup_failed" == "false" ]] \
+  || fail "a stale rehearsal Cron job could not be drained safely."
+
 db_exec >/dev/null <<SQL
-create extension if not exists pg_cron;
-
-do \$\$
-declare stale_job_id bigint;
-begin
-  for stale_job_id in
-    select jobid from cron.job where jobname = '$cron_job_name'
-  loop
-    perform cron.unschedule(stale_job_id);
-    delete from cron.job_run_details where jobid = stale_job_id;
-  end loop;
-end;
-\$\$;
-
+begin;
 drop table if exists $secret_table;
 drop table if exists $fixture_table;
 
 create unlogged table $secret_table (
   singleton boolean primary key default true check (singleton),
-  worker_secret text not null check (char_length(worker_secret) >= 32),
+  worker_secret text not null check (worker_secret ~ '^[0-9a-f]{64}$'),
+  pg_cron_installed_by_rehearsal boolean not null,
+  cron_job_id bigint,
   invoked_at timestamptz,
-  request_id bigint
+  readiness_request_id bigint,
+  worker_request_id bigint,
+  health_request_id bigint,
+  cleanup_request_id bigint
 );
 revoke all on $secret_table from public, anon, authenticated, service_role;
-insert into $secret_table (worker_secret) values ('$worker_secret');
+insert into $secret_table (
+  worker_secret,
+  pg_cron_installed_by_rehearsal
+) values (
+  encode(gen_random_bytes(32), 'hex'),
+  $cron_installed_by_rehearsal
+);
+commit;
+SQL
 
+worker_secret="$(db_query --command \
+  "select worker_secret from ${secret_table} where singleton;")"
+[[ "$worker_secret" =~ ^[0-9a-f]{64}$ ]] \
+  || fail "the database did not generate a valid disposable worker secret."
+maybe_inject_fault tracking_ready
+
+db_exec >/dev/null <<SQL
+begin;
 create unlogged table $fixture_table (
   fixture_kind text primary key check (
     fixture_kind in ('abandoned', 'canonical', 'wrong_identity', 'account_erasure')
@@ -467,8 +813,9 @@ begin
   end loop;
 end;
 \$\$;
+commit;
 SQL
-fixtures_created=true
+maybe_inject_fault fixtures_ready
 
 cp "$repository_root/public/images/science-bible-training.jpg" "$payload_file"
 payload_size="$(wc -c <"$payload_file" | tr -d ' ')"
@@ -478,14 +825,9 @@ payload_sha256="$(shasum -a 256 "$payload_file" | awk '{print $1}')"
 [[ "$payload_sha256" =~ ^[0-9a-f]{64}$ ]] \
   || fail "the local Storage payload digest is invalid."
 
-umask 077
 {
-  printf 'silent\n'
-  printf 'show-error\n'
-  printf 'fail\n'
   printf 'header = "Authorization: Bearer %s"\n' "$service_role_key"
   printf 'header = "apikey: %s"\n' "$service_role_key"
-  printf 'header = "Content-Type: image/webp"\n'
 } >"$curl_config"
 
 for fixture_kind in abandoned canonical wrong_identity account_erasure; do
@@ -498,9 +840,17 @@ for fixture_kind in abandoned canonical wrong_identity account_erasure; do
     http://127.0.0.1:54321/storage/v1/object/profile-photos/*) ;;
     *) fail "a fixture upload attempted to leave the loopback Storage API." ;;
   esac
-  if ! curl --config "$curl_config" --request POST --data-binary "@$payload_file" \
+  if ! storage_curl \
+    --request POST \
+    --header 'Content-Type: image/webp' \
+    --data-binary "@$payload_file" \
     "$storage_url" >"$upload_response"; then
     fail "the local Storage API rejected a fixture upload."
+  fi
+  if [[ "$fixture_kind" == "abandoned" ]]; then
+    # Exercise the otherwise tiny failure gap between Storage commit and the
+    # registry-ID observation below. Trap cleanup must recover by bucket/path.
+    maybe_inject_fault first_upload_stored
   fi
   db_exec --command "
     update $fixture_table fixture
@@ -605,9 +955,14 @@ where fixture.fixture_kind = 'wrong_identity'
 set session_replication_role = origin;
 SQL
 
-mkdir -p "$runtime_source/functions/_rehearsal" "$runtime_cache"
-cp -R "$repository_root/supabase/functions/_shared" \
-  "$runtime_source/functions/_shared"
+mkdir -p \
+  "$runtime_source/functions/_rehearsal" \
+  "$runtime_source/functions/_shared" \
+  "$runtime_cache"
+cp "$repository_root/supabase/functions/_shared/supabase.ts" \
+  "$runtime_source/functions/_shared/supabase.ts"
+cp "$repository_root/supabase/functions/_shared/http.ts" \
+  "$runtime_source/functions/_shared/http.ts"
 cp -R "$repository_root/supabase/functions/process-profile-photo-cleanup" \
   "$runtime_source/functions/process-profile-photo-cleanup"
 cp "$script_directory/fixtures/profile-photo-cleanup-supabase-bridge.ts" \
@@ -625,11 +980,16 @@ cp "$script_directory/fixtures/profile-photo-cleanup-supabase-bridge.ts" \
   printf 'SUPABASE_SERVICE_ROLE_KEY=%s\n' "$service_role_key"
   printf 'PROFILE_PHOTO_WORKER_SECRET=%s\n' "$worker_secret"
   printf 'DENO_NO_UPDATE_CHECK=1\n'
-  printf 'HTTP_PROXY=http://127.0.0.1:9\n'
-  printf 'HTTPS_PROXY=http://127.0.0.1:9\n'
-  printf 'ALL_PROXY=http://127.0.0.1:9\n'
+  printf 'HTTP_PROXY=\n'
+  printf 'HTTPS_PROXY=\n'
+  printf 'ALL_PROXY=\n'
+  printf 'http_proxy=\n'
+  printf 'https_proxy=\n'
+  printf 'all_proxy=\n'
   printf 'NO_PROXY=127.0.0.1,localhost,%s,%s,%s\n' \
-    "$kong_container" "$storage_container" "supabase_rest_${project_id}"
+    "$kong_container" "$storage_container" "$rest_container"
+  printf 'no_proxy=127.0.0.1,localhost,%s,%s,%s\n' \
+    "$kong_container" "$storage_container" "$rest_container"
 } >"$runtime_env"
 
 if "$docker_cli" inspect "$runtime_container" >/dev/null 2>&1; then
@@ -663,7 +1023,7 @@ fi
   --port=8081 \
   --policy=per_worker \
   --quiet >/dev/null
-runtime_started=true
+maybe_inject_fault runtime_created
 
 [[ "$(inspect_value "$runtime_container" '{{.Config.Image}}')" \
   == "$expected_edge_image" ]] \
@@ -678,6 +1038,18 @@ runtime_aliases="$(inspect_value "$runtime_container" \
   '{{range $_, $network := .NetworkSettings.Networks}}{{json $network.Aliases}}{{end}}')"
 [[ "$runtime_aliases" == *"\"$runtime_alias\""* ]] \
   || fail "the isolated runtime did not receive its exact local alias."
+runtime_environment="$(inspect_value "$runtime_container" \
+  '{{range .Config.Env}}{{println .}}{{end}}')"
+for proxy_name in \
+  HTTP_PROXY HTTPS_PROXY ALL_PROXY http_proxy https_proxy all_proxy; do
+  grep -Fxq "${proxy_name}=" <<<"$runtime_environment" \
+    || fail "the isolated runtime retained a ${proxy_name} value."
+done
+runtime_no_proxy="127.0.0.1,localhost,${kong_container},${storage_container},${rest_container}"
+grep -Fxq "NO_PROXY=${runtime_no_proxy}" <<<"$runtime_environment" \
+  || fail "the isolated runtime uppercase no-proxy boundary changed."
+grep -Fxq "no_proxy=${runtime_no_proxy}" <<<"$runtime_environment" \
+  || fail "the isolated runtime lowercase no-proxy boundary changed."
 
 wait_for_http_response() {
   local request_id="$1"
@@ -707,52 +1079,61 @@ wait_for_http_response() {
 }
 
 readiness_request_id="$(db_query --command "
-  select net.http_post(
-    url := 'http://${runtime_alias}:8081/',
-    headers := '{\"Content-Type\":\"application/json\"}'::jsonb,
-    body := '{}'::jsonb,
-    timeout_milliseconds := 10000
-  );
+  update ${secret_table} rehearsal
+  set readiness_request_id = net.http_post(
+      url := 'http://${runtime_alias}:8081/',
+      headers := '{\"Content-Type\":\"application/json\"}'::jsonb,
+      body := '{}'::jsonb,
+      timeout_milliseconds := 10000
+    )
+  where rehearsal.singleton
+  returning readiness_request_id;
 ")"
 [[ "$readiness_request_id" =~ ^[0-9]+$ ]] \
   || fail "pg_net did not queue the isolated runtime readiness request."
+maybe_inject_fault readiness_queued
 wait_for_http_response "$readiness_request_id" "401"
 readiness_body="$(db_query --command \
   "select content::jsonb ->> 'error' from net._http_response where id = ${readiness_request_id};")"
 [[ "$readiness_body" == "Not authorized." ]] \
   || fail "the no-JWT readiness request did not reach the worker's own auth gate."
-db_exec --command \
-  "delete from net._http_response where id = ${readiness_request_id};" >/dev/null
-readiness_request_id=""
 
 cron_job_id="$(db_query --command "
-  select cron.schedule(
-    '${cron_job_name}',
-    '1 second',
-    \$job\$
-    update $secret_table rehearsal
-    set
-      invoked_at = clock_timestamp(),
-      request_id = net.http_post(
-        url := 'http://${runtime_alias}:8081/',
-        headers := jsonb_build_object(
-          'Content-Type', 'application/json',
-          'x-dominion-worker-key', rehearsal.worker_secret
-        ),
-        body := '{\"limit\":10}'::jsonb,
-        timeout_milliseconds := 10000
-      )
-    where rehearsal.singleton
-      and rehearsal.invoked_at is null;
-    \$job\$
-  );
+  with scheduled as (
+    select cron.schedule(
+      '${cron_job_name}',
+      '1 second',
+      \$job\$
+      update $secret_table rehearsal
+      set
+        invoked_at = clock_timestamp(),
+        worker_request_id = net.http_post(
+          url := 'http://${runtime_alias}:8081/',
+          headers := jsonb_build_object(
+            'Content-Type', 'application/json',
+            'x-dominion-worker-key', rehearsal.worker_secret
+          ),
+          body := '{\"limit\":10}'::jsonb,
+          timeout_milliseconds := 10000
+        )
+      where rehearsal.singleton
+        and rehearsal.invoked_at is null;
+      \$job\$
+    ) as jobid
+  )
+  update ${secret_table} rehearsal
+  set cron_job_id = scheduled.jobid
+  from scheduled
+  where rehearsal.singleton
+  returning rehearsal.cron_job_id;
 ")"
 [[ "$cron_job_id" =~ ^[0-9]+$ ]] \
   || fail "pg_cron did not return a job ID."
+maybe_inject_fault cron_scheduled
 
 for attempt in $(seq 1 150); do
   worker_request_id="$(db_query --command \
-    "select coalesce(request_id::text, '') from $secret_table where singleton;")"
+    "select coalesce(worker_request_id::text, '') from $secret_table where singleton;")"
   [[ "$worker_request_id" =~ ^[0-9]+$ ]] && break
   sleep 0.1
 done
@@ -760,6 +1141,7 @@ done
   || fail "the scheduled Cron command did not queue its one local worker request."
 
 wait_for_http_response "$worker_request_id" "200"
+maybe_inject_fault worker_completed
 
 for attempt in $(seq 1 100); do
   cron_run_id="$(db_query --command "
@@ -776,6 +1158,16 @@ done
   || fail "cron.job_run_details did not record the request-queuing run."
 
 db_query --command "select cron.unschedule(${cron_job_id});" >/dev/null
+for attempt in $(seq 1 100); do
+  active_cron_runs="$(db_query --command "
+    select count(*) from cron.job_run_details
+    where jobid = ${cron_job_id} and status in ('starting', 'running');
+  ")"
+  [[ "$active_cron_runs" == "0" ]] && break
+  sleep 0.1
+done
+[[ "$active_cron_runs" == "0" ]] \
+  || fail "the rehearsal Cron job did not drain after unscheduling."
 
 db_exec >/dev/null <<SQL
 do \$\$
@@ -800,7 +1192,8 @@ begin
   end if;
 
   health := worker_response -> 'health';
-  if health ->> 'expiredPending' <> '0'
+  if health ->> 'oldestReadyAt' is null
+    or health ->> 'expiredPending' <> '0'
     or health ->> 'ready' <> '1'
     or health ->> 'leased' <> '0'
     or health ->> 'staleLeases' <> '0'
@@ -911,6 +1304,97 @@ end;
 \$\$;
 SQL
 
+health_request_id="$(db_query --command "
+  update ${secret_table} rehearsal
+  set health_request_id = net.http_post(
+      url := 'http://${runtime_alias}:8081/',
+      headers := jsonb_build_object(
+        'Content-Type', 'application/json',
+        'x-dominion-worker-key', rehearsal.worker_secret
+      ),
+      body := '{\"mode\":\"health\"}'::jsonb,
+      timeout_milliseconds := 10000
+    )
+  where rehearsal.singleton
+  returning health_request_id;
+")"
+[[ "$health_request_id" =~ ^[0-9]+$ ]] \
+  || fail "the authenticated health request was not tracked atomically."
+maybe_inject_fault health_queued
+wait_for_http_response "$health_request_id" "200"
+
+db_exec >/dev/null <<SQL
+do \$\$
+declare
+  health_response jsonb;
+  aggregate_health jsonb;
+  response_created_at timestamptz;
+begin
+  select content::jsonb, created
+    into strict health_response, response_created_at
+  from net._http_response
+  where id = $health_request_id
+    and status_code = 200
+    and not timed_out
+    and error_msg is null;
+
+  aggregate_health := health_response -> 'health';
+  if health_response ->> 'status' <> 'ok'
+    or response_created_at is null
+    or response_created_at < clock_timestamp() - interval '1 minute'
+    or aggregate_health ->> 'oldestReadyAt' is null
+    or (aggregate_health ->> 'oldestReadyAt')::timestamptz
+      < clock_timestamp() - interval '15 minutes'
+    or aggregate_health ->> 'expiredPending' <> '0'
+    or aggregate_health ->> 'ready' <> '1'
+    or aggregate_health ->> 'leased' <> '0'
+    or aggregate_health ->> 'staleLeases' <> '0'
+    or aggregate_health ->> 'backingOff' <> '1'
+    or aggregate_health ->> 'failuresLastHour' <> '1'
+  then
+    raise exception 'FOU-802 authenticated health proof was stale or alerting.';
+  end if;
+end;
+\$\$;
+SQL
+
+db_exec >/dev/null <<SQL
+do \$\$
+declare diagnostic_text text;
+begin
+  select concat_ws(
+      '',
+      (
+        select string_agg(coalesce(content, ''), '')
+        from net._http_response
+        where id in (
+          $readiness_request_id,
+          $worker_request_id,
+          $health_request_id
+        )
+      ),
+      (
+        select concat_ws('', return_message, command)
+        from cron.job_run_details
+        where runid = $cron_run_id
+      )
+    )
+    into diagnostic_text;
+
+  if position((select worker_secret from $secret_table) in diagnostic_text) > 0
+    or exists (
+      select 1 from $fixture_table fixture
+      where position(fixture.user_id::text in diagnostic_text) > 0
+        or position(fixture.storage_path in diagnostic_text) > 0
+        or position(fixture.actual_object_id::text in diagnostic_text) > 0
+    )
+  then
+    raise exception 'FOU-802 SQL diagnostics leaked protected rehearsal data.';
+  end if;
+end;
+\$\$;
+SQL
+
 cron_evidence="$(db_query --command "
   select jsonb_build_object(
     'source', 'cron.job_run_details',
@@ -933,12 +1417,31 @@ worker_evidence="$(db_query --command "
   from net._http_response
   where id = ${worker_request_id};
 ")"
+health_evidence="$(db_query --command "
+  select jsonb_build_object(
+    'source', 'net._http_response.health',
+    'httpStatus', status_code,
+    'workerStatus', content::jsonb ->> 'status',
+    'observedAt', created,
+    'oldestReadyAt', content::jsonb #>> '{health,oldestReadyAt}',
+    'ready', content::jsonb #>> '{health,ready}',
+    'staleLeases', content::jsonb #>> '{health,staleLeases}',
+    'failuresLastHour', content::jsonb #>> '{health,failuresLastHour}'
+  )
+  from net._http_response
+  where id = ${health_request_id};
+")"
 [[ "$cron_evidence" == *'"status": "succeeded"'* \
-  && "$worker_evidence" == *'"workerStatus": "processed"'* ]] \
+  && "$worker_evidence" == *'"workerStatus": "processed"'* \
+  && "$health_evidence" == *'"workerStatus": "ok"'* \
+  && "$health_evidence" == *'"observedAt":'* ]] \
   || fail "sanitized evidence could not be recorded."
 
 printf 'FOU-802 cron evidence: %s\n' "$cron_evidence"
 printf 'FOU-802 worker evidence: %s\n' "$worker_evidence"
+printf 'FOU-802 health evidence: %s\n' "$health_evidence"
+
+maybe_inject_fault teardown_started
 
 db_exec >/dev/null <<SQL
 insert into private.retired_community_deletion_ledger (
@@ -990,18 +1493,22 @@ set session_replication_role = origin;
 SQL
 
 cleanup_request_id="$(db_query --command "
-  select net.http_post(
-    url := 'http://${runtime_alias}:8081/',
-    headers := jsonb_build_object(
-      'Content-Type', 'application/json',
-      'x-dominion-worker-key', (select worker_secret from $secret_table)
-    ),
-    body := '{\"limit\":10}'::jsonb,
-    timeout_milliseconds := 10000
-  );
+  update ${secret_table} rehearsal
+  set cleanup_request_id = net.http_post(
+      url := 'http://${runtime_alias}:8081/',
+      headers := jsonb_build_object(
+        'Content-Type', 'application/json',
+        'x-dominion-worker-key', rehearsal.worker_secret
+      ),
+      body := '{\"limit\":10}'::jsonb,
+      timeout_milliseconds := 10000
+    )
+  where rehearsal.singleton
+  returning cleanup_request_id;
 ")"
 [[ "$cleanup_request_id" =~ ^[0-9]+$ ]] \
   || fail "the local teardown worker request was not queued."
+maybe_inject_fault cleanup_queued
 wait_for_http_response "$cleanup_request_id" "200"
 
 db_exec >/dev/null <<SQL
@@ -1033,58 +1540,27 @@ begin
   end if;
 end;
 \$\$;
-
-delete from net._http_response
-where id in ($worker_request_id, $cleanup_request_id);
-delete from cron.job_run_details where jobid = $cron_job_id;
-
-set session_replication_role = replica;
-do \$\$
-declare target_batch_ids uuid[];
-begin
-  select coalesce(array_agg(erasure_batch_id) filter (
-    where erasure_batch_id is not null
-  ), '{}'::uuid[])
-  into target_batch_ids
-  from $fixture_table;
-  delete from private.retired_community_deletion_ledger
-  where batch_id = any(target_batch_ids);
-  delete from private.retired_community_storage_work
-  where batch_id = any(target_batch_ids);
-  delete from private.retired_community_credential_work
-  where batch_id = any(target_batch_ids);
-  delete from private.retired_community_deletion_items
-  where batch_id = any(target_batch_ids);
-end;
-\$\$;
-
-delete from private.retired_community_deletion_batches
-where id in (
-  select erasure_batch_id from $fixture_table where erasure_batch_id is not null
-);
-set session_replication_role = origin;
-
-delete from private.profile_photo_objects
-where user_id in (select user_id from $fixture_table);
-delete from private.profile_photo_path_tombstones tombstone
-where exists (
-  select 1 from $fixture_table fixture
-  where tombstone.path_sha256 = private.profile_photo_path_sha256(
-    fixture.storage_path
-  )
-);
-delete from auth.users where id in (select user_id from $fixture_table);
-drop table $fixture_table;
-drop table $secret_table;
 SQL
-fixtures_cleaned=true
 
-if [[ "$cron_was_installed" == "false" ]]; then
-  db_exec --command 'drop extension pg_cron;' >/dev/null
+# Run the same idempotent cleanup used by every trap path, then assert the
+# result before printing success. The EXIT trap repeats it safely.
+set +e
+best_effort_database_cleanup
+set -e
+[[ "$cleanup_failed" == "false" ]] \
+  || fail "disposable database, Cron, pg_net, or Storage state remained."
+remove_exact_runtime_container
+[[ "$cleanup_failed" == "false" ]] \
+  || fail "the exact labeled runtime container could not be removed."
+if "$docker_cli" inspect "$runtime_container" >/dev/null 2>&1; then
+  fail "the exact labeled runtime container remained after teardown."
 fi
-
-"$docker_cli" rm --force "$runtime_container" >/dev/null
-runtime_started=false
+[[ "$(db_query --command "
+  select
+    (to_regclass('${secret_table}') is not null)::integer
+    + (to_regclass('${fixture_table}') is not null)::integer;
+")" == "0" ]] \
+  || fail "a disposable rehearsal table remained after teardown."
 
 printf '%s\n' \
-  'FOU-802 local rehearsal passed: Cron invoked the self-auth worker, exact cleanup was terminal, protected objects survived, aggregate health stayed non-alerting, and all disposable state was removed.'
+  'FOU-802 local rehearsal passed: Cron invoked the self-auth worker, authenticated health was fresh, exact cleanup was terminal, protected objects survived, and every tracked disposable resource was removed.'
