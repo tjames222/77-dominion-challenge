@@ -124,6 +124,21 @@ cleanup_helper_roles() {
   [[ "$cleanup_failed" == "false" ]]
 }
 
+terminate_database_connections() {
+  local database_name="$1"
+  [[ "$database_name" =~ ^${database_prefix}_[a-z0-9_]+$ ]] \
+    || fail "refusing to terminate connections for unexpected database name $database_name."
+  "$docker_cli" exec "$database_container" \
+    psql \
+      --username postgres \
+      --dbname postgres \
+      --no-psqlrc \
+      --quiet \
+      --set ON_ERROR_STOP=1 \
+      --command "select pg_terminate_backend(pid) from pg_stat_activity where datname = '${database_name}' and pid <> pg_backend_pid();" \
+      >/dev/null
+}
+
 cleanup() {
   exit_status=$?
   trap - EXIT
@@ -133,6 +148,11 @@ cleanup() {
   fi
   cleanup_status=0
   for database_name in "${created_databases[@]}"; do
+    if ! terminate_database_connections "$database_name"; then
+      echo "Baseline reconciliation rehearsal: failed to terminate connections to disposable database ${database_name}." >&2
+      cleanup_status=1
+      continue
+    fi
     if ! "$docker_cli" exec supabase_db_77-dominion-challenge \
       dropdb --username postgres --if-exists "$database_name" \
       >/dev/null 2>&1; then
@@ -460,7 +480,7 @@ done
 if apply_stage "$lock_database" "$lock_stage" >"$rehearsal_root/lock.failure.log" 2>&1; then
   fail "lock-contention migration unexpectedly succeeded."
 fi
-kill "$lock_pid" >/dev/null 2>&1 || true
+terminate_database_connections "$lock_database"
 wait "$lock_pid" >/dev/null 2>&1 || true
 lock_pid=""
 capture_manifest "$lock_database" "$rehearsal_root/lock.after.manifest.jsonl"
