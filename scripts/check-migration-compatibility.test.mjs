@@ -248,6 +248,10 @@ test("package, CI, and production deploy run the gate before migrations", async 
     path.join(repositoryRoot, "scripts", "check-schema-drift.sh"),
     "utf8",
   );
+  const canonicalSchema = await readFile(
+    path.join(repositoryRoot, "supabase", "schema.sql"),
+    "utf8",
+  );
   const postgresVersion = await readFile(
     path.join(repositoryRoot, "supabase", ".temp", "postgres-version"),
     "utf8",
@@ -322,6 +326,7 @@ test("package, CI, and production deploy run the gate before migrations", async 
     schemaDriftHelper,
     /--single-transaction\s*\\\s*\n\s*--file=supabase\/schema\.sql/,
   );
+  assert.deepEqual(migrationCompatibilityViolations(canonicalSchema), []);
 
   const repositoryStart = startHelper.indexOf(
     '"$supabase_cli" start --workdir "$repository_root"',

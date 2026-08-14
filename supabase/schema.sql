@@ -11551,8 +11551,6 @@ comment on function public.import_retired_community_dr_manifest(jsonb,text) is
 comment on function public.fail_retired_community_work(text,uuid,uuid,uuid,text) is
   'Worker-only release and durable aggregate telemetry after an exact Storage or credential claim exhausts retries.';
 
-begin;
-
 create table if not exists public.reward_catalog_meta (
   catalog_key text primary key check (catalog_key = 'primary'),
   catalog_version bigint not null default 1 check (catalog_version > 0),
@@ -12380,8 +12378,6 @@ grant execute on function public.reconcile_user_reward_entitlements(uuid, boolea
 grant execute on function public.get_reward_catalog(integer, integer, text) to authenticated;
 grant execute on function public.claim_reward_entitlement_unlocks() to authenticated;
 
-commit;
-
 -- Privacy-safe, immutable public snapshots for streak, challenge-progress, and
 -- general Dominion shares. Public tokens are returned once and stored only as
 -- SHA-256 digests so a database read cannot recover usable share URLs.
@@ -12709,8 +12705,6 @@ grant execute on function public.create_share_snapshot(text, timestamptz) to aut
 grant execute on function public.revoke_share_snapshot(uuid) to authenticated;
 grant execute on function public.get_public_share_snapshot(text) to anon, authenticated, service_role;
 grant execute on function public.purge_retired_share_snapshots(interval) to service_role;
-
-begin;
 
 create extension if not exists pgcrypto with schema extensions;
 
@@ -13373,8 +13367,6 @@ grant execute on function public.preview_crew_invite(text, text) to authenticate
 revoke execute on function public.confirm_crew_invite(text) from public;
 revoke execute on function public.confirm_crew_invite(text) from anon;
 grant execute on function public.confirm_crew_invite(text) to authenticated;
-
-commit;
 
 -- Grant the lifetime Sharing reward from bounded, auditable completion evidence.
 
