@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import test from 'node:test';
 
 import {
@@ -142,4 +143,13 @@ test('allowlist candidate builder recognizes only named platform object classes'
   assert.equal(isPlatformDifferenceKey('effective-acl/function/public.rls_auto_enable()/anon'), true);
   assert.equal(isPlatformDifferenceKey('function/public.has_active_entitlement(text)'), false);
   assert.equal(isPlatformDifferenceKey('policy/storage.objects/Users can read own journal photo objects'), false);
+});
+
+test('rehearsal cleanup is safe when Bash 3.2 sees no created databases', () => {
+  const rehearsal = readFileSync(
+    new URL('./rehearse-baseline-reconciliation.sh', import.meta.url),
+    'utf8',
+  );
+  assert.match(rehearsal, /"\$\{created_databases\[@\]-\}"/u);
+  assert.match(rehearsal, /\[\[ -n "\$database_name" \]\] \|\| continue/u);
 });

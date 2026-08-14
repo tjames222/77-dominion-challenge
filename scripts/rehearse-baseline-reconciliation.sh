@@ -147,7 +147,9 @@ cleanup() {
     wait "$lock_pid" >/dev/null 2>&1 || true
   fi
   cleanup_status=0
-  for database_name in "${created_databases[@]}"; do
+  # Bash 3.2 treats an empty array expansion as unbound under `set -u`.
+  for database_name in "${created_databases[@]-}"; do
+    [[ -n "$database_name" ]] || continue
     if ! terminate_database_connections "$database_name"; then
       echo "Baseline reconciliation rehearsal: failed to terminate connections to disposable database ${database_name}." >&2
       cleanup_status=1
