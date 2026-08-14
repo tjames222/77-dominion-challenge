@@ -134,14 +134,32 @@ test('allowlist fails closed on wildcards, mismatched hashes, and unused entries
 
 test('allowlist candidate builder recognizes only named platform object classes', () => {
   assert.equal(isPlatformDifferenceKey('platform-function/storage.filename(text)'), true);
+  assert.equal(isPlatformDifferenceKey('platform-event-trigger/pgrst_ddl_watch'), true);
+  assert.equal(isPlatformDifferenceKey('platform-trigger/storage.buckets/enforce_bucket_name_length_trigger'), true);
   assert.equal(isPlatformDifferenceKey('platform-extension/pg_graphql'), true);
   assert.equal(
     isPlatformDifferenceKey('direct-acl/platform-relation-acl/storage.objects/postgres/anon/SELECT'),
     true,
   );
+  assert.equal(
+    isPlatformDifferenceKey('direct-acl/platform-column-acl/storage.objects.owner/postgres/anon/SELECT'),
+    true,
+  );
+  assert.equal(
+    isPlatformDifferenceKey('direct-acl/platform-function-acl/extensions.pgrst_ddl_watch()/postgres/anon/EXECUTE'),
+    true,
+  );
   assert.equal(isPlatformDifferenceKey('effective-acl/relation/storage.objects/authenticated'), true);
+  assert.equal(isPlatformDifferenceKey('effective-acl/column/storage.objects.owner/authenticated'), true);
+  assert.equal(isPlatformDifferenceKey('effective-acl/function/extensions.pgrst_ddl_watch()/anon'), true);
   assert.equal(isPlatformDifferenceKey('effective-acl/function/public.rls_auto_enable()/anon'), true);
   assert.equal(isPlatformDifferenceKey('function/public.has_active_entitlement(text)'), false);
+  assert.equal(
+    isPlatformDifferenceKey('direct-acl/column-acl/public.profiles.email/postgres/anon/SELECT'),
+    false,
+  );
+  assert.equal(isPlatformDifferenceKey('event-trigger/application_ddl_hook'), false);
+  assert.equal(isPlatformDifferenceKey('trigger/storage.objects/application_guard'), false);
   assert.equal(isPlatformDifferenceKey('policy/storage.objects/Users can read own journal photo objects'), false);
 });
 

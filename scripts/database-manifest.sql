@@ -60,7 +60,13 @@ with scoped_relations as (
   from pg_class relation
   join pg_namespace namespace on namespace.oid = relation.relnamespace
   where namespace.nspname = 'storage'
-    and relation.relname in ('buckets', 'objects', 'iceberg_namespaces', 'iceberg_tables')
+    and relation.relname in (
+      'buckets',
+      'objects',
+      's3_multipart_uploads',
+      'iceberg_namespaces',
+      'iceberg_tables'
+    )
     and relation.relkind in ('r', 'p', 'v', 'm', 'S', 'f')
 )
 insert into database_manifest_records (key, record)
@@ -256,16 +262,21 @@ join pg_namespace namespace on namespace.oid = table_relation.relnamespace
 where namespace.nspname in ('public', 'private')
    or namespace.nspname like 'reconciliation\_%' escape '\';
 
-with scoped_functions as (
-  select
-    procedure_value.*,
-    namespace.nspname as schema_name,
-    language.lanname as language_name,
-    'function'::text as manifest_kind,
-    'function'::text as key_prefix
+with referenced_event_trigger_functions as (
+  select event_trigger.evtfoid as function_oid
+  from pg_event_trigger event_trigger
+), referenced_storage_trigger_functions as (
+  select distinct trigger_value.tgfoid as function_oid
+  from pg_trigger trigger_value
+  join pg_class relation on relation.oid = trigger_value.tgrelid
+  join pg_namespace namespace on namespace.oid = relation.relnamespace
+  where not trigger_value.tgisinternal
+    and namespace.nspname = 'storage'
+    and relation.relname in ('buckets', 'objects')
+), scoped_function_oids as (
+  select procedure_value.oid
   from pg_proc procedure_value
   join pg_namespace namespace on namespace.oid = procedure_value.pronamespace
-  join pg_language language on language.oid = procedure_value.prolang
   where (
       namespace.nspname in ('public', 'private')
       or namespace.nspname like 'reconciliation\_%' escape '\'
@@ -276,20 +287,87 @@ with scoped_functions as (
       and pg_get_function_identity_arguments(procedure_value.oid) = ''
     )
 
-  union all
+  union
 
+  select procedure_value.oid
+  from pg_proc procedure_value
+  join pg_namespace namespace on namespace.oid = procedure_value.pronamespace
+  where namespace.nspname = 'storage'
+    and procedure_value.proname = 'filename'
+
+  union
+
+  select procedure_value.oid
+  from pg_proc procedure_value
+  join pg_namespace namespace on namespace.oid = procedure_value.pronamespace
+  where namespace.nspname = 'public'
+    and procedure_value.proname = 'rls_auto_enable'
+    and pg_get_function_identity_arguments(procedure_value.oid) = ''
+
+  union
+
+  select function_oid from referenced_event_trigger_functions
+
+  union
+
+  select function_oid from referenced_storage_trigger_functions
+), scoped_functions as (
   select
     procedure_value.*,
-    namespace.nspname,
-    language.lanname,
-    'platform-function',
-    'platform-function'
+    namespace.nspname as schema_name,
+    language.lanname as language_name,
+    case
+      when (
+        namespace.nspname = 'storage'
+        and (
+          procedure_value.proname = 'filename'
+          or procedure_value.oid in (
+            select function_oid from referenced_storage_trigger_functions
+          )
+        )
+      )
+        or (
+          namespace.nspname = 'extensions'
+          and procedure_value.oid in (
+            select function_oid from referenced_event_trigger_functions
+          )
+        )
+        or (
+          namespace.nspname = 'public'
+          and procedure_value.proname = 'rls_auto_enable'
+          and pg_get_function_identity_arguments(procedure_value.oid) = ''
+        )
+        then 'platform-function'
+      else 'function'
+    end as manifest_kind,
+    case
+      when (
+        namespace.nspname = 'storage'
+        and (
+          procedure_value.proname = 'filename'
+          or procedure_value.oid in (
+            select function_oid from referenced_storage_trigger_functions
+          )
+        )
+      )
+        or (
+          namespace.nspname = 'extensions'
+          and procedure_value.oid in (
+            select function_oid from referenced_event_trigger_functions
+          )
+        )
+        or (
+          namespace.nspname = 'public'
+          and procedure_value.proname = 'rls_auto_enable'
+          and pg_get_function_identity_arguments(procedure_value.oid) = ''
+        )
+        then 'platform-function'
+      else 'function'
+    end as key_prefix
   from pg_proc procedure_value
   join pg_namespace namespace on namespace.oid = procedure_value.pronamespace
   join pg_language language on language.oid = procedure_value.prolang
-  where (namespace.nspname, procedure_value.proname) in (
-    ('storage', 'filename')
-  )
+  join scoped_function_oids function_scope on function_scope.oid = procedure_value.oid
 )
 insert into database_manifest_records (key, record)
 select
@@ -327,64 +405,84 @@ select
   )
 from scoped_functions function_value;
 
--- Supabase production may install this platform event-trigger function in
--- public while the exact-version local image omits it. Capture it when present;
--- its whole-object hash is the only acceptable way to classify that difference.
 insert into database_manifest_records (key, record)
 select
-  format('platform-function/%I.%I(%s)', namespace.nspname, procedure_value.proname, pg_get_function_identity_arguments(procedure_value.oid)),
+  format(
+    '%s/%I',
+    case
+      when function_namespace.nspname = 'extensions'
+        or (function_namespace.nspname = 'public' and function_value.proname = 'rls_auto_enable')
+        then 'platform-event-trigger'
+      else 'event-trigger'
+    end,
+    event_trigger.evtname
+  ),
   jsonb_build_object(
-    'kind', 'platform-function',
-    'identity', format('%I.%I(%s)', namespace.nspname, procedure_value.proname, pg_get_function_identity_arguments(procedure_value.oid)),
+    'kind', case
+      when function_namespace.nspname = 'extensions'
+        or (function_namespace.nspname = 'public' and function_value.proname = 'rls_auto_enable')
+        then 'platform-event-trigger'
+      else 'event-trigger'
+    end,
+    'identity', event_trigger.evtname,
     'definition', jsonb_build_object(
-      'owner', pg_get_userbyid(procedure_value.proowner),
-      'arguments', pg_get_function_arguments(procedure_value.oid),
-      'result', pg_get_function_result(procedure_value.oid),
-      'language', language.lanname,
-      'kind', procedure_value.prokind,
-      'volatility', procedure_value.provolatile,
-      'parallel', procedure_value.proparallel,
-      'securityDefiner', procedure_value.prosecdef,
-      'strict', procedure_value.proisstrict,
-      'leakproof', procedure_value.proleakproof,
-      'returnsSet', procedure_value.proretset,
-      'configuration', coalesce(to_jsonb(procedure_value.proconfig), '[]'::jsonb),
-      'binary', coalesce(procedure_value.probin, ''),
-      'bodyBase64', encode(convert_to(procedure_value.prosrc, 'UTF8'), 'base64')
+      'owner', pg_get_userbyid(event_trigger.evtowner),
+      'event', event_trigger.evtevent,
+      'enabled', event_trigger.evtenabled,
+      'tags', coalesce(to_jsonb(event_trigger.evttags), '[]'::jsonb),
+      'function', format(
+        '%I.%I(%s)',
+        function_namespace.nspname,
+        function_value.proname,
+        pg_get_function_identity_arguments(function_value.oid)
+      )
     )
   )
-from pg_proc procedure_value
-join pg_namespace namespace on namespace.oid = procedure_value.pronamespace
-join pg_language language on language.oid = procedure_value.prolang
-where namespace.nspname = 'public'
-  and procedure_value.proname = 'rls_auto_enable';
+from pg_event_trigger event_trigger
+join pg_proc function_value on function_value.oid = event_trigger.evtfoid
+join pg_namespace function_namespace on function_namespace.oid = function_value.pronamespace;
 
 insert into database_manifest_records (key, record)
 select
-  format('trigger/%I.%I/%I', namespace.nspname, relation.relname, trigger_value.tgname),
+  format(
+    '%s/%I.%I/%I',
+    case
+      when namespace.nspname = 'storage' and function_namespace.nspname = 'storage'
+        then 'platform-trigger'
+      else 'trigger'
+    end,
+    namespace.nspname,
+    relation.relname,
+    trigger_value.tgname
+  ),
   jsonb_build_object(
-    'kind', 'trigger',
+    'kind', case
+      when namespace.nspname = 'storage' and function_namespace.nspname = 'storage'
+        then 'platform-trigger'
+      else 'trigger'
+    end,
     'identity', format('%I.%I.%I', namespace.nspname, relation.relname, trigger_value.tgname),
     'definition', jsonb_build_object(
       'enabled', trigger_value.tgenabled,
-      'definition', pg_get_triggerdef(trigger_value.oid, false)
+      'definition', pg_get_triggerdef(trigger_value.oid, false),
+      'function', format(
+        '%I.%I(%s)',
+        function_namespace.nspname,
+        function_value.proname,
+        pg_get_function_identity_arguments(function_value.oid)
+      )
     )
   )
 from pg_trigger trigger_value
 join pg_class relation on relation.oid = trigger_value.tgrelid
 join pg_namespace namespace on namespace.oid = relation.relnamespace
+join pg_proc function_value on function_value.oid = trigger_value.tgfoid
+join pg_namespace function_namespace on function_namespace.oid = function_value.pronamespace
 where not trigger_value.tgisinternal
   and (
     namespace.nspname in ('public', 'private')
     or namespace.nspname like 'reconciliation\_%' escape '\'
-    or (
-      namespace.nspname = 'storage'
-      and trigger_value.tgname in (
-        'guard_profile_photo_storage_insert',
-        'guard_profile_photo_storage_update',
-        'guard_profile_photo_storage_delete'
-      )
-    )
+    or (namespace.nspname = 'storage' and relation.relname in ('buckets', 'objects'))
   );
 
 insert into database_manifest_records (key, record)
@@ -418,7 +516,7 @@ join pg_class relation on relation.oid = policy_value.polrelid
 join pg_namespace namespace on namespace.oid = relation.relnamespace
 where namespace.nspname in ('public', 'private')
    or namespace.nspname like 'reconciliation\_%' escape '\'
-   or (namespace.nspname = 'storage' and relation.relname = 'objects');
+   or (namespace.nspname = 'storage' and relation.relname in ('buckets', 'objects'));
 
 -- Direct ACLs are not expanded from acldefault(): a missing ACL and an explicit
 -- ACL are intentionally different. Object ownership is recorded separately.
@@ -442,7 +540,13 @@ with schema_acls as (
       or namespace.nspname like 'reconciliation\_%' escape '\'
       or (
         namespace.nspname = 'storage'
-        and relation.relname in ('buckets', 'objects', 'iceberg_namespaces', 'iceberg_tables')
+        and relation.relname in (
+          'buckets',
+          'objects',
+          's3_multipart_uploads',
+          'iceberg_namespaces',
+          'iceberg_tables'
+        )
       )
     )
     and relation.relkind in ('r', 'p', 'v', 'm', 'S', 'f')
@@ -450,7 +554,12 @@ with schema_acls as (
   select
     case
       when namespace.nspname = 'storage'
-        or (namespace.nspname = 'public' and procedure_value.proname = 'rls_auto_enable')
+        or namespace.nspname = 'extensions'
+        or (
+          namespace.nspname = 'public'
+          and procedure_value.proname = 'rls_auto_enable'
+          and pg_get_function_identity_arguments(procedure_value.oid) = ''
+        )
         then 'platform-function-acl'
       else 'function-acl'
     end as kind,
@@ -461,6 +570,26 @@ with schema_acls as (
   where namespace.nspname in ('public', 'private')
      or namespace.nspname like 'reconciliation\_%' escape '\'
      or (namespace.nspname = 'storage' and procedure_value.proname = 'filename')
+     or (
+       namespace.nspname = 'public'
+       and procedure_value.proname = 'rls_auto_enable'
+       and pg_get_function_identity_arguments(procedure_value.oid) = ''
+     )
+     or exists (
+       select 1
+       from pg_event_trigger event_trigger
+       where event_trigger.evtfoid = procedure_value.oid
+     )
+     or exists (
+       select 1
+       from pg_trigger trigger_value
+       join pg_class relation on relation.oid = trigger_value.tgrelid
+       join pg_namespace relation_namespace on relation_namespace.oid = relation.relnamespace
+       where trigger_value.tgfoid = procedure_value.oid
+         and not trigger_value.tgisinternal
+         and relation_namespace.nspname = 'storage'
+         and relation.relname in ('buckets', 'objects')
+     )
 ), object_acls as (
   select * from schema_acls
   union all
@@ -495,7 +624,8 @@ cross join lateral aclexplode(object_acl.acl) acl_value;
 insert into database_manifest_records (key, record)
 select
   format(
-    'direct-acl/column-acl/%I.%I.%I/%s/%s/%s',
+    'direct-acl/%s/%I.%I.%I/%s/%s/%s',
+    case when namespace.nspname = 'storage' then 'platform-column-acl' else 'column-acl' end,
     namespace.nspname,
     relation.relname,
     column_value.attname,
@@ -507,7 +637,10 @@ select
     'kind', 'direct-acl',
     'identity', format('%I.%I.%I', namespace.nspname, relation.relname, column_value.attname),
     'definition', jsonb_build_object(
-      'objectKind', 'column-acl',
+      'objectKind', case
+        when namespace.nspname = 'storage' then 'platform-column-acl'
+        else 'column-acl'
+      end,
       'grantor', case when acl_value.grantor = 0 then 'PUBLIC' else pg_get_userbyid(acl_value.grantor) end,
       'grantee', case when acl_value.grantee = 0 then 'PUBLIC' else pg_get_userbyid(acl_value.grantee) end,
       'privilege', acl_value.privilege_type,
@@ -521,6 +654,7 @@ cross join lateral aclexplode(column_value.attacl) acl_value
 where (
     namespace.nspname in ('public', 'private')
     or namespace.nspname like 'reconciliation\_%' escape '\'
+    or (namespace.nspname = 'storage' and relation.relname in ('buckets', 'objects'))
   )
   and column_value.attnum > 0
   and not column_value.attisdropped;
@@ -543,7 +677,13 @@ with api_roles(role_name) as (
       or namespace.nspname like 'reconciliation\_%' escape '\'
       or (
         namespace.nspname = 'storage'
-        and relation.relname in ('buckets', 'objects', 'iceberg_namespaces', 'iceberg_tables')
+        and relation.relname in (
+          'buckets',
+          'objects',
+          's3_multipart_uploads',
+          'iceberg_namespaces',
+          'iceberg_tables'
+        )
       )
     )
     and relation.relkind in ('r', 'p', 'v', 'm', 'S', 'f')
@@ -637,6 +777,26 @@ with api_roles(role_name) as (
   where namespace.nspname in ('public', 'private')
      or namespace.nspname like 'reconciliation\_%' escape '\'
      or (namespace.nspname = 'storage' and procedure_value.proname = 'filename')
+     or (
+       namespace.nspname = 'public'
+       and procedure_value.proname = 'rls_auto_enable'
+       and pg_get_function_identity_arguments(procedure_value.oid) = ''
+     )
+     or exists (
+       select 1
+       from pg_event_trigger event_trigger
+       where event_trigger.evtfoid = procedure_value.oid
+     )
+     or exists (
+       select 1
+       from pg_trigger trigger_value
+       join pg_class relation on relation.oid = trigger_value.tgrelid
+       join pg_namespace relation_namespace on relation_namespace.oid = relation.relnamespace
+       where trigger_value.tgfoid = procedure_value.oid
+         and not trigger_value.tgisinternal
+         and relation_namespace.nspname = 'storage'
+         and relation.relname in ('buckets', 'objects')
+     )
 )
 insert into database_manifest_records (key, record)
 select
@@ -674,6 +834,7 @@ with api_roles(role_name) as (
   where (
       namespace.nspname in ('public', 'private')
       or namespace.nspname like 'reconciliation\_%' escape '\'
+      or (namespace.nspname = 'storage' and relation.relname in ('buckets', 'objects'))
     )
     and relation.relkind in ('r', 'p', 'v', 'm', 'f')
     and column_value.attnum > 0
@@ -773,13 +934,63 @@ select
       'type', bucket.type
     )
   )
-from storage.buckets bucket
-where bucket.id in (
-  'journal-progress',
-  'profile-photos',
-  'community-post-images',
-  'reward-downloads'
-);
+from storage.buckets bucket;
+
+insert into database_manifest_records (key, record)
+select
+  'storage-object-inventory/all-buckets',
+  jsonb_build_object(
+    'kind', 'storage-object-inventory',
+    'identity', 'storage.objects/all-buckets',
+    'definition', jsonb_build_object(
+      'rowCount', count(*),
+      'rowsSha256', encode(
+        digest(
+          convert_to(
+            coalesce(
+              string_agg(
+                encode(digest(convert_to(to_jsonb(object_value)::text, 'UTF8'), 'sha256'), 'hex'),
+                '' order by to_jsonb(object_value)::text collate "C"
+              ),
+              ''
+            ),
+            'UTF8'
+          ),
+          'sha256'
+        ),
+        'hex'
+      )
+    )
+  )
+from storage.objects object_value;
+
+insert into database_manifest_records (key, record)
+select
+  'storage-multipart-inventory/all-buckets',
+  jsonb_build_object(
+    'kind', 'storage-multipart-inventory',
+    'identity', 'storage.s3_multipart_uploads/all-buckets',
+    'definition', jsonb_build_object(
+      'rowCount', count(*),
+      'rowsSha256', encode(
+        digest(
+          convert_to(
+            coalesce(
+              string_agg(
+                encode(digest(convert_to(to_jsonb(upload_value)::text, 'UTF8'), 'sha256'), 'hex'),
+                '' order by to_jsonb(upload_value)::text collate "C"
+              ),
+              ''
+            ),
+            'UTF8'
+          ),
+          'sha256'
+        ),
+        'hex'
+      )
+    )
+  )
+from storage.s3_multipart_uploads upload_value;
 
 insert into database_manifest_records (key, record)
 select

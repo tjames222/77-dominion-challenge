@@ -72,10 +72,10 @@ $block$;
 
 insert into baseline_data_fingerprints (key, record)
 select
-  'data/storage.objects/application-buckets',
+  'data/storage.objects/all-buckets',
   jsonb_build_object(
     'kind', 'data-fingerprint',
-    'identity', 'storage.objects/application-buckets',
+    'identity', 'storage.objects/all-buckets',
     'definition', jsonb_build_object(
       'rowCount', count(*),
       'rowsSha256', encode(
@@ -96,13 +96,35 @@ select
       )
     )
   )
-from storage.objects object_value
-where object_value.bucket_id in (
-  'journal-progress',
-  'profile-photos',
-  'community-post-images',
-  'reward-downloads'
-);
+from storage.objects object_value;
+
+insert into baseline_data_fingerprints (key, record)
+select
+  'data/storage.s3_multipart_uploads/all-buckets',
+  jsonb_build_object(
+    'kind', 'data-fingerprint',
+    'identity', 'storage.s3_multipart_uploads/all-buckets',
+    'definition', jsonb_build_object(
+      'rowCount', count(*),
+      'rowsSha256', encode(
+        digest(
+          convert_to(
+            coalesce(
+              string_agg(
+                encode(digest(convert_to(to_jsonb(upload_value)::text, 'UTF8'), 'sha256'), 'hex'),
+                '' order by to_jsonb(upload_value)::text collate "C"
+              ),
+              ''
+            ),
+            'UTF8'
+          ),
+          'sha256'
+        ),
+        'hex'
+      )
+    )
+  )
+from storage.s3_multipart_uploads upload_value;
 
 select jsonb_build_object(
   'key', fingerprint.key,

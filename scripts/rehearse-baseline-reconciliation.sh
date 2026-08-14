@@ -17,6 +17,7 @@ helper_roles=(
   reconciliation_column_reader
   reconciliation_default_reader
   reconciliation_effective_reader
+  reconciliation_storage_column_reader
   reconciliation_unknown_direct
 )
 
@@ -139,6 +140,14 @@ terminate_database_connections() {
       >/dev/null
 }
 
+remove_disposable_database() {
+  local database_name="$1"
+  terminate_database_connections "$database_name"
+  "$docker_cli" exec "$database_container" \
+    dropdb --username postgres --if-exists "$database_name" \
+    >/dev/null
+}
+
 cleanup() {
   exit_status=$?
   trap - EXIT
@@ -150,14 +159,7 @@ cleanup() {
   # Bash 3.2 treats an empty array expansion as unbound under `set -u`.
   for database_name in "${created_databases[@]-}"; do
     [[ -n "$database_name" ]] || continue
-    if ! terminate_database_connections "$database_name"; then
-      echo "Baseline reconciliation rehearsal: failed to terminate connections to disposable database ${database_name}." >&2
-      cleanup_status=1
-      continue
-    fi
-    if ! "$docker_cli" exec supabase_db_77-dominion-challenge \
-      dropdb --username postgres --if-exists "$database_name" \
-      >/dev/null 2>&1; then
+    if ! remove_disposable_database "$database_name" >/dev/null 2>&1; then
       echo "Baseline reconciliation rehearsal: failed to remove disposable database ${database_name}." >&2
       cleanup_status=1
     fi
@@ -409,7 +411,11 @@ expect_failure_without_change purchase_row "$fixture_directory/source-drift/purc
 expect_failure_without_change nonmembership_entitlement "$fixture_directory/source-drift/nonmembership-entitlement.sql"
 expect_failure_without_change null_entitlement "$fixture_directory/source-drift/null-entitlement.sql"
 expect_failure_without_change external_dependency "$fixture_directory/source-drift/external-dependency.sql"
+expect_failure_without_change unknown_storage_bucket "$fixture_directory/source-drift/unknown-storage-bucket.sql"
+expect_failure_without_change storage_object "$fixture_directory/source-drift/storage-object.sql"
+expect_failure_without_change multipart_upload "$fixture_directory/source-drift/multipart-upload.sql"
 
+drift_number=0
 for drift_case in \
   unknown-direct-privilege \
   unknown-column-privilege \
@@ -421,8 +427,20 @@ for drift_case in \
   changed-column \
   changed-constraint \
   changed-index \
-  changed-trigger; do
-  database_name="${database_prefix}_${drift_case//-/_}"
+  changed-trigger \
+  changed-storage-trigger \
+  changed-storage-policy \
+  changed-storage-column-privilege \
+  changed-storage-trigger-function \
+  changed-storage-trigger-function-acl \
+  changed-event-trigger \
+  changed-event-trigger-function \
+  changed-event-trigger-function-acl \
+  unknown-storage-bucket \
+  storage-object \
+  multipart-upload; do
+  drift_number=$((drift_number + 1))
+  database_name="${database_prefix}_drift_${drift_number}"
   new_source_database "$database_name"
   execute_sql "$database_name" "$fixture_directory/source-drift/${drift_case}.sql"
   capture_manifest "$database_name" "$rehearsal_root/${drift_case}.manifest.jsonl"
@@ -431,6 +449,10 @@ for drift_case in \
       >"$rehearsal_root/${drift_case}.comparison.log" 2>&1; then
     fail "$drift_case was not detected by the source manifest gate."
   fi
+  remove_disposable_database "$database_name" \
+    || fail "could not remove the isolated $drift_case database."
+  cleanup_helper_roles \
+    || fail "could not remove helper roles after the isolated $drift_case case."
 done
 
 # A forced statement failure added to migration 1 must roll back all prior DDL,

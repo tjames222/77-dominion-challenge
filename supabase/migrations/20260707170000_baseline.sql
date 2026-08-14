@@ -48,7 +48,8 @@ begin
         ('public', 'user_badges'),
         ('public', 'user_game_stats'),
         ('storage', 'buckets'),
-        ('storage', 'objects')
+        ('storage', 'objects'),
+        ('storage', 's3_multipart_uploads')
       )
     order by namespace.nspname collate "C", relation.relname collate "C"
   loop
@@ -86,6 +87,41 @@ begin
       raise exception using
         errcode = 'P0001',
         message = 'Baseline refused: public.entitlements contains an unexpected entitlement key.';
+    end if;
+  end if;
+
+  if pg_catalog.to_regclass('storage.buckets') is not null then
+    execute $query$
+      select exists (
+        select 1
+        from storage.buckets
+        where id is distinct from 'journal-progress'
+      )
+    $query$ into has_unsafe_rows;
+    if has_unsafe_rows then
+      raise exception using
+        errcode = 'P0001',
+        message = 'Baseline refused: storage.buckets contains an unexpected bucket.';
+    end if;
+  end if;
+
+  if pg_catalog.to_regclass('storage.objects') is not null then
+    execute 'select exists (select 1 from storage.objects)'
+      into has_unsafe_rows;
+    if has_unsafe_rows then
+      raise exception using
+        errcode = 'P0001',
+        message = 'Baseline refused: storage.objects contains rows.';
+    end if;
+  end if;
+
+  if pg_catalog.to_regclass('storage.s3_multipart_uploads') is not null then
+    execute 'select exists (select 1 from storage.s3_multipart_uploads)'
+      into has_unsafe_rows;
+    if has_unsafe_rows then
+      raise exception using
+        errcode = 'P0001',
+        message = 'Baseline refused: storage.s3_multipart_uploads contains rows.';
     end if;
   end if;
 end;

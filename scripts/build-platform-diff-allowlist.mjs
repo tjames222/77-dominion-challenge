@@ -10,9 +10,11 @@ import { readFile } from 'node:fs/promises';
 const ALLOWED_PLATFORM_KEY_PATTERNS = [
   /^platform-extension\//u,
   /^platform-function\//u,
+  /^platform-event-trigger\//u,
+  /^platform-trigger\//u,
   /^platform-relation\//u,
-  /^direct-acl\/platform-(?:function|relation)-acl\//u,
-  /^effective-acl\/(?:function\/storage\.|relation\/storage\.|sequence\/storage\.)/u,
+  /^direct-acl\/platform-(?:column|function|relation)-acl\//u,
+  /^effective-acl\/(?:column\/storage\.|function\/(?:extensions|storage)\.|relation\/storage\.|sequence\/storage\.)/u,
   /^effective-acl\/function\/public\.rls_auto_enable\(\)\//u,
 ];
 

@@ -198,11 +198,15 @@ Before approving the GitHub `production` environment deployment, confirm:
 
 ### One-time migration-history reconciliation
 
-The project predates migration-based deployments. The new
-`20260707170000_baseline.sql` reconstructs that historical schema for empty local
-databases; it must never be replayed over an already-populated hosted project.
-The release workflow deliberately omits `--include-all`, so a hosted project with
-later migration records but no baseline record fails closed.
+The project predates migration-based deployments. The original
+`20260707170000_baseline.sql` only reconstructed that historical schema for empty
+local databases and must never be replayed over a populated project. The
+prelaunch production exception below uses a separately reviewed, fail-closed
+revision of that still-unrecorded migration only after the exact legacy source,
+zero-risk rows, encrypted backup, restored rehearsal, and normalized manifest
+all match. Any other populated state remains prohibited. The release workflow
+deliberately omits `--include-all`, so a hosted project with later migration
+records but no baseline record fails closed.
 
 Before the first workflow-managed production release, an administrator must make
 a backup, link the exact production project, and inspect its history and schema:
@@ -252,41 +256,43 @@ function attributes and bodies, triggers, constraints, RLS policy expressions,
 or Storage configuration. In the 2026-08-13 audit, a three-schema CLI diff even
 returned empty while direct dumps proved application-owned differences, so an
 empty CLI diff never authorizes repair. Export direct schema dumps and normalized
-catalog manifests for `public`, `private`, and the application-owned parts of
-`storage` from the isolated local checkpoint and production. Compare all of those
-object classes, classifying platform-version noise through an explicit reviewed
-allowlist rather than silently discarding it. Also run these read-only queries in
-the production Supabase SQL editor. Compare the result exactly with the
-version-bounded local checkpoint manifest, including commands, roles, `qual`,
-and `with_check` expressions. For the migration-3 checkpoint below, the only
-expected result is `journal-progress` and its four
-`Users can ... journal photo objects` policies; `profile-photos`,
-`community-post-images`, and their seven policies must be absent:
+catalog manifests for `public`, `private`, the complete bucket and object
+inventory, the application-owned Storage policies, and the selected Supabase
+platform surface in `storage` from the isolated local checkpoint and production.
+That platform surface includes event-trigger registrations, every non-internal
+trigger on `storage.buckets` and `storage.objects`, the definitions and ACLs of
+their referenced functions, and direct and effective relation, function, and
+column privileges. Compare all of those object classes, classifying
+platform-version noise through an explicit reviewed allowlist rather than
+silently discarding it. Also run these read-only queries in the production
+Supabase SQL editor. Compare the result exactly with the version-bounded local
+checkpoint manifest, including commands, roles, `qual`, and `with_check`
+expressions. Do not filter the inventory to expected IDs or policy names: an
+unknown row is itself a release blocker. For the migration-3 checkpoint below,
+the only bucket is `journal-progress`, both object counts are zero, and the only
+application Storage policies are its four `Users can ... journal photo objects`
+policies:
 
 ```sql
-select id, name, public, file_size_limit, allowed_mime_types
+select id, name, owner_id, public, file_size_limit, allowed_mime_types, type
 from storage.buckets
-where id in ('profile-photos', 'community-post-images', 'journal-progress')
 order by id;
 
-select policyname, cmd, roles, qual, with_check
+select schemaname, tablename, policyname, permissive, cmd, roles, qual, with_check
 from pg_policies
 where schemaname = 'storage'
-  and tablename = 'objects'
-  and policyname in (
-    'Profile photos are publicly readable',
-    'Users can upload own profile photo objects',
-    'Users can update own profile photo objects',
-    'Users can delete own profile photo objects',
-    'Crew members can read community post images',
-    'Crew members can upload own community post images',
-    'Authors and crew leaders can delete community post images',
-    'Users can read own journal photo objects',
-    'Users can upload own journal photo objects',
-    'Users can update own journal photo objects',
-    'Users can delete own journal photo objects'
-  )
-order by policyname;
+  and tablename in ('buckets', 'objects')
+order by tablename, policyname;
+
+select bucket_id, count(*) as object_count
+from storage.objects
+group by bucket_id
+order by bucket_id;
+
+select bucket_id, count(*) as multipart_upload_count
+from storage.s3_multipart_uploads
+group by bucket_id
+order by bucket_id;
 ```
 
 Migration repair records history without executing SQL. Never repair a version
@@ -381,13 +387,15 @@ separately reviewed change and the exact restored-snapshot rehearsal passes:
 
    Rehearse the successful path once against an exact legacy-source copy. Then
    prove that the hardened migration aborts and rolls back completely for a
-   purchase row, an external dependency, a legacy entitlement, an unknown
-   privilege state, lock contention, and a forced error. Separately prove that
-   the normalized source-manifest gate rejects a changed function, policy,
-   relation, constraint, trigger, or privilege before the migration runner
-   starts. The successful copy must match the clean migration-3 application
-   manifest, including effective privileges, and have exactly these three
-   history records.
+   purchase row, an external dependency, a legacy entitlement, any unexpected
+   bucket, object, or multipart upload, an unknown privilege state, lock
+   contention, and a forced error. Separately prove that the normalized
+   source-manifest gate rejects a changed function, policy, relation,
+   constraint, trigger, event trigger, Storage trigger-function definition or
+   ACL, and direct or effective Storage column privilege before the migration
+   runner starts. The successful copy must match the clean migration-3
+   application manifest, including effective privileges, and have exactly these
+   three history records.
 
    The checked-in harness performs that exact-version proof against the
    sanitized audited source fixture without contacting production:
@@ -534,7 +542,6 @@ FOU-752/753 must not use the normal backend-first order for their first producti
 ```sql
 select id, public, file_size_limit, allowed_mime_types
 from storage.buckets
-where id in ('profile-photos', 'community-post-images', 'journal-progress')
 order by id;
 
 -- Exactly profile-photos (153600; WebP only) and community-post-images remain.
