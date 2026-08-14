@@ -133,11 +133,13 @@ test('allowlist fails closed on wildcards, mismatched hashes, and unused entries
 
 test('allowlist candidate builder recognizes only named platform object classes', () => {
   assert.equal(isPlatformDifferenceKey('platform-function/storage.filename(text)'), true);
+  assert.equal(isPlatformDifferenceKey('platform-extension/pg_graphql'), true);
   assert.equal(
     isPlatformDifferenceKey('direct-acl/platform-relation-acl/storage.objects/postgres/anon/SELECT'),
     true,
   );
   assert.equal(isPlatformDifferenceKey('effective-acl/relation/storage.objects/authenticated'), true);
+  assert.equal(isPlatformDifferenceKey('effective-acl/function/public.rls_auto_enable()/anon'), true);
   assert.equal(isPlatformDifferenceKey('function/public.has_active_entitlement(text)'), false);
   assert.equal(isPlatformDifferenceKey('policy/storage.objects/Users can read own journal photo objects'), false);
 });

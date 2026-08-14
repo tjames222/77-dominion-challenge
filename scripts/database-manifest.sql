@@ -29,9 +29,13 @@ where namespace.nspname in ('public', 'private')
 
 insert into database_manifest_records (key, record)
 select
-  format('extension/%I', extension.extname),
+  format(
+    '%s/%I',
+    case when extension.extname = 'pgcrypto' then 'extension' else 'platform-extension' end,
+    extension.extname
+  ),
   jsonb_build_object(
-    'kind', 'extension',
+    'kind', case when extension.extname = 'pgcrypto' then 'extension' else 'platform-extension' end,
     'identity', extension.extname,
     'definition', jsonb_build_object(
       'schema', namespace.nspname,
@@ -72,7 +76,74 @@ select
       'rowSecurity', relation.relrowsecurity,
       'forceRowSecurity', relation.relforcerowsecurity,
       'replicaIdentity', relation.relreplident,
-      'options', coalesce(to_jsonb(relation.reloptions), '[]'::jsonb)
+      'options', coalesce(to_jsonb(relation.reloptions), '[]'::jsonb),
+      'columns', case
+        when kind <> 'platform-relation' then '[]'::jsonb
+        else coalesce((
+          select jsonb_agg(
+            jsonb_build_object(
+              'name', column_value.attname,
+              'position', column_value.attnum,
+              'type', format_type(column_value.atttypid, column_value.atttypmod),
+              'notNull', column_value.attnotnull,
+              'identity', column_value.attidentity,
+              'generated', column_value.attgenerated,
+              'storage', column_value.attstorage,
+              'compression', column_value.attcompression,
+              'default', case
+                when default_value.adbin is null then null
+                else pg_get_expr(default_value.adbin, default_value.adrelid, false)
+              end
+            )
+            order by column_value.attnum
+          )
+          from pg_attribute column_value
+          left join pg_attrdef default_value
+            on default_value.adrelid = column_value.attrelid
+           and default_value.adnum = column_value.attnum
+          where column_value.attrelid = relation.oid
+            and column_value.attnum > 0
+            and not column_value.attisdropped
+        ), '[]'::jsonb)
+      end,
+      'constraints', case
+        when kind <> 'platform-relation' then '[]'::jsonb
+        else coalesce((
+          select jsonb_agg(
+            jsonb_build_object(
+              'name', constraint_value.conname,
+              'type', constraint_value.contype,
+              'definition', pg_get_constraintdef(constraint_value.oid, false),
+              'deferrable', constraint_value.condeferrable,
+              'deferred', constraint_value.condeferred,
+              'validated', constraint_value.convalidated,
+              'noInherit', constraint_value.connoinherit
+            )
+            order by constraint_value.conname collate "C"
+          )
+          from pg_constraint constraint_value
+          where constraint_value.conrelid = relation.oid
+        ), '[]'::jsonb)
+      end,
+      'indexes', case
+        when kind <> 'platform-relation' then '[]'::jsonb
+        else coalesce((
+          select jsonb_agg(
+            jsonb_build_object(
+              'name', index_relation.relname,
+              'definition', pg_get_indexdef(index_relation.oid, 0, false),
+              'unique', index_value.indisunique,
+              'primary', index_value.indisprimary,
+              'valid', index_value.indisvalid,
+              'ready', index_value.indisready
+            )
+            order by index_relation.relname collate "C"
+          )
+          from pg_index index_value
+          join pg_class index_relation on index_relation.oid = index_value.indexrelid
+          where index_value.indrelid = relation.oid
+        ), '[]'::jsonb)
+      end
     )
   )
 from (
@@ -195,8 +266,15 @@ with scoped_functions as (
   from pg_proc procedure_value
   join pg_namespace namespace on namespace.oid = procedure_value.pronamespace
   join pg_language language on language.oid = procedure_value.prolang
-  where namespace.nspname in ('public', 'private')
-     or namespace.nspname like 'reconciliation\_%' escape '\'
+  where (
+      namespace.nspname in ('public', 'private')
+      or namespace.nspname like 'reconciliation\_%' escape '\'
+    )
+    and not (
+      namespace.nspname = 'public'
+      and procedure_value.proname = 'rls_auto_enable'
+      and pg_get_function_identity_arguments(procedure_value.oid) = ''
+    )
 
   union all
 
@@ -370,7 +448,12 @@ with schema_acls as (
     and relation.relkind in ('r', 'p', 'v', 'm', 'S', 'f')
 ), function_acls as (
   select
-    case when namespace.nspname = 'storage' then 'platform-function-acl' else 'function-acl' end as kind,
+    case
+      when namespace.nspname = 'storage'
+        or (namespace.nspname = 'public' and procedure_value.proname = 'rls_auto_enable')
+        then 'platform-function-acl'
+      else 'function-acl'
+    end as kind,
     format('%I.%I(%s)', namespace.nspname, procedure_value.proname, pg_get_function_identity_arguments(procedure_value.oid)) as identity,
     procedure_value.proacl as acl
   from pg_proc procedure_value

@@ -8,10 +8,12 @@ import {
 import { readFile } from 'node:fs/promises';
 
 const ALLOWED_PLATFORM_KEY_PATTERNS = [
+  /^platform-extension\//u,
   /^platform-function\//u,
   /^platform-relation\//u,
   /^direct-acl\/platform-(?:function|relation)-acl\//u,
   /^effective-acl\/(?:function\/storage\.|relation\/storage\.|sequence\/storage\.)/u,
+  /^effective-acl\/function\/public\.rls_auto_enable\(\)\//u,
 ];
 
 export function isPlatformDifferenceKey(key) {

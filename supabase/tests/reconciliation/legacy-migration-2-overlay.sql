@@ -6,6 +6,24 @@
 -- scripts/run-local-sql.sh supplies the single all-or-nothing transaction.
 -- This fixture contains no production data or secrets.
 
+-- The audited hosted project predates the tightened .141 local defaults. These
+-- legacy defaults must exist before the source tables/functions are created,
+-- because the original baseline used narrower GRANTs without first revoking
+-- inherited authenticated/service privileges. Migrations 1-2 deliberately
+-- normalize both the defaults and every surviving object's direct ACL.
+alter default privileges for role postgres in schema public
+  revoke all on tables from anon, authenticated, service_role;
+alter default privileges for role postgres in schema public
+  revoke all on sequences from anon, authenticated, service_role;
+alter default privileges for role postgres in schema public
+  revoke all on functions from anon, authenticated, service_role;
+alter default privileges for role postgres in schema public
+  grant all on tables to anon, authenticated, service_role;
+alter default privileges for role postgres in schema public
+  grant all on sequences to anon, authenticated, service_role;
+alter default privileges for role postgres in schema public
+  grant all on functions to anon, authenticated, service_role;
+
 create extension if not exists pgcrypto;
 
 create or replace function public.set_updated_at()
