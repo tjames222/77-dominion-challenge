@@ -263,10 +263,8 @@ test('frozen checkpoints contain the exact legacy Storage policy and inventory s
     }
 
     for (const relationName of storageRelations) {
-      assert.ok(
-        records.has(`platform-relation/storage.${relationName}`),
-        `${manifestName} is missing the ${relationName} definition`,
-      );
+      const relation = records.get(`platform-relation/storage.${relationName}`);
+      assert.ok(relation, `${manifestName} is missing the ${relationName} definition`);
       for (const roleName of ['anon', 'authenticated', 'service_role']) {
         assert.ok(
           records.has(`effective-acl/relation/storage.${relationName}/${roleName}`),
@@ -277,6 +275,24 @@ test('frozen checkpoints contain the exact legacy Storage policy and inventory s
             `effective-acl/column/storage.${relationName}.${firstColumns.get(relationName)}/${roleName}`,
           ),
           `${manifestName} is missing the ${relationName}/${roleName} column ACL`,
+        );
+      }
+    }
+
+    for (const relationName of ['buckets_vectors', 'vector_indexes']) {
+      const relation = records.get(`platform-relation/storage.${relationName}`);
+      assert.equal(
+        relation?.definition.owner,
+        'supabase_storage_admin',
+        `${manifestName}:${relationName} owner`,
+      );
+      for (const roleName of ['anon', 'authenticated', 'service_role']) {
+        assert.deepEqual(
+          records.get(
+            `effective-acl/relation/storage.${relationName}/${roleName}`,
+          )?.definition.privileges,
+          ['SELECT'],
+          `${manifestName}:${relationName}/${roleName} privileges`,
         );
       }
     }
@@ -331,6 +347,7 @@ test('rehearsal and migration gate every pinned Storage inventory relation', () 
   assert.doesNotMatch(rehearsal, /Users can read own profile photo objects/u);
   assert.match(manifestSql, /procedure_value\.proname in \('filename', 'foldername'\)/u);
   assert.match(rehearsal, /changed-storage-policy-helper-function \\/u);
+  assert.match(rehearsal, /changed-vector-lock-privilege \\/u);
   assert.match(
     rehearsal,
     /changed-storage-policy-helper-function-acl \\/u,

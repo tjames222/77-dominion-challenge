@@ -1,3 +1,4 @@
+set local transaction isolation level serializable;
 set local lock_timeout = '5s';
 set local statement_timeout = '5min';
 set local idle_in_transaction_session_timeout = '5min';
@@ -12,21 +13,35 @@ alter default privileges for role postgres in schema public
 alter default privileges for role postgres in schema public
   revoke all privileges on functions from public, anon, authenticated, service_role;
 
--- Production predates workflow-managed migration history. Freeze writes and
--- concurrent DDL on every known relation that may already exist before
--- inspecting or changing it, while allowing ordinary read-only traffic to
--- remain online. Alphabetical ordering keeps concurrent rehearsals
--- deterministic. The bounded lock timeout makes a non-quiesced deployment fail
--- atomically; later DDL upgrades its own locks only where required.
+-- Production predates workflow-managed migration history. Use one serializable
+-- snapshot, freeze writes and concurrent DDL on every application-owned or
+-- migration-writable relation, and retain reader locks on the two pinned
+-- Storage vector inventory relations that the Supabase postgres role can only
+-- SELECT. That preserves a coherent platform preflight without attempting to
+-- grant postgres ownership-equivalent privileges on Supabase-owned tables.
+-- Alphabetical ordering keeps concurrent rehearsals deterministic. The bounded
+-- lock timeout makes a non-quiesced deployment fail atomically; later DDL
+-- upgrades its own locks only where required.
 do $baseline_locks$
 declare
   relation_identity text;
+  relation_oid oid;
+  relation_owner name;
+  is_vector_inventory boolean;
+  locked_vector_relation_count integer := 0;
 begin
-  for relation_identity in
-    select format('%I.%I', namespace.nspname, relation.relname)
+  for relation_identity, relation_oid, relation_owner, is_vector_inventory in
+    select
+      format('%I.%I', namespace.nspname, relation.relname),
+      relation.oid,
+      owner.rolname,
+      namespace.nspname = 'storage'
+        and relation.relname in ('buckets_vectors', 'vector_indexes')
     from pg_catalog.pg_class relation
     join pg_catalog.pg_namespace namespace
       on namespace.oid = relation.relnamespace
+    join pg_catalog.pg_roles owner
+      on owner.oid = relation.relowner
     where relation.relkind in ('r', 'p')
       and (namespace.nspname, relation.relname) in (
         ('public', 'badge_definitions'),
@@ -61,8 +76,40 @@ begin
       )
     order by namespace.nspname collate "C", relation.relname collate "C"
   loop
-    execute format('lock table %s in share row exclusive mode', relation_identity);
+    if is_vector_inventory then
+      if relation_owner is distinct from 'supabase_storage_admin'
+        or not pg_catalog.has_table_privilege(current_user, relation_oid, 'SELECT')
+        or pg_catalog.has_table_privilege(current_user, relation_oid, 'INSERT')
+        or pg_catalog.has_table_privilege(current_user, relation_oid, 'UPDATE')
+        or pg_catalog.has_table_privilege(current_user, relation_oid, 'DELETE')
+        or pg_catalog.has_table_privilege(current_user, relation_oid, 'TRUNCATE')
+        or pg_catalog.has_table_privilege(current_user, relation_oid, 'REFERENCES')
+        or pg_catalog.has_table_privilege(current_user, relation_oid, 'TRIGGER')
+        or pg_catalog.has_table_privilege(current_user, relation_oid, 'MAINTAIN') then
+        raise exception using
+          errcode = 'P0001',
+          message = pg_catalog.format(
+            'Baseline refused: %s does not match the pinned Supabase-owned SELECT-only lock contract for role %I.',
+            relation_identity,
+            current_user
+          );
+      end if;
+
+      execute format('lock table %s in access share mode', relation_identity);
+      locked_vector_relation_count := locked_vector_relation_count + 1;
+    else
+      execute format('lock table %s in share row exclusive mode', relation_identity);
+    end if;
   end loop;
+
+  if locked_vector_relation_count <> 2 then
+    raise exception using
+      errcode = 'P0001',
+      message = pg_catalog.format(
+        'Baseline refused: expected two pinned Supabase vector inventory relations, found %s.',
+        locked_vector_relation_count
+      );
+  end if;
 end;
 $baseline_locks$;
 

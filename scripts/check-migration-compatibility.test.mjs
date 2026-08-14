@@ -476,10 +476,47 @@ test("the production baseline fails closed and normalizes legacy privileges", as
     );
   }
 
+  assert.match(
+    baseline,
+    /set local transaction isolation level serializable;/,
+  );
+
   for (const migration of [baseline, gamification]) {
     assert.match(migration, /lock table %s in share row exclusive mode/);
     assert.doesNotMatch(migration, /lock table %s in access exclusive mode/);
   }
+  assert.match(
+    baseline,
+    /lock table %s in access share mode/,
+  );
+  assert.match(
+    baseline,
+    /relation_owner is distinct from 'supabase_storage_admin'/,
+  );
+  for (
+    const privilege of [
+      "SELECT",
+      "INSERT",
+      "UPDATE",
+      "DELETE",
+      "TRUNCATE",
+      "REFERENCES",
+      "TRIGGER",
+      "MAINTAIN",
+    ]
+  ) {
+    assert.match(
+      baseline,
+      new RegExp(
+        `has_table_privilege\\(current_user, relation_oid, '${privilege}'\\)`,
+      ),
+    );
+  }
+  assert.match(baseline, /locked_vector_relation_count <> 2/);
+  assert.match(
+    baseline,
+    /order by namespace\.nspname collate "C", relation\.relname collate "C"[\s\S]*if is_vector_inventory then[\s\S]*access share mode[\s\S]*else[\s\S]*share row exclusive mode/,
+  );
   assert.match(baseline, /select exists \(select 1 from public\.purchases\)/);
   assert.match(
     baseline,
