@@ -13,6 +13,7 @@ const headers = read('../../public/_headers');
 const setup = read('../../CLOUDFLARE_PAGES_SETUP.md');
 const localProductionRunner = read('../../scripts/rehearse-local-production-stack.sh');
 const localProductionSpec = read('../../tests/e2e/local-production-stack.spec.mjs');
+const defaultPlaywrightConfig = read('../../playwright.config.mjs');
 
 describe('production release configuration', () => {
   test('requires an explicit release from the protected main branch', () => {
@@ -156,6 +157,14 @@ describe('production release configuration', () => {
     assert.match(
       localProductionSpec,
       /https:\/\/pub-53499389187a4de4984349b4f9b36b74\.r2\.dev\/photo_1783730958\.105418\.png/,
+    );
+  });
+
+  test('runs the destructive local rehearsal only through its dedicated config', () => {
+    assert.match(defaultPlaywrightConfig, /local-production-stack\\\.spec\\\.mjs/);
+    assert.match(
+      read('../../playwright.local-production.config.mjs'),
+      /testMatch: \/local-production-stack\\\.spec\\\.mjs\//,
     );
   });
 });
