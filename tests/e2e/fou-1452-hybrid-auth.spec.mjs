@@ -161,26 +161,36 @@ test('hybrid dev Auth registers, persists, logs in, isolates UUID-owned state, a
   expect(auth.count('/token', 'POST')).toBeGreaterThanOrEqual(1);
   await expectAccountACommunityState(page);
 
+  const getUserBeforeInvalidation = auth.count('/user', 'GET');
   auth.invalidateUser(ACCOUNT_A.email);
-  const staleWrite = await page.evaluate(async (journalNote) => {
-    const api = await import('/src/static/api.js');
-    try {
-      await api.saveJournalEntry({
-        date: '2026-08-11',
-        note: journalNote,
-        win: '',
-        prayer: '',
-        mood: 'Tested',
-        energy: 'Low',
-      });
-      return { accepted: true, message: '' };
-    } catch (error) {
-      return { accepted: false, message: error?.message || '' };
-    }
+  const invalidSessionResponse = page.waitForResponse((response) => (
+    response.request().method() === 'GET'
+    && new URL(response.url()).pathname.endsWith('/auth/v1/user')
+    && response.status() === 403
+  ));
+  const loginRedirect = page.waitForURL(/\/login\.html\?returnTo=/);
+
+  // Start the stale write without awaiting it in the page context. The Auth
+  // state listener intentionally redirects as soon as getUser fails, so an
+  // awaited page.evaluate can be destroyed by that successful navigation.
+  await page.evaluate((journalNote) => {
+    window.setTimeout(() => {
+      void import('/src/static/api.js')
+        .then((api) => api.saveJournalEntry({
+          date: '2026-08-11',
+          note: journalNote,
+          win: '',
+          prayer: '',
+          mood: 'Tested',
+          energy: 'Low',
+        }))
+        .catch(() => {});
+    }, 0);
   }, STALE_JOURNAL);
-  expect(staleWrite.accepted).toBe(false);
-  expect(staleWrite.message).toMatch(/log in again|session|signed-in/i);
-  await expect(page).toHaveURL(/\/login\.html\?returnTo=/);
+
+  const [failedUserCheck] = await Promise.all([invalidSessionResponse, loginRedirect]);
+  expect(await failedUserCheck.json()).toMatchObject({ error_code: 'session_not_found' });
+  expect(auth.count('/user', 'GET')).toBeGreaterThan(getUserBeforeInvalidation);
   await page.waitForLoadState('domcontentloaded');
   expect(await page.evaluate((marker) => (
     Object.values(localStorage).some((value) => String(value).includes(marker))
