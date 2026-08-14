@@ -133,7 +133,14 @@ else
   "$supabase_cli" stop --workdir "$staging_root"
 fi
 
-"$supabase_cli" start --workdir "$repository_root"
+start_arguments=(--workdir "$repository_root")
+if [[ "${CI:-}" == "true" ]]; then
+  # The hosted runner can reserve Mailpit's default web port (54324). Database,
+  # Auth, Storage, Realtime, Edge Runtime, and the API remain in the CI stack;
+  # only the optional local mail viewer is omitted from this database job.
+  start_arguments=(--exclude inbucket "${start_arguments[@]}")
+fi
+"$supabase_cli" start "${start_arguments[@]}"
 bash "$repository_root/scripts/verify-local-supabase-runtime.sh"
 
 if [[ "$owns_database" == "true" ]]; then

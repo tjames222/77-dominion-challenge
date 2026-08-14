@@ -302,7 +302,10 @@ test("package, CI, and production deploy run the gate before migrations", async 
     startHelper,
     /cp "\$postgres_version_file" "\$staging_root\/supabase\/\.temp\/postgres-version"[\s\S]*db start --workdir/,
   );
-  assert.match(startHelper, /start --workdir "\$repository_root"/);
+  assert.match(
+    startHelper,
+    /CI:-.*true[\s\S]*--exclude inbucket[\s\S]*start "\$\{start_arguments\[@\]\}"/,
+  );
   assert.match(startHelper, /migration up --local --workdir "\$repository_root"/);
   assert.match(startHelper, /run-local-sql\.sh/);
   assert.match(startHelper, /17\.6\.1\.141/);
@@ -329,7 +332,7 @@ test("package, CI, and production deploy run the gate before migrations", async 
   assert.deepEqual(migrationCompatibilityViolations(canonicalSchema), []);
 
   const repositoryStart = startHelper.indexOf(
-    '"$supabase_cli" start --workdir "$repository_root"',
+    '"$supabase_cli" start "${start_arguments[@]}"',
   );
   const freshHistoryProof = startHelper.indexOf("fresh_history_count=0");
   const localApply = startHelper.indexOf(
