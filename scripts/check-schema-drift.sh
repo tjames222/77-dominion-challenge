@@ -100,7 +100,11 @@ $$;
 SQL
 
 PGOPTIONS="-c search_path=public,extensions" \
-  psql "$temp_database_url" --set=ON_ERROR_STOP=1 --quiet --file=supabase/schema.sql >/dev/null
+  psql "$temp_database_url" \
+    --set=ON_ERROR_STOP=1 \
+    --quiet \
+    --single-transaction \
+    --file=supabase/schema.sql >/dev/null
 
 snapshot_query=$(cat <<'SQL'
 with structural_records as (

@@ -244,6 +244,10 @@ test("package, CI, and production deploy run the gate before migrations", async 
     path.join(repositoryRoot, "scripts", "verify-local-supabase-runtime.sh"),
     "utf8",
   );
+  const schemaDriftHelper = await readFile(
+    path.join(repositoryRoot, "scripts", "check-schema-drift.sh"),
+    "utf8",
+  );
   const postgresVersion = await readFile(
     path.join(repositoryRoot, "supabase", ".temp", "postgres-version"),
     "utf8",
@@ -314,6 +318,10 @@ test("package, CI, and production deploy run the gate before migrations", async 
   assert.match(startHelper, /exit_status != 0.*owns_database/s);
   assert.match(startHelper, /volume inspect "\$database_volume"/);
   assert.doesNotMatch(startHelper, /ln -s|keep_staging/);
+  assert.match(
+    schemaDriftHelper,
+    /--single-transaction\s*\\\s*\n\s*--file=supabase\/schema\.sql/,
+  );
 
   const repositoryStart = startHelper.indexOf(
     '"$supabase_cli" start --workdir "$repository_root"',
