@@ -82,17 +82,51 @@ database backoff; do not delete it manually or bypass the exact-object trigger.
 
 ## Local rehearsal and closed-canary proof
 
-First run this proof against the clean local full stack. Repeat it during the
-closed canary on the single hosted production project before public signup is
-opened: register and upload a disposable profile photo, abandon it, and then
-leave the Profile page. Record evidence that:
+Run the deterministic proof only against the pinned local full stack. It has an
+explicit destructive-reset acknowledgement and refuses every database/API
+origin except the exact local containers and loopback ports:
+
+```bash
+pnpm run rehearse:profile-photo-cleanup-cron -- --confirm-local-reset
+```
+
+The command resets the local database, uploads four disposable objects through
+the local Storage API, and starts a second pinned Edge Runtime container. The
+isolated runtime mounts a staged copy of the real handler; a reviewed local
+client bridge permits only the exact local Kong origin, so the proof neither
+uses the broken CLI Function server nor contacts a hosted project. Cron keeps
+the one-use 64-character worker secret in a revoked unlogged table and stores
+only a table reference in job text. The reset verifies the exact database
+runtime but deliberately does not require the CLI-managed Edge Runtime to be
+mounted from the current worktree, because the isolated runtime is the reviewed
+Function source boundary for this proof.
+
+The proof emits two aggregate JSON records: one selected from
+`cron.job_run_details`, and one selected from `net._http_response`. It rejects
+evidence containing a fixture member ID, object ID/path, or worker secret. It
+then removes the Cron job/run details, pg_net responses, runtime container,
+temporary files, Storage objects, lifecycle rows, deletion batch, and fixture
+accounts. It never deletes a Docker volume.
+
+The local proof must establish that:
 
 1. Cron invokes the worker without a member session.
 2. The exact Storage object becomes absent.
 3. Its lifecycle row becomes `retired` and the digest tombstone is terminal.
 4. A canonical photo, an object with the wrong identity, and an account under
    erasure sealing are not deleted.
-5. Health returns to zero ready/stale work and the alert path receives its test.
+5. Aggregate health remains below every documented alert threshold.
+
+The account-erasure fixture intentionally remains one fresh ready item in the
+first worker response because its governing deletion batch blocks cleanup. This
+is non-alerting: `ready` is below 100, `oldestReadyAt` is under fifteen minutes,
+`staleLeases` is zero, and the single wrong-identity failure is below the
+documented threshold. The teardown invocation cancels only that disposable
+local batch and proves all fixture objects are removed.
+
+Repeat the behavioral checklist separately during the closed canary on the
+single hosted production project before public signup is opened. Do not run the
+local command for that canary: it deliberately cannot address a hosted origin.
 
 Pause the Cron job before rolling back the Function. Never restore browser
 Storage DELETE permission as an operational workaround.

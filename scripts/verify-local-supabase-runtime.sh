@@ -8,6 +8,15 @@ fail() {
 
 script_directory="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 repository_root="$(cd "$script_directory/.." && pwd -P)"
+database_only=false
+
+if [[ "$#" -gt 1 ]]; then
+  fail "expected at most one argument."
+fi
+if [[ "$#" -eq 1 ]]; then
+  [[ "$1" == "--database-only" ]] || fail "unsupported argument: $1"
+  database_only=true
+fi
 
 if [[ -n "${DOCKER_BIN:-}" ]]; then
   [[ -x "$DOCKER_BIN" ]] || fail "DOCKER_BIN is not executable: $DOCKER_BIN."
@@ -46,6 +55,11 @@ server_version_num="$($docker_cli exec "$database_container" \
   --command 'show server_version_num')"
 [[ "$server_version_num" == "170006" ]] \
   || fail "expected PostgreSQL server version 17.6, found $server_version_num."
+
+if [[ "$database_only" == "true" ]]; then
+  echo "Local Supabase runtime passed: exact Postgres image and server are active."
+  exit 0
+fi
 
 edge_container="supabase_edge_runtime_${project_id}"
 functions_root="$(realpath "$repository_root/supabase/functions")"

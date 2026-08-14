@@ -29,8 +29,13 @@ cli_version="$($supabase_cli --version)"
 
 seed_database=true
 target_version=""
+database_only_runtime_check=false
 while (( $# > 0 )); do
   case "$1" in
+    --database-only-runtime-check)
+      database_only_runtime_check=true
+      shift
+      ;;
     --no-seed)
       seed_database=false
       shift
@@ -147,6 +152,11 @@ if [[ "$seed_database" == "true" ]]; then
     "$repository_root/supabase/seed.sql"
 fi
 
-bash "$repository_root/scripts/verify-local-supabase-runtime.sh"
+runtime_check_arguments=()
+if [[ "$database_only_runtime_check" == "true" ]]; then
+  runtime_check_arguments+=(--database-only)
+fi
+bash "$repository_root/scripts/verify-local-supabase-runtime.sh" \
+  "${runtime_check_arguments[@]}"
 
 echo "Atomic local reset passed: migration SQL and history were committed together."
