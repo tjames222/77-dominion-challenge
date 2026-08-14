@@ -181,6 +181,16 @@ test('rehearsal accepts only this repository local Supabase container', () => {
   assert.match(rehearsal, /SUPABASE_DB_CONTAINER must equal \$expected_database_container/u);
   assert.match(rehearsal, /com\.supabase\.cli\.project/u);
   assert.match(rehearsal, /com\.docker\.compose\.project/u);
+  assert.match(rehearsal, /identity_verified=false/u);
+  assert.match(
+    rehearsal,
+    /if \[\[ "\$identity_verified" == "true" \]\]; then[\s\S]*cleanup_helper_roles/u,
+  );
+  assert.ok(
+    rehearsal.indexOf('identity_verified=true')
+      > rehearsal.indexOf("expected PostgreSQL server version 17.6"),
+    'cleanup mutation must remain disabled until every identity check passes',
+  );
 });
 
 test('frozen checkpoints contain the exact legacy Storage policy and inventory surface', () => {

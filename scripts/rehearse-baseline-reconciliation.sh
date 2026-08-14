@@ -105,6 +105,7 @@ rehearsal_root="$(mktemp -d "${TMPDIR:-/tmp}/baseline-reconciliation.XXXXXX")"
 database_prefix="baseline_reconciliation_${RANDOM}_$$"
 created_databases=()
 lock_pid=""
+identity_verified=false
 
 cleanup_helper_roles() {
   local cleanup_failed=false
@@ -162,20 +163,24 @@ remove_disposable_database() {
 cleanup() {
   exit_status=$?
   trap - EXIT
-  if [[ -n "$lock_pid" ]]; then
-    kill "$lock_pid" >/dev/null 2>&1 || true
-    wait "$lock_pid" >/dev/null 2>&1 || true
-  fi
   cleanup_status=0
-  # Bash 3.2 treats an empty array expansion as unbound under `set -u`.
-  for database_name in "${created_databases[@]-}"; do
-    [[ -n "$database_name" ]] || continue
-    if ! remove_disposable_database "$database_name" >/dev/null 2>&1; then
-      echo "Baseline reconciliation rehearsal: failed to remove disposable database ${database_name}." >&2
+  if [[ "$identity_verified" == "true" ]]; then
+    if [[ -n "$lock_pid" ]]; then
+      kill "$lock_pid" >/dev/null 2>&1 || true
+      wait "$lock_pid" >/dev/null 2>&1 || true
+    fi
+    # Bash 3.2 treats an empty array expansion as unbound under `set -u`.
+    for database_name in "${created_databases[@]-}"; do
+      [[ -n "$database_name" ]] || continue
+      if ! remove_disposable_database "$database_name" >/dev/null 2>&1; then
+        echo "Baseline reconciliation rehearsal: failed to remove disposable database ${database_name}." >&2
+        cleanup_status=1
+      fi
+    done
+    if ! cleanup_helper_roles; then
       cleanup_status=1
     fi
-  done
-  cleanup_helper_roles || cleanup_status=1
+  fi
   rm -rf -- "$rehearsal_root"
   if (( exit_status == 0 && cleanup_status != 0 )); then
     exit "$cleanup_status"
@@ -204,6 +209,7 @@ server_version_num="$($docker_cli exec "$database_container" \
   --command 'show server_version_num')"
 [[ "$server_version_num" == "170006" ]] \
   || fail "expected PostgreSQL server version 17.6, found $server_version_num."
+identity_verified=true
 
 # These fixed roles are owned solely by this harness. Recover a prior interrupted
 # run only when PostgreSQL can prove they have no remaining dependencies. A
