@@ -14,6 +14,7 @@
     "check:frontend": "pnpm run test:frontend && pnpm run build",
     "test:e2e": "playwright test",
     "test:e2e:auth": "playwright test --config=playwright.fou-1452.config.mjs",
+    "test:e2e:local-production": "bash scripts/rehearse-local-production-stack.sh",
     "test:e2e:headed": "playwright test --headed --project=chromium-functional",
     "test:e2e:update": "playwright test --update-snapshots=all",
     "test:quality": "pnpm test && pnpm build && pnpm test:e2e",
