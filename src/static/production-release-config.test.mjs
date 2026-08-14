@@ -123,12 +123,25 @@ describe('production release configuration', () => {
     const cliVersionCheck = localProductionRunner.indexOf('$supabase_cli --version');
     const dockerBinding = localProductionRunner.indexOf('export DOCKER_BIN="$local_docker_bin"');
     const databaseReset = localProductionRunner.indexOf('scripts/reset-local-database.sh');
+    const ownershipPreflight = localProductionRunner.indexOf('# A same-name container');
     assert.ok(
       telemetryGuard !== -1
         && cliVersionCheck !== -1
         && telemetryGuard < cliVersionCheck,
     );
     assert.ok(dockerBinding !== -1 && databaseReset !== -1 && dockerBinding < databaseReset);
+    assert.ok(
+      ownershipPreflight !== -1
+        && ownershipPreflight < databaseReset
+        && localProductionRunner
+          .slice(ownershipPreflight, databaseReset)
+          .includes('verify_local_database_container'),
+      'container ownership must be proven before the reset',
+    );
+    assert.ok(
+      localProductionRunner.slice(databaseReset).includes('verify_local_database_container'),
+      'container ownership must be rechecked after the reset',
+    );
   });
 
   test('intercepts all hosted browser traffic during the local rehearsal', () => {

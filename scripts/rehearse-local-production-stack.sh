@@ -59,24 +59,36 @@ expected_postgres_image_ref="$postgres_image_registry/supabase/postgres:$postgre
 export DOCKER_BIN="$local_docker_bin"
 export SUPABASE_DB_CONTAINER="$local_postgres_container"
 
+verify_local_database_container() {
+  "$local_docker_bin" container inspect "$local_postgres_container" >/dev/null 2>&1 || fail \
+    "the expected local Postgres container is not running."
+  actual_postgres_image="$("$local_docker_bin" container inspect "$local_postgres_container" \
+    --format '{{.Config.Image}}')"
+  [[ "$actual_postgres_image" == "$expected_postgres_image_ref" ]] || fail \
+    "expected $expected_postgres_image_ref, found $actual_postgres_image."
+  actual_supabase_project="$("$local_docker_bin" container inspect "$local_postgres_container" \
+    --format '{{index .Config.Labels "com.supabase.cli.project"}}')"
+  [[ "$actual_supabase_project" == "$project_id" ]] || fail \
+    "the Postgres container is not owned by local Supabase project $project_id."
+  actual_compose_project="$("$local_docker_bin" container inspect "$local_postgres_container" \
+    --format '{{index .Config.Labels "com.docker.compose.project"}}')"
+  [[ "$actual_compose_project" == "$project_id" ]] || fail \
+    "the Postgres container is not owned by Docker Compose project $project_id."
+}
+
+# A same-name container is an external resource until both ownership labels and
+# the exact image prove otherwise. Check it before any start/reset command can
+# mutate it. The local start helper separately refuses an orphaned volume.
+if "$local_docker_bin" container inspect "$local_postgres_container" >/dev/null 2>&1; then
+  verify_local_database_container
+fi
+
 if ! "$supabase_cli" status --workdir "$repository_root" >/dev/null 2>&1; then
   bash "$repository_root/scripts/start-local-database.sh"
 fi
+verify_local_database_container
 bash "$repository_root/scripts/reset-local-database.sh"
-"$local_docker_bin" container inspect "$local_postgres_container" >/dev/null 2>&1 || fail \
-  "the expected local Postgres container is not running."
-actual_postgres_image="$("$local_docker_bin" inspect "$local_postgres_container" \
-  --format '{{.Config.Image}}')"
-[[ "$actual_postgres_image" == "$expected_postgres_image_ref" ]] || fail \
-  "expected $expected_postgres_image_ref, found $actual_postgres_image."
-actual_supabase_project="$("$local_docker_bin" inspect "$local_postgres_container" \
-  --format '{{index .Config.Labels "com.supabase.cli.project"}}')"
-[[ "$actual_supabase_project" == "$project_id" ]] || fail \
-  "the Postgres container is not owned by local Supabase project $project_id."
-actual_compose_project="$("$local_docker_bin" inspect "$local_postgres_container" \
-  --format '{{index .Config.Labels "com.docker.compose.project"}}')"
-[[ "$actual_compose_project" == "$project_id" ]] || fail \
-  "the Postgres container is not owned by Docker Compose project $project_id."
+verify_local_database_container
 
 status_file="$(mktemp "${TMPDIR:-/tmp}/dominion-local-stack.XXXXXX")"
 chmod 600 "$status_file"
