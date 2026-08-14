@@ -307,7 +307,7 @@ with referenced_event_trigger_functions as (
   from pg_proc procedure_value
   join pg_namespace namespace on namespace.oid = procedure_value.pronamespace
   where namespace.nspname = 'storage'
-    and procedure_value.proname = 'filename'
+    and procedure_value.proname in ('filename', 'foldername')
 
   union
 
@@ -334,7 +334,7 @@ with referenced_event_trigger_functions as (
       when (
         namespace.nspname = 'storage'
         and (
-          procedure_value.proname = 'filename'
+          procedure_value.proname in ('filename', 'foldername')
           or procedure_value.oid in (
             select function_oid from referenced_storage_trigger_functions
           )
@@ -358,7 +358,7 @@ with referenced_event_trigger_functions as (
       when (
         namespace.nspname = 'storage'
         and (
-          procedure_value.proname = 'filename'
+          procedure_value.proname in ('filename', 'foldername')
           or procedure_value.oid in (
             select function_oid from referenced_storage_trigger_functions
           )
@@ -613,7 +613,10 @@ with schema_acls as (
   join pg_namespace namespace on namespace.oid = procedure_value.pronamespace
   where namespace.nspname in ('public', 'private')
      or namespace.nspname like 'reconciliation\_%' escape '\'
-     or (namespace.nspname = 'storage' and procedure_value.proname = 'filename')
+     or (
+       namespace.nspname = 'storage'
+       and procedure_value.proname in ('filename', 'foldername')
+     )
      or (
        namespace.nspname = 'public'
        and procedure_value.proname = 'rls_auto_enable'
@@ -847,7 +850,10 @@ with api_roles(role_name) as (
   join pg_namespace namespace on namespace.oid = procedure_value.pronamespace
   where namespace.nspname in ('public', 'private')
      or namespace.nspname like 'reconciliation\_%' escape '\'
-     or (namespace.nspname = 'storage' and procedure_value.proname = 'filename')
+     or (
+       namespace.nspname = 'storage'
+       and procedure_value.proname in ('filename', 'foldername')
+     )
      or (
        namespace.nspname = 'public'
        and procedure_value.proname = 'rls_auto_enable'

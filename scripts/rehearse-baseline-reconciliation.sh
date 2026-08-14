@@ -510,6 +510,8 @@ for drift_case in \
   changed-trigger \
   changed-storage-trigger \
   changed-storage-policy \
+  changed-storage-policy-helper-function \
+  changed-storage-policy-helper-function-acl \
   changed-storage-column-privilege \
   changed-storage-trigger-function \
   changed-storage-trigger-function-acl \

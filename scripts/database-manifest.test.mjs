@@ -249,6 +249,19 @@ test('frozen checkpoints contain the exact legacy Storage policy and inventory s
       .filter((key) => /^(?:platform-)?trigger\/storage\./u.test(key));
     assert.deepEqual(actualTriggerKeys, expectedTriggerKeys, manifestName);
 
+    for (const helperName of ['filename', 'foldername']) {
+      const helperIdentity = `storage.${helperName}(name text)`;
+      const helper = records.get(`platform-function/${helperIdentity}`);
+      assert.ok(helper, `${manifestName} is missing ${helperIdentity}`);
+      assert.ok(helper.definition.bodyBase64, `${manifestName} is missing ${helperIdentity} body`);
+      for (const roleName of ['anon', 'authenticated', 'service_role']) {
+        assert.ok(
+          records.has(`effective-acl/function/${helperIdentity}/${roleName}`),
+          `${manifestName} is missing ${helperIdentity}/${roleName} function ACL`,
+        );
+      }
+    }
+
     for (const relationName of storageRelations) {
       assert.ok(
         records.has(`platform-relation/storage.${relationName}`),
@@ -316,4 +329,10 @@ test('rehearsal and migration gate every pinned Storage inventory relation', () 
   }
   assert.match(rehearsal, /array_agg\([\s\S]*four legacy journal Storage policies/u);
   assert.doesNotMatch(rehearsal, /Users can read own profile photo objects/u);
+  assert.match(manifestSql, /procedure_value\.proname in \('filename', 'foldername'\)/u);
+  assert.match(rehearsal, /changed-storage-policy-helper-function \\/u);
+  assert.match(
+    rehearsal,
+    /changed-storage-policy-helper-function-acl \\/u,
+  );
 });
