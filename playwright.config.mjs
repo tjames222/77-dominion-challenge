@@ -101,6 +101,7 @@ export default defineConfig({
       testIgnore: [
         /visual-routes\.spec\.mjs/,
         /fou-1452-hybrid-auth\.spec\.mjs/,
+        /local-production-stack\.spec\.mjs/,
       ],
       metadata: {
         breakpoint: 'desktop',

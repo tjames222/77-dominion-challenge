@@ -1,8 +1,9 @@
 # Browser quality gate
 
-This suite exercises the real Vite multi-page application with Playwright and
-axe. It never uses Supabase, Stripe, production credentials, or live customer
-data.
+The normal pull-request suite exercises the real Vite multi-page application
+with Playwright and axe. It never uses Supabase, Stripe, production credentials,
+or live customer data. A separate explicit local-production rehearsal uses only
+the clean local Supabase stack and disposable test accounts.
 
 ## Local commands
 
@@ -20,6 +21,19 @@ Useful focused commands:
     pnpm exec playwright test --project=chromium-functional
     pnpm exec playwright test visual-routes.spec.mjs
     pnpm exec playwright show-report
+
+Run the production-shaped local proof only after acknowledging that it resets
+the repository's local Supabase database:
+
+    DOMINION_ALLOW_LOCAL_RESET=true pnpm test:e2e:local-production
+
+That command verifies the pinned local Postgres stack, replays every migration,
+builds with `VITE_ENABLE_MOCKS=false`, and serves the built assets. It then uses
+real local Auth and PostgREST to create an account, seed a disposable membership
+directly into the reset local Postgres database, load authenticated routes, retain
+Share and App Streak header controls, create private journal entries in two accounts,
+and prove cross-account journal reads and updates are denied by RLS. The runner
+rejects any non-local Supabase URL and never reads hosted credentials.
 
 Normal pull-request runs compare screenshots and never rewrite their expected
 images once Linux baselines are committed. The first branch run, when no
@@ -59,6 +73,9 @@ can differ from the Linux comparison environment.
   color-scheme at first contentful paint.
 - regression-sensitivity.spec.mjs proves controlled accessibility and visual
   changes are rejected while the test itself remains green.
+- local-production-stack.spec.mjs is outside the normal mock suite and proves a
+  built, mocks-off client against real local Auth/Postgres with two disposable
+  accounts and owner-only journal RLS.
 
 Screenshots disable motion and carets, freeze the clock, use UTC, replace
 external images with a local SVG response, and block all other external
