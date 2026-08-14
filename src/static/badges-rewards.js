@@ -55,6 +55,7 @@ let activeFulfillment = {};
 let rewardDetailReturnFocus = null;
 let pageActorId = '';
 let actorInvalidated = false;
+let rewardActionInFlight = null;
 let unsubscribeAuthState = () => {};
 
 function activateTab(tab, { focus = false } = {}) {
@@ -415,12 +416,12 @@ rewardDetailActions?.addEventListener('click', async (event) => {
   if (!activeReward || (!claimButton && !copyButton && !downloadButton)) return;
   const expectedUserId = pageActorId;
   const requestId = detailRequestId;
-  if (!(await pageActorIsCurrent(expectedUserId))) {
-    invalidatePageActor();
-    return;
-  }
 
   if (copyButton) {
+    if (!(await pageActorIsCurrent(expectedUserId))) {
+      invalidatePageActor();
+      return;
+    }
     const code = String(activeFulfillment.code || '');
     if (!code) return;
     try {
@@ -433,20 +434,43 @@ rewardDetailActions?.addEventListener('click', async (event) => {
   }
 
   const button = claimButton || downloadButton;
+  if (rewardActionInFlight) return;
+  const action = Object.freeze({
+    actorId: expectedUserId,
+    detailRequestId: requestId,
+    rewardKey: activeReward.key,
+    type: claimButton ? 'claim' : 'download',
+  });
+  rewardActionInFlight = action;
   button.disabled = true;
   if (rewardDetailFeedback) rewardDetailFeedback.textContent = downloadButton ? 'Preparing secure download…' : 'Securing your discount code…';
   try {
+    if (!(await pageActorIsCurrent(action.actorId))) {
+      invalidatePageActor();
+      return;
+    }
+    if (rewardActionInFlight !== action
+      || action.detailRequestId !== detailRequestId
+      || action.rewardKey !== activeReward?.key
+      || !rewardDetailDialog?.open) return;
+
     if (claimButton) {
-      const nextFulfillment = await claimRewardOffer(activeReward.key, { expectedUserId });
-      if (requestId !== detailRequestId || !rewardDetailDialog?.open || pageActorId !== expectedUserId) return;
+      const nextFulfillment = await claimRewardOffer(action.rewardKey, { expectedUserId: action.actorId });
+      if (rewardActionInFlight !== action
+        || requestId !== detailRequestId
+        || !rewardDetailDialog?.open
+        || pageActorId !== action.actorId) return;
       activeFulfillment = nextFulfillment;
       if (rewardDetailFeedback) rewardDetailFeedback.textContent = activeFulfillment.code
         ? 'Your code is ready.'
         : activeFulfillment.message || 'The offer is temporarily unavailable.';
       renderRewardDetail();
     } else {
-      const result = await downloadRewardAsset(activeReward.key, { expectedUserId });
-      if (requestId !== detailRequestId || !rewardDetailDialog?.open || pageActorId !== expectedUserId) return;
+      const result = await downloadRewardAsset(action.rewardKey, { expectedUserId: action.actorId });
+      if (rewardActionInFlight !== action
+        || requestId !== detailRequestId
+        || !rewardDetailDialog?.open
+        || pageActorId !== action.actorId) return;
       if (result?.blob instanceof Blob) {
         if (rewardDetailFeedback) rewardDetailFeedback.textContent = 'Your download is ready.';
         const objectUrl = URL.createObjectURL(result.blob);
@@ -463,12 +487,16 @@ rewardDetailActions?.addEventListener('click', async (event) => {
       }
     }
   } catch (error) {
-    if (!(await pageActorIsCurrent(expectedUserId))) {
+    if (!(await pageActorIsCurrent(action.actorId))) {
       invalidatePageActor();
       return;
     }
+    if (rewardActionInFlight !== action
+      || requestId !== detailRequestId
+      || !rewardDetailDialog?.open) return;
     if (rewardDetailFeedback) rewardDetailFeedback.textContent = error?.message || 'Unable to complete that reward action.';
   } finally {
+    if (rewardActionInFlight === action) rewardActionInFlight = null;
     if (button.isConnected) button.disabled = false;
   }
 });
