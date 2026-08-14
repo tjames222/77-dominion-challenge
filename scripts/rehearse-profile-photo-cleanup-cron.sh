@@ -60,6 +60,12 @@ fi
 
 script_directory="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 repository_root="$(cd "$script_directory/.." && pwd -P)"
+cleanup_orchestrator="$script_directory/fixtures/profile-photo-cleanup-cron-cleanup.sh"
+[[ -f "$cleanup_orchestrator" ]] \
+  || fail "the reviewed cleanup orchestrator is missing."
+# shellcheck source=fixtures/profile-photo-cleanup-cron-cleanup.sh
+source "$cleanup_orchestrator"
+cleanup_failed=false
 project_id="77-dominion-challenge"
 database_container="supabase_db_${project_id}"
 edge_container="supabase_edge_runtime_${project_id}"
@@ -138,6 +144,22 @@ inspect_value() {
   "$docker_cli" inspect "$container" --format "$format"
 }
 
+docker_command() {
+  "$docker_cli" "$@"
+}
+
+remove_tree_command() {
+  rm -rf -- "$1"
+}
+
+remove_file_command() {
+  rm -f -- "$1"
+}
+
+rmdir_command() {
+  rmdir "$1" 2>/dev/null
+}
+
 assert_local_container() {
   local container="$1"
   local expected_image="$2"
@@ -204,18 +226,13 @@ if ! mkdir "$lock_directory" 2>/dev/null; then
 fi
 printf '%s\n' "$$" >"$lock_owner_file"
 
-release_lock() {
-  if [[ -f "$lock_owner_file" \
-    && "$(tr -d '\r\n' <"$lock_owner_file" 2>/dev/null)" == "$$" ]]; then
-    rm -f -- "$lock_owner_file"
-    rmdir "$lock_directory" 2>/dev/null
-  fi
-}
-
 early_cleanup() {
   local test_status=$?
   trap - EXIT INT TERM
   set +e
+  if [[ -n "${temporary_root:-}" ]]; then
+    remove_temporary_artifacts
+  fi
   release_lock
   exit "$test_status"
 }
@@ -268,26 +285,17 @@ worker_secret=""
 service_role_key=""
 cleanup_failed=false
 capture_active=false
+runtime_cleanup_complete=false
+cron_cleanup_complete=false
+pgnet_cleanup_complete=false
+fixture_objects_cleanup_complete=false
+fixture_database_cleanup_complete=false
 
 if command -v curl >/dev/null 2>&1; then
   curl_cli="$(command -v curl)"
 else
   fail "curl is required for exact local Storage cleanup."
 fi
-
-mark_cleanup_failure() {
-  cleanup_failed=true
-}
-
-tracking_table_exists() {
-  [[ "$(db_query --command \
-    "select to_regclass('${secret_table}') is not null;" 2>/dev/null)" == "t" ]]
-}
-
-fixture_table_exists() {
-  [[ "$(db_query --command \
-    "select to_regclass('${fixture_table}') is not null;" 2>/dev/null)" == "t" ]]
-}
 
 storage_curl() {
   "$curl_cli" --disable --config "$curl_config" \
@@ -304,310 +312,13 @@ storage_curl() {
     "$@"
 }
 
-remove_exact_runtime_container() {
-  local runtime_label
-  if "$docker_cli" inspect "$runtime_container" >/dev/null 2>&1; then
-    runtime_label="$(inspect_value "$runtime_container" \
-      '{{index .Config.Labels "fou802.rehearsal"}}' 2>/dev/null)"
-    if [[ "$runtime_label" == "true" ]]; then
-      "$docker_cli" rm --force "$runtime_container" >/dev/null 2>&1 \
-        || mark_cleanup_failure
-    else
-      echo "FOU-802 local rehearsal: refusing to remove an unrelated runtime container." >&2
-      mark_cleanup_failure
-    fi
-  fi
-}
-
-tracked_job_ids() {
-  local named_ids=""
-  local recorded_id=""
-  named_ids="$(db_query --command "
-    select coalesce(string_agg(jobid::text, ',' order by jobid), '')
-    from cron.job where jobname = '${cron_job_name}';
-  " 2>/dev/null)"
-  if tracking_table_exists; then
-    recorded_id="$(db_query --command \
-      "select coalesce(cron_job_id::text, '') from ${secret_table} where singleton;" \
-      2>/dev/null)"
-  fi
-  if [[ -n "$named_ids" && -n "$recorded_id" ]]; then
-    printf '%s,%s\n' "$named_ids" "$recorded_id"
-  else
-    printf '%s%s\n' "$named_ids" "$recorded_id"
-  fi
-}
-
-unschedule_and_drain_rehearsal_jobs() {
-  local job_ids
-  local job_id
-  local active_count=""
-  local attempt
-  if [[ "$(db_query --command \
-    "select exists (select 1 from pg_extension where extname = 'pg_cron');" \
-    2>/dev/null)" != "t" ]]; then
-    return 0
-  fi
-  job_ids="$(tracked_job_ids)"
-  [[ -z "$job_ids" ]] && return 0
-  if [[ ! "$job_ids" =~ ^[0-9]+(,[0-9]+)*$ ]]; then
-    mark_cleanup_failure
-    return 0
-  fi
-  IFS=',' read -r -a job_id_values <<<"$job_ids"
-  for job_id in "${job_id_values[@]}"; do
-    db_query --command \
-      "select cron.unschedule(${job_id}) where exists (select 1 from cron.job where jobid = ${job_id});" \
-      >/dev/null 2>&1 || mark_cleanup_failure
-  done
-  for attempt in $(seq 1 150); do
-    active_count="$(db_query --command "
-      select count(*) from cron.job_run_details
-      where jobid in (${job_ids}) and status in ('starting', 'running');
-    " 2>/dev/null)"
-    [[ "$active_count" == "0" ]] && break
-    sleep 0.1
-  done
-  if [[ "$active_count" != "0" ]]; then
-    mark_cleanup_failure
-    return 0
-  fi
-  db_exec --command \
-    "delete from cron.job_run_details where jobid in (${job_ids});" \
-    >/dev/null 2>&1 || mark_cleanup_failure
-  if [[ "$(db_query --command \
-    "select count(*) from cron.job_run_details where jobid in (${job_ids});" \
-    2>/dev/null)" != "0" ]]; then
-    mark_cleanup_failure
-  fi
-}
-
-tracked_request_ids() {
-  local recorded_ids=""
-  local shell_ids=""
-  if tracking_table_exists; then
-    recorded_ids="$(db_query --command "
-      select coalesce(string_agg(request_id::text, ',' order by request_id), '')
-      from (
-        select distinct unnest(array_remove(array[
-          readiness_request_id,
-          worker_request_id,
-          health_request_id,
-          cleanup_request_id
-        ], null)) as request_id
-        from ${secret_table}
-        where singleton
-      ) tracked;
-    " 2>/dev/null)"
-  fi
-  for shell_request_id in \
-    "$readiness_request_id" "$worker_request_id" \
-    "$health_request_id" "$cleanup_request_id"; do
-    [[ "$shell_request_id" =~ ^[0-9]+$ ]] || continue
-    if [[ ",$recorded_ids,$shell_ids," != *",${shell_request_id},"* ]]; then
-      shell_ids="${shell_ids:+${shell_ids},}${shell_request_id}"
-    fi
-  done
-  if [[ -n "$recorded_ids" && -n "$shell_ids" ]]; then
-    printf '%s,%s\n' "$recorded_ids" "$shell_ids"
-  else
-    printf '%s%s\n' "$recorded_ids" "$shell_ids"
-  fi
-}
-
-drain_and_delete_tracked_requests() {
-  local request_ids
-  local expected_count
-  local visible_count=""
-  local residue_count=""
-  local attempt
-  request_ids="$(tracked_request_ids)"
-  [[ -z "$request_ids" ]] && return 0
-  if [[ ! "$request_ids" =~ ^[0-9]+(,[0-9]+)*$ ]]; then
-    mark_cleanup_failure
-    return 0
-  fi
-  expected_count="$(tr ',' '\n' <<<"$request_ids" | LC_ALL=C sort -u | wc -l | tr -d ' ')"
-  for attempt in $(seq 1 150); do
-    visible_count="$(db_query --command "
-      select count(distinct id) from (
-        select id from net.http_request_queue where id in (${request_ids})
-        union all
-        select id from net._http_response where id in (${request_ids})
-      ) visible;
-    " 2>/dev/null)"
-    [[ "$visible_count" == "$expected_count" ]] && break
-    sleep 0.1
-  done
-  [[ "$visible_count" == "$expected_count" ]] || mark_cleanup_failure
-  db_exec >/dev/null 2>&1 <<SQL || mark_cleanup_failure
-delete from net.http_request_queue where id in (${request_ids});
-delete from net._http_response where id in (${request_ids});
-SQL
-  for attempt in $(seq 1 20); do
-    residue_count="$(db_query --command "
-      select
-        (select count(*) from net.http_request_queue where id in (${request_ids}))
-        + (select count(*) from net._http_response where id in (${request_ids}));
-    " 2>/dev/null)"
-    [[ "$residue_count" == "0" ]] && break
-    db_exec >/dev/null 2>&1 <<SQL
-delete from net.http_request_queue where id in (${request_ids});
-delete from net._http_response where id in (${request_ids});
-SQL
-    sleep 0.1
-  done
-  [[ "$residue_count" == "0" ]] || mark_cleanup_failure
-}
-
-best_effort_database_cleanup() {
-  local cleanup_path
-  local object_residue=""
-  local drop_rehearsal_cron="$cron_installed_by_rehearsal"
-  unschedule_and_drain_rehearsal_jobs
-  drain_and_delete_tracked_requests
-
-  if tracking_table_exists; then
-    [[ "$(db_query --command \
-      "select pg_cron_installed_by_rehearsal from ${secret_table} where singleton;" \
-      2>/dev/null)" == "t" ]] && drop_rehearsal_cron=true
-  fi
-
-  if fixture_table_exists; then
-    # The upload can commit before the happy-path shell records its object ID.
-    # Recover only the exact object at the already-recorded bucket/path.
-    db_exec >/dev/null 2>&1 <<'SQL' || mark_cleanup_failure
-update private.fou802_profile_photo_cleanup_fixtures fixture
-set actual_object_id = object_row.id
-from storage.objects object_row
-where object_row.bucket_id = 'profile-photos'
-  and object_row.name = fixture.storage_path
-  and fixture.actual_object_id is distinct from object_row.id;
-SQL
-  fi
-
-  if [[ -f "$curl_config" ]] && fixture_table_exists; then
-    while IFS= read -r cleanup_path; do
-      [[ "$cleanup_path" =~ ^[0-9a-f-]{36}/avatar-[0-9]{13}-[a-f0-9]{32}\.webp$ ]] \
-        || { mark_cleanup_failure; continue; }
-      storage_curl \
-        --request DELETE \
-        --header 'Content-Type: application/json' \
-        --json "{\"prefixes\":[\"${cleanup_path}\"]}" \
-        "${local_api_origin}/storage/v1/object/profile-photos" \
-        >/dev/null 2>&1 || mark_cleanup_failure
-    done < <(db_query --command \
-      'select storage_path from private.fou802_profile_photo_cleanup_fixtures order by fixture_kind;' \
-      2>/dev/null)
-    object_residue="$(db_query --command "
-      select count(*)
-      from storage.objects object_row
-      join ${fixture_table} fixture
-        on object_row.bucket_id = 'profile-photos'
-       and object_row.name = fixture.storage_path;
-    " 2>/dev/null)"
-    [[ "$object_residue" == "0" ]] || mark_cleanup_failure
-  fi
-
-  db_exec >/dev/null 2>&1 <<'SQL' || mark_cleanup_failure
-do $$
-declare target_batch_ids uuid[];
-begin
-  if to_regclass('private.fou802_profile_photo_cleanup_fixtures') is null then
-    return;
-  end if;
-  select coalesce(array_agg(erasure_batch_id) filter (
-    where erasure_batch_id is not null
-  ), '{}'::uuid[])
-  into target_batch_ids
-  from private.fou802_profile_photo_cleanup_fixtures;
-
-  perform set_config('session_replication_role', 'replica', true);
-  delete from private.retired_community_deletion_ledger
-  where batch_id = any(target_batch_ids);
-  delete from private.retired_community_storage_work
-  where batch_id = any(target_batch_ids);
-  delete from private.retired_community_credential_work
-  where batch_id = any(target_batch_ids);
-  delete from private.retired_community_deletion_items
-  where batch_id = any(target_batch_ids);
-  delete from private.retired_community_deletion_batches
-  where id = any(target_batch_ids);
-  delete from private.profile_photo_objects registry
-  where exists (
-    select 1 from private.fou802_profile_photo_cleanup_fixtures fixture
-    where fixture.user_id = registry.user_id
-  );
-  delete from private.profile_photo_path_tombstones tombstone
-  where exists (
-    select 1
-    from private.fou802_profile_photo_cleanup_fixtures fixture
-    where tombstone.path_sha256 = private.profile_photo_path_sha256(
-      fixture.storage_path
-    )
-  );
-  perform set_config('session_replication_role', 'origin', true);
-  delete from auth.users user_row
-  where exists (
-    select 1 from private.fou802_profile_photo_cleanup_fixtures fixture
-    where fixture.user_id = user_row.id
-  );
-
-  if exists (
-      select 1 from auth.users user_row
-      join private.fou802_profile_photo_cleanup_fixtures fixture
-        on fixture.user_id = user_row.id
-    )
-    or exists (
-      select 1 from public.profiles profile
-      join private.fou802_profile_photo_cleanup_fixtures fixture
-        on fixture.user_id = profile.user_id
-    )
-    or exists (
-      select 1 from private.profile_photo_objects registry
-      join private.fou802_profile_photo_cleanup_fixtures fixture
-        on fixture.user_id = registry.user_id
-    )
-    or exists (
-      select 1 from private.retired_community_deletion_batches batch_row
-      join private.fou802_profile_photo_cleanup_fixtures fixture
-        on fixture.erasure_batch_id = batch_row.id
-    )
-  then
-    raise exception 'FOU-802 lifecycle fixture rows remained during cleanup.';
-  end if;
-end;
-$$;
-drop table if exists private.fou802_profile_photo_cleanup_fixtures;
-SQL
-
-  db_exec --command \
-    'drop table if exists private.fou802_profile_photo_cleanup_rehearsal;' \
-    >/dev/null 2>&1 || mark_cleanup_failure
-  if [[ "$drop_rehearsal_cron" == "true" ]]; then
-    if db_exec --command 'drop extension if exists pg_cron;' >/dev/null 2>&1; then
-      cron_installed_by_rehearsal=false
-    else
-      mark_cleanup_failure
-    fi
-  fi
-  if [[ "$cleanup_failed" == "false" ]]; then
-    cron_job_id=""
-    readiness_request_id=""
-    worker_request_id=""
-    health_request_id=""
-    cleanup_request_id=""
-  fi
-}
-
 cleanup() {
   local test_status=$?
   local leaked=false
   trap - EXIT INT TERM
   set +e
 
-  remove_exact_runtime_container
-  best_effort_database_cleanup
+  run_rehearsal_resource_cleanup
 
   if [[ "$capture_active" == "true" ]]; then
     exec 1>&3 2>&4
@@ -626,8 +337,7 @@ cleanup() {
     [[ -f "$stderr_capture" ]] && cat "$stderr_capture" >&2
   fi
 
-  rm -rf -- "$temporary_root"
-  release_lock
+  fou802_run_cleanup_steps remove_temporary_artifacts release_lock
 
   if [[ "$cleanup_failed" == "true" ]]; then
     echo "FOU-802 local rehearsal: cleanup could not prove that every tracked disposable resource was removed." >&2
@@ -1158,15 +868,25 @@ done
   || fail "cron.job_run_details did not record the request-queuing run."
 
 db_query --command "select cron.unschedule(${cron_job_id});" >/dev/null
-for attempt in $(seq 1 100); do
+cron_quiet_observations=0
+for attempt in $(seq 1 150); do
+  remaining_cron_jobs="$(db_query --command "
+    select count(*) from cron.job
+    where jobid = ${cron_job_id} or jobname = '${cron_job_name}';
+  ")"
   active_cron_runs="$(db_query --command "
     select count(*) from cron.job_run_details
-    where jobid = ${cron_job_id} and status in ('starting', 'running');
+    where jobid = ${cron_job_id} and end_time is null;
   ")"
-  [[ "$active_cron_runs" == "0" ]] && break
+  if [[ "$remaining_cron_jobs" == "0" && "$active_cron_runs" == "0" ]]; then
+    cron_quiet_observations=$((cron_quiet_observations + 1))
+    [[ "$cron_quiet_observations" -ge 20 ]] && break
+  else
+    cron_quiet_observations=0
+  fi
   sleep 0.1
 done
-[[ "$active_cron_runs" == "0" ]] \
+[[ "$cron_quiet_observations" -ge 20 ]] \
   || fail "the rehearsal Cron job did not drain after unscheduling."
 
 db_exec >/dev/null <<SQL
@@ -1545,13 +1265,10 @@ SQL
 # Run the same idempotent cleanup used by every trap path, then assert the
 # result before printing success. The EXIT trap repeats it safely.
 set +e
-best_effort_database_cleanup
+run_rehearsal_resource_cleanup
 set -e
 [[ "$cleanup_failed" == "false" ]] \
   || fail "disposable database, Cron, pg_net, or Storage state remained."
-remove_exact_runtime_container
-[[ "$cleanup_failed" == "false" ]] \
-  || fail "the exact labeled runtime container could not be removed."
 if "$docker_cli" inspect "$runtime_container" >/dev/null 2>&1; then
   fail "the exact labeled runtime container remained after teardown."
 fi

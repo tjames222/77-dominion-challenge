@@ -122,17 +122,30 @@ for both the worker secret and local service-role key before either stream is
 released; SQL evidence is also checked for fixture identity and worker-secret
 leaks.
 
-Teardown first unschedules the one named job and waits for its active runs to
-finish. It then waits until every tracked pg_net request is either queued or has
-a response, deletes only those queue/response rows, and asserts that none
-remain. If an upload succeeded before its object ID was recorded, cleanup
-recovers the ID from the exact `profile-photos` bucket/path and sends a JSON
-bulk-delete request for that path only. Cleanup removes the labeled runtime by
-its exact name even when failure occurs immediately after `docker run`, then
-removes the lifecycle rows, deletion batch, fixture accounts, tracking tables,
-and temporary files. A `pg_cron` extension that existed before the rehearsal is
-preserved; one installed by the rehearsal is removed. Cleanup is idempotent and
-runs again from the EXIT trap. It never deletes a Docker volume.
+Teardown first unschedules the one named job and requires repeated quiet
+observations with no schedule and no nonterminal `cron.job_run_details` row.
+After pruning terminal history, it requires a second quiet window so a late
+`starting`, `connecting`, or `sending` run cannot escape cleanup. It then waits
+until every tracked pg_net request has a terminal response, deletes only those
+queue/response rows, and asserts that none remain.
+
+Before any exact fixture Storage delete, teardown cancels its fixture erasure
+batch where necessary, clears canonical avatar pointers, repairs the registry to
+the actual object ID recovered from the exact `profile-photos` bucket/path,
+transitions the row to cleanup, obtains a live service claim, and re-verifies the
+claim against that exact object identity. It sends a JSON bulk-delete request
+for the reviewed path only. Tracking inventory is retained whenever exact
+runtime absence, Cron/pg_net drain, or a database existence probe cannot be
+proved. Related fixture inventory is retained whenever authorization or Storage
+deletion cannot be proved; lifecycle rows and fixture accounts are removed only
+after `storage.objects` proves zero exact-path residue.
+
+Cleanup removes the labeled runtime by its exact name even when failure occurs
+immediately after `docker run`, then removes the lifecycle rows, deletion batch,
+fixture accounts, tracking tables, and temporary files. A `pg_cron` extension
+that existed before the rehearsal is preserved; one installed by the rehearsal
+must be removed successfully before its ownership record is dropped. Cleanup is
+idempotent and runs again from the EXIT trap. It never deletes a Docker volume.
 
 Maintainers can set `FOU802_REHEARSAL_FAULT_AFTER` to one of the checkpoint
 names covered by `test:profile-photo-cleanup-cron` to rehearse failure cleanup.
