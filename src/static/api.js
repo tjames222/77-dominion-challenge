@@ -49,6 +49,7 @@ import {
   clearPreviewAuthOwner,
   previewAuthUser,
   readPreviewAuthOwner,
+  shouldCreateSupabaseClient,
   shouldUseSupabaseAuthentication,
 } from './preview-auth-runtime.mjs';
 import { normalizeEarnedBadges } from './badges-rewards.mjs';
@@ -134,16 +135,29 @@ const SUPABASE_KEY =
   import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY ||
   import.meta.env.VITE_SUPABASE_ANON_KEY ||
   '';
-const ENABLE_MOCKS = String(import.meta.env.VITE_ENABLE_MOCKS || '').toLowerCase() === 'true';
-const ENABLE_SUPABASE_AUTH_IN_MOCKS = String(
-  import.meta.env.VITE_ENABLE_SUPABASE_AUTH_IN_MOCKS || '',
-).toLowerCase() === 'true';
+const environmentFlagEnabled = (value) => (
+  String(value || '').trim().toLowerCase() === 'true'
+);
+const ENABLE_MOCKS = environmentFlagEnabled(import.meta.env.VITE_ENABLE_MOCKS);
+const ENABLE_PRODUCTION_CONNECTIONS = environmentFlagEnabled(
+  import.meta.env.VITE_ENABLE_PRODUCTION_CONNECTIONS,
+);
+const ENABLE_SUPABASE_AUTH_IN_MOCKS = environmentFlagEnabled(
+  import.meta.env.VITE_ENABLE_SUPABASE_AUTH_IN_MOCKS,
+);
 const ENABLE_LOCAL_HYBRID_AUTH = Boolean(
   import.meta.env.DEV && ENABLE_MOCKS && ENABLE_SUPABASE_AUTH_IN_MOCKS,
 );
 const isPlaceholder = (value) => !value || value.includes('YOUR_');
 const isSupabaseConfigured = () => !isPlaceholder(SUPABASE_URL) && !isPlaceholder(SUPABASE_KEY);
-export const supabase = isSupabaseConfigured() && (!ENABLE_MOCKS || ENABLE_LOCAL_HYBRID_AUTH)
+const ALLOW_SUPABASE_CLIENT = shouldCreateSupabaseClient({
+  configured: isSupabaseConfigured(),
+  mocksEnabled: ENABLE_MOCKS,
+  productionBuild: import.meta.env.PROD,
+  productionConnectionsEnabled: ENABLE_PRODUCTION_CONNECTIONS,
+  localHybridEnabled: ENABLE_LOCAL_HYBRID_AUTH,
+});
+export const supabase = ALLOW_SUPABASE_CLIENT
   ? createClient(SUPABASE_URL, SUPABASE_KEY, {
       auth: {
         persistSession: true,

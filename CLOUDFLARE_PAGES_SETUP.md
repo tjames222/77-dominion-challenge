@@ -20,7 +20,7 @@ Preview environment variables:
 
 - VITE_ENABLE_MOCKS=true
 
-Do not configure Supabase, Stripe, or provider values in the Preview environment. Production-built previews use browser-local identities and browser-local product data. The runtime refuses to construct a Supabase client while mock mode is active, even if a production variable is accidentally inherited.
+Do not configure Supabase, Stripe, worker, production-origin, Slack, Discord, or external resource/handoff values in the Preview environment, and do not enable hybrid Auth, production connections, or provider connections. Canonical `develop` builds reject those values. The runtime also refuses to construct a Supabase client while mock mode is active.
 
 Branch workflow:
 
@@ -52,7 +52,7 @@ Function deployment, and backend smoke checks succeed. Configure these GitHub
 Do not re-enable automatic production deployments. A frontend-only rollback is a
 manual dispatch of the protected workflow from a known backend-compatible commit.
 
-Cloudflare Preview environment variables are shared by `develop` and feature previews. Configure **Builds → Branch control → Preview branch** to include only `develop`. Canonical `develop` requires mock mode and rejects the hybrid-Auth override; it does not require or use a hosted Supabase project.
+Cloudflare Preview environment variables are shared by `develop` and feature previews. Configure **Builds → Branch control → Preview branch** to include only `develop`. Canonical `develop` requires mock mode and rejects the hybrid-Auth override, production-connection opt-in, provider enablement, and every known live backend/provider value; it does not require or use a hosted Supabase project.
 
 Set the hosted Supabase Auth Site URL to
 `https://77-dominion-challenge.pages.dev` and allow only this production

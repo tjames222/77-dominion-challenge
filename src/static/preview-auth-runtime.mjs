@@ -1,6 +1,18 @@
 export const PREVIEW_AUTH_OWNER_STORAGE_KEY = 'dominion:previewAuthOwnerId';
 export const PREVIEW_AUTH_PROFILE_STORAGE_KEY = 'dominion:previewAuthProfile';
 
+export function shouldCreateSupabaseClient({
+  configured = false,
+  mocksEnabled = false,
+  productionBuild = false,
+  productionConnectionsEnabled = false,
+  localHybridEnabled = false,
+} = {}) {
+  if (!configured) return false;
+  if (productionBuild) return Boolean(productionConnectionsEnabled && !mocksEnabled);
+  return Boolean(mocksEnabled && localHybridEnabled);
+}
+
 export function shouldUseSupabaseAuthentication({
   configured = false,
   localDemo = false,

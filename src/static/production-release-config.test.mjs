@@ -44,6 +44,8 @@ describe('production release configuration', () => {
     assert.match(workflow, /CF_PAGES: "1"/);
     assert.match(workflow, /CF_PAGES_BRANCH: main/);
     assert.match(workflow, /VITE_ENABLE_MOCKS: "false"/);
+    assert.match(workflow, /VITE_ENABLE_PRODUCTION_CONNECTIONS: "true"/);
+    assert.match(workflow, /Production builds must explicitly enable production connections/);
     assert.match(workflow, /VITE_ENABLE_GROUP_INTEGRATIONS: "false"/);
     assert.match(workflow, /Slack and Discord must remain safely off/);
     assert.match(setup, /turn off[\s\S]*Enable automatic production branch deployments/i);
