@@ -1,8 +1,6 @@
 -- FOU-1438: make challenge activation an explicit, server-owned lifecycle.
 -- Existing challenge history remains authoritative; new accounts start inert.
 
-begin;
-
 set local lock_timeout = '10s';
 set local statement_timeout = '120s';
 
@@ -2054,5 +2052,3 @@ comment on table private.challenge_activation_migration_reviews is
   'Contradictory legacy activation evidence requiring explicit operational remediation.';
 comment on function public.get_challenge_activation(uuid) is
   'Returns the signed-in actor''s authoritative activation contract and promotes due schedules only when the expected actor still matches.';
-
-commit;

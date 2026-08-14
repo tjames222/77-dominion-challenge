@@ -2,8 +2,6 @@
 -- contracts. This is intentionally one prelaunch migration: no superseded
 -- intermediate reward curve is ever observable by an application client.
 
-begin;
-
 set local lock_timeout = '10s';
 set local statement_timeout = '120s';
 
@@ -1672,5 +1670,3 @@ comment on table private.reward_offer_configurations is
   'Service-only versioned partner and merchandise offer configuration. Never expose code inventory through the catalog.';
 comment on table private.reward_download_assets is
   'Service-only approved handbook metadata for exact private-object verification and streaming.';
-
-commit;

@@ -1,8 +1,6 @@
 -- FOU-821: enforce one active crew per account and expose all lifecycle
 -- mutations through race-safe, idempotent RPCs.
 
-begin;
-
 set local lock_timeout = '10s';
 set local statement_timeout = '120s';
 
@@ -763,5 +761,3 @@ comment on table private.crew_lifecycle_requests is
   'Server-only idempotency and audit evidence for crew create, delete, and leave mutations.';
 comment on function public.delete_crew(uuid, uuid) is
   'Immediately removes group access and delivery while retaining FOU-559 deletion evidence for the 30-day worker flow.';
-
-commit;

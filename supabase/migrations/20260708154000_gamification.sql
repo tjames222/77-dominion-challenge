@@ -1,5 +1,3 @@
-begin;
-
 alter table public.check_ins
   add column if not exists completed text[] not null default '{}',
   add column if not exists workout_difficulty jsonb not null default '{}'::jsonb,
@@ -767,5 +765,3 @@ grant select on public.badge_definitions to authenticated;
 grant select on public.user_badges to authenticated;
 grant select on public.user_game_stats to authenticated;
 grant select on public.game_point_events to authenticated;
-
-commit;

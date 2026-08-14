@@ -1,5 +1,3 @@
-begin;
-
 -- Recover any legacy point-qualified unlock that was not persisted before the
 -- threshold change. Mark only these compatibility rows as already seen so the
 -- migration cannot manufacture an unlock celebration for existing progress.
@@ -58,5 +56,3 @@ from (
 ) as threshold(challenge_key, points_required)
 where definition.challenge_key = threshold.challenge_key
   and definition.points_required is distinct from threshold.points_required;
-
-commit;

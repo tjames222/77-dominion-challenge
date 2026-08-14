@@ -1,5 +1,3 @@
-begin;
-
 create schema if not exists private;
 revoke all on schema private from public, anon, authenticated;
 grant usage on schema private to service_role;
@@ -336,5 +334,3 @@ revoke execute on function public.backfill_reward_entitlements(text, uuid, integ
 
 grant execute on function public.backfill_reward_entitlements(text, uuid, integer, boolean)
   to service_role;
-
-commit;

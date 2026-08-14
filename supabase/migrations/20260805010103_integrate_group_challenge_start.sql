@@ -1,8 +1,6 @@
 -- FOU-1443: connect Group challenge activation to the existing single-crew
 -- lifecycle without allowing a partially-created owner crew.
 
-begin;
-
 set local lock_timeout = '10s';
 set local statement_timeout = '120s';
 
@@ -93,5 +91,3 @@ comment on function public.create_crew_and_activate_group(
   uuid, uuid, text, text, date, text, uuid
 ) is
   'Atomically creates one owner crew and binds the authenticated actor to its Group challenge date with independent retry-safe request evidence.';
-
-commit;

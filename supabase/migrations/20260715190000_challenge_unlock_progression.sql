@@ -1,5 +1,3 @@
-begin;
-
 create table if not exists public.challenge_definitions (
   challenge_key text primary key check (challenge_key ~ '^[a-z0-9][a-z0-9_]*$'),
   title text not null check (btrim(title) <> ''),
@@ -601,5 +599,3 @@ grant execute on function public.claim_challenge_unlocks() to authenticated;
 revoke execute on function public.start_challenge(text) from public;
 revoke execute on function public.start_challenge(text) from anon;
 grant execute on function public.start_challenge(text) to authenticated;
-
-commit;

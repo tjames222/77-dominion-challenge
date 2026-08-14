@@ -5,8 +5,6 @@
 -- version-1 page, and the Solo first-run program advances to the ordered
 -- fourteen-page version 2 while retaining every version-1 history row.
 
-begin;
-
 set local lock_timeout = '10s';
 set local statement_timeout = '120s';
 
@@ -121,5 +119,3 @@ values
   ('solo-first-run', 2, 'profile', 1, 11),
   ('solo-first-run', 2, 'billing', 1, 12),
   ('solo-first-run', 2, 'science', 1, 13);
-
-commit;

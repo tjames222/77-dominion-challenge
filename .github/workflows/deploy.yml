@@ -75,10 +75,16 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Setup Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
       - name: Setup Supabase CLI
         uses: supabase/setup-cli@3c2f5e2ae34c34e428e8e206e2c4d21fa2d20fbf # v2
         with:
           version: 2.109.0
+      - name: Reject migrations incompatible with atomic CLI execution
+        run: node scripts/check-migration-compatibility.mjs
       - name: Validate the production release gate
         shell: bash
         run: |
@@ -143,7 +149,7 @@ jobs:
       - name: Verify migration history and preview the migration plan
         run: supabase db push --linked --dry-run --password "$SUPABASE_DB_PASSWORD"
       - name: Apply database migrations
-        run: supabase db push --linked --password "$SUPABASE_DB_PASSWORD"
+        run: supabase migration up --linked
       - name: Synchronize Edge Function secrets
         id: function-secrets
         shell: bash

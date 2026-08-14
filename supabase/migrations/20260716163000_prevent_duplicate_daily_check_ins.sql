@@ -1,5 +1,3 @@
-begin;
-
 alter table public.profiles
   add column if not exists time_zone text;
 
@@ -247,5 +245,3 @@ revoke execute on function public.lock_challenge_start_date_after_check_in() fro
 revoke execute on function public.submit_daily_check_in(text, text[], jsonb, text, date) from public;
 revoke execute on function public.submit_daily_check_in(text, text[], jsonb, text, date) from anon;
 grant execute on function public.submit_daily_check_in(text, text[], jsonb, text, date) to authenticated;
-
-commit;

@@ -1,5 +1,3 @@
-begin;
-
 -- The original gamification migration predated the canonical schema changes
 -- committed with it. Align those shapes before later migrations refer to
 -- user_badges.entry_date and the globally idempotent point ledger.
@@ -117,5 +115,3 @@ begin
   return true;
 end;
 $$;
-
-commit;

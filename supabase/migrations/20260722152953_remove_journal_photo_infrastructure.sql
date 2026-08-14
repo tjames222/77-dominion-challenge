@@ -1,5 +1,3 @@
-begin;
-
 set local lock_timeout = '5s';
 set local statement_timeout = '30s';
 
@@ -93,5 +91,3 @@ drop table if exists public.journal_photos;
 
 comment on table public.journal_entries is
   'Private text-only journal entries. FOU-753 retired journal photo metadata and Storage infrastructure.';
-
-commit;

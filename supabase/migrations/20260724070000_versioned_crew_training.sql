@@ -1,8 +1,6 @@
 -- FOU-822: persist a versioned, privacy-minimal creator walkthrough without
 -- coupling onboarding progress to invitation, provider, consent, or delivery data.
 
-begin;
-
 set local lock_timeout = '10s';
 set local statement_timeout = '120s';
 
@@ -392,5 +390,3 @@ comment on function public.claim_crew_training(uuid, integer) is
   'Atomically claims one creator walkthrough start across retries, tabs, and devices.';
 comment on function public.advance_crew_training(uuid, integer, text, integer) is
   'Persists monotonic walkthrough progress without mutating any crew, invitation, provider, consent, or delivery state.';
-
-commit;

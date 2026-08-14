@@ -1,5 +1,3 @@
-begin;
-
 do $$
 begin
   if not exists (
@@ -423,5 +421,3 @@ begin
       awarded_badges;
 end;
 $$;
-
-commit;

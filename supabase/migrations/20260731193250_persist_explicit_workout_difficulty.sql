@@ -1,5 +1,3 @@
-begin;
-
 -- An absent value still scores with the established Medium fallback, but once
 -- the member explicitly chooses Medium it must be stored like every other
 -- selection so the UI does not return to its Difficulty placeholder.
@@ -94,5 +92,3 @@ revoke execute on function public.set_daily_standard_workout_difficulty(date, te
   from public, anon;
 grant execute on function public.set_daily_standard_workout_difficulty(date, text, text, bigint)
   to authenticated;
-
-commit;
