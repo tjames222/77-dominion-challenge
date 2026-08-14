@@ -145,6 +145,15 @@ const ENABLE_PRODUCTION_CONNECTIONS = environmentFlagEnabled(
 const ENABLE_SUPABASE_AUTH_IN_MOCKS = environmentFlagEnabled(
   import.meta.env.VITE_ENABLE_SUPABASE_AUTH_IN_MOCKS,
 );
+const ENABLE_E2E_FIXTURES = Boolean(
+  import.meta.env.DEV
+  && ENABLE_MOCKS
+  && environmentFlagEnabled(import.meta.env.VITE_ENABLE_E2E_FIXTURES)
+);
+const e2eRewardFixturesEnabled = () => (
+  ENABLE_E2E_FIXTURES
+  && globalThis.__DOMINION_E2E__?.enabled === true
+);
 const ENABLE_LOCAL_HYBRID_AUTH = Boolean(
   import.meta.env.DEV && ENABLE_MOCKS && ENABLE_SUPABASE_AUTH_IN_MOCKS,
 );
@@ -201,6 +210,7 @@ const MOCK_CHALLENGE_ACTIVATION_REQUESTS_KEY = 'dominion:mockChallengeActivation
 const MOCK_GROUP_START_REQUESTS_KEY = 'dominion:mockGroupChallengeStartRequests';
 const MOCK_CHALLENGE_ACTIVATION_LEGACY_OWNER_KEY = 'dominion:mockChallengeActivationLegacyOwner';
 const MOCK_REWARD_ENTITLEMENTS_KEY = 'dominion:mockRewardEntitlements';
+const MOCK_REWARD_FULFILLMENTS_KEY = 'dominion:mockRewardFulfillments';
 const MOCK_CHALLENGE_THRESHOLDS_VERSION_KEY = 'dominion:mockChallengeThresholdsVersion';
 const MOCK_OUTBOUND_CONSENT_KEY = 'dominion:mockOutboundConsent';
 const MOCK_SHARING_REWARD_KEY = 'dominion:mockSharingReward';
@@ -1706,13 +1716,34 @@ export async function claimRewardEntitlementUnlocks({ expectedUserId = '' } = {}
   };
 }
 
-function mockRewardFulfillment(rewardKey) {
+function mockRewardFulfillment(rewardKey, { action = 'read' } = {}) {
   const catalog = getMockRewardCatalog();
   const reward = catalog.items.find((item) => item.key === rewardKey);
   if (!reward || !['partner_discount', 'merch_discount', 'digital_download'].includes(reward.rewardType)) {
     throw new Error('The requested reward fulfillment is unavailable.');
   }
   const owned = reward.status === 'owned';
+  const fixtureByReward = e2eRewardFixturesEnabled()
+    ? readMockUserValue(MOCK_REWARD_FULFILLMENTS_KEY, {})
+    : {};
+  const fixture = fixtureByReward && typeof fixtureByReward === 'object'
+    ? fixtureByReward[rewardKey]
+    : null;
+  const fixturePayload = fixture && typeof fixture === 'object'
+    ? fixture[action] || fixture.read || fixture
+    : null;
+  if (fixturePayload?.error) throw new Error(String(fixturePayload.error));
+  if (fixturePayload && typeof fixturePayload === 'object') {
+    return {
+      preview: true,
+      rewardKey,
+      rewardType: reward.rewardType,
+      currentPoints: reward.currentPoints,
+      pointsRequired: reward.pointsRequired,
+      pointsRemaining: reward.pointsRemaining,
+      ...fixturePayload,
+    };
+  }
   if (reward.rewardType === 'digital_download') {
     return {
       preview: true,
@@ -1776,7 +1807,7 @@ export async function getRewardFulfillment(rewardKey, { expectedUserId = '' } = 
 export async function claimRewardOffer(rewardKey, { expectedUserId = '' } = {}) {
   if (isLocalDemoMode()) {
     const actorId = requireMockRewardActor(expectedUserId);
-    const result = mockRewardFulfillment(rewardKey, { reveal: true });
+    const result = mockRewardFulfillment(rewardKey, { action: 'claim' });
     requireMockRewardActor(actorId);
     return result;
   }
@@ -1794,8 +1825,17 @@ export async function claimRewardOffer(rewardKey, { expectedUserId = '' } = {}) 
 export async function downloadRewardAsset(rewardKey, { expectedUserId = '' } = {}) {
   if (isLocalDemoMode()) {
     const actorId = requireMockRewardActor(expectedUserId);
-    const result = mockRewardFulfillment(rewardKey);
+    const result = mockRewardFulfillment(rewardKey, { action: 'download' });
     requireMockRewardActor(actorId);
+    if (typeof result.pdfFixture === 'string' && result.pdfFixture.startsWith('%PDF-')) {
+      return {
+        blob: new Blob([result.pdfFixture], { type: 'application/pdf' }),
+        filename: /^[A-Za-z0-9][A-Za-z0-9._ -]*\.pdf$/.test(result.downloadFilename || '')
+          ? result.downloadFilename
+          : 'Nehemiah-Leadership-Handbook.pdf',
+        contentType: 'application/pdf',
+      };
+    }
     return result;
   }
   const client = requireSupabase();

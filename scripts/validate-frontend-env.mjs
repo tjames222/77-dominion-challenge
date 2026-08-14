@@ -52,11 +52,15 @@ export function frontendEnvironmentErrors(environment = {}) {
   const enablesProductionConnections = explicitlyEnabled(
     environment.VITE_ENABLE_PRODUCTION_CONNECTIONS,
   );
+  const enablesE2eFixtures = explicitlyEnabled(environment.VITE_ENABLE_E2E_FIXTURES);
   const branch = String(environment.CF_PAGES_BRANCH || '').trim();
 
   if (!isCloudflareBuild) return [];
 
   const errors = [];
+  if (enablesE2eFixtures) {
+    errors.push('VITE_ENABLE_E2E_FIXTURES must be unset for Cloudflare builds');
+  }
   if (branch === 'main' && usesMockProductData) {
     errors.push('VITE_ENABLE_MOCKS must be false on main');
   }
