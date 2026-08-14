@@ -256,22 +256,26 @@ function attributes and bodies, triggers, constraints, RLS policy expressions,
 or Storage configuration. In the 2026-08-13 audit, a three-schema CLI diff even
 returned empty while direct dumps proved application-owned differences, so an
 empty CLI diff never authorizes repair. Export direct schema dumps and normalized
-catalog manifests for `public`, `private`, the complete bucket and object
+catalog manifests for `public`, `private`, the complete Storage metadata
 inventory, the application-owned Storage policies, and the selected Supabase
 platform surface in `storage` from the isolated local checkpoint and production.
 That platform surface includes event-trigger registrations, every non-internal
-trigger on `storage.buckets` and `storage.objects`, the definitions and ACLs of
-their referenced functions, and direct and effective relation, function, and
-column privileges. Compare all of those object classes, classifying
+trigger on any pinned Storage inventory relation, the definitions and ACLs of
+its referenced functions, and direct and effective relation, function, and
+column privileges. The pinned Supabase CLI 2.109.0 Storage inventory relations are
+`buckets`, `buckets_analytics`, `buckets_vectors`, `iceberg_namespaces`,
+`iceberg_tables`, `objects`, `s3_multipart_uploads`,
+`s3_multipart_uploads_parts`, and `vector_indexes`. Compare all of those object
+classes and every row inventory independently, classifying
 platform-version noise through an explicit reviewed allowlist rather than
 silently discarding it. Also run these read-only queries in the production
 Supabase SQL editor. Compare the result exactly with the version-bounded local
 checkpoint manifest, including commands, roles, `qual`, and `with_check`
 expressions. Do not filter the inventory to expected IDs or policy names: an
 unknown row is itself a release blocker. For the migration-3 checkpoint below,
-the only bucket is `journal-progress`, both object counts are zero, and the only
-application Storage policies are its four `Users can ... journal photo objects`
-policies:
+the only standard bucket is `journal-progress`, every other Storage inventory
+relation has zero rows, and the only application Storage policies are its four
+`Users can ... journal photo objects` policies:
 
 ```sql
 select id, name, owner_id, public, file_size_limit, allowed_mime_types, type
@@ -281,18 +285,39 @@ order by id;
 select schemaname, tablename, policyname, permissive, cmd, roles, qual, with_check
 from pg_policies
 where schemaname = 'storage'
-  and tablename in ('buckets', 'objects')
+  and tablename in (
+    'buckets',
+    'buckets_analytics',
+    'buckets_vectors',
+    'iceberg_namespaces',
+    'iceberg_tables',
+    'objects',
+    's3_multipart_uploads',
+    's3_multipart_uploads_parts',
+    'vector_indexes'
+  )
 order by tablename, policyname;
 
-select bucket_id, count(*) as object_count
-from storage.objects
-group by bucket_id
-order by bucket_id;
-
-select bucket_id, count(*) as multipart_upload_count
-from storage.s3_multipart_uploads
-group by bucket_id
-order by bucket_id;
+select relation_name, row_count
+from (
+  select 'storage.buckets_analytics' as relation_name, count(*) as row_count
+  from storage.buckets_analytics
+  union all
+  select 'storage.buckets_vectors', count(*) from storage.buckets_vectors
+  union all
+  select 'storage.iceberg_namespaces', count(*) from storage.iceberg_namespaces
+  union all
+  select 'storage.iceberg_tables', count(*) from storage.iceberg_tables
+  union all
+  select 'storage.objects', count(*) from storage.objects
+  union all
+  select 'storage.s3_multipart_uploads', count(*) from storage.s3_multipart_uploads
+  union all
+  select 'storage.s3_multipart_uploads_parts', count(*) from storage.s3_multipart_uploads_parts
+  union all
+  select 'storage.vector_indexes', count(*) from storage.vector_indexes
+) inventory
+order by relation_name;
 ```
 
 Migration repair records history without executing SQL. Never repair a version
@@ -327,10 +352,11 @@ separately reviewed change and the exact restored-snapshot rehearsal passes:
 2. Create encrypted, off-repository dumps of roles, schema, and data. Include
    Auth and Storage data and custom DDL, archive the empty
    `supabase_migrations` schema, download or inventory every deployed Edge
-   Function, and record aggregate row/object counts. Storage blobs are not part
-   of a database dump; stop and export through the Storage API if the fresh
-   object count is nonzero. Checksum every artifact and test-restore the backup
-   locally before continuing.
+   Function, and record every Storage metadata-table count listed above. Storage
+   blobs are not part of a database dump; stop and export through the Storage API
+   if the fresh object or multipart inventory is nonzero, and separately
+   disposition any analytics/vector catalog rows. Checksum every artifact and
+   test-restore the backup locally before continuing.
 3. In an isolated worktree containing only migrations 1–3, pin the exact hosted
    Postgres image (`17.6.1.141`) and build a clean checkpoint without the
    final-schema seed:
@@ -525,7 +551,7 @@ a reviewed forward fix; do not rewrite it or mark it reverted.
 FOU-752/753 must not use the normal backend-first order for their first production release. The hardening migration rejects the previous raw/upsert avatar client, and the final cleanup removes journal-photo infrastructure used by the previous client. Use the same reviewed commit for both stages:
 
 1. Confirm the migration-history reconciliation above is genuinely complete. The 2026-07-22 inventory in [`release-evidence/fou-759-production-inventory-2026-07-22.md`](./release-evidence/fou-759-production-inventory-2026-07-22.md) found missing historical profile infrastructure, so those versions must not be marked applied until a structural diff proves their effects exist or an approved bootstrap applies them.
-2. Rerun the aggregate journal inventory from that evidence record. Journal rows, objects, multipart uploads, and nonterminal `journal-progress` retention work must all be zero.
+2. Rerun the aggregate journal inventory from that evidence record. Journal rows, objects, multipart-upload parents and parts, and nonterminal `journal-progress` retention work must all be zero.
 3. Manually dispatch **Release production** from the exact reviewed release-candidate ref with `release_scope=frontend-only`. This deploys the schema-negotiating, prepared-thumbnail and text-only-journal client while intentionally skipping migrations. The client must treat the missing `profiles.avatar_url` column as the planned compatibility state and must make no profile-photo RPC or Storage request.
 4. Verify normal sign-in, profile text editing, dashboard challenge-date synchronization, and journal create/edit/reload behavior in production. The profile-photo control must remain disabled, and all six journal text fields must work without a journal-photo request. Leave the previous database and empty bucket in place during this verification window.
 5. Rerun the zero-data inventory. Stop on any nonzero result; export or explicitly disposition user data and use the Storage API for object deletion.

@@ -48,8 +48,14 @@ begin
         ('public', 'user_badges'),
         ('public', 'user_game_stats'),
         ('storage', 'buckets'),
+        ('storage', 'buckets_analytics'),
+        ('storage', 'buckets_vectors'),
+        ('storage', 'iceberg_namespaces'),
+        ('storage', 'iceberg_tables'),
         ('storage', 'objects'),
-        ('storage', 's3_multipart_uploads')
+        ('storage', 's3_multipart_uploads'),
+        ('storage', 's3_multipart_uploads_parts'),
+        ('storage', 'vector_indexes')
       )
     order by namespace.nspname collate "C", relation.relname collate "C"
   loop
@@ -64,6 +70,7 @@ $baseline_locks$;
 do $baseline_data_preflight$
 declare
   has_unsafe_rows boolean;
+  relation_name text;
 begin
   if pg_catalog.to_regclass('public.purchases') is not null then
     execute 'select exists (select 1 from public.purchases)'
@@ -105,25 +112,39 @@ begin
     end if;
   end if;
 
-  if pg_catalog.to_regclass('storage.objects') is not null then
-    execute 'select exists (select 1 from storage.objects)'
-      into has_unsafe_rows;
-    if has_unsafe_rows then
-      raise exception using
-        errcode = 'P0001',
-        message = 'Baseline refused: storage.objects contains rows.';
+  -- The pinned Storage service has three bucket families and independent
+  -- metadata relations for multipart parts, vector indexes, and Iceberg
+  -- catalogs. Check every relation even when its parent is empty: historical
+  -- or disabled constraints can otherwise leave an orphan invisible.
+  for relation_name in
+    select inventory_relation.relation_name
+    from (values
+      ('buckets_analytics'),
+      ('buckets_vectors'),
+      ('iceberg_namespaces'),
+      ('iceberg_tables'),
+      ('objects'),
+      ('s3_multipart_uploads'),
+      ('s3_multipart_uploads_parts'),
+      ('vector_indexes')
+    ) inventory_relation(relation_name)
+    order by inventory_relation.relation_name collate "C"
+  loop
+    if pg_catalog.to_regclass(pg_catalog.format('storage.%I', relation_name)) is not null then
+      execute pg_catalog.format(
+        'select exists (select 1 from storage.%I)',
+        relation_name
+      ) into has_unsafe_rows;
+      if has_unsafe_rows then
+        raise exception using
+          errcode = 'P0001',
+          message = pg_catalog.format(
+            'Baseline refused: storage.%s contains rows.',
+            relation_name
+          );
+      end if;
     end if;
-  end if;
-
-  if pg_catalog.to_regclass('storage.s3_multipart_uploads') is not null then
-    execute 'select exists (select 1 from storage.s3_multipart_uploads)'
-      into has_unsafe_rows;
-    if has_unsafe_rows then
-      raise exception using
-        errcode = 'P0001',
-        message = 'Baseline refused: storage.s3_multipart_uploads contains rows.';
-    end if;
-  end if;
+  end loop;
 end;
 $baseline_data_preflight$;
 

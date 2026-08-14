@@ -171,3 +171,128 @@ test('rehearsal cleanup is safe when Bash 3.2 sees no created databases', () => 
   assert.match(rehearsal, /"\$\{created_databases\[@\]-\}"/u);
   assert.match(rehearsal, /\[\[ -n "\$database_name" \]\] \|\| continue/u);
 });
+
+test('frozen checkpoints contain the exact legacy Storage policy and inventory surface', () => {
+  const storageRelations = [
+    'buckets',
+    'buckets_analytics',
+    'buckets_vectors',
+    'iceberg_namespaces',
+    'iceberg_tables',
+    'objects',
+    's3_multipart_uploads',
+    's3_multipart_uploads_parts',
+    'vector_indexes',
+  ];
+  const firstColumns = new Map([
+    ['buckets', 'id'],
+    ['buckets_analytics', 'name'],
+    ['buckets_vectors', 'id'],
+    ['iceberg_namespaces', 'id'],
+    ['iceberg_tables', 'id'],
+    ['objects', 'id'],
+    ['s3_multipart_uploads', 'id'],
+    ['s3_multipart_uploads_parts', 'id'],
+    ['vector_indexes', 'id'],
+  ]);
+  const expectedPolicyKeys = [
+    'policy/storage.objects/"Users can delete own journal photo objects"',
+    'policy/storage.objects/"Users can read own journal photo objects"',
+    'policy/storage.objects/"Users can update own journal photo objects"',
+    'policy/storage.objects/"Users can upload own journal photo objects"',
+  ];
+  const expectedTriggerKeys = [
+    'platform-trigger/storage.buckets/enforce_bucket_name_length_trigger',
+    'platform-trigger/storage.buckets/protect_buckets_delete',
+    'platform-trigger/storage.objects/protect_objects_delete',
+    'platform-trigger/storage.objects/update_objects_updated_at',
+  ];
+  const emptySha256 = 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855';
+
+  for (const manifestName of [
+    'legacy-migration-2.source.manifest.jsonl',
+    'migration-3.target.manifest.jsonl',
+  ]) {
+    const manifestUrl = new URL(
+      `../supabase/tests/reconciliation/${manifestName}`,
+      import.meta.url,
+    );
+    const records = parseManifestText(
+      readFileSync(manifestUrl, 'utf8'),
+      manifestUrl.pathname,
+    );
+    const actualPolicyKeys = [...records.keys()]
+      .filter((key) => key.startsWith('policy/storage.'));
+    assert.deepEqual(actualPolicyKeys, expectedPolicyKeys, manifestName);
+    const actualTriggerKeys = [...records.keys()]
+      .filter((key) => /^(?:platform-)?trigger\/storage\./u.test(key));
+    assert.deepEqual(actualTriggerKeys, expectedTriggerKeys, manifestName);
+
+    for (const relationName of storageRelations) {
+      assert.ok(
+        records.has(`platform-relation/storage.${relationName}`),
+        `${manifestName} is missing the ${relationName} definition`,
+      );
+      for (const roleName of ['anon', 'authenticated', 'service_role']) {
+        assert.ok(
+          records.has(`effective-acl/relation/storage.${relationName}/${roleName}`),
+          `${manifestName} is missing the ${relationName}/${roleName} relation ACL`,
+        );
+        assert.ok(
+          records.has(
+            `effective-acl/column/storage.${relationName}.${firstColumns.get(relationName)}/${roleName}`,
+          ),
+          `${manifestName} is missing the ${relationName}/${roleName} column ACL`,
+        );
+      }
+    }
+
+    const standardBucket = records.get('storage-bucket/journal-progress');
+    assert.equal(standardBucket?.definition.type, 'STANDARD', manifestName);
+    for (const relationName of storageRelations.filter((name) => name !== 'buckets')) {
+      const inventory = records.get(`storage-row-inventory/${relationName}`);
+      assert.equal(inventory?.definition.rowCount, 0, `${manifestName}:${relationName}`);
+      assert.equal(
+        inventory?.definition.rowsSha256,
+        emptySha256,
+        `${manifestName}:${relationName}`,
+      );
+    }
+  }
+});
+
+test('rehearsal and migration gate every pinned Storage inventory relation', () => {
+  const manifestSql = readFileSync(new URL('./database-manifest.sql', import.meta.url), 'utf8');
+  const fingerprintSql = readFileSync(
+    new URL('./baseline-data-fingerprint.sql', import.meta.url),
+    'utf8',
+  );
+  const rehearsal = readFileSync(
+    new URL('./rehearse-baseline-reconciliation.sh', import.meta.url),
+    'utf8',
+  );
+  const baseline = readFileSync(
+    new URL('../supabase/migrations/20260707170000_baseline.sql', import.meta.url),
+    'utf8',
+  );
+  const relationCases = new Map([
+    ['buckets', 'unknown-storage-bucket'],
+    ['buckets_analytics', 'analytics-bucket'],
+    ['buckets_vectors', 'vector-bucket'],
+    ['iceberg_namespaces', 'iceberg-namespace'],
+    ['iceberg_tables', 'iceberg-table'],
+    ['objects', 'storage-object'],
+    ['s3_multipart_uploads', 'multipart-upload'],
+    ['s3_multipart_uploads_parts', 'multipart-upload-part'],
+    ['vector_indexes', 'vector-index'],
+  ]);
+
+  for (const [relationName, fixtureName] of relationCases) {
+    for (const source of [manifestSql, fingerprintSql, baseline]) {
+      assert.match(source, new RegExp(`['\"]${relationName}['\"]`, 'u'));
+    }
+    assert.match(rehearsal, new RegExp(`source-drift/${fixtureName}\\.sql`, 'u'));
+  }
+  assert.match(rehearsal, /array_agg\([\s\S]*four legacy journal Storage policies/u);
+  assert.doesNotMatch(rehearsal, /Users can read own profile photo objects/u);
+});

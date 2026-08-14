@@ -173,8 +173,8 @@ cleanup() {
 }
 trap cleanup EXIT
 
-database_container="supabase_db_77-dominion-challenge"
-container_image="$($docker_cli inspect "$database_container" --format '{{.Config.Image}}')"
+database_container="${SUPABASE_DB_CONTAINER:-supabase_db_77-dominion-challenge}"
+container_image="$($docker_cli container inspect "$database_container" --format '{{.Config.Image}}')"
 postgres_image_registry="${SUPABASE_INTERNAL_IMAGE_REGISTRY:-public.ecr.aws}"
 postgres_image_registry="${postgres_image_registry%/}"
 [[ -n "$postgres_image_registry" ]] || fail "Postgres image registry cannot be empty."
@@ -221,13 +221,22 @@ create_database() {
     | sed \
         -e '/^CREATE EXTENSION IF NOT EXISTS supabase_vault /d' \
         -e '/^COMMENT ON EXTENSION supabase_vault /d' \
-        -e '/^CREATE TRIGGER block_pending_account_storage_write /d' \
-        -e '/^CREATE TRIGGER guard_profile_photo_storage_delete /d' \
-        -e '/^CREATE TRIGGER guard_profile_photo_storage_insert /d' \
-        -e '/^CREATE TRIGGER guard_profile_photo_storage_update /d' \
-        -e '/^CREATE POLICY "Pending account erasure blocks personal asset deletes" /d' \
-        -e '/^CREATE POLICY "Pending account erasure blocks personal asset uploads" /d' \
-        -e '/^CREATE POLICY "Pending account erasure freezes personal asset updates" /d' \
+    | awk '
+        function is_inventory_relation(line) {
+          return line ~ / ON storage\.(buckets|buckets_analytics|buckets_vectors|iceberg_namespaces|iceberg_tables|objects|s3_multipart_uploads|s3_multipart_uploads_parts|vector_indexes)( |;)/
+        }
+        /^CREATE POLICY / && is_inventory_relation($0) { next }
+        /^CREATE (CONSTRAINT )?TRIGGER / && is_inventory_relation($0) {
+          if ($0 ~ /^CREATE TRIGGER enforce_bucket_name_length_trigger / \
+              || $0 ~ /^CREATE TRIGGER protect_buckets_delete / \
+              || $0 ~ /^CREATE TRIGGER protect_objects_delete / \
+              || $0 ~ /^CREATE TRIGGER update_objects_updated_at /) {
+            print
+          }
+          next
+        }
+        { print }
+      ' \
     | "$docker_cli" exec -i "$database_container" \
       psql \
         --username postgres \
@@ -273,6 +282,44 @@ capture_fingerprint() {
     >/dev/null
 }
 
+assert_checkpoint_storage_policies() {
+  local database_name="$1"
+  local policy_set_matches
+  policy_set_matches="$($docker_cli exec "$database_container" \
+    psql --username postgres --dbname "$database_name" \
+      --tuples-only --no-align --no-psqlrc --set ON_ERROR_STOP=1 \
+      --command "
+        select (
+          coalesce(
+            array_agg(
+              format('%s/%s', tablename, policyname)
+              order by tablename collate \"C\", policyname collate \"C\"
+            ),
+            array[]::text[]
+          ) = array[
+            'objects/Users can delete own journal photo objects',
+            'objects/Users can read own journal photo objects',
+            'objects/Users can update own journal photo objects',
+            'objects/Users can upload own journal photo objects'
+          ]::text[]
+        )
+        from pg_policies
+        where schemaname = 'storage'
+          and tablename in (
+            'buckets',
+            'buckets_analytics',
+            'buckets_vectors',
+            'iceberg_namespaces',
+            'iceberg_tables',
+            'objects',
+            's3_multipart_uploads',
+            's3_multipart_uploads_parts',
+            'vector_indexes'
+          );")"
+  [[ "$policy_set_matches" == "t" ]] \
+    || fail "$database_name does not contain exactly the four legacy journal Storage policies."
+}
+
 history_versions() {
   local database_name="$1"
   local history_relation
@@ -306,6 +353,7 @@ new_source_database() {
         --command 'select count(*) from supabase_migrations.schema_migrations')"
   fi
   [[ "$history_count" == "0" ]] || fail "source fixture unexpectedly has $history_count migration-history rows."
+  assert_checkpoint_storage_policies "$database_name"
 }
 
 make_stage() {
@@ -357,6 +405,8 @@ for migration_number in 1 2 3; do
       || fail "unexpected history prefix after stage $migration_number."
   done
 done
+
+assert_checkpoint_storage_policies "$source_database"
 
 capture_manifest "$source_database" "$rehearsal_root/target.manifest.jsonl"
 capture_fingerprint "$source_database" "$rehearsal_root/target.fingerprint.jsonl"
@@ -414,6 +464,12 @@ expect_failure_without_change external_dependency "$fixture_directory/source-dri
 expect_failure_without_change unknown_storage_bucket "$fixture_directory/source-drift/unknown-storage-bucket.sql"
 expect_failure_without_change storage_object "$fixture_directory/source-drift/storage-object.sql"
 expect_failure_without_change multipart_upload "$fixture_directory/source-drift/multipart-upload.sql"
+expect_failure_without_change multipart_upload_part "$fixture_directory/source-drift/multipart-upload-part.sql"
+expect_failure_without_change analytics_bucket "$fixture_directory/source-drift/analytics-bucket.sql"
+expect_failure_without_change vector_bucket "$fixture_directory/source-drift/vector-bucket.sql"
+expect_failure_without_change vector_index "$fixture_directory/source-drift/vector-index.sql"
+expect_failure_without_change iceberg_namespace "$fixture_directory/source-drift/iceberg-namespace.sql"
+expect_failure_without_change iceberg_table "$fixture_directory/source-drift/iceberg-table.sql"
 
 drift_number=0
 for drift_case in \
@@ -438,7 +494,13 @@ for drift_case in \
   changed-event-trigger-function-acl \
   unknown-storage-bucket \
   storage-object \
-  multipart-upload; do
+  multipart-upload \
+  multipart-upload-part \
+  analytics-bucket \
+  vector-bucket \
+  vector-index \
+  iceberg-namespace \
+  iceberg-table; do
   drift_number=$((drift_number + 1))
   database_name="${database_prefix}_drift_${drift_number}"
   new_source_database "$database_name"

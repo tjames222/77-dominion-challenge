@@ -62,10 +62,14 @@ with scoped_relations as (
   where namespace.nspname = 'storage'
     and relation.relname in (
       'buckets',
+      'buckets_analytics',
+      'buckets_vectors',
+      'iceberg_namespaces',
+      'iceberg_tables',
       'objects',
       's3_multipart_uploads',
-      'iceberg_namespaces',
-      'iceberg_tables'
+      's3_multipart_uploads_parts',
+      'vector_indexes'
     )
     and relation.relkind in ('r', 'p', 'v', 'm', 'S', 'f')
 )
@@ -272,7 +276,17 @@ with referenced_event_trigger_functions as (
   join pg_namespace namespace on namespace.oid = relation.relnamespace
   where not trigger_value.tgisinternal
     and namespace.nspname = 'storage'
-    and relation.relname in ('buckets', 'objects')
+    and relation.relname in (
+      'buckets',
+      'buckets_analytics',
+      'buckets_vectors',
+      'iceberg_namespaces',
+      'iceberg_tables',
+      'objects',
+      's3_multipart_uploads',
+      's3_multipart_uploads_parts',
+      'vector_indexes'
+    )
 ), scoped_function_oids as (
   select procedure_value.oid
   from pg_proc procedure_value
@@ -482,7 +496,20 @@ where not trigger_value.tgisinternal
   and (
     namespace.nspname in ('public', 'private')
     or namespace.nspname like 'reconciliation\_%' escape '\'
-    or (namespace.nspname = 'storage' and relation.relname in ('buckets', 'objects'))
+    or (
+      namespace.nspname = 'storage'
+      and relation.relname in (
+        'buckets',
+        'buckets_analytics',
+        'buckets_vectors',
+        'iceberg_namespaces',
+        'iceberg_tables',
+        'objects',
+        's3_multipart_uploads',
+        's3_multipart_uploads_parts',
+        'vector_indexes'
+      )
+    )
   );
 
 insert into database_manifest_records (key, record)
@@ -516,7 +543,20 @@ join pg_class relation on relation.oid = policy_value.polrelid
 join pg_namespace namespace on namespace.oid = relation.relnamespace
 where namespace.nspname in ('public', 'private')
    or namespace.nspname like 'reconciliation\_%' escape '\'
-   or (namespace.nspname = 'storage' and relation.relname in ('buckets', 'objects'));
+   or (
+     namespace.nspname = 'storage'
+     and relation.relname in (
+       'buckets',
+       'buckets_analytics',
+       'buckets_vectors',
+       'iceberg_namespaces',
+       'iceberg_tables',
+       'objects',
+       's3_multipart_uploads',
+       's3_multipart_uploads_parts',
+       'vector_indexes'
+     )
+   );
 
 -- Direct ACLs are not expanded from acldefault(): a missing ACL and an explicit
 -- ACL are intentionally different. Object ownership is recorded separately.
@@ -542,10 +582,14 @@ with schema_acls as (
         namespace.nspname = 'storage'
         and relation.relname in (
           'buckets',
+          'buckets_analytics',
+          'buckets_vectors',
+          'iceberg_namespaces',
+          'iceberg_tables',
           'objects',
           's3_multipart_uploads',
-          'iceberg_namespaces',
-          'iceberg_tables'
+          's3_multipart_uploads_parts',
+          'vector_indexes'
         )
       )
     )
@@ -588,7 +632,17 @@ with schema_acls as (
        where trigger_value.tgfoid = procedure_value.oid
          and not trigger_value.tgisinternal
          and relation_namespace.nspname = 'storage'
-         and relation.relname in ('buckets', 'objects')
+         and relation.relname in (
+           'buckets',
+           'buckets_analytics',
+           'buckets_vectors',
+           'iceberg_namespaces',
+           'iceberg_tables',
+           'objects',
+           's3_multipart_uploads',
+           's3_multipart_uploads_parts',
+           'vector_indexes'
+         )
      )
 ), object_acls as (
   select * from schema_acls
@@ -654,7 +708,20 @@ cross join lateral aclexplode(column_value.attacl) acl_value
 where (
     namespace.nspname in ('public', 'private')
     or namespace.nspname like 'reconciliation\_%' escape '\'
-    or (namespace.nspname = 'storage' and relation.relname in ('buckets', 'objects'))
+    or (
+      namespace.nspname = 'storage'
+      and relation.relname in (
+        'buckets',
+        'buckets_analytics',
+        'buckets_vectors',
+        'iceberg_namespaces',
+        'iceberg_tables',
+        'objects',
+        's3_multipart_uploads',
+        's3_multipart_uploads_parts',
+        'vector_indexes'
+      )
+    )
   )
   and column_value.attnum > 0
   and not column_value.attisdropped;
@@ -679,10 +746,14 @@ with api_roles(role_name) as (
         namespace.nspname = 'storage'
         and relation.relname in (
           'buckets',
+          'buckets_analytics',
+          'buckets_vectors',
+          'iceberg_namespaces',
+          'iceberg_tables',
           'objects',
           's3_multipart_uploads',
-          'iceberg_namespaces',
-          'iceberg_tables'
+          's3_multipart_uploads_parts',
+          'vector_indexes'
         )
       )
     )
@@ -795,7 +866,17 @@ with api_roles(role_name) as (
        where trigger_value.tgfoid = procedure_value.oid
          and not trigger_value.tgisinternal
          and relation_namespace.nspname = 'storage'
-         and relation.relname in ('buckets', 'objects')
+         and relation.relname in (
+           'buckets',
+           'buckets_analytics',
+           'buckets_vectors',
+           'iceberg_namespaces',
+           'iceberg_tables',
+           'objects',
+           's3_multipart_uploads',
+           's3_multipart_uploads_parts',
+           'vector_indexes'
+         )
      )
 )
 insert into database_manifest_records (key, record)
@@ -834,7 +915,20 @@ with api_roles(role_name) as (
   where (
       namespace.nspname in ('public', 'private')
       or namespace.nspname like 'reconciliation\_%' escape '\'
-      or (namespace.nspname = 'storage' and relation.relname in ('buckets', 'objects'))
+      or (
+        namespace.nspname = 'storage'
+        and relation.relname in (
+          'buckets',
+          'buckets_analytics',
+          'buckets_vectors',
+          'iceberg_namespaces',
+          'iceberg_tables',
+          'objects',
+          's3_multipart_uploads',
+          's3_multipart_uploads_parts',
+          'vector_indexes'
+        )
+      )
     )
     and relation.relkind in ('r', 'p', 'v', 'm', 'f')
     and column_value.attnum > 0
@@ -936,61 +1030,72 @@ select
   )
 from storage.buckets bucket;
 
-insert into database_manifest_records (key, record)
-select
-  'storage-object-inventory/all-buckets',
-  jsonb_build_object(
-    'kind', 'storage-object-inventory',
-    'identity', 'storage.objects/all-buckets',
-    'definition', jsonb_build_object(
-      'rowCount', count(*),
-      'rowsSha256', encode(
-        digest(
-          convert_to(
-            coalesce(
-              string_agg(
-                encode(digest(convert_to(to_jsonb(object_value)::text, 'UTF8'), 'sha256'), 'hex'),
-                '' order by to_jsonb(object_value)::text collate "C"
+-- Standard bucket rows are represented individually above without volatile
+-- service-managed timestamps. Every remaining Storage metadata table is empty
+-- at this checkpoint, so retain both its count and a canonical whole-row hash.
+-- This covers multipart parts and the analytics/vector catalog independently of
+-- their parent rows; an orphaned or partially written record cannot disappear
+-- behind a parent-only inventory.
+do $storage_row_inventories$
+declare
+  relation_name text;
+  row_count bigint;
+  row_hash text;
+begin
+  for relation_name in
+    select inventory_relation.relation_name
+    from (values
+      ('buckets_analytics'),
+      ('buckets_vectors'),
+      ('iceberg_namespaces'),
+      ('iceberg_tables'),
+      ('objects'),
+      ('s3_multipart_uploads'),
+      ('s3_multipart_uploads_parts'),
+      ('vector_indexes')
+    ) inventory_relation(relation_name)
+    order by inventory_relation.relation_name collate "C"
+  loop
+    execute format(
+      $query$
+        select
+          count(*),
+          encode(
+            digest(
+              convert_to(
+                coalesce(
+                  string_agg(
+                    encode(digest(convert_to(to_jsonb(source_row)::text, 'UTF8'), 'sha256'), 'hex'),
+                    '' order by to_jsonb(source_row)::text collate "C"
+                  ),
+                  ''
+                ),
+                'UTF8'
               ),
-              ''
+              'sha256'
             ),
-            'UTF8'
-          ),
-          'sha256'
-        ),
-        'hex'
-      )
-    )
-  )
-from storage.objects object_value;
+            'hex'
+          )
+        from storage.%I source_row
+      $query$,
+      relation_name
+    ) into row_count, row_hash;
 
-insert into database_manifest_records (key, record)
-select
-  'storage-multipart-inventory/all-buckets',
-  jsonb_build_object(
-    'kind', 'storage-multipart-inventory',
-    'identity', 'storage.s3_multipart_uploads/all-buckets',
-    'definition', jsonb_build_object(
-      'rowCount', count(*),
-      'rowsSha256', encode(
-        digest(
-          convert_to(
-            coalesce(
-              string_agg(
-                encode(digest(convert_to(to_jsonb(upload_value)::text, 'UTF8'), 'sha256'), 'hex'),
-                '' order by to_jsonb(upload_value)::text collate "C"
-              ),
-              ''
-            ),
-            'UTF8'
-          ),
-          'sha256'
-        ),
-        'hex'
+    insert into database_manifest_records (key, record)
+    values (
+      format('storage-row-inventory/%s', relation_name),
+      jsonb_build_object(
+        'kind', 'storage-row-inventory',
+        'identity', format('storage.%I/all-rows', relation_name),
+        'definition', jsonb_build_object(
+          'rowCount', row_count,
+          'rowsSha256', row_hash
+        )
       )
-    )
-  )
-from storage.s3_multipart_uploads upload_value;
+    );
+  end loop;
+end;
+$storage_row_inventories$;
 
 insert into database_manifest_records (key, record)
 select

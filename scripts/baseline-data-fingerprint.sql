@@ -70,61 +70,70 @@ begin
 end;
 $block$;
 
-insert into baseline_data_fingerprints (key, record)
-select
-  'data/storage.objects/all-buckets',
-  jsonb_build_object(
-    'kind', 'data-fingerprint',
-    'identity', 'storage.objects/all-buckets',
-    'definition', jsonb_build_object(
-      'rowCount', count(*),
-      'rowsSha256', encode(
-        digest(
-          convert_to(
-            coalesce(
-              string_agg(
-                encode(digest(convert_to(to_jsonb(object_value)::text, 'UTF8'), 'sha256'), 'hex'),
-                '' order by to_jsonb(object_value)::text collate "C"
+-- Fingerprint every data-bearing relation in the pinned local Storage metadata
+-- model. Parent and child relations remain independent so an orphaned
+-- multipart part, vector index, or Iceberg catalog row is still observable.
+do $storage_data_fingerprints$
+declare
+  relation_name text;
+  row_count bigint;
+  row_hash text;
+begin
+  for relation_name in
+    select inventory_relation.relation_name
+    from (values
+      ('buckets'),
+      ('buckets_analytics'),
+      ('buckets_vectors'),
+      ('iceberg_namespaces'),
+      ('iceberg_tables'),
+      ('objects'),
+      ('s3_multipart_uploads'),
+      ('s3_multipart_uploads_parts'),
+      ('vector_indexes')
+    ) inventory_relation(relation_name)
+    order by inventory_relation.relation_name collate "C"
+  loop
+    execute format(
+      $query$
+        select
+          count(*),
+          encode(
+            digest(
+              convert_to(
+                coalesce(
+                  string_agg(
+                    encode(digest(convert_to(to_jsonb(source_row)::text, 'UTF8'), 'sha256'), 'hex'),
+                    '' order by to_jsonb(source_row)::text collate "C"
+                  ),
+                  ''
+                ),
+                'UTF8'
               ),
-              ''
+              'sha256'
             ),
-            'UTF8'
-          ),
-          'sha256'
-        ),
-        'hex'
-      )
-    )
-  )
-from storage.objects object_value;
+            'hex'
+          )
+        from storage.%I source_row
+      $query$,
+      relation_name
+    ) into row_count, row_hash;
 
-insert into baseline_data_fingerprints (key, record)
-select
-  'data/storage.s3_multipart_uploads/all-buckets',
-  jsonb_build_object(
-    'kind', 'data-fingerprint',
-    'identity', 'storage.s3_multipart_uploads/all-buckets',
-    'definition', jsonb_build_object(
-      'rowCount', count(*),
-      'rowsSha256', encode(
-        digest(
-          convert_to(
-            coalesce(
-              string_agg(
-                encode(digest(convert_to(to_jsonb(upload_value)::text, 'UTF8'), 'sha256'), 'hex'),
-                '' order by to_jsonb(upload_value)::text collate "C"
-              ),
-              ''
-            ),
-            'UTF8'
-          ),
-          'sha256'
-        ),
-        'hex'
+    insert into baseline_data_fingerprints (key, record)
+    values (
+      format('data/storage.%s/all-rows', relation_name),
+      jsonb_build_object(
+        'kind', 'data-fingerprint',
+        'identity', format('storage.%I/all-rows', relation_name),
+        'definition', jsonb_build_object(
+          'rowCount', row_count,
+          'rowsSha256', row_hash
+        )
       )
-    )
-  )
-from storage.s3_multipart_uploads upload_value;
+    );
+  end loop;
+end;
+$storage_data_fingerprints$;
 
 select jsonb_build_object(
   'key', fingerprint.key,

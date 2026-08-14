@@ -185,7 +185,7 @@ test("local start does not mutate a pre-existing wrong-version stack", async () 
     );
     await writeFile(
       fakeDocker,
-      "#!/usr/bin/env bash\nprintf '%s\\n' \"$*\" >>\"$FAKE_DOCKER_LOG\"\nif [[ \"${1:-}\" == \"inspect\" && \"${2:-}\" == \"supabase_db_77-dominion-challenge\" ]]; then\n  if [[ \"$*\" == *--format* ]]; then echo ghcr.io/supabase/postgres:17.6.1.140; fi\n  exit 0\nfi\nif [[ \"${1:-}\" == \"volume\" && \"${2:-}\" == \"inspect\" ]]; then exit 0; fi\nexit 91\n",
+      "#!/usr/bin/env bash\nprintf '%s\\n' \"$*\" >>\"$FAKE_DOCKER_LOG\"\nif [[ \"${1:-}\" == \"container\" && \"${2:-}\" == \"inspect\" && \"${3:-}\" == \"supabase_db_77-dominion-challenge\" ]]; then\n  if [[ \"$*\" == *--format* ]]; then echo ghcr.io/supabase/postgres:17.6.1.140; fi\n  exit 0\nfi\nif [[ \"${1:-}\" == \"volume\" && \"${2:-}\" == \"inspect\" ]]; then exit 0; fi\nexit 91\n",
     );
     await chmod(fakeCli, 0o755);
     await chmod(fakeDocker, 0o755);
@@ -215,6 +215,57 @@ test("local start does not mutate a pre-existing wrong-version stack", async () 
     assert.match(result.stderr, /It was not changed/);
     assert.equal((await readFile(cliLog, "utf8")).trim(), "--version");
     assert.doesNotMatch(await readFile(dockerLog, "utf8"), /\bexec\b|\brm\b/);
+  } finally {
+    await rm(fixtureRoot, { recursive: true, force: true });
+  }
+});
+
+test("local start distinguishes a preserved volume from a missing container", async () => {
+  const fixtureRoot = await mkdtemp(path.join(os.tmpdir(), "migration-start-volume-"));
+  const fakeCli = path.join(fixtureRoot, "supabase");
+  const fakeDocker = path.join(fixtureRoot, "docker");
+  const cliLog = path.join(fixtureRoot, "cli.log");
+  const dockerLog = path.join(fixtureRoot, "docker.log");
+
+  try {
+    await writeFile(
+      fakeCli,
+      "#!/usr/bin/env bash\nprintf '%s\\n' \"$*\" >>\"$FAKE_CLI_LOG\"\nif [[ \"${1:-}\" == \"--version\" ]]; then echo 2.109.0; exit 0; fi\nexit 90\n",
+    );
+    await writeFile(
+      fakeDocker,
+      "#!/usr/bin/env bash\nprintf '%s\\n' \"$*\" >>\"$FAKE_DOCKER_LOG\"\nif [[ \"${1:-}\" == \"container\" && \"${2:-}\" == \"inspect\" ]]; then exit 1; fi\nif [[ \"${1:-}\" == \"volume\" && \"${2:-}\" == \"inspect\" && \"${3:-}\" == \"supabase_db_77-dominion-challenge\" ]]; then exit 0; fi\nexit 91\n",
+    );
+    await chmod(fakeCli, 0o755);
+    await chmod(fakeDocker, 0o755);
+
+    const result = spawnSync(
+      "bash",
+      [path.join(repositoryRoot, "scripts", "start-local-database.sh")],
+      {
+        cwd: repositoryRoot,
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          SUPABASE_CLI_BIN: fakeCli,
+          DOCKER_BIN: fakeDocker,
+          FAKE_CLI_LOG: cliLog,
+          FAKE_DOCKER_LOG: dockerLog,
+        },
+      },
+    );
+
+    assert.notEqual(result.status, 0);
+    assert.match(
+      result.stderr,
+      /found preserved database volume supabase_db_77-dominion-challenge without a container/,
+    );
+    assert.doesNotMatch(result.stderr, /Config\.Image|existing stack uses/);
+    assert.equal((await readFile(cliLog, "utf8")).trim(), "--version");
+    const dockerCalls = await readFile(dockerLog, "utf8");
+    assert.match(dockerCalls, /^container inspect supabase_db_77-dominion-challenge$/m);
+    assert.match(dockerCalls, /^volume inspect supabase_db_77-dominion-challenge$/m);
+    assert.doesNotMatch(dockerCalls, /(^|\s)rm(\s|$)|(^|\s)exec(\s|$)/m);
   } finally {
     await rm(fixtureRoot, { recursive: true, force: true });
   }
@@ -320,7 +371,8 @@ test("package, CI, and production deploy run the gate before migrations", async 
       /\$postgres_image_registry\/supabase\/postgres:\$[a-z_]+/,
     );
   }
-  assert.match(startHelper, /docker_cli inspect "\$database_container"/);
+  assert.match(startHelper, /docker_cli" container inspect "\$database_container"/);
+  assert.doesNotMatch(startHelper, /docker_cli" inspect "\$database_container"/);
   assert.match(startHelper, /verify-local-supabase-runtime\.sh/);
   assert.match(startHelper, /exit_status != 0.*owns_database/s);
   assert.match(startHelper, /volume inspect "\$database_volume"/);
