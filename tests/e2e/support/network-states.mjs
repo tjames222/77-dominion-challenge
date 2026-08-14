@@ -42,12 +42,21 @@ export async function deferApiFunction(page, functionName) {
       throw new Error('Unable to defer API function; missing export ' + functionName);
     }
     const bodyStart = exportedFunctionBodyStart(source, markerIndex, functionName);
+    const key = JSON.stringify(functionName);
     const injected = source.slice(0, bodyStart + 1)
-      + '\nawait new Promise((resolve) => {\n'
-      + '  globalThis.__DOMINION_E2E_DEFERRED_API__ ||= {};\n'
-      + '  globalThis.__DOMINION_E2E_DEFERRED_API__[' + JSON.stringify(functionName) + '] = resolve;\n'
-      + '  void globalThis[' + JSON.stringify(signalName) + ']();\n'
-      + '});\n'
+      + '\nglobalThis.__DOMINION_E2E_API_CALL_COUNTS__ ||= {};\n'
+      + 'globalThis.__DOMINION_E2E_API_CALL_COUNTS__[' + key + '] = '
+      + '(globalThis.__DOMINION_E2E_API_CALL_COUNTS__[' + key + '] || 0) + 1;\n'
+      + 'globalThis.__DOMINION_E2E_DEFERRED_API__ ||= {};\n'
+      + 'let injectedDeferredApiGate = globalThis.__DOMINION_E2E_DEFERRED_API__[' + key + '];\n'
+      + 'if (!injectedDeferredApiGate) {\n'
+      + '  let releaseInjectedDeferredApi;\n'
+      + '  const injectedDeferredApiPromise = new Promise((resolve) => { releaseInjectedDeferredApi = resolve; });\n'
+      + '  injectedDeferredApiGate = { promise: injectedDeferredApiPromise, release: releaseInjectedDeferredApi };\n'
+      + '  globalThis.__DOMINION_E2E_DEFERRED_API__[' + key + '] = injectedDeferredApiGate;\n'
+      + '}\n'
+      + 'void globalThis[' + JSON.stringify(signalName) + ']();\n'
+      + 'await injectedDeferredApiGate.promise;\n'
       + source.slice(bodyStart + 1);
     await route.fulfill({ response, body: injected });
   });
@@ -58,14 +67,18 @@ export async function deferApiFunction(page, functionName) {
       await intercepted;
       await page.evaluate((name) => {
         const gates = globalThis.__DOMINION_E2E_DEFERRED_API__;
-        const release = gates?.[name];
-        if (typeof release !== 'function') {
+        const gate = gates?.[name];
+        if (typeof gate?.release !== 'function') {
           throw new Error('Deferred API function was not waiting: ' + name);
         }
         delete gates[name];
-        release();
+        gate.release();
       }, functionName);
     },
+    count: () => page.evaluate(
+      (name) => globalThis.__DOMINION_E2E_API_CALL_COUNTS__?.[name] || 0,
+      functionName,
+    ),
   };
 }
 

@@ -86,6 +86,15 @@ const shirtOffer = {
   },
 };
 
+const claimedShirtOffer = {
+  read: {
+    ...shirtOffer.read,
+    status: 'claimed',
+    destinationUrl: 'https://shop.example.test/redeem',
+  },
+  claim: shirtOffer.claim,
+};
+
 test('locked gym reward shows exact progress and a safe configured partner link', async ({ page, app }) => {
   await openRewardsWithFulfillment(page, app, {
     gym_training_discount: gymOffer,
@@ -169,6 +178,63 @@ test('eligible T-shirt reward claims once, reveals a code, and copies it', async
   await expect(dialog.locator('#rewardDetailFeedback')).toHaveText('Discount code copied.');
   await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe('BGE-TEST-273');
   await expect.poll(() => claimCalls.count()).toBe(1);
+  app.assertNoRuntimeErrors();
+});
+
+test('an existing T-shirt claim reveals its code only through the trusted claim action', async ({
+  context,
+  page,
+  app,
+}) => {
+  await context.grantPermissions(['clipboard-read', 'clipboard-write']);
+  const claimCalls = await countApiFunctionCalls(page, 'claimRewardOffer');
+  await openRewardsWithFulfillment(page, app, {
+    big_god_energy_tshirt_discount: claimedShirtOffer,
+  });
+
+  await page.locator('[data-reward-key="big_god_energy_tshirt_discount"]').click();
+  const dialog = page.getByRole('dialog', { name: 'Big God Energy T-Shirt Discount' });
+  const reveal = dialog.getByRole('button', { name: 'Reveal code' });
+  await expect(reveal).toBeVisible();
+  await expect(dialog.locator('#rewardDetailCode')).toHaveCount(0);
+  await expect(dialog.getByRole('button', { name: 'Copy code' })).toHaveCount(0);
+  await reveal.click();
+
+  await expect(dialog.locator('#rewardDetailCode')).toHaveText('BGE-TEST-273');
+  await expect(reveal).toHaveCount(0);
+  await expect.poll(() => claimCalls.count()).toBe(1);
+  await dialog.getByRole('button', { name: 'Copy code' }).click();
+  await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe('BGE-TEST-273');
+  await expect.poll(() => claimCalls.count()).toBe(1);
+  app.assertNoRuntimeErrors();
+});
+
+test('concurrent discount activations produce only one in-flight claim request', async ({ page, app }) => {
+  const deferred = await deferApiFunction(page, 'claimRewardOffer');
+  await openRewardsWithFulfillment(page, app, {
+    gym_training_discount: gymOffer,
+  });
+
+  await page.locator('[data-reward-key="gym_training_discount"]').click();
+  const dialog = page.getByRole('dialog', { name: 'Gym Training Discount' });
+  const claim = dialog.getByRole('button', { name: 'Claim discount' });
+  await expect(claim).toBeVisible();
+  await claim.click({ noWaitAfter: true });
+  await deferred.intercepted;
+
+  try {
+    await expect(claim).toBeDisabled();
+    await claim.evaluate(async (button) => {
+      button.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    expect(await deferred.count()).toBe(1);
+  } finally {
+    await deferred.release();
+  }
+
+  await expect(dialog.locator('#rewardDetailCode')).toHaveText('DOMINION-TEST-21');
+  await expect.poll(() => deferred.count()).toBe(1);
   app.assertNoRuntimeErrors();
 });
 
