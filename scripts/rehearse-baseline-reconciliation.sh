@@ -13,6 +13,12 @@ source_manifest="$fixture_directory/legacy-migration-2.source.manifest.jsonl"
 target_manifest="$fixture_directory/migration-3.target.manifest.jsonl"
 allowlist="$fixture_directory/platform-diff-allowlist.pg17.6.1.141.json"
 expected_postgres_image="17.6.1.141"
+helper_roles=(
+  reconciliation_column_reader
+  reconciliation_default_reader
+  reconciliation_effective_reader
+  reconciliation_unknown_direct
+)
 
 mode="verify"
 case "${1:-}" in
@@ -88,6 +94,36 @@ database_prefix="baseline_reconciliation_${RANDOM}_$$"
 created_databases=()
 lock_pid=""
 
+cleanup_helper_roles() {
+  local cleanup_failed=false
+  for helper_role in "${helper_roles[@]}"; do
+    role_exists="$($docker_cli exec "$database_container" \
+      psql \
+        --username postgres \
+        --dbname postgres \
+        --no-psqlrc \
+        --tuples-only \
+        --no-align \
+        --command "select count(*) from pg_roles where rolname = '${helper_role}'")"
+    if [[ "$role_exists" == "0" ]]; then
+      continue
+    fi
+    if ! "$docker_cli" exec "$database_container" \
+        psql \
+          --username postgres \
+          --dbname postgres \
+          --no-psqlrc \
+          --quiet \
+          --set ON_ERROR_STOP=1 \
+          --command "revoke ${helper_role} from authenticated; drop role ${helper_role};" \
+          >/dev/null 2>&1; then
+      echo "Baseline reconciliation rehearsal: could not safely remove helper role ${helper_role}; inspect its dependencies before retrying." >&2
+      cleanup_failed=true
+    fi
+  done
+  [[ "$cleanup_failed" == "false" ]]
+}
+
 cleanup() {
   exit_status=$?
   trap - EXIT
@@ -95,19 +131,30 @@ cleanup() {
     kill "$lock_pid" >/dev/null 2>&1 || true
     wait "$lock_pid" >/dev/null 2>&1 || true
   fi
+  cleanup_status=0
   for database_name in "${created_databases[@]}"; do
-    "$docker_cli" exec supabase_db_77-dominion-challenge \
+    if ! "$docker_cli" exec supabase_db_77-dominion-challenge \
       dropdb --username postgres --if-exists "$database_name" \
-      >/dev/null 2>&1 || true
+      >/dev/null 2>&1; then
+      echo "Baseline reconciliation rehearsal: failed to remove disposable database ${database_name}." >&2
+      cleanup_status=1
+    fi
   done
+  cleanup_helper_roles || cleanup_status=1
   rm -rf -- "$rehearsal_root"
+  if (( exit_status == 0 && cleanup_status != 0 )); then
+    exit "$cleanup_status"
+  fi
   exit "$exit_status"
 }
 trap cleanup EXIT
 
 database_container="supabase_db_77-dominion-challenge"
 container_image="$($docker_cli inspect "$database_container" --format '{{.Config.Image}}')"
-expected_image_ref="${SUPABASE_INTERNAL_IMAGE_REGISTRY:-public.ecr.aws}/supabase/postgres:${expected_postgres_image}"
+postgres_image_registry="${SUPABASE_INTERNAL_IMAGE_REGISTRY:-public.ecr.aws}"
+postgres_image_registry="${postgres_image_registry%/}"
+[[ -n "$postgres_image_registry" ]] || fail "Postgres image registry cannot be empty."
+expected_image_ref="${postgres_image_registry}/supabase/postgres:${expected_postgres_image}"
 [[ "$container_image" == "$expected_image_ref" ]] \
   || fail "expected running image $expected_image_ref, found $container_image."
 server_version_num="$($docker_cli exec "$database_container" \
@@ -115,6 +162,13 @@ server_version_num="$($docker_cli exec "$database_container" \
   --command 'show server_version_num')"
 [[ "$server_version_num" == "170006" ]] \
   || fail "expected PostgreSQL server version 17.6, found $server_version_num."
+
+# These fixed roles are owned solely by this harness. Recover a prior interrupted
+# run only when PostgreSQL can prove they have no remaining dependencies. A
+# failed DROP is a hard stop; the harness never REASSIGNs or DROP OWNED outside
+# its disposable databases.
+cleanup_helper_roles \
+  || fail "stale reconciliation helper roles have dependencies outside disposable rehearsal databases."
 
 create_database() {
   local database_name="$1"
@@ -334,7 +388,18 @@ expect_failure_without_change nonmembership_entitlement "$fixture_directory/sour
 expect_failure_without_change null_entitlement "$fixture_directory/source-drift/null-entitlement.sql"
 expect_failure_without_change external_dependency "$fixture_directory/source-drift/external-dependency.sql"
 
-for drift_case in unknown-direct-privilege role-derived-effective-privilege default-privilege changed-object; do
+for drift_case in \
+  unknown-direct-privilege \
+  unknown-column-privilege \
+  role-derived-effective-privilege \
+  default-privilege \
+  changed-object \
+  changed-policy \
+  changed-relation \
+  changed-column \
+  changed-constraint \
+  changed-index \
+  changed-trigger; do
   database_name="${database_prefix}_${drift_case//-/_}"
   new_source_database "$database_name"
   execute_sql "$database_name" "$fixture_directory/source-drift/${drift_case}.sql"
