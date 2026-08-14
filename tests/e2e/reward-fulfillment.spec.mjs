@@ -1,8 +1,9 @@
 import { test, expect } from './support/app-test.mjs';
 import { ROUTE_BY_ID } from './support/routes.mjs';
 import {
+  countApiFunctionCalls,
   deferApiFunction,
-  injectApiFunctionFailure,
+  injectApiFunctionFailureOnce,
 } from './support/network-states.mjs';
 import {
   analyzeAccessibility,
@@ -10,6 +11,7 @@ import {
 } from './support/quality-gates.mjs';
 
 const FULFILLMENT_STORAGE_KEY = 'dominion:mockRewardFulfillments';
+const HANDBOOK_PDF_FIXTURE = '%PDF-1.7\n% deterministic browser fixture\n%%EOF';
 
 async function openRewardsWithFulfillment(page, app, fulfillments, { points = 1_200 } = {}) {
   await app.seed('rewardsUnlocked');
@@ -61,6 +63,29 @@ const gymOffer = {
   },
 };
 
+const shirtOffer = {
+  read: {
+    availability: 'available',
+    status: 'unclaimed',
+    partnerName: 'Test Big God Energy Store',
+    offerTitle: 'Member T-shirt discount',
+    description: 'A deterministic browser-only merchandise offer.',
+    terms: 'One use per member.',
+    expiration: 'December 31, 2026',
+  },
+  claim: {
+    availability: 'available',
+    status: 'claimed',
+    partnerName: 'Test Big God Energy Store',
+    offerTitle: 'Member T-shirt discount',
+    description: 'A deterministic browser-only merchandise offer.',
+    terms: 'One use per member.',
+    expiration: 'December 31, 2026',
+    destinationUrl: 'https://shop.example.test/redeem',
+    code: 'BGE-TEST-273',
+  },
+};
+
 test('locked gym reward shows exact progress and a safe configured partner link', async ({ page, app }) => {
   await openRewardsWithFulfillment(page, app, {
     gym_training_discount: gymOffer,
@@ -91,6 +116,7 @@ test('eligible gym reward claims once, reveals a code, copies it, and exposes on
   app,
 }) => {
   await context.grantPermissions(['clipboard-read', 'clipboard-write']);
+  const claimCalls = await countApiFunctionCalls(page, 'claimRewardOffer');
   await openRewardsWithFulfillment(page, app, {
     gym_training_discount: gymOffer,
   });
@@ -106,9 +132,43 @@ test('eligible gym reward claims once, reveals a code, copies it, and exposes on
     'href',
     'https://gym.example.test/redeem',
   );
+  await expect(claim).toHaveCount(0);
+  await expect.poll(() => claimCalls.count()).toBe(1);
   await dialog.getByRole('button', { name: 'Copy code' }).click();
   await expect(dialog.locator('#rewardDetailFeedback')).toHaveText('Discount code copied.');
   await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe('DOMINION-TEST-21');
+  await expect.poll(() => claimCalls.count()).toBe(1);
+  app.assertNoRuntimeErrors();
+});
+
+test('eligible T-shirt reward claims once, reveals a code, and copies it', async ({
+  context,
+  page,
+  app,
+}) => {
+  await context.grantPermissions(['clipboard-read', 'clipboard-write']);
+  const claimCalls = await countApiFunctionCalls(page, 'claimRewardOffer');
+  await openRewardsWithFulfillment(page, app, {
+    big_god_energy_tshirt_discount: shirtOffer,
+  });
+
+  await page.locator('[data-reward-key="big_god_energy_tshirt_discount"]').click();
+  const dialog = page.getByRole('dialog', { name: 'Big God Energy T-Shirt Discount' });
+  const claim = dialog.getByRole('button', { name: 'Claim discount' });
+  await expect(claim).toBeVisible();
+  await claim.click();
+
+  await expect(dialog.locator('#rewardDetailCode')).toHaveText('BGE-TEST-273');
+  await expect(dialog.getByRole('link', { name: 'Redeem offer' })).toHaveAttribute(
+    'href',
+    'https://shop.example.test/redeem',
+  );
+  await expect(claim).toHaveCount(0);
+  await expect.poll(() => claimCalls.count()).toBe(1);
+  await dialog.getByRole('button', { name: 'Copy code' }).click();
+  await expect(dialog.locator('#rewardDetailFeedback')).toHaveText('Discount code copied.');
+  await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe('BGE-TEST-273');
+  await expect.poll(() => claimCalls.count()).toBe(1);
   app.assertNoRuntimeErrors();
 });
 
@@ -137,7 +197,7 @@ test('expired, exhausted, and unavailable fulfillment states fail closed without
 });
 
 test('reward details expose an explicit loading state before secure data resolves', async ({ page, app }) => {
-  const deferred = deferApiFunction(page, 'getRewardFulfillment');
+  const deferred = await deferApiFunction(page, 'getRewardFulfillment');
   await openRewardsWithFulfillment(page, app, {
     gym_training_discount: gymOffer,
   });
@@ -154,8 +214,8 @@ test('reward details expose an explicit loading state before secure data resolve
   app.assertNoRuntimeErrors();
 });
 
-test('a reward-detail failure is announced and leaves fulfillment actions unavailable', async ({ page, app }) => {
-  await injectApiFunctionFailure(page, 'getRewardFulfillment', 'The secure reward service is temporarily unavailable.');
+test('a reward-detail failure is announced and recovers on retry', async ({ page, app }) => {
+  await injectApiFunctionFailureOnce(page, 'getRewardFulfillment', 'The secure reward service is temporarily unavailable.');
   await openRewardsWithFulfillment(page, app, {
     gym_training_discount: gymOffer,
   });
@@ -166,6 +226,12 @@ test('a reward-detail failure is announced and leaves fulfillment actions unavai
     'The secure reward service is temporarily unavailable.',
   );
   await expect(dialog.locator('[data-claim-reward-offer], [data-copy-reward-code]')).toHaveCount(0);
+  await page.getByRole('button', { name: 'Close reward details' }).click();
+
+  await page.locator('[data-reward-key="gym_training_discount"]').click();
+  await expect(dialog.locator('#rewardDetailFeedback')).toHaveText('');
+  await expect(dialog).toContainText('Test Training Club');
+  await expect(dialog.getByRole('button', { name: 'Claim discount' })).toBeVisible();
   app.assertNoRuntimeErrors();
 });
 
@@ -183,7 +249,7 @@ test('an approved handbook response downloads verified PDF fixture bytes', async
         availability: 'available',
         status: 'claimed',
         downloadFilename: 'Nehemiah-Leadership-Handbook-RC.pdf',
-        pdfFixture: '%PDF-1.7\n% deterministic browser fixture\n%%EOF',
+        pdfFixture: HANDBOOK_PDF_FIXTURE,
       },
     },
   });
@@ -196,7 +262,13 @@ test('an approved handbook response downloads verified PDF fixture bytes', async
     dialog.getByRole('button', { name: 'Download handbook' }).click(),
   ]);
   expect(download.suggestedFilename()).toBe('Nehemiah-Leadership-Handbook-RC.pdf');
+  const stream = await download.createReadStream();
+  const chunks = [];
+  for await (const chunk of stream) chunks.push(Buffer.from(chunk));
+  const bytes = Buffer.concat(chunks);
+  expect(bytes.length).toBe(Buffer.byteLength(HANDBOOK_PDF_FIXTURE));
+  expect(bytes.subarray(0, 5).toString('ascii')).toBe('%PDF-');
+  expect(bytes.toString('utf8')).toBe(HANDBOOK_PDF_FIXTURE);
   await expect(dialog.locator('#rewardDetailFeedback')).toHaveText('Your download is ready.');
   app.assertNoRuntimeErrors();
 });
-

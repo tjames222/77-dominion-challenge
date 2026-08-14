@@ -22,13 +22,18 @@ function exportedFunctionBodyStart(source, markerIndex, functionName) {
   throw new Error('Unable to inspect API function body for ' + functionName);
 }
 
-export function deferApiFunction(page, functionName) {
+let deferredApiSignalSequence = 0;
+
+export async function deferApiFunction(page, functionName) {
   let markIntercepted;
   const intercepted = new Promise((resolve) => {
     markIntercepted = resolve;
   });
+  deferredApiSignalSequence += 1;
+  const signalName = '__dominionE2eDeferredApiStarted' + deferredApiSignalSequence;
+  await page.exposeFunction(signalName, markIntercepted);
 
-  page.route(apiModulePattern, async (route) => {
+  await page.route(apiModulePattern, async (route) => {
     const response = await route.fetch();
     const source = await response.text();
     const marker = 'export async function ' + functionName + '(';
@@ -41,19 +46,22 @@ export function deferApiFunction(page, functionName) {
       + '\nawait new Promise((resolve) => {\n'
       + '  globalThis.__DOMINION_E2E_DEFERRED_API__ ||= {};\n'
       + '  globalThis.__DOMINION_E2E_DEFERRED_API__[' + JSON.stringify(functionName) + '] = resolve;\n'
+      + '  void globalThis[' + JSON.stringify(signalName) + ']();\n'
       + '});\n'
       + source.slice(bodyStart + 1);
     await route.fulfill({ response, body: injected });
-    markIntercepted();
   });
 
   return {
     intercepted,
     async release() {
+      await intercepted;
       await page.evaluate((name) => {
         const gates = globalThis.__DOMINION_E2E_DEFERRED_API__;
         const release = gates?.[name];
-        if (typeof release !== 'function') return;
+        if (typeof release !== 'function') {
+          throw new Error('Deferred API function was not waiting: ' + name);
+        }
         delete gates[name];
         release();
       }, functionName);
@@ -76,4 +84,52 @@ export async function injectApiFunctionFailure(page, functionName, message) {
       + source.slice(bodyStart + 1);
     await route.fulfill({ response, body: injected });
   });
+}
+
+export async function injectApiFunctionFailureOnce(page, functionName, message) {
+  await page.route(apiModulePattern, async (route) => {
+    const response = await route.fetch();
+    const source = await response.text();
+    const marker = 'export async function ' + functionName + '(';
+    const markerIndex = source.indexOf(marker);
+    if (markerIndex < 0) {
+      throw new Error('Unable to inject API failure; missing export ' + functionName);
+    }
+    const bodyStart = exportedFunctionBodyStart(source, markerIndex, functionName);
+    const key = JSON.stringify(functionName);
+    const injected = source.slice(0, bodyStart + 1)
+      + '\nglobalThis.__DOMINION_E2E_API_FAILURE_COUNTS__ ||= {};\n'
+      + 'const injectedFailureCount = globalThis.__DOMINION_E2E_API_FAILURE_COUNTS__[' + key + '] || 0;\n'
+      + 'globalThis.__DOMINION_E2E_API_FAILURE_COUNTS__[' + key + '] = injectedFailureCount + 1;\n'
+      + 'if (injectedFailureCount === 0) throw new Error(' + JSON.stringify(message) + ');\n'
+      + source.slice(bodyStart + 1);
+    await route.fulfill({ response, body: injected });
+  });
+}
+
+export async function countApiFunctionCalls(page, functionName) {
+  await page.route(apiModulePattern, async (route) => {
+    const response = await route.fetch();
+    const source = await response.text();
+    const marker = 'export async function ' + functionName + '(';
+    const markerIndex = source.indexOf(marker);
+    if (markerIndex < 0) {
+      throw new Error('Unable to count API calls; missing export ' + functionName);
+    }
+    const bodyStart = exportedFunctionBodyStart(source, markerIndex, functionName);
+    const key = JSON.stringify(functionName);
+    const injected = source.slice(0, bodyStart + 1)
+      + '\nglobalThis.__DOMINION_E2E_API_CALL_COUNTS__ ||= {};\n'
+      + 'globalThis.__DOMINION_E2E_API_CALL_COUNTS__[' + key + '] = '
+      + '(globalThis.__DOMINION_E2E_API_CALL_COUNTS__[' + key + '] || 0) + 1;\n'
+      + source.slice(bodyStart + 1);
+    await route.fulfill({ response, body: injected });
+  });
+
+  return {
+    count: () => page.evaluate(
+      (name) => globalThis.__DOMINION_E2E_API_CALL_COUNTS__?.[name] || 0,
+      functionName,
+    ),
+  };
 }

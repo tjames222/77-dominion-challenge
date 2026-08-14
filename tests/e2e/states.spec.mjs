@@ -16,7 +16,7 @@ import { BASE_BADGES } from './support/fixtures.mjs';
 
 test('billing loading state is stable and reviewable', async ({ page, app }) => {
   await app.seed('memberLocked');
-  const deferred = deferApiFunction(page, 'getBillingState');
+  const deferred = await deferApiFunction(page, 'getBillingState');
   await page.goto(ROUTE_BY_ID.billing.path, { waitUntil: 'domcontentloaded' });
   await deferred.intercepted;
 

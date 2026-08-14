@@ -8,11 +8,15 @@ export function frontendEnvironmentErrors(environment = {}) {
   const isCloudflareBuild = truthy(environment.CF_PAGES);
   const usesMockProductData = truthy(environment.VITE_ENABLE_MOCKS);
   const enablesHybridAuth = truthy(environment.VITE_ENABLE_SUPABASE_AUTH_IN_MOCKS);
+  const enablesE2eFixtures = truthy(environment.VITE_ENABLE_E2E_FIXTURES);
   const branch = String(environment.CF_PAGES_BRANCH || '').trim();
 
   if (!isCloudflareBuild) return [];
 
   const errors = [];
+  if (enablesE2eFixtures) {
+    errors.push('VITE_ENABLE_E2E_FIXTURES must be unset for Cloudflare builds');
+  }
   if (branch === 'main' && usesMockProductData) {
     errors.push('VITE_ENABLE_MOCKS must be false on main');
   }

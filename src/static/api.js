@@ -135,9 +135,15 @@ const SUPABASE_KEY =
   import.meta.env.VITE_SUPABASE_ANON_KEY ||
   '';
 const ENABLE_MOCKS = String(import.meta.env.VITE_ENABLE_MOCKS || '').toLowerCase() === 'true';
-const ENABLE_E2E_FIXTURES = String(
-  import.meta.env.VITE_ENABLE_E2E_FIXTURES || '',
-).toLowerCase() === 'true';
+const ENABLE_E2E_FIXTURES = Boolean(
+  import.meta.env.DEV
+  && ENABLE_MOCKS
+  && String(import.meta.env.VITE_ENABLE_E2E_FIXTURES || '').trim().toLowerCase() === 'true'
+);
+const e2eRewardFixturesEnabled = () => (
+  ENABLE_E2E_FIXTURES
+  && globalThis.__DOMINION_E2E__?.enabled === true
+);
 const ENABLE_SUPABASE_AUTH_IN_MOCKS = String(
   import.meta.env.VITE_ENABLE_SUPABASE_AUTH_IN_MOCKS || '',
 ).toLowerCase() === 'true';
@@ -1703,7 +1709,7 @@ function mockRewardFulfillment(rewardKey, { action = 'read' } = {}) {
     throw new Error('The requested reward fulfillment is unavailable.');
   }
   const owned = reward.status === 'owned';
-  const fixtureByReward = ENABLE_E2E_FIXTURES
+  const fixtureByReward = e2eRewardFixturesEnabled()
     ? readMockUserValue(MOCK_REWARD_FULFILLMENTS_KEY, {})
     : {};
   const fixture = fixtureByReward && typeof fixtureByReward === 'object'
