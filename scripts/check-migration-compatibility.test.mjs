@@ -476,7 +476,10 @@ test("the production baseline fails closed and normalizes legacy privileges", as
     );
   }
 
-  assert.match(baseline, /lock table %s in access exclusive mode/);
+  for (const migration of [baseline, gamification]) {
+    assert.match(migration, /lock table %s in share row exclusive mode/);
+    assert.doesNotMatch(migration, /lock table %s in access exclusive mode/);
+  }
   assert.match(baseline, /select exists \(select 1 from public\.purchases\)/);
   assert.match(
     baseline,

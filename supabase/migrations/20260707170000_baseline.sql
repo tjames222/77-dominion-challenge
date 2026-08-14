@@ -12,10 +12,12 @@ alter default privileges for role postgres in schema public
 alter default privileges for role postgres in schema public
   revoke all privileges on functions from public, anon, authenticated, service_role;
 
--- Production predates workflow-managed migration history. Lock every known
--- application relation that may already exist before inspecting or changing
--- it. Alphabetical ordering keeps concurrent rehearsals deterministic. The
--- bounded lock timeout makes a non-quiesced deployment fail atomically.
+-- Production predates workflow-managed migration history. Freeze writes and
+-- concurrent DDL on every known relation that may already exist before
+-- inspecting or changing it, while allowing ordinary read-only traffic to
+-- remain online. Alphabetical ordering keeps concurrent rehearsals
+-- deterministic. The bounded lock timeout makes a non-quiesced deployment fail
+-- atomically; later DDL upgrades its own locks only where required.
 do $baseline_locks$
 declare
   relation_identity text;
@@ -59,7 +61,7 @@ begin
       )
     order by namespace.nspname collate "C", relation.relname collate "C"
   loop
-    execute format('lock table %s in access exclusive mode', relation_identity);
+    execute format('lock table %s in share row exclusive mode', relation_identity);
   end loop;
 end;
 $baseline_locks$;

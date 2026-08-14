@@ -9,6 +9,9 @@ alter default privileges for role postgres in schema public
 alter default privileges for role postgres in schema public
   revoke all privileges on functions from public, anon, authenticated, service_role;
 
+-- Keep the legacy gamification reconciliation on the same write-exclusive,
+-- reader-compatible boundary as migration 1. This blocks application writers
+-- and concurrent DDL without racing Supabase service health reads.
 do $gamification_locks$
 declare
   relation_identity text;
@@ -30,7 +33,7 @@ begin
       )
     order by relation.relname collate "C"
   loop
-    execute format('lock table %s in access exclusive mode', relation_identity);
+    execute format('lock table %s in share row exclusive mode', relation_identity);
   end loop;
 end;
 $gamification_locks$;

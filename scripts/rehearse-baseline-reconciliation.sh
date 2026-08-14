@@ -105,6 +105,7 @@ rehearsal_root="$(mktemp -d "${TMPDIR:-/tmp}/baseline-reconciliation.XXXXXX")"
 database_prefix="baseline_reconciliation_${RANDOM}_$$"
 created_databases=()
 lock_pid=""
+reader_release_pid=""
 identity_verified=false
 
 cleanup_helper_roles() {
@@ -143,7 +144,7 @@ terminate_database_connections() {
     || fail "refusing to terminate connections for unexpected database name $database_name."
   "$docker_cli" exec "$database_container" \
     psql \
-      --username postgres \
+      --username supabase_admin \
       --dbname postgres \
       --no-psqlrc \
       --quiet \
@@ -165,6 +166,10 @@ cleanup() {
   trap - EXIT
   cleanup_status=0
   if [[ "$identity_verified" == "true" ]]; then
+    if [[ -n "$reader_release_pid" ]]; then
+      kill "$reader_release_pid" >/dev/null 2>&1 || true
+      wait "$reader_release_pid" >/dev/null 2>&1 || true
+    fi
     if [[ -n "$lock_pid" ]]; then
       kill "$lock_pid" >/dev/null 2>&1 || true
       wait "$lock_pid" >/dev/null 2>&1 || true
@@ -568,8 +573,8 @@ node "$script_directory/compare-database-manifests.mjs" \
 [[ -z "$(history_versions "$forced_database")" ]] \
   || fail "forced exception wrote migration history."
 
-# The bounded lock timeout in migration 1 must stop a concurrent writer instead
-# of waiting indefinitely or applying around it.
+# The bounded lock timeout in migration 1 must stop an ordinary concurrent
+# writer instead of waiting indefinitely or applying around it.
 lock_database="${database_prefix}_lock_contention"
 new_source_database "$lock_database"
 capture_manifest "$lock_database" "$rehearsal_root/lock.before.manifest.jsonl"
@@ -578,13 +583,13 @@ lock_stage="$rehearsal_root/lock-stage"
 make_stage "$lock_stage" 1
 "$docker_cli" exec "$database_container" \
   psql --username postgres --dbname "$lock_database" --no-psqlrc \
-    --command "begin; lock table public.purchases in access exclusive mode; select pg_sleep(20); rollback;" \
+    --command "begin; lock table public.purchases in row exclusive mode; select pg_sleep(20); rollback;" \
     >"$rehearsal_root/lock-holder.log" 2>&1 &
 lock_pid=$!
 for (( lock_attempt = 0; lock_attempt < 50; lock_attempt += 1 )); do
   lock_seen="$($docker_cli exec "$database_container" \
     psql --username postgres --dbname "$lock_database" --tuples-only --no-align --no-psqlrc \
-      --command "select count(*) from pg_locks where relation='public.purchases'::regclass and granted and mode='AccessExclusiveLock'")"
+      --command "select count(*) from pg_locks where relation='public.purchases'::regclass and granted and mode='RowExclusiveLock'")"
   [[ "$lock_seen" == "1" ]] && break
   sleep 0.1
 done
@@ -603,5 +608,105 @@ node "$script_directory/compare-database-manifests.mjs" \
   "$rehearsal_root/lock.before.fingerprint.jsonl" "$rehearsal_root/lock.after.fingerprint.jsonl"
 [[ -z "$(history_versions "$lock_database")" ]] \
   || fail "lock contention wrote migration history."
+
+# Supabase services legitimately keep short read-only health/schema traffic
+# online. Prove that migration 1 acquires its initial write freeze while an
+# AccessShare reader is still active, then let that reader drain before later
+# DDL requests the stronger platform-relation locks PostgreSQL requires.
+reader_database="${database_prefix}_reader_compatible"
+new_source_database "$reader_database"
+reader_stage="$rehearsal_root/reader-stage"
+make_stage "$reader_stage" 1
+"$docker_cli" exec "$database_container" \
+  psql --username postgres --dbname "$reader_database" --no-psqlrc \
+    --command "begin; set application_name = 'baseline_reconciliation_reader'; lock table storage.buckets_analytics in access share mode; select pg_sleep(20); rollback;" \
+    >"$rehearsal_root/reader-holder.log" 2>&1 &
+lock_pid=$!
+reader_backend_pid=""
+for (( reader_attempt = 0; reader_attempt < 50; reader_attempt += 1 )); do
+  reader_backend_pid="$($docker_cli exec "$database_container" \
+    psql --username postgres --dbname "$reader_database" --tuples-only --no-align --no-psqlrc \
+      --command "select activity.pid from pg_stat_activity activity join pg_locks lock on lock.pid = activity.pid where activity.application_name = 'baseline_reconciliation_reader' and lock.relation = 'storage.buckets_analytics'::regclass and lock.granted and lock.mode = 'AccessShareLock'")"
+  [[ "$reader_backend_pid" =~ ^[0-9]+$ ]] && break
+  sleep 0.1
+done
+[[ "$reader_backend_pid" =~ ^[0-9]+$ ]] \
+  || fail "could not establish the compatible-reader fixture."
+(
+  migration_write_freeze_seen=0
+  for (( write_freeze_attempt = 0; write_freeze_attempt < 100; write_freeze_attempt += 1 )); do
+    migration_write_freeze_seen="$($docker_cli exec "$database_container" \
+      psql --username postgres --dbname "$reader_database" --tuples-only --no-align --no-psqlrc \
+        --command "select count(*) from pg_locks where relation = 'storage.buckets_analytics'::regclass and granted and mode = 'ShareRowExclusiveLock' and pid <> ${reader_backend_pid}")"
+    [[ "$migration_write_freeze_seen" == "1" ]] && break
+    sleep 0.1
+  done
+  [[ "$migration_write_freeze_seen" == "1" ]] || exit 1
+  reader_terminated="$($docker_cli exec "$database_container" \
+    psql --username supabase_admin --dbname "$reader_database" \
+      --tuples-only --no-align --no-psqlrc --set ON_ERROR_STOP=1 \
+      --command "select pg_terminate_backend(${reader_backend_pid})")"
+  [[ "$reader_terminated" == "t" ]]
+) >"$rehearsal_root/reader-release.log" 2>&1 &
+reader_release_pid=$!
+if ! apply_stage "$reader_database" "$reader_stage" \
+    >"$rehearsal_root/reader.success.log" 2>&1; then
+  cat "$rehearsal_root/reader.success.log" >&2
+  fail "the baseline migration did not tolerate a draining read-only platform request."
+fi
+if ! wait "$reader_release_pid"; then
+  cat "$rehearsal_root/reader-release.log" >&2
+  fail "migration 1 never acquired its reader-compatible write freeze."
+fi
+reader_release_pid=""
+terminate_database_connections "$reader_database"
+wait "$lock_pid" >/dev/null 2>&1 || true
+lock_pid=""
+[[ "$(history_versions "$reader_database")" == "${migration_versions[0]}" ]] \
+  || fail "compatible-reader migration did not record exactly migration 1."
+
+# A reader may coexist with the initial write freeze, but a later DDL lock
+# upgrade must still fail atomically if that reader does not drain inside the
+# bounded timeout.
+upgrade_database="${database_prefix}_ddl_upgrade"
+new_source_database "$upgrade_database"
+capture_manifest "$upgrade_database" "$rehearsal_root/upgrade.before.manifest.jsonl"
+capture_fingerprint "$upgrade_database" "$rehearsal_root/upgrade.before.fingerprint.jsonl"
+upgrade_stage="$rehearsal_root/upgrade-stage"
+make_stage "$upgrade_stage" 1
+"$docker_cli" exec "$database_container" \
+  psql --username postgres --dbname "$upgrade_database" --no-psqlrc \
+    --command "begin; lock table storage.objects in access share mode; select pg_sleep(20); rollback;" \
+    >"$rehearsal_root/upgrade-reader-holder.log" 2>&1 &
+lock_pid=$!
+upgrade_reader_seen=0
+for (( upgrade_attempt = 0; upgrade_attempt < 50; upgrade_attempt += 1 )); do
+  upgrade_reader_seen="$($docker_cli exec "$database_container" \
+    psql --username postgres --dbname "$upgrade_database" --tuples-only --no-align --no-psqlrc \
+      --command "select count(*) from pg_locks where relation='storage.objects'::regclass and granted and mode='AccessShareLock'")"
+  [[ "$upgrade_reader_seen" == "1" ]] && break
+  sleep 0.1
+done
+[[ "$upgrade_reader_seen" == "1" ]] || fail "could not establish the DDL-upgrade reader fixture."
+"$docker_cli" exec "$database_container" \
+  psql --username postgres --dbname "$upgrade_database" --no-psqlrc --set ON_ERROR_STOP=1 \
+    --command "begin; set local lock_timeout = '1s'; lock table storage.objects in share row exclusive mode; rollback;" \
+    >"$rehearsal_root/upgrade-initial-lock.log" 2>&1 \
+  || fail "the initial write-exclusive lock was not compatible with an ordinary reader."
+if apply_stage "$upgrade_database" "$upgrade_stage" \
+    >"$rehearsal_root/upgrade.failure.log" 2>&1; then
+  fail "DDL lock-upgrade contention unexpectedly succeeded."
+fi
+terminate_database_connections "$upgrade_database"
+wait "$lock_pid" >/dev/null 2>&1 || true
+lock_pid=""
+capture_manifest "$upgrade_database" "$rehearsal_root/upgrade.after.manifest.jsonl"
+capture_fingerprint "$upgrade_database" "$rehearsal_root/upgrade.after.fingerprint.jsonl"
+node "$script_directory/compare-database-manifests.mjs" \
+  "$rehearsal_root/upgrade.before.manifest.jsonl" "$rehearsal_root/upgrade.after.manifest.jsonl"
+node "$script_directory/compare-database-manifests.mjs" \
+  "$rehearsal_root/upgrade.before.fingerprint.jsonl" "$rehearsal_root/upgrade.after.fingerprint.jsonl"
+[[ -z "$(history_versions "$upgrade_database")" ]] \
+  || fail "DDL lock-upgrade contention wrote migration history."
 
 echo "Baseline reconciliation rehearsal passed on exact Postgres 17.6.1.141: source gate, migrations 1-3, target/data/history equivalence, and every fail-closed case."
