@@ -388,6 +388,76 @@ separately reviewed change and the exact restored-snapshot rehearsal passes:
    starts. The successful copy must match the clean migration-3 application
    manifest, including effective privileges, and have exactly these three
    history records.
+
+   The checked-in harness performs that exact-version proof against the
+   sanitized audited source fixture without contacting production:
+
+   ```bash
+   pnpm run test:database-manifest
+   pnpm run test:baseline-reconciliation
+   ```
+
+   `test:baseline-reconciliation` refuses to run while either frozen manifest
+   contains the regeneration sentinel. It constructs isolated local databases
+   on the pinned `17.6.1.141` container, captures the source manifest before any
+   migration, applies migrations 1–3 one version at a time with pinned
+   `migration up`, checks the exact history prefix after every version, and
+   compares the target manifest plus non-badge application data fingerprints.
+   It also proves fail-closed behavior for purchase and invalid-entitlement
+   rows, external dependencies, direct and role-derived privileges, default
+   ACL drift, an exact function-body change, a forced migration exception, and
+   lock contention. Every runner failure must preserve the complete pre-attempt
+   manifest, data fingerprint, and empty history.
+
+   After any reviewed edit to migrations 1–3, regenerate the deterministic
+   sanitized source and target files only on an isolated exact-version stack:
+
+   ```bash
+   pnpm run generate:baseline-reconciliation
+   git diff -- \
+     supabase/tests/reconciliation/legacy-migration-2.source.manifest.jsonl \
+     supabase/tests/reconciliation/migration-3.target.manifest.jsonl \
+     supabase/tests/reconciliation/platform-diff-allowlist.pg17.6.1.141.json
+   pnpm run test:baseline-reconciliation
+   ```
+
+   Review every changed whole-object record. The isolated target-vs-target
+   platform allowlist must remain empty. To generate a candidate for a reviewed
+   production-vs-target comparison, first export the normalized production
+   manifest read-only and off-repository, then run:
+
+   ```bash
+   node scripts/build-platform-diff-allowlist.mjs \
+     supabase/tests/reconciliation/migration-3.target.manifest.jsonl \
+     /approved/off-repository/production.manifest.jsonl \
+     --postgres-image 17.6.1.141 \
+     --output /approved/off-repository/platform-candidate.json
+   ```
+
+   The builder rejects every application-owned key. It emits exact keys and
+   whole-record SHA-256 pairs only; wildcards, hash mismatches, version
+   mismatches, and unused entries fail comparison. A generated candidate is not
+   approval. Review it against direct dumps and then compare with:
+
+   ```bash
+   node scripts/compare-database-manifests.mjs \
+     supabase/tests/reconciliation/migration-3.target.manifest.jsonl \
+     /approved/off-repository/production.manifest.jsonl \
+     --postgres-image 17.6.1.141 \
+     --allowlist /approved/off-repository/platform-candidate.json
+   ```
+
+   Capture against a restored database URL only through a read-only credential:
+
+   ```bash
+   bash scripts/capture-database-manifest.sh \
+     --db-url "$RESTORED_READ_ONLY_DATABASE_URL" \
+     --output /approved/off-repository/production.manifest.jsonl
+   ```
+
+   Never commit a production manifest or data fingerprint; catalog definitions,
+   role names, and aggregate hashes are release evidence and belong in the
+   encrypted off-repository archive.
 6. Only after the backup, restore, source-manifest comparison, successful
    rehearsal, failure rehearsals, code review, and release approval all pass,
    open a production maintenance window. Keep signup and application writes
