@@ -172,6 +172,17 @@ test('rehearsal cleanup is safe when Bash 3.2 sees no created databases', () => 
   assert.match(rehearsal, /\[\[ -n "\$database_name" \]\] \|\| continue/u);
 });
 
+test('rehearsal accepts only this repository local Supabase container', () => {
+  const rehearsal = readFileSync(
+    new URL('./rehearse-baseline-reconciliation.sh', import.meta.url),
+    'utf8',
+  );
+  assert.match(rehearsal, /expected_database_container="supabase_db_\$\{project_id\}"/u);
+  assert.match(rehearsal, /SUPABASE_DB_CONTAINER must equal \$expected_database_container/u);
+  assert.match(rehearsal, /com\.supabase\.cli\.project/u);
+  assert.match(rehearsal, /com\.docker\.compose\.project/u);
+});
+
 test('frozen checkpoints contain the exact legacy Storage policy and inventory surface', () => {
   const storageRelations = [
     'buckets',

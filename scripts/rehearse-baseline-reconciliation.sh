@@ -54,6 +54,17 @@ else
   fail "Docker is required."
 fi
 
+project_id="$(sed -n 's/^project_id = "\([^"]*\)"/\1/p' \
+  "$repository_root/supabase/config.toml" | head -n 1)"
+[[ "$project_id" =~ ^[A-Za-z0-9][A-Za-z0-9_.-]*$ ]] \
+  || fail "could not resolve a safe local Supabase project ID."
+expected_database_container="supabase_db_${project_id}"
+if [[ -n "${SUPABASE_DB_CONTAINER:-}" \
+  && "$SUPABASE_DB_CONTAINER" != "$expected_database_container" ]]; then
+  fail "SUPABASE_DB_CONTAINER must equal $expected_database_container."
+fi
+database_container="$expected_database_container"
+
 export SUPABASE_TELEMETRY_DISABLED=1
 cli_version="$($supabase_cli --version)"
 [[ "$cli_version" == "2.109.0" ]] \
@@ -173,7 +184,6 @@ cleanup() {
 }
 trap cleanup EXIT
 
-database_container="${SUPABASE_DB_CONTAINER:-supabase_db_77-dominion-challenge}"
 container_image="$($docker_cli container inspect "$database_container" --format '{{.Config.Image}}')"
 postgres_image_registry="${SUPABASE_INTERNAL_IMAGE_REGISTRY:-public.ecr.aws}"
 postgres_image_registry="${postgres_image_registry%/}"
@@ -181,6 +191,14 @@ postgres_image_registry="${postgres_image_registry%/}"
 expected_image_ref="${postgres_image_registry}/supabase/postgres:${expected_postgres_image}"
 [[ "$container_image" == "$expected_image_ref" ]] \
   || fail "expected running image $expected_image_ref, found $container_image."
+actual_supabase_project="$($docker_cli container inspect "$database_container" \
+  --format '{{index .Config.Labels "com.supabase.cli.project"}}')"
+[[ "$actual_supabase_project" == "$project_id" ]] \
+  || fail "the Postgres container is not owned by local Supabase project $project_id."
+actual_compose_project="$($docker_cli container inspect "$database_container" \
+  --format '{{index .Config.Labels "com.docker.compose.project"}}')"
+[[ "$actual_compose_project" == "$project_id" ]] \
+  || fail "the Postgres container is not owned by Docker Compose project $project_id."
 server_version_num="$($docker_cli exec "$database_container" \
   psql --username postgres --dbname postgres --tuples-only --no-align \
   --command 'show server_version_num')"
