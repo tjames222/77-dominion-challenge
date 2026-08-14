@@ -52,17 +52,19 @@ pnpm install
 pnpm dev
 ```
 
-Local Vite development automatically uses the browser-local preview workflow. Any hosted build with `VITE_ENABLE_MOCKS=true` keeps identities, product data, billing, and provider connections browser-local even if production variables are accidentally visible to the build. Local `vite` sessions may exercise the isolated Auth fixture only when `VITE_ENABLE_SUPABASE_AUTH_IN_MOCKS=true` is explicitly set with mock Supabase values; that override is ignored by production builds.
+Local Vite development automatically uses the browser-local preview workflow and does not initialize Supabase merely because an ignored local environment file contains public hosted values. A local `vite` session can exercise the isolated Auth fixture only when both `VITE_ENABLE_MOCKS=true` and `VITE_ENABLE_SUPABASE_AUTH_IN_MOCKS=true` are explicitly set with fixture or local-stack Supabase values. That narrow override leaves application data mocked and is ignored by production builds. Even local production-mode builds keep hosted connections off unless the protected `main` release explicitly sets `VITE_ENABLE_PRODUCTION_CONNECTIONS=true`.
+
+Canonical Cloudflare `develop` builds accept only the mock backend selection. They fail if Supabase, Stripe, worker, Slack, Discord, configured external-resource, or production-origin values are present, or if hybrid Auth or provider connections are enabled.
 
 Slack and Discord connection controls fail closed unless `VITE_ENABLE_GROUP_INTEGRATIONS=true`. Keep the flag false until the complete provider rollout in FOU-764 is approved; when it is false, the browser does not expose provider controls or call provider-management functions.
 
 ## Supabase setup
 
-1. Create a Supabase project.
-2. For local development, run `pnpm run supabase:start`; it starts the exact pinned local stack, applies pending migrations atomically, and loads the stable fixtures. Use `pnpm run supabase:reset` only when you explicitly need a clean rebuild from the full migration chain.
-3. For a hosted environment, follow the migration reconciliation and deployment steps in [`docs/backend-release-runbook.md`](docs/backend-release-runbook.md). Never run `supabase/schema.sql` manually or use `--include-all` against production.
-4. Copy `.env.example` to `.env`.
-5. Fill in `VITE_SUPABASE_URL` and `VITE_SUPABASE_PUBLISHABLE_KEY`.
+1. Copy `.env.example` to `.env` and keep `VITE_ENABLE_MOCKS=true` with the Supabase placeholders unchanged for ordinary local UI work.
+2. For local backend validation, run `pnpm run supabase:start`; it starts the exact pinned local stack, applies pending migrations atomically, and loads the stable fixtures. Use `pnpm run supabase:reset` only when you explicitly need a clean rebuild from the full migration chain.
+3. To test the isolated local Auth fixture, use the public URL/key reported by the local stack and explicitly set `VITE_ENABLE_SUPABASE_AUTH_IN_MOCKS=true`. Do not put the hosted production project's values in a local development file.
+4. For a hosted environment, follow the migration reconciliation and deployment steps in [`docs/backend-release-runbook.md`](docs/backend-release-runbook.md). Never run `supabase/schema.sql` manually or use `--include-all` against production.
+5. Configure `VITE_SUPABASE_URL` and `VITE_SUPABASE_PUBLISHABLE_KEY` only in the protected GitHub `production` environment used by `main`.
 6. In the hosted Supabase Auth URL Configuration, set the Site URL to the exact Cloudflare Pages production URL for this app.
 7. Add only the exact password-recovery callback to the hosted project's
    redirect allowlist:
@@ -108,9 +110,9 @@ Workout difficulty describes the work performed and never changes points. Histor
 - `main` is production and must use real Supabase Auth, Postgres, and Stripe billing.
 - `https://develop.77-dominion-challenge.pages.dev` is the canonical prelaunch dev URL. The bare `https://77-dominion-challenge.pages.dev` host follows `main` and must not be treated as the current dev deployment.
 - `develop` must set only `VITE_ENABLE_MOCKS=true` for backend selection. Login, registration, membership, billing, dashboard, community, journal, and provider connections remain browser-local and never call Supabase or Stripe.
-- Production must resolve `VITE_ENABLE_MOCKS` to `false`; `main` builds fail closed if mocks are enabled.
-- Local Vite dev on localhost enables browser-local product data for rapid UI testing. It uses local mock identities unless `VITE_ENABLE_MOCKS=true`, `VITE_ENABLE_SUPABASE_AUTH_IN_MOCKS=true`, and valid Supabase public configuration are all supplied explicitly.
-- Canonical `develop` builds fail unless mock mode is enabled and hybrid Auth is disabled. Canonical `main` builds fail unless mock mode is disabled and the production Supabase URL/publishable key are present.
+- Production must resolve `VITE_ENABLE_MOCKS` to `false` and `VITE_ENABLE_PRODUCTION_CONNECTIONS` to `true`; `main` builds fail closed unless both conditions hold.
+- Local Vite dev always refuses to initialize Supabase unless mock mode, the local hybrid-Auth override, and valid public configuration are all supplied explicitly. Without that narrow Auth-only opt-in, identity and application data stay browser-local even if stale hosted public values exist in an ignored file.
+- Canonical `develop` builds fail unless mock mode is enabled and both hybrid Auth and production connections are disabled. Canonical `main` builds fail unless mock mode is disabled, production connections are explicitly enabled, and the production Supabase URL/publishable key are present.
 
 ### Feature-flagged Dominion Night theme
 

@@ -89,7 +89,8 @@ The prelaunch environment model deliberately uses no paid staging project:
 
 - `develop` and its Cloudflare preview are pure mocks, including identity and
   every backend/provider connection. They require `VITE_ENABLE_MOCKS=true` and
-  must not enable `VITE_ENABLE_SUPABASE_AUTH_IN_MOCKS`.
+  must not enable `VITE_ENABLE_SUPABASE_AUTH_IN_MOCKS` or
+  `VITE_ENABLE_PRODUCTION_CONNECTIONS`.
 - the one hosted Supabase project, Auth tenant, and Stripe configuration belong
   only to the protected `main`/`production` environment;
 - local CI still replays the full schema and stubs external providers, so code is
@@ -136,8 +137,11 @@ The prelaunch environment model deliberately uses no paid staging project:
 | `VITE_APPLE_FITNESS_URL` | Optional | Apple Fitness destination |
 | `VITE_WALK_ALARM_URL` | Optional | Supported walk-alarm destination |
 
-`VITE_ENABLE_MOCKS` is deliberately hard-coded to `false` by the production
-workflow. `VITE_ENABLE_GROUP_INTEGRATIONS` is deliberately hard-coded to `false`
+`VITE_ENABLE_MOCKS` is deliberately hard-coded to `false` and
+`VITE_ENABLE_PRODUCTION_CONNECTIONS` to `true` by the production workflow. The
+second gate ensures that production-mode builds outside the protected release
+cannot initialize hosted connections merely because public values are present.
+`VITE_ENABLE_GROUP_INTEGRATIONS` is deliberately hard-coded to `false`
 for the safe-off launch path. Treat any future `VITE_*` release toggle as a build-time feature gate:
 document its safe default here, leave it disabled until its backend is deployed
 and verified, and record who approved enabling it.
@@ -182,7 +186,8 @@ Before approving the GitHub `production` environment deployment, confirm:
 4. Every new Edge Function secret is present in the inventory and has an owner.
 5. Provider configuration uses test/sandbox endpoints until its production smoke
    test is explicitly approved.
-6. Mock mode is disabled and new frontend feature flags remain at their safe
+6. Mock mode is disabled, production connections are explicitly enabled by the
+   protected workflow, and new frontend feature flags remain at their safe
    default until the backing migration and functions pass verification.
 7. Cloudflare automatic production-branch deployment is disabled. The GitHub
    workflow is the only process allowed to publish `main` after backend checks.

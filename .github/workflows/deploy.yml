@@ -431,6 +431,7 @@ jobs:
       VITE_SUPABASE_URL: ${{ vars.VITE_SUPABASE_URL }}
       VITE_SUPABASE_PUBLISHABLE_KEY: ${{ vars.VITE_SUPABASE_PUBLISHABLE_KEY }}
       VITE_ENABLE_MOCKS: "false"
+      VITE_ENABLE_PRODUCTION_CONNECTIONS: "true"
       VITE_ENABLE_GROUP_INTEGRATIONS: "false"
       VITE_YOUVERSION_VERSE_URL: ${{ vars.VITE_YOUVERSION_VERSE_URL }}
       VITE_YOUVERSION_APP_URL: ${{ vars.VITE_YOUVERSION_APP_URL }}
@@ -461,6 +462,10 @@ jobs:
           fi
           if [[ "${VITE_ENABLE_MOCKS}" != "false" ]]; then
             echo "::error::Production builds must disable mock data."
+            exit 1
+          fi
+          if [[ "${VITE_ENABLE_PRODUCTION_CONNECTIONS}" != "true" ]]; then
+            echo "::error::Production builds must explicitly enable production connections."
             exit 1
           fi
           if [[ "${VITE_ENABLE_GROUP_INTEGRATIONS}" != "false" ]]; then
