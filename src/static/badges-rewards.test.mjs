@@ -199,8 +199,12 @@ describe('Badges & Rewards route integration', () => {
     assert.match(pageSource, /getLocalOrSessionUser\(\)/);
     assert.match(pageSource, /subscribeToAuthStateChanges/);
     assert.match(pageSource, /getRewardFulfillment\(reward\.key, \{ expectedUserId \}\)/);
-    assert.match(pageSource, /claimRewardOffer\(activeReward\.key, \{ expectedUserId \}\)/);
-    assert.match(pageSource, /downloadRewardAsset\(activeReward\.key, \{ expectedUserId \}\)/);
+    assert.match(pageSource, /claimRewardOffer\(action\.rewardKey, \{ expectedUserId: action\.actorId \}\)/);
+    assert.match(pageSource, /downloadRewardAsset\(action\.rewardKey, \{ expectedUserId: action\.actorId \}\)/);
+    assert.match(
+      pageSource,
+      /if \(rewardActionInFlight\) return;[\s\S]*?rewardActionInFlight = action;[\s\S]*?button\.disabled = true;[\s\S]*?await pageActorIsCurrent\(action\.actorId\)/,
+    );
     assert.match(pageSource, /function scrubRewardDetail[\s\S]*?activeFulfillment = \{}[\s\S]*?replaceChildren\(\)/);
     assert.match(pageSource, /function scrubAccountBoundPage[\s\S]*?replaceChildren\(\)/);
     assert.match(pageSource, /window\.addEventListener\('pagehide'[\s\S]*?scrubAccountBoundPage\(\)/);
