@@ -1,3 +1,96 @@
+set local lock_timeout = '5s';
+set local statement_timeout = '5min';
+set local idle_in_transaction_session_timeout = '5min';
+
+-- Supabase grants broad defaults to its API roles. Establish the application
+-- baseline from a deny-by-default position before this migration creates or
+-- replaces any object. Every runtime capability is granted explicitly below.
+alter default privileges for role postgres in schema public
+  revoke all privileges on tables from public, anon, authenticated, service_role;
+alter default privileges for role postgres in schema public
+  revoke all privileges on sequences from public, anon, authenticated, service_role;
+alter default privileges for role postgres in schema public
+  revoke all privileges on functions from public, anon, authenticated, service_role;
+
+-- Production predates workflow-managed migration history. Lock every known
+-- application relation that may already exist before inspecting or changing
+-- it. Alphabetical ordering keeps concurrent rehearsals deterministic. The
+-- bounded lock timeout makes a non-quiesced deployment fail atomically.
+do $baseline_locks$
+declare
+  relation_identity text;
+begin
+  for relation_identity in
+    select format('%I.%I', namespace.nspname, relation.relname)
+    from pg_catalog.pg_class relation
+    join pg_catalog.pg_namespace namespace
+      on namespace.oid = relation.relnamespace
+    where relation.relkind in ('r', 'p')
+      and (namespace.nspname, relation.relname) in (
+        ('public', 'badge_definitions'),
+        ('public', 'billing_customers'),
+        ('public', 'challenge_entries'),
+        ('public', 'check_ins'),
+        ('public', 'community_feed_items'),
+        ('public', 'community_posts'),
+        ('public', 'crew_invites'),
+        ('public', 'crew_members'),
+        ('public', 'crews'),
+        ('public', 'entitlements'),
+        ('public', 'game_point_events'),
+        ('public', 'journal_entries'),
+        ('public', 'journal_photos'),
+        ('public', 'post_comments'),
+        ('public', 'post_likes'),
+        ('public', 'profiles'),
+        ('public', 'purchases'),
+        ('public', 'subscriptions'),
+        ('public', 'user_badges'),
+        ('public', 'user_game_stats'),
+        ('storage', 'buckets'),
+        ('storage', 'objects')
+      )
+    order by namespace.nspname collate "C", relation.relname collate "C"
+  loop
+    execute format('lock table %s in access exclusive mode', relation_identity);
+  end loop;
+end;
+$baseline_locks$;
+
+-- Never turn unknown production data into an apparently successful baseline.
+-- The reconciliation rehearsal proves the expected legacy source has no
+-- purchase rows and no entitlement other than membership_active.
+do $baseline_data_preflight$
+declare
+  has_unsafe_rows boolean;
+begin
+  if pg_catalog.to_regclass('public.purchases') is not null then
+    execute 'select exists (select 1 from public.purchases)'
+      into has_unsafe_rows;
+    if has_unsafe_rows then
+      raise exception using
+        errcode = 'P0001',
+        message = 'Baseline refused: public.purchases contains rows.';
+    end if;
+  end if;
+
+  if pg_catalog.to_regclass('public.entitlements') is not null then
+    execute $query$
+      select exists (
+        select 1
+        from public.entitlements
+        where entitlement_key is distinct from 'membership_active'
+      )
+    $query$ into has_unsafe_rows;
+    if has_unsafe_rows then
+      raise exception using
+        errcode = 'P0001',
+        message = 'Baseline refused: public.entitlements contains an unexpected entitlement key.';
+    end if;
+  end if;
+end;
+$baseline_data_preflight$;
+
 create extension if not exists pgcrypto;
 
 create or replace function public.set_updated_at()
@@ -49,7 +142,7 @@ create table if not exists public.billing_customers (
   updated_at timestamptz not null default now()
 );
 
-drop table if exists public.purchases cascade;
+drop table if exists public.purchases restrict;
 
 create table if not exists public.subscriptions (
   id uuid primary key default gen_random_uuid(),
@@ -81,9 +174,6 @@ create table if not exists public.entitlements (
   primary key (user_id, entitlement_key)
 );
 
-delete from public.entitlements
-where entitlement_key <> 'membership_active';
-
 alter table public.entitlements
   drop constraint if exists entitlements_entitlement_key_check;
 
@@ -91,7 +181,7 @@ alter table public.entitlements
   add constraint entitlements_entitlement_key_check
   check (entitlement_key in ('membership_active'));
 
-drop view if exists public.community_feed;
+drop view if exists public.community_feed restrict;
 
 create table if not exists public.community_feed_items (
   id uuid primary key default gen_random_uuid(),
@@ -442,26 +532,24 @@ as $$
   );
 $$;
 
-revoke execute on function public.set_updated_at() from public;
-revoke execute on function public.set_updated_at() from anon;
-revoke execute on function public.set_updated_at() from authenticated;
-revoke execute on function public.create_community_feed_item() from public;
-revoke execute on function public.create_community_feed_item() from anon;
-revoke execute on function public.create_community_feed_item() from authenticated;
-revoke execute on function public.join_crew_by_invite(text) from public;
-revoke execute on function public.join_crew_by_invite(text) from anon;
+revoke execute on function public.set_updated_at()
+  from public, anon, authenticated, service_role;
+revoke execute on function public.create_community_feed_item()
+  from public, anon, authenticated, service_role;
+revoke execute on function public.join_crew_by_invite(text)
+  from public, anon, authenticated, service_role;
 grant execute on function public.join_crew_by_invite(text) to authenticated;
-revoke execute on function public.is_crew_member(uuid) from public;
-revoke execute on function public.is_crew_member(uuid) from anon;
+revoke execute on function public.is_crew_member(uuid)
+  from public, anon, authenticated, service_role;
 grant execute on function public.is_crew_member(uuid) to authenticated;
-revoke execute on function public.can_manage_crew(uuid) from public;
-revoke execute on function public.can_manage_crew(uuid) from anon;
+revoke execute on function public.can_manage_crew(uuid)
+  from public, anon, authenticated, service_role;
 grant execute on function public.can_manage_crew(uuid) to authenticated;
-revoke execute on function public.has_active_entitlement(text) from public;
-revoke execute on function public.has_active_entitlement(text) from anon;
+revoke execute on function public.has_active_entitlement(text)
+  from public, anon, authenticated, service_role;
 grant execute on function public.has_active_entitlement(text) to authenticated;
-revoke execute on function public.can_read_community_post(uuid) from public;
-revoke execute on function public.can_read_community_post(uuid) from anon;
+revoke execute on function public.can_read_community_post(uuid)
+  from public, anon, authenticated, service_role;
 grant execute on function public.can_read_community_post(uuid) to authenticated;
 
 do $$
@@ -470,6 +558,7 @@ begin
     execute 'revoke execute on function public.rls_auto_enable() from public';
     execute 'revoke execute on function public.rls_auto_enable() from anon';
     execute 'revoke execute on function public.rls_auto_enable() from authenticated';
+    execute 'revoke execute on function public.rls_auto_enable() from service_role';
   end if;
 end;
 $$;
@@ -891,37 +980,68 @@ create policy "Users can delete own journal photos"
     and public.has_active_entitlement('membership_active')
   );
 
-revoke all on public.profiles from anon;
-revoke all on public.challenge_entries from anon;
-revoke all on public.check_ins from anon;
-revoke all on public.billing_customers from anon;
-revoke all on public.billing_customers from authenticated;
-revoke all on public.subscriptions from anon;
-revoke all on public.subscriptions from authenticated;
-revoke all on public.entitlements from anon;
-revoke all on public.entitlements from authenticated;
-revoke all on public.community_feed_items from anon;
-revoke all on public.community_feed_items from authenticated;
-revoke all on public.crews from anon;
-revoke all on public.crews from authenticated;
-revoke all on public.crew_members from anon;
-revoke all on public.crew_members from authenticated;
-revoke all on public.crew_invites from anon;
-revoke all on public.crew_invites from authenticated;
-revoke all on public.community_posts from anon;
-revoke all on public.community_posts from authenticated;
-revoke all on public.post_likes from anon;
-revoke all on public.post_likes from authenticated;
-revoke all on public.post_comments from anon;
-revoke all on public.post_comments from authenticated;
-revoke all on public.journal_entries from anon;
-revoke all on public.journal_entries from authenticated;
-revoke all on public.journal_photos from anon;
-revoke all on public.journal_photos from authenticated;
+-- A table-level REVOKE does not remove column ACL entries. Normalize both so
+-- the same least-privilege target is produced from a fresh stack and from the
+-- legacy production grants.
+do $baseline_table_acl$
+declare
+  relation_value record;
+  column_list text;
+begin
+  for relation_value in
+    select
+      relation.oid,
+      format('%I.%I', namespace.nspname, relation.relname) as identity
+    from pg_catalog.pg_class relation
+    join pg_catalog.pg_namespace namespace
+      on namespace.oid = relation.relnamespace
+    where namespace.nspname = 'public'
+      and relation.relkind in ('r', 'p')
+      and relation.relname in (
+        'billing_customers',
+        'challenge_entries',
+        'check_ins',
+        'community_feed_items',
+        'community_posts',
+        'crew_invites',
+        'crew_members',
+        'crews',
+        'entitlements',
+        'journal_entries',
+        'journal_photos',
+        'post_comments',
+        'post_likes',
+        'profiles',
+        'subscriptions'
+      )
+    order by relation.relname collate "C"
+  loop
+    execute format(
+      'revoke all privileges on table %s from public, anon, authenticated, service_role',
+      relation_value.identity
+    );
+
+    select string_agg(format('%I', attribute.attname), ', ' order by attribute.attnum)
+      into column_list
+    from pg_catalog.pg_attribute attribute
+    where attribute.attrelid = relation_value.oid
+      and attribute.attnum > 0
+      and not attribute.attisdropped;
+
+    execute format(
+      'revoke all privileges (%s) on table %s from public, anon, authenticated, service_role',
+      column_list,
+      relation_value.identity
+    );
+  end loop;
+end;
+$baseline_table_acl$;
 
 grant select, insert, update on public.profiles to authenticated;
 grant select, insert, update on public.challenge_entries to authenticated;
 grant insert on public.check_ins to authenticated;
+grant select (id, user_id, challenge_day, status, completed_count, created_at)
+  on public.check_ins to authenticated;
 grant select on public.subscriptions to authenticated;
 grant select on public.entitlements to authenticated;
 grant insert on public.community_feed_items to authenticated;
@@ -935,6 +1055,11 @@ grant select, insert, delete on public.post_likes to authenticated;
 grant select, insert, update on public.post_comments to authenticated;
 grant select, insert, update, delete on public.journal_entries to authenticated;
 grant select, insert, update, delete on public.journal_photos to authenticated;
+
+grant select on public.profiles to service_role;
+grant select, insert, update on public.billing_customers to service_role;
+grant select, insert, update on public.subscriptions to service_role;
+grant select, insert, update on public.entitlements to service_role;
 
 insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
 values (

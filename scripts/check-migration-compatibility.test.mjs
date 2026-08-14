@@ -385,3 +385,89 @@ test("package, CI, and production deploy run the gate before migrations", async 
     /run: supabase db push --linked --password/,
   );
 });
+
+test("the production baseline fails closed and normalizes legacy privileges", async () => {
+  const baseline = await readFile(
+    path.join(
+      repositoryRoot,
+      "supabase",
+      "migrations",
+      "20260707170000_baseline.sql",
+    ),
+    "utf8",
+  );
+  const gamification = await readFile(
+    path.join(
+      repositoryRoot,
+      "supabase",
+      "migrations",
+      "20260708154000_gamification.sql",
+    ),
+    "utf8",
+  );
+  const searchPathFix = await readFile(
+    path.join(
+      repositoryRoot,
+      "supabase",
+      "migrations",
+      "20260708155500_fix_gamification_function_search_path.sql",
+    ),
+    "utf8",
+  );
+
+  for (const migration of [baseline, gamification, searchPathFix]) {
+    assert.match(migration, /set local lock_timeout = '5s';/);
+    assert.match(migration, /set local statement_timeout = '5min';/);
+    assert.match(
+      migration,
+      /set local idle_in_transaction_session_timeout = '5min';/,
+    );
+  }
+
+  assert.match(baseline, /lock table %s in access exclusive mode/);
+  assert.match(baseline, /select exists \(select 1 from public\.purchases\)/);
+  assert.match(
+    baseline,
+    /entitlement_key is distinct from 'membership_active'/,
+  );
+  assert.doesNotMatch(baseline, /delete from public\.entitlements/i);
+  assert.match(baseline, /drop table if exists public\.purchases restrict;/);
+  assert.match(baseline, /drop view if exists public\.community_feed restrict;/);
+  assert.doesNotMatch(baseline, /drop (?:table|view)[^;]+cascade;/i);
+
+  for (const migration of [baseline, gamification]) {
+    assert.match(
+      migration,
+      /alter default privileges for role postgres in schema public[\s\S]*revoke all privileges on tables from public, anon, authenticated, service_role;/,
+    );
+    assert.match(
+      migration,
+      /revoke all privileges \(%s\) on table %s from public, anon, authenticated, service_role/,
+    );
+  }
+
+  assert.match(
+    baseline,
+    /grant select on public\.profiles to service_role;/,
+  );
+  for (const table of ["billing_customers", "subscriptions", "entitlements"]) {
+    assert.match(
+      baseline,
+      new RegExp(
+        `grant select, insert, update on public\\.${table} to service_role;`,
+      ),
+    );
+  }
+  assert.doesNotMatch(
+    gamification,
+    /grant[^;]+(?:badge_definitions|user_badges|user_game_stats|game_point_events)[^;]+service_role/i,
+  );
+  assert.match(
+    searchPathFix,
+    /revoke execute on function public\.workout_difficulty_points\(text\)[\s\S]*from public, anon, authenticated, service_role;/,
+  );
+  assert.match(
+    searchPathFix,
+    /revoke execute on function public\.full_streak_bonus_points\(integer\)[\s\S]*from public, anon, authenticated, service_role;/,
+  );
+});

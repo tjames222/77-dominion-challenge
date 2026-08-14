@@ -1,3 +1,7 @@
+set local lock_timeout = '5s';
+set local statement_timeout = '5min';
+set local idle_in_transaction_session_timeout = '5min';
+
 create or replace function public.workout_difficulty_points(target_difficulty text)
 returns integer
 language sql
@@ -28,3 +32,8 @@ as $$
     else 0
   end;
 $$;
+
+revoke execute on function public.workout_difficulty_points(text)
+  from public, anon, authenticated, service_role;
+revoke execute on function public.full_streak_bonus_points(integer)
+  from public, anon, authenticated, service_role;
