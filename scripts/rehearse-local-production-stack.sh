@@ -8,6 +8,7 @@ fail() {
 
 script_directory="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 repository_root="$(cd "$script_directory/.." && pwd -P)"
+export SUPABASE_TELEMETRY_DISABLED=1
 
 [[ "${DOMINION_ALLOW_LOCAL_RESET:-}" == "true" ]] || fail \
   "set DOMINION_ALLOW_LOCAL_RESET=true to acknowledge the clean local database reset."
@@ -34,11 +35,29 @@ else
 fi
 [[ -x "$local_docker_bin" ]] || fail "LOCAL_DOCKER_BIN must be an executable file."
 
-local_postgres_container="${LOCAL_POSTGRES_CONTAINER:-supabase_db_77-dominion-challenge}"
-[[ "$local_postgres_container" =~ ^[A-Za-z0-9][A-Za-z0-9_.-]*$ ]] || fail \
-  "LOCAL_POSTGRES_CONTAINER is not a valid container name."
+project_id="$(sed -n 's/^project_id = "\([^"]*\)"/\1/p' \
+  "$repository_root/supabase/config.toml" | head -n 1)"
+[[ "$project_id" =~ ^[A-Za-z0-9][A-Za-z0-9_.-]*$ ]] || fail \
+  "could not resolve a safe local project ID."
+local_postgres_container="supabase_db_${project_id}"
+if [[ -n "${LOCAL_POSTGRES_CONTAINER:-}" \
+  && "$LOCAL_POSTGRES_CONTAINER" != "$local_postgres_container" ]]; then
+  fail "LOCAL_POSTGRES_CONTAINER must equal $local_postgres_container."
+fi
 
-export SUPABASE_TELEMETRY_DISABLED=1
+postgres_version_file="$repository_root/supabase/.temp/postgres-version"
+[[ -f "$postgres_version_file" ]] || fail \
+  "missing exact Postgres image pin: $postgres_version_file."
+postgres_image_version="$(tr -d '\r\n' <"$postgres_version_file")"
+[[ "$postgres_image_version" == "17.6.1.141" ]] || fail \
+  "expected Postgres image 17.6.1.141, found $postgres_image_version."
+postgres_image_registry="${SUPABASE_INTERNAL_IMAGE_REGISTRY:-public.ecr.aws}"
+postgres_image_registry="${postgres_image_registry%/}"
+[[ -n "$postgres_image_registry" ]] || fail "Postgres image registry cannot be empty."
+expected_postgres_image_ref="$postgres_image_registry/supabase/postgres:$postgres_image_version"
+
+export DOCKER_BIN="$local_docker_bin"
+export SUPABASE_DB_CONTAINER="$local_postgres_container"
 
 if ! "$supabase_cli" status --workdir "$repository_root" >/dev/null 2>&1; then
   bash "$repository_root/scripts/start-local-database.sh"
@@ -46,6 +65,18 @@ fi
 bash "$repository_root/scripts/reset-local-database.sh"
 "$local_docker_bin" container inspect "$local_postgres_container" >/dev/null 2>&1 || fail \
   "the expected local Postgres container is not running."
+actual_postgres_image="$("$local_docker_bin" inspect "$local_postgres_container" \
+  --format '{{.Config.Image}}')"
+[[ "$actual_postgres_image" == "$expected_postgres_image_ref" ]] || fail \
+  "expected $expected_postgres_image_ref, found $actual_postgres_image."
+actual_supabase_project="$("$local_docker_bin" inspect "$local_postgres_container" \
+  --format '{{index .Config.Labels "com.supabase.cli.project"}}')"
+[[ "$actual_supabase_project" == "$project_id" ]] || fail \
+  "the Postgres container is not owned by local Supabase project $project_id."
+actual_compose_project="$("$local_docker_bin" inspect "$local_postgres_container" \
+  --format '{{index .Config.Labels "com.docker.compose.project"}}')"
+[[ "$actual_compose_project" == "$project_id" ]] || fail \
+  "the Postgres container is not owned by Docker Compose project $project_id."
 
 status_file="$(mktemp "${TMPDIR:-/tmp}/dominion-local-stack.XXXXXX")"
 chmod 600 "$status_file"

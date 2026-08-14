@@ -11,11 +11,77 @@ const runId = `${Date.now()}-${process.pid}`;
 const password = 'Local-rehearsal-passphrase-77!';
 const accountA = { email: `local-release-a-${runId}@example.test`, name: 'Local Release A' };
 const accountB = { email: `local-release-b-${runId}@example.test`, name: 'Local Release B' };
+const LOCAL_STATIC_IMAGE_URLS = new Set([
+  'https://pub-53499389187a4de4984349b4f9b36b74.r2.dev/5317DC26-DA71-4E5E-8964-01B9EAF033AF.png',
+  'https://pub-53499389187a4de4984349b4f9b36b74.r2.dev/photo_1783730958.105418.png',
+  'https://pub-53499389187a4de4984349b4f9b36b74.r2.dev/photo_1783734046.5413918.png',
+]);
+const LOCAL_STATIC_IMAGE = [
+  '<svg xmlns="http://www.w3.org/2000/svg" width="300" height="200" viewBox="0 0 300 200">',
+  '<rect width="300" height="200" fill="#f5f1e8"/>',
+  '<path d="M52 142 112 72l40 46 31-35 65 59Z" fill="#172019"/>',
+  '<circle cx="224" cy="52" r="20" fill="#c8aa64"/>',
+  '</svg>',
+].join('');
 
 const admin = createClient(supabaseUrl, serviceRoleKey, {
   auth: { autoRefreshToken: false, persistSession: false },
 });
 const createdUserIds = new Set();
+
+function webSocketOrigin(httpOrigin) {
+  const url = new URL(httpOrigin);
+  url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
+  return url.origin;
+}
+
+async function installLocalNetworkBoundary(context, { frontendOrigin, localSupabaseOrigin }) {
+  const allowedHttpOrigins = new Set([frontendOrigin, localSupabaseOrigin]);
+  const allowedWebSocketOrigins = new Set([
+    webSocketOrigin(frontendOrigin),
+    webSocketOrigin(localSupabaseOrigin),
+  ]);
+  const unexpectedHostedRequests = [];
+  const locallyFulfilledStaticRequests = [];
+
+  await context.route('**/*', async (route) => {
+    const request = route.request();
+    const requestUrl = new URL(request.url());
+    if (allowedHttpOrigins.has(requestUrl.origin)) {
+      await route.continue();
+      return;
+    }
+
+    if (LOCAL_STATIC_IMAGE_URLS.has(requestUrl.href) && request.resourceType() === 'image') {
+      locallyFulfilledStaticRequests.push(requestUrl.href);
+      await route.fulfill({
+        status: 200,
+        contentType: 'image/svg+xml',
+        body: LOCAL_STATIC_IMAGE,
+        headers: { 'cache-control': 'no-store' },
+      });
+      return;
+    }
+
+    unexpectedHostedRequests.push(
+      `${request.method()} ${request.resourceType()} ${requestUrl.href}`,
+    );
+    await route.abort('blockedbyclient');
+  });
+
+  await context.routeWebSocket(/^wss?:\/\//, async (webSocket) => {
+    const requestUrl = new URL(webSocket.url());
+    if (allowedWebSocketOrigins.has(requestUrl.origin)) {
+      webSocket.connectToServer();
+      return;
+    }
+
+    unexpectedHostedRequests.push(`WEBSOCKET websocket ${requestUrl.href}`);
+    await webSocket.close({ code: 1008, reason: 'Blocked by local production rehearsal.' });
+  });
+
+  return { locallyFulfilledStaticRequests, unexpectedHostedRequests };
+}
 
 function runLocalSql(sql, variables = {}) {
   const variableArguments = [];
@@ -136,8 +202,13 @@ test.afterAll(async () => {
   }
 });
 
-test('production-shaped frontend uses real local Auth, Postgres, and account RLS with mocks off', async ({ page }) => {
+test('production-shaped frontend uses real local Auth, Postgres, and account RLS with mocks off', async ({ context, page }, testInfo) => {
   const localOrigin = new URL(supabaseUrl).origin;
+  const frontendOrigin = new URL(testInfo.project.use.baseURL).origin;
+  const networkBoundary = await installLocalNetworkBoundary(context, {
+    frontendOrigin,
+    localSupabaseOrigin: localOrigin,
+  });
   const localServiceRequests = [];
   page.on('request', (request) => {
     if (request.url().startsWith(localOrigin)) localServiceRequests.push(request.url());
@@ -217,4 +288,9 @@ test('production-shaped frontend uses real local Auth, Postgres, and account RLS
 
   expect(localServiceRequests.some((url) => url.includes('/auth/v1/'))).toBe(true);
   expect(localServiceRequests.some((url) => url.includes('/rest/v1/'))).toBe(true);
+  expect(networkBoundary.unexpectedHostedRequests).toEqual([]);
+  expect(networkBoundary.locallyFulfilledStaticRequests.length).toBeGreaterThan(0);
+  expect(new Set(networkBoundary.locallyFulfilledStaticRequests)).toEqual(
+    LOCAL_STATIC_IMAGE_URLS,
+  );
 });
