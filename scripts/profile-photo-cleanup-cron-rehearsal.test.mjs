@@ -548,6 +548,35 @@ test("only the two documented reset acknowledgement forms pass the gate", () => 
   }
 });
 
+test("Kong HostPort validation accepts dual-stack duplicates only", () => {
+  const cases = [
+    ["single binding", "54321", 0],
+    ["dual-stack bindings", "54321\n54321", 0],
+    ["mixed bindings", "54321\n54322", 1],
+    ["wrong binding", "54322", 1],
+    ["missing binding", "", 1],
+    ["blank binding mixed in", "54321\n\n54321", 1],
+  ];
+
+  for (const [label, bindings, expectedStatus] of cases) {
+    const result = spawnSync("bash", [rehearsalPath, "54321", bindings], {
+      cwd: repositoryRoot,
+      encoding: "utf8",
+      env: {
+        PATH: "/usr/bin:/bin",
+        FOU802_KONG_PORT_BINDING_SELF_TEST: "1",
+      },
+    });
+
+    assert.equal(result.status, expectedStatus, `${label}: ${result.stderr}`);
+    assert.doesNotMatch(
+      result.stdout + result.stderr,
+      /resetting local database|docker|supabase/i,
+      label,
+    );
+  }
+});
+
 test("unsafe Docker endpoints fail before reset or Docker mutation", () => {
   const endpointCases = [
     ["SSH", "ssh://review.invalid"],
@@ -680,6 +709,14 @@ test("the rehearsal is pinned, local-only, one-shot, and self-cleaning", async (
   assert.match(
     source,
     /export DOCKER_HOST="\$effective_docker_endpoint"[\s\S]*unset DOCKER_CONTEXT/,
+  );
+  assert.match(
+    source,
+    /while IFS= read -r host_port; do[\s\S]*host_port" == "\$expected_port"[\s\S]*binding_count > 0/,
+  );
+  assert.equal(
+    source.match(/^assert_kong_api_port_bindings$/gm)?.length,
+    2,
   );
   assert.match(source, /--database-only-runtime-check/);
   assert.match(source, /project_id="77-dominion-challenge"/);

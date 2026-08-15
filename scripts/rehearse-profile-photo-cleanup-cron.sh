@@ -36,6 +36,29 @@ maybe_inject_fault() {
   fi
 }
 
+kong_api_port_bindings_are_exact() {
+  local expected_port="$1"
+  local host_ports="$2"
+  local host_port
+  local binding_count=0
+
+  [[ "$expected_port" =~ ^[0-9]+$ ]] || return 1
+  while IFS= read -r host_port; do
+    [[ -n "$host_port" && "$host_port" == "$expected_port" ]] || return 1
+    binding_count=$((binding_count + 1))
+  done <<<"$host_ports"
+  (( binding_count > 0 ))
+}
+
+# This pure parser mode lets CI exercise Docker's single-stack, dual-stack,
+# mixed, wrong, and missing HostPort shapes without contacting any daemon.
+if [[ "${FOU802_KONG_PORT_BINDING_SELF_TEST:-}" == "1" ]]; then
+  [[ "$#" -eq 2 ]] \
+    || fail "the Kong port-binding self-test requires an expected port and binding list."
+  kong_api_port_bindings_are_exact "$1" "$2"
+  exit $?
+fi
+
 # This internal mode executes the same fault dispatcher without touching
 # Docker, Supabase, or the filesystem. The Node regression test invokes every
 # supported phase so renamed/dead checkpoints fail CI.
@@ -229,16 +252,21 @@ assert_local_container() {
   [[ "$running" == "true" ]] || fail "$container is not running."
 }
 
+assert_kong_api_port_bindings() {
+  local host_ports
+  host_ports="$(inspect_value "$kong_container" \
+    '{{range (index .NetworkSettings.Ports "8000/tcp")}}{{println .HostPort}}{{end}}')" \
+    || fail "Kong port 8000 bindings could not be inspected."
+  kong_api_port_bindings_are_exact "$config_api_port" "$host_ports" \
+    || fail "every Kong port 8000 binding must use the pinned local API port."
+}
+
 assert_local_container "$database_container" "$expected_postgres_image"
 assert_local_container "$edge_container" "$expected_edge_image"
 assert_local_container "$storage_container" "$expected_storage_image"
 assert_local_container "$kong_container" "$expected_kong_image"
 assert_local_container "$rest_container" "$expected_rest_image"
-
-kong_api_ports="$(inspect_value "$kong_container" \
-  '{{range (index .NetworkSettings.Ports "8000/tcp")}}{{println .HostPort}}{{end}}')"
-[[ "$kong_api_ports" == "$config_api_port" ]] \
-  || fail "Kong port 8000 is not published only on the pinned local API port."
+assert_kong_api_port_bindings
 
 assert_pg_net_alias_bypasses_proxy() {
   local environment_line
@@ -295,10 +323,7 @@ assert_local_container "$edge_container" "$expected_edge_image"
 assert_local_container "$storage_container" "$expected_storage_image"
 assert_local_container "$kong_container" "$expected_kong_image"
 assert_local_container "$rest_container" "$expected_rest_image"
-kong_api_ports="$(inspect_value "$kong_container" \
-  '{{range (index .NetworkSettings.Ports "8000/tcp")}}{{println .HostPort}}{{end}}')"
-[[ "$kong_api_ports" == "$config_api_port" ]] \
-  || fail "Kong changed its exact local API port during reset."
+assert_kong_api_port_bindings
 assert_pg_net_alias_bypasses_proxy
 
 db_exec() {
