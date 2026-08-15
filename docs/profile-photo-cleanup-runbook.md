@@ -82,17 +82,105 @@ database backoff; do not delete it manually or bypass the exact-object trigger.
 
 ## Local rehearsal and closed-canary proof
 
-First run this proof against the clean local full stack. Repeat it during the
-closed canary on the single hosted production project before public signup is
-opened: register and upload a disposable profile photo, abandon it, and then
-leave the Profile page. Record evidence that:
+Run the deterministic proof only against the pinned local full stack. It has an
+explicit destructive-reset acknowledgement and refuses every database/API
+origin except the exact local containers and loopback ports:
 
-1. Cron invokes the worker without a member session.
+```bash
+pnpm run rehearse:profile-photo-cleanup-cron -- --confirm-local-reset
+```
+
+The command first removes and verifies any exact disposable resources retained
+by an interrupted rehearsal, then resets the local database, uploads four new
+disposable objects through the local Storage API, and starts a second pinned
+Edge Runtime container. It aborts before reset if retained cleanup cannot be
+proved, because the tracking tables are the authority for exact Storage
+deletion. The isolated runtime mounts a staged copy of the real handler; a
+reviewed local client bridge permits only the exact local Kong origin. An
+executable import-graph gate proves the real handler reaches exactly one
+external import and maps that pinned Supabase client import to the bridge. The
+runtime clears uppercase and lowercase proxy variables, and the bridge still
+rejects every non-local origin. The proof therefore neither uses the CLI
+Function server nor contacts a hosted project.
+
+Before resetting, the command holds an atomic lock for this one local project
+and attests the pinned Postgres, Storage, Kong, PostgREST, and Edge Runtime
+images, the Supabase network, and Kong's exact configured API port. It also
+fails closed if a database proxy could route the pg_net runtime alias through a
+proxy. Do not bypass these checks to make a local environment pass.
+
+Cron keeps the database-generated, one-use 64-character worker secret in a
+revoked unlogged tracking table and stores only a table reference in job text.
+That table atomically records the Cron job ID and every readiness, worker,
+health, and teardown pg_net request ID. The reset verifies the exact database
+runtime but deliberately does not require the CLI-managed Edge Runtime to be
+mounted from the current worktree, because the isolated runtime is the reviewed
+Function source boundary for this proof.
+
+The proof emits three aggregate JSON records: Cron history, the cleanup worker
+result, and a separate authenticated `mode=health` response. The health record
+must have a non-null observation time and a non-null `oldestReadyAt` within the
+documented fifteen-minute threshold. Captured stdout and stderr are searched
+for both the worker secret and local service-role key before either stream is
+released; SQL evidence is also checked for fixture identity and worker-secret
+leaks.
+
+Teardown first unschedules the one named job and requires repeated quiet
+observations with no schedule and no nonterminal `cron.job_run_details` row.
+After pruning terminal history, it requires a second quiet window so a late
+`starting`, `connecting`, or `sending` run cannot escape cleanup. It then waits
+until every tracked pg_net request has a terminal response, deletes only those
+queue/response rows, and asserts that none remain.
+
+Before any exact fixture Storage delete, teardown cancels its fixture erasure
+batch where necessary and clears canonical avatar pointers. A non-null recorded
+Storage object UUID is immutable: if the current exact bucket/path belongs to a
+different UUID, teardown fails closed and retains its inventory. Only the crash
+gap where the upload trigger recorded its UUID in the registry before the
+fixture recorded it may fill a null fixture UUID once, and only when that same
+registry UUID still occupies the path. Teardown then binds the registry to that
+exact UUID, transitions the row to cleanup, obtains a live service claim, and
+re-verifies the claim against the same identity before sending a JSON
+bulk-delete request for the reviewed path. Tracking inventory is retained
+whenever exact runtime absence, Cron/pg_net drain, or a database existence probe
+cannot be proved. Related fixture inventory is retained whenever identity,
+authorization, or Storage deletion cannot be proved; lifecycle rows and fixture
+accounts are removed only after `storage.objects` proves zero exact-path
+residue.
+
+Cleanup removes the labeled runtime by its exact name even when failure occurs
+immediately after `docker run`, then removes the lifecycle rows, deletion batch,
+fixture accounts, tracking tables, and temporary files. A `pg_cron` extension
+that existed before the rehearsal is preserved; one installed by the rehearsal
+must be removed successfully before its ownership record is dropped. Cleanup is
+idempotent and runs again from the EXIT trap. It never deletes a Docker volume.
+
+Maintainers can set `FOU802_REHEARSAL_FAULT_AFTER` to one of the checkpoint
+names covered by `test:profile-photo-cleanup-cron` to rehearse failure cleanup.
+Those runs still require `--confirm-local-reset`, are destructive to the same
+local database, and must not be run without the same explicit approval as the
+normal rehearsal.
+
+The local proof must establish that:
+
+1. Cron invokes the worker without a member session, and a distinct
+   authenticated health request returns fresh non-alerting aggregates.
 2. The exact Storage object becomes absent.
 3. Its lifecycle row becomes `retired` and the digest tombstone is terminal.
 4. A canonical photo, an object with the wrong identity, and an account under
    erasure sealing are not deleted.
-5. Health returns to zero ready/stale work and the alert path receives its test.
+5. Aggregate health remains below every documented alert threshold.
+
+The account-erasure fixture intentionally remains one fresh ready item in the
+first worker and health responses because its governing deletion batch blocks
+cleanup. This is non-alerting: `ready` is below 100, `oldestReadyAt` is present
+and under fifteen minutes, `staleLeases` is zero, and the single wrong-identity
+failure is below the documented threshold. The teardown invocation cancels
+only that disposable local batch and proves all fixture objects are removed.
+
+Repeat the behavioral checklist separately during the closed canary on the
+single hosted production project before public signup is opened. Do not run the
+local command for that canary: it deliberately cannot address a hosted origin.
 
 Pause the Cron job before rolling back the Function. Never restore browser
 Storage DELETE permission as an operational workaround.

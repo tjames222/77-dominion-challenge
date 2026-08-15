@@ -64,6 +64,8 @@ jobs:
           version: 2.109.0
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
+      - name: Test profile-photo cleanup Cron rehearsal harness
+        run: pnpm run test:profile-photo-cleanup-cron
       - name: Validate migration execution compatibility
         run: pnpm run check:migrations
       - name: Test the migration compatibility gate

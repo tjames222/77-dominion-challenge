@@ -6,6 +6,19 @@ fail() {
   exit 1
 }
 
+run_supabase_credential_safe() {
+  local operation="$1"
+  local exit_status
+  shift
+  if "$@" >/dev/null 2>&1; then
+    return 0
+  else
+    exit_status=$?
+  fi
+  echo "Atomic local reset: ${operation} failed; Supabase CLI output was suppressed because it may contain local credentials." >&2
+  return "$exit_status"
+}
+
 script_directory="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 repository_root="$(cd "$script_directory/.." && pwd -P)"
 
@@ -29,8 +42,13 @@ cli_version="$($supabase_cli --version)"
 
 seed_database=true
 target_version=""
+database_only_runtime_check=false
 while (( $# > 0 )); do
   case "$1" in
+    --database-only-runtime-check)
+      database_only_runtime_check=true
+      shift
+      ;;
     --no-seed)
       seed_database=false
       shift
@@ -124,7 +142,10 @@ fi
 # rolls SQL back on failure, but it does not provide an explicit transaction for
 # transaction-only statements such as LOCK TABLE. Use it only to restore the
 # Supabase-managed platform schemas to an empty application-migration history.
-"$supabase_cli" db reset --local --no-seed --workdir "$staging_root"
+# CLI reset/start output can include the local API keys. Suppress it on both
+# success and failure; the wrapper preserves the status and emits a safe label.
+run_supabase_credential_safe "platform database reset" \
+  "$supabase_cli" db reset --local --no-seed --workdir "$staging_root"
 
 actual_postgres_image="$($docker_cli inspect "$database_container" \
   --format '{{.Config.Image}}')"
@@ -157,8 +178,14 @@ start_arguments=(--workdir "$repository_root")
 if [[ "${CI:-}" == "true" ]]; then
   start_arguments=(--exclude inbucket "${start_arguments[@]}")
 fi
-"$supabase_cli" start "${start_arguments[@]}"
+run_supabase_credential_safe "full local stack restart" \
+  "$supabase_cli" start "${start_arguments[@]}"
 
-bash "$repository_root/scripts/verify-local-supabase-runtime.sh"
+runtime_check_arguments=()
+if [[ "$database_only_runtime_check" == "true" ]]; then
+  runtime_check_arguments+=(--database-only)
+fi
+bash "$repository_root/scripts/verify-local-supabase-runtime.sh" \
+  "${runtime_check_arguments[@]}"
 
 echo "Atomic local reset passed: migration SQL and history were committed together."
