@@ -1,0 +1,5 @@
+{
+  "schemaVersion": 1,
+  "postgresImage": "17.6.1.141",
+  "differences": []
+}

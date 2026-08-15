@@ -525,7 +525,6 @@ test('cross-tab preview account switch clears an owned Dominion Night theme for 
       avatarUrl: '',
       authenticated: true,
     });
-    await api.createCheckoutSession('dominion_membership');
     return user.userId;
   });
   expect(secondUserId).not.toBe(FIXED_USER_ID);

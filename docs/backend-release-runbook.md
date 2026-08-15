@@ -198,11 +198,15 @@ Before approving the GitHub `production` environment deployment, confirm:
 
 ### One-time migration-history reconciliation
 
-The project predates migration-based deployments. The new
-`20260707170000_baseline.sql` reconstructs that historical schema for empty local
-databases; it must never be replayed over an already-populated hosted project.
-The release workflow deliberately omits `--include-all`, so a hosted project with
-later migration records but no baseline record fails closed.
+The project predates migration-based deployments. The original
+`20260707170000_baseline.sql` only reconstructed that historical schema for empty
+local databases and must never be replayed over a populated project. The
+prelaunch production exception below uses a separately reviewed, fail-closed
+revision of that still-unrecorded migration only after the exact legacy source,
+zero-risk rows, encrypted backup, restored rehearsal, and normalized manifest
+all match. Any other populated state remains prohibited. The release workflow
+deliberately omits `--include-all`, so a hosted project with later migration
+records but no baseline record fails closed.
 
 Before the first workflow-managed production release, an administrator must make
 a backup, link the exact production project, and inspect its history and schema:
@@ -252,41 +256,68 @@ function attributes and bodies, triggers, constraints, RLS policy expressions,
 or Storage configuration. In the 2026-08-13 audit, a three-schema CLI diff even
 returned empty while direct dumps proved application-owned differences, so an
 empty CLI diff never authorizes repair. Export direct schema dumps and normalized
-catalog manifests for `public`, `private`, and the application-owned parts of
-`storage` from the isolated local checkpoint and production. Compare all of those
-object classes, classifying platform-version noise through an explicit reviewed
-allowlist rather than silently discarding it. Also run these read-only queries in
-the production Supabase SQL editor. Compare the result exactly with the
-version-bounded local checkpoint manifest, including commands, roles, `qual`,
-and `with_check` expressions. For the migration-3 checkpoint below, the only
-expected result is `journal-progress` and its four
-`Users can ... journal photo objects` policies; `profile-photos`,
-`community-post-images`, and their seven policies must be absent:
+catalog manifests for `public`, `private`, the complete Storage metadata
+inventory, the application-owned Storage policies, and the selected Supabase
+platform surface in `storage` from the isolated local checkpoint and production.
+That platform surface includes event-trigger registrations, every non-internal
+trigger on any pinned Storage inventory relation, the definitions and ACLs of
+its referenced functions, and direct and effective relation, function, and
+column privileges. The pinned Supabase CLI 2.109.0 Storage inventory relations are
+`buckets`, `buckets_analytics`, `buckets_vectors`, `iceberg_namespaces`,
+`iceberg_tables`, `objects`, `s3_multipart_uploads`,
+`s3_multipart_uploads_parts`, and `vector_indexes`. Compare all of those object
+classes and every row inventory independently, classifying
+platform-version noise through an explicit reviewed allowlist rather than
+silently discarding it. Also run these read-only queries in the production
+Supabase SQL editor. Compare the result exactly with the version-bounded local
+checkpoint manifest, including commands, roles, `qual`, and `with_check`
+expressions. Do not filter the inventory to expected IDs or policy names: an
+unknown row is itself a release blocker. For the migration-3 checkpoint below,
+the only standard bucket is `journal-progress`, every other Storage inventory
+relation has zero rows, and the only application Storage policies are its four
+`Users can ... journal photo objects` policies:
 
 ```sql
-select id, name, public, file_size_limit, allowed_mime_types
+select id, name, owner_id, public, file_size_limit, allowed_mime_types, type
 from storage.buckets
-where id in ('profile-photos', 'community-post-images', 'journal-progress')
 order by id;
 
-select policyname, cmd, roles, qual, with_check
+select schemaname, tablename, policyname, permissive, cmd, roles, qual, with_check
 from pg_policies
 where schemaname = 'storage'
-  and tablename = 'objects'
-  and policyname in (
-    'Profile photos are publicly readable',
-    'Users can upload own profile photo objects',
-    'Users can update own profile photo objects',
-    'Users can delete own profile photo objects',
-    'Crew members can read community post images',
-    'Crew members can upload own community post images',
-    'Authors and crew leaders can delete community post images',
-    'Users can read own journal photo objects',
-    'Users can upload own journal photo objects',
-    'Users can update own journal photo objects',
-    'Users can delete own journal photo objects'
+  and tablename in (
+    'buckets',
+    'buckets_analytics',
+    'buckets_vectors',
+    'iceberg_namespaces',
+    'iceberg_tables',
+    'objects',
+    's3_multipart_uploads',
+    's3_multipart_uploads_parts',
+    'vector_indexes'
   )
-order by policyname;
+order by tablename, policyname;
+
+select relation_name, row_count
+from (
+  select 'storage.buckets_analytics' as relation_name, count(*) as row_count
+  from storage.buckets_analytics
+  union all
+  select 'storage.buckets_vectors', count(*) from storage.buckets_vectors
+  union all
+  select 'storage.iceberg_namespaces', count(*) from storage.iceberg_namespaces
+  union all
+  select 'storage.iceberg_tables', count(*) from storage.iceberg_tables
+  union all
+  select 'storage.objects', count(*) from storage.objects
+  union all
+  select 'storage.s3_multipart_uploads', count(*) from storage.s3_multipart_uploads
+  union all
+  select 'storage.s3_multipart_uploads_parts', count(*) from storage.s3_multipart_uploads_parts
+  union all
+  select 'storage.vector_indexes', count(*) from storage.vector_indexes
+) inventory
+order by relation_name;
 ```
 
 Migration repair records history without executing SQL. Never repair a version
@@ -321,10 +352,11 @@ separately reviewed change and the exact restored-snapshot rehearsal passes:
 2. Create encrypted, off-repository dumps of roles, schema, and data. Include
    Auth and Storage data and custom DDL, archive the empty
    `supabase_migrations` schema, download or inventory every deployed Edge
-   Function, and record aggregate row/object counts. Storage blobs are not part
-   of a database dump; stop and export through the Storage API if the fresh
-   object count is nonzero. Checksum every artifact and test-restore the backup
-   locally before continuing.
+   Function, and record every Storage metadata-table count listed above. Storage
+   blobs are not part of a database dump; stop and export through the Storage API
+   if the fresh object or multipart inventory is nonzero, and separately
+   disposition any analytics/vector catalog rows. Checksum every artifact and
+   test-restore the backup locally before continuing.
 3. In an isolated worktree containing only migrations 1–3, pin the exact hosted
    Postgres image (`17.6.1.141`) and build a clean checkpoint without the
    final-schema seed:
@@ -381,13 +413,103 @@ separately reviewed change and the exact restored-snapshot rehearsal passes:
 
    Rehearse the successful path once against an exact legacy-source copy. Then
    prove that the hardened migration aborts and rolls back completely for a
-   purchase row, an external dependency, a legacy entitlement, an unknown
-   privilege state, lock contention, and a forced error. Separately prove that
-   the normalized source-manifest gate rejects a changed function, policy,
-   relation, constraint, trigger, or privilege before the migration runner
-   starts. The successful copy must match the clean migration-3 application
-   manifest, including effective privileges, and have exactly these three
-   history records.
+   purchase row, an external dependency, a legacy entitlement, any unexpected
+   bucket, object, or multipart upload, an unknown privilege state, lock
+   contention, and a forced error. Separately prove that the normalized
+   source-manifest gate rejects a changed function, policy, relation,
+   constraint, trigger, event trigger, Storage trigger-function definition or
+   ACL, and direct or effective Storage column privilege before the migration
+   runner starts. The successful copy must match the clean migration-3
+   application manifest, including effective privileges, and have exactly these
+   three history records.
+
+   The checked-in harness performs that exact-version proof against the
+   sanitized audited source fixture without contacting production:
+
+   ```bash
+   pnpm run test:database-manifest
+   pnpm run test:baseline-reconciliation
+   ```
+
+   Migration 1 runs in one `READ COMMITTED` transaction. It takes
+   `SHARE ROW EXCLUSIVE` on application-owned and migration-writable relations,
+   blocking writes and concurrent DDL while allowing ordinary readers. The
+   destructive preflight is the next statement, so it receives a fresh snapshot
+   after any writer that held up the lock pass commits; the acquired locks then
+   prevent a later application write from racing that preflight. An in-flight
+   writer may drain safely within the five-second lock timeout. A holder that
+   does not drain within that window makes the migration fail atomically. On the
+   pinned Storage image, `storage.buckets_vectors` and
+   `storage.vector_indexes` are owned by `supabase_storage_admin` and expose only
+   `SELECT` to the migration role. The migration verifies that exact contract
+   and retains `ACCESS SHARE` on those two read-only inventory relations for the
+   full transaction instead of escalating the role's platform privileges. Keep
+   all application and vector API writers quiesced for the maintenance window.
+   `ACCESS SHARE` does not block the platform owner from vector DML, so the
+   required post-migration inventory must catch any vector write that races the
+   migration despite that operational gate.
+
+   `test:baseline-reconciliation` refuses to run while either frozen manifest
+   contains the regeneration sentinel. It constructs isolated local databases
+   on the pinned `17.6.1.141` container, captures the source manifest before any
+   migration, applies migrations 1–3 one version at a time with pinned
+   `migration up`, checks the exact history prefix after every version, and
+   compares the target manifest plus non-badge application data fingerprints.
+   It also proves fail-closed behavior for purchase and invalid-entitlement
+   rows, external dependencies, direct and role-derived privileges, default
+   ACL drift, an exact function-body change, a forced migration exception, and
+   lock contention. Every runner failure must preserve the complete pre-attempt
+   manifest, data fingerprint, and empty history.
+
+   After any reviewed edit to migrations 1–3, regenerate the deterministic
+   sanitized source and target files only on an isolated exact-version stack:
+
+   ```bash
+   pnpm run generate:baseline-reconciliation
+   git diff -- \
+     supabase/tests/reconciliation/legacy-migration-2.source.manifest.jsonl \
+     supabase/tests/reconciliation/migration-3.target.manifest.jsonl \
+     supabase/tests/reconciliation/platform-diff-allowlist.pg17.6.1.141.json
+   pnpm run test:baseline-reconciliation
+   ```
+
+   Review every changed whole-object record. The isolated target-vs-target
+   platform allowlist must remain empty. To generate a candidate for a reviewed
+   production-vs-target comparison, first export the normalized production
+   manifest read-only and off-repository, then run:
+
+   ```bash
+   node scripts/build-platform-diff-allowlist.mjs \
+     supabase/tests/reconciliation/migration-3.target.manifest.jsonl \
+     /approved/off-repository/production.manifest.jsonl \
+     --postgres-image 17.6.1.141 \
+     --output /approved/off-repository/platform-candidate.json
+   ```
+
+   The builder rejects every application-owned key. It emits exact keys and
+   whole-record SHA-256 pairs only; wildcards, hash mismatches, version
+   mismatches, and unused entries fail comparison. A generated candidate is not
+   approval. Review it against direct dumps and then compare with:
+
+   ```bash
+   node scripts/compare-database-manifests.mjs \
+     supabase/tests/reconciliation/migration-3.target.manifest.jsonl \
+     /approved/off-repository/production.manifest.jsonl \
+     --postgres-image 17.6.1.141 \
+     --allowlist /approved/off-repository/platform-candidate.json
+   ```
+
+   Capture against a restored database URL only through a read-only credential:
+
+   ```bash
+   bash scripts/capture-database-manifest.sh \
+     --db-url "$RESTORED_READ_ONLY_DATABASE_URL" \
+     --output /approved/off-repository/production.manifest.jsonl
+   ```
+
+   Never commit a production manifest or data fingerprint; catalog definitions,
+   role names, and aggregate hashes are release evidence and belong in the
+   encrypted off-repository archive.
 6. Only after the backup, restore, source-manifest comparison, successful
    rehearsal, failure rehearsals, code review, and release approval all pass,
    open a production maintenance window. Keep signup and application writes
@@ -447,7 +569,7 @@ a reviewed forward fix; do not rewrite it or mark it reverted.
 FOU-752/753 must not use the normal backend-first order for their first production release. The hardening migration rejects the previous raw/upsert avatar client, and the final cleanup removes journal-photo infrastructure used by the previous client. Use the same reviewed commit for both stages:
 
 1. Confirm the migration-history reconciliation above is genuinely complete. The 2026-07-22 inventory in [`release-evidence/fou-759-production-inventory-2026-07-22.md`](./release-evidence/fou-759-production-inventory-2026-07-22.md) found missing historical profile infrastructure, so those versions must not be marked applied until a structural diff proves their effects exist or an approved bootstrap applies them.
-2. Rerun the aggregate journal inventory from that evidence record. Journal rows, objects, multipart uploads, and nonterminal `journal-progress` retention work must all be zero.
+2. Rerun the aggregate journal inventory from that evidence record. Journal rows, objects, multipart-upload parents and parts, and nonterminal `journal-progress` retention work must all be zero.
 3. Manually dispatch **Release production** from the exact reviewed release-candidate ref with `release_scope=frontend-only`. This deploys the schema-negotiating, prepared-thumbnail and text-only-journal client while intentionally skipping migrations. The client must treat the missing `profiles.avatar_url` column as the planned compatibility state and must make no profile-photo RPC or Storage request.
 4. Verify normal sign-in, profile text editing, dashboard challenge-date synchronization, and journal create/edit/reload behavior in production. The profile-photo control must remain disabled, and all six journal text fields must work without a journal-photo request. Leave the previous database and empty bucket in place during this verification window.
 5. Rerun the zero-data inventory. Stop on any nonzero result; export or explicitly disposition user data and use the Storage API for object deletion.
@@ -464,7 +586,6 @@ FOU-752/753 must not use the normal backend-first order for their first producti
 ```sql
 select id, public, file_size_limit, allowed_mime_types
 from storage.buckets
-where id in ('profile-photos', 'community-post-images', 'journal-progress')
 order by id;
 
 -- Exactly profile-photos (153600; WebP only) and community-post-images remain.

@@ -805,9 +805,17 @@ test("the local client bridge cannot address a hosted origin", async () => {
   assert.doesNotMatch(source, /from\s+["'](?:jsr:|npm:|https?:)/);
 });
 
-test("package and runbook expose the acknowledged proof", async () => {
+test("package, CI, reset, and runbook expose the acknowledged proof", async () => {
   const packageJson = JSON.parse(
     await readFile(path.join(repositoryRoot, "package.json"), "utf8"),
+  );
+  const ciWorkflow = await readFile(
+    path.join(repositoryRoot, ".github", "workflows", "ci.yml"),
+    "utf8",
+  );
+  const resetHelper = await readFile(
+    path.join(repositoryRoot, "scripts", "reset-local-database.sh"),
+    "utf8",
   );
   const runbook = await readFile(
     path.join(repositoryRoot, "docs", "profile-photo-cleanup-runbook.md"),
@@ -823,6 +831,40 @@ test("package and runbook expose the acknowledged proof", async () => {
     "node --test scripts/profile-photo-cleanup-cron-rehearsal.test.mjs",
   );
   assert.match(packageJson.scripts["check:backend"], /test:profile-photo-cleanup-cron/);
+
+  const cronTest = ciWorkflow.indexOf(
+    "run: pnpm run test:profile-photo-cleanup-cron",
+  );
+  const supabaseStart = ciWorkflow.indexOf("run: pnpm run supabase:start");
+  assert.ok(cronTest !== -1 && supabaseStart !== -1 && cronTest < supabaseStart);
+
+  const stagedStop = resetHelper.indexOf(
+    '"$supabase_cli" stop --workdir "$staging_root"',
+  );
+  const repositoryStart = resetHelper.indexOf(
+    '"$supabase_cli" start "${start_arguments[@]}"',
+  );
+  const databaseOnlyVerify = resetHelper.indexOf(
+    "runtime_check_arguments+=(--database-only)",
+  );
+  const runtimeVerify = resetHelper.indexOf(
+    'bash "$repository_root/scripts/verify-local-supabase-runtime.sh"',
+  );
+  assert.ok(
+    stagedStop !== -1
+      && repositoryStart !== -1
+      && databaseOnlyVerify !== -1
+      && runtimeVerify !== -1
+      && stagedStop < repositoryStart
+      && repositoryStart < databaseOnlyVerify
+      && databaseOnlyVerify < runtimeVerify,
+  );
+  assert.match(resetHelper, /start_arguments=\(--workdir "\$repository_root"\)/);
+  assert.match(
+    resetHelper,
+    /CI:-.*true[\s\S]*--exclude inbucket[\s\S]*"\$supabase_cli" start/,
+  );
+  assert.equal(resetHelper.match(/--database-only(?=[)\s])/g)?.length, 1);
   assert.match(
     runbook,
     /rehearse:profile-photo-cleanup-cron -- --confirm-local-reset/,

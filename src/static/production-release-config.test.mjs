@@ -11,6 +11,9 @@ const workflows = [
 ];
 const headers = read('../../public/_headers');
 const setup = read('../../CLOUDFLARE_PAGES_SETUP.md');
+const localProductionRunner = read('../../scripts/rehearse-local-production-stack.sh');
+const localProductionSpec = read('../../tests/e2e/local-production-stack.spec.mjs');
+const defaultPlaywrightConfig = read('../../playwright.config.mjs');
 
 describe('production release configuration', () => {
   test('requires an explicit release from the protected main branch', () => {
@@ -95,5 +98,73 @@ describe('production release configuration', () => {
     assert.match(headers, /frame-ancestors 'none'/);
     assert.match(headers, /connect-src 'self' https:\/\/\*\.supabase\.co wss:\/\/\*\.supabase\.co/);
     assert.doesNotMatch(headers, /script-src\s+'unsafe-inline'/);
+  });
+
+  test('binds the destructive local rehearsal to the exact repository stack', () => {
+    assert.match(localProductionRunner, /DOMINION_ALLOW_LOCAL_RESET:-.*== "true"/);
+    assert.match(
+      localProductionRunner,
+      /project_id=[\s\S]*supabase\/config\.toml[\s\S]*local_postgres_container="supabase_db_\$\{project_id\}"/,
+    );
+    assert.match(
+      localProductionRunner,
+      /LOCAL_POSTGRES_CONTAINER:-[\s\S]*!= "\$local_postgres_container"[\s\S]*must equal/,
+    );
+    assert.doesNotMatch(localProductionRunner, /LOCAL_POSTGRES_CONTAINER:-supabase_db_/);
+    assert.match(localProductionRunner, /export DOCKER_BIN="\$local_docker_bin"/);
+    assert.match(
+      localProductionRunner,
+      /export SUPABASE_DB_CONTAINER="\$local_postgres_container"/,
+    );
+    assert.match(localProductionRunner, /com\.supabase\.cli\.project/);
+    assert.match(localProductionRunner, /com\.docker\.compose\.project/);
+    assert.match(localProductionRunner, /actual_postgres_image[\s\S]*expected_postgres_image_ref/);
+
+    const telemetryGuard = localProductionRunner.indexOf('export SUPABASE_TELEMETRY_DISABLED=1');
+    const cliVersionCheck = localProductionRunner.indexOf('$supabase_cli --version');
+    const dockerBinding = localProductionRunner.indexOf('export DOCKER_BIN="$local_docker_bin"');
+    const databaseReset = localProductionRunner.indexOf('scripts/reset-local-database.sh');
+    const ownershipPreflight = localProductionRunner.indexOf('# A same-name container');
+    assert.ok(
+      telemetryGuard !== -1
+        && cliVersionCheck !== -1
+        && telemetryGuard < cliVersionCheck,
+    );
+    assert.ok(dockerBinding !== -1 && databaseReset !== -1 && dockerBinding < databaseReset);
+    assert.ok(
+      ownershipPreflight !== -1
+        && ownershipPreflight < databaseReset
+        && localProductionRunner
+          .slice(ownershipPreflight, databaseReset)
+          .includes('verify_local_database_container'),
+      'container ownership must be proven before the reset',
+    );
+    assert.ok(
+      localProductionRunner.slice(databaseReset).includes('verify_local_database_container'),
+      'container ownership must be rechecked after the reset',
+    );
+  });
+
+  test('intercepts all hosted browser traffic during the local rehearsal', () => {
+    assert.match(localProductionSpec, /context\.route\('\*\*\/\*'/);
+    assert.match(localProductionSpec, /allowedHttpOrigins\.has\(requestUrl\.origin\)/);
+    assert.match(localProductionSpec, /route\.fulfill\(\{/);
+    assert.match(localProductionSpec, /route\.abort\('blockedbyclient'\)/);
+    assert.match(localProductionSpec, /context\.routeWebSocket\(\/\^wss\?/);
+    assert.match(localProductionSpec, /allowedWebSocketOrigins\.has\(requestUrl\.origin\)/);
+    assert.match(localProductionSpec, /webSocket\.connectToServer\(\)/);
+    assert.match(localProductionSpec, /unexpectedHostedRequests[\s\S]*toEqual\(\[\]\)/);
+    assert.match(
+      localProductionSpec,
+      /https:\/\/pub-53499389187a4de4984349b4f9b36b74\.r2\.dev\/photo_1783730958\.105418\.png/,
+    );
+  });
+
+  test('runs the destructive local rehearsal only through its dedicated config', () => {
+    assert.match(defaultPlaywrightConfig, /local-production-stack\\\.spec\\\.mjs/);
+    assert.match(
+      read('../../playwright.local-production.config.mjs'),
+      /testMatch: \/local-production-stack\\\.spec\\\.mjs\//,
+    );
   });
 });

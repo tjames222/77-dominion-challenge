@@ -64,16 +64,22 @@ jobs:
           version: 2.109.0
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
+      - name: Test profile-photo cleanup Cron rehearsal harness
+        run: pnpm run test:profile-photo-cleanup-cron
       - name: Validate migration execution compatibility
         run: pnpm run check:migrations
       - name: Test the migration compatibility gate
         run: pnpm run test:migration-compatibility
+      - name: Test canonical database manifest gates
+        run: pnpm run test:database-manifest
       - name: Start local Supabase
         run: pnpm run supabase:start
       - name: Rebuild from the migration chain
         run: pnpm run supabase:reset
       - name: Prove migration SQL and history roll back together
         run: pnpm run test:migration-atomicity
+      - name: Rehearse the production baseline reconciliation
+        run: pnpm run test:baseline-reconciliation
       - name: Test migrations and RLS
         run: pnpm run test:database
       - name: Test RPC retries and concurrency

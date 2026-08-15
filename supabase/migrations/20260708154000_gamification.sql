@@ -1,3 +1,43 @@
+set local lock_timeout = '5s';
+set local statement_timeout = '5min';
+set local idle_in_transaction_session_timeout = '5min';
+
+alter default privileges for role postgres in schema public
+  revoke all privileges on tables from public, anon, authenticated, service_role;
+alter default privileges for role postgres in schema public
+  revoke all privileges on sequences from public, anon, authenticated, service_role;
+alter default privileges for role postgres in schema public
+  revoke all privileges on functions from public, anon, authenticated, service_role;
+
+-- Keep the legacy gamification reconciliation on the same write-exclusive,
+-- reader-compatible boundary as migration 1. This blocks application writers
+-- and concurrent DDL without racing Supabase service health reads.
+do $gamification_locks$
+declare
+  relation_identity text;
+begin
+  for relation_identity in
+    select format('%I.%I', namespace.nspname, relation.relname)
+    from pg_catalog.pg_class relation
+    join pg_catalog.pg_namespace namespace
+      on namespace.oid = relation.relnamespace
+    where namespace.nspname = 'public'
+      and relation.relkind in ('r', 'p')
+      and relation.relname in (
+        'badge_definitions',
+        'check_ins',
+        'community_feed_items',
+        'game_point_events',
+        'user_badges',
+        'user_game_stats'
+      )
+    order by relation.relname collate "C"
+  loop
+    execute format('lock table %s in share row exclusive mode', relation_identity);
+  end loop;
+end;
+$gamification_locks$;
+
 alter table public.check_ins
   add column if not exists completed text[] not null default '{}',
   add column if not exists workout_difficulty jsonb not null default '{}'::jsonb,
@@ -660,26 +700,28 @@ begin
 end;
 $$;
 
-revoke execute on function public.ensure_user_game_stats(uuid) from public;
-revoke execute on function public.ensure_user_game_stats(uuid) from anon;
-revoke execute on function public.ensure_user_game_stats(uuid) from authenticated;
-revoke execute on function public.award_badge(uuid, text, date, jsonb) from public;
-revoke execute on function public.award_badge(uuid, text, date, jsonb) from anon;
-revoke execute on function public.award_badge(uuid, text, date, jsonb) from authenticated;
-revoke execute on function public.add_game_points(uuid, text, integer, date, integer, uuid, jsonb, text) from public;
-revoke execute on function public.add_game_points(uuid, text, integer, date, integer, uuid, jsonb, text) from anon;
-revoke execute on function public.add_game_points(uuid, text, integer, date, integer, uuid, jsonb, text) from authenticated;
-revoke execute on function public.process_check_in_game_rewards() from public;
-revoke execute on function public.process_check_in_game_rewards() from anon;
-revoke execute on function public.process_check_in_game_rewards() from authenticated;
-revoke execute on function public.record_app_visit() from public;
-revoke execute on function public.record_app_visit() from anon;
+revoke execute on function public.ensure_user_game_stats(uuid)
+  from public, anon, authenticated, service_role;
+revoke execute on function public.award_badge(uuid, text, date, jsonb)
+  from public, anon, authenticated, service_role;
+revoke execute on function public.add_game_points(uuid, text, integer, date, integer, uuid, jsonb, text)
+  from public, anon, authenticated, service_role;
+revoke execute on function public.workout_difficulty_points(text)
+  from public, anon, authenticated, service_role;
+revoke execute on function public.full_streak_bonus_points(integer)
+  from public, anon, authenticated, service_role;
+revoke execute on function public.process_check_in_game_rewards()
+  from public, anon, authenticated, service_role;
+revoke execute on function public.create_community_feed_item()
+  from public, anon, authenticated, service_role;
+revoke execute on function public.record_app_visit()
+  from public, anon, authenticated, service_role;
 grant execute on function public.record_app_visit() to authenticated;
-revoke execute on function public.get_global_leaderboard(text) from public;
-revoke execute on function public.get_global_leaderboard(text) from anon;
+revoke execute on function public.get_global_leaderboard(text)
+  from public, anon, authenticated, service_role;
 grant execute on function public.get_global_leaderboard(text) to authenticated;
-revoke execute on function public.get_crew_leaderboard(uuid, text) from public;
-revoke execute on function public.get_crew_leaderboard(uuid, text) from anon;
+revoke execute on function public.get_crew_leaderboard(uuid, text)
+  from public, anon, authenticated, service_role;
 grant execute on function public.get_crew_leaderboard(uuid, text) to authenticated;
 
 insert into public.community_feed_items (
@@ -748,17 +790,55 @@ create policy "Users can read own check ins"
     and public.has_active_entitlement('membership_active')
   );
 
-revoke all on public.badge_definitions from anon;
-revoke all on public.badge_definitions from authenticated;
-revoke all on public.user_badges from anon;
-revoke all on public.user_badges from authenticated;
-revoke all on public.user_game_stats from anon;
-revoke all on public.user_game_stats from authenticated;
-revoke all on public.game_point_events from anon;
-revoke all on public.game_point_events from authenticated;
+do $gamification_table_acl$
+declare
+  relation_value record;
+  column_list text;
+begin
+  for relation_value in
+    select
+      relation.oid,
+      format('%I.%I', namespace.nspname, relation.relname) as identity
+    from pg_catalog.pg_class relation
+    join pg_catalog.pg_namespace namespace
+      on namespace.oid = relation.relnamespace
+    where namespace.nspname = 'public'
+      and relation.relkind in ('r', 'p')
+      and relation.relname in (
+        'badge_definitions',
+        'check_ins',
+        'community_feed_items',
+        'game_point_events',
+        'user_badges',
+        'user_game_stats'
+      )
+    order by relation.relname collate "C"
+  loop
+    execute format(
+      'revoke all privileges on table %s from public, anon, authenticated, service_role',
+      relation_value.identity
+    );
 
+    select string_agg(format('%I', attribute.attname), ', ' order by attribute.attnum)
+      into column_list
+    from pg_catalog.pg_attribute attribute
+    where attribute.attrelid = relation_value.oid
+      and attribute.attnum > 0
+      and not attribute.attisdropped;
+
+    execute format(
+      'revoke all privileges (%s) on table %s from public, anon, authenticated, service_role',
+      column_list,
+      relation_value.identity
+    );
+  end loop;
+end;
+$gamification_table_acl$;
+
+grant insert on public.check_ins to authenticated;
 grant select (id, user_id, challenge_day, status, completed_count, points_awarded, created_at)
   on public.check_ins to authenticated;
+grant insert on public.community_feed_items to authenticated;
 grant select (id, display_name, challenge_day, status, completed_count, points_awarded, created_at)
   on public.community_feed_items to authenticated;
 grant select on public.badge_definitions to authenticated;

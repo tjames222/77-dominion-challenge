@@ -152,6 +152,18 @@ if [[ "$seed_database" == "true" ]]; then
     "$repository_root/supabase/seed.sql"
 fi
 
+# The staging reset owns only migration execution. CLI 2.109 restarts the
+# project from that staged directory, which has no repository Functions tree,
+# and can therefore leave the Edge Runtime stopped or mounted from the wrong
+# host path. Preserve the freshly migrated database volume, then restore the
+# complete stack from the real repository before claiming a full local reset.
+"$supabase_cli" stop --workdir "$staging_root"
+start_arguments=(--workdir "$repository_root")
+if [[ "${CI:-}" == "true" ]]; then
+  start_arguments=(--exclude inbucket "${start_arguments[@]}")
+fi
+"$supabase_cli" start "${start_arguments[@]}"
+
 runtime_check_arguments=()
 if [[ "$database_only_runtime_check" == "true" ]]; then
   runtime_check_arguments+=(--database-only)
