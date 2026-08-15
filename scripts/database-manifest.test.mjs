@@ -170,6 +170,13 @@ test('rehearsal cleanup is safe when Bash 3.2 sees no created databases', () => 
   );
   assert.match(rehearsal, /"\$\{created_databases\[@\]-\}"/u);
   assert.match(rehearsal, /\[\[ -n "\$database_name" \]\] \|\| continue/u);
+  assert.match(rehearsal, /if \[\[ -n "\$migration_pid" \]\]; then/u);
+  assert.match(rehearsal, /if \[\[ "\$writer_fd_open" == "true" \]\]; then/u);
+  assert.ok(
+    rehearsal.indexOf('if [[ -n "$migration_pid" ]]')
+      < rehearsal.indexOf('if [[ "$writer_fd_open" == "true" ]]'),
+    'cleanup must stop the migration before closing the writer controller',
+  );
 });
 
 test('rehearsal accepts only this repository local Supabase container', () => {
@@ -294,6 +301,27 @@ test('frozen checkpoints contain the exact legacy Storage policy and inventory s
           ['SELECT'],
           `${manifestName}:${relationName}/${roleName} privileges`,
         );
+        const directSelect = records.get(
+          `direct-acl/platform-relation-acl/storage.${relationName}/supabase_storage_admin/${roleName}/SELECT`,
+        );
+        assert.equal(
+          directSelect?.definition.grantable,
+          false,
+          `${manifestName}:${relationName}/${roleName} direct SELECT grantability`,
+        );
+      }
+      const vectorDirectAcls = [...records.values()].filter((record) =>
+        record.kind === 'direct-acl'
+        && (
+          record.identity === `storage.${relationName}`
+          || record.identity.startsWith(`storage.${relationName}.`)
+        ));
+      for (const directAcl of vectorDirectAcls) {
+        assert.notEqual(
+          directAcl.definition.grantee,
+          'postgres',
+          `${manifestName}:${directAcl.identity} must not grant directly to postgres`,
+        );
       }
     }
 
@@ -347,7 +375,84 @@ test('rehearsal and migration gate every pinned Storage inventory relation', () 
   assert.doesNotMatch(rehearsal, /Users can read own profile photo objects/u);
   assert.match(manifestSql, /procedure_value\.proname in \('filename', 'foldername'\)/u);
   assert.match(rehearsal, /changed-storage-policy-helper-function \\/u);
-  assert.match(rehearsal, /changed-vector-lock-privilege \\/u);
+  const vectorPrivilegeFixtures = [
+    {
+      caseName: 'vector_lock_privilege',
+      fileName: 'changed-vector-lock-privilege',
+      relationName: 'buckets_vectors',
+      statement: 'grant insert on storage.buckets_vectors to postgres;',
+    },
+    {
+      caseName: 'vector_column_lock_privilege',
+      fileName: 'changed-vector-column-lock-privilege',
+      relationName: 'vector_indexes',
+      statement: 'grant insert (id) on storage.vector_indexes to postgres;',
+    },
+    {
+      caseName: 'vector_table_select_grant_option',
+      fileName: 'changed-vector-table-select-grant-option',
+      relationName: 'vector_indexes',
+      statement: 'grant select on table storage.vector_indexes to postgres with grant option;',
+    },
+    {
+      caseName: 'vector_column_select_grant_option',
+      fileName: 'changed-vector-column-select-grant-option',
+      relationName: 'buckets_vectors',
+      statement: 'grant select (id) on table storage.buckets_vectors to postgres with grant option;',
+    },
+  ];
+  const driftList = rehearsal.slice(
+    rehearsal.indexOf('for drift_case in'),
+    rehearsal.indexOf('; do', rehearsal.indexOf('for drift_case in')),
+  );
+  for (const fixture of vectorPrivilegeFixtures) {
+    const directInvocation = [
+      `expect_failure_without_change ${fixture.caseName} \\`,
+      `  "$fixture_directory/source-drift/${fixture.fileName}.sql"`,
+    ].join('\n');
+    assert.ok(
+      rehearsal.includes(directInvocation),
+      `missing direct failure fixture ${fixture.fileName}`,
+    );
+    assert.ok(
+      driftList.includes(fixture.fileName),
+      `missing manifest drift fixture ${fixture.fileName}`,
+    );
+    const fixtureSql = readFileSync(
+      new URL(
+        `../supabase/tests/reconciliation/source-drift/${fixture.fileName}.sql`,
+        import.meta.url,
+      ),
+      'utf8',
+    ).replace(/\s+/gu, ' ').trim();
+    assert.equal(fixtureSql, fixture.statement);
+    assert.match(fixtureSql, new RegExp(`storage\\.${fixture.relationName}`, 'u'));
+  }
+  assert.match(
+    rehearsal,
+    /draining_migration_backend_pid[\s\S]*activity\.backend_type = 'client backend'[\s\S]*not lock\.granted[\s\S]*lock\.mode = 'ShareRowExclusiveLock'/u,
+  );
+  assert.match(rehearsal, /mkfifo "\$draining_writer_fifo"/u);
+  assert.match(rehearsal, /activity\.state = 'idle in transaction'/u);
+  assert.match(rehearsal, /activity\.pid <> \$\{draining_writer_backend_pid\}/u);
+  assert.ok(
+    rehearsal.indexOf('[[ "$draining_migration_backend_pid" =~ ^[0-9]+$ ]]')
+      < rehearsal.indexOf("  'commit;' "),
+    'the controller must not release the writer before observing migration lock wait',
+  );
+  assert.doesNotMatch(rehearsal, /pg_sleep\(2\)/u);
+  assert.match(rehearsal, /--agent no/u);
+  assert.match(rehearsal, /At statement: 5/u);
+  assert.match(rehearsal, /--set VERBOSITY=verbose/u);
+  assert.match(rehearsal, /P0001: Baseline refused:/u);
+  assert.match(
+    rehearsal,
+    /purchase_rows_fingerprint[\s\S]*draining_actual_purchase_fingerprint[\s\S]*draining_expected_purchase_fingerprint/u,
+  );
+  assert.match(
+    rehearsal,
+    /draining\.before\.fingerprint\.jsonl[\s\S]*draining\.actual\.fingerprint\.jsonl/u,
+  );
   assert.match(
     rehearsal,
     /changed-storage-policy-helper-function-acl \\/u,

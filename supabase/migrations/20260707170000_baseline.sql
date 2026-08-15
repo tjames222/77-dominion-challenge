@@ -1,26 +1,18 @@
-set local transaction isolation level serializable;
+set local transaction isolation level read committed;
 set local lock_timeout = '5s';
 set local statement_timeout = '5min';
 set local idle_in_transaction_session_timeout = '5min';
 
--- Supabase grants broad defaults to its API roles. Establish the application
--- baseline from a deny-by-default position before this migration creates or
--- replaces any object. Every runtime capability is granted explicitly below.
-alter default privileges for role postgres in schema public
-  revoke all privileges on tables from public, anon, authenticated, service_role;
-alter default privileges for role postgres in schema public
-  revoke all privileges on sequences from public, anon, authenticated, service_role;
-alter default privileges for role postgres in schema public
-  revoke all privileges on functions from public, anon, authenticated, service_role;
-
--- Production predates workflow-managed migration history. Use one serializable
--- snapshot, freeze writes and concurrent DDL on every application-owned or
--- migration-writable relation, and retain reader locks on the two pinned
+-- Production predates workflow-managed migration history. Freeze writes and
+-- concurrent DDL on every application-owned or migration-writable relation,
+-- then let the following preflight statement take a fresh READ COMMITTED
+-- snapshot after any prior writer drains. Retain reader locks on the two pinned
 -- Storage vector inventory relations that the Supabase postgres role can only
--- SELECT. That preserves a coherent platform preflight without attempting to
--- grant postgres ownership-equivalent privileges on Supabase-owned tables.
--- Alphabetical ordering keeps concurrent rehearsals deterministic. The bounded
--- lock timeout makes a non-quiesced deployment fail atomically; later DDL
+-- SELECT; vector writers must be quiesced and are verified again after the
+-- migration because the platform owner can still write through ACCESS SHARE.
+-- Alphabetical ordering keeps concurrent rehearsals deterministic. A writer
+-- already in flight may drain safely within the five-second lock timeout; a
+-- holder that does not drain makes the migration fail atomically. Later DDL
 -- upgrades its own locks only where required.
 do $baseline_locks$
 declare
@@ -79,13 +71,30 @@ begin
     if is_vector_inventory then
       if relation_owner is distinct from 'supabase_storage_admin'
         or not pg_catalog.has_table_privilege(current_user, relation_oid, 'SELECT')
+        or pg_catalog.has_table_privilege(
+          current_user,
+          relation_oid,
+          'SELECT WITH GRANT OPTION'
+        )
         or pg_catalog.has_table_privilege(current_user, relation_oid, 'INSERT')
         or pg_catalog.has_table_privilege(current_user, relation_oid, 'UPDATE')
         or pg_catalog.has_table_privilege(current_user, relation_oid, 'DELETE')
         or pg_catalog.has_table_privilege(current_user, relation_oid, 'TRUNCATE')
         or pg_catalog.has_table_privilege(current_user, relation_oid, 'REFERENCES')
         or pg_catalog.has_table_privilege(current_user, relation_oid, 'TRIGGER')
-        or pg_catalog.has_table_privilege(current_user, relation_oid, 'MAINTAIN') then
+        or pg_catalog.has_table_privilege(current_user, relation_oid, 'MAINTAIN')
+        or pg_catalog.has_any_column_privilege(
+          current_user,
+          relation_oid,
+          'SELECT WITH GRANT OPTION'
+        )
+        or pg_catalog.has_any_column_privilege(current_user, relation_oid, 'INSERT')
+        or pg_catalog.has_any_column_privilege(current_user, relation_oid, 'UPDATE')
+        or pg_catalog.has_any_column_privilege(
+          current_user,
+          relation_oid,
+          'REFERENCES'
+        ) then
         raise exception using
           errcode = 'P0001',
           message = pg_catalog.format(
@@ -196,6 +205,17 @@ begin
   end loop;
 end;
 $baseline_data_preflight$;
+
+-- Supabase grants broad defaults to its API roles. Establish the application
+-- baseline from a deny-by-default position only after the relation lock pass and
+-- destructive-data preflight succeed. Every runtime capability is granted
+-- explicitly below.
+alter default privileges for role postgres in schema public
+  revoke all privileges on tables from public, anon, authenticated, service_role;
+alter default privileges for role postgres in schema public
+  revoke all privileges on sequences from public, anon, authenticated, service_role;
+alter default privileges for role postgres in schema public
+  revoke all privileges on functions from public, anon, authenticated, service_role;
 
 create extension if not exists pgcrypto;
 

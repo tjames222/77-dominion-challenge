@@ -466,6 +466,10 @@ test("the production baseline fails closed and normalizes legacy privileges", as
     ),
     "utf8",
   );
+  const rehearsal = await readFile(
+    path.join(repositoryRoot, "scripts", "rehearse-baseline-reconciliation.sh"),
+    "utf8",
+  );
 
   for (const migration of [baseline, gamification, searchPathFix]) {
     assert.match(migration, /set local lock_timeout = '5s';/);
@@ -478,8 +482,9 @@ test("the production baseline fails closed and normalizes legacy privileges", as
 
   assert.match(
     baseline,
-    /set local transaction isolation level serializable;/,
+    /set local transaction isolation level read committed;/,
   );
+  assert.doesNotMatch(baseline, /transaction isolation level serializable/);
 
   for (const migration of [baseline, gamification]) {
     assert.match(migration, /lock table %s in share row exclusive mode/);
@@ -493,9 +498,51 @@ test("the production baseline fails closed and normalizes legacy privileges", as
     baseline,
     /relation_owner is distinct from 'supabase_storage_admin'/,
   );
-  for (
-    const privilege of [
-      "SELECT",
+  assert.match(
+    baseline,
+    /namespace\.nspname = 'storage'\s+and relation\.relname in \('buckets_vectors', 'vector_indexes'\)/,
+  );
+  const vectorGuardStart = baseline.indexOf("if is_vector_inventory then");
+  const vectorGuardEnd = baseline.indexOf("raise exception using", vectorGuardStart);
+  assert.ok(vectorGuardStart !== -1 && vectorGuardEnd > vectorGuardStart);
+  const vectorGuard = baseline
+    .slice(vectorGuardStart, vectorGuardEnd)
+    .replace(/\s+/g, " ")
+    .replace(/\(\s+/g, "(")
+    .replace(/\s+\)/g, ")");
+  const platformGuardStart = rehearsal.indexOf(
+    "if relation_record.owner_name is distinct from 'supabase_storage_admin'",
+  );
+  const platformGuardEnd = rehearsal.indexOf(
+    "raise exception 'unexpected platform vector lock contract",
+    platformGuardStart,
+  );
+  assert.ok(platformGuardStart !== -1 && platformGuardEnd > platformGuardStart);
+  const platformGuard = rehearsal
+    .slice(platformGuardStart, platformGuardEnd)
+    .replace(/\s+/g, " ")
+    .replace(/\(\s+/g, "(")
+    .replace(/\s+\)/g, ")");
+
+  assert.match(
+    vectorGuard,
+    /relation_owner is distinct from 'supabase_storage_admin' or not pg_catalog\.has_table_privilege\(current_user, relation_oid, 'SELECT'\)/,
+  );
+  assert.match(
+    platformGuard,
+    /relation_record\.owner_name is distinct from 'supabase_storage_admin' or not pg_catalog\.has_table_privilege\(current_user, relation_record\.oid, 'SELECT'\)/,
+  );
+  for (const [guard, relationOid] of [
+    [vectorGuard, "relation_oid"],
+    [platformGuard, "relation_record\\.oid"],
+  ]) {
+    assert.match(
+      guard,
+      new RegExp(
+        `or pg_catalog\\.has_table_privilege\\(current_user, ${relationOid}, 'SELECT WITH GRANT OPTION'\\)`,
+      ),
+    );
+    for (const privilege of [
       "INSERT",
       "UPDATE",
       "DELETE",
@@ -503,19 +550,41 @@ test("the production baseline fails closed and normalizes legacy privileges", as
       "REFERENCES",
       "TRIGGER",
       "MAINTAIN",
-    ]
-  ) {
+    ]) {
+      assert.match(
+        guard,
+        new RegExp(
+          `or pg_catalog\\.has_table_privilege\\(current_user, ${relationOid}, '${privilege}'\\)`,
+        ),
+      );
+    }
     assert.match(
-      baseline,
+      guard,
       new RegExp(
-        `has_table_privilege\\(current_user, relation_oid, '${privilege}'\\)`,
+        `or pg_catalog\\.has_any_column_privilege\\(current_user, ${relationOid}, 'SELECT WITH GRANT OPTION'\\)`,
       ),
     );
+    for (const privilege of ["INSERT", "UPDATE", "REFERENCES"]) {
+      assert.match(
+        guard,
+        new RegExp(
+          `or pg_catalog\\.has_any_column_privilege\\(current_user, ${relationOid}, '${privilege}'\\)`,
+        ),
+      );
+    }
   }
   assert.match(baseline, /locked_vector_relation_count <> 2/);
   assert.match(
     baseline,
     /order by namespace\.nspname collate "C", relation\.relname collate "C"[\s\S]*if is_vector_inventory then[\s\S]*access share mode[\s\S]*else[\s\S]*share row exclusive mode/,
+  );
+  assert.ok(
+    baseline.indexOf('$baseline_locks$;')
+      < baseline.indexOf('do $baseline_data_preflight$'),
+  );
+  assert.ok(
+    baseline.indexOf('$baseline_data_preflight$;')
+      < baseline.indexOf('alter default privileges for role postgres'),
   );
   assert.match(baseline, /select exists \(select 1 from public\.purchases\)/);
   assert.match(

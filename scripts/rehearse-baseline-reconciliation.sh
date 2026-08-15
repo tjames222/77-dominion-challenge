@@ -106,6 +106,8 @@ database_prefix="baseline_reconciliation_${RANDOM}_$$"
 created_databases=()
 lock_pid=""
 reader_release_pid=""
+migration_pid=""
+writer_fd_open=false
 identity_verified=false
 
 cleanup_helper_roles() {
@@ -170,6 +172,14 @@ cleanup() {
       kill "$reader_release_pid" >/dev/null 2>&1 || true
       wait "$reader_release_pid" >/dev/null 2>&1 || true
     fi
+    if [[ -n "$migration_pid" ]]; then
+      kill "$migration_pid" >/dev/null 2>&1 || true
+      wait "$migration_pid" >/dev/null 2>&1 || true
+    fi
+    if [[ "$writer_fd_open" == "true" ]]; then
+      exec 9>&-
+      writer_fd_open=false
+    fi
     if [[ -n "$lock_pid" ]]; then
       kill "$lock_pid" >/dev/null 2>&1 || true
       wait "$lock_pid" >/dev/null 2>&1 || true
@@ -226,7 +236,7 @@ platform_vector_lock_contract="$($docker_cli exec "$database_container" \
     --quiet --tuples-only --no-align --set ON_ERROR_STOP=1 \
     --command "
       begin;
-      set local transaction isolation level serializable;
+      set local transaction isolation level read committed;
       do \$platform_vector_lock_contract\$
       declare
         relation_record record;
@@ -246,13 +256,18 @@ platform_vector_lock_contract="$($docker_cli exec "$database_container" \
         loop
           if relation_record.owner_name is distinct from 'supabase_storage_admin'
             or not pg_catalog.has_table_privilege(current_user, relation_record.oid, 'SELECT')
+            or pg_catalog.has_table_privilege(current_user, relation_record.oid, 'SELECT WITH GRANT OPTION')
             or pg_catalog.has_table_privilege(current_user, relation_record.oid, 'INSERT')
             or pg_catalog.has_table_privilege(current_user, relation_record.oid, 'UPDATE')
             or pg_catalog.has_table_privilege(current_user, relation_record.oid, 'DELETE')
             or pg_catalog.has_table_privilege(current_user, relation_record.oid, 'TRUNCATE')
             or pg_catalog.has_table_privilege(current_user, relation_record.oid, 'REFERENCES')
             or pg_catalog.has_table_privilege(current_user, relation_record.oid, 'TRIGGER')
-            or pg_catalog.has_table_privilege(current_user, relation_record.oid, 'MAINTAIN') then
+            or pg_catalog.has_table_privilege(current_user, relation_record.oid, 'MAINTAIN')
+            or pg_catalog.has_any_column_privilege(current_user, relation_record.oid, 'SELECT WITH GRANT OPTION')
+            or pg_catalog.has_any_column_privilege(current_user, relation_record.oid, 'INSERT')
+            or pg_catalog.has_any_column_privilege(current_user, relation_record.oid, 'UPDATE')
+            or pg_catalog.has_any_column_privilege(current_user, relation_record.oid, 'REFERENCES') then
             raise exception 'unexpected platform vector lock contract for storage.%', relation_record.relname;
           end if;
           execute pg_catalog.format(
@@ -268,8 +283,8 @@ platform_vector_lock_contract="$($docker_cli exec "$database_container" \
       \$platform_vector_lock_contract\$;
       select current_setting('transaction_isolation');
       rollback;")"
-[[ "$platform_vector_lock_contract" == "serializable" ]] \
-  || fail "the pinned platform vector lock contract did not run in a serializable transaction."
+[[ "$platform_vector_lock_contract" == "read committed" ]] \
+  || fail "the pinned platform vector lock contract did not run in a read-committed transaction."
 
 # These fixed roles are owned solely by this harness. Recover a prior interrupted
 # run only when PostgreSQL can prove they have no remaining dependencies. A
@@ -386,6 +401,33 @@ capture_fingerprint() {
     >/dev/null
 }
 
+purchase_rows_fingerprint() {
+  local database_name="$1"
+  "$docker_cli" exec "$database_container" \
+    psql --username postgres --dbname "$database_name" \
+      --tuples-only --no-align --no-psqlrc --set ON_ERROR_STOP=1 \
+      --command "
+        select
+          count(*)::text || ':' ||
+          encode(
+            digest(
+              convert_to(
+                coalesce(
+                  string_agg(
+                    to_jsonb(purchase_row)::text,
+                    '' order by to_jsonb(purchase_row)::text collate \"C\"
+                  ),
+                  ''
+                ),
+                'UTF8'
+              ),
+              'sha256'
+            ),
+            'hex'
+          )
+        from public.purchases purchase_row;"
+}
+
 assert_checkpoint_storage_policies() {
   local database_name="$1"
   local policy_set_matches
@@ -478,6 +520,8 @@ apply_stage() {
   "$supabase_cli" migration up \
     --db-url "postgresql://postgres:postgres@127.0.0.1:54322/${database_name}" \
     --include-all \
+    --agent no \
+    --output-format text \
     --workdir "$stage_root"
 }
 
@@ -544,16 +588,22 @@ expect_failure_without_change() {
   local after_manifest="$rehearsal_root/${case_name}.after.manifest.jsonl"
   local after_fingerprint="$rehearsal_root/${case_name}.after.fingerprint.jsonl"
   local failure_log="$rehearsal_root/${case_name}.failure.log"
+  local before_purchase_fingerprint
+  local after_purchase_fingerprint
 
   new_source_database "$database_name"
   if [[ "$case_name" == "vector_bucket" \
     || "$case_name" == "vector_index" \
-    || "$case_name" == "vector_lock_privilege" ]]; then
+    || "$case_name" == "vector_lock_privilege" \
+    || "$case_name" == "vector_column_lock_privilege" \
+    || "$case_name" == "vector_table_select_grant_option" \
+    || "$case_name" == "vector_column_select_grant_option" ]]; then
     mutation_user="supabase_admin"
   fi
   execute_sql "$database_name" "$mutation_file" "$mutation_user"
   capture_manifest "$database_name" "$before_manifest"
   capture_fingerprint "$database_name" "$before_fingerprint"
+  before_purchase_fingerprint="$(purchase_rows_fingerprint "$database_name")"
   make_stage "$failing_stage_root" 1
 
   if apply_stage "$database_name" "$failing_stage_root" >"$failure_log" 2>&1; then
@@ -561,8 +611,11 @@ expect_failure_without_change() {
   fi
   capture_manifest "$database_name" "$after_manifest"
   capture_fingerprint "$database_name" "$after_fingerprint"
+  after_purchase_fingerprint="$(purchase_rows_fingerprint "$database_name")"
   node "$script_directory/compare-database-manifests.mjs" "$before_manifest" "$after_manifest"
   node "$script_directory/compare-database-manifests.mjs" "$before_fingerprint" "$after_fingerprint"
+  [[ "$after_purchase_fingerprint" == "$before_purchase_fingerprint" ]] \
+    || fail "$case_name changed purchase rows despite failure."
   [[ -z "$(history_versions "$database_name")" ]] \
     || fail "$case_name wrote migration history despite failure."
 }
@@ -580,6 +633,12 @@ expect_failure_without_change vector_bucket "$fixture_directory/source-drift/vec
 expect_failure_without_change vector_index "$fixture_directory/source-drift/vector-index.sql"
 expect_failure_without_change vector_lock_privilege \
   "$fixture_directory/source-drift/changed-vector-lock-privilege.sql"
+expect_failure_without_change vector_column_lock_privilege \
+  "$fixture_directory/source-drift/changed-vector-column-lock-privilege.sql"
+expect_failure_without_change vector_table_select_grant_option \
+  "$fixture_directory/source-drift/changed-vector-table-select-grant-option.sql"
+expect_failure_without_change vector_column_select_grant_option \
+  "$fixture_directory/source-drift/changed-vector-column-select-grant-option.sql"
 expect_failure_without_change iceberg_namespace "$fixture_directory/source-drift/iceberg-namespace.sql"
 expect_failure_without_change iceberg_table "$fixture_directory/source-drift/iceberg-table.sql"
 
@@ -602,6 +661,9 @@ for drift_case in \
   changed-storage-policy-helper-function-acl \
   changed-storage-column-privilege \
   changed-vector-lock-privilege \
+  changed-vector-column-lock-privilege \
+  changed-vector-table-select-grant-option \
+  changed-vector-column-select-grant-option \
   changed-storage-trigger-function \
   changed-storage-trigger-function-acl \
   changed-event-trigger \
@@ -622,7 +684,10 @@ for drift_case in \
   mutation_user="postgres"
   if [[ "$drift_case" == "vector-bucket" \
     || "$drift_case" == "vector-index" \
-    || "$drift_case" == "changed-vector-lock-privilege" ]]; then
+    || "$drift_case" == "changed-vector-lock-privilege" \
+    || "$drift_case" == "changed-vector-column-lock-privilege" \
+    || "$drift_case" == "changed-vector-table-select-grant-option" \
+    || "$drift_case" == "changed-vector-column-select-grant-option" ]]; then
     mutation_user="supabase_admin"
   fi
   execute_sql \
@@ -666,8 +731,9 @@ node "$script_directory/compare-database-manifests.mjs" \
 [[ -z "$(history_versions "$forced_database")" ]] \
   || fail "forced exception wrote migration history."
 
-# The bounded lock timeout in migration 1 must stop an ordinary concurrent
-# writer instead of waiting indefinitely or applying around it.
+# An ordinary writer may drain safely within migration 1's bounded lock timeout.
+# A writer that remains active beyond that window must make the migration fail
+# atomically instead of waiting indefinitely or applying around it.
 lock_database="${database_prefix}_lock_contention"
 new_source_database "$lock_database"
 capture_manifest "$lock_database" "$rehearsal_root/lock.before.manifest.jsonl"
@@ -701,6 +767,167 @@ node "$script_directory/compare-database-manifests.mjs" \
   "$rehearsal_root/lock.before.fingerprint.jsonl" "$rehearsal_root/lock.after.fingerprint.jsonl"
 [[ -z "$(history_versions "$lock_database")" ]] \
   || fail "lock contention wrote migration history."
+
+# READ COMMITTED must take the destructive preflight snapshot only after a
+# writer that delayed the lock pass commits. Prove the exact migration first
+# waits for that writer, then rejects its newly committed purchase row without
+# changing any migration-owned schema, data, or history.
+draining_expected_database="${database_prefix}_draining_writer_expected"
+new_source_database "$draining_expected_database"
+execute_sql \
+  "$draining_expected_database" \
+  "$fixture_directory/source-drift/purchase-row.sql"
+draining_expected_purchase_fingerprint="$(
+  purchase_rows_fingerprint "$draining_expected_database"
+)"
+[[ "$draining_expected_purchase_fingerprint" =~ ^1:[0-9a-f]{64}$ ]] \
+  || fail "the draining-writer fixture does not contain exactly one purchase row."
+
+draining_database="${database_prefix}_draining_writer"
+new_source_database "$draining_database"
+capture_manifest \
+  "$draining_database" \
+  "$rehearsal_root/draining.before.manifest.jsonl"
+capture_fingerprint \
+  "$draining_database" \
+  "$rehearsal_root/draining.before.fingerprint.jsonl"
+draining_stage="$rehearsal_root/draining-stage"
+make_stage "$draining_stage" 1
+draining_writer_fifo="$rehearsal_root/draining-writer.fifo"
+mkfifo "$draining_writer_fifo"
+exec 9<>"$draining_writer_fifo"
+writer_fd_open=true
+"$docker_cli" exec -i "$database_container" \
+  psql --username postgres --dbname "$draining_database" --no-psqlrc \
+    --set ON_ERROR_STOP=1 \
+    <"$draining_writer_fifo" \
+    9>&- \
+    >"$rehearsal_root/draining-writer.log" 2>&1 &
+lock_pid=$!
+{
+  printf '%s\n' \
+    "set application_name = 'baseline_reconciliation_draining_writer';" \
+    'begin;'
+  sed -n '1,$p' "$fixture_directory/source-drift/purchase-row.sql"
+} >&9
+draining_writer_backend_pid=""
+for (( draining_writer_attempt = 0; draining_writer_attempt < 50; draining_writer_attempt += 1 )); do
+  draining_writer_backend_pid="$($docker_cli exec "$database_container" \
+    psql --username postgres --dbname "$draining_database" \
+      --tuples-only --no-align --no-psqlrc \
+      --command "
+        select distinct activity.pid
+        from pg_stat_activity activity
+        join pg_locks lock on lock.pid = activity.pid
+        where activity.datname = current_database()
+          and activity.application_name = 'baseline_reconciliation_draining_writer'
+          and activity.state = 'idle in transaction'
+          and lock.relation = 'public.purchases'::regclass
+          and lock.granted
+          and lock.mode = 'RowExclusiveLock'")"
+  [[ "$draining_writer_backend_pid" =~ ^[0-9]+$ ]] && break
+  sleep 0.1
+done
+[[ "$draining_writer_backend_pid" =~ ^[0-9]+$ ]] \
+  || fail "could not establish the draining-writer fixture."
+
+apply_stage "$draining_database" "$draining_stage" \
+  >"$rehearsal_root/draining.failure.log" 2>&1 &
+migration_pid=$!
+draining_migration_backend_pid=""
+for (( draining_wait_attempt = 0; draining_wait_attempt < 50; draining_wait_attempt += 1 )); do
+  draining_migration_backend_pid="$($docker_cli exec "$database_container" \
+    psql --username postgres --dbname "$draining_database" \
+      --tuples-only --no-align --no-psqlrc \
+      --command "
+        select distinct activity.pid
+        from pg_stat_activity activity
+        join pg_locks lock on lock.pid = activity.pid
+        where activity.datname = current_database()
+          and activity.backend_type = 'client backend'
+          and lock.relation = 'public.purchases'::regclass
+          and not lock.granted
+          and lock.mode = 'ShareRowExclusiveLock'
+          and activity.pid <> ${draining_writer_backend_pid}")"
+  [[ "$draining_migration_backend_pid" =~ ^[0-9]+$ ]] && break
+  sleep 0.1
+done
+[[ "$draining_migration_backend_pid" =~ ^[0-9]+$ ]] \
+  || fail "migration 1 did not wait behind the draining writer."
+
+# Release the writer only after PostgreSQL proves the exact migration is
+# waiting for its relation lock. The writer then commits before the migration
+# takes its fresh READ COMMITTED preflight snapshot.
+printf '%s\n' \
+  'commit;' \
+  '\quit' \
+  >&9
+exec 9>&-
+writer_fd_open=false
+if ! wait "$lock_pid"; then
+  lock_pid=""
+  cat "$rehearsal_root/draining-writer.log" >&2
+  fail "the draining writer did not commit successfully."
+fi
+lock_pid=""
+if wait "$migration_pid"; then
+  migration_pid=""
+  fail "migration 1 ignored the purchase committed by its draining writer."
+fi
+migration_pid=""
+if ! grep -Fq 'effect/sql/SqlError: Failed to execute statement' \
+    "$rehearsal_root/draining.failure.log" \
+  || ! grep -Fq 'At statement: 5' \
+    "$rehearsal_root/draining.failure.log" \
+  || grep -Fqi 'lock timeout' \
+    "$rehearsal_root/draining.failure.log"; then
+  cat "$rehearsal_root/draining.failure.log" >&2
+  fail "migration 1 did not reject the draining writer in its purchase preflight."
+fi
+
+# The pinned CLI identifies the failed statement but omits PostgreSQL's error
+# fields. Re-run the exact same migration file through psql's transaction
+# wrapper on the preserved database and require the server's verbose SQLSTATE.
+draining_migration_file="$(
+  find "$draining_stage/supabase/migrations" \
+    -maxdepth 1 -type f -name '20260707170000_*.sql' -print
+)"
+if "$docker_cli" exec -i "$database_container" \
+    psql --username postgres --dbname "$draining_database" --no-psqlrc \
+      --set ON_ERROR_STOP=1 \
+      --set VERBOSITY=verbose \
+      --single-transaction \
+      --file - \
+      <"$draining_migration_file" \
+      >"$rehearsal_root/draining-sqlstate.log" 2>&1; then
+  fail "the exact migration did not reproduce its purchase refusal through psql."
+fi
+if ! grep -Eq \
+    'ERROR:[[:space:]]+P0001: Baseline refused: public\.purchases contains rows\.' \
+    "$rehearsal_root/draining-sqlstate.log"; then
+  cat "$rehearsal_root/draining-sqlstate.log" >&2
+  fail "the exact migration did not return SQLSTATE P0001 for the committed purchase."
+fi
+
+capture_manifest \
+  "$draining_database" \
+  "$rehearsal_root/draining.actual.manifest.jsonl"
+capture_fingerprint \
+  "$draining_database" \
+  "$rehearsal_root/draining.actual.fingerprint.jsonl"
+draining_actual_purchase_fingerprint="$(
+  purchase_rows_fingerprint "$draining_database"
+)"
+node "$script_directory/compare-database-manifests.mjs" \
+  "$rehearsal_root/draining.before.manifest.jsonl" \
+  "$rehearsal_root/draining.actual.manifest.jsonl"
+node "$script_directory/compare-database-manifests.mjs" \
+  "$rehearsal_root/draining.before.fingerprint.jsonl" \
+  "$rehearsal_root/draining.actual.fingerprint.jsonl"
+[[ "$draining_actual_purchase_fingerprint" == "$draining_expected_purchase_fingerprint" ]] \
+  || fail "draining-writer refusal did not preserve the exact committed purchase row."
+[[ -z "$(history_versions "$draining_database")" ]] \
+  || fail "draining-writer refusal wrote migration history."
 
 # Supabase services legitimately keep short read-only health/schema traffic
 # online. Prove that migration 1 acquires its initial write freeze while an

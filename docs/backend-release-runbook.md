@@ -431,17 +431,23 @@ separately reviewed change and the exact restored-snapshot rehearsal passes:
    pnpm run test:baseline-reconciliation
    ```
 
-   Migration 1 runs in one serializable transaction. It takes
+   Migration 1 runs in one `READ COMMITTED` transaction. It takes
    `SHARE ROW EXCLUSIVE` on application-owned and migration-writable relations,
-   blocking writes and concurrent DDL while allowing ordinary readers. On the
+   blocking writes and concurrent DDL while allowing ordinary readers. The
+   destructive preflight is the next statement, so it receives a fresh snapshot
+   after any writer that held up the lock pass commits; the acquired locks then
+   prevent a later application write from racing that preflight. An in-flight
+   writer may drain safely within the five-second lock timeout. A holder that
+   does not drain within that window makes the migration fail atomically. On the
    pinned Storage image, `storage.buckets_vectors` and
    `storage.vector_indexes` are owned by `supabase_storage_admin` and expose only
    `SELECT` to the migration role. The migration verifies that exact contract
    and retains `ACCESS SHARE` on those two read-only inventory relations for the
    full transaction instead of escalating the role's platform privileges. Keep
-   all application and vector API writers quiesced for the maintenance window;
-   any platform DML concurrent with this serializable snapshot is ordered after
-   the migration and must be caught by the required post-migration inventory.
+   all application and vector API writers quiesced for the maintenance window.
+   `ACCESS SHARE` does not block the platform owner from vector DML, so the
+   required post-migration inventory must catch any vector write that races the
+   migration despite that operational gate.
 
    `test:baseline-reconciliation` refuses to run while either frozen manifest
    contains the regeneration sentinel. It constructs isolated local databases
