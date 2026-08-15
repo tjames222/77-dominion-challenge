@@ -85,6 +85,7 @@ source "$1"
 fault_phase="$2"
 fail_boundary="$3"
 fake_root="$4"
+identity_mode="$5"
 
 runtime_container="fou802-profile-photo-cleanup-rehearsal"
 cron_job_name="fou802-profile-photo-cleanup-local"
@@ -96,6 +97,10 @@ fixture_path_2="00000000-0000-4000-8000-000000000002/avatar-1700000000001-112345
 fixture_path_3="00000000-0000-4000-8000-000000000003/avatar-1700000000002-2123456789abcdef0123456789abcdef.webp"
 fixture_path_4="00000000-0000-4000-8000-000000000004/avatar-1700000000003-3123456789abcdef0123456789abcdef.webp"
 fixture_object_id="10000000-0000-4000-8000-000000000001"
+replacement_object_id="20000000-0000-4000-8000-000000000002"
+fake_recorded_object_id="$fixture_object_id"
+fake_registry_object_id="$fixture_object_id"
+current_object_id="$fixture_object_id"
 curl_config="$fake_root/curl.conf"
 temporary_root="/tmp/fou802-fake-artifacts"
 runtime_mount_root="/tmp/fou802-fake-runtime-mount"
@@ -130,6 +135,24 @@ fixture_paths=""
 first_cleanup_path="$fixture_path"
 storage_delete_calls=0
 logged_keys="|"
+
+case "$identity_mode" in
+  matched) ;;
+  replacement)
+    current_object_id="$replacement_object_id"
+    ;;
+  null_recovery)
+    fake_recorded_object_id=""
+    ;;
+  null_replacement)
+    fake_recorded_object_id=""
+    current_object_id="$replacement_object_id"
+    ;;
+  *)
+    printf 'unknown:identity-mode:%s\n' "$identity_mode" >&9
+    exit 96
+    ;;
+esac
 
 case "$fault_phase" in
   tracking_ready)
@@ -359,10 +382,13 @@ db_query() {
     *"select coalesce(object_row.id::text"*)
       log_once storage_recover "storage:recover exact object id for bucket=profile-photos path=$fixture_path"
       if [[ "$fixture_object_residue" -gt 0 ]]; then
-        printf '%s\n' "$fixture_object_id"
+        printf '%s\n' "$current_object_id"
       else
         printf '%s\n' ""
       fi
+      ;;
+    *"select coalesce(fixture.actual_object_id::text"*)
+      printf '%s\n' "$fake_recorded_object_id"
       ;;
     *"select coalesce(public.verify_profile_photo_cleanup_service"*)
       log_once storage_verify "storage:verify exact bucket path and object identity"
@@ -390,6 +416,18 @@ db_exec() {
   fi
   case "$sql" in
     *"claim_profile_photo_cleanup_service(100)"*)
+      if [[ "$identity_mode" == "replacement" \
+        || "$identity_mode" == "null_replacement" ]]; then
+        log_once storage_identity_mismatch \
+          "storage:identity mismatch recorded=$fake_recorded_object_id registry=$fake_registry_object_id occupant=$current_object_id"
+        return 71
+      fi
+      if [[ "$identity_mode" == "null_recovery" ]]; then
+        [[ "$fake_registry_object_id" == "$current_object_id" ]] || return 71
+        fake_recorded_object_id="$fake_registry_object_id"
+        log_once storage_identity_recovery \
+          "storage:record null object identity once from registry as $fake_recorded_object_id"
+      fi
       log_once storage_cancel "storage:cancel fixture erasure ledger"
       log_once storage_avatar "storage:clear canonical avatar pointers"
       log_once storage_state "storage:recover exact storage object id and transition registry to cleanup"
@@ -476,7 +514,7 @@ printf 'cleanup:flags failed=%s runtime=%s cron=%s pgnet=%s objects=%s database=
   "$storage_delete_calls" "$expected_delete_count"
 `;
 
-function runFakeCleanup(faultPhase, failStep = "none") {
+function runFakeCleanup(faultPhase, failStep = "none", identityMode = "matched") {
   const fakeRoot = mkdtempSync(path.join(tmpdir(), "fou802-cleanup-test."));
   writeFileSync(path.join(fakeRoot, "curl.conf"), "# fake local curl config\n");
   try {
@@ -490,6 +528,7 @@ function runFakeCleanup(faultPhase, failStep = "none") {
         faultPhase,
         failStep,
         fakeRoot,
+        identityMode,
       ],
       {
         cwd: repositoryRoot,
@@ -717,12 +756,15 @@ test("the rehearsal is pinned, local-only, one-shot, and self-cleaning", async (
     'assert_local_container "$database_container"',
   );
   const resetOffset = source.indexOf('bash "$script_directory/reset-local-database.sh"');
+  const staleCleanupOffset = source.indexOf("\nrun_rehearsal_resource_cleanup\n");
   const lockOffset = source.indexOf('mkdir "$lock_directory"');
   assert.ok(
     gateOffset >= 0
       && endpointGuardOffset > gateOffset
       && firstContainerInspection > endpointGuardOffset
       && lockOffset > endpointGuardOffset
+      && staleCleanupOffset > lockOffset
+      && staleCleanupOffset < resetOffset
       && resetOffset > lockOffset,
   );
   assert.match(source, /unix:\/\/\/\*[\s\S]*\[\[ -S "\$docker_socket_path" \]\]/);
@@ -797,7 +839,10 @@ test("the rehearsal is pinned, local-only, one-shot, and self-cleaning", async (
   assert.match(source, /assert_pg_net_alias_bypasses_proxy/);
   assert.match(source, /grep -Fq -- "\$sensitive_value" "\$stdout_capture"/);
   assert.match(source, /grep -Fq -- "\$sensitive_value" "\$stderr_capture"/);
-  assert.match(source, /for sensitive_value in "\$worker_secret" "\$service_role_key"/);
+  assert.match(
+    source,
+    /for sensitive_value in \\\s*\n\s*"\$worker_secret" "\$service_role_key" "\$pre_reset_service_role_key"/,
+  );
   assert.match(source, /mkdir "\$lock_directory"/);
   assert.ok(lockOffset < resetOffset);
   assert.match(cleanupSource, /docker_command rm --force "\$runtime_container"/);
@@ -845,14 +890,37 @@ test("runtime mounts are shared and stale inventory is recovered before replacem
   );
 
   const curlConfigReady = source.indexOf('} >"$curl_config"');
-  const staleCleanup = source.indexOf("\nrun_rehearsal_resource_cleanup\n");
+  const keyLoadOffsets = [...source.matchAll(/^load_local_service_role_key$/gm)]
+    .map((match) => match.index);
+  const staleCleanupOffset = source.indexOf("\nrun_rehearsal_resource_cleanup\n");
+  const cleanupProofOffset = source.indexOf(
+    '[[ "$cleanup_failed" == "false" ]]',
+    staleCleanupOffset,
+  );
+  const resetOffset = source.indexOf(
+    'bash "$script_directory/reset-local-database.sh"',
+  );
   const cronOwnershipProbe = source.indexOf('cron_installed_value="$(db_query');
   const trackingCreate = source.indexOf(`create unlogged table $secret_table`);
   assert.ok(
     curlConfigReady !== -1
-      && staleCleanup > curlConfigReady
-      && cronOwnershipProbe > staleCleanup
+      && keyLoadOffsets.length === 2
+      && keyLoadOffsets[0] > curlConfigReady
+      && staleCleanupOffset > keyLoadOffsets[0]
+      && cleanupProofOffset > staleCleanupOffset
+      && resetOffset > cleanupProofOffset
+      && keyLoadOffsets[1] > resetOffset
+      && resetOffset > staleCleanupOffset
+      && cronOwnershipProbe > keyLoadOffsets[1]
       && trackingCreate > cronOwnershipProbe,
+  );
+  assert.match(
+    source.slice(keyLoadOffsets[0], staleCleanupOffset),
+    /pre_reset_service_role_key="\$service_role_key"/,
+  );
+  assert.match(
+    source.slice(cleanupProofOffset, resetOffset),
+    /\|\| fail "retained rehearsal resources could not be recovered safely\."/,
   );
   assert.doesNotMatch(source, /drop table if exists \$secret_table/);
   assert.doesNotMatch(source, /drop table if exists \$fixture_table/);
@@ -872,6 +940,84 @@ test("runtime mounts are shared and stale inventory is recovered before replacem
   assert.match(
     cleanupSource,
     /remove_tree_command "\$temporary_root"[\s\S]*remove_tree_command "\$runtime_mount_root"/,
+  );
+});
+
+test("cleanup preserves a recorded Storage UUID and recovers only a null UUID", async () => {
+  const cleanupSource = await readFile(cleanupOrchestratorPath, "utf8");
+  assert.match(
+    cleanupSource,
+    /fixture\.actual_object_id is not null[\s\S]*fixture\.actual_object_id is distinct from object_row\.id[\s\S]*fixture\.actual_object_id is null[\s\S]*registry\.storage_object_id is distinct from object_row\.id[\s\S]*fixture path now belongs to a different Storage object/,
+  );
+  assert.match(
+    cleanupSource,
+    /set actual_object_id = registry\.storage_object_id[\s\S]*object_row\.id = registry\.storage_object_id[\s\S]*where fixture\.actual_object_id is null/,
+  );
+  assert.equal(
+    cleanupSource.match(/set actual_object_id = registry\.storage_object_id/g)?.length,
+    1,
+  );
+  assert.match(
+    cleanupSource,
+    /object_row\.id = fixture\.actual_object_id[\s\S]*recorded_object_id" != "\$exact_object_id/,
+  );
+  assert.match(
+    cleanupSource,
+    /fixture\.actual_object_id = '\$\{exact_object_id\}'::uuid[\s\S]*registry\.storage_object_id = '\$\{exact_object_id\}'::uuid/,
+  );
+
+  const replacement = runFakeCleanup(
+    "first_upload_stored",
+    "none",
+    "replacement",
+  );
+  assert.equal(replacement.status, 0, replacement.stderr);
+  assert.doesNotMatch(replacement.stdout, /unknown:(?:query|exec|docker)/);
+  assert.match(
+    replacement.stdout,
+    /storage:identity mismatch recorded=10000000-0000-4000-8000-000000000001 registry=10000000-0000-4000-8000-000000000001 occupant=20000000-0000-4000-8000-000000000002/,
+  );
+  assert.doesNotMatch(replacement.stdout, /storage:DELETE JSON/);
+  assert.doesNotMatch(
+    replacement.stdout,
+    /database:delete fixture lifecycle and auth rows|database:drop tracking inventory/,
+  );
+  assert.match(
+    replacement.stdout,
+    /cleanup:flags failed=true[\s\S]*objects=false database=false tracking=true fixture=true deletes=0 expected_deletes=1/,
+  );
+
+  const nullRecovery = runFakeCleanup(
+    "first_upload_stored",
+    "none",
+    "null_recovery",
+  );
+  assert.equal(nullRecovery.status, 0, nullRecovery.stderr);
+  assert.doesNotMatch(nullRecovery.stdout, /unknown:(?:query|exec|docker)/);
+  assert.match(
+    nullRecovery.stdout,
+    /storage:record null object identity once from registry as 10000000-0000-4000-8000-000000000001/,
+  );
+  assert.match(nullRecovery.stdout, /storage:DELETE JSON/);
+  assert.match(
+    nullRecovery.stdout,
+    /cleanup:flags failed=false runtime=true cron=true pgnet=true objects=true database=true tracking=false fixture=false deletes=1 expected_deletes=1/,
+  );
+
+  const nullReplacement = runFakeCleanup(
+    "first_upload_stored",
+    "none",
+    "null_replacement",
+  );
+  assert.equal(nullReplacement.status, 0, nullReplacement.stderr);
+  assert.match(
+    nullReplacement.stdout,
+    /storage:identity mismatch recorded= registry=10000000-0000-4000-8000-000000000001 occupant=20000000-0000-4000-8000-000000000002/,
+  );
+  assert.doesNotMatch(nullReplacement.stdout, /storage:DELETE JSON/);
+  assert.match(
+    nullReplacement.stdout,
+    /cleanup:flags failed=true[\s\S]*objects=false database=false tracking=true fixture=true deletes=0 expected_deletes=1/,
   );
 });
 

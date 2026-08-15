@@ -353,6 +353,42 @@ begin
 end;
 $$;
 
+do $$
+begin
+  if exists (
+    select 1
+    from private.fou802_profile_photo_cleanup_fixtures fixture
+    join storage.objects object_row
+      on object_row.bucket_id = 'profile-photos'
+     and object_row.name = fixture.storage_path
+    left join private.profile_photo_objects registry
+      on registry.id = fixture.registration_id
+    where (
+      fixture.actual_object_id is not null
+      and fixture.actual_object_id is distinct from object_row.id
+    ) or (
+      fixture.actual_object_id is null
+      and registry.storage_object_id is distinct from object_row.id
+    )
+  ) then
+    raise exception 'FOU-802 fixture path now belongs to a different Storage object.';
+  end if;
+end;
+$$;
+
+-- A crash can occur after the upload trigger records its immutable UUID in the
+-- registry but before the fixture records it. Fill that null once only when the
+-- same registry UUID still occupies the exact bucket/path.
+update private.fou802_profile_photo_cleanup_fixtures fixture
+set actual_object_id = registry.storage_object_id
+from private.profile_photo_objects registry
+join storage.objects object_row
+  on object_row.id = registry.storage_object_id
+ and object_row.bucket_id = 'profile-photos'
+where fixture.actual_object_id is null
+  and registry.id = fixture.registration_id
+  and object_row.name = fixture.storage_path;
+
 -- The pinned local postgres role is intentionally NOSUPERUSER. This image
 -- permits direct SET in the migration/test session but denies set_config().
 -- Keep the override transaction-local and restore origin before authorization.
@@ -373,17 +409,11 @@ set
   updated_at = clock_timestamp()
 from private.fou802_profile_photo_cleanup_fixtures fixture
 join storage.objects object_row
-  on object_row.bucket_id = 'profile-photos'
+  on object_row.id = fixture.actual_object_id
+ and object_row.bucket_id = 'profile-photos'
  and object_row.name = fixture.storage_path
 where registry.id = fixture.registration_id;
 set local session_replication_role = origin;
-
-update private.fou802_profile_photo_cleanup_fixtures fixture
-set actual_object_id = object_row.id
-from storage.objects object_row
-where object_row.bucket_id = 'profile-photos'
-  and object_row.name = fixture.storage_path
-  and fixture.actual_object_id is distinct from object_row.id;
 
 select public.claim_profile_photo_cleanup_service(100);
 
@@ -419,6 +449,7 @@ recover_and_remove_fixture_objects() {
   local cleanup_path
   local cleanup_paths=""
   local exact_object_id
+  local recorded_object_id
   local authorization_result
   local object_residue=""
   local fixture_status=0
@@ -456,6 +487,20 @@ recover_and_remove_fixture_objects() {
         mark_cleanup_failure
         continue
       fi
+      if ! recorded_object_id="$(db_query --command "
+        select coalesce(fixture.actual_object_id::text, '')
+        from private.fou802_profile_photo_cleanup_fixtures fixture
+        where fixture.storage_path = '${cleanup_path}';
+      " 2>/dev/null)"; then
+        mark_cleanup_failure
+        continue
+      fi
+      if [[ "$recorded_object_id" != "$exact_object_id" ]]; then
+        # Storage deletion is path-based. Never authorize it when the current
+        # path occupant is not the exact immutable UUID retained by inventory.
+        mark_cleanup_failure
+        continue
+      fi
       if ! authorization_result="$(db_query --command "
         select coalesce(public.verify_profile_photo_cleanup_service(
           registry.id,
@@ -464,7 +509,12 @@ recover_and_remove_fixture_objects() {
         from private.fou802_profile_photo_cleanup_fixtures fixture
         join private.profile_photo_objects registry
           on registry.id = fixture.registration_id
+        join storage.objects object_row
+          on object_row.id = fixture.actual_object_id
+         and object_row.bucket_id = 'profile-photos'
+         and object_row.name = fixture.storage_path
         where fixture.storage_path = '${cleanup_path}'
+          and fixture.actual_object_id = '${exact_object_id}'::uuid
           and registry.storage_object_id = '${exact_object_id}'::uuid;
       " 2>/dev/null)"; then
         mark_cleanup_failure

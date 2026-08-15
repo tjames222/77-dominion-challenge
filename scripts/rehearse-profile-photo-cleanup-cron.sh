@@ -328,19 +328,6 @@ trap early_cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 
-export SUPABASE_TELEMETRY_DISABLED=1
-DOCKER_BIN="$docker_cli" SUPABASE_CLI_BIN="$supabase_cli" \
-  bash "$script_directory/reset-local-database.sh" \
-    --database-only-runtime-check
-
-assert_local_container "$database_container" "$expected_postgres_image"
-assert_local_container "$edge_container" "$expected_edge_image"
-assert_local_container "$storage_container" "$expected_storage_image"
-assert_local_container "$kong_container" "$expected_kong_image"
-assert_local_container "$rest_container" "$expected_rest_image"
-assert_kong_api_port_bindings
-assert_pg_net_alias_bypasses_proxy
-
 db_exec() {
   "$docker_cli" exec -i "$database_container" \
     psql --username postgres --dbname postgres --set=ON_ERROR_STOP=1 "$@"
@@ -351,13 +338,9 @@ db_query() {
 }
 
 temporary_root="$(mktemp -d "${TMPDIR:-/tmp}/fou802-cron-rehearsal.XXXXXX")"
-runtime_mount_root="$(mktemp -d "$repository_root/.fou802-runtime.XXXXXX")"
-case "$runtime_mount_root" in
-  "$repository_root"/.fou802-runtime.*) ;;
-  *) fail "the Docker mount root escaped the repository sharing boundary." ;;
-esac
-runtime_source="$runtime_mount_root/runtime"
-runtime_cache="$runtime_mount_root/cache"
+runtime_mount_root=""
+runtime_source=""
+runtime_cache=""
 runtime_env="$temporary_root/runtime.env"
 curl_config="$temporary_root/curl.conf"
 upload_response="$temporary_root/upload-response.json"
@@ -373,6 +356,7 @@ worker_request_id=""
 health_request_id=""
 worker_secret=""
 service_role_key=""
+pre_reset_service_role_key=""
 cleanup_failed=false
 capture_active=false
 runtime_cleanup_complete=false
@@ -402,6 +386,27 @@ storage_curl() {
     "$@"
 }
 
+load_local_service_role_key() {
+  local environment_line
+  service_role_key=""
+  while IFS= read -r environment_line; do
+    case "$environment_line" in
+      SUPABASE_SERVICE_ROLE_KEY=*)
+        service_role_key="${environment_line#SUPABASE_SERVICE_ROLE_KEY=}"
+        ;;
+    esac
+  done < <(inspect_value "$edge_container" \
+    '{{range .Config.Env}}{{println .}}{{end}}')
+  [[ "${#service_role_key}" -ge 32 \
+    && "$service_role_key" =~ ^[A-Za-z0-9._-]+$ ]] \
+    || fail "the exact local Edge Runtime did not expose a usable service key."
+
+  {
+    printf 'header = "Authorization: Bearer %s"\n' "$service_role_key"
+    printf 'header = "apikey: %s"\n' "$service_role_key"
+  } >"$curl_config"
+}
+
 cleanup() {
   local test_status=$?
   local leaked=false
@@ -414,7 +419,8 @@ cleanup() {
     exec 1>&3 2>&4
     capture_active=false
   fi
-  for sensitive_value in "$worker_secret" "$service_role_key"; do
+  for sensitive_value in \
+    "$worker_secret" "$service_role_key" "$pre_reset_service_role_key"; do
     [[ -n "$sensitive_value" ]] || continue
     grep -Fq -- "$sensitive_value" "$stdout_capture" 2>/dev/null && leaked=true
     grep -Fq -- "$sensitive_value" "$stderr_capture" 2>/dev/null && leaked=true
@@ -447,30 +453,16 @@ exec 3>&1 4>&2
 exec >"$stdout_capture" 2>"$stderr_capture"
 capture_active=true
 
-while IFS= read -r environment_line; do
-  case "$environment_line" in
-    SUPABASE_SERVICE_ROLE_KEY=*)
-      service_role_key="${environment_line#SUPABASE_SERVICE_ROLE_KEY=}"
-      ;;
-  esac
-done < <(inspect_value "$edge_container" \
-  '{{range .Config.Env}}{{println .}}{{end}}')
-[[ "${#service_role_key}" -ge 32 \
-  && "$service_role_key" =~ ^[A-Za-z0-9._-]+$ ]] \
-  || fail "the exact local Edge Runtime did not expose a usable service key."
-
-{
-  printf 'header = "Authorization: Bearer %s"\n' "$service_role_key"
-  printf 'header = "apikey: %s"\n' "$service_role_key"
-} >"$curl_config"
-
 # Recover only resources whose exact identities were retained by an earlier
-# interrupted rehearsal. Never overwrite the inventory tables before their
-# Storage objects, lifecycle rows, Cron/pg_net work, and owned extension have
-# all been removed and verified.
+# interrupted rehearsal from the already-running, pinned local stack. This
+# proof must finish before the destructive reset can erase the only inventory
+# that authorizes exact Storage and database cleanup.
+load_local_service_role_key
+pre_reset_service_role_key="$service_role_key"
 run_rehearsal_resource_cleanup
 [[ "$cleanup_failed" == "false" ]] \
   || fail "retained rehearsal resources could not be recovered safely."
+
 cleanup_failed=false
 runtime_cleanup_complete=false
 cron_cleanup_complete=false
@@ -483,6 +475,31 @@ cleanup_request_id=""
 readiness_request_id=""
 worker_request_id=""
 health_request_id=""
+
+export SUPABASE_TELEMETRY_DISABLED=1
+DOCKER_BIN="$docker_cli" SUPABASE_CLI_BIN="$supabase_cli" \
+  bash "$script_directory/reset-local-database.sh" \
+    --database-only-runtime-check
+
+assert_local_container "$database_container" "$expected_postgres_image"
+assert_local_container "$edge_container" "$expected_edge_image"
+assert_local_container "$storage_container" "$expected_storage_image"
+assert_local_container "$kong_container" "$expected_kong_image"
+assert_local_container "$rest_container" "$expected_rest_image"
+assert_kong_api_port_bindings
+assert_pg_net_alias_bypasses_proxy
+
+# The reset restarts the full local stack. Refresh its local-only credential
+# before creating new fixtures, and keep Docker bind sources on a host path
+# shared with the pinned local daemon.
+load_local_service_role_key
+runtime_mount_root="$(mktemp -d "$repository_root/.fou802-runtime.XXXXXX")"
+case "$runtime_mount_root" in
+  "$repository_root"/.fou802-runtime.*) ;;
+  *) fail "the Docker mount root escaped the repository sharing boundary." ;;
+esac
+runtime_source="$runtime_mount_root/runtime"
+runtime_cache="$runtime_mount_root/cache"
 
 cron_installed_value="$(db_query --command \
   "select exists (select 1 from pg_extension where extname = 'pg_cron');")"

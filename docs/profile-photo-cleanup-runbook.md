@@ -90,15 +90,18 @@ origin except the exact local containers and loopback ports:
 pnpm run rehearse:profile-photo-cleanup-cron -- --confirm-local-reset
 ```
 
-The command resets the local database, uploads four disposable objects through
-the local Storage API, and starts a second pinned Edge Runtime container. The
-isolated runtime mounts a staged copy of the real handler; a reviewed local
-client bridge permits only the exact local Kong origin. An executable import-
-graph gate proves the real handler reaches exactly one external import and maps
-that pinned Supabase client import to the bridge. The runtime clears uppercase
-and lowercase proxy variables, and the bridge still rejects every non-local
-origin. The proof therefore neither uses the CLI Function server nor contacts a
-hosted project.
+The command first removes and verifies any exact disposable resources retained
+by an interrupted rehearsal, then resets the local database, uploads four new
+disposable objects through the local Storage API, and starts a second pinned
+Edge Runtime container. It aborts before reset if retained cleanup cannot be
+proved, because the tracking tables are the authority for exact Storage
+deletion. The isolated runtime mounts a staged copy of the real handler; a
+reviewed local client bridge permits only the exact local Kong origin. An
+executable import-graph gate proves the real handler reaches exactly one
+external import and maps that pinned Supabase client import to the bridge. The
+runtime clears uppercase and lowercase proxy variables, and the bridge still
+rejects every non-local origin. The proof therefore neither uses the CLI
+Function server nor contacts a hosted project.
 
 Before resetting, the command holds an atomic lock for this one local project
 and attests the pinned Postgres, Storage, Kong, PostgREST, and Edge Runtime
@@ -130,15 +133,20 @@ until every tracked pg_net request has a terminal response, deletes only those
 queue/response rows, and asserts that none remain.
 
 Before any exact fixture Storage delete, teardown cancels its fixture erasure
-batch where necessary, clears canonical avatar pointers, repairs the registry to
-the actual object ID recovered from the exact `profile-photos` bucket/path,
-transitions the row to cleanup, obtains a live service claim, and re-verifies the
-claim against that exact object identity. It sends a JSON bulk-delete request
-for the reviewed path only. Tracking inventory is retained whenever exact
-runtime absence, Cron/pg_net drain, or a database existence probe cannot be
-proved. Related fixture inventory is retained whenever authorization or Storage
-deletion cannot be proved; lifecycle rows and fixture accounts are removed only
-after `storage.objects` proves zero exact-path residue.
+batch where necessary and clears canonical avatar pointers. A non-null recorded
+Storage object UUID is immutable: if the current exact bucket/path belongs to a
+different UUID, teardown fails closed and retains its inventory. Only the crash
+gap where the upload trigger recorded its UUID in the registry before the
+fixture recorded it may fill a null fixture UUID once, and only when that same
+registry UUID still occupies the path. Teardown then binds the registry to that
+exact UUID, transitions the row to cleanup, obtains a live service claim, and
+re-verifies the claim against the same identity before sending a JSON
+bulk-delete request for the reviewed path. Tracking inventory is retained
+whenever exact runtime absence, Cron/pg_net drain, or a database existence probe
+cannot be proved. Related fixture inventory is retained whenever identity,
+authorization, or Storage deletion cannot be proved; lifecycle rows and fixture
+accounts are removed only after `storage.objects` proves zero exact-path
+residue.
 
 Cleanup removes the labeled runtime by its exact name even when failure occurs
 immediately after `docker run`, then removes the lifecycle rows, deletion batch,
