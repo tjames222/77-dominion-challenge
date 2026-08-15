@@ -116,6 +116,7 @@ health_request_id=""
 cleanup_request_id=""
 cron_installed_by_rehearsal=false
 cleanup_failed=false
+cleanup_failure_stages=""
 runtime_cleanup_complete=false
 cron_cleanup_complete=false
 pgnet_cleanup_complete=false
@@ -132,6 +133,7 @@ tracking_present=true
 fixture_authorized=false
 fixture_object_residue=0
 fixture_paths=""
+present_fixture_paths=""
 first_cleanup_path="$fixture_path"
 storage_delete_calls=0
 logged_keys="|"
@@ -166,13 +168,13 @@ case "$fault_phase" in
     phase_state="fixtures-first-object"
     fixture_present=true
     fixture_object_residue=1
-    fixture_paths="$fixture_path"
+    present_fixture_paths="$fixture_path"
     ;;
   runtime_created)
     phase_state="runtime-four-objects"
     fixture_present=true
     fixture_object_residue=4
-    fixture_paths="$fixture_path
+    present_fixture_paths="$fixture_path
 $fixture_path_2
 $fixture_path_3
 $fixture_path_4"
@@ -182,7 +184,7 @@ $fixture_path_4"
     phase_state="runtime-readiness-request"
     fixture_present=true
     fixture_object_residue=4
-    fixture_paths="$fixture_path
+    present_fixture_paths="$fixture_path
 $fixture_path_2
 $fixture_path_3
 $fixture_path_4"
@@ -195,7 +197,7 @@ $fixture_path_4"
     phase_state="runtime-readiness-cron"
     fixture_present=true
     fixture_object_residue=4
-    fixture_paths="$fixture_path
+    present_fixture_paths="$fixture_path
 $fixture_path_2
 $fixture_path_3
 $fixture_path_4"
@@ -210,7 +212,7 @@ $fixture_path_4"
     phase_state="runtime-readiness-worker-cron-history"
     fixture_present=true
     fixture_object_residue=3
-    fixture_paths="$fixture_path_2
+    present_fixture_paths="$fixture_path_2
 $fixture_path_3
 $fixture_path_4"
     first_cleanup_path="$fixture_path_2"
@@ -227,7 +229,7 @@ $fixture_path_4"
     phase_state="runtime-three-requests-drained-cron"
     fixture_present=true
     fixture_object_residue=3
-    fixture_paths="$fixture_path_2
+    present_fixture_paths="$fixture_path_2
 $fixture_path_3
 $fixture_path_4"
     first_cleanup_path="$fixture_path_2"
@@ -244,7 +246,7 @@ $fixture_path_4"
     phase_state="runtime-four-requests-drained-cron"
     fixture_present=true
     fixture_object_residue=3
-    fixture_paths="$fixture_path_2
+    present_fixture_paths="$fixture_path_2
 $fixture_path_3
 $fixture_path_4"
     first_cleanup_path="$fixture_path_2"
@@ -263,6 +265,13 @@ $fixture_path_4"
     exit 98
     ;;
 esac
+
+if $fixture_present; then
+  fixture_paths="$fixture_path
+$fixture_path_2
+$fixture_path_3
+$fixture_path_4"
+fi
 
 expected_delete_count="$fixture_object_residue"
 
@@ -329,6 +338,11 @@ inspect_value() {
 
 db_query() {
   local sql=""
+  local ignored_stdin
+  local candidate_path
+  local query_path=""
+  local present_path
+  local query_path_present=false
   [[ "$1" == "--command" ]] && sql="$2"
   case "$sql" in
     *"fou802_profile_photo_cleanup_rehearsal') is not null"*)
@@ -380,10 +394,28 @@ db_query() {
       printf '%s\n' "$fixture_paths"
       ;;
     *"select coalesce(object_row.id::text"*)
+      # Model docker exec -i eagerly draining its inherited stdin even though
+      # psql is executing a --command query.
+      while IFS= read -r ignored_stdin; do :; done
+      log_once stdin_consumption "storage:child attempted to consume stdin"
       log_once storage_recover "storage:recover exact object id for bucket=profile-photos path=$fixture_path"
-      if [[ "$fixture_object_residue" -gt 0 ]]; then
+      for candidate_path in \
+        "$fixture_path" "$fixture_path_2" "$fixture_path_3" "$fixture_path_4"; do
+        if [[ "$sql" == *"$candidate_path"* ]]; then
+          query_path="$candidate_path"
+          break
+        fi
+      done
+      while IFS= read -r present_path; do
+        if [[ -n "$present_path" && "$present_path" == "$query_path" ]]; then
+          query_path_present=true
+        fi
+      done < <(printf '%s\n' "$present_fixture_paths")
+      if $query_path_present; then
         printf '%s\n' "$current_object_id"
       else
+        log_once storage_already_absent \
+          "storage:recorded path already absent; continue remaining inventory"
         printf '%s\n' ""
       fi
       ;;
@@ -507,11 +539,11 @@ rmdir_command() {
 printf 'phase:%s state:%s\n' "$fault_phase" "$phase_state"
 run_rehearsal_resource_cleanup
 fou802_run_cleanup_steps remove_temporary_artifacts release_lock
-printf 'cleanup:flags failed=%s runtime=%s cron=%s pgnet=%s objects=%s database=%s tracking=%s fixture=%s deletes=%s expected_deletes=%s\n' \
+printf 'cleanup:flags failed=%s runtime=%s cron=%s pgnet=%s objects=%s database=%s tracking=%s fixture=%s deletes=%s expected_deletes=%s stages=%s\n' \
   "$cleanup_failed" "$runtime_cleanup_complete" "$cron_cleanup_complete" \
   "$pgnet_cleanup_complete" "$fixture_objects_cleanup_complete" \
   "$fixture_database_cleanup_complete" "$tracking_present" "$fixture_present" \
-  "$storage_delete_calls" "$expected_delete_count"
+  "$storage_delete_calls" "$expected_delete_count" "$cleanup_failure_stages"
 `;
 
 function runFakeCleanup(faultPhase, failStep = "none", identityMode = "matched") {
@@ -894,7 +926,7 @@ test("runtime mounts are shared and stale inventory is recovered before replacem
     .map((match) => match.index);
   const staleCleanupOffset = source.indexOf("\nrun_rehearsal_resource_cleanup\n");
   const cleanupProofOffset = source.indexOf(
-    '[[ "$cleanup_failed" == "false" ]]',
+    'if [[ "$cleanup_failed" != "false" ]]',
     staleCleanupOffset,
   );
   const resetOffset = source.indexOf(
@@ -920,7 +952,7 @@ test("runtime mounts are shared and stale inventory is recovered before replacem
   );
   assert.match(
     source.slice(cleanupProofOffset, resetOffset),
-    /\|\| fail "retained rehearsal resources could not be recovered safely\."/,
+    /report_cleanup_failure_stages[\s\S]*fail "retained rehearsal resources could not be recovered safely\."/,
   );
   assert.doesNotMatch(source, /drop table if exists \$secret_table/);
   assert.doesNotMatch(source, /drop table if exists \$fixture_table/);
@@ -941,6 +973,56 @@ test("runtime mounts are shared and stale inventory is recovered before replacem
     cleanupSource,
     /remove_tree_command "\$temporary_root"[\s\S]*remove_tree_command "\$runtime_mount_root"/,
   );
+});
+
+test("multi-path cleanup isolates inventory from child stdin consumption", async () => {
+  const cleanupSource = await readFile(cleanupOrchestratorPath, "utf8");
+  assert.match(
+    cleanupSource,
+    /while IFS= read -r cleanup_path <&7; do[\s\S]*done 7<<<"\$cleanup_paths"/,
+  );
+
+  const result = runFakeCleanup("runtime_created");
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /storage:child attempted to consume stdin/);
+  assert.match(
+    result.stdout,
+    /cleanup:flags failed=false[\s\S]*deletes=4 expected_deletes=4 stages=$/m,
+  );
+
+  const resumed = runFakeCleanup("worker_completed");
+  assert.equal(resumed.status, 0, resumed.stderr);
+  assert.match(
+    resumed.stdout,
+    /storage:recorded path already absent; continue remaining inventory/,
+  );
+  assert.match(
+    resumed.stdout,
+    /cleanup:flags failed=false[\s\S]*deletes=3 expected_deletes=3 stages=$/m,
+  );
+});
+
+test("cleanup failures surface only fixed safe stage labels", async () => {
+  const source = await readFile(rehearsalPath, "utf8");
+  const cleanupSource = await readFile(cleanupOrchestratorPath, "utf8");
+  assert.match(
+    cleanupSource,
+    /stage="\$\{1:-unknown\}"[\s\S]*\^\[a-z\]\[a-z0-9-\]\*\$[\s\S]*failed cleanup stages:/,
+  );
+  assert.match(
+    source,
+    /if \[\[ "\$cleanup_failed" != "false" \]\]; then[\s\S]*report_cleanup_failure_stages[\s\S]*retained rehearsal resources could not be recovered safely/,
+  );
+
+  const result = runFakeCleanup("cleanup_queued", "storage_delete");
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(
+    result.stdout,
+    /stages=fixture-storage-delete,fixture-storage-residue/,
+  );
+  const stageSummary = result.stdout.match(/stages=([^\n]*)/)?.[1] ?? "";
+  assert.match(stageSummary, /^[a-z0-9,-]+$/);
+  assert.doesNotMatch(stageSummary, /[a-f0-9]{8}-|avatar-|profile-photos/);
 });
 
 test("cleanup preserves a recorded Storage UUID and recovers only a null UUID", async () => {

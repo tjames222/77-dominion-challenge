@@ -358,6 +358,7 @@ worker_secret=""
 service_role_key=""
 pre_reset_service_role_key=""
 cleanup_failed=false
+cleanup_failure_stages=""
 capture_active=false
 runtime_cleanup_complete=false
 cron_cleanup_complete=false
@@ -436,6 +437,7 @@ cleanup() {
   fou802_run_cleanup_steps remove_temporary_artifacts release_lock
 
   if [[ "$cleanup_failed" == "true" ]]; then
+    report_cleanup_failure_stages
     echo "FOU-802 local rehearsal: cleanup could not prove that every tracked disposable resource was removed." >&2
   fi
   if (( test_status != 0 )); then
@@ -460,10 +462,13 @@ capture_active=true
 load_local_service_role_key
 pre_reset_service_role_key="$service_role_key"
 run_rehearsal_resource_cleanup
-[[ "$cleanup_failed" == "false" ]] \
-  || fail "retained rehearsal resources could not be recovered safely."
+if [[ "$cleanup_failed" != "false" ]]; then
+  report_cleanup_failure_stages
+  fail "retained rehearsal resources could not be recovered safely."
+fi
 
 cleanup_failed=false
+cleanup_failure_stages=""
 runtime_cleanup_complete=false
 cron_cleanup_complete=false
 pgnet_cleanup_complete=false

@@ -7,7 +7,20 @@
 # paths without touching Docker or a database.
 
 mark_cleanup_failure() {
+  local stage="${1:-unknown}"
   cleanup_failed=true
+  [[ "$stage" =~ ^[a-z][a-z0-9-]*$ ]] || stage="unknown"
+  case ",${cleanup_failure_stages:-}," in
+    *",${stage},"*) ;;
+    *)
+      cleanup_failure_stages="${cleanup_failure_stages:+${cleanup_failure_stages},}${stage}"
+      ;;
+  esac
+}
+
+report_cleanup_failure_stages() {
+  [[ -n "${cleanup_failure_stages:-}" ]] || return 0
+  echo "FOU-802 local rehearsal: failed cleanup stages: ${cleanup_failure_stages}." >&2
 }
 
 tracking_table_exists() {
@@ -323,7 +336,8 @@ prepare_fixture_objects_for_exact_delete() {
     fi
     return 0
   fi
-  db_exec >/dev/null 2>&1 <<'SQL' || mark_cleanup_failure
+  db_exec >/dev/null 2>&1 <<'SQL' \
+    || mark_cleanup_failure "fixture-preparation"
 begin;
 do $$
 begin
@@ -458,7 +472,8 @@ recover_and_remove_fixture_objects() {
     :
   else
     fixture_status=$?
-    [[ "$fixture_status" -eq 1 ]] || mark_cleanup_failure
+    [[ "$fixture_status" -eq 1 ]] \
+      || mark_cleanup_failure "fixture-inventory-probe"
     return 0
   fi
 
@@ -466,39 +481,41 @@ recover_and_remove_fixture_objects() {
     if ! cleanup_paths="$(db_query --command \
       'select storage_path from private.fou802_profile_photo_cleanup_fixtures order by fixture_kind;' \
       2>/dev/null)"; then
-      mark_cleanup_failure
+      mark_cleanup_failure "fixture-path-inventory"
       return 0
     fi
-    while IFS= read -r cleanup_path; do
+    # Keep the path inventory off stdin. docker exec -i/psql commands inside
+    # the loop inherit fd 0 and must never consume the remaining path records.
+    while IFS= read -r cleanup_path <&7; do
       [[ -n "$cleanup_path" ]] || continue
       [[ "$cleanup_path" =~ ^[0-9a-f-]{36}/avatar-[0-9]{13}-[a-f0-9]{32}\.webp$ ]] \
-        || { mark_cleanup_failure; continue; }
+        || { mark_cleanup_failure "fixture-path-validation"; continue; }
       if ! exact_object_id="$(db_query --command "
         select coalesce(object_row.id::text, '')
         from storage.objects object_row
         where object_row.bucket_id = 'profile-photos'
           and object_row.name = '${cleanup_path}';
-      " 2>/dev/null)"; then
-        mark_cleanup_failure
+      " </dev/null 2>/dev/null)"; then
+        mark_cleanup_failure "fixture-object-lookup"
         continue
       fi
       [[ -n "$exact_object_id" ]] || continue
       if [[ ! "$exact_object_id" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]]; then
-        mark_cleanup_failure
+        mark_cleanup_failure "fixture-object-identity"
         continue
       fi
       if ! recorded_object_id="$(db_query --command "
         select coalesce(fixture.actual_object_id::text, '')
         from private.fou802_profile_photo_cleanup_fixtures fixture
         where fixture.storage_path = '${cleanup_path}';
-      " 2>/dev/null)"; then
-        mark_cleanup_failure
+      " </dev/null 2>/dev/null)"; then
+        mark_cleanup_failure "fixture-recorded-identity"
         continue
       fi
       if [[ "$recorded_object_id" != "$exact_object_id" ]]; then
         # Storage deletion is path-based. Never authorize it when the current
         # path occupant is not the exact immutable UUID retained by inventory.
-        mark_cleanup_failure
+        mark_cleanup_failure "fixture-object-identity"
         continue
       fi
       if ! authorization_result="$(db_query --command "
@@ -516,12 +533,12 @@ recover_and_remove_fixture_objects() {
         where fixture.storage_path = '${cleanup_path}'
           and fixture.actual_object_id = '${exact_object_id}'::uuid
           and registry.storage_object_id = '${exact_object_id}'::uuid;
-      " 2>/dev/null)"; then
-        mark_cleanup_failure
+      " </dev/null 2>/dev/null)"; then
+        mark_cleanup_failure "fixture-authorization"
         continue
       fi
       if [[ "$authorization_result" != "true" && "$authorization_result" != "t" ]]; then
-        mark_cleanup_failure
+        mark_cleanup_failure "fixture-authorization"
         continue
       fi
       storage_curl \
@@ -529,8 +546,9 @@ recover_and_remove_fixture_objects() {
         --header 'Content-Type: application/json' \
         --json "{\"prefixes\":[\"${cleanup_path}\"]}" \
         "${local_api_origin}/storage/v1/object/profile-photos" \
-        >/dev/null 2>&1 || mark_cleanup_failure
-    done <<<"$cleanup_paths"
+        </dev/null >/dev/null 2>&1 \
+        || mark_cleanup_failure "fixture-storage-delete"
+    done 7<<<"$cleanup_paths"
   fi
 
   if ! object_residue="$(db_query --command "
@@ -540,13 +558,13 @@ recover_and_remove_fixture_objects() {
       on object_row.bucket_id = 'profile-photos'
      and object_row.name = fixture.storage_path;
   " 2>/dev/null)"; then
-    mark_cleanup_failure
+    mark_cleanup_failure "fixture-storage-residue-probe"
     return 0
   fi
   if [[ "$object_residue" == "0" ]]; then
     fixture_objects_cleanup_complete=true
   else
-    mark_cleanup_failure
+    mark_cleanup_failure "fixture-storage-residue"
   fi
 }
 
