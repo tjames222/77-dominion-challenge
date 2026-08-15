@@ -1,0 +1,3 @@
+create role reconciliation_effective_reader nologin;
+grant select on public.billing_customers to reconciliation_effective_reader;
+grant reconciliation_effective_reader to authenticated;

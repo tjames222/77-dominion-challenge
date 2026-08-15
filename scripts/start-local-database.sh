@@ -74,7 +74,7 @@ cleanup() {
 trap cleanup EXIT
 
 container_exists=false
-if "$docker_cli" inspect "$database_container" >/dev/null 2>&1; then
+if "$docker_cli" container inspect "$database_container" >/dev/null 2>&1; then
   container_exists=true
 fi
 
@@ -86,7 +86,7 @@ fi
 if [[ "$container_exists" == "true" ]]; then
   # This stack belongs to the developer. Verify it before any mutating CLI call,
   # and never stop or reset it from the failure trap.
-  actual_postgres_image="$($docker_cli inspect "$database_container" \
+  actual_postgres_image="$($docker_cli container inspect "$database_container" \
     --format '{{.Config.Image}}')"
   [[ "$actual_postgres_image" == "$expected_postgres_image_ref" ]] \
     || fail "existing stack uses $actual_postgres_image; expected $expected_postgres_image_ref. It was not changed."
@@ -123,7 +123,7 @@ else
 
   "$supabase_cli" db start --workdir "$staging_root"
 
-  actual_postgres_image="$($docker_cli inspect "$database_container" \
+  actual_postgres_image="$($docker_cli container inspect "$database_container" \
     --format '{{.Config.Image}}')"
   [[ "$actual_postgres_image" == "$expected_postgres_image_ref" ]] \
     || fail "expected $expected_postgres_image_ref, found $actual_postgres_image."

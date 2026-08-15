@@ -185,7 +185,7 @@ test("local start does not mutate a pre-existing wrong-version stack", async () 
     );
     await writeFile(
       fakeDocker,
-      "#!/usr/bin/env bash\nprintf '%s\\n' \"$*\" >>\"$FAKE_DOCKER_LOG\"\nif [[ \"${1:-}\" == \"inspect\" && \"${2:-}\" == \"supabase_db_77-dominion-challenge\" ]]; then\n  if [[ \"$*\" == *--format* ]]; then echo ghcr.io/supabase/postgres:17.6.1.140; fi\n  exit 0\nfi\nif [[ \"${1:-}\" == \"volume\" && \"${2:-}\" == \"inspect\" ]]; then exit 0; fi\nexit 91\n",
+      "#!/usr/bin/env bash\nprintf '%s\\n' \"$*\" >>\"$FAKE_DOCKER_LOG\"\nif [[ \"${1:-}\" == \"container\" && \"${2:-}\" == \"inspect\" && \"${3:-}\" == \"supabase_db_77-dominion-challenge\" ]]; then\n  if [[ \"$*\" == *--format* ]]; then echo ghcr.io/supabase/postgres:17.6.1.140; fi\n  exit 0\nfi\nif [[ \"${1:-}\" == \"volume\" && \"${2:-}\" == \"inspect\" ]]; then exit 0; fi\nexit 91\n",
     );
     await chmod(fakeCli, 0o755);
     await chmod(fakeDocker, 0o755);
@@ -215,6 +215,57 @@ test("local start does not mutate a pre-existing wrong-version stack", async () 
     assert.match(result.stderr, /It was not changed/);
     assert.equal((await readFile(cliLog, "utf8")).trim(), "--version");
     assert.doesNotMatch(await readFile(dockerLog, "utf8"), /\bexec\b|\brm\b/);
+  } finally {
+    await rm(fixtureRoot, { recursive: true, force: true });
+  }
+});
+
+test("local start distinguishes a preserved volume from a missing container", async () => {
+  const fixtureRoot = await mkdtemp(path.join(os.tmpdir(), "migration-start-volume-"));
+  const fakeCli = path.join(fixtureRoot, "supabase");
+  const fakeDocker = path.join(fixtureRoot, "docker");
+  const cliLog = path.join(fixtureRoot, "cli.log");
+  const dockerLog = path.join(fixtureRoot, "docker.log");
+
+  try {
+    await writeFile(
+      fakeCli,
+      "#!/usr/bin/env bash\nprintf '%s\\n' \"$*\" >>\"$FAKE_CLI_LOG\"\nif [[ \"${1:-}\" == \"--version\" ]]; then echo 2.109.0; exit 0; fi\nexit 90\n",
+    );
+    await writeFile(
+      fakeDocker,
+      "#!/usr/bin/env bash\nprintf '%s\\n' \"$*\" >>\"$FAKE_DOCKER_LOG\"\nif [[ \"${1:-}\" == \"container\" && \"${2:-}\" == \"inspect\" ]]; then exit 1; fi\nif [[ \"${1:-}\" == \"volume\" && \"${2:-}\" == \"inspect\" && \"${3:-}\" == \"supabase_db_77-dominion-challenge\" ]]; then exit 0; fi\nexit 91\n",
+    );
+    await chmod(fakeCli, 0o755);
+    await chmod(fakeDocker, 0o755);
+
+    const result = spawnSync(
+      "bash",
+      [path.join(repositoryRoot, "scripts", "start-local-database.sh")],
+      {
+        cwd: repositoryRoot,
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          SUPABASE_CLI_BIN: fakeCli,
+          DOCKER_BIN: fakeDocker,
+          FAKE_CLI_LOG: cliLog,
+          FAKE_DOCKER_LOG: dockerLog,
+        },
+      },
+    );
+
+    assert.notEqual(result.status, 0);
+    assert.match(
+      result.stderr,
+      /found preserved database volume supabase_db_77-dominion-challenge without a container/,
+    );
+    assert.doesNotMatch(result.stderr, /Config\.Image|existing stack uses/);
+    assert.equal((await readFile(cliLog, "utf8")).trim(), "--version");
+    const dockerCalls = await readFile(dockerLog, "utf8");
+    assert.match(dockerCalls, /^container inspect supabase_db_77-dominion-challenge$/m);
+    assert.match(dockerCalls, /^volume inspect supabase_db_77-dominion-challenge$/m);
+    assert.doesNotMatch(dockerCalls, /(^|\s)rm(\s|$)|(^|\s)exec(\s|$)/m);
   } finally {
     await rm(fixtureRoot, { recursive: true, force: true });
   }
@@ -263,7 +314,7 @@ test("package, CI, and production deploy run the gate before migrations", async 
   );
   assert.match(
     packageJson.scripts["check:database"],
-    /^pnpm run check:migrations && pnpm run test:migration-compatibility && pnpm run supabase:reset && pnpm run test:migration-atomicity/,
+    /^pnpm run check:migrations && pnpm run test:migration-compatibility && pnpm run test:database-manifest && pnpm run supabase:reset && pnpm run test:migration-atomicity/,
   );
   assert.equal(postgresVersion.trim(), "17.6.1.141");
   assert.equal(
@@ -320,7 +371,8 @@ test("package, CI, and production deploy run the gate before migrations", async 
       /\$postgres_image_registry\/supabase\/postgres:\$[a-z_]+/,
     );
   }
-  assert.match(startHelper, /docker_cli inspect "\$database_container"/);
+  assert.match(startHelper, /docker_cli" container inspect "\$database_container"/);
+  assert.doesNotMatch(startHelper, /docker_cli" inspect "\$database_container"/);
   assert.match(startHelper, /verify-local-supabase-runtime\.sh/);
   assert.match(startHelper, /exit_status != 0.*owns_database/s);
   assert.match(startHelper, /volume inspect "\$database_volume"/);
@@ -383,5 +435,200 @@ test("package, CI, and production deploy run the gate before migrations", async 
   assert.doesNotMatch(
     deployWorkflow,
     /run: supabase db push --linked --password/,
+  );
+});
+
+test("the production baseline fails closed and normalizes legacy privileges", async () => {
+  const baseline = await readFile(
+    path.join(
+      repositoryRoot,
+      "supabase",
+      "migrations",
+      "20260707170000_baseline.sql",
+    ),
+    "utf8",
+  );
+  const gamification = await readFile(
+    path.join(
+      repositoryRoot,
+      "supabase",
+      "migrations",
+      "20260708154000_gamification.sql",
+    ),
+    "utf8",
+  );
+  const searchPathFix = await readFile(
+    path.join(
+      repositoryRoot,
+      "supabase",
+      "migrations",
+      "20260708155500_fix_gamification_function_search_path.sql",
+    ),
+    "utf8",
+  );
+  const rehearsal = await readFile(
+    path.join(repositoryRoot, "scripts", "rehearse-baseline-reconciliation.sh"),
+    "utf8",
+  );
+
+  for (const migration of [baseline, gamification, searchPathFix]) {
+    assert.match(migration, /set local lock_timeout = '5s';/);
+    assert.match(migration, /set local statement_timeout = '5min';/);
+    assert.match(
+      migration,
+      /set local idle_in_transaction_session_timeout = '5min';/,
+    );
+  }
+
+  assert.match(
+    baseline,
+    /set local transaction isolation level read committed;/,
+  );
+  assert.doesNotMatch(baseline, /transaction isolation level serializable/);
+
+  for (const migration of [baseline, gamification]) {
+    assert.match(migration, /lock table %s in share row exclusive mode/);
+    assert.doesNotMatch(migration, /lock table %s in access exclusive mode/);
+  }
+  assert.match(
+    baseline,
+    /lock table %s in access share mode/,
+  );
+  assert.match(
+    baseline,
+    /relation_owner is distinct from 'supabase_storage_admin'/,
+  );
+  assert.match(
+    baseline,
+    /namespace\.nspname = 'storage'\s+and relation\.relname in \('buckets_vectors', 'vector_indexes'\)/,
+  );
+  const vectorGuardStart = baseline.indexOf("if is_vector_inventory then");
+  const vectorGuardEnd = baseline.indexOf("raise exception using", vectorGuardStart);
+  assert.ok(vectorGuardStart !== -1 && vectorGuardEnd > vectorGuardStart);
+  const vectorGuard = baseline
+    .slice(vectorGuardStart, vectorGuardEnd)
+    .replace(/\s+/g, " ")
+    .replace(/\(\s+/g, "(")
+    .replace(/\s+\)/g, ")");
+  const platformGuardStart = rehearsal.indexOf(
+    "if relation_record.owner_name is distinct from 'supabase_storage_admin'",
+  );
+  const platformGuardEnd = rehearsal.indexOf(
+    "raise exception 'unexpected platform vector lock contract",
+    platformGuardStart,
+  );
+  assert.ok(platformGuardStart !== -1 && platformGuardEnd > platformGuardStart);
+  const platformGuard = rehearsal
+    .slice(platformGuardStart, platformGuardEnd)
+    .replace(/\s+/g, " ")
+    .replace(/\(\s+/g, "(")
+    .replace(/\s+\)/g, ")");
+
+  assert.match(
+    vectorGuard,
+    /relation_owner is distinct from 'supabase_storage_admin' or not pg_catalog\.has_table_privilege\(current_user, relation_oid, 'SELECT'\)/,
+  );
+  assert.match(
+    platformGuard,
+    /relation_record\.owner_name is distinct from 'supabase_storage_admin' or not pg_catalog\.has_table_privilege\(current_user, relation_record\.oid, 'SELECT'\)/,
+  );
+  for (const [guard, relationOid] of [
+    [vectorGuard, "relation_oid"],
+    [platformGuard, "relation_record\\.oid"],
+  ]) {
+    assert.match(
+      guard,
+      new RegExp(
+        `or pg_catalog\\.has_table_privilege\\(current_user, ${relationOid}, 'SELECT WITH GRANT OPTION'\\)`,
+      ),
+    );
+    for (const privilege of [
+      "INSERT",
+      "UPDATE",
+      "DELETE",
+      "TRUNCATE",
+      "REFERENCES",
+      "TRIGGER",
+      "MAINTAIN",
+    ]) {
+      assert.match(
+        guard,
+        new RegExp(
+          `or pg_catalog\\.has_table_privilege\\(current_user, ${relationOid}, '${privilege}'\\)`,
+        ),
+      );
+    }
+    assert.match(
+      guard,
+      new RegExp(
+        `or pg_catalog\\.has_any_column_privilege\\(current_user, ${relationOid}, 'SELECT WITH GRANT OPTION'\\)`,
+      ),
+    );
+    for (const privilege of ["INSERT", "UPDATE", "REFERENCES"]) {
+      assert.match(
+        guard,
+        new RegExp(
+          `or pg_catalog\\.has_any_column_privilege\\(current_user, ${relationOid}, '${privilege}'\\)`,
+        ),
+      );
+    }
+  }
+  assert.match(baseline, /locked_vector_relation_count <> 2/);
+  assert.match(
+    baseline,
+    /order by namespace\.nspname collate "C", relation\.relname collate "C"[\s\S]*if is_vector_inventory then[\s\S]*access share mode[\s\S]*else[\s\S]*share row exclusive mode/,
+  );
+  assert.ok(
+    baseline.indexOf('$baseline_locks$;')
+      < baseline.indexOf('do $baseline_data_preflight$'),
+  );
+  assert.ok(
+    baseline.indexOf('$baseline_data_preflight$;')
+      < baseline.indexOf('alter default privileges for role postgres'),
+  );
+  assert.match(baseline, /select exists \(select 1 from public\.purchases\)/);
+  assert.match(
+    baseline,
+    /entitlement_key is distinct from 'membership_active'/,
+  );
+  assert.doesNotMatch(baseline, /delete from public\.entitlements/i);
+  assert.match(baseline, /drop table if exists public\.purchases restrict;/);
+  assert.match(baseline, /drop view if exists public\.community_feed restrict;/);
+  assert.doesNotMatch(baseline, /drop (?:table|view)[^;]+cascade;/i);
+
+  for (const migration of [baseline, gamification]) {
+    assert.match(
+      migration,
+      /alter default privileges for role postgres in schema public[\s\S]*revoke all privileges on tables from public, anon, authenticated, service_role;/,
+    );
+    assert.match(
+      migration,
+      /revoke all privileges \(%s\) on table %s from public, anon, authenticated, service_role/,
+    );
+  }
+
+  assert.match(
+    baseline,
+    /grant select on public\.profiles to service_role;/,
+  );
+  for (const table of ["billing_customers", "subscriptions", "entitlements"]) {
+    assert.match(
+      baseline,
+      new RegExp(
+        `grant select, insert, update on public\\.${table} to service_role;`,
+      ),
+    );
+  }
+  assert.doesNotMatch(
+    gamification,
+    /grant[^;]+(?:badge_definitions|user_badges|user_game_stats|game_point_events)[^;]+service_role/i,
+  );
+  assert.match(
+    searchPathFix,
+    /revoke execute on function public\.workout_difficulty_points\(text\)[\s\S]*from public, anon, authenticated, service_role;/,
+  );
+  assert.match(
+    searchPathFix,
+    /revoke execute on function public\.full_streak_bonus_points\(integer\)[\s\S]*from public, anon, authenticated, service_role;/,
   );
 });
