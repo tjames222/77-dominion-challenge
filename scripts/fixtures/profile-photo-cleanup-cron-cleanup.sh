@@ -324,6 +324,7 @@ prepare_fixture_objects_for_exact_delete() {
     return 0
   fi
   db_exec >/dev/null 2>&1 <<'SQL' || mark_cleanup_failure
+begin;
 do $$
 begin
   insert into private.retired_community_deletion_ledger (
@@ -349,36 +350,40 @@ begin
   where profile.user_id = fixture.user_id
     and coalesce(profile.avatar_url, '') <> '';
 
-  perform set_config('session_replication_role', 'replica', true);
-  update private.profile_photo_objects registry
-  set
-    storage_object_id = object_row.id,
-    state = 'cleanup',
-    upload_expires_at = null,
-    claim_token = null,
-    claim_expires_at = null,
-    claim_actor = null,
-    delete_authorized_at = null,
-    next_attempt_at = clock_timestamp(),
-    last_error_code = null,
-    last_failed_at = null,
-    retired_at = null,
-    updated_at = clock_timestamp()
-  from private.fou802_profile_photo_cleanup_fixtures fixture
-  join storage.objects object_row
-    on object_row.bucket_id = 'profile-photos'
-   and object_row.name = fixture.storage_path
-  where registry.id = fixture.registration_id;
-  perform set_config('session_replication_role', 'origin', true);
-
-  update private.fou802_profile_photo_cleanup_fixtures fixture
-  set actual_object_id = object_row.id
-  from storage.objects object_row
-  where object_row.bucket_id = 'profile-photos'
-    and object_row.name = fixture.storage_path
-    and fixture.actual_object_id is distinct from object_row.id;
 end;
 $$;
+
+-- The pinned local postgres role is intentionally NOSUPERUSER. This image
+-- permits direct SET in the migration/test session but denies set_config().
+-- Keep the override transaction-local and restore origin before authorization.
+set local session_replication_role = replica;
+update private.profile_photo_objects registry
+set
+  storage_object_id = object_row.id,
+  state = 'cleanup',
+  upload_expires_at = null,
+  claim_token = null,
+  claim_expires_at = null,
+  claim_actor = null,
+  delete_authorized_at = null,
+  next_attempt_at = clock_timestamp(),
+  last_error_code = null,
+  last_failed_at = null,
+  retired_at = null,
+  updated_at = clock_timestamp()
+from private.fou802_profile_photo_cleanup_fixtures fixture
+join storage.objects object_row
+  on object_row.bucket_id = 'profile-photos'
+ and object_row.name = fixture.storage_path
+where registry.id = fixture.registration_id;
+set local session_replication_role = origin;
+
+update private.fou802_profile_photo_cleanup_fixtures fixture
+set actual_object_id = object_row.id
+from storage.objects object_row
+where object_row.bucket_id = 'profile-photos'
+  and object_row.name = fixture.storage_path
+  and fixture.actual_object_id is distinct from object_row.id;
 
 select public.claim_profile_photo_cleanup_service(100);
 
@@ -406,6 +411,7 @@ begin
   end loop;
 end;
 $$;
+commit;
 SQL
 }
 
@@ -507,46 +513,60 @@ remove_fixture_database_state() {
       return 0
     fi
     db_exec >/dev/null 2>&1 <<'SQL' || mark_cleanup_failure
+begin;
+set local session_replication_role = replica;
+delete from private.retired_community_deletion_ledger ledger
+where ledger.batch_id in (
+  select fixture.erasure_batch_id
+  from private.fou802_profile_photo_cleanup_fixtures fixture
+  where fixture.erasure_batch_id is not null
+);
+delete from private.retired_community_storage_work work
+where work.batch_id in (
+  select fixture.erasure_batch_id
+  from private.fou802_profile_photo_cleanup_fixtures fixture
+  where fixture.erasure_batch_id is not null
+);
+delete from private.retired_community_credential_work work
+where work.batch_id in (
+  select fixture.erasure_batch_id
+  from private.fou802_profile_photo_cleanup_fixtures fixture
+  where fixture.erasure_batch_id is not null
+);
+delete from private.retired_community_deletion_items item
+where item.batch_id in (
+  select fixture.erasure_batch_id
+  from private.fou802_profile_photo_cleanup_fixtures fixture
+  where fixture.erasure_batch_id is not null
+);
+delete from private.retired_community_deletion_batches batch_row
+where batch_row.id in (
+  select fixture.erasure_batch_id
+  from private.fou802_profile_photo_cleanup_fixtures fixture
+  where fixture.erasure_batch_id is not null
+);
+delete from private.profile_photo_objects registry
+where exists (
+  select 1 from private.fou802_profile_photo_cleanup_fixtures fixture
+  where fixture.user_id = registry.user_id
+);
+delete from private.profile_photo_path_tombstones tombstone
+where exists (
+  select 1
+  from private.fou802_profile_photo_cleanup_fixtures fixture
+  where tombstone.path_sha256 = private.profile_photo_path_sha256(
+    fixture.storage_path
+  )
+);
+set local session_replication_role = origin;
+delete from auth.users user_row
+where exists (
+  select 1 from private.fou802_profile_photo_cleanup_fixtures fixture
+  where fixture.user_id = user_row.id
+);
+
 do $$
-declare target_batch_ids uuid[];
 begin
-  select coalesce(array_agg(erasure_batch_id) filter (
-    where erasure_batch_id is not null
-  ), '{}'::uuid[])
-  into target_batch_ids
-  from private.fou802_profile_photo_cleanup_fixtures;
-
-  perform set_config('session_replication_role', 'replica', true);
-  delete from private.retired_community_deletion_ledger
-  where batch_id = any(target_batch_ids);
-  delete from private.retired_community_storage_work
-  where batch_id = any(target_batch_ids);
-  delete from private.retired_community_credential_work
-  where batch_id = any(target_batch_ids);
-  delete from private.retired_community_deletion_items
-  where batch_id = any(target_batch_ids);
-  delete from private.retired_community_deletion_batches
-  where id = any(target_batch_ids);
-  delete from private.profile_photo_objects registry
-  where exists (
-    select 1 from private.fou802_profile_photo_cleanup_fixtures fixture
-    where fixture.user_id = registry.user_id
-  );
-  delete from private.profile_photo_path_tombstones tombstone
-  where exists (
-    select 1
-    from private.fou802_profile_photo_cleanup_fixtures fixture
-    where tombstone.path_sha256 = private.profile_photo_path_sha256(
-      fixture.storage_path
-    )
-  );
-  perform set_config('session_replication_role', 'origin', true);
-  delete from auth.users user_row
-  where exists (
-    select 1 from private.fou802_profile_photo_cleanup_fixtures fixture
-    where fixture.user_id = user_row.id
-  );
-
   if exists (
       select 1 from auth.users user_row
       join private.fou802_profile_photo_cleanup_fixtures fixture
@@ -573,6 +593,7 @@ begin
 end;
 $$;
 drop table private.fou802_profile_photo_cleanup_fixtures;
+commit;
 SQL
   else
     fixture_status=$?
@@ -653,10 +674,19 @@ SQL
 
 fou802_run_cleanup_steps() {
   local cleanup_step
+  local errexit_was_enabled=false
+  case "$-" in
+    *e*) errexit_was_enabled=true ;;
+  esac
   set +e
   for cleanup_step in "$@"; do
     "$cleanup_step"
   done
+  if [[ "$errexit_was_enabled" == "true" ]]; then
+    set -e
+  else
+    set +e
+  fi
 }
 
 run_rehearsal_resource_cleanup() {
@@ -670,6 +700,10 @@ run_rehearsal_resource_cleanup() {
 
 remove_temporary_artifacts() {
   remove_tree_command "$temporary_root" || mark_cleanup_failure
+  if [[ -n "${runtime_mount_root:-}" \
+    && "$runtime_mount_root" != "$temporary_root" ]]; then
+    remove_tree_command "$runtime_mount_root" || mark_cleanup_failure
+  fi
 }
 
 release_lock() {

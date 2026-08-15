@@ -76,6 +76,7 @@ const fakeCleanupIntents = [
   "database:delete fixture lifecycle and auth rows",
   "database:drop tracking inventory",
   "temporary:rm -rf /tmp/fou802-fake-artifacts",
+  "temporary:rm -rf /tmp/fou802-fake-runtime-mount",
 ];
 const fakeCleanupHarness = String.raw`
 set -u
@@ -97,6 +98,7 @@ fixture_path_4="00000000-0000-4000-8000-000000000004/avatar-1700000000003-312345
 fixture_object_id="10000000-0000-4000-8000-000000000001"
 curl_config="$fake_root/curl.conf"
 temporary_root="/tmp/fou802-fake-artifacts"
+runtime_mount_root="/tmp/fou802-fake-runtime-mount"
 lock_directory="$fake_root/lock"
 lock_owner_file="$lock_directory/owner"
 mkdir "$lock_directory"
@@ -438,8 +440,20 @@ storage_curl() {
 }
 
 remove_tree_command() {
-  log_once temporary_remove "temporary:rm -rf $1"
-  [[ "$fail_boundary" != "temporary_remove" ]]
+  case "$1" in
+    "$temporary_root")
+      log_once temporary_remove "temporary:rm -rf $1"
+      [[ "$fail_boundary" != "temporary_remove" ]]
+      ;;
+    "$runtime_mount_root")
+      log_once runtime_mount_remove "temporary:rm -rf $1"
+      [[ "$fail_boundary" != "runtime_mount_remove" ]]
+      ;;
+    *)
+      log_once unknown_remove "unknown:remove:$1"
+      return 97
+      ;;
+  esac
 }
 
 remove_file_command() {
@@ -800,6 +814,106 @@ test("the rehearsal is pinned, local-only, one-shot, and self-cleaning", async (
   assert.doesNotMatch(source, /rm\s+-rf\s+[^\n]*docker\/volumes/);
 });
 
+test("runtime mounts are shared and stale inventory is recovered before replacement", async () => {
+  const source = await readFile(rehearsalPath, "utf8");
+  const cleanupSource = await readFile(cleanupOrchestratorPath, "utf8");
+  const ignoreSource = await readFile(
+    path.join(repositoryRoot, ".gitignore"),
+    "utf8",
+  );
+
+  assert.match(
+    source,
+    /runtime_mount_root="\$\(mktemp -d "\$repository_root\/\.fou802-runtime\.XXXXXX"\)"/,
+  );
+  assert.match(source, /runtime_source="\$runtime_mount_root\/runtime"/);
+  assert.match(source, /runtime_cache="\$runtime_mount_root\/cache"/);
+  assert.doesNotMatch(source, /runtime_source="\$temporary_root/);
+  assert.match(ignoreSource, /^\.fou802-runtime\.\*$/m);
+
+  const sourceAssembly = source.indexOf(
+    '"$runtime_source/functions/process-profile-photo-cleanup/deno.json"',
+  );
+  const sourceProof = source.indexOf(
+    '[[ -d "$runtime_source/functions"',
+  );
+  const runtimeCreation = source.indexOf('"$docker_cli" run --detach');
+  assert.ok(
+    sourceAssembly !== -1
+      && sourceProof > sourceAssembly
+      && runtimeCreation > sourceProof,
+  );
+
+  const curlConfigReady = source.indexOf('} >"$curl_config"');
+  const staleCleanup = source.indexOf("\nrun_rehearsal_resource_cleanup\n");
+  const cronOwnershipProbe = source.indexOf('cron_installed_value="$(db_query');
+  const trackingCreate = source.indexOf(`create unlogged table $secret_table`);
+  assert.ok(
+    curlConfigReady !== -1
+      && staleCleanup > curlConfigReady
+      && cronOwnershipProbe > staleCleanup
+      && trackingCreate > cronOwnershipProbe,
+  );
+  assert.doesNotMatch(source, /drop table if exists \$secret_table/);
+  assert.doesNotMatch(source, /drop table if exists \$fixture_table/);
+
+  assert.doesNotMatch(
+    cleanupSource,
+    /set_config\('session_replication_role'/,
+  );
+  assert.equal(
+    cleanupSource.match(/^set local session_replication_role = replica;$/gm)?.length,
+    2,
+  );
+  assert.equal(
+    cleanupSource.match(/^set local session_replication_role = origin;$/gm)?.length,
+    2,
+  );
+  assert.match(
+    cleanupSource,
+    /remove_tree_command "\$temporary_root"[\s\S]*remove_tree_command "\$runtime_mount_root"/,
+  );
+});
+
+test("the cleanup runner restores the caller's errexit mode", async () => {
+  const cleanupSource = await readFile(cleanupOrchestratorPath, "utf8");
+  const functionSource = cleanupSource.match(
+    /fou802_run_cleanup_steps\(\) \{[\s\S]*?^\}/m,
+  )?.[0];
+  assert.ok(functionSource);
+
+  const harness = `${functionSource}\n${String.raw`
+step_count=0
+failing_step() {
+  step_count=$((step_count + 1))
+  return 17
+}
+passing_step() {
+  step_count=$((step_count + 1))
+  return 0
+}
+
+set -e
+fou802_run_cleanup_steps failing_step passing_step
+[[ "$step_count" == "2" ]] || exit 91
+case "$-" in
+  *e*) ;;
+  *) exit 92 ;;
+esac
+
+set +e
+fou802_run_cleanup_steps failing_step passing_step
+[[ "$step_count" == "4" ]] || exit 93
+case "$-" in
+  *e*) exit 94 ;;
+esac
+`}`;
+  const result = spawnSync("bash", ["-c", harness], { encoding: "utf8" });
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.stdout, "");
+  assert.equal(result.stderr, "");
+});
+
 test("every cleanup fault checkpoint executes before destructive test work", async () => {
   const source = await readFile(rehearsalPath, "utf8");
   for (const phase of faultPhases) {
@@ -890,6 +1004,7 @@ test("production cleanup continues and preserves recovery inventory on boundary 
     ["fixture_database", /database=false/, /temporary:rm -rf/, /tracking=true/],
     ["tracking_drop", /database=true/, /temporary:rm -rf/, /tracking=true/],
     ["temporary_remove", /failed=true/, /lock:rm owner/, /lock:rmdir/],
+    ["runtime_mount_remove", /failed=true/, /lock:rm owner/, /lock:rmdir/],
     ["lock_remove", /failed=true/, /lock:rmdir/, /database=true/],
     ["lock_rmdir", /failed=true/, /database=true/, /fixture=false/],
   ];

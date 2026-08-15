@@ -6,6 +6,19 @@ fail() {
   exit 1
 }
 
+run_supabase_credential_safe() {
+  local operation="$1"
+  local exit_status
+  shift
+  if "$@" >/dev/null 2>&1; then
+    return 0
+  else
+    exit_status=$?
+  fi
+  echo "Atomic local start: ${operation} failed; Supabase CLI output was suppressed because it may contain local credentials." >&2
+  return "$exit_status"
+}
+
 script_directory="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 repository_root="$(cd "$script_directory/.." && pwd -P)"
 
@@ -121,7 +134,8 @@ else
     | grep -Fqx 'enabled = false' \
     || fail "failed to disable seed in the database bootstrap config."
 
-  "$supabase_cli" db start --workdir "$staging_root"
+  run_supabase_credential_safe "platform database bootstrap" \
+    "$supabase_cli" db start --workdir "$staging_root"
 
   actual_postgres_image="$($docker_cli container inspect "$database_container" \
     --format '{{.Config.Image}}')"
@@ -140,7 +154,8 @@ if [[ "${CI:-}" == "true" ]]; then
   # only the optional local mail viewer is omitted from this database job.
   start_arguments=(--exclude inbucket "${start_arguments[@]}")
 fi
-"$supabase_cli" start "${start_arguments[@]}"
+run_supabase_credential_safe "full local stack start" \
+  "$supabase_cli" start "${start_arguments[@]}"
 bash "$repository_root/scripts/verify-local-supabase-runtime.sh"
 
 if [[ "$owns_database" == "true" ]]; then

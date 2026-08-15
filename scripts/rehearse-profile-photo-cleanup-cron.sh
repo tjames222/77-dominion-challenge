@@ -351,8 +351,13 @@ db_query() {
 }
 
 temporary_root="$(mktemp -d "${TMPDIR:-/tmp}/fou802-cron-rehearsal.XXXXXX")"
-runtime_source="$temporary_root/runtime"
-runtime_cache="$temporary_root/cache"
+runtime_mount_root="$(mktemp -d "$repository_root/.fou802-runtime.XXXXXX")"
+case "$runtime_mount_root" in
+  "$repository_root"/.fou802-runtime.*) ;;
+  *) fail "the Docker mount root escaped the repository sharing boundary." ;;
+esac
+runtime_source="$runtime_mount_root/runtime"
+runtime_cache="$runtime_mount_root/cache"
 runtime_env="$temporary_root/runtime.env"
 curl_config="$temporary_root/curl.conf"
 upload_response="$temporary_root/upload-response.json"
@@ -454,6 +459,31 @@ done < <(inspect_value "$edge_container" \
   && "$service_role_key" =~ ^[A-Za-z0-9._-]+$ ]] \
   || fail "the exact local Edge Runtime did not expose a usable service key."
 
+{
+  printf 'header = "Authorization: Bearer %s"\n' "$service_role_key"
+  printf 'header = "apikey: %s"\n' "$service_role_key"
+} >"$curl_config"
+
+# Recover only resources whose exact identities were retained by an earlier
+# interrupted rehearsal. Never overwrite the inventory tables before their
+# Storage objects, lifecycle rows, Cron/pg_net work, and owned extension have
+# all been removed and verified.
+run_rehearsal_resource_cleanup
+[[ "$cleanup_failed" == "false" ]] \
+  || fail "retained rehearsal resources could not be recovered safely."
+cleanup_failed=false
+runtime_cleanup_complete=false
+cron_cleanup_complete=false
+pgnet_cleanup_complete=false
+fixture_objects_cleanup_complete=false
+fixture_database_cleanup_complete=false
+cron_installed_by_rehearsal=false
+cron_job_id=""
+cleanup_request_id=""
+readiness_request_id=""
+worker_request_id=""
+health_request_id=""
+
 cron_installed_value="$(db_query --command \
   "select exists (select 1 from pg_extension where extname = 'pg_cron');")"
 if [[ "$cron_installed_value" == "t" ]]; then
@@ -469,15 +499,8 @@ else
   fail "could not determine local pg_cron state without changing it."
 fi
 
-unschedule_and_drain_rehearsal_jobs
-[[ "$cleanup_failed" == "false" ]] \
-  || fail "a stale rehearsal Cron job could not be drained safely."
-
 db_exec >/dev/null <<SQL
 begin;
-drop table if exists $secret_table;
-drop table if exists $fixture_table;
-
 create unlogged table $secret_table (
   singleton boolean primary key default true check (singleton),
   worker_secret text not null check (worker_secret ~ '^[0-9a-f]{64}$'),
@@ -619,11 +642,6 @@ payload_sha256="$(shasum -a 256 "$payload_file" | awk '{print $1}')"
   || fail "the local Storage payload is outside the trusted upload size limit."
 [[ "$payload_sha256" =~ ^[0-9a-f]{64}$ ]] \
   || fail "the local Storage payload digest is invalid."
-
-{
-  printf 'header = "Authorization: Bearer %s"\n' "$service_role_key"
-  printf 'header = "apikey: %s"\n' "$service_role_key"
-} >"$curl_config"
 
 for fixture_kind in abandoned canonical wrong_identity account_erasure; do
   storage_path="$(db_query --command \
@@ -769,6 +787,12 @@ cp "$script_directory/fixtures/profile-photo-cleanup-supabase-bridge.ts" \
   printf '  }\n'
   printf '}\n'
 } >"$runtime_source/functions/process-profile-photo-cleanup/deno.json"
+
+[[ -d "$runtime_source/functions" \
+  && -f "$runtime_source/functions/process-profile-photo-cleanup/index.ts" \
+  && -f "$runtime_source/functions/process-profile-photo-cleanup/deno.json" \
+  && -d "$runtime_cache" ]] \
+  || fail "the repository-shared runtime bind sources were not assembled."
 
 {
   printf 'SUPABASE_URL=%s\n' "$container_api_origin"

@@ -344,6 +344,28 @@ test("package, CI, and production deploy run the gate before migrations", async 
     resetHelper,
     /run-local-sql\.sh"\s*\\\s*\n\s*"[^"\n]*supabase\/seed\.sql"/,
   );
+  for (const helper of [startHelper, resetHelper]) {
+    assert.match(
+      helper,
+      /run_supabase_credential_safe\(\) \{[\s\S]*if "\$@" >\/dev\/null 2>&1; then[\s\S]*exit_status=\$\?[\s\S]*output was suppressed because it may contain local credentials/,
+    );
+  }
+  assert.match(
+    startHelper,
+    /run_supabase_credential_safe "platform database bootstrap"[\s\S]*db start --workdir "\$staging_root"/,
+  );
+  assert.match(
+    startHelper,
+    /run_supabase_credential_safe "full local stack start"[\s\S]*start "\$\{start_arguments\[@\]\}"/,
+  );
+  assert.match(
+    resetHelper,
+    /run_supabase_credential_safe "platform database reset"[\s\S]*db reset --local --no-seed --workdir "\$staging_root"/,
+  );
+  assert.match(
+    resetHelper,
+    /run_supabase_credential_safe "full local stack restart"[\s\S]*start "\$\{start_arguments\[@\]\}"/,
+  );
   assert.match(startHelper, /cli_version=.*--version/);
   assert.match(startHelper, /cli_version" == "2\.109\.0"/);
   assert.match(startHelper, /section == "migrations"[\s\S]*enabled = false/);
@@ -436,6 +458,51 @@ test("package, CI, and production deploy run the gate before migrations", async 
     deployWorkflow,
     /run: supabase db push --linked --password/,
   );
+});
+
+test("local Supabase lifecycle wrappers suppress credentials and preserve status", async () => {
+  const helpers = await Promise.all([
+    readFile(
+      path.join(repositoryRoot, "scripts", "start-local-database.sh"),
+      "utf8",
+    ),
+    readFile(
+      path.join(repositoryRoot, "scripts", "reset-local-database.sh"),
+      "utf8",
+    ),
+  ]);
+
+  for (const helper of helpers) {
+    const functionSource = helper.match(
+      /run_supabase_credential_safe\(\) \{[\s\S]*?^\}/m,
+    )?.[0];
+    assert.ok(functionSource);
+
+    const failure = spawnSync(
+      "bash",
+      [
+        "-c",
+        `${functionSource}\nemit_secret() { printf '%s\\n' LOCAL_SECRET_SENTINEL; printf '%s\\n' LOCAL_SECRET_ERROR >&2; return 73; }\nrun_supabase_credential_safe 'test lifecycle' emit_secret`,
+      ],
+      { encoding: "utf8" },
+    );
+    assert.equal(failure.status, 73);
+    assert.equal(failure.stdout, "");
+    assert.doesNotMatch(failure.stderr, /LOCAL_SECRET/);
+    assert.match(failure.stderr, /output was suppressed/);
+
+    const success = spawnSync(
+      "bash",
+      [
+        "-c",
+        `${functionSource}\nemit_secret() { printf '%s\\n' LOCAL_SECRET_SENTINEL; printf '%s\\n' LOCAL_SECRET_ERROR >&2; return 0; }\nrun_supabase_credential_safe 'test lifecycle' emit_secret`,
+      ],
+      { encoding: "utf8" },
+    );
+    assert.equal(success.status, 0);
+    assert.equal(success.stdout, "");
+    assert.equal(success.stderr, "");
+  }
 });
 
 test("the production baseline fails closed and normalizes legacy privileges", async () => {
