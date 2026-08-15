@@ -47,7 +47,17 @@ if [[ "${FOU802_REHEARSAL_FAULT_SELF_TEST:-}" == "1" ]]; then
   fail "the fault self-test did not inject its failure."
 fi
 
-if [[ "$#" -ne 1 || "$1" != "--confirm-local-reset" ]]; then
+confirmation_valid=false
+case "$#" in
+  1)
+    [[ "$1" == "--confirm-local-reset" ]] && confirmation_valid=true
+    ;;
+  2)
+    [[ "$1" == "--" && "$2" == "--confirm-local-reset" ]] \
+      && confirmation_valid=true
+    ;;
+esac
+if [[ "$confirmation_valid" != "true" ]]; then
   echo "FOU-802 local rehearsal: this proof destroys and rebuilds only the pinned local Supabase database." >&2
   echo "Re-run with --confirm-local-reset after confirming no local data must be kept." >&2
   exit 2

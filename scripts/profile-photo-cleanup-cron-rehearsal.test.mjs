@@ -523,18 +523,29 @@ async function externalImportsFromGraph(entryPath) {
   return [...external].sort();
 }
 
-test("the reset acknowledgement fails before any local-stack command", async () => {
-  const result = spawnSync("bash", [rehearsalPath], {
-    cwd: repositoryRoot,
-    encoding: "utf8",
-    env: {
-      PATH: "/usr/bin:/bin",
-    },
-  });
+test("only the two documented reset acknowledgement forms pass the gate", () => {
+  const rejectedArguments = [
+    [],
+    ["--"],
+    ["--confirm-local-reset", "extra"],
+    ["--", "--confirm-local-reset", "extra"],
+    ["--confirm-local-reset", "--"],
+    ["--", "confirm-local-reset"],
+  ];
 
-  assert.equal(result.status, 2);
-  assert.match(result.stderr, /--confirm-local-reset/);
-  assert.doesNotMatch(result.stdout + result.stderr, /resetting local database/i);
+  for (const argumentsList of rejectedArguments) {
+    const result = spawnSync("bash", [rehearsalPath, ...argumentsList], {
+      cwd: repositoryRoot,
+      encoding: "utf8",
+      env: {
+        PATH: "/usr/bin:/bin",
+      },
+    });
+
+    assert.equal(result.status, 2, argumentsList.join(" "));
+    assert.match(result.stderr, /--confirm-local-reset/);
+    assert.doesNotMatch(result.stdout + result.stderr, /resetting local database/i);
+  }
 });
 
 test("unsafe Docker endpoints fail before reset or Docker mutation", () => {
@@ -546,10 +557,14 @@ test("unsafe Docker endpoints fail before reset or Docker mutation", () => {
     ["named pipe", "npipe:////./pipe/docker_engine"],
     ["relative Unix", "unix://relative.sock"],
     ["missing Unix", "missing"],
-    ["remote selected context", "context"],
+    [
+      "remote selected context through the pnpm argument contract",
+      "context",
+      ["--", "--confirm-local-reset"],
+    ],
   ];
 
-  for (const [label, endpointKind] of endpointCases) {
+  for (const [label, endpointKind, confirmationArguments] of endpointCases) {
     const fakeRoot = mkdtempSync(path.join(tmpdir(), "fou802-endpoint-test."));
     const fakeDocker = path.join(fakeRoot, "docker");
     const fakeSupabase = path.join(fakeRoot, "supabase");
@@ -594,7 +609,10 @@ exit 97
     try {
       const result = spawnSync(
         "bash",
-        [rehearsalPath, "--confirm-local-reset"],
+        [
+          rehearsalPath,
+          ...(confirmationArguments || ["--confirm-local-reset"]),
+        ],
         {
           cwd: repositoryRoot,
           encoding: "utf8",
@@ -614,6 +632,7 @@ exit 97
 
       assert.equal(result.status, 1, `${label}: ${result.stderr}`);
       assert.match(result.stderr, /effective Docker endpoint/, label);
+      assert.doesNotMatch(result.stderr, /Re-run with --confirm-local-reset/, label);
       assert.deepEqual(
         readFileSync(dockerLog, "utf8").trim().split("\n"),
         ["context inspect --format {{.Endpoints.docker.Host}}"],
