@@ -1,6 +1,12 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -531,14 +537,131 @@ test("the reset acknowledgement fails before any local-stack command", async () 
   assert.doesNotMatch(result.stdout + result.stderr, /resetting local database/i);
 });
 
+test("unsafe Docker endpoints fail before reset or Docker mutation", () => {
+  const endpointCases = [
+    ["SSH", "ssh://review.invalid"],
+    ["TCP", "tcp://127.0.0.1:2375"],
+    ["HTTP", "http://127.0.0.1:2375"],
+    ["HTTPS", "https://127.0.0.1:2376"],
+    ["named pipe", "npipe:////./pipe/docker_engine"],
+    ["relative Unix", "unix://relative.sock"],
+    ["missing Unix", "missing"],
+    ["remote selected context", "context"],
+  ];
+
+  for (const [label, endpointKind] of endpointCases) {
+    const fakeRoot = mkdtempSync(path.join(tmpdir(), "fou802-endpoint-test."));
+    const fakeDocker = path.join(fakeRoot, "docker");
+    const fakeSupabase = path.join(fakeRoot, "supabase");
+    const dockerLog = path.join(fakeRoot, "docker.log");
+    const supabaseLog = path.join(fakeRoot, "supabase.log");
+    writeFileSync(dockerLog, "");
+    writeFileSync(supabaseLog, "");
+    writeFileSync(
+      fakeDocker,
+      `#!/bin/bash
+set -eu
+printf '%s\\n' "$*" >> "$FOU802_DOCKER_LOG"
+if [[ "$1" != "context" || "$2" != "inspect" ]]; then
+  printf 'MUTATION:%s\\n' "$*" >> "$FOU802_DOCKER_LOG"
+  exit 97
+fi
+if [[ -n "$DOCKER_HOST" ]]; then
+  printf '%s\\n' "$DOCKER_HOST"
+else
+  printf '%s\\n' "$FOU802_FAKE_CONTEXT_ENDPOINT"
+fi
+`,
+      { mode: 0o755 },
+    );
+    writeFileSync(
+      fakeSupabase,
+      `#!/bin/bash
+printf '%s\\n' "$*" >> "$FOU802_SUPABASE_LOG"
+exit 97
+`,
+      { mode: 0o755 },
+    );
+
+    const dockerHost = endpointKind === "missing"
+      ? `unix://${path.join(fakeRoot, "missing.sock")}`
+      : endpointKind === "context"
+        ? ""
+        : endpointKind;
+    const contextEndpoint = endpointKind === "context"
+      ? "ssh://context.invalid"
+      : "unix:///should-not-be-selected.sock";
+    try {
+      const result = spawnSync(
+        "bash",
+        [rehearsalPath, "--confirm-local-reset"],
+        {
+          cwd: repositoryRoot,
+          encoding: "utf8",
+          env: {
+            PATH: "/usr/bin:/bin",
+            TMPDIR: fakeRoot,
+            DOCKER_BIN: fakeDocker,
+            DOCKER_HOST: dockerHost,
+            DOCKER_CONTEXT: endpointKind === "context" ? "remote-review" : "",
+            FOU802_DOCKER_LOG: dockerLog,
+            FOU802_FAKE_CONTEXT_ENDPOINT: contextEndpoint,
+            FOU802_SUPABASE_LOG: supabaseLog,
+            SUPABASE_CLI_BIN: fakeSupabase,
+          },
+        },
+      );
+
+      assert.equal(result.status, 1, `${label}: ${result.stderr}`);
+      assert.match(result.stderr, /effective Docker endpoint/, label);
+      assert.deepEqual(
+        readFileSync(dockerLog, "utf8").trim().split("\n"),
+        ["context inspect --format {{.Endpoints.docker.Host}}"],
+        label,
+      );
+      assert.equal(readFileSync(supabaseLog, "utf8"), "", label);
+      assert.equal(
+        existsSync(path.join(fakeRoot, "fou802-77-dominion-challenge.lock")),
+        false,
+        label,
+      );
+      assert.doesNotMatch(
+        result.stdout + result.stderr,
+        /resetting local database|MUTATION:/i,
+        label,
+      );
+    } finally {
+      rmSync(fakeRoot, { recursive: true, force: true });
+    }
+  }
+});
+
 test("the rehearsal is pinned, local-only, one-shot, and self-cleaning", async () => {
   const source = await readFile(rehearsalPath, "utf8");
   const cleanupSource = await readFile(cleanupOrchestratorPath, "utf8");
   const implementation = `${source}\n${cleanupSource}`;
 
   const gateOffset = source.indexOf('"--confirm-local-reset"');
+  const endpointGuardOffset = source.indexOf(
+    "context inspect --format '{{.Endpoints.docker.Host}}'",
+  );
+  const firstContainerInspection = source.indexOf(
+    'assert_local_container "$database_container"',
+  );
   const resetOffset = source.indexOf('bash "$script_directory/reset-local-database.sh"');
-  assert.ok(gateOffset >= 0 && resetOffset > gateOffset);
+  const lockOffset = source.indexOf('mkdir "$lock_directory"');
+  assert.ok(
+    gateOffset >= 0
+      && endpointGuardOffset > gateOffset
+      && firstContainerInspection > endpointGuardOffset
+      && lockOffset > endpointGuardOffset
+      && resetOffset > lockOffset,
+  );
+  assert.match(source, /unix:\/\/\/\*[\s\S]*\[\[ -S "\$docker_socket_path" \]\]/);
+  assert.match(
+    source,
+    /export DOCKER_HOST="\$effective_docker_endpoint"[\s\S]*unset DOCKER_CONTEXT/,
+  );
   assert.match(source, /--database-only-runtime-check/);
   assert.match(source, /project_id="77-dominion-challenge"/);
   assert.match(source, /http:\/\/127\.0\.0\.1:54321/);
@@ -598,7 +721,7 @@ test("the rehearsal is pinned, local-only, one-shot, and self-cleaning", async (
   assert.match(source, /grep -Fq -- "\$sensitive_value" "\$stderr_capture"/);
   assert.match(source, /for sensitive_value in "\$worker_secret" "\$service_role_key"/);
   assert.match(source, /mkdir "\$lock_directory"/);
-  assert.ok(source.indexOf('mkdir "$lock_directory"') < resetOffset);
+  assert.ok(lockOffset < resetOffset);
   assert.match(cleanupSource, /docker_command rm --force "\$runtime_container"/);
   assert.match(source, /source "\$cleanup_orchestrator"/);
   assert.doesNotMatch(source, /remove_exact_runtime_container\(\)/);

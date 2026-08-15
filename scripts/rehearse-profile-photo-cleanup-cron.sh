@@ -103,6 +103,41 @@ else
   fail "Docker is required."
 fi
 
+# Ask the CLI for the endpoint it would actually use so DOCKER_HOST, the
+# selected context, and Docker's own precedence rules cannot be interpreted
+# differently by this rehearsal. Resolving context metadata is read-only and
+# must happen before the first container inspection, lock, reset, or mutation.
+if ! effective_docker_endpoint="$(
+  "$docker_cli" context inspect --format '{{.Endpoints.docker.Host}}' 2>/dev/null
+)"; then
+  fail "the effective Docker endpoint could not be resolved."
+fi
+case "$effective_docker_endpoint" in
+  *$'\n'*|*$'\r'*|'')
+    fail "the effective Docker endpoint must be one existing local absolute unix:// socket."
+    ;;
+  unix:///*)
+    docker_socket_path="${effective_docker_endpoint#unix://}"
+    ;;
+  *)
+    fail "the effective Docker endpoint must be one existing local absolute unix:// socket."
+    ;;
+esac
+case "$docker_socket_path" in
+  /*) ;;
+  *)
+    fail "the effective Docker endpoint must use an absolute unix:// socket path."
+    ;;
+esac
+[[ -S "$docker_socket_path" ]] \
+  || fail "the effective Docker endpoint does not name an existing local Unix socket."
+
+# Pin every subsequent Docker and Supabase-CLI subprocess to the endpoint that
+# passed the local-socket check. A context change during the rehearsal cannot
+# redirect later destructive commands to another daemon.
+export DOCKER_HOST="$effective_docker_endpoint"
+unset DOCKER_CONTEXT DOCKER_TLS_VERIFY DOCKER_CERT_PATH
+
 if [[ -n "${SUPABASE_CLI_BIN:-}" ]]; then
   supabase_cli="$SUPABASE_CLI_BIN"
 elif [[ -x "$repository_root/node_modules/.bin/supabase" ]]; then
