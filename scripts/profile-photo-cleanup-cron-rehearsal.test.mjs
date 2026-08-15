@@ -550,12 +550,18 @@ test("only the two documented reset acknowledgement forms pass the gate", () => 
 
 test("Kong HostPort validation accepts dual-stack duplicates only", () => {
   const cases = [
-    ["single binding", "54321", 0],
-    ["dual-stack bindings", "54321\n54321", 0],
-    ["mixed bindings", "54321\n54322", 1],
-    ["wrong binding", "54322", 1],
+    ["single binding", "binding:54321\n", 0],
+    ["dual-stack bindings", "binding:54321\nbinding:54321\n", 0],
+    ["mixed bindings", "binding:54321\nbinding:54322\n", 1],
+    ["wrong binding", "binding:54322\n", 1],
     ["missing binding", "", 1],
-    ["blank binding mixed in", "54321\n\n54321", 1],
+    ["blank first binding", "binding:\nbinding:54321\n", 1],
+    [
+      "blank interior binding",
+      "binding:54321\nbinding:\nbinding:54321\n",
+      1,
+    ],
+    ["blank trailing binding", "binding:54321\nbinding:\n", 1],
   ];
 
   for (const [label, bindings, expectedStatus] of cases) {
@@ -712,8 +718,10 @@ test("the rehearsal is pinned, local-only, one-shot, and self-cleaning", async (
   );
   assert.match(
     source,
-    /while IFS= read -r host_port; do[\s\S]*host_port" == "\$expected_port"[\s\S]*binding_count > 0/,
+    /while IFS= read -r binding_record; do[\s\S]*binding:\$\{expected_port\}[\s\S]*binding_count > 0/,
   );
+  assert.match(source, /binding_records="\$\("\$@"\)"/);
+  assert.match(source, /printf "binding:%s\\n" \.HostPort/);
   assert.equal(
     source.match(/^assert_kong_api_port_bindings$/gm)?.length,
     2,

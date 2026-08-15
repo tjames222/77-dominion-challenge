@@ -38,24 +38,39 @@ maybe_inject_fault() {
 
 kong_api_port_bindings_are_exact() {
   local expected_port="$1"
-  local host_ports="$2"
-  local host_port
+  local binding_records="$2"
+  local binding_record
   local binding_count=0
 
   [[ "$expected_port" =~ ^[0-9]+$ ]] || return 1
-  while IFS= read -r host_port; do
-    [[ -n "$host_port" && "$host_port" == "$expected_port" ]] || return 1
+  while IFS= read -r binding_record; do
+    [[ "$binding_record" == "binding:${expected_port}" ]] || return 1
     binding_count=$((binding_count + 1))
-  done <<<"$host_ports"
+  done <<<"$binding_records"
   (( binding_count > 0 ))
 }
 
+capture_and_validate_kong_api_port_bindings() {
+  local expected_port="$1"
+  shift
+  local binding_records
+
+  binding_records="$("$@")" || return 1
+  kong_api_port_bindings_are_exact "$expected_port" "$binding_records"
+}
+
+emit_kong_api_port_binding_self_test_records() {
+  printf '%s' "$1"
+}
+
 # This pure parser mode lets CI exercise Docker's single-stack, dual-stack,
-# mixed, wrong, and missing HostPort shapes without contacting any daemon.
+# blank, mixed, wrong, and missing HostPort shapes through the same command-
+# substitution capture used in production without contacting any daemon.
 if [[ "${FOU802_KONG_PORT_BINDING_SELF_TEST:-}" == "1" ]]; then
   [[ "$#" -eq 2 ]] \
     || fail "the Kong port-binding self-test requires an expected port and binding list."
-  kong_api_port_bindings_are_exact "$1" "$2"
+  capture_and_validate_kong_api_port_bindings \
+    "$1" emit_kong_api_port_binding_self_test_records "$2"
   exit $?
 fi
 
@@ -253,11 +268,11 @@ assert_local_container() {
 }
 
 assert_kong_api_port_bindings() {
-  local host_ports
-  host_ports="$(inspect_value "$kong_container" \
-    '{{range (index .NetworkSettings.Ports "8000/tcp")}}{{println .HostPort}}{{end}}')" \
-    || fail "Kong port 8000 bindings could not be inspected."
-  kong_api_port_bindings_are_exact "$config_api_port" "$host_ports" \
+  capture_and_validate_kong_api_port_bindings \
+    "$config_api_port" \
+    inspect_value \
+    "$kong_container" \
+    '{{range (index .NetworkSettings.Ports "8000/tcp")}}{{printf "binding:%s\n" .HostPort}}{{end}}' \
     || fail "every Kong port 8000 binding must use the pinned local API port."
 }
 
