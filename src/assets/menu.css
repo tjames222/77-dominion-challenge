@@ -197,6 +197,10 @@ body:not(.challenge-finished) .dashboard-shell > :is(.topbar, .member-tabs) + .d
   pointer-events: none;
   opacity: 0;
 }
+.menu-open .member-tabs {
+  visibility: hidden;
+  pointer-events: none;
+}
 .global-streak-details {
   display: grid;
   gap: 18px;

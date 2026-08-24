@@ -42,6 +42,7 @@ test('global navigation is keyboard operable and Escape closes it', async ({ pag
   await app.open(ROUTE_BY_ID.dashboard);
   const menuButton = page.getByRole('button', { name: 'Open menu' });
   const menu = page.locator('.global-menu');
+  const memberTabs = page.locator('[data-member-tabs]');
   const firstMenuLink = menu.locator('a').first();
   const lastMenuControl = menu.getByRole('button', { name: 'Log Out' });
 
@@ -53,6 +54,9 @@ test('global navigation is keyboard operable and Escape closes it', async ({ pag
   await expect(menuButton).toHaveAttribute('aria-expanded', 'true');
   await expect(menu).toHaveAttribute('aria-hidden', 'false');
   await expect(menu).not.toHaveAttribute('inert', '');
+  await expect(memberTabs).toHaveAttribute('aria-hidden', 'true');
+  await expect(memberTabs).toHaveAttribute('inert', '');
+  await expect(memberTabs).toBeHidden();
   await expect(page.getByRole('navigation', { name: 'Global navigation' })).toBeVisible();
   await expect(firstMenuLink).toBeFocused();
 
@@ -67,6 +71,9 @@ test('global navigation is keyboard operable and Escape closes it', async ({ pag
   await expect(menu).toHaveAttribute('aria-hidden', 'true');
   await expect(menu).toHaveAttribute('inert', '');
   await expect(menu).toBeHidden();
+  await expect(memberTabs).toHaveAttribute('aria-hidden', 'false');
+  await expect(memberTabs).not.toHaveAttribute('inert', '');
+  await expect(memberTabs).toBeVisible();
   await expect(page.locator('body')).not.toHaveClass(/menu-open/);
 
   await firstMenuLink.evaluate((link) => link.focus());

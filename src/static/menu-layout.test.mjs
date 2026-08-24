@@ -180,6 +180,7 @@ describe('shared sticky menu', () => {
     const drawer = declarationsFor('.global-menu');
     const backdrop = declarationsFor('.global-menu-backdrop');
     const openDrawer = declarationsFor('.menu-open .global-menu');
+    const isolatedMemberTabs = declarationsFor('.menu-open .member-tabs');
 
     assert.match(drawer, /visibility:\s*hidden/);
     assert.match(drawer, /pointer-events:\s*none/);
@@ -188,8 +189,13 @@ describe('shared sticky menu', () => {
     assert.match(openDrawer, /visibility:\s*visible/);
     assert.match(openDrawer, /pointer-events:\s*auto/);
     assert.match(openDrawer, /box-shadow:\s*-24px 0 80px/);
+    assert.match(isolatedMemberTabs, /visibility:\s*hidden/);
+    assert.match(isolatedMemberTabs, /pointer-events:\s*none/);
     assert.match(menuJs, /menu\.inert = !isOpen/);
     assert.match(menuJs, /menu\.setAttribute\('aria-hidden', String\(!isOpen\)\)/);
+    assert.match(menuJs, /memberTabs\.inert = isOpen/);
+    assert.match(menuJs, /memberTabs\.setAttribute\?\.\('aria-hidden', String\(isOpen\)\)/);
+    assert.match(menuJs, /memberTabs\.removeAttribute\?\.\('inert'\)/);
     assert.match(menuJs, /button\.setAttribute\('aria-controls', menu\.id\)/);
     assert.match(menuJs, /event\.key !== 'Tab'/);
     assert.match(menuJs, /styles\.display !== 'none'/);

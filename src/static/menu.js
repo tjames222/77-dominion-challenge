@@ -104,6 +104,12 @@ function syncMenuExpandedState(isOpen) {
   const menu = document.querySelector('.global-menu');
 
   button?.setAttribute('aria-expanded', String(isOpen));
+  if (memberTabs) {
+    memberTabs.inert = isOpen;
+    memberTabs.setAttribute?.('aria-hidden', String(isOpen));
+    if (isOpen) memberTabs.setAttribute?.('inert', '');
+    else memberTabs.removeAttribute?.('inert');
+  }
   if (!menu) return;
 
   menu.inert = !isOpen;
