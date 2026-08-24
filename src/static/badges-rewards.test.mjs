@@ -174,7 +174,8 @@ describe('Badges & Rewards route integration', () => {
   it('gives the share action, tabs, and selected panel explicit responsive spacing', () => {
     assert.match(pageCss, /--badges-rewards-section-gap:\s*clamp\(28px, 5vw, 56px\)/);
     assert.match(pageCss, /--badges-rewards-page-gap:\s*clamp\(22px, 3\.5vw, 36px\)/);
-    assert.match(pageCss, /\.badges-rewards-shell\s*\{[\s\S]*?display:\s*grid;[\s\S]*?gap:\s*var\(--badges-rewards-page-gap\)/);
+    assert.match(pageCss, /--app-shell-row-gap:\s*var\(--badges-rewards-page-gap\)/);
+    assert.match(pageCss, /\.badges-rewards-shell\s*\{[\s\S]*?display:\s*grid;[\s\S]*?gap:\s*var\(--app-shell-row-gap\)/);
     assert.match(pageCss, /\.badges-rewards-tabs\s*\{[\s\S]*?grid-template-columns:\s*repeat\(2, minmax\(0, 1fr\)\)/);
     assert.match(pageCss, /--badges-rewards-sticky-top:[\s\S]*?env\(safe-area-inset-top\)/);
     assert.match(pageCss, /\.badges-rewards-tabs\.secondary-tabs-scrolled/);
