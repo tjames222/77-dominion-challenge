@@ -12,6 +12,7 @@ import {
 
 const apiSource = readFileSync(new URL('./api.js', import.meta.url), 'utf8');
 const pageSource = readFileSync(new URL('./badges-rewards.js', import.meta.url), 'utf8');
+const rewardCardSource = readFileSync(new URL('./reward-card.mjs', import.meta.url), 'utf8');
 const pageHtml = readFileSync(new URL('../../badges-rewards.html', import.meta.url), 'utf8');
 const pageCss = readFileSync(new URL('../assets/badges-rewards.css', import.meta.url), 'utf8');
 const dashboardHtml = readFileSync(new URL('../../dashboard.html', import.meta.url), 'utf8');
@@ -77,7 +78,8 @@ describe('Badges & Rewards page model', () => {
 
     assert.equal(available.canStart, true);
     assert.equal(active.canStart, false);
-    assert.equal(active.statusLabel, 'Active');
+    assert.equal(active.statusLabel, 'In progress');
+    assert.equal(active.detail, 'Challenge in progress');
     assert.equal(completed.statusLabel, 'Completed');
     assert.equal(owned.statusLabel, 'Owned');
     assert.equal(owned.canStart, false);
@@ -133,22 +135,26 @@ describe('Badges & Rewards page model', () => {
 
 describe('Badges & Rewards route integration', () => {
   it('splits Rewards and Badges into accessible Community-style tabs with Rewards selected by default', () => {
-    assert.match(pageHtml, /class="badges-rewards-tabs" role="tablist" aria-label="Rewards and badges"/);
+    assert.match(pageHtml, /class="badges-rewards-tabs secondary-tabs" role="tablist" aria-label="Rewards and badges"/);
     assert.match(pageHtml, /id="rewards-tab"[\s\S]*?role="tab"[\s\S]*?aria-selected="true"[\s\S]*?aria-controls="rewards-panel"/);
     assert.match(pageHtml, /id="badges-tab"[\s\S]*?role="tab"[\s\S]*?aria-selected="false"[\s\S]*?aria-controls="badges-panel"[\s\S]*?tabindex="-1"/);
     assert.match(pageHtml, /class="badges-rewards-panel active"[\s\S]*?id="rewards-panel"[\s\S]*?role="tabpanel"[\s\S]*?aria-labelledby="rewards-tab"/);
     assert.match(pageHtml, /class="badges-rewards-panel"[\s\S]*?id="badges-panel"[\s\S]*?role="tabpanel"[\s\S]*?aria-labelledby="badges-tab"[\s\S]*?hidden/);
 
-    const tabsIndex = pageHtml.indexOf('class="badges-rewards-tabs"');
+    const titleIndex = pageHtml.indexOf('id="badgesRewardsTitle"');
+    const subtextIndex = pageHtml.indexOf('class="lead"');
+    const tabsIndex = pageHtml.indexOf('class="badges-rewards-tabs secondary-tabs"');
     const progressIndex = pageHtml.indexOf('id="gameSummaryCard"');
     const shareIndex = pageHtml.indexOf('data-share-kind="progress"');
     const nextUnlockIndex = pageHtml.indexOf('id="rewardNextPanel"');
     const rewardsCatalogIndex = pageHtml.indexOf('class="rewards-catalog-section');
     const badgesPanelIndex = pageHtml.indexOf('id="badges-panel"');
     const badgesGalleryIndex = pageHtml.indexOf('class="badges-gallery-section');
-    assert.ok(tabsIndex < progressIndex);
-    assert.ok(progressIndex < shareIndex);
-    assert.ok(shareIndex < nextUnlockIndex);
+    assert.ok(titleIndex < subtextIndex);
+    assert.ok(subtextIndex < tabsIndex);
+    assert.ok(tabsIndex < shareIndex);
+    assert.ok(shareIndex < progressIndex);
+    assert.ok(progressIndex < nextUnlockIndex);
     assert.ok(nextUnlockIndex < rewardsCatalogIndex);
     assert.ok(rewardsCatalogIndex < badgesPanelIndex);
     assert.ok(badgesPanelIndex < badgesGalleryIndex);
@@ -167,8 +173,12 @@ describe('Badges & Rewards route integration', () => {
 
   it('gives the share action, tabs, and selected panel explicit responsive spacing', () => {
     assert.match(pageCss, /--badges-rewards-section-gap:\s*clamp\(28px, 5vw, 56px\)/);
-    assert.match(pageCss, /\.badges-rewards-shell\s*\{[\s\S]*?display:\s*grid;[\s\S]*?gap:\s*var\(--badges-rewards-section-gap\)/);
+    assert.match(pageCss, /--badges-rewards-page-gap:\s*clamp\(22px, 3\.5vw, 36px\)/);
+    assert.match(pageCss, /\.badges-rewards-shell\s*\{[\s\S]*?display:\s*grid;[\s\S]*?gap:\s*var\(--badges-rewards-page-gap\)/);
     assert.match(pageCss, /\.badges-rewards-tabs\s*\{[\s\S]*?grid-template-columns:\s*repeat\(2, minmax\(0, 1fr\)\)/);
+    assert.match(pageCss, /--badges-rewards-sticky-top:[\s\S]*?env\(safe-area-inset-top\)/);
+    assert.match(pageCss, /\.badges-rewards-tabs\.secondary-tabs-scrolled/);
+    assert.match(pageCss, /\.badges-rewards-share-action \.share-entry-button\s*\{[\s\S]*?width:\s*100%/);
     assert.match(pageCss, /\.badges-rewards-panel\s*\{[\s\S]*?gap:\s*var\(--badges-rewards-section-gap\)/);
     assert.match(pageCss, /@media \(max-width: 520px\)[\s\S]*?\.badges-rewards-tab/);
   });
@@ -209,7 +219,7 @@ describe('Badges & Rewards route integration', () => {
     assert.match(pageSource, /function scrubAccountBoundPage[\s\S]*?replaceChildren\(\)/);
     assert.match(pageSource, /window\.addEventListener\('pagehide'[\s\S]*?scrubAccountBoundPage\(\)/);
     assert.match(pageSource, /window\.addEventListener\('storage'[\s\S]*?dismissAndScrubRewardDetail\(\)/);
-    assert.match(pageSource, /renderRewardDetail\(\{ busy: true \}\)/);
+    assert.match(pageSource, /renderRewardDetail\(\{ busy: requiresSecureDetails \}\)/);
     assert.match(pageSource, /rewardDetailContent\.setAttribute\('aria-busy', String\(busy\)\)/);
   });
 
@@ -231,8 +241,16 @@ describe('Badges & Rewards route integration', () => {
   it('claims one-time unlocks and keeps Start actions on the rewards page', () => {
     assert.match(pageSource, /claimRewardEntitlementUnlocks\(\{ expectedUserId \}\)/);
     assert.match(pageSource, /claimChallengeUnlocks\(\{ expectedUserId \}\)/);
-    assert.match(pageSource, /data-start-reward/);
+    assert.match(rewardCardSource, /data-start-reward/);
     assert.match(pageSource, /await startChallenge\(pendingRewardKey, \{ expectedUserId \}\)/);
+  });
+
+  it('renders every reward through one accessible shared card contract', () => {
+    assert.match(pageSource, /import\s*\{[\s\S]*?renderRewardCard,[\s\S]*?\}\s*from '\.\/reward-card\.mjs'/);
+    assert.match(pageSource, /model\.rewards\.map\(\(reward\) => renderRewardCard\(reward, \{ pendingRewardKey \}\)\)/);
+    assert.match(rewardCardSource, /data-view-reward/);
+    assert.match(rewardCardSource, />View Progress<\/button>/);
+    assert.doesNotMatch(pageSource, /const rewardCardMarkup/);
   });
 
   it('downloads verified PDF bytes without navigating to a signed storage URL', () => {

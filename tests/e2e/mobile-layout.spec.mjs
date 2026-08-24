@@ -43,7 +43,7 @@ test('phone member navigation stays on one sticky icon row without overflow', as
   }
 });
 
-test('Rewards tabs stack below the sticky member row and precede progress', async ({ page, app }) => {
+test('Rewards intro, sticky tabs, share action, and progress follow the intended mobile order', async ({ page, app }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await app.open(ROUTE_BY_ID.badgesRewards);
   const memberNav = page.locator('[data-member-tabs]');
@@ -51,12 +51,16 @@ test('Rewards tabs stack below the sticky member row and precede progress', asyn
   const progress = page.locator('#gameSummaryCard');
 
   await expect(progress).toHaveAttribute('aria-busy', 'false');
-  const order = await page.locator('main > nav, main > section').evaluateAll((elements) => ({
+  const order = await page.locator('main > *').evaluateAll((elements) => ({
+    hero: elements.findIndex((element) => element.classList.contains('badges-rewards-hero')),
     tabs: elements.findIndex((element) => element.classList.contains('badges-rewards-tabs')),
+    share: elements.findIndex((element) => element.classList.contains('badges-rewards-share-action')),
     progress: elements.findIndex((element) => element.id === 'gameSummaryCard'),
   }));
-  expect(order.tabs).toBeGreaterThan(-1);
-  expect(order.progress).toBe(order.tabs + 1);
+  expect(order.hero).toBeGreaterThan(-1);
+  expect(order.tabs).toBe(order.hero + 1);
+  expect(order.share).toBe(order.tabs + 1);
+  expect(order.progress).toBe(order.share + 1);
 
   await page.evaluate(() => window.scrollTo(0, 500));
   const positions = await Promise.all([
@@ -64,6 +68,10 @@ test('Rewards tabs stack below the sticky member row and precede progress', asyn
     rewardTabs.evaluate((element) => element.getBoundingClientRect()),
   ]);
   expect(positions[1].top).toBeGreaterThanOrEqual(positions[0].bottom + 7);
+  await expect.poll(() => rewardTabs.evaluate((element) => Math.abs(
+    Number.parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--secondary-tabs-sticky-height'))
+      - element.getBoundingClientRect().height,
+  ))).toBeLessThanOrEqual(1);
   await expectNoHorizontalOverflow(page);
   app.assertNoRuntimeErrors();
 });

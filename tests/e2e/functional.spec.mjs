@@ -210,24 +210,74 @@ test('Badges & Rewards tabs preserve loaded state across pointer and keyboard na
   await expect(page.locator('#badgesGallery')).toHaveAttribute('aria-busy', 'false');
 });
 
-test('a fulfillment reward card is one keyboard-accessible dialog trigger', async ({ page, app }) => {
+test('every reward card has the same keyboard-accessible View Progress dialog action', async ({ page, app }) => {
   await app.open(ROUTE_BY_ID.badgesRewards, { state: 'rewardsLocked' });
   const card = page.locator('[data-reward-key="gym_training_discount"]');
+  const rewardCards = page.locator('[data-reward-key]');
+  const progressActions = page.getByRole('button', { name: /^View progress for /i });
+  const progressAction = card.getByRole('button', { name: 'View progress for Gym Training Discount' });
   const dialog = page.getByRole('dialog', { name: /Gym Training Discount/i });
 
-  await expect(card).toHaveAttribute('role', 'button');
-  await expect(card).toHaveAttribute('tabindex', '0');
-  await card.click({ position: { x: 20, y: 20 } });
+  await expect(progressActions).toHaveCount(await rewardCards.count());
+  await expect(card).not.toHaveAttribute('role', 'button');
+  await expect(card).not.toHaveAttribute('tabindex', '0');
+  await progressAction.click();
   await expect(dialog).toBeVisible();
   await page.keyboard.press('Escape');
-  await expect(card).toBeFocused();
+  await expect(progressAction).toBeFocused();
 
   await page.keyboard.press('Enter');
   await expect(dialog).toBeVisible();
   await page.keyboard.press('Escape');
+  await expect(progressAction).toBeFocused();
   await page.keyboard.press('Space');
   await expect(dialog).toBeVisible();
   await page.keyboard.press('Escape');
+  app.assertNoRuntimeErrors();
+});
+
+test('reward progress details distinguish in-progress and completed challenges', async ({ page, app }) => {
+  await app.seed('rewardsUnlocked');
+  await page.addInitScript(() => {
+    localStorage.setItem('dominion:mockChallengeStates', JSON.stringify([
+      {
+        key: 'seven_day_reset',
+        status: 'active',
+        unlockPoints: 140,
+        unlockedAt: '2026-02-10T18:00:00.000Z',
+        startedAt: '2026-02-11T18:00:00.000Z',
+        completedAt: null,
+        celebrationSeenAt: '2026-02-10T18:05:00.000Z',
+      },
+      {
+        key: 'twenty_one_day_prayer',
+        status: 'completed',
+        unlockPoints: 336,
+        unlockedAt: '2026-02-10T18:00:00.000Z',
+        startedAt: '2026-02-11T18:00:00.000Z',
+        completedAt: '2026-02-13T18:00:00.000Z',
+        celebrationSeenAt: '2026-02-10T18:05:00.000Z',
+      },
+    ]));
+  });
+  await page.goto(ROUTE_BY_ID.badgesRewards.path, { waitUntil: 'networkidle' });
+  await app.stable();
+
+  const activeCard = page.locator('[data-reward-key="seven_day_reset"]');
+  await expect(activeCard).toContainText('In progress');
+  await activeCard.locator('[data-view-reward]').click();
+  const activeDialog = page.getByRole('dialog', { name: '7-Day Reset' });
+  await expect(activeDialog.locator('.reward-detail-state')).toContainText('In progress');
+  await expect(activeDialog.locator('.reward-detail-state')).toContainText('In progress since');
+  await page.getByRole('button', { name: 'Close reward details' }).click();
+
+  const completedCard = page.locator('[data-reward-key="twenty_one_day_prayer"]');
+  await expect(completedCard).toContainText('Completed');
+  await completedCard.locator('[data-view-reward]').click();
+  const completedDialog = page.getByRole('dialog', { name: '21-Day Prayer Track' });
+  await expect(completedDialog.locator('.reward-detail-state')).toContainText('Completed');
+  await expect(completedDialog.locator('.reward-detail-state')).toContainText('Completed Feb');
+  await page.getByRole('button', { name: 'Close reward details' }).click();
   app.assertNoRuntimeErrors();
 });
 

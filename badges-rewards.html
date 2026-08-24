@@ -28,9 +28,15 @@
         <a class="member-tab" href="./private-journal.html" aria-label="Private Journal"><span class="member-tab-icon app-icon icon-book" aria-hidden="true"></span><span class="member-tab-label"><span class="member-tab-label-prefix">Private </span>Journal</span></a>
       </nav>
 
-      <nav class="badges-rewards-tabs" role="tablist" aria-label="Rewards and badges" aria-orientation="horizontal" data-training-target="rewards-tabs">
+      <section class="badges-rewards-hero reveal is-visible" data-section-surface="plain" aria-labelledby="badgesRewardsTitle">
+        <p class="eyebrow">Badges &amp; Rewards</p>
+        <h1 id="badgesRewardsTitle">Your rewards and badges</h1>
+        <p class="lead">See what you’ve earned and how many points you need for the next reward.</p>
+      </section>
+
+      <nav class="badges-rewards-tabs secondary-tabs" role="tablist" aria-label="Rewards and badges" aria-orientation="horizontal" data-sticky-secondary-tabs data-training-target="rewards-tabs">
         <button
-          class="badges-rewards-tab active"
+          class="badges-rewards-tab secondary-tab active"
           id="rewards-tab"
           type="button"
           role="tab"
@@ -39,7 +45,7 @@
           data-tab="rewards-panel"
         >Rewards</button>
         <button
-          class="badges-rewards-tab"
+          class="badges-rewards-tab secondary-tab"
           id="badges-tab"
           type="button"
           role="tab"
@@ -50,6 +56,12 @@
           tabindex="-1"
         >Badges</button>
       </nav>
+
+      <div class="badges-rewards-share-action" data-section-surface="plain">
+        <button class="share-entry-button" type="button" data-share-composer data-share-kind="progress" data-training-target="rewards-sharing">
+          Share my progress
+        </button>
+      </div>
 
       <section class="game-summary-card rewards-game-summary reveal" id="gameSummaryCard" data-section-surface="accent" data-training-target="dashboard-levels" aria-labelledby="gameSummaryEyebrow gameSummaryTitle" aria-busy="true">
         <div class="game-summary-hero">
@@ -99,15 +111,6 @@
             <span id="gameMomentumMessage">Post your first check-in to start earning points.</span>
           </p>
         </div>
-      </section>
-
-      <section class="badges-rewards-hero reveal is-visible" data-section-surface="plain" aria-labelledby="badgesRewardsTitle">
-        <p class="eyebrow">Badges &amp; Rewards</p>
-        <h1 id="badgesRewardsTitle">Your rewards and badges</h1>
-        <p class="lead">See what you’ve earned and how many points you need for the next reward.</p>
-        <button class="share-entry-button" type="button" data-share-composer data-share-kind="progress" data-training-target="rewards-sharing">
-          Share my progress
-        </button>
       </section>
 
       <section

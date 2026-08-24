@@ -25,6 +25,11 @@ import { renderGameProgress } from './game-progress.mjs';
 import {
   buildFulfillmentDialogModel,
 } from './reward-fulfillment.mjs';
+import {
+  formatRewardPoints,
+  renderRewardCard,
+  rewardTypeLabel,
+} from './reward-card.mjs';
 
 const $ = (id) => document.getElementById(id);
 const ACTIVE_CREW_STORAGE_KEY = 'dominion:activeCrewId';
@@ -90,42 +95,6 @@ tabs.forEach((tab, index) => {
   });
 });
 
-const formatPoints = (value) => `${Number(value || 0).toLocaleString()} ${Number(value || 0) === 1 ? 'point' : 'points'}`;
-
-const rewardTypeLabel = (reward) => {
-  if (reward.rewardType === 'partner_discount') return 'Partner discount';
-  if (reward.rewardType === 'merch_discount') return 'Merchandise discount';
-  if (reward.rewardType === 'digital_download') return 'Digital download';
-  if (reward.rewardType === 'cosmetic') return 'Cosmetic reward';
-  const challengeType = String(reward.metadata?.challengeType || reward.rewardType || 'challenge').replace(/_/g, ' ');
-  return `${challengeType} challenge`;
-};
-
-const rewardCardMarkup = (reward) => {
-  const progress = reward.status === 'locked' && reward.active
-    ? `<div class="reward-row-progress" role="progressbar" aria-label="Progress toward ${escapeHtml(reward.title)}" aria-valuemin="0" aria-valuemax="${reward.pointsRequired}" aria-valuenow="${Math.min(reward.currentPoints, reward.pointsRequired)}" aria-valuetext="${escapeHtml(`${reward.currentPoints} of ${reward.pointsRequired} points`)}"><span style="--reward-progress:${reward.progressPercent}%"></span></div>`
-    : '';
-  let action = '';
-  if (reward.canStart) {
-    const pending = pendingRewardKey === reward.key;
-    action = `<button class="reward-action-button" type="button" data-start-reward="${escapeHtml(reward.key)}"${pending ? ' disabled' : ''}>${pending ? 'Starting…' : 'Start challenge'}</button>`;
-  } else if (reward.selectionHref) {
-    action = `<a class="reward-action-link" href="${escapeHtml(reward.selectionHref)}">${escapeHtml(reward.selectionLabel)}</a>`;
-  } else if (reward.hasDetails) {
-    action = `<span class="reward-action-link reward-detail-label" aria-hidden="true">${reward.status === 'locked' ? 'View progress' : 'View reward'}</span>`;
-  }
-  const nextLabel = reward.isNext ? '<span class="reward-next-marker">Next unlock</span>' : '';
-  const inactiveLabel = reward.active ? '' : '<span class="reward-inactive-marker">Unavailable for selection</span>';
-
-  const visual = reward.thumbnailUrl
-    ? `<img class="reward-row-thumbnail" src="${escapeHtml(reward.thumbnailUrl)}" alt="${escapeHtml(reward.thumbnailAlt)}" loading="lazy" decoding="async" />`
-    : `<div class="reward-row-icon app-icon ${escapeHtml(reward.iconClass)}" aria-hidden="true"></div>`;
-  const detailAttributes = reward.hasDetails && !reward.canStart && !reward.selectionHref
-    ? ` role="button" tabindex="0" data-view-reward="${escapeHtml(reward.key)}" aria-haspopup="dialog" aria-label="${escapeHtml(`${reward.status === 'locked' ? 'View progress for' : 'View'} ${reward.title}`)}"`
-    : '';
-  return `<article class="reward-row is-${escapeHtml(reward.status)}${reward.isNext ? ' is-next' : ''}" data-reward-key="${escapeHtml(reward.key)}"${detailAttributes}>${visual}<div class="reward-row-main"><div class="reward-row-topline"><span>${escapeHtml(rewardTypeLabel(reward))}</span><span class="reward-status">${escapeHtml(reward.statusLabel)}</span></div><h3>${escapeHtml(reward.title)}</h3><p>${escapeHtml(reward.description)}</p>${progress}<div class="reward-row-footer"><small>${escapeHtml(reward.detail)} · ${formatPoints(reward.pointsRequired)} required</small>${action}</div></div>${nextLabel}${inactiveLabel}</article>`;
-};
-
 const badgeCardMarkup = (badge) => {
   const details = [badge.earnedLabel ? `Earned ${badge.earnedLabel}` : 'Recently earned', ...badge.achievementDetails]
     .filter(Boolean)
@@ -141,13 +110,13 @@ function renderNextUnlock(model) {
   const progress = $('rewardNextProgress');
   const fill = $('rewardNextProgressFill');
   rewardNextPanel?.setAttribute('aria-busy', 'false');
-  if (total) total.textContent = formatPoints(model.totalPoints);
+  if (total) total.textContent = formatRewardPoints(model.totalPoints);
 
   if (model.nextUnlock) {
     const next = model.nextUnlock;
     if (eyebrow) eyebrow.textContent = 'Next reward';
     if (title) title.textContent = next.title;
-    if (copy) copy.textContent = `${formatPoints(next.pointsRemaining)} to go · ${next.currentPoints.toLocaleString()} of ${next.pointsRequired.toLocaleString()} earned`;
+    if (copy) copy.textContent = `${formatRewardPoints(next.pointsRemaining)} to go · ${next.currentPoints.toLocaleString()} of ${next.pointsRequired.toLocaleString()} earned`;
     if (progress) {
       progress.hidden = false;
       progress.setAttribute('aria-valuemax', String(next.pointsRequired));
@@ -192,7 +161,7 @@ function renderPage() {
   if (rewardsList) {
     rewardsList.setAttribute('aria-busy', 'false');
     rewardsList.innerHTML = model.rewards.length
-      ? model.rewards.map(rewardCardMarkup).join('')
+      ? model.rewards.map((reward) => renderRewardCard(reward, { pendingRewardKey })).join('')
       : '<p class="badges-rewards-empty"><strong>No rewards are configured yet.</strong><span>Your lifetime points will keep accumulating.</span></p>';
   }
   const rewardSummary = $('rewardsCatalogSummary');
@@ -245,46 +214,49 @@ function showUnlockNotice(unlocks = []) {
 
 function renderRewardDetail({ busy = false } = {}) {
   if (!activeReward || !rewardDetailDialog) return;
-  const model = buildFulfillmentDialogModel(activeReward, activeFulfillment);
+  const fulfillmentModel = activeReward.hasDetails
+    ? buildFulfillmentDialogModel(activeReward, activeFulfillment)
+    : null;
   const title = $('rewardDetailTitle');
   const eyebrow = $('rewardDetailEyebrow');
   const description = $('rewardDetailDescription');
-  if (title) title.textContent = model.title;
+  if (title) title.textContent = activeReward.title;
   if (eyebrow) eyebrow.textContent = rewardTypeLabel(activeReward);
   if (description) description.textContent = activeReward.description;
 
   const thumbnail = activeReward.thumbnailUrl
     ? `<img class="reward-detail-thumbnail" src="${escapeHtml(activeReward.thumbnailUrl)}" alt="${escapeHtml(activeReward.thumbnailAlt)}" />`
     : '';
-  const progress = model.showProgress
-    ? `<div class="reward-detail-progress" role="progressbar" aria-label="Progress toward ${escapeHtml(model.title)}" aria-valuemin="0" aria-valuemax="${model.pointsRequired}" aria-valuenow="${Math.min(model.currentPoints, model.pointsRequired)}"><span style="--reward-progress:${activeReward.progressPercent}%"></span></div><p><strong>${formatPoints(model.pointsRemaining)}</strong> remaining</p>`
+  const status = `<section class="reward-detail-state" aria-label="Reward status"><div><span>Status</span><strong>${escapeHtml(activeReward.statusLabel)}</strong></div><p>${escapeHtml(activeReward.detail)} · ${formatRewardPoints(activeReward.pointsRequired)} required</p></section>`;
+  const progress = activeReward.status === 'locked' && activeReward.active
+    ? `<div class="reward-detail-progress" role="progressbar" aria-label="Progress toward ${escapeHtml(activeReward.title)}" aria-valuemin="0" aria-valuemax="${activeReward.pointsRequired}" aria-valuenow="${Math.min(activeReward.currentPoints, activeReward.pointsRequired)}" aria-valuetext="${escapeHtml(`${activeReward.currentPoints} of ${activeReward.pointsRequired} points`)}"><span style="--reward-progress:${activeReward.progressPercent}%"></span></div><p><strong>${formatRewardPoints(activeReward.pointsRemaining)}</strong> remaining</p>`
     : '';
-  const encouragement = model.encouragement
-    ? `<aside class="reward-detail-encouragement"><strong>Train with intention</strong><p>${escapeHtml(model.encouragement)}</p></aside>`
+  const encouragement = fulfillmentModel?.encouragement
+    ? `<aside class="reward-detail-encouragement"><strong>Train with intention</strong><p>${escapeHtml(fulfillmentModel.encouragement)}</p></aside>`
     : '';
   const offer = [
-    model.partnerName ? `<p><strong>Partner</strong><span>${escapeHtml(model.partnerName)}</span></p>` : '',
-    model.offerTitle ? `<p><strong>Offer</strong><span>${escapeHtml(model.offerTitle)}</span></p>` : '',
-    model.description ? `<p><strong>Details</strong><span>${escapeHtml(model.description)}</span></p>` : '',
-    model.edition ? `<p><strong>Edition</strong><span>${escapeHtml(model.edition)}</span></p>` : '',
-    model.format ? `<p><strong>Format</strong><span>${escapeHtml(model.format)}</span></p>` : '',
-    model.expiration ? `<p><strong>Expiration</strong><span>${escapeHtml(model.expiration)}</span></p>` : '',
-    model.terms ? `<p><strong>Terms</strong><span>${escapeHtml(model.terms)}</span></p>` : '',
+    fulfillmentModel?.partnerName ? `<p><strong>Partner</strong><span>${escapeHtml(fulfillmentModel.partnerName)}</span></p>` : '',
+    fulfillmentModel?.offerTitle ? `<p><strong>Offer</strong><span>${escapeHtml(fulfillmentModel.offerTitle)}</span></p>` : '',
+    fulfillmentModel?.description ? `<p><strong>Details</strong><span>${escapeHtml(fulfillmentModel.description)}</span></p>` : '',
+    fulfillmentModel?.edition ? `<p><strong>Edition</strong><span>${escapeHtml(fulfillmentModel.edition)}</span></p>` : '',
+    fulfillmentModel?.format ? `<p><strong>Format</strong><span>${escapeHtml(fulfillmentModel.format)}</span></p>` : '',
+    fulfillmentModel?.expiration ? `<p><strong>Expiration</strong><span>${escapeHtml(fulfillmentModel.expiration)}</span></p>` : '',
+    fulfillmentModel?.terms ? `<p><strong>Terms</strong><span>${escapeHtml(fulfillmentModel.terms)}</span></p>` : '',
   ].filter(Boolean).join('');
-  const code = model.code
-    ? `<div class="reward-code"><span>Your code</span><code id="rewardDetailCode">${escapeHtml(model.code)}</code></div>`
+  const code = fulfillmentModel?.code
+    ? `<div class="reward-code"><span>Your code</span><code id="rewardDetailCode">${escapeHtml(fulfillmentModel.code)}</code></div>`
     : '';
   if (rewardDetailContent) {
     rewardDetailContent.setAttribute('aria-busy', String(busy));
-    rewardDetailContent.innerHTML = `${thumbnail}${progress}${encouragement}${model.message ? `<p class="reward-detail-message">${escapeHtml(model.message)}</p>` : ''}${offer ? `<div class="reward-detail-facts">${offer}</div>` : ''}${code}`;
+    rewardDetailContent.innerHTML = `${thumbnail}${status}${progress}${encouragement}${fulfillmentModel?.message ? `<p class="reward-detail-message">${escapeHtml(fulfillmentModel.message)}</p>` : ''}${offer ? `<div class="reward-detail-facts">${offer}</div>` : ''}${code}`;
   }
 
   const actions = [];
-  if (model.canClaim || model.canReveal) actions.push(`<button class="reward-action-button" type="button" data-claim-reward-offer>${escapeHtml(model.actionLabel)}</button>`);
-  if (model.canCopy) actions.push('<button class="reward-action-button" type="button" data-copy-reward-code>Copy code</button>');
-  if (model.canVisitWebsite) actions.push(`<a class="reward-action-link" href="${escapeHtml(model.websiteUrl)}" target="_blank" rel="noopener noreferrer">Visit gym website</a>`);
-  if (model.canVisitDestination) actions.push(`<a class="reward-action-link" href="${escapeHtml(model.destinationUrl)}" target="_blank" rel="noopener noreferrer">Redeem offer</a>`);
-  if (model.canDownload) actions.push('<button class="reward-action-button" type="button" data-download-reward>Download handbook</button>');
+  if (fulfillmentModel?.canClaim || fulfillmentModel?.canReveal) actions.push(`<button class="reward-action-button" type="button" data-claim-reward-offer>${escapeHtml(fulfillmentModel.actionLabel)}</button>`);
+  if (fulfillmentModel?.canCopy) actions.push('<button class="reward-action-button" type="button" data-copy-reward-code>Copy code</button>');
+  if (fulfillmentModel?.canVisitWebsite) actions.push(`<a class="reward-action-link" href="${escapeHtml(fulfillmentModel.websiteUrl)}" target="_blank" rel="noopener noreferrer">Visit gym website</a>`);
+  if (fulfillmentModel?.canVisitDestination) actions.push(`<a class="reward-action-link" href="${escapeHtml(fulfillmentModel.destinationUrl)}" target="_blank" rel="noopener noreferrer">Redeem offer</a>`);
+  if (fulfillmentModel?.canDownload) actions.push('<button class="reward-action-button" type="button" data-download-reward>Download handbook</button>');
   if (rewardDetailActions) rewardDetailActions.innerHTML = busy ? '' : actions.join('');
 }
 
@@ -365,16 +337,19 @@ async function openRewardDetail(rewardKey, trigger) {
     ? rewardViewModel(catalogReward, catalog?.nextUnlock?.key || catalog?.next_unlock?.key)
     : null;
   const expectedUserId = pageActorId;
-  if (!reward?.key || !reward.hasDetails || !rewardDetailDialog || !expectedUserId) return;
+  if (!reward?.key || !rewardDetailDialog || !expectedUserId) return;
   const requestId = ++detailRequestId;
   activeReward = reward;
   activeFulfillment = reward.fulfillment || {};
   rewardDetailReturnFocus = trigger;
-  if (rewardDetailFeedback) rewardDetailFeedback.textContent = 'Loading secure reward details…';
-  if (rewardDetailContent) rewardDetailContent.setAttribute('aria-busy', 'true');
-  renderRewardDetail({ busy: true });
+  const requiresSecureDetails = reward.hasDetails;
+  if (rewardDetailFeedback) rewardDetailFeedback.textContent = requiresSecureDetails
+    ? 'Loading secure reward details…'
+    : '';
+  renderRewardDetail({ busy: requiresSecureDetails });
   rewardDetailDialog.showModal();
   $('rewardDetailClose')?.focus();
+  if (!requiresSecureDetails) return;
   try {
     const nextFulfillment = await getRewardFulfillment(reward.key, { expectedUserId });
     if (requestId !== detailRequestId || !rewardDetailDialog.open || pageActorId !== expectedUserId) return;
@@ -581,9 +556,9 @@ async function loadBadgesAndRewards({ claimUnlocks = true } = {}) {
 }
 
 rewardsList?.addEventListener('click', async (event) => {
-  const detailCard = event.target.closest('[data-view-reward]');
-  if (detailCard) {
-    await openRewardDetail(detailCard.dataset.viewReward, detailCard);
+  const detailButton = event.target.closest('[data-view-reward]');
+  if (detailButton) {
+    await openRewardDetail(detailButton.dataset.viewReward, detailButton);
     return;
   }
   const button = event.target.closest('[data-start-reward]');
@@ -609,23 +584,6 @@ rewardsList?.addEventListener('click', async (event) => {
     pendingRewardKey = '';
     renderPage();
   }
-});
-
-rewardsList?.addEventListener('keydown', async (event) => {
-  if (!['Enter', ' '].includes(event.key)) return;
-  const detailCard = event.target.closest('[data-view-reward]');
-  if (!detailCard || event.target !== detailCard) return;
-  event.preventDefault();
-  if (event.key === ' ' || event.repeat) return;
-  await openRewardDetail(detailCard.dataset.viewReward, detailCard);
-});
-
-rewardsList?.addEventListener('keyup', async (event) => {
-  if (event.key !== ' ') return;
-  const detailCard = event.target.closest('[data-view-reward]');
-  if (!detailCard || event.target !== detailCard) return;
-  event.preventDefault();
-  await openRewardDetail(detailCard.dataset.viewReward, detailCard);
 });
 
 retryButton?.addEventListener('click', () => loadBadgesAndRewards());

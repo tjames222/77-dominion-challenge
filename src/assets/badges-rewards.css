@@ -1,8 +1,14 @@
 .badges-rewards-shell {
   --badges-rewards-section-gap: clamp(28px, 5vw, 56px);
+  --badges-rewards-page-gap: clamp(22px, 3.5vw, 36px);
+  --badges-rewards-sticky-top: calc(
+    var(--topbar-sticky-height, calc(72px + env(safe-area-inset-top)))
+    + var(--member-tabs-sticky-height, 0px)
+    + 14px
+  );
   width: min(100%, 1120px);
   display: grid;
-  gap: var(--badges-rewards-section-gap);
+  gap: var(--badges-rewards-page-gap);
   padding-bottom: clamp(64px, 9vw, 110px);
 }
 
@@ -38,7 +44,7 @@
 
 .badges-rewards-tabs {
   position: sticky;
-  top: calc(var(--topbar-sticky-height) + var(--member-tabs-sticky-height) + 14px);
+  top: var(--badges-rewards-sticky-top);
   z-index: 110;
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -49,10 +55,30 @@
   background: color-mix(in srgb, var(--background) 88%, transparent);
   backdrop-filter: blur(18px);
   -webkit-backdrop-filter: blur(18px);
+  transition: border-color 180ms ease, background 180ms ease, box-shadow 180ms ease;
+}
+
+.badges-rewards-tabs.secondary-tabs-scrolled {
+  border-color: color-mix(in srgb, var(--accent) 24%, var(--border));
+  background: color-mix(in srgb, var(--background) 94%, transparent);
+  box-shadow: 0 12px 32px color-mix(in srgb, var(--shadow-color) 22%, transparent);
+}
+
+.badges-rewards-share-action {
+  display: grid;
+  width: min(100%, 760px);
+}
+
+.badges-rewards-share-action .share-entry-button {
+  width: 100%;
 }
 
 .rewards-game-summary {
-  scroll-margin-top: calc(var(--topbar-sticky-height) + var(--member-tabs-sticky-height) + 24px);
+  scroll-margin-top: calc(
+    var(--badges-rewards-sticky-top)
+    + var(--secondary-tabs-sticky-height, 0px)
+    + 14px
+  );
 }
 
 .badges-rewards-tab {
@@ -238,18 +264,6 @@
   border-top: 1px solid var(--border);
 }
 
-.reward-row[data-view-reward] {
-  min-height: 44px;
-  cursor: pointer;
-}
-
-.reward-row[data-view-reward]:focus-visible {
-  z-index: 1;
-  border-radius: 16px;
-  outline: 3px solid color-mix(in srgb, var(--accent-strong) 60%, transparent);
-  outline-offset: 4px;
-}
-
 .reward-row.is-next {
   margin: 10px 0;
   padding: clamp(20px, 4vw, 30px);
@@ -335,6 +349,14 @@
   margin-top: 14px;
 }
 
+.reward-card-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-left: auto;
+}
+
 .reward-row-footer small {
   max-width: 62ch;
   color: var(--text-muted);
@@ -363,6 +385,17 @@
 .reward-action-button:disabled {
   cursor: wait;
   opacity: .62;
+}
+
+.reward-progress-action {
+  border-color: color-mix(in srgb, var(--accent) 42%, var(--border));
+  color: var(--text);
+  background: color-mix(in srgb, var(--accent) 9%, var(--surface-elevated));
+}
+
+.reward-progress-action:hover {
+  border-color: color-mix(in srgb, var(--accent) 68%, var(--border));
+  background: color-mix(in srgb, var(--accent) 15%, var(--surface-elevated));
 }
 
 .reward-action-button:focus-visible,
@@ -603,6 +636,40 @@
   background: linear-gradient(90deg, var(--progress-fill-start), var(--progress-fill-end));
 }
 
+.reward-detail-state {
+  display: grid;
+  gap: 7px;
+  padding: 14px;
+  border: 1px solid color-mix(in srgb, var(--accent) 28%, var(--border));
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--accent) 7%, var(--surface-elevated));
+}
+
+.reward-detail-state > div {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.reward-detail-state span {
+  color: var(--text-muted);
+  font-size: .7rem;
+  font-weight: 900;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+
+.reward-detail-state strong {
+  color: var(--accent-strong);
+}
+
+.reward-detail-state p {
+  color: var(--text-muted);
+  font-size: .84rem;
+  line-height: 1.45;
+}
+
 .reward-detail-encouragement {
   padding: 14px;
   border-left: 3px solid var(--accent);
@@ -708,6 +775,11 @@
     align-items: stretch;
   }
 
+  .reward-card-actions {
+    width: 100%;
+    margin-left: 0;
+  }
+
   .reward-action-button,
   .reward-action-link {
     width: 100%;
@@ -736,6 +808,7 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .badges-rewards-tabs,
   .reward-next-progress > span,
   .reward-row-progress > span {
     transition: none;

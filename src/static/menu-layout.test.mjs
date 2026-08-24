@@ -37,6 +37,10 @@ describe('shared sticky menu', () => {
       classList: createClassList(),
       getBoundingClientRect: () => ({ height: 56 }),
     };
+    const secondaryTabs = {
+      classList: createClassList(),
+      getBoundingClientRect: () => ({ height: 56 }),
+    };
     const body = { classList: createClassList(), appendChild() {} };
     const listeners = new Map();
     const animationFrames = [];
@@ -57,6 +61,7 @@ describe('shared sticky menu', () => {
       querySelector(selector) {
         if (selector === '.topbar') return topbar;
         if (selector === '[data-member-tabs]') return memberTabs;
+        if (selector === '[data-sticky-secondary-tabs]') return secondaryTabs;
         if (selector === '.global-menu') return {};
         return null;
       },
@@ -102,6 +107,7 @@ describe('shared sticky menu', () => {
       assert.equal(topbar.classList.contains('topbar-scrolled'), true);
       assert.equal(memberTabs.classList.contains('member-tabs-collapsed'), true);
       assert.equal(memberTabs.classList.contains('member-tabs-scrolled'), true);
+      assert.equal(secondaryTabs.classList.contains('secondary-tabs-scrolled'), true);
 
       runScrollFrame(7);
       assert.equal(topbar.classList.contains('topbar-collapsed'), true, 'minor upward scrolling must not expand the menu');
@@ -111,6 +117,7 @@ describe('shared sticky menu', () => {
       assert.equal(topbar.classList.contains('topbar-scrolled'), false);
       assert.equal(memberTabs.classList.contains('member-tabs-collapsed'), false);
       assert.equal(memberTabs.classList.contains('member-tabs-scrolled'), false);
+      assert.equal(secondaryTabs.classList.contains('secondary-tabs-scrolled'), false);
 
       body.classList.add('menu-open');
       runScrollFrame(40);
@@ -145,6 +152,7 @@ describe('shared sticky menu', () => {
     const productCss = readFileSync(new URL('../assets/product.css', import.meta.url), 'utf8');
     assert.match(menuCss, /scroll-padding-top:\s*calc\(var\(--topbar-sticky-height\) \+ var\(--member-tabs-sticky-height\) \+ 24px\)/);
     assert.match(menuJs, /root\.style\.setProperty\('--member-tabs-sticky-height'/);
+    assert.match(menuJs, /root\.style\.setProperty\('--secondary-tabs-sticky-height'/);
     assert.match(productCss, /\.dashboard-scorecard\s*\{[\s\S]*scroll-margin-top:\s*calc\(var\(--topbar-sticky-height\) \+ var\(--member-tabs-sticky-height\) \+ 24px\)/);
     assert.doesNotMatch(menuCss, /scroll-padding-top:\s*calc\((?:76|88)px/);
   });
