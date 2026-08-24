@@ -24,6 +24,10 @@ export function siteTrainingTargetAvailable(target, ownerWindow = globalThis.win
 }
 
 function ensureStyles(ownerDocument) {
+  const stylesReady = ownerDocument.defaultView?.getComputedStyle?.(ownerDocument.documentElement)
+    ?.getPropertyValue?.('--site-training-styles-ready')
+    ?.trim() === '1';
+  if (stylesReady) return;
   const existing = [...(ownerDocument.head?.querySelectorAll?.('link[rel="stylesheet"]') || [])]
     .find((link) => link.href === STYLE_URL || link.dataset.siteTrainingStyles !== undefined);
   if (existing) return;

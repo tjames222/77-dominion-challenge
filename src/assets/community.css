@@ -1,7 +1,8 @@
 .community-shell {
+  --app-shell-row-gap: 18px;
   width: min(100%, 1120px);
   display: grid;
-  gap: 18px;
+  gap: var(--app-shell-row-gap);
 }
 .community-shell [hidden] {
   display: none !important;

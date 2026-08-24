@@ -147,7 +147,7 @@
 }
 .member-tabs {
   position: sticky;
-  top: calc(var(--topbar-sticky-height, 72px) + 6px);
+  top: calc(var(--topbar-sticky-height, 72px) + var(--navigation-stack-gap, 8px));
   z-index: 120;
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -271,9 +271,10 @@
   }
 }
 .dashboard-shell {
+  --app-shell-row-gap: clamp(34px, 5vw, 58px);
   width: min(100%, 1120px);
   display: grid;
-  gap: clamp(34px, 5vw, 58px);
+  gap: var(--app-shell-row-gap);
 }
 .dashboard-shell > section {
   margin-bottom: 0;
@@ -573,11 +574,12 @@
   line-height: 1.55;
 }
 body.challenge-finished .dashboard-shell {
+  --app-shell-row-gap: clamp(24px, 4vw, 42px);
   position: relative;
   z-index: 1100;
   min-height: calc(100vh - 48px);
   align-content: center;
-  gap: clamp(24px, 4vw, 42px);
+  gap: var(--app-shell-row-gap);
 }
 body.challenge-finished .dashboard-shell > section:not(.dashboard-hero):not(.challenge-complete-panel):not(.game-summary-card):not(.challenge-vault-card) {
   display: none;
@@ -2466,7 +2468,7 @@ body.challenge-finished .reward-backdrop {
   object-position: center;
 }
 .billing-shell {
-  gap: clamp(26px, 5vw, 44px);
+  --app-shell-row-gap: clamp(26px, 5vw, 44px);
 }
 .billing-status-card {
   display: grid;
@@ -2602,9 +2604,10 @@ body.challenge-finished .reward-backdrop {
   width: 100%;
 }
 .membership-shell {
+  --app-shell-row-gap: clamp(22px, 4vw, 40px);
   width: min(100%, 1040px);
   display: grid;
-  gap: clamp(22px, 4vw, 40px);
+  gap: var(--app-shell-row-gap);
 }
 .membership-hero {
   display: grid;
@@ -3679,8 +3682,9 @@ body.challenge-finished .reward-backdrop {
 .auth-complete { margin-top: 18px; }
 .auth-complete .primary { width: 100%; }
 .legal-shell {
+  --app-shell-row-gap: clamp(24px, 5vw, 44px);
   display: grid;
-  gap: clamp(24px, 5vw, 44px);
+  gap: var(--app-shell-row-gap);
   width: min(100%, 880px);
 }
 .legal-hero,

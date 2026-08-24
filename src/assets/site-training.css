@@ -1,3 +1,4 @@
+:root { --site-training-styles-ready: 1; }
 .site-training-layer[hidden] { display: none !important; }
 .site-training-layer {
   position: fixed;

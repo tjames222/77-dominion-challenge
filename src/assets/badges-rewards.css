@@ -1,14 +1,16 @@
 .badges-rewards-shell {
   --badges-rewards-section-gap: clamp(28px, 5vw, 56px);
   --badges-rewards-page-gap: clamp(22px, 3.5vw, 36px);
+  --app-shell-row-gap: var(--badges-rewards-page-gap);
   --badges-rewards-sticky-top: calc(
     var(--topbar-sticky-height, calc(72px + env(safe-area-inset-top)))
     + var(--member-tabs-sticky-height, 0px)
-    + 14px
+    + var(--navigation-stack-gap, 8px)
+    + var(--navigation-stack-gap, 8px)
   );
   width: min(100%, 1120px);
   display: grid;
-  gap: var(--badges-rewards-page-gap);
+  gap: var(--app-shell-row-gap);
   padding-bottom: clamp(64px, 9vw, 110px);
 }
 

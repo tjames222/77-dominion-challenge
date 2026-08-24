@@ -44,6 +44,14 @@ describe('Dashboard challenge start integration', () => {
     assert.match(flowSource, /storage: windowLike\.localStorage/);
     assert.match(dashboardSource, /dominion:challenge-activation-updated/);
     assert.match(menuSource, /dominion:challenge-activation-updated/);
+    const finish = flowSource.slice(
+      flowSource.indexOf('async function finishSoloActivation'),
+      flowSource.indexOf('async function submitSoloActivation'),
+    );
+    const releaseIndex = finish.indexOf("dialog.close('activated')");
+    const publishIndex = finish.indexOf('publishSoloTrainingLaunch({');
+    assert.ok(releaseIndex >= 0);
+    assert.ok(publishIndex > releaseIndex);
   });
 
   test('hands Group choice to the canonical Community intent without mutating Group state', () => {
