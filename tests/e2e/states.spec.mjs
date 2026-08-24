@@ -83,6 +83,7 @@ test('unlocked challenge progression has a deterministic visual contract', async
 });
 
 test('selected Badges tab has a deterministic visual and accessibility contract', async ({ page, app }) => {
+  await page.setViewportSize({ width: 1440, height: 1300 });
   await app.open(ROUTE_BY_ID.badgesRewards, { state: 'rewardsUnlocked' });
   const badgesTab = page.getByRole('tab', { name: 'Badges' });
   await badgesTab.click();
@@ -91,7 +92,7 @@ test('selected Badges tab has a deterministic visual and accessibility contract'
   for (const badge of BASE_BADGES) {
     await expect(page.locator(`[data-badge-key="${badge.key}"]`)).toContainText(badge.name);
   }
-  await expectStableScreenshot(page, app, 'state-badges-selected.png');
+  await expectStableScreenshot(page, app, 'state-badges-selected.png', { fullPage: false });
 
   const results = await analyzeAccessibility(page);
   assertNoBlockingAxeViolations(results);
