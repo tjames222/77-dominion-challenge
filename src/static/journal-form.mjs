@@ -1,11 +1,4 @@
-const FIELD_SUFFIXES = Object.freeze({
-  date: 'Date',
-  mood: 'Mood',
-  energy: 'Energy',
-  note: 'Note',
-  win: 'Win',
-  prayer: 'Prayer',
-});
+import { JOURNAL_FIELD_DEFINITIONS } from './journal-fields.mjs';
 
 function control(form, name) {
   return form?.querySelector?.(`[name="${name}"]`) || null;
@@ -24,11 +17,15 @@ export function createJournalForm(template, {
   form.id = formId || '';
   if (label) form.setAttribute('aria-label', label);
 
-  for (const [name, suffix] of Object.entries(FIELD_SUFFIXES)) {
+  for (const { name, label: fieldLabel, suffix } of JOURNAL_FIELD_DEFINITIONS) {
     const field = control(form, name);
     if (!field) throw new TypeError(`Journal form field is missing: ${name}`);
     field.id = `${idPrefix || 'journal'}${suffix}`;
-    field.closest('label')?.setAttribute('for', field.id);
+    const fieldLabelElement = field.closest('label')
+      || field.closest('[data-journal-field]')?.querySelector?.('label');
+    fieldLabelElement?.setAttribute('for', field.id);
+    const labelText = fieldLabelElement?.querySelector?.('[data-journal-field-label]');
+    if (labelText) labelText.textContent = fieldLabel;
   }
 
   const submit = form.querySelector('[data-journal-submit]');
@@ -63,6 +60,7 @@ export function writeJournalForm(form, entry = {}) {
   control(form, 'prayer').value = entry.prayer || '';
   control(form, 'mood').value = entry.mood || '';
   control(form, 'energy').value = entry.energy || '';
+  control(form, 'date')?.dispatchEvent?.(new Event('journal:date-sync'));
   return form;
 }
 

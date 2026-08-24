@@ -58,12 +58,12 @@
 
     <template id="journalFormTemplate">
       <form class="journal-form">
-        <label>
-          <span>Date</span>
+        <div class="journal-field" data-journal-field="date">
+          <label><span data-journal-field-label>Date</span></label>
           <input name="date" type="date" required />
-        </label>
+        </div>
         <label>
-          <span>Mood</span>
+          <span data-journal-field-label>Mood</span>
           <select name="mood">
             <option value="">Choose one</option>
             <option>Steady</option>
@@ -74,7 +74,7 @@
           </select>
         </label>
         <label>
-          <span>Energy</span>
+          <span data-journal-field-label>Energy</span>
           <select name="energy">
             <option value="">Choose one</option>
             <option>Low</option>
@@ -83,15 +83,15 @@
           </select>
         </label>
         <label class="full-span">
-          <span>What did today reveal?</span>
+          <span data-journal-field-label>What did today reveal?</span>
           <textarea name="note" placeholder="What did today reveal about your discipline, prayer, body, or attention?"></textarea>
         </label>
         <label class="full-span">
-          <span>Win</span>
+          <span data-journal-field-label>Win</span>
           <input name="win" type="text" placeholder="Name one concrete win from today." />
         </label>
         <label class="full-span">
-          <span>Prayer or reflection</span>
+          <span data-journal-field-label>Prayer or reflection</span>
           <textarea name="prayer" placeholder="What are you praying through or surrendering?"></textarea>
         </label>
         <div class="journal-form-actions full-span">
