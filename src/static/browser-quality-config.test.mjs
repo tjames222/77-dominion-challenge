@@ -10,6 +10,10 @@ const workflow = readFileSync(
   new URL('../../.github/workflows/browser-quality.yml', import.meta.url),
   'utf8',
 );
+const playwrightConfig = readFileSync(
+  new URL('../../playwright.config.mjs', import.meta.url),
+  'utf8',
+);
 const deployWorkflow = readFileSync(
   new URL('../../.github/workflows/deploy.yml', import.meta.url),
   'utf8',
@@ -61,6 +65,18 @@ test('browser diagnostics are short-lived and uploaded only when the gate fails'
   assert.doesNotMatch(
     workflow,
     /- name: Upload browser diagnostics\n\s+if: always\(\)/,
+  );
+  assert.match(
+    workflow,
+    /- name: Upload browser diagnostics[\s\S]*?path: playwright-report\/\n[\s\S]*?retention-days: 3/,
+  );
+  assert.doesNotMatch(
+    workflow,
+    /- name: Upload browser diagnostics[\s\S]*?path:[\s\S]*?test-results\//,
+  );
+  assert.match(
+    playwrightConfig,
+    /video: process\.env\.CI \? 'off' : 'retain-on-failure'/,
   );
 });
 

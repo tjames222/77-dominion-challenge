@@ -77,7 +77,10 @@ export default defineConfig({
     serviceWorkers: 'block',
     trace: 'retain-on-failure',
     screenshot: 'only-on-failure',
-    video: 'retain-on-failure',
+    // Trace Viewer already records the DOM and screenshot timeline needed to
+    // diagnose CI failures. Retaining a video for every failed retry can make
+    // one broad visual-regression run exceed the repository's artifact quota.
+    video: process.env.CI ? 'off' : 'retain-on-failure',
     actionTimeout: 10_000,
     navigationTimeout: 30_000,
   },
