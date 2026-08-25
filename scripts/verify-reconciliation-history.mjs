@@ -7,7 +7,15 @@ function fail(message) {
 }
 
 function normalizeVersionCell(value) {
-  return value.trim().replace(/^`|`$/gu, "");
+  const trimmed = value.trim();
+  const startsWithBacktick = trimmed.startsWith("`");
+  const endsWithBacktick = trimmed.endsWith("`");
+  if (startsWithBacktick !== endsWithBacktick) {
+    fail(`invalid quoted migration version cell: ${trimmed}.`);
+  }
+  return startsWithBacktick
+    ? trimmed.slice(1, -1).trim()
+    : trimmed;
 }
 
 export function parseMigrationList(output) {
@@ -16,12 +24,18 @@ export function parseMigrationList(output) {
   for (const rawLine of output.split(/\r?\n/u)) {
     if (!rawLine.includes("|")) continue;
     const cells = rawLine.split("|");
-    if (cells.length < 2) continue;
+    if (cells.length !== 3) {
+      fail("migration list contains a malformed table row.");
+    }
     const localValue = normalizeVersionCell(cells[0]);
     const remoteValue = normalizeVersionCell(cells[1]);
+    if (localValue === "Local" && remoteValue === "Remote") continue;
+    if (/^-+$/u.test(localValue) && /^-+$/u.test(remoteValue)) continue;
     const localIsVersion = /^\d{14}$/u.test(localValue);
     const remoteIsVersion = /^\d{14}$/u.test(remoteValue);
-    if (!localIsVersion && !remoteIsVersion) continue;
+    if (!localIsVersion && !remoteIsVersion && !localValue && !remoteValue) {
+      fail("migration list contains a row without a local or remote version.");
+    }
     if (localValue && !localIsVersion) {
       fail(`invalid local version cell: ${localValue}.`);
     }

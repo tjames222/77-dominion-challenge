@@ -21,8 +21,8 @@ function migrationList(localVersions, remoteVersions) {
     "  ------------------|------------------|-----------------------",
   ];
   for (let index = 0; index < count; index += 1) {
-    const local = localVersions[index] ? `\`${localVersions[index]}\`` : "";
-    const remote = remoteVersions[index] ? `\`${remoteVersions[index]}\`` : "";
+    const local = localVersions[index] ? `\`${localVersions[index]}\`` : "` `";
+    const remote = remoteVersions[index] ? `\`${remoteVersions[index]}\`` : "` `";
     rows.push(`   ${local.padEnd(18)} | ${remote.padEnd(18)} | ignored`);
   }
   return `${rows.join("\n")}\n`;
@@ -45,6 +45,25 @@ test("parses the pinned CLI table with blank local or remote cells", () => {
     local: [],
     remote: HISTORICAL_RECONCILIATION_VERSIONS.slice(0, 1),
   });
+});
+
+test("rejects malformed, legacy, and versionless data rows", () => {
+  for (const row of [
+    "   `123`              | ` `                | ignored",
+    "   legacy             | ` `                | ignored",
+    "   ` `                | ` `                | ignored",
+    "   `20260707170000     | ` `                | ignored",
+    "   `20260707170000`    | ` `",
+  ]) {
+    assert.throws(
+      () => parseMigrationList(
+        `   Local            | Remote           | Time (UTC)\n`
+        + `  ------------------|------------------|-----------------------\n`
+        + `${row}\n`,
+      ),
+      /invalid|without a local or remote version|malformed/u,
+    );
+  }
 });
 
 test("requires exactly one newly pending version before the apply", () => {

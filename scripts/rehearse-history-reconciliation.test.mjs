@@ -266,6 +266,30 @@ test("hosted configuration is rejected before any fake boundary call", async () 
   }
 });
 
+test("accepts pnpm's one literal leading argument separator", async () => {
+  const boundary = await makeFakeBoundary({ cliVersion: "9.9.9" });
+  try {
+    const result = spawnSync(
+      "bash",
+      [rehearsalPath, "--", "--release-commit", git(["rev-parse", "HEAD"])],
+      {
+        cwd: repositoryRoot,
+        encoding: "utf8",
+        env: cleanEnvironment({
+          DOCKER_BIN: boundary.fakeDocker,
+          FAKE_RECONCILIATION_LOG: boundary.logPath,
+          SUPABASE_CLI_BIN: boundary.fakeSupabase,
+        }),
+      },
+    );
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /expected pinned Supabase CLI 2\.109\.0/u);
+    assert.match(await readLog(boundary.logPath), /^supabase:--version$/mu);
+  } finally {
+    await rm(boundary.fixtureRoot, { force: true, recursive: true });
+  }
+});
+
 test("CLI and container identity failures stop before database creation", async () => {
   const wrongCli = await makeFakeBoundary({ cliVersion: "9.9.9" });
   try {

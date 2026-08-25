@@ -166,6 +166,73 @@ test("materializes committed blobs instead of dirty working-tree contents", asyn
   });
 });
 
+test("ignores local Git replacement refs when materializing an exact commit", async () => {
+  await withReleaseFixture(async ({ commit, repository }) => {
+    const firstMigration = path.join(
+      repository,
+      "supabase",
+      "migrations",
+      historicalNames[0],
+    );
+    await writeFile(firstMigration, "select 'replacement tree';\n");
+    git(repository, ["add", "supabase"]);
+    git(
+      repository,
+      ["commit", "-q", "-m", "replacement fixture"],
+      {
+        GIT_AUTHOR_NAME: "Reconciliation Test",
+        GIT_AUTHOR_EMAIL: "reconciliation@example.invalid",
+        GIT_COMMITTER_NAME: "Reconciliation Test",
+        GIT_COMMITTER_EMAIL: "reconciliation@example.invalid",
+      },
+    );
+    const replacementCommit = git(repository, ["rev-parse", "HEAD"]);
+    git(repository, ["replace", commit, replacementCommit]);
+
+    const plan = buildReconciliationStagePlan({
+      releaseCommit: commit,
+      throughVersion: HISTORICAL_RECONCILIATION_VERSIONS[0],
+      root: repository,
+    });
+    const stagedMigration = plan.sourceEntries.find(({ path: filePath }) =>
+      filePath.endsWith(historicalNames[0])
+    );
+    assert.equal(stagedMigration?.contents.toString("utf8"), "select 1;\n");
+  });
+});
+
+test("rejects nested or non-SQL migration inventory", async () => {
+  await withReleaseFixture(async ({ repository }) => {
+    const migrationDirectory = path.join(repository, "supabase", "migrations");
+    const directName = "20990101000000_future_01.sql";
+    const directPath = path.join(migrationDirectory, directName);
+    const contents = await readFile(directPath);
+    await rm(directPath);
+    await mkdir(path.join(migrationDirectory, "nested"));
+    await writeFile(path.join(migrationDirectory, "nested", directName), contents);
+    git(repository, ["add", "supabase"]);
+    git(
+      repository,
+      ["commit", "-q", "-m", "nested migration fixture"],
+      {
+        GIT_AUTHOR_NAME: "Reconciliation Test",
+        GIT_AUTHOR_EMAIL: "reconciliation@example.invalid",
+        GIT_COMMITTER_NAME: "Reconciliation Test",
+        GIT_COMMITTER_EMAIL: "reconciliation@example.invalid",
+      },
+    );
+    const nestedCommit = git(repository, ["rev-parse", "HEAD"]);
+    assert.throws(
+      () => buildReconciliationStagePlan({
+        releaseCommit: nestedCommit,
+        throughVersion: HISTORICAL_RECONCILIATION_VERSIONS[0],
+        root: repository,
+      }),
+      /direct SQL files/u,
+    );
+  });
+});
+
 test("rejects a short ref, unsupported version, in-repository output, and reuse", async () => {
   await withReleaseFixture(async ({ commit, fixtureRoot, repository }) => {
     assert.throws(

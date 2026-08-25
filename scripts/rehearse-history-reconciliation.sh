@@ -51,6 +51,14 @@ migration_versions=(
 
 release_commit=""
 mode="verify"
+
+# pnpm forwards the conventional argument separator as a literal first
+# argument for this script. Accept exactly that one leading separator so the
+# documented package command and direct Bash invocation share one parser.
+if [[ "${1:-}" == "--" ]]; then
+  shift
+fi
+
 while (( $# > 0 )); do
   case "$1" in
     --release-commit)

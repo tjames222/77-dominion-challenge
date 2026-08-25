@@ -52,7 +52,7 @@ function compareAscii(left, right) {
 }
 
 function runGit(argumentsList, root = repositoryRoot, encoding = "utf8") {
-  const result = spawnSync("git", argumentsList, {
+  const result = spawnSync("git", ["--no-replace-objects", ...argumentsList], {
     cwd: root,
     encoding,
     maxBuffer: 256 * 1024 * 1024,
@@ -157,9 +157,19 @@ export function buildReconciliationStagePlan({
     );
   }
 
-  const migrations = listTree(commit, "supabase/migrations", root)
-    .filter((entry) => entry.path.endsWith(".sql"))
+  const migrationEntries = listTree(commit, "supabase/migrations", root);
+  const migrations = migrationEntries
     .sort((left, right) => compareAscii(left.path, right.path));
+  if (
+    migrations.some((entry) =>
+      path.posix.dirname(entry.path) !== "supabase/migrations"
+      || !entry.path.endsWith(".sql")
+    )
+  ) {
+    fail(
+      "release commit migrations must be direct SQL files in supabase/migrations.",
+    );
+  }
   if (migrations.length !== EXPECTED_RELEASE_MIGRATION_COUNT) {
     fail(
       `release commit must contain exactly ${EXPECTED_RELEASE_MIGRATION_COUNT} migrations; found ${migrations.length}.`,
