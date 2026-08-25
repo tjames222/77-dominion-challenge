@@ -107,7 +107,7 @@ test('production bundles the pinned Inter variable font as the brand family', ()
   assert.match(productionFontLicense, /SIL OPEN FONT LICENSE Version 1\.1/);
   assert.equal(
     packageJson.scripts.build,
-    'node scripts/validate-frontend-env.mjs && vite build && node scripts/verify-build-assets.mjs',
+    'node scripts/build-frontend.mjs',
   );
   assert.match(buildAssetVerifier, /fonts\/Inter-LICENSE\.txt/);
   assert.match(buildAssetVerifier, /InterVariable-/);
