@@ -1375,10 +1375,10 @@ test("package, CI, reset, and runbook expose the acknowledged proof", async () =
     '"$supabase_cli" start "${start_arguments[@]}"',
   );
   const databaseOnlyVerify = resetHelper.indexOf(
-    "runtime_check_arguments+=(--database-only)",
+    '      --database-only',
   );
-  const runtimeVerify = resetHelper.indexOf(
-    'bash "$repository_root/scripts/verify-local-supabase-runtime.sh"',
+  const runtimeVerify = resetHelper.lastIndexOf(
+    'verify_local_supabase_runtime "$database_only_runtime_check"',
   );
   assert.ok(
     stagedStop !== -1
@@ -1386,8 +1386,8 @@ test("package, CI, reset, and runbook expose the acknowledged proof", async () =
       && databaseOnlyVerify !== -1
       && runtimeVerify !== -1
       && stagedStop < repositoryStart
-      && repositoryStart < databaseOnlyVerify
-      && databaseOnlyVerify < runtimeVerify,
+      && databaseOnlyVerify < repositoryStart
+      && repositoryStart < runtimeVerify,
   );
   assert.match(resetHelper, /start_arguments=\(--workdir "\$repository_root"\)/);
   assert.match(
@@ -1395,6 +1395,7 @@ test("package, CI, reset, and runbook expose the acknowledged proof", async () =
     /CI:-.*true[\s\S]*--exclude inbucket[\s\S]*"\$supabase_cli" start/,
   );
   assert.equal(resetHelper.match(/--database-only(?=[)\s])/g)?.length, 1);
+  assert.doesNotMatch(resetHelper, /runtime_check_arguments/);
   assert.match(
     runbook,
     /rehearse:profile-photo-cleanup-cron -- --confirm-local-reset/,

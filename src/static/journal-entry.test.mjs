@@ -136,6 +136,26 @@ describe('text-only private journal', () => {
     assert.doesNotMatch(privateJournalJs, /fillJournalFormForDate|addEventListener\('change', fill/);
   });
 
+  test('keeps the create form locked until the actor date policy finishes loading', () => {
+    const pickerReady = privateJournalJs.indexOf('const createDatePicker = createJournalDatePicker');
+    const initialLock = privateJournalJs.indexOf(
+      "setJournalFormBusy(createForm, true, 'Loading journal…')",
+    );
+    const boot = privateJournalJs.indexOf('async function bootPrivateJournal()');
+    const policyLoad = privateJournalJs.indexOf('getJournalDatePolicy({');
+    const finalReset = privateJournalJs.indexOf('resetJournalForm(createForm, todayKey());', policyLoad);
+    const unlock = privateJournalJs.indexOf('setJournalFormBusy(createForm, false);', finalReset);
+
+    assert.ok(
+      pickerReady !== -1
+        && initialLock > pickerReady
+        && boot > initialLock
+        && policyLoad > boot
+        && finalReset > policyLoad
+        && unlock > finalReset,
+    );
+  });
+
   test('removes every supported photo hook while retaining responsive layout', () => {
     const retiredHooks = [
       'journalPhoto',

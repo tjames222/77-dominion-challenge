@@ -195,6 +195,9 @@ const createDatePicker = createJournalDatePicker(createForm, {
   idPrefix: 'journalCreate',
   maximumDate: todayKey,
 });
+// Auth, entries, and the actor-local date policy load together. Keep every
+// control locked until the final reset so a late response cannot erase a draft.
+setJournalFormBusy(createForm, true, 'Loading journal…');
 
 const editForm = createJournalForm(journalFormTemplate, {
   formId: 'journalEditForm',
@@ -260,6 +263,7 @@ async function bootPrivateJournal() {
   editDatePicker.setMaximumDate(todayKey());
   resetJournalForm(createForm, todayKey());
   renderJournal();
+  setJournalFormBusy(createForm, false);
 
   if (isLocalDemoMode()) {
     setFeedback('Preview mode: private journal entries use local mock data.');
