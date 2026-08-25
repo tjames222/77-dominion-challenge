@@ -19,6 +19,16 @@ run_supabase_credential_safe() {
   return "$exit_status"
 }
 
+verify_local_supabase_runtime() {
+  local database_only="$1"
+  if [[ "$database_only" == "true" ]]; then
+    bash "$repository_root/scripts/verify-local-supabase-runtime.sh" \
+      --database-only
+  else
+    bash "$repository_root/scripts/verify-local-supabase-runtime.sh"
+  fi
+}
+
 script_directory="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 repository_root="$(cd "$script_directory/.." && pwd -P)"
 
@@ -181,11 +191,6 @@ fi
 run_supabase_credential_safe "full local stack restart" \
   "$supabase_cli" start "${start_arguments[@]}"
 
-runtime_check_arguments=()
-if [[ "$database_only_runtime_check" == "true" ]]; then
-  runtime_check_arguments+=(--database-only)
-fi
-bash "$repository_root/scripts/verify-local-supabase-runtime.sh" \
-  "${runtime_check_arguments[@]}"
+verify_local_supabase_runtime "$database_only_runtime_check"
 
 echo "Atomic local reset passed: migration SQL and history were committed together."

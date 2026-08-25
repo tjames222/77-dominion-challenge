@@ -505,6 +505,34 @@ test("local Supabase lifecycle wrappers suppress credentials and preserve status
   }
 });
 
+test("local runtime verification avoids empty arrays under Bash 3.2 nounset", async () => {
+  const resetHelper = await readFile(
+    path.join(repositoryRoot, "scripts", "reset-local-database.sh"),
+    "utf8",
+  );
+  const functionSource = resetHelper.match(
+    /verify_local_supabase_runtime\(\) \{[\s\S]*?^\}/m,
+  )?.[0];
+  assert.ok(functionSource);
+  assert.doesNotMatch(functionSource, /\[@\]/);
+
+  const result = spawnSync(
+    "/bin/bash",
+    [
+      "-u",
+      "-c",
+      `${functionSource}\nrepository_root=/verified/repository\nbash() { printf '<%s>\\n' "$*"; }\nverify_local_supabase_runtime false\nverify_local_supabase_runtime true`,
+    ],
+    { encoding: "utf8" },
+  );
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.deepEqual(result.stdout.trim().split("\n"), [
+    "</verified/repository/scripts/verify-local-supabase-runtime.sh>",
+    "</verified/repository/scripts/verify-local-supabase-runtime.sh --database-only>",
+  ]);
+});
+
 test("the production baseline fails closed and normalizes legacy privileges", async () => {
   const baseline = await readFile(
     path.join(

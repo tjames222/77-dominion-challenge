@@ -181,6 +181,8 @@ async function userClient(account) {
 
 async function saveJournalEntry(page, note, win) {
   const form = page.locator('#journalForm');
+  await expect(form).toHaveAttribute('aria-busy', 'false');
+  await expect(form.getByRole('button', { name: 'Save Private Entry' })).toBeEnabled();
   await form.getByLabel('Date').fill('2026-08-13');
   await form.getByLabel('Mood').selectOption('Focused');
   await form.getByLabel('Energy').selectOption('High');
@@ -247,11 +249,19 @@ test('production-shaped frontend uses real local Auth, Postgres, and account RLS
   const clientA = await userClient(accountA);
   const { data: accountARows, error: accountAReadError } = await clientA
     .from('journal_entries')
-    .select('id, user_id, note')
+    .select('id, user_id, entry_date, note, win, mood, energy')
     .eq('user_id', userA.id)
     .eq('note', privateNote);
   if (accountAReadError) throw accountAReadError;
-  expect(accountARows).toHaveLength(1);
+  expect(accountARows).toEqual([{
+    id: accountARows[0]?.id,
+    user_id: userA.id,
+    entry_date: '2026-08-13',
+    note: privateNote,
+    win: 'Account A journal proof',
+    mood: 'Focused',
+    energy: 'High',
+  }]);
 
   await page.getByRole('button', { name: 'Open menu' }).click();
   await page.getByRole('button', { name: 'Log Out' }).click();
