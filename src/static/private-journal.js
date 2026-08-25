@@ -2,6 +2,7 @@ import {
   createJournalEntry,
   getBillingState,
   getCrews,
+  getJournalDatePolicy,
   getJournalEntries,
   getLocalOrSessionUser,
   hasSupabaseAuth,
@@ -11,6 +12,15 @@ import {
   updateJournalEntry,
 } from './api';
 import { createDialog } from './dialog.mjs';
+import { dateKeyForTimeZone } from './check-in.mjs';
+import {
+  createJournalDatePicker,
+  isJournalFutureDateError,
+} from './journal-date-picker.mjs';
+import {
+  JOURNAL_CARD_FIELD_DEFINITIONS,
+  JOURNAL_CARD_TITLE,
+} from './journal-fields.mjs';
 import {
   createJournalForm,
   readJournalForm,
@@ -22,7 +32,15 @@ import { groupJournalEntriesByDate } from './journal-entry.mjs';
 
 const RETURN_PATH = './private-journal.html';
 const $ = (id) => document.getElementById(id);
-const todayKey = () => new Date().toISOString().slice(0, 10);
+const browserTimeZone = () => {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+  } catch {
+    return 'UTC';
+  }
+};
+const initialTimeZone = browserTimeZone();
+const initialToday = dateKeyForTimeZone(new Date(), initialTimeZone);
 const escapeHtml = (value = '') => String(value).replace(/[&<>"']/g, (char) => ({
   '&': '&amp;',
   '<': '&lt;',
@@ -36,8 +54,14 @@ const state = {
   crews: [],
   currentUser: null,
   editingEntryId: null,
+  journalDatePolicy: {
+    timeZone: initialTimeZone,
+    today: initialToday,
+  },
   journalEntries: [],
 };
+
+const todayKey = () => state.journalDatePolicy.today;
 
 function setFeedback(message = '') {
   const feedback = $('communityFeedback');
@@ -82,13 +106,27 @@ function formatEntryTime(value) {
 function entryMetadata(entry) {
   return [
     entry.day ? `Challenge day ${entry.day}` : '',
-    entry.energy ? `${entry.energy} energy` : '',
     formatEntryTime(entry.createdAt),
   ].filter(Boolean);
 }
 
+function renderEntrySections(entry) {
+  const sections = JOURNAL_CARD_FIELD_DEFINITIONS.flatMap((field) => {
+    const value = String(entry?.[field.name] || '').trim();
+    if (!value) return [];
+    return [`
+      <section class="journal-entry-section" data-journal-card-field="${escapeHtml(field.name)}">
+        <h5>${escapeHtml(field.label)}</h5>
+        <p>${escapeHtml(value)}</p>
+      </section>
+    `];
+  });
+  return sections.length
+    ? `<div class="journal-entry-sections">${sections.join('')}</div>`
+    : '';
+}
+
 function renderEntry(entry, formattedDate) {
-  const title = entry.win || 'Private entry';
   const metadata = entryMetadata(entry);
   const editButton = entry.id ? `
     <button
@@ -103,14 +141,12 @@ function renderEntry(entry, formattedDate) {
     <article class="card timeline-note" data-journal-entry-id="${escapeHtml(entry.id || '')}">
       <header class="journal-entry-heading">
         <div>
-          <p class="journal-entry-kicker">${escapeHtml(entry.mood || 'Journal entry')}</p>
-          <h4>${escapeHtml(title)}</h4>
+          <h4>${escapeHtml(JOURNAL_CARD_TITLE)}</h4>
         </div>
         ${editButton}
       </header>
       ${metadata.length ? `<p class="journal-entry-meta">${metadata.map(escapeHtml).join(' · ')}</p>` : ''}
-      ${entry.note ? `<p>${escapeHtml(entry.note)}</p>` : ''}
-      ${entry.prayer ? `<p><strong>Prayer or reflection:</strong> ${escapeHtml(entry.prayer)}</p>` : ''}
+      ${renderEntrySections(entry)}
     </article>
   `;
 }
@@ -155,6 +191,10 @@ const createForm = createJournalForm(journalFormTemplate, {
 });
 $('journalCreateFormMount')?.append(createForm);
 resetJournalForm(createForm, todayKey());
+const createDatePicker = createJournalDatePicker(createForm, {
+  idPrefix: 'journalCreate',
+  maximumDate: todayKey,
+});
 
 const editForm = createJournalForm(journalFormTemplate, {
   formId: 'journalEditForm',
@@ -162,6 +202,10 @@ const editForm = createJournalForm(journalFormTemplate, {
   label: 'Edit private journal entry',
   submitLabel: 'Save Changes',
   cancelLabel: 'Cancel',
+});
+const editDatePicker = createJournalDatePicker(editForm, {
+  idPrefix: 'journalEdit',
+  maximumDate: todayKey,
 });
 
 const editDialog = createDialog({
@@ -207,10 +251,14 @@ async function bootPrivateJournal() {
   }
 
   state.currentUser = await getLocalOrSessionUser();
-  [state.crews, state.journalEntries] = await Promise.all([
+  [state.crews, state.journalEntries, state.journalDatePolicy] = await Promise.all([
     getCrews(),
     getJournalEntries(),
+    getJournalDatePolicy({ expectedUserId: state.currentUser?.userId || '' }),
   ]);
+  createDatePicker.setMaximumDate(todayKey());
+  editDatePicker.setMaximumDate(todayKey());
+  resetJournalForm(createForm, todayKey());
   renderJournal();
 
   if (isLocalDemoMode()) {
@@ -220,19 +268,29 @@ async function bootPrivateJournal() {
 
 createForm.addEventListener('submit', async (event) => {
   event.preventDefault();
-  if (!createForm.reportValidity()) return;
+  if (!createDatePicker.validate({ announce: true, focus: true }) || !createForm.reportValidity()) return;
 
   const values = readJournalForm(createForm);
   setJournalFormBusy(createForm, true, 'Saving…');
   try {
-    await createJournalEntry({
-      ...values,
-      day: challengeDay(activeCrew()?.challengeStartDate, values.date),
-    });
+    await createJournalEntry(
+      {
+        ...values,
+        day: challengeDay(activeCrew()?.challengeStartDate, values.date),
+      },
+      {
+        expectedUserId: state.currentUser?.userId || '',
+        userDate: todayKey(),
+      },
+    );
     resetJournalForm(createForm, todayKey());
     await refreshJournal();
     setFeedback('Private journal entry saved.');
   } catch (error) {
+    if (isJournalFutureDateError(error)) {
+      createDatePicker.showFutureDateError();
+      return;
+    }
     window.alert(error?.message || 'Unable to save your journal entry right now.');
   } finally {
     setJournalFormBusy(createForm, false);
@@ -241,7 +299,9 @@ createForm.addEventListener('submit', async (event) => {
 
 editForm.addEventListener('submit', async (event) => {
   event.preventDefault();
-  if (!editForm.reportValidity() || !state.editingEntryId) return;
+  if (!editDatePicker.validate({ announce: true, focus: true })
+    || !editForm.reportValidity()
+    || !state.editingEntryId) return;
 
   const entryId = state.editingEntryId;
   const values = readJournalForm(editForm);
@@ -250,15 +310,26 @@ editForm.addEventListener('submit', async (event) => {
   editDialog.setBusy(true, 'Saving changes…');
   setJournalFormBusy(editForm, true, 'Saving…');
   try {
-    await updateJournalEntry(entryId, {
-      ...values,
-      day: challengeDay(activeCrew()?.challengeStartDate, values.date),
-    });
+    await updateJournalEntry(
+      entryId,
+      {
+        ...values,
+        day: challengeDay(activeCrew()?.challengeStartDate, values.date),
+      },
+      {
+        expectedUserId: state.currentUser?.userId || '',
+        userDate: todayKey(),
+      },
+    );
     await refreshJournal();
     setFeedback('Journal entry updated.');
     saved = true;
   } catch (error) {
-    editDialog.setError(error?.message || 'Unable to update this journal entry right now.');
+    if (isJournalFutureDateError(error)) {
+      editDatePicker.showFutureDateError();
+    } else {
+      editDialog.setError(error?.message || 'Unable to update this journal entry right now.');
+    }
   } finally {
     setJournalFormBusy(editForm, false);
     editDialog.setBusy(false);
@@ -281,6 +352,9 @@ function scrubPrivateJournalState() {
   state.billing = null;
   state.crews = [];
   state.journalEntries = [];
+  state.journalDatePolicy = { timeZone: initialTimeZone, today: initialToday };
+  createDatePicker.setMaximumDate(todayKey());
+  editDatePicker.setMaximumDate(todayKey());
   setJournalFormBusy(editForm, false);
   editDialog.setBusy(false);
   editDialog.close('account-change');

@@ -15,6 +15,8 @@ const communityCss = readFileSync(new URL('../assets/community.css', import.meta
 const apiJs = readFileSync(new URL('./api.js', import.meta.url), 'utf8');
 const privateJournalJs = readFileSync(new URL('./private-journal.js', import.meta.url), 'utf8');
 const journalFormJs = readFileSync(new URL('./journal-form.mjs', import.meta.url), 'utf8');
+const journalDatePickerJs = readFileSync(new URL('./journal-date-picker.mjs', import.meta.url), 'utf8');
+const journalFieldsJs = readFileSync(new URL('./journal-fields.mjs', import.meta.url), 'utf8');
 const canonicalSchema = readFileSync(new URL('../../supabase/schema.sql', import.meta.url), 'utf8');
 const cleanupMigration = readFileSync(
   new URL('../../supabase/migrations/20260722152953_remove_journal_photo_infrastructure.sql', import.meta.url),
@@ -22,6 +24,10 @@ const cleanupMigration = readFileSync(
 );
 const multipleEntriesMigration = readFileSync(
   new URL('../../supabase/migrations/20260813162042_allow_multiple_daily_journal_entries.sql', import.meta.url),
+  'utf8',
+);
+const journalDateMigration = readFileSync(
+  new URL('../../supabase/migrations/20260824204444_enforce_journal_entry_dates.sql', import.meta.url),
   'utf8',
 );
 
@@ -88,20 +94,44 @@ describe('text-only private journal', () => {
   });
 
   test('creates append-only entries and edits only an explicit entry id', () => {
-    assert.match(apiJs, /export async function createJournalEntry\(entry\)/);
-    assert.match(apiJs, /\.insert\(\{[\s\S]*?user_id: user\.id/);
+    assert.match(apiJs, /export async function createJournalEntry\(entry,/);
+    assert.match(apiJs, /\.rpc\('create_journal_entry'/);
     assert.doesNotMatch(apiJs, /\.upsert\([\s\S]*?onConflict:\s*['"]user_id,entry_date/);
-    assert.match(apiJs, /export async function updateJournalEntry\(entryId, entry\)/);
-    assert.match(apiJs, /\.update\(journalEntryWritePayload\(entry\)\)[\s\S]*?\.eq\('id', targetId\)[\s\S]*?\.eq\('user_id', user\.id\)/);
+    assert.match(apiJs, /export async function updateJournalEntry\(entryId, entry,/);
+    assert.match(apiJs, /\.rpc\('update_journal_entry'/);
     assert.match(apiJs, /findIndex\(\(item\) => item\.id === targetId\)/);
     assert.doesNotMatch(apiJs, /findIndex\(\(item\) => item\.date === entry\.date\)/);
+  });
+
+  test('uses one field-label source for the form and every non-empty card section', () => {
+    assert.match(journalFormJs, /JOURNAL_FIELD_DEFINITIONS/);
+    assert.match(privateJournalJs, /JOURNAL_CARD_FIELD_DEFINITIONS\.flatMap/);
+    assert.match(privateJournalJs, /if \(!value\) return \[\]/);
+    assert.match(privateJournalJs, /JOURNAL_CARD_TITLE/);
+    assert.match(journalFieldsJs, /JOURNAL_CARD_TITLE = 'Journal Entry'/);
+    assert.match(journalFieldsJs, /name: 'date'[\s\S]*name: 'mood'[\s\S]*name: 'energy'[\s\S]*name: 'note'[\s\S]*name: 'win'[\s\S]*name: 'prayer'/);
+  });
+
+  test('rejects future dates in the picker, API, RLS, RPC, and trigger paths', () => {
+    assert.match(journalDatePickerJs, /input\.max = maximumDate/);
+    assert.match(journalDatePickerJs, /JOURNAL_FUTURE_DATE_MESSAGE/);
+    assert.match(privateJournalJs, /createDatePicker\.validate/);
+    assert.match(apiJs, /get_journal_date_policy/);
+    assert.match(apiJs, /assertJournalDateAllowed\(entry\.date, maximumDate\)/);
+    assert.match(apiJs, /\.rpc\('create_journal_entry'/);
+    assert.match(journalDateMigration, /create trigger enforce_journal_entry_date/);
+    assert.match(journalDateMigration, /entry_date <= public\.journal_current_user_date\(\)/);
+    assert.match(journalDateMigration, /create or replace function public\.create_journal_entry/);
+    assert.match(journalDateMigration, /create or replace function public\.update_journal_entry/);
+    assert.doesNotMatch(journalDateMigration, /update\s+public\.journal_entries[\s\S]*entry_date\s*=\s*(?:current_date|private\.journal_user_date)/i);
+    assert.match(canonicalSchema, /20260824204444_enforce_journal_entry_dates\.sql/);
   });
 
   test('reuses the journal form for create and modal edit without mutating the create form', () => {
     assert.match(privateJournalJs, /createJournalForm\(journalFormTemplate,[\s\S]*?formId: 'journalForm'/);
     assert.match(privateJournalJs, /createJournalForm\(journalFormTemplate,[\s\S]*?formId: 'journalEditForm'/);
     assert.match(privateJournalJs, /createDialog\(\{[\s\S]*?id: 'journalEditDialog'/);
-    assert.match(privateJournalJs, /updateJournalEntry\(entryId/);
+    assert.match(privateJournalJs, /updateJournalEntry\(\s*entryId/);
     assert.match(privateJournalJs, /groupJournalEntriesByDate\(state\.journalEntries\)/);
     assert.doesNotMatch(privateJournalJs, /fillJournalFormForDate|addEventListener\('change', fill/);
   });

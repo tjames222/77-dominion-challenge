@@ -195,6 +195,18 @@ test('Solo confirmation activates once, claims training, and resumes after refre
     window.__soloTrainingEvents = [];
     window.addEventListener('dominion:solo-training-launch-requested', (event) => {
       window.__soloTrainingEvents.push(event.detail);
+      const main = document.querySelector('main');
+      const setupLayer = document.querySelector('#challengeStartDialog')?.closest('.app-dialog-layer');
+      window.__soloTrainingLaunchIsolation = {
+        bodyDialogOpen: document.body.hasAttribute('data-dialog-open'),
+        bodyOverflow: document.body.style.overflow,
+        bodyPosition: document.body.style.position,
+        mainAriaHidden: main?.getAttribute('aria-hidden') ?? null,
+        mainInert: Boolean(main?.inert || main?.hasAttribute('inert')),
+        setupHidden: setupLayer?.hidden ?? null,
+        trainingStylesReady: getComputedStyle(document.documentElement)
+          .getPropertyValue('--site-training-styles-ready').trim(),
+      };
     });
   });
   await app.open(ROUTE_BY_ID.dashboard, { state: 'notStarted' });
@@ -250,10 +262,47 @@ test('Solo confirmation activates once, claims training, and resumes after refre
     startDate: FIXED_TODAY,
     source: 'challenge_activation',
   });
+  expect(await page.evaluate(() => window.__soloTrainingLaunchIsolation)).toEqual({
+    bodyDialogOpen: false,
+    bodyOverflow: '',
+    bodyPosition: '',
+    mainAriaHidden: null,
+    mainInert: false,
+    setupHidden: true,
+    trainingStylesReady: '1',
+  });
 
   await trainingDialog.getByRole('button', { name: 'Stop for now' }).click();
   await expect(trainingDialog).toBeHidden();
   await expect(page.locator('.shared-header-share')).toHaveAccessibleName('Share');
+  expect(await page.evaluate(() => {
+    const main = document.querySelector('main');
+    const menuButton = document.querySelector('.global-menu-button');
+    return {
+      bodyDialogOpen: document.body.hasAttribute('data-dialog-open'),
+      bodyOverflow: document.body.style.overflow,
+      bodyPosition: document.body.style.position,
+      mainAriaHidden: main?.getAttribute('aria-hidden') ?? null,
+      mainInert: Boolean(main?.inert || main?.hasAttribute('inert')),
+      menuPointerEvents: menuButton ? getComputedStyle(menuButton).pointerEvents : '',
+      staleTargetCount: document.querySelectorAll('.site-training-target').length,
+    };
+  })).toEqual({
+    bodyDialogOpen: false,
+    bodyOverflow: '',
+    bodyPosition: '',
+    mainAriaHidden: null,
+    mainInert: false,
+    menuPointerEvents: 'auto',
+    staleTargetCount: 0,
+  });
+
+  await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
+  await expect.poll(() => page.evaluate(() => window.scrollY)).toBeGreaterThan(0);
+  const menuButton = page.getByRole('button', { name: 'Open menu' });
+  await menuButton.click();
+  await expect(page.getByRole('navigation', { name: 'Global navigation' })).toBeVisible();
+  await menuButton.click();
 
   await page.reload({ waitUntil: 'networkidle' });
   await expect(page.locator('#challengeStartGate')).toBeHidden();

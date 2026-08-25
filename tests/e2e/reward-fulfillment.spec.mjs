@@ -38,6 +38,11 @@ async function openRewardsWithFulfillment(page, app, fulfillments, { points = 1_
   await expect(page.locator(ROUTE_BY_ID.badgesRewards.ready).first()).toBeVisible();
 }
 
+async function openRewardDetails(page, rewardKey, options) {
+  const card = page.locator(`[data-reward-key="${rewardKey}"]`);
+  await card.locator('[data-view-reward]').click(options);
+}
+
 const gymOffer = {
   read: {
     availability: 'available',
@@ -102,7 +107,7 @@ test('locked gym reward shows exact progress and a safe configured partner link'
 
   const card = page.locator('[data-reward-key="gym_training_discount"]');
   await expect(card).toContainText('Locked');
-  await card.click();
+  await openRewardDetails(page, 'gym_training_discount');
 
   const dialog = page.getByRole('dialog', { name: 'Gym Training Discount' });
   await expect(dialog).toBeVisible();
@@ -130,7 +135,7 @@ test('eligible gym reward claims once, reveals a code, copies it, and exposes on
     gym_training_discount: gymOffer,
   });
 
-  await page.locator('[data-reward-key="gym_training_discount"]').click();
+  await openRewardDetails(page, 'gym_training_discount');
   const dialog = page.getByRole('dialog', { name: 'Gym Training Discount' });
   const claim = dialog.getByRole('button', { name: 'Claim discount' });
   await expect(claim).toBeVisible();
@@ -161,7 +166,7 @@ test('eligible T-shirt reward claims once, reveals a code, and copies it', async
     big_god_energy_tshirt_discount: shirtOffer,
   });
 
-  await page.locator('[data-reward-key="big_god_energy_tshirt_discount"]').click();
+  await openRewardDetails(page, 'big_god_energy_tshirt_discount');
   const dialog = page.getByRole('dialog', { name: 'Big God Energy T-Shirt Discount' });
   const claim = dialog.getByRole('button', { name: 'Claim discount' });
   await expect(claim).toBeVisible();
@@ -192,7 +197,7 @@ test('an existing T-shirt claim reveals its code only through the trusted claim 
     big_god_energy_tshirt_discount: claimedShirtOffer,
   });
 
-  await page.locator('[data-reward-key="big_god_energy_tshirt_discount"]').click();
+  await openRewardDetails(page, 'big_god_energy_tshirt_discount');
   const dialog = page.getByRole('dialog', { name: 'Big God Energy T-Shirt Discount' });
   const reveal = dialog.getByRole('button', { name: 'Reveal code' });
   await expect(reveal).toBeVisible();
@@ -215,7 +220,7 @@ test('concurrent discount activations produce only one in-flight claim request',
     gym_training_discount: gymOffer,
   });
 
-  await page.locator('[data-reward-key="gym_training_discount"]').click();
+  await openRewardDetails(page, 'gym_training_discount');
   const dialog = page.getByRole('dialog', { name: 'Gym Training Discount' });
   const claim = dialog.getByRole('button', { name: 'Claim discount' });
   await expect(claim).toBeVisible();
@@ -250,8 +255,7 @@ test('expired, exhausted, and unavailable fulfillment states fail closed without
   await openRewardsWithFulfillment(page, app, fixtures);
 
   for (const [key, , message] of cases) {
-    const card = page.locator(`[data-reward-key="${key}"]`);
-    await card.click();
+    await openRewardDetails(page, key);
     const dialog = page.locator('#rewardDetailDialog');
     await expect(dialog).toBeVisible();
     await expect(dialog).toContainText(message);
@@ -268,7 +272,7 @@ test('reward details expose an explicit loading state before secure data resolve
     gym_training_discount: gymOffer,
   });
 
-  await page.locator('[data-reward-key="gym_training_discount"]').click({ noWaitAfter: true });
+  await openRewardDetails(page, 'gym_training_discount', { noWaitAfter: true });
   await deferred.intercepted;
   const dialog = page.getByRole('dialog', { name: 'Gym Training Discount' });
   await expect(dialog.locator('#rewardDetailContent')).toHaveAttribute('aria-busy', 'true');
@@ -286,7 +290,7 @@ test('a reward-detail failure is announced and recovers on retry', async ({ page
     gym_training_discount: gymOffer,
   });
 
-  await page.locator('[data-reward-key="gym_training_discount"]').click();
+  await openRewardDetails(page, 'gym_training_discount');
   const dialog = page.getByRole('dialog', { name: 'Gym Training Discount' });
   await expect(dialog.locator('#rewardDetailFeedback')).toHaveText(
     'The secure reward service is temporarily unavailable.',
@@ -294,7 +298,7 @@ test('a reward-detail failure is announced and recovers on retry', async ({ page
   await expect(dialog.locator('[data-claim-reward-offer], [data-copy-reward-code]')).toHaveCount(0);
   await page.getByRole('button', { name: 'Close reward details' }).click();
 
-  await page.locator('[data-reward-key="gym_training_discount"]').click();
+  await openRewardDetails(page, 'gym_training_discount');
   await expect(dialog.locator('#rewardDetailFeedback')).toHaveText('');
   await expect(dialog).toContainText('Test Training Club');
   await expect(dialog.getByRole('button', { name: 'Claim discount' })).toBeVisible();
@@ -320,7 +324,7 @@ test('an approved handbook response downloads verified PDF fixture bytes', async
     },
   });
 
-  await page.locator('[data-reward-key="nehemiah_leadership_handbook"]').click();
+  await openRewardDetails(page, 'nehemiah_leadership_handbook');
   const dialog = page.getByRole('dialog', { name: 'Nehemiah Leadership Handbook' });
   await expect(dialog).toContainText('Release candidate');
   const [download] = await Promise.all([

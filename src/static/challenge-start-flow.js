@@ -219,6 +219,12 @@ export function createChallengeStartFlow({
 
   async function finishSoloActivation(activation, owner, message) {
     if (!isCurrentOwner(owner) || !verifiedSoloActivation(activation)) return false;
+    setSubmitting(false);
+    dialog.close('activated');
+
+    // Release setup's focus trap and page isolation before the training event
+    // can acquire its own modal layer. Dispatching while setup still owned the
+    // page could leave a slow-loading coachmark behind an inert dashboard.
     let trainingLaunchQueued = true;
     try {
       publishSoloTrainingLaunch({
@@ -231,8 +237,6 @@ export function createChallengeStartFlow({
       trainingLaunchQueued = false;
       console.warn('Unable to persist the Solo training launch handoff', error);
     }
-    setSubmitting(false);
-    dialog.close('activated');
     await onActivation(activation, owner);
     if (!isCurrentOwner(owner)) return false;
     onStatus(message || (!trainingLaunchQueued

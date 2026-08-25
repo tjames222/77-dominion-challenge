@@ -10,6 +10,14 @@ const workflow = readFileSync(
   new URL('../../.github/workflows/browser-quality.yml', import.meta.url),
   'utf8',
 );
+const playwrightConfig = readFileSync(
+  new URL('../../playwright.config.mjs', import.meta.url),
+  'utf8',
+);
+const deployWorkflow = readFileSync(
+  new URL('../../.github/workflows/deploy.yml', import.meta.url),
+  'utf8',
+);
 const screenshotCss = readFileSync(
   new URL('../../tests/e2e/support/screenshot.css', import.meta.url),
   'utf8',
@@ -46,6 +54,40 @@ test('manual baseline generation forcibly rewrites every screenshot', () => {
   assert.match(
     workflow,
     /- name: Generate reviewable Linux visual baselines[\s\S]*?run: pnpm test:e2e:update/,
+  );
+});
+
+test('browser diagnostics are short-lived and uploaded only when the gate fails', () => {
+  assert.match(
+    workflow,
+    /- name: Upload browser diagnostics\n\s+if: failure\(\)[\s\S]*?retention-days: 3/,
+  );
+  assert.doesNotMatch(
+    workflow,
+    /- name: Upload browser diagnostics\n\s+if: always\(\)/,
+  );
+  assert.match(
+    workflow,
+    /- name: Upload browser diagnostics[\s\S]*?path: playwright-report\/\n[\s\S]*?retention-days: 3/,
+  );
+  assert.doesNotMatch(
+    workflow,
+    /- name: Upload browser diagnostics[\s\S]*?path:[\s\S]*?test-results\//,
+  );
+  assert.match(
+    playwrightConfig,
+    /video: process\.env\.CI \? 'off' : 'retain-on-failure'/,
+  );
+});
+
+test('review baselines and release frontend artifacts keep their dedicated retention', () => {
+  assert.match(
+    workflow,
+    /- name: Upload generated visual baselines[\s\S]*?name: browser-visual-baselines-\$\{\{ github\.sha \}\}[\s\S]*?retention-days: 14/,
+  );
+  assert.match(
+    deployWorkflow,
+    /- name: Upload frontend artifact[\s\S]*?name: production-frontend-\$\{\{ github\.sha \}\}[\s\S]*?retention-days: 7/,
   );
 });
 

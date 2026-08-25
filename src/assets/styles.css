@@ -63,6 +63,16 @@
   --overlay-background: color-mix(in srgb, var(--scrim) 62%, transparent);
   --tooltip-background: var(--surface-elevated);
   --tooltip-text: var(--text);
+  --date-picker-surface: var(--surface);
+  --date-picker-surface-elevated: var(--surface-elevated);
+  --date-picker-border: var(--border);
+  --date-picker-text: var(--text);
+  --date-picker-muted: var(--text-muted);
+  --date-picker-accent: var(--accent);
+  --date-picker-accent-text: var(--button-primary-text);
+  --date-picker-today-ring: var(--accent-strong);
+  --date-picker-disabled: var(--text-disabled);
+  --date-picker-hover: color-mix(in srgb, var(--accent) 12%, var(--surface-elevated));
 }
 
 :root[data-theme="light"] {

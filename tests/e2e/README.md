@@ -86,8 +86,10 @@ if either the font or its license is absent. The screenshot harness waits for
 that same production face instead of substituting a test-only family. This prevents Linux
 runner font-package changes from altering text metrics and full-page screenshot
 heights while keeping visual tests faithful to production. Failed runs retain a
-trace, screenshot, video, HTML report, and Playwright image diff in the CI
-artifact.
+trace, screenshot timeline, HTML report, and Playwright image diff in one
+short-lived CI artifact. Standalone CI videos are disabled because a broad
+visual failure can otherwise exceed the repository's artifact storage quota;
+local runs still retain failure videos for debugging.
 
 ## Adding a route or feature assertion
 

@@ -101,7 +101,7 @@ const readableDate = (value) => {
 const rewardStatusLabel = (reward) => ({
   locked: reward.canAccess === false ? 'Access required' : 'Locked',
   available: 'Available',
-  active: 'Active',
+  active: 'In progress',
   completed: 'Completed',
   owned: 'Owned',
 })[reward.status] || 'Locked';
@@ -139,7 +139,7 @@ export function rewardViewModel(reward = {}, nextRewardKey = '') {
   } else if (status === 'available') {
     detail = unlockedDate ? `Unlocked ${unlockedDate}` : 'Unlocked and ready to start';
   } else if (status === 'active') {
-    detail = startedDate ? `Started ${startedDate}` : 'Challenge in progress';
+    detail = startedDate ? `In progress since ${startedDate}` : 'Challenge in progress';
   } else if (status === 'completed') {
     detail = completedDate ? `Completed ${completedDate}` : 'Challenge completed';
   } else {

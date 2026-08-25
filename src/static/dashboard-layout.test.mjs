@@ -76,11 +76,12 @@ describe('dashboard progress document order', () => {
 });
 
 describe('Rewards level and private-ranking coin integration', () => {
-  it('renders the shared fourteen-point level contract directly below the Rewards tabs', () => {
-    const tabs = rewardsHtml.indexOf('class="badges-rewards-tabs"');
-    const progress = rewardsHtml.indexOf('id="gameSummaryCard"');
+  it('renders the shared fourteen-point level contract after the Rewards intro controls', () => {
     const hero = rewardsHtml.indexOf('class="badges-rewards-hero');
-    assert.ok(tabs >= 0 && tabs < progress && progress < hero);
+    const tabs = rewardsHtml.indexOf('class="badges-rewards-tabs secondary-tabs"');
+    const share = rewardsHtml.indexOf('class="badges-rewards-share-action"');
+    const progress = rewardsHtml.indexOf('id="gameSummaryCard"');
+    assert.ok(hero >= 0 && hero < tabs && tabs < share && share < progress);
     assert.match(
       gameProgressJs,
       /import \{ POINTS_PER_LEVEL, calculateLevelProgress \} from '\.\/point-economy\.mjs'/,

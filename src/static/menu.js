@@ -21,6 +21,7 @@ import { createPageTrainingControls } from './page-training-controls.mjs';
 
 const topbar = document.querySelector('.topbar');
 const memberTabs = document.querySelector('[data-member-tabs]');
+const secondaryTabs = document.querySelector('[data-sticky-secondary-tabs]');
 const TOPBAR_COMPACT_SCROLL_Y = 12;
 const TOPBAR_TOP_SCROLL_Y = 2;
 
@@ -103,6 +104,12 @@ function syncMenuExpandedState(isOpen) {
   const menu = document.querySelector('.global-menu');
 
   button?.setAttribute('aria-expanded', String(isOpen));
+  if (memberTabs) {
+    memberTabs.inert = isOpen;
+    memberTabs.setAttribute?.('aria-hidden', String(isOpen));
+    if (isOpen) memberTabs.setAttribute?.('inert', '');
+    else memberTabs.removeAttribute?.('inert');
+  }
   if (!menu) return;
 
   menu.inert = !isOpen;
@@ -175,6 +182,7 @@ function initScrollResponsiveTopbar() {
 
     topbar.classList.toggle('topbar-scrolled', currentScrollY > TOPBAR_TOP_SCROLL_Y);
     memberTabs?.classList.toggle('member-tabs-scrolled', currentScrollY > TOPBAR_TOP_SCROLL_Y);
+    secondaryTabs?.classList.toggle('secondary-tabs-scrolled', currentScrollY > TOPBAR_TOP_SCROLL_Y);
     ticking = false;
   };
 
@@ -196,10 +204,12 @@ function initTopbarStickyOffset() {
   const root = document.documentElement;
   let previousTopbarHeight = 0;
   let previousMemberTabsHeight = -1;
+  let previousSecondaryTabsHeight = -1;
 
   const syncStickyHeights = () => {
     const topbarHeight = topbar.getBoundingClientRect().height;
     const memberTabsHeight = memberTabs?.getBoundingClientRect().height || 0;
+    const secondaryTabsHeight = secondaryTabs?.getBoundingClientRect().height || 0;
     if (Number.isFinite(topbarHeight) && topbarHeight > 0 && Math.abs(topbarHeight - previousTopbarHeight) >= 0.1) {
       previousTopbarHeight = topbarHeight;
       root.style.setProperty('--topbar-sticky-height', `${topbarHeight.toFixed(2)}px`);
@@ -208,6 +218,11 @@ function initTopbarStickyOffset() {
     if (Number.isFinite(memberTabsHeight) && memberTabsHeight >= 0 && Math.abs(memberTabsHeight - previousMemberTabsHeight) >= 0.1) {
       previousMemberTabsHeight = memberTabsHeight;
       root.style.setProperty('--member-tabs-sticky-height', `${memberTabsHeight.toFixed(2)}px`);
+    }
+
+    if (Number.isFinite(secondaryTabsHeight) && secondaryTabsHeight >= 0 && Math.abs(secondaryTabsHeight - previousSecondaryTabsHeight) >= 0.1) {
+      previousSecondaryTabsHeight = secondaryTabsHeight;
+      root.style.setProperty('--secondary-tabs-sticky-height', `${secondaryTabsHeight.toFixed(2)}px`);
     }
   };
 
@@ -218,6 +233,7 @@ function initTopbarStickyOffset() {
     const observer = new ResizeObserver(syncStickyHeights);
     observer.observe(topbar, { box: 'border-box' });
     if (memberTabs) observer.observe(memberTabs, { box: 'border-box' });
+    if (secondaryTabs) observer.observe(secondaryTabs, { box: 'border-box' });
   }
 }
 

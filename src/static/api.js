@@ -9,6 +9,7 @@ import {
 } from './challenge-progression.mjs';
 import {
   createCheckInAlreadyCompleteError,
+  dateKeyForTimeZone,
   isDuplicateCheckInError,
   migrateMockCheckInCache,
 } from './check-in.mjs';
@@ -54,6 +55,7 @@ import {
 } from './preview-auth-runtime.mjs';
 import { normalizeEarnedBadges } from './badges-rewards.mjs';
 import { normalizeJournalEntry, sortJournalEntries } from './journal-entry.mjs';
+import { assertJournalDateAllowed, isJournalDateKey } from './journal-date-picker.mjs';
 import {
   canonicalProfilePhotoUrl,
   commitProfileUpdateWithCompareAndSwap,
@@ -4422,6 +4424,35 @@ export async function getJournalEntries() {
   return sortJournalEntries((entries || []).map(normalizeJournalEntry));
 }
 
+export async function getJournalDatePolicy({ expectedUserId = '' } = {}) {
+  if (isLocalDemoMode()) {
+    await requireHybridPreviewUser(expectedUserId);
+    const actorId = getMockUserId();
+    if (expectedUserId && actorId !== expectedUserId) {
+      throw new Error('The signed-in account changed. Try again.');
+    }
+    const timeZone = browserTimeZone();
+    return {
+      timeZone,
+      today: dateKeyForTimeZone(new Date(), timeZone),
+    };
+  }
+
+  const client = requireSupabase();
+  const user = await requireUser(expectedUserId);
+  const { data, error } = await client.rpc('get_journal_date_policy', {
+    target_expected_actor_id: user.id,
+  });
+  await requireUser(user.id);
+  if (error) throw error;
+  const today = data?.today ?? data?.user_date;
+  if (!isJournalDateKey(today)) throw new Error('Unable to determine your journal date.');
+  return {
+    timeZone: String(data?.timeZone ?? data?.time_zone ?? 'UTC'),
+    today,
+  };
+}
+
 function journalEntryWritePayload(entry) {
   return {
     entry_date: entry.date,
@@ -4434,9 +4465,20 @@ function journalEntryWritePayload(entry) {
   };
 }
 
-export async function createJournalEntry(entry) {
+export async function createJournalEntry(entry, {
+  expectedUserId = '',
+  userDate = '',
+} = {}) {
+  const maximumDate = isJournalDateKey(userDate)
+    ? userDate
+    : (isLocalDemoMode() ? dateKeyForTimeZone(new Date(), browserTimeZone()) : '');
+  if (maximumDate) assertJournalDateAllowed(entry.date, maximumDate);
+
   if (isLocalDemoMode()) {
-    await requireHybridPreviewUser();
+    await requireHybridPreviewUser(expectedUserId);
+    if (expectedUserId && getMockUserId() !== expectedUserId) {
+      throw new Error('The signed-in account changed. Try again.');
+    }
     const entries = readMockUserValue(MOCK_JOURNAL_KEY, []).map(normalizeJournalEntry);
     const now = new Date().toISOString();
     const baseId = randomId('preview_journal');
@@ -4464,26 +4506,40 @@ export async function createJournalEntry(entry) {
   }
 
   const client = requireSupabase();
-  const user = await requireUser();
-  const { data, error } = await client
-    .from('journal_entries')
-    .insert({
-      user_id: user.id,
-      ...journalEntryWritePayload(entry),
-    })
-    .select('id, user_id, entry_date, challenge_day, note, win, prayer, mood, energy, created_at, updated_at')
-    .single();
+  const user = await requireUser(expectedUserId);
+  const payload = journalEntryWritePayload(entry);
+  const { data, error } = await client.rpc('create_journal_entry', {
+    target_entry_date: payload.entry_date,
+    target_challenge_day: payload.challenge_day,
+    target_note: payload.note,
+    target_win: payload.win,
+    target_prayer: payload.prayer,
+    target_mood: payload.mood,
+    target_energy: payload.energy,
+    target_expected_actor_id: user.id,
+  });
 
+  await requireUser(user.id);
   if (error) throw error;
   return normalizeJournalEntry(data);
 }
 
-export async function updateJournalEntry(entryId, entry) {
+export async function updateJournalEntry(entryId, entry, {
+  expectedUserId = '',
+  userDate = '',
+} = {}) {
   const targetId = String(entryId || '').trim();
   if (!targetId) throw new TypeError('A journal entry id is required.');
+  const maximumDate = isJournalDateKey(userDate)
+    ? userDate
+    : (isLocalDemoMode() ? dateKeyForTimeZone(new Date(), browserTimeZone()) : '');
+  if (maximumDate) assertJournalDateAllowed(entry.date, maximumDate);
 
   if (isLocalDemoMode()) {
-    await requireHybridPreviewUser();
+    await requireHybridPreviewUser(expectedUserId);
+    if (expectedUserId && getMockUserId() !== expectedUserId) {
+      throw new Error('The signed-in account changed. Try again.');
+    }
     const entries = readMockUserValue(MOCK_JOURNAL_KEY, []).map(normalizeJournalEntry);
     const existingIndex = entries.findIndex((item) => item.id === targetId);
     if (existingIndex < 0) throw new Error('This journal entry is no longer available.');
@@ -4506,15 +4562,21 @@ export async function updateJournalEntry(entryId, entry) {
   }
 
   const client = requireSupabase();
-  const user = await requireUser();
-  const { data, error } = await client
-    .from('journal_entries')
-    .update(journalEntryWritePayload(entry))
-    .eq('id', targetId)
-    .eq('user_id', user.id)
-    .select('id, user_id, entry_date, challenge_day, note, win, prayer, mood, energy, created_at, updated_at')
-    .single();
+  const user = await requireUser(expectedUserId);
+  const payload = journalEntryWritePayload(entry);
+  const { data, error } = await client.rpc('update_journal_entry', {
+    target_entry_id: targetId,
+    target_entry_date: payload.entry_date,
+    target_challenge_day: payload.challenge_day,
+    target_note: payload.note,
+    target_win: payload.win,
+    target_prayer: payload.prayer,
+    target_mood: payload.mood,
+    target_energy: payload.energy,
+    target_expected_actor_id: user.id,
+  });
 
+  await requireUser(user.id);
   if (error) throw error;
   return normalizeJournalEntry(data);
 }

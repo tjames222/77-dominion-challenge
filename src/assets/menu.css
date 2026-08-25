@@ -1,6 +1,10 @@
+@import url('./site-training.css');
+
 :root {
   --topbar-sticky-height: calc(72px + env(safe-area-inset-top));
   --member-tabs-sticky-height: 0px;
+  --navigation-stack-gap: clamp(8px, 1.6vw, 12px);
+  --navigation-content-gap: clamp(20px, 3.2vw, 32px);
 }
 html {
   scroll-padding-top: calc(var(--topbar-sticky-height) + var(--member-tabs-sticky-height) + 24px);
@@ -14,13 +18,39 @@ body {
   top: 0;
   z-index: 140;
   isolation: isolate;
-  min-height: 72px;
+  min-height: var(--topbar-sticky-height);
+  margin-top: calc(-1 * max(var(--shell-pad, clamp(18px, 4vw, 34px)), env(safe-area-inset-top)));
   margin-inline: calc(-1 * var(--shell-pad, clamp(18px, 4vw, 34px)));
+  margin-bottom: 0;
   padding: calc(12px + env(safe-area-inset-top)) var(--shell-pad, clamp(18px, 4vw, 34px)) 12px;
   background: transparent;
   border-bottom: 1px solid transparent;
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
+}
+
+/*
+ * Keep the primary bar, optional member tabs, and first page surface on one
+ * shared rhythm. Grid-based shells expose their native row gap so the same
+ * tokens produce the same visible distance as block-based public/auth pages.
+ */
+.app-shell > .topbar + .member-tabs {
+  margin-top: calc(var(--navigation-stack-gap) - var(--app-shell-row-gap, 0px));
+}
+.app-shell > .topbar + :not(.member-tabs),
+.app-shell > .member-tabs + :not(nav) {
+  margin-top: calc(var(--navigation-content-gap) - var(--app-shell-row-gap, 0px));
+}
+.app-shell > .member-tabs + nav {
+  margin-top: calc(var(--navigation-stack-gap) - var(--app-shell-row-gap, 0px));
+}
+body:not(.challenge-finished) .app-shell > .topbar + [data-section-surface="plain"]:not(.card),
+body:not(.challenge-finished) .app-shell > .member-tabs + [data-section-surface="plain"]:not(.card) {
+  padding-block-start: 0;
+}
+body:not(.challenge-finished) .dashboard-shell > :is(.topbar, .member-tabs) + .dashboard-hero {
+  min-height: 0;
+  align-content: start;
 }
 .topbar::before {
   content: "";
@@ -166,6 +196,10 @@ body {
   visibility: hidden;
   pointer-events: none;
   opacity: 0;
+}
+.menu-open .member-tabs {
+  visibility: hidden;
+  pointer-events: none;
 }
 .global-streak-details {
   display: grid;

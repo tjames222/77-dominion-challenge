@@ -162,17 +162,9 @@ test('hybrid dev Auth registers, persists, logs in, isolates UUID-owned state, a
   await expectAccountACommunityState(page);
 
   const getUserBeforeInvalidation = auth.count('/user', 'GET');
-  auth.invalidateUser(ACCOUNT_A.email);
-  const invalidSessionResponse = page.waitForResponse((response) => (
-    response.request().method() === 'GET'
-    && new URL(response.url()).pathname.endsWith('/auth/v1/user')
-    && response.status() === 403
-  ));
-  const loginRedirect = page.waitForURL(/\/login\.html\?returnTo=/);
-
-  // Arm the stale write behind a Node-controlled gate. Releasing it only after
-  // evaluate has returned proves that a successful Auth redirect cannot destroy
-  // the command used to start the assertion.
+  // Arm the stale write before invalidating Auth. This prevents the expected
+  // redirect from destroying the page context while exposeFunction/evaluate is
+  // still setting up the regression assertion.
   let releaseStaleWrite;
   const staleWriteRelease = new Promise((resolve) => {
     releaseStaleWrite = resolve;
@@ -195,6 +187,15 @@ test('hybrid dev Auth registers, persists, logs in, isolates UUID-owned state, a
     return true;
   }, STALE_JOURNAL);
   expect(staleWriteArmed).toBe(true);
+
+  const invalidSessionResponse = page.waitForResponse((response) => (
+    response.request().method() === 'GET'
+    && new URL(response.url()).pathname.endsWith('/auth/v1/user')
+    && response.status() === 403
+  ));
+  const loginRedirect = page.waitForURL(/\/login\.html\?returnTo=/);
+
+  auth.invalidateUser(ACCOUNT_A.email);
   releaseStaleWrite();
 
   const [failedUserCheck] = await Promise.all([invalidSessionResponse, loginRedirect]);
