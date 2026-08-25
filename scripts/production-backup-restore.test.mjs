@@ -712,7 +712,7 @@ function replaceArgument(args, flag, value) {
   return copy;
 }
 
-test("operator shell files parse under Bash 3.2", () => {
+test("operator shell files parse under Bash 3.2 or newer", () => {
   const result = spawnSync(
     "bash",
     ["-n", path.join(scriptDirectory, "production-backup-common.sh"), captureScript, restoreScript, verifyScript],
@@ -720,7 +720,12 @@ test("operator shell files parse under Bash 3.2", () => {
   );
   assert.equal(result.status, 0, result.stderr);
   const version = spawnSync("bash", ["--version"], { encoding: "utf8" });
-  assert.match(version.stdout, /version 3\.2\./);
+  assert.equal(version.status, 0, version.stderr);
+  const match = version.stdout.match(/version (\d+)\.(\d+)\./);
+  assert.ok(match, `unable to parse Bash version: ${version.stdout}`);
+  const major = Number.parseInt(match[1], 10);
+  const minor = Number.parseInt(match[2], 10);
+  assert.ok(major > 3 || (major === 3 && minor >= 2));
 });
 
 test("capture rejects incomplete input before any remote boundary", async (t) => {
