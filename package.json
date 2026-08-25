@@ -7,7 +7,7 @@
   },
   "scripts": {
     "dev": "vite --host 0.0.0.0",
-    "build": "node scripts/validate-frontend-env.mjs && vite build && node scripts/verify-build-assets.mjs",
+    "build": "node scripts/build-frontend.mjs",
     "preview": "vite preview --host 0.0.0.0",
     "test": "node --test src/static/*.test.mjs",
     "test:frontend": "pnpm run test",

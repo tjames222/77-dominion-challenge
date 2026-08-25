@@ -546,8 +546,8 @@ separately reviewed change and the exact restored-snapshot rehearsal passes:
    ```
 
 8. Return to the full release tree. `migration list` must show matching local and
-   remote versions 1–13, and the full linked dry run must list exactly 39 pending
-   migrations, versions 14–52. No production release may run until every pending
+   remote versions 1–13, and the full linked dry run must list exactly 40 pending
+   migrations, versions 14–53. No production release may run until every pending
    file passes the transaction-control gate and the exact release tree passes the
    pinned-runner failure proof. Require the complete normalized migration-13
    application manifest—including effective and default privileges—to match its
@@ -560,7 +560,7 @@ Record the exact applied versions, file hashes, backup and restore
 evidence, comparison output, Storage manifest, project reference, operator,
 approver, and UTC time in the release record. Never reset the hosted project,
 use `--include-all`, mark a missing effect applied, manually execute migration
-SQL outside the approved three-version runner, or push the full 52-file tree
+SQL outside the approved three-version runner, or push the full 53-file tree
 before the checkpoint passes. If an applied migration later fails, stop and use
 a reviewed forward fix; do not rewrite it or mark it reverted.
 

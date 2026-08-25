@@ -5,7 +5,7 @@ const truthy = (value) => ['1', 'true', 'yes'].includes(
 );
 const explicitlyEnabled = (value) => String(value || '').trim().toLowerCase() === 'true';
 
-const DEVELOP_LIVE_CONNECTION_VARIABLES = Object.freeze([
+export const DEVELOP_LIVE_CONNECTION_VARIABLES = Object.freeze([
   'VITE_SUPABASE_URL',
   'VITE_SUPABASE_PUBLISHABLE_KEY',
   'VITE_SUPABASE_ANON_KEY',
