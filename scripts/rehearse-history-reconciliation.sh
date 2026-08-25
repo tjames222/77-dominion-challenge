@@ -140,7 +140,7 @@ fi
 
 export SUPABASE_TELEMETRY_DISABLED=1
 
-resolved_release_commit="$(git -C "$repository_root" rev-parse --verify "${release_commit}^{commit}")" \
+resolved_release_commit="$(git --no-replace-objects -C "$repository_root" rev-parse --verify "${release_commit}^{commit}")" \
   || fail "release commit does not resolve to a commit."
 [[ "$resolved_release_commit" == "$release_commit" ]] \
   || fail "release commit resolved to $resolved_release_commit instead of the exact requested SHA."
@@ -149,9 +149,9 @@ assert_release_file_matches() {
   local relative_path="$1"
   local release_blob
   local working_blob
-  release_blob="$(git -C "$repository_root" rev-parse "${release_commit}:${relative_path}")" \
+  release_blob="$(git --no-replace-objects -C "$repository_root" rev-parse "${release_commit}:${relative_path}")" \
     || fail "release commit is missing $relative_path."
-  working_blob="$(git -C "$repository_root" hash-object "$repository_root/$relative_path")" \
+  working_blob="$(git --no-replace-objects -C "$repository_root" hash-object "$repository_root/$relative_path")" \
     || fail "could not hash $relative_path."
   [[ "$working_blob" == "$release_blob" ]] \
     || fail "$relative_path does not match the immutable release commit."
@@ -161,9 +161,9 @@ assert_head_file_matches() {
   local relative_path="$1"
   local head_blob
   local working_blob
-  head_blob="$(git -C "$repository_root" rev-parse "HEAD:${relative_path}")" \
+  head_blob="$(git --no-replace-objects -C "$repository_root" rev-parse "HEAD:${relative_path}")" \
     || fail "current commit is missing $relative_path."
-  working_blob="$(git -C "$repository_root" hash-object "$repository_root/$relative_path")" \
+  working_blob="$(git --no-replace-objects -C "$repository_root" hash-object "$repository_root/$relative_path")" \
     || fail "could not hash $relative_path."
   [[ "$working_blob" == "$head_blob" ]] \
     || fail "$relative_path does not match the current committed integration head."

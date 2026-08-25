@@ -204,6 +204,12 @@ test("static contract is local-only, one-version-at-a-time, and checkpointed", a
   assert.match(source, /--through-version "\$migration_version"/u);
   assert.match(source, /assert_history_prefix \$\(\(stage_number - 1\)\)/u);
   assert.match(source, /assert_history_prefix "\$stage_number"/u);
+  assert.match(
+    source,
+    /select version from supabase_migrations\.schema_migrations order by version/u,
+  );
+  assert.doesNotMatch(source, /git -C "\$repository_root"/u);
+  assert.match(source, /git --no-replace-objects -C "\$repository_root"/u);
   assert.match(source, /migration up[\s\S]*--db-url "\$local_database_url"/u);
   assert.match(
     source,

@@ -23,12 +23,31 @@ function migrationList(localVersions, remoteVersions) {
   for (let index = 0; index < count; index += 1) {
     const local = localVersions[index] ? `\`${localVersions[index]}\`` : "` `";
     const remote = remoteVersions[index] ? `\`${remoteVersions[index]}\`` : "` `";
-    rows.push(`   ${local.padEnd(18)} | ${remote.padEnd(18)} | ignored`);
+    const version = localVersions[index] || remoteVersions[index];
+    const timestamp = `${version.slice(0, 4)}-${version.slice(4, 6)}-${version.slice(6, 8)} `
+      + `${version.slice(8, 10)}:${version.slice(10, 12)}:${version.slice(12, 14)}`;
+    rows.push(
+      `   ${local.padEnd(18)} | ${remote.padEnd(18)} | \`${timestamp}\` `,
+    );
   }
   return `${rows.join("\n")}\n`;
 }
 
+const PINNED_CLI_2_109_TABLE = [
+  "",
+  "  ",
+  "   Local            | Remote           | Time (UTC)             ",
+  "  ------------------|------------------|-----------------------",
+  "   `20260707170000`   | `20260707170000`   | `2026-07-07 17:00:00` ",
+  "   `20260708154000`   | ` `                  | `2026-07-08 15:40:00` ",
+  "",
+].join("\n");
+
 test("parses the pinned CLI table with blank local or remote cells", () => {
+  assert.deepEqual(parseMigrationList(PINNED_CLI_2_109_TABLE), {
+    local: HISTORICAL_RECONCILIATION_VERSIONS.slice(0, 2),
+    remote: HISTORICAL_RECONCILIATION_VERSIONS.slice(0, 1),
+  });
   const output = migrationList(
     HISTORICAL_RECONCILIATION_VERSIONS.slice(0, 2),
     HISTORICAL_RECONCILIATION_VERSIONS.slice(0, 1),
@@ -49,10 +68,10 @@ test("parses the pinned CLI table with blank local or remote cells", () => {
 
 test("rejects malformed, legacy, and versionless data rows", () => {
   for (const row of [
-    "   `123`              | ` `                | ignored",
-    "   legacy             | ` `                | ignored",
-    "   ` `                | ` `                | ignored",
-    "   `20260707170000     | ` `                | ignored",
+    "   `123`              | ` `                | `2026-07-07 17:00:00`",
+    "   `legacy`           | ` `                | `2026-07-07 17:00:00`",
+    "   ` `                | ` `                | `2026-07-07 17:00:00`",
+    "   `20260707170000     | ` `                | `2026-07-07 17:00:00`",
     "   `20260707170000`    | ` `",
   ]) {
     assert.throws(
@@ -64,6 +83,52 @@ test("rejects malformed, legacy, and versionless data rows", () => {
       /invalid|without a local or remote version|malformed/u,
     );
   }
+});
+
+test("requires the exact pinned CLI table grammar", () => {
+  const validRow = "   `20260707170000`   | ` `                  | `2026-07-07 17:00:00`";
+  for (const invalidOutput of [
+    `${validRow}\n`,
+    `  ------------------|------------------|-----------------------\n`
+      + `   Local            | Remote           | Time (UTC)\n${validRow}\n`,
+    `   Local            | Remote           | Time (UTC)\n`
+      + `   Local            | Remote           | Time (UTC)\n`
+      + `  ------------------|------------------|-----------------------\n${validRow}\n`,
+    `unexpected\n   Local            | Remote           | Time (UTC)\n`
+      + `  ------------------|------------------|-----------------------\n${validRow}\n`,
+    `   Local            | Remote           | Time (UTC)\n`
+      + `  ------------------|------------------|-----------------------\n`
+      + "   20260707170000     | ` `                  | `2026-07-07 17:00:00`\n",
+    `   Local            | Remote           | Time (UTC)\n`
+      + `  ------------------|------------------|-----------------------\n`
+      + "   `20260707170000`   | ` `                  | `bad-time`\n",
+    `   Local            | Remote           | Time (UTC)\n`
+      + `  ------------------|------------------|-----------------------\n${validRow}\n\n${validRow}\n`,
+  ]) {
+    assert.throws(
+      () => parseMigrationList(invalidOutput),
+      /header|separator|quoted|timestamp|trailing whitespace/u,
+    );
+  }
+});
+
+test("an extra short numeric row cannot be hidden by the table parser", () => {
+  const throughVersion = HISTORICAL_RECONCILIATION_VERSIONS[1];
+  const output = migrationList(
+    HISTORICAL_RECONCILIATION_VERSIONS.slice(0, 2),
+    HISTORICAL_RECONCILIATION_VERSIONS.slice(0, 1),
+  ).replace(
+    /\n$/u,
+    "\n   `001`              | ` `                  | `2000-01-01 00:00:01`\n",
+  );
+  assert.throws(
+    () => verifyReconciliationHistory({
+      output,
+      phase: "before",
+      throughVersion,
+    }),
+    /invalid local version/u,
+  );
 });
 
 test("requires exactly one newly pending version before the apply", () => {

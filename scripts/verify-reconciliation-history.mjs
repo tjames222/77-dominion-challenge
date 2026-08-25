@@ -6,31 +6,74 @@ function fail(message) {
   throw new Error(`Reconciliation history: ${message}`);
 }
 
-function normalizeVersionCell(value) {
+function parseQuotedCell(value, label) {
   const trimmed = value.trim();
-  const startsWithBacktick = trimmed.startsWith("`");
-  const endsWithBacktick = trimmed.endsWith("`");
-  if (startsWithBacktick !== endsWithBacktick) {
-    fail(`invalid quoted migration version cell: ${trimmed}.`);
+  if (
+    trimmed.length < 2
+    || !trimmed.startsWith("`")
+    || !trimmed.endsWith("`")
+    || trimmed.slice(1, -1).includes("`")
+  ) {
+    fail(`invalid quoted ${label} cell: ${trimmed}.`);
   }
-  return startsWithBacktick
-    ? trimmed.slice(1, -1).trim()
-    : trimmed;
+  return trimmed.slice(1, -1).trim();
+}
+
+function expectedTimestamp(version) {
+  return `${version.slice(0, 4)}-${version.slice(4, 6)}-${version.slice(6, 8)} `
+    + `${version.slice(8, 10)}:${version.slice(10, 12)}:${version.slice(12, 14)}`;
 }
 
 export function parseMigrationList(output) {
   const local = [];
   const remote = [];
-  for (const rawLine of output.split(/\r?\n/u)) {
-    if (!rawLine.includes("|")) continue;
-    const cells = rawLine.split("|");
-    if (cells.length !== 3) {
-      fail("migration list contains a malformed table row.");
+  const lines = output.split(/\r?\n/u);
+  let lineIndex = 0;
+  while (lineIndex < lines.length && lines[lineIndex].trim() === "") {
+    lineIndex += 1;
+  }
+
+  const headerCells = (lines[lineIndex] || "").split("|").map((cell) =>
+    cell.trim()
+  );
+  if (
+    headerCells.length !== 3
+    || headerCells[0] !== "Local"
+    || headerCells[1] !== "Remote"
+    || headerCells[2] !== "Time (UTC)"
+  ) {
+    fail("migration list is missing the exact pinned CLI header.");
+  }
+  lineIndex += 1;
+
+  const separatorCells = (lines[lineIndex] || "").split("|").map((cell) =>
+    cell.trim()
+  );
+  if (
+    separatorCells.length !== 3
+    || separatorCells[0] !== "------------------"
+    || separatorCells[1] !== "------------------"
+    || separatorCells[2] !== "-----------------------"
+  ) {
+    fail("migration list is missing the exact pinned CLI separator.");
+  }
+  lineIndex += 1;
+
+  let sawTrailingWhitespace = false;
+  for (; lineIndex < lines.length; lineIndex += 1) {
+    const rawLine = lines[lineIndex];
+    if (rawLine.trim() === "") {
+      sawTrailingWhitespace = true;
+      continue;
     }
-    const localValue = normalizeVersionCell(cells[0]);
-    const remoteValue = normalizeVersionCell(cells[1]);
-    if (localValue === "Local" && remoteValue === "Remote") continue;
-    if (/^-+$/u.test(localValue) && /^-+$/u.test(remoteValue)) continue;
+    if (sawTrailingWhitespace) {
+      fail("migration list contains content after trailing whitespace.");
+    }
+    const cells = rawLine.split("|");
+    if (cells.length !== 3) fail("migration list contains a malformed table row.");
+    const localValue = parseQuotedCell(cells[0], "local version");
+    const remoteValue = parseQuotedCell(cells[1], "remote version");
+    const timestampValue = parseQuotedCell(cells[2], "timestamp");
     const localIsVersion = /^\d{14}$/u.test(localValue);
     const remoteIsVersion = /^\d{14}$/u.test(remoteValue);
     if (!localIsVersion && !remoteIsVersion && !localValue && !remoteValue) {
@@ -41,6 +84,15 @@ export function parseMigrationList(output) {
     }
     if (remoteValue && !remoteIsVersion) {
       fail(`invalid remote version cell: ${remoteValue}.`);
+    }
+    if (!/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/u.test(timestampValue)) {
+      fail(`invalid migration timestamp cell: ${timestampValue}.`);
+    }
+    const displayedVersions = [localValue, remoteValue].filter(Boolean);
+    if (!displayedVersions.some((version) =>
+      expectedTimestamp(version) === timestampValue
+    )) {
+      fail("migration timestamp does not match the displayed version.");
     }
     if (localIsVersion) local.push(localValue);
     if (remoteIsVersion) remote.push(remoteValue);

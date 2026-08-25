@@ -314,7 +314,7 @@ test("package, CI, and production deploy run the gate before migrations", async 
   );
   assert.match(
     packageJson.scripts["check:database"],
-    /^pnpm run check:migrations && pnpm run test:migration-compatibility && pnpm run test:database-manifest && pnpm run supabase:reset && pnpm run test:migration-atomicity/,
+    /^pnpm run check:migrations && pnpm run test:migration-compatibility && pnpm run test:reconciliation-stage && pnpm run test:database-manifest && pnpm run supabase:reset && pnpm run test:migration-atomicity/,
   );
   assert.equal(postgresVersion.trim(), "17.6.1.141");
   assert.equal(

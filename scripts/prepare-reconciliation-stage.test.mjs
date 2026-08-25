@@ -233,6 +233,35 @@ test("rejects nested or non-SQL migration inventory", async () => {
   });
 });
 
+test("rejects a direct non-SQL entry in the migration directory", async () => {
+  await withReleaseFixture(async ({ repository }) => {
+    await writeFile(
+      path.join(repository, "supabase", "migrations", "README.md"),
+      "not a migration\n",
+    );
+    git(repository, ["add", "supabase"]);
+    git(
+      repository,
+      ["commit", "-q", "-m", "non-SQL migration fixture"],
+      {
+        GIT_AUTHOR_NAME: "Reconciliation Test",
+        GIT_AUTHOR_EMAIL: "reconciliation@example.invalid",
+        GIT_COMMITTER_NAME: "Reconciliation Test",
+        GIT_COMMITTER_EMAIL: "reconciliation@example.invalid",
+      },
+    );
+    const nonSqlCommit = git(repository, ["rev-parse", "HEAD"]);
+    assert.throws(
+      () => buildReconciliationStagePlan({
+        releaseCommit: nonSqlCommit,
+        throughVersion: HISTORICAL_RECONCILIATION_VERSIONS[0],
+        root: repository,
+      }),
+      /direct SQL files/u,
+    );
+  });
+});
+
 test("rejects a short ref, unsupported version, in-repository output, and reuse", async () => {
   await withReleaseFixture(async ({ commit, fixtureRoot, repository }) => {
     assert.throws(
