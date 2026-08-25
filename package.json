@@ -23,12 +23,14 @@
     "supabase:reset": "bash scripts/reset-local-database.sh",
     "check:migrations": "node scripts/check-migration-compatibility.mjs",
     "test:migration-compatibility": "node --test scripts/check-migration-compatibility.test.mjs",
+    "test:reconciliation-stage": "node --test scripts/prepare-reconciliation-stage.test.mjs scripts/rehearse-history-reconciliation.test.mjs",
     "test:migration-atomicity": "bash scripts/test-migration-atomicity.sh",
     "test:profile-photo-cleanup-cron": "node --test scripts/profile-photo-cleanup-cron-rehearsal.test.mjs",
     "rehearse:profile-photo-cleanup-cron": "bash scripts/rehearse-profile-photo-cleanup-cron.sh",
     "test:database-manifest": "node --test scripts/database-manifest.test.mjs",
     "test:baseline-reconciliation": "bash scripts/rehearse-baseline-reconciliation.sh",
     "generate:baseline-reconciliation": "bash scripts/rehearse-baseline-reconciliation.sh --regenerate",
+    "rehearse:history-reconciliation": "bash scripts/rehearse-history-reconciliation.sh",
     "test:database": "pnpm run test:database-runner && bash scripts/test-database.sh",
     "test:database-runner": "node --test scripts/test-database-runner.test.mjs",
     "test:rpc": "bash supabase/tests/integration/rpc-concurrency.sh && bash supabase/tests/integration/profile-photo-concurrency.sh && bash supabase/tests/integration/crew-lifecycle-concurrency.sh && bash supabase/tests/integration/crew-invite-code-concurrency.sh && bash supabase/tests/integration/crew-training-concurrency.sh && bash supabase/tests/integration/challenge-activation-concurrency.sh && bash supabase/tests/integration/challenge-activation-backfill.sh && bash supabase/tests/integration/site-training-concurrency.sh && bash supabase/tests/integration/group-challenge-start-concurrency.sh && bash supabase/tests/integration/solo-training-catalog-concurrency.sh && bash supabase/tests/integration/member-progress-profile-concurrency.sh",
@@ -36,7 +38,7 @@
     "check:schema": "bash scripts/check-schema-drift.sh",
     "check:functions": "cd supabase && deno task fmt:check && deno task check",
     "test:functions": "cd supabase && deno task test",
-    "check:database": "pnpm run check:migrations && pnpm run test:migration-compatibility && pnpm run test:database-manifest && pnpm run supabase:reset && pnpm run test:migration-atomicity && pnpm run test:database && pnpm run test:rpc && pnpm run check:schema",
+    "check:database": "pnpm run check:migrations && pnpm run test:migration-compatibility && pnpm run test:reconciliation-stage && pnpm run test:database-manifest && pnpm run supabase:reset && pnpm run test:migration-atomicity && pnpm run test:database && pnpm run test:rpc && pnpm run check:schema",
     "check:backend": "pnpm run test:profile-photo-cleanup-cron && pnpm run check:database && pnpm run check:functions && pnpm run test:functions"
   },
   "dependencies": {
