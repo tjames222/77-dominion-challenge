@@ -208,16 +208,18 @@ all match. Any other populated state remains prohibited. The release workflow
 deliberately omits `--include-all`, so a hosted project with later migration
 records but no baseline record fails closed.
 
-Before the first workflow-managed production release, an administrator must make
-a backup, link the exact production project, and inspect its history and schema:
+Before the first workflow-managed production release, an administrator must
+quiesce writers, create and test-restore the encrypted exact production backup,
+and inspect its history and schema through the reviewed hooks. Do not link a
+working tree or run an ad hoc CLI command against the hosted target. The
+one-version entrypoint in
+[`production-backup-restore.md`](production-backup-restore.md) receives an
+owner-only passwordless URL file and exact pgpass file, captures authoritative
+raw and CLI history itself, and preserves every result inside the encrypted
+evidence chain.
 
-```bash
-supabase migration list --linked
-supabase db diff --from migrations --to linked --schema public
-supabase db push --linked --dry-run
-```
-
-`db push --dry-run` is a read-only plan preview only. With pinned CLI 2.109.0,
+`db push --dry-run` is a read-only plan preview in rehearsals or guarded workflow
+prechecks. With pinned CLI 2.109.0,
 actual application must use `supabase migration up`: that TypeScript executor
 opens a transaction, runs one migration's compatible statements, inserts the
 same version into `supabase_migrations.schema_migrations`, and commits. The
@@ -524,17 +526,25 @@ separately reviewed change and the exact restored-snapshot rehearsal passes:
      --allowlist /approved/off-repository/platform-candidate.json
    ```
 
-   Capture against a restored database URL only through a read-only credential:
+   Capture against the exact hosted Supabase database only through an owner-only passwordless
+   URL file and one exact matching pgpass row. Never put a password-bearing URL
+   on argv:
 
    ```bash
    bash scripts/capture-database-manifest.sh \
-     --db-url "$RESTORED_READ_ONLY_DATABASE_URL" \
+     --database-client-contract exact-docker-pgpass/v1 \
+     --db-url-file /approved/off-repository/restored-read-only.url \
+     --database-passfile /approved/off-repository/restored-read-only.pgpass \
+     --project-ref <exact-project-ref> \
+     --docker-bin <reviewed-absolute-docker-binary> \
+     --postgres-image public.ecr.aws/supabase/postgres:17.6.1.141 \
+     --postgres-image-id sha256:<64-lowercase-hex> \
      --output /approved/off-repository/production.manifest.jsonl
    ```
 
-   If host `psql` is unavailable, capture automatically uses `psql` from the
-   pinned `public.ecr.aws/supabase/postgres:17.6.1.141` image. Pass
-   `--docker-psql` to force that reviewed fallback. The database hostname in the
+   These exact Docker arguments force `psql` from the pinned image. The helper
+   verifies the tag resolves to that already-present ID, uses
+   `--pull never`, and launches by ID. The database hostname in the passwordless
    URL must be reachable from the container; do not rewrite or expose the
    read-only credential merely to make a localhost-only address work.
 
@@ -543,25 +553,24 @@ separately reviewed change and the exact restored-snapshot rehearsal passes:
    encrypted off-repository archive.
 6. Only after the backup, restore, source-manifest comparison, successful
    rehearsal, failure rehearsals, code review, and release approval all pass,
-   open a production maintenance window. Keep signup and application writes
-   closed, take a fresh encrypted backup, and require the fresh production source
-   manifest and destructive-data preflight to match the approved inputs. From the
-   pinned three-migration worktree, apply migrations 1–3 with
-   `supabase migration up --linked`. Do not assume the three-version sequence is
-   one transaction. The rehearsed wrapper-free executor must leave each version's
-   SQL and history record both present or both absent; verify both after every
-   version and stop on a mismatch. Do not use `migration repair`. Immediately
-   require exactly those
-   three remote history records and the complete migration-3 application
-   manifest; stop on any unexplained difference.
-7. Create a separate, hashed worktree containing exactly migrations 1–13. Its
-   linked dry run must list exactly the following ten pending versions. Rehearse
-   the same push against the verified local restore. Before either push, remove
+   open a production maintenance window. Keep signup and every application,
+   Storage, and database writer closed. Take a fresh encrypted backup and run
+   the reviewed one-version entrypoint from the exact clean `main` commit.
+   Prepare and independently approve one immutable stage plan for each of
+   migrations 1–3. The first plan chains to genesis; each later plan must name
+   the prior verified completion digest. The entrypoint captures live raw and
+   pinned-CLI history twice before mutation, applies only one
+   `migration up --yes`, verifies the complete post-manifest, fingerprint,
+   history, and migration-specific effects, re-attests the encrypted
+   destination, and finalizes its completion digest. Do not begin the next
+   version until the standalone completion verifier succeeds. Never call the
+   CLI directly and never use `migration repair`.
+7. Prepare and independently approve ten more one-version stages, continuing
+   the same completion chain through migration 13. Before approval, remove
    top-level transaction controls from every still-unrecorded migration in this
-   range, pass the static gate, and repeat the pinned-runner failure proof. The
-   linked `db push --dry-run` is only the reviewed plan; apply those ten
-   migrations with `supabase migration up --linked` and verify SQL effects and
-   history after every version:
+   range, pass the static gate, and repeat the pinned-runner success and failure
+   proofs against the verified local restore. Apply exactly these versions, one
+   entrypoint invocation and one verified completion digest at a time:
 
    ```text
    20260708160000
@@ -576,8 +585,14 @@ separately reviewed change and the exact restored-snapshot rehearsal passes:
    20260716163000
    ```
 
-8. Return to the full release tree. `migration list` must show matching local and
-   remote versions 1–13, and the full linked dry run must list exactly 40 pending
+   The same quiesced backup may be used only while its plan-approved freshness
+   window remains valid and never for more than 3600 seconds. If it expires,
+   stop before the next mutation, take and restore a new quiesced backup, and
+   approve new plans that continue from the last completion digest. Do not
+   extend or override the freshness limit.
+8. Return to the full release tree. The reviewed raw and CLI evidence must show
+   matching local and remote versions 1–13, and the full linked dry run must list
+   exactly 40 pending
    migrations, versions 14–53. No production release may run until every pending
    file passes the transaction-control gate and the exact release tree passes the
    pinned-runner failure proof. Require the complete normalized migration-13
@@ -591,7 +606,7 @@ Record the exact applied versions, file hashes, backup and restore
 evidence, comparison output, Storage manifest, project reference, operator,
 approver, and UTC time in the release record. Never reset the hosted project,
 use `--include-all`, mark a missing effect applied, manually execute migration
-SQL outside the approved three-version runner, or push the full 53-file tree
+SQL outside the approved one-version entrypoint, or push the full 53-file tree
 before the checkpoint passes. If an applied migration later fails, stop and use
 a reviewed forward fix; do not rewrite it or mark it reverted.
 

@@ -28,9 +28,14 @@
     "test:profile-photo-cleanup-cron": "node --test scripts/profile-photo-cleanup-cron-rehearsal.test.mjs",
     "rehearse:profile-photo-cleanup-cron": "bash scripts/rehearse-profile-photo-cleanup-cron.sh",
     "test:production-backup-restore": "node --test scripts/production-backup-restore.test.mjs",
+    "test:production-reconciliation": "node --test scripts/verify-production-reconciliation-preflight.test.mjs scripts/run-production-reconciliation-step.test.mjs",
     "capture:production-backup": "bash scripts/capture-production-backup.sh",
     "rehearse:production-backup-restore": "bash scripts/rehearse-production-backup-restore.sh",
     "verify:production-backup-evidence": "bash scripts/verify-production-backup-evidence.sh",
+    "verify:production-reconciliation-preflight": "bash scripts/verify-production-reconciliation-preflight.sh",
+    "prepare:production-reconciliation-plan": "node scripts/production-reconciliation-artifacts.mjs prepare-plan",
+    "run:production-reconciliation-step": "bash scripts/run-production-reconciliation-step.sh",
+    "verify:production-reconciliation-completion": "node scripts/production-reconciliation-artifacts.mjs verify-completion",
     "test:database-manifest": "node --test scripts/database-manifest.test.mjs",
     "test:baseline-reconciliation": "bash scripts/rehearse-baseline-reconciliation.sh",
     "generate:baseline-reconciliation": "bash scripts/rehearse-baseline-reconciliation.sh --regenerate",
@@ -42,7 +47,7 @@
     "check:schema": "bash scripts/check-schema-drift.sh",
     "check:functions": "cd supabase && deno task fmt:check && deno task check",
     "test:functions": "cd supabase && deno task test",
-    "check:database": "pnpm run check:migrations && pnpm run test:migration-compatibility && pnpm run test:reconciliation-stage && pnpm run test:production-backup-restore && pnpm run test:database-manifest && pnpm run supabase:reset && pnpm run test:migration-atomicity && pnpm run test:database && pnpm run test:rpc && pnpm run check:schema",
+    "check:database": "pnpm run check:migrations && pnpm run test:migration-compatibility && pnpm run test:reconciliation-stage && pnpm run test:production-backup-restore && pnpm run test:production-reconciliation && pnpm run test:database-manifest && pnpm run supabase:reset && pnpm run test:migration-atomicity && pnpm run test:database && pnpm run test:rpc && pnpm run check:schema",
     "check:backend": "pnpm run test:profile-photo-cleanup-cron && pnpm run check:database && pnpm run check:functions && pnpm run test:functions"
   },
   "dependencies": {

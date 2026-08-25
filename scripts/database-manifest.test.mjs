@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import {
   chmodSync,
+  existsSync,
   mkdtempSync,
   readFileSync,
   rmSync,
@@ -24,6 +25,26 @@ import {
   buildPlatformAllowlist,
   isPlatformDifferenceKey,
 } from './build-platform-diff-allowlist.mjs';
+
+function databaseSafeEnvironment(overrides = {}) {
+  const environment = { ...process.env, ...overrides };
+  for (const name of [
+    'DATABASE_URL', 'PGAPPNAME', 'PGCHANNELBINDING', 'PGCLIENTENCODING',
+    'PGCONNECT_TIMEOUT', 'PGDATABASE', 'PGHOST', 'PGHOSTADDR', 'PGOPTIONS',
+    'PGPASSFILE', 'PGPASSWORD', 'PGPORT', 'PGREQUIRESSL', 'PGSERVICE',
+    'PGSERVICEFILE', 'PGSSLCERT', 'PGSSLCRL', 'PGSSLCRLDIR', 'PGSSLKEY',
+    'PGSSLMODE', 'PGSSLROOTCERT', 'PGTARGETSESSIONATTRS', 'PGTZ', 'PGUSER',
+    'POSTGRES_PASSWORD', 'SUPABASE_ACCESS_TOKEN', 'SUPABASE_DB_PASSWORD',
+    'BASH_ENV', 'CDPATH', 'DOCKER_CERT_PATH', 'DOCKER_CONFIG', 'DOCKER_CONTEXT',
+    'DOCKER_HOST', 'DOCKER_TLS_VERIFY', 'DYLD_INSERT_LIBRARIES',
+    'DYLD_LIBRARY_PATH', 'ENV', 'GIT_ALTERNATE_OBJECT_DIRECTORIES',
+    'GIT_CEILING_DIRECTORIES', 'GIT_CONFIG_COUNT', 'GIT_CONFIG_GLOBAL',
+    'GIT_CONFIG_NOSYSTEM', 'GIT_CONFIG_SYSTEM', 'GIT_DIR', 'GIT_INDEX_FILE',
+    'GIT_OBJECT_DIRECTORY', 'GIT_WORK_TREE', 'LD_LIBRARY_PATH', 'LD_PRELOAD',
+    'NODE_OPTIONS', 'NODE_PATH',
+  ]) delete environment[name];
+  return { ...environment, ...overrides };
+}
 
 function manifestRecord(key, value = key) {
   return {
@@ -801,42 +822,171 @@ test('manifest and fingerprint resolve optional Iceberg without querying an abse
 test('db-url capture falls back to the pinned Docker psql client', () => {
   const fixtureRoot = mkdtempSync(join(tmpdir(), 'database-manifest-docker-psql.'));
   try {
+    const projectRef = 'abcdefghijklmnopqrst';
     const fakeDocker = join(fixtureRoot, 'docker');
     const dockerLog = join(fixtureRoot, 'docker.log');
     const output = join(fixtureRoot, 'manifest.jsonl');
+    const databaseUrlFile = join(fixtureRoot, 'database-url');
+    const databasePassfile = join(fixtureRoot, 'database.pgpass');
+    const postgresImageId = `sha256:${'9'.repeat(64)}`;
+    writeFileSync(
+      databaseUrlFile,
+      `postgresql://postgres.${projectRef}@aws-0-us-east-1.pooler.supabase.com:5432/postgres?sslmode=require\n`,
+      { mode: 0o600 },
+    );
+    writeFileSync(
+      databasePassfile,
+      `aws-0-us-east-1.pooler.supabase.com:5432:postgres:postgres.${projectRef}:fixture-secret\n`,
+      { mode: 0o600 },
+    );
+    chmodSync(databaseUrlFile, 0o600);
+    chmodSync(databasePassfile, 0o600);
     writeFileSync(fakeDocker, [
       '#!/usr/bin/env bash',
       'set -euo pipefail',
-      'printf \'%s\\n\' "$*" >"$FAKE_DOCKER_LOG"',
+      'printf \'%s\\n\' "$*" >>"$FAKE_DOCKER_LOG"',
+      'if [[ "${1:-} ${2:-}" == "context inspect" ]]; then',
+      '  printf \'%s\\n\' \'unix:///var/run/docker.sock\'',
+      '  exit 0',
+      'fi',
+      'if [[ "${1:-} ${2:-}" == "image inspect" ]]; then',
+      '  printf \'%s\\n\' "$FAKE_POSTGRES_IMAGE_ID"',
+      '  exit 0',
+      'fi',
+      '[[ "${1:-}" == "run" ]]',
       'printf \'%s\\n\' \'{"key":"fixture/docker","kind":"fixture","identity":"docker","definition":{}}\'',
     ].join('\n'));
     chmodSync(fakeDocker, 0o755);
 
     execFileSync('bash', [
       new URL('./capture-database-manifest.sh', import.meta.url).pathname,
-      '--db-url',
-      'postgresql://readonly:fixture@database.invalid:5432/postgres',
-      '--docker-psql',
+      '--db-url-file',
+      databaseUrlFile,
+      '--database-client-contract',
+      'exact-docker-pgpass/v1',
+      '--database-passfile',
+      databasePassfile,
+      '--project-ref',
+      projectRef,
+      '--docker-bin',
+      fakeDocker,
+      '--postgres-image',
+      'public.ecr.aws/supabase/postgres:17.6.1.141',
+      '--postgres-image-id',
+      postgresImageId,
       '--output',
       output,
     ], {
-      env: {
-        ...process.env,
-        DOCKER_BIN: fakeDocker,
+      env: databaseSafeEnvironment({
         FAKE_DOCKER_LOG: dockerLog,
+        FAKE_POSTGRES_IMAGE_ID: postgresImageId,
         SUPABASE_INTERNAL_IMAGE_REGISTRY: 'public.ecr.aws',
-      },
+      }),
       stdio: ['ignore', 'pipe', 'pipe'],
     });
 
     assert.match(
       readFileSync(dockerLog, 'utf8'),
-      /run --rm --interactive --env PGAPPNAME=77dc-baseline-manifest-read-only --entrypoint psql public\.ecr\.aws\/supabase\/postgres:17\.6\.1\.141 postgresql:\/\/readonly:fixture@database\.invalid:5432\/postgres --no-psqlrc --quiet --set ON_ERROR_STOP=1 --file -/u,
+      new RegExp(`run --rm --pull never --network bridge --log-driver none --interactive [^\\n]* --entrypoint psql ${postgresImageId} postgresql://postgres\\.abcdefghijklmnopqrst@aws-0-us-east-1\\.pooler\\.supabase\\.com:5432/postgres\\?sslmode=require --no-psqlrc --quiet --set ON_ERROR_STOP=1 --file -`, 'u'),
     );
+    assert.match(readFileSync(dockerLog, 'utf8'), /image inspect public\.ecr\.aws\/supabase\/postgres:17\.6\.1\.141 --format \{\{\.Id\}\}/u);
+    assert.doesNotMatch(readFileSync(dockerLog, 'utf8'), /fixture-secret/u);
     assert.deepEqual(
       [...parseManifestText(readFileSync(output, 'utf8')).keys()],
       ['fixture/docker'],
     );
+  } finally {
+    rmSync(fixtureRoot, { recursive: true, force: true });
+  }
+});
+
+test('host psql manifest capture uses only the explicit pgpass boundary', () => {
+  const fixtureRoot = mkdtempSync(join(tmpdir(), 'database-manifest-host-psql.'));
+  try {
+    const projectRef = 'abcdefghijklmnopqrst';
+    const fakePsql = join(fixtureRoot, 'psql');
+    const psqlLog = join(fixtureRoot, 'psql.log');
+    const output = join(fixtureRoot, 'manifest.jsonl');
+    const databaseUrlFile = join(fixtureRoot, 'database-url');
+    const databasePassfile = join(fixtureRoot, 'database.pgpass');
+    writeFileSync(
+      databaseUrlFile,
+      `postgresql://postgres.${projectRef}@aws-0-us-east-1.pooler.supabase.com:5432/postgres?sslmode=require\n`,
+      { mode: 0o600 },
+    );
+    writeFileSync(
+      databasePassfile,
+      `aws-0-us-east-1.pooler.supabase.com:5432:postgres:postgres.${projectRef}:fixture-secret\n`,
+      { mode: 0o600 },
+    );
+    writeFileSync(fakePsql, [
+      '#!/usr/bin/env bash',
+      'set -euo pipefail',
+      '[[ -z "${PGPASSWORD:-}" && -z "${PGOPTIONS:-}" && -z "${PGSERVICE:-}" ]]',
+      `[[ "\${PGPASSFILE:-}" == '${databasePassfile}' ]]`,
+      `printf '%s\\n' "$*" >'${psqlLog}'`,
+      'printf \'%s\\n\' \'{"key":"fixture/host","kind":"fixture","identity":"host","definition":{}}\'',
+    ].join('\n'));
+    chmodSync(fakePsql, 0o755);
+    chmodSync(databaseUrlFile, 0o600);
+    chmodSync(databasePassfile, 0o600);
+
+    execFileSync('bash', [
+      new URL('./capture-database-manifest.sh', import.meta.url).pathname,
+      '--db-url-file', databaseUrlFile,
+      '--database-passfile', databasePassfile,
+      '--project-ref', projectRef,
+      '--output', output,
+    ], {
+      env: databaseSafeEnvironment({ PSQL_BIN: fakePsql }),
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+
+    assert.match(readFileSync(psqlLog, 'utf8'), /--dbname postgresql:\/\/postgres\.abcdefghijklmnopqrst@/u);
+    assert.doesNotMatch(readFileSync(psqlLog, 'utf8'), /fixture-secret/u);
+    assert.deepEqual(
+      [...parseManifestText(readFileSync(output, 'utf8')).keys()],
+      ['fixture/host'],
+    );
+  } finally {
+    rmSync(fixtureRoot, { recursive: true, force: true });
+  }
+});
+
+test('remote manifest capture rejects ambient libpq credentials before psql', () => {
+  const fixtureRoot = mkdtempSync(join(tmpdir(), 'database-manifest-ambient.'));
+  try {
+    const projectRef = 'abcdefghijklmnopqrst';
+    const fakePsql = join(fixtureRoot, 'psql');
+    const touched = join(fixtureRoot, 'psql-ran');
+    const databaseUrlFile = join(fixtureRoot, 'database-url');
+    const databasePassfile = join(fixtureRoot, 'database.pgpass');
+    writeFileSync(
+      databaseUrlFile,
+      `postgresql://postgres.${projectRef}@aws-0-us-east-1.pooler.supabase.com:5432/postgres?sslmode=require\n`,
+      { mode: 0o600 },
+    );
+    writeFileSync(
+      databasePassfile,
+      `aws-0-us-east-1.pooler.supabase.com:5432:postgres:postgres.${projectRef}:fixture-secret\n`,
+      { mode: 0o600 },
+    );
+    writeFileSync(fakePsql, `#!/usr/bin/env bash\ntouch '${touched}'\n`, { mode: 0o755 });
+    chmodSync(fakePsql, 0o755);
+    chmodSync(databaseUrlFile, 0o600);
+    chmodSync(databasePassfile, 0o600);
+
+    assert.throws(() => execFileSync('bash', [
+      new URL('./capture-database-manifest.sh', import.meta.url).pathname,
+      '--db-url-file', databaseUrlFile,
+      '--database-passfile', databasePassfile,
+      '--project-ref', projectRef,
+      '--output', join(fixtureRoot, 'manifest.jsonl'),
+    ], {
+      env: { ...process.env, PSQL_BIN: fakePsql, PGPASSWORD: 'ambient-secret' },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    }), /Command failed/u);
+    assert.equal(existsSync(touched), false);
   } finally {
     rmSync(fixtureRoot, { recursive: true, force: true });
   }

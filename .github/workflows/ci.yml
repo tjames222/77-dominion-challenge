@@ -74,6 +74,8 @@ jobs:
         run: pnpm run test:reconciliation-stage
       - name: Test production backup and restore evidence boundaries
         run: pnpm run test:production-backup-restore
+      - name: Test production one-version reconciliation boundaries
+        run: pnpm run test:production-reconciliation
       - name: Test canonical database manifest gates
         run: pnpm run test:database-manifest
       - name: Start local Supabase

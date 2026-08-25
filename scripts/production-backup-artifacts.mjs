@@ -15,8 +15,10 @@ import {
 import path from "node:path";
 
 const captureArtifacts = [
+  "approved-tool-manifest.json",
   "capture.json",
   "data.sql",
+  "dump-contract.json",
   "edge-functions.json",
   "history-data.sql",
   "history-schema.sql",
@@ -51,9 +53,12 @@ const storageRelations = [
 ];
 const requiredStorageRelations = new Set([
   "storage.buckets",
+  "storage.buckets_analytics",
+  "storage.buckets_vectors",
   "storage.objects",
   "storage.s3_multipart_uploads",
   "storage.s3_multipart_uploads_parts",
+  "storage.vector_indexes",
 ]);
 const hashPattern = /^[a-f0-9]{64}$/;
 const imageIdPattern = /^sha256:[a-f0-9]{64}$/;
@@ -138,6 +143,134 @@ function requireRfc3339UtcSecond(value, label) {
     || parsed.toISOString().replace(".000Z", "Z") !== value
   ) {
     fail(`${label} must be a real RFC3339 UTC second timestamp`);
+  }
+}
+
+function sha256Object(value) {
+  const canonicalize = (entry) => {
+    if (Array.isArray(entry)) return entry.map(canonicalize);
+    if (entry && typeof entry === "object") {
+      return Object.fromEntries(
+        Object.keys(entry).sort().map((key) => [key, canonicalize(entry[key])]),
+      );
+    }
+    return entry;
+  };
+  return createHash("sha256")
+    .update(JSON.stringify(canonicalize(value)))
+    .digest("hex");
+}
+
+const captureToolNames = [
+  "credentialValidatorSha256",
+  "dockerBinSha256",
+  "dumpScriptTransformerSha256",
+  "edgeFunctionsInventoryHookSha256",
+  "encryptedVolumeCheckHookSha256",
+  "managedApplicationDdlHookSha256",
+  "migrationHistoryHookSha256",
+  "relationCountsHookSha256",
+  "sourceFingerprintHookSha256",
+  "sourceManifestHookSha256",
+  "storageInventoryHookSha256",
+  "supabaseCliSha256",
+];
+const restoreToolNames = [
+  "dockerBinSha256",
+  "encryptedVolumeCheckHookSha256",
+  "restoreVerificationHookSha256",
+];
+const captureToolOptions = [
+  ["credential-validator-sha256", "credentialValidatorSha256"],
+  ["docker-bin-sha256", "dockerBinSha256"],
+  ["dump-script-transformer-sha256", "dumpScriptTransformerSha256"],
+  ["edge-functions-inventory-hook-sha256", "edgeFunctionsInventoryHookSha256"],
+  ["encrypted-volume-check-hook-sha256", "encryptedVolumeCheckHookSha256"],
+  ["managed-application-ddl-hook-sha256", "managedApplicationDdlHookSha256"],
+  ["migration-history-hook-sha256", "migrationHistoryHookSha256"],
+  ["relation-counts-hook-sha256", "relationCountsHookSha256"],
+  ["source-fingerprint-hook-sha256", "sourceFingerprintHookSha256"],
+  ["source-manifest-hook-sha256", "sourceManifestHookSha256"],
+  ["storage-inventory-hook-sha256", "storageInventoryHookSha256"],
+  ["supabase-cli-sha256", "supabaseCliSha256"],
+];
+const restoreToolOptions = [
+  ["docker-bin-sha256", "dockerBinSha256"],
+  ["encrypted-volume-check-hook-sha256", "encryptedVolumeCheckHookSha256"],
+  ["restore-verification-hook-sha256", "restoreVerificationHookSha256"],
+];
+
+function toolsetFromOptions(options, mappings) {
+  return Object.fromEntries(
+    mappings.map(([option, property]) => [property, requireOption(options, option)]),
+  );
+}
+
+function validateToolset(tools, names, expectedHash, label) {
+  requireObject(tools, `${label} tools`);
+  assert.deepEqual(
+    Object.keys(tools).sort(),
+    names,
+    `${label} tool inventory must contain the exact v1 keys`,
+  );
+  for (const name of names) assertHash(tools[name], `${label} ${name}`);
+  assertHash(expectedHash, `${label} toolset SHA-256`);
+  if (sha256Object(tools) !== expectedHash) {
+    fail(`${label} toolset SHA-256 does not match its canonical tool inventory`);
+  }
+}
+
+function validateApprovedToolManifest(manifest, releaseCommit) {
+  requireObject(manifest, "approved tool manifest");
+  assert.deepEqual(
+    Object.keys(manifest).sort(),
+    [
+      "artifactContract",
+      "captureTools",
+      "captureToolsetSha256",
+      "releaseCommit",
+      "restoreTools",
+      "restoreToolsetSha256",
+      "schemaVersion",
+    ].sort(),
+    "approved tool manifest must contain the exact v1 keys",
+  );
+  if (
+    manifest.schemaVersion !== 1
+    || manifest.artifactContract !== "dominion-production-backup-approved-tools/v1"
+  ) {
+    fail("approved tool manifest contract is not v1");
+  }
+  if (!commitPattern.test(manifest.releaseCommit)) {
+    fail("approved tool manifest releaseCommit is invalid");
+  }
+  if (manifest.releaseCommit !== releaseCommit) {
+    fail("approved tool manifest is not bound to the exact release commit");
+  }
+  validateToolset(
+    manifest.captureTools,
+    captureToolNames,
+    manifest.captureToolsetSha256,
+    "approved capture",
+  );
+  validateToolset(
+    manifest.restoreTools,
+    restoreToolNames,
+    manifest.restoreToolsetSha256,
+    "approved restore",
+  );
+  return manifest;
+}
+
+function requireOrderedTimes(writerQuiescedAt, captureStartedAt, capturedAt) {
+  requireRfc3339UtcSecond(writerQuiescedAt, "capture writerQuiescedAt");
+  requireRfc3339UtcSecond(captureStartedAt, "capture captureStartedAt");
+  requireRfc3339UtcSecond(capturedAt, "capture capturedAt");
+  if (Date.parse(captureStartedAt) < Date.parse(writerQuiescedAt)) {
+    fail("capture started before writer quiescence");
+  }
+  if (Date.parse(capturedAt) < Date.parse(captureStartedAt)) {
+    fail("capture completion precedes capture start");
   }
 }
 
@@ -306,15 +439,43 @@ function validateStorageInventory(inventory, projectRef) {
   );
 
   for (const relationName of [
+    "storage.buckets_vectors",
     "storage.objects",
     "storage.s3_multipart_uploads",
     "storage.s3_multipart_uploads_parts",
+    "storage.vector_indexes",
   ]) {
     if (inventory.relations[relationName].rowCount !== 0) {
       fail(
         `${relationName} is nonzero; export Storage blobs through the Storage API before retrying`,
       );
     }
+  }
+}
+
+function validateDumpContract(contract, historyState, cliSha256, imageId) {
+  requireObject(contract, "dump contract");
+  if (
+    contract.schemaVersion !== 1
+    || contract.supabaseCliSha256 !== cliSha256
+    || contract.postgresImageId !== imageId
+    || contract.migrationHistoryState !== historyState
+  ) {
+    fail("dump contract identity does not match the capture");
+  }
+  const expectedNames = historyState === "present"
+    ? ["roles.sql", "schema.sql", "data.sql", "history-schema.sql", "history-data.sql"]
+    : ["roles.sql", "schema.sql", "data.sql"];
+  if (!Array.isArray(contract.scripts)) fail("dump contract scripts must be an array");
+  assert.deepEqual(
+    contract.scripts.map((entry) => entry.name),
+    expectedNames,
+    "dump contract scripts do not match the exact capture plan",
+  );
+  for (const [index, entry] of contract.scripts.entries()) {
+    requireObject(entry, `dump contract scripts[${index}]`);
+    assertHash(entry.supabaseDryRunSha256, "Supabase dry-run SHA-256");
+    assertHash(entry.executableScriptSha256, "executable dump-script SHA-256");
   }
 }
 
@@ -540,10 +701,21 @@ function expectedArtifacts(kind) {
   fail("--kind must be capture or restore");
 }
 
-async function assertArtifactInventory(directory, kind, includeManifest) {
+async function assertArtifactInventory(
+  directory,
+  kind,
+  includeManifest,
+  allowIncomplete = false,
+) {
   const allowedMarkers = kind === "capture"
-    ? ["CAPTURE_COMPLETE.json"]
-    : ["RESTORE_COMPLETE.json"];
+    ? [
+      "CAPTURE_COMPLETE.json",
+      ...(allowIncomplete ? ["CAPTURE_INCOMPLETE"] : []),
+    ]
+    : [
+      "RESTORE_COMPLETE.json",
+      ...(allowIncomplete ? ["RESTORE_INCOMPLETE"] : []),
+    ];
   const expected = [
     ...expectedArtifacts(kind),
     ...(includeManifest ? ["SHA256SUMS"] : []),
@@ -551,7 +723,12 @@ async function assertArtifactInventory(directory, kind, includeManifest) {
   const entries = await readdir(directory, { withFileTypes: true });
   const files = [];
   for (const entry of entries) {
-    if (allowedMarkers.includes(entry.name)) continue;
+    if (allowedMarkers.includes(entry.name)) {
+      if (!entry.isFile() || entry.isSymbolicLink()) {
+        fail(`invalid evidence marker: ${entry.name}`);
+      }
+      continue;
+    }
     if (!entry.isFile() || entry.isSymbolicLink()) {
       fail(`unexpected non-regular artifact: ${entry.name}`);
     }
@@ -568,7 +745,7 @@ async function assertArtifactInventory(directory, kind, includeManifest) {
 }
 
 async function writeManifest(directory, kind) {
-  await assertArtifactInventory(directory, kind, false);
+  await assertArtifactInventory(directory, kind, false, true);
   const lines = [];
   for (const name of expectedArtifacts(kind)) {
     lines.push(`${await sha256File(path.join(directory, name))}  ${name}`);
@@ -581,8 +758,8 @@ async function writeManifest(directory, kind) {
   await rename(temporary, path.join(directory, "SHA256SUMS"));
 }
 
-async function verifyManifest(directory, kind) {
-  await assertArtifactInventory(directory, kind, true);
+async function verifyManifest(directory, kind, allowIncomplete = false) {
+  await assertArtifactInventory(directory, kind, true, allowIncomplete);
   const manifestPath = path.join(directory, "SHA256SUMS");
   const manifestStat = await lstat(manifestPath);
   if (!manifestStat.isFile() || manifestStat.isSymbolicLink()) {
@@ -627,7 +804,21 @@ function validateCaptureMetadata(metadata, expected) {
   if (!imageIdPattern.test(metadata.postgres.imageId)) {
     fail("capture PostgreSQL image ID is invalid");
   }
-  requireRfc3339UtcSecond(metadata.capturedAt, "capture capturedAt");
+  requireOrderedTimes(
+    metadata.writerQuiescedAt,
+    metadata.captureStartedAt,
+    metadata.capturedAt,
+  );
+  validateToolset(
+    metadata.operatorTools,
+    captureToolNames,
+    metadata.captureToolsetSha256,
+    "capture",
+  );
+  assertHash(
+    metadata.approvedToolManifestSha256,
+    "capture approved tool manifest SHA-256",
+  );
 }
 
 function validateRestoreVerification(verification, expected) {
@@ -665,16 +856,23 @@ function validateRestoreVerification(verification, expected) {
 }
 
 async function writeMarker(directory, kind, identity) {
-  const manifestSha256 = await verifyManifest(directory, kind);
+  const manifestSha256 = await verifyManifest(directory, kind, true);
   const marker = kind === "capture"
     ? {
       schemaVersion: 1,
       artifactContract: "dominion-production-backup/v1",
       captureId: identity.captureId,
+      writerQuiescedAt: identity.writerQuiescedAt,
+      captureStartedAt: identity.captureStartedAt,
       capturedAt: identity.capturedAt,
       projectRef: identity.projectRef,
       gitCommit: identity.gitCommit,
       manifestSha256,
+      captureToolsetSha256: identity.captureToolsetSha256,
+      approvedToolManifestSha256: identity.approvedToolManifestSha256,
+      dumpContractSha256: await sha256File(
+        path.join(directory, "dump-contract.json"),
+      ),
       sourceManifestSha256: await sha256File(
         path.join(directory, "source-manifest.jsonl"),
       ),
@@ -697,6 +895,8 @@ async function writeMarker(directory, kind, identity) {
       captureId: identity.captureId,
       restoreId: identity.restoreId,
       backupManifestSha256: identity.backupManifestSha256,
+      restoreToolsetSha256: identity.restoreToolsetSha256,
+      approvedToolManifestSha256: identity.approvedToolManifestSha256,
       manifestSha256,
     };
   const filename = kind === "capture"
@@ -719,32 +919,22 @@ function assertImageId(value) {
 const { command, options } = parseArguments(process.argv.slice(2));
 
 switch (command) {
-  case "validate-db-url": {
-    requireExactOptions(options, ["file", "project-ref"]);
-    const filename = requireOption(options, "file");
-    const projectRef = requireOption(options, "project-ref");
-    if (!projectRefPattern.test(projectRef)) fail("invalid project ref");
-    const raw = (await readFile(filename, "utf8")).trim();
-    let databaseUrl;
-    try {
-      databaseUrl = new URL(raw);
-    } catch {
-      fail("database URL file is invalid");
-    }
-    if (!["postgres:", "postgresql:"].includes(databaseUrl.protocol)) {
-      fail("database URL must use postgres or postgresql");
-    }
-    if (!databaseUrl.password) fail("database URL must include a password");
-    if (databaseUrl.pathname !== "/postgres") {
-      fail("database URL must select the postgres database");
-    }
-    const direct = databaseUrl.hostname === `db.${projectRef}.supabase.co`
-      && databaseUrl.username === "postgres";
-    const pooled = databaseUrl.hostname.endsWith(".pooler.supabase.com")
-      && databaseUrl.username === `postgres.${projectRef}`;
-    if (!direct && !pooled) {
-      fail("database URL does not identify the exact project ref");
-    }
+  case "validate-timestamp": {
+    requireExactOptions(options, ["value"]);
+    requireRfc3339UtcSecond(requireOption(options, "value"), "timestamp");
+    break;
+  }
+  case "validate-capture-time-order": {
+    requireExactOptions(options, [
+      "capture-started-at",
+      "captured-at",
+      "writer-quiesced-at",
+    ]);
+    requireOrderedTimes(
+      requireOption(options, "writer-quiesced-at"),
+      requireOption(options, "capture-started-at"),
+      requireOption(options, "captured-at"),
+    );
     break;
   }
   case "validate-inventories": {
@@ -831,6 +1021,47 @@ switch (command) {
     await validateDataDump(requireOption(options, "file"));
     break;
   }
+  case "write-dump-contract": {
+    requireExactOptions(options, [
+      "cli-sha256",
+      "history-state",
+      "input",
+      "output",
+      "postgres-image-id",
+    ]);
+    const cliSha256 = requireOption(options, "cli-sha256");
+    const imageId = requireOption(options, "postgres-image-id");
+    const historyState = requireOption(options, "history-state");
+    assertHash(cliSha256, "Supabase CLI SHA-256");
+    assertImageId(imageId);
+    if (!["absent", "present"].includes(historyState)) fail("invalid history state");
+    const lines = (await readFile(requireOption(options, "input"), "utf8"))
+      .split("\n")
+      .filter(Boolean);
+    const scripts = lines.map((line) => {
+      const match = /^([a-z-]+\.sql)\t([a-f0-9]{64})\t([a-f0-9]{64})$/u.exec(line);
+      if (!match) fail("dump contract entry is malformed");
+      return {
+        name: match[1],
+        supabaseDryRunSha256: match[2],
+        executableScriptSha256: match[3],
+      };
+    });
+    const contract = {
+      schemaVersion: 1,
+      supabaseCliSha256: cliSha256,
+      postgresImageId: imageId,
+      migrationHistoryState: historyState,
+      scripts,
+    };
+    validateDumpContract(contract, historyState, cliSha256, imageId);
+    await writeFile(
+      requireOption(options, "output"),
+      `${JSON.stringify(contract, null, 2)}\n`,
+      { flag: "wx", mode: 0o600 },
+    );
+    break;
+  }
   case "capture-timestamp": {
     requireExactOptions(options, ["directory"]);
     const metadata = await parseJsonFile(
@@ -840,17 +1071,94 @@ switch (command) {
     process.stdout.write(`${metadata.capturedAt}\n`);
     break;
   }
+  case "capture-start-timestamp": {
+    requireExactOptions(options, ["directory"]);
+    const metadata = await parseJsonFile(
+      path.join(requireOption(options, "directory"), "capture.json"),
+    );
+    requireRfc3339UtcSecond(metadata.captureStartedAt, "capture captureStartedAt");
+    process.stdout.write(`${metadata.captureStartedAt}\n`);
+    break;
+  }
+  case "capture-quiesced-timestamp": {
+    requireExactOptions(options, ["directory"]);
+    const metadata = await parseJsonFile(
+      path.join(requireOption(options, "directory"), "capture.json"),
+    );
+    requireRfc3339UtcSecond(metadata.writerQuiescedAt, "capture writerQuiescedAt");
+    process.stdout.write(`${metadata.writerQuiescedAt}\n`);
+    break;
+  }
+  case "capture-toolset-sha256": {
+    requireExactOptions(options, captureToolOptions.map(([name]) => name));
+    const tools = toolsetFromOptions(options, captureToolOptions);
+    for (const name of captureToolNames) assertHash(tools[name], name);
+    process.stdout.write(`${sha256Object(tools)}\n`);
+    break;
+  }
+  case "restore-toolset-sha256": {
+    requireExactOptions(options, restoreToolOptions.map(([name]) => name));
+    const tools = toolsetFromOptions(options, restoreToolOptions);
+    for (const name of restoreToolNames) assertHash(tools[name], name);
+    process.stdout.write(`${sha256Object(tools)}\n`);
+    break;
+  }
+  case "verify-approved-tool-manifest": {
+    const expectedOptions = [
+      "capture-toolset-sha256",
+      "file",
+      "file-sha256",
+      "release-commit",
+    ];
+    if (Object.hasOwn(options, "restore-toolset-sha256")) {
+      expectedOptions.push("restore-toolset-sha256");
+    }
+    requireExactOptions(options, expectedOptions);
+    const filename = requireOption(options, "file");
+    const expectedFileSha256 = requireOption(options, "file-sha256");
+    assertHash(expectedFileSha256, "approved tool manifest SHA-256");
+    const actualFileSha256 = await sha256File(filename);
+    if (actualFileSha256 !== expectedFileSha256) {
+      fail("approved tool manifest SHA-256 does not match");
+    }
+    const manifest = validateApprovedToolManifest(
+      await parseJsonFile(filename),
+      requireOption(options, "release-commit"),
+    );
+    if (
+      manifest.captureToolsetSha256
+      !== requireOption(options, "capture-toolset-sha256")
+    ) {
+      fail("actual capture toolset is not the independently approved toolset");
+    }
+    if (
+      Object.hasOwn(options, "restore-toolset-sha256")
+      && manifest.restoreToolsetSha256
+        !== requireOption(options, "restore-toolset-sha256")
+    ) {
+      fail("actual restore toolset is not the independently approved toolset");
+    }
+    process.stdout.write(`${actualFileSha256}\n`);
+    break;
+  }
   case "write-capture-metadata": {
     requireExactOptions(options, [
+      "approved-tool-manifest-sha256",
       "capture-id",
+      "capture-started-at",
+      "capture-toolset-sha256",
       "captured-at",
       "cli-sha256",
+      ...captureToolOptions
+        .map(([name]) => name)
+        .filter((name) => name !== "supabase-cli-sha256"),
       "git-branch",
       "git-commit",
       "output",
       "postgres-image",
       "postgres-image-id",
       "project-ref",
+      "writer-quiesced-at",
     ]);
     const captureId = requireOption(options, "capture-id");
     const projectRef = requireOption(options, "project-ref");
@@ -862,21 +1170,45 @@ switch (command) {
     if (!commitPattern.test(gitCommit)) fail("invalid git commit");
     assertHash(cliSha256, "CLI SHA-256");
     assertImageId(postgresImageId);
+    const operatorTools = toolsetFromOptions({
+      ...options,
+      "supabase-cli-sha256": cliSha256,
+    }, captureToolOptions);
+    const captureToolsetSha256 = requireOption(options, "capture-toolset-sha256");
+    validateToolset(
+      operatorTools,
+      captureToolNames,
+      captureToolsetSha256,
+      "capture",
+    );
     const metadata = {
       schemaVersion: 1,
       artifactContract: "dominion-production-backup/v1",
       captureId,
+      writerQuiescedAt: requireOption(options, "writer-quiesced-at"),
+      captureStartedAt: requireOption(options, "capture-started-at"),
       capturedAt: requireOption(options, "captured-at"),
       projectRef,
       gitBranch: requireOption(options, "git-branch"),
       gitCommit,
       supabaseCli: { version: "2.109.0", sha256: cliSha256 },
+      operatorTools,
+      captureToolsetSha256,
+      approvedToolManifestSha256: requireOption(
+        options,
+        "approved-tool-manifest-sha256",
+      ),
       postgres: {
         image: requireOption(options, "postgres-image"),
         imageId: postgresImageId,
         serverVersionNum: 170006,
       },
     };
+    requireOrderedTimes(
+      metadata.writerQuiescedAt,
+      metadata.captureStartedAt,
+      metadata.capturedAt,
+    );
     await writeFile(
       requireOption(options, "output"),
       `${JSON.stringify(metadata, null, 2)}\n`,
@@ -894,14 +1226,25 @@ switch (command) {
   }
   case "write-capture-marker": {
     requireExactOptions(options, [
+      "approved-tool-manifest-sha256",
       "capture-id",
+      "capture-started-at",
+      "capture-toolset-sha256",
       "captured-at",
       "directory",
       "git-commit",
       "project-ref",
+      "writer-quiesced-at",
     ]);
     await writeMarker(requireOption(options, "directory"), "capture", {
       captureId: requireOption(options, "capture-id"),
+      writerQuiescedAt: requireOption(options, "writer-quiesced-at"),
+      captureStartedAt: requireOption(options, "capture-started-at"),
+      captureToolsetSha256: requireOption(options, "capture-toolset-sha256"),
+      approvedToolManifestSha256: requireOption(
+        options,
+        "approved-tool-manifest-sha256",
+      ),
       capturedAt: requireOption(options, "captured-at"),
       gitCommit: requireOption(options, "git-commit"),
       projectRef: requireOption(options, "project-ref"),
@@ -909,8 +1252,10 @@ switch (command) {
     break;
   }
   case "verify-capture": {
-    requireExactOptions(options, [
+    const expectedOptions = [
+      "approved-tool-manifest-sha256",
       "capture-id",
+      "capture-toolset-sha256",
       "cli-sha256",
       "directory",
       "git-branch",
@@ -918,7 +1263,13 @@ switch (command) {
       "postgres-image",
       "postgres-image-id",
       "project-ref",
-    ]);
+    ];
+    const allowIncomplete = Object.hasOwn(options, "allow-incomplete-marker");
+    if (allowIncomplete) expectedOptions.push("allow-incomplete-marker");
+    requireExactOptions(options, expectedOptions);
+    if (allowIncomplete && options["allow-incomplete-marker"] !== "true") {
+      fail("--allow-incomplete-marker must be exactly true");
+    }
     const directory = requireOption(options, "directory");
     const expected = {
       captureId: requireOption(options, "capture-id"),
@@ -930,6 +1281,33 @@ switch (command) {
     validateCaptureMetadata(metadata, expected);
     if (metadata.supabaseCli.sha256 !== requireOption(options, "cli-sha256")) {
       fail("capture Supabase CLI SHA-256 does not match");
+    }
+    if (
+      metadata.captureToolsetSha256
+      !== requireOption(options, "capture-toolset-sha256")
+    ) {
+      fail("capture toolset SHA-256 does not match");
+    }
+    const approvedToolManifestSha256 = requireOption(
+      options,
+      "approved-tool-manifest-sha256",
+    );
+    if (metadata.approvedToolManifestSha256 !== approvedToolManifestSha256) {
+      fail("capture approved tool manifest SHA-256 does not match");
+    }
+    const capturedApprovedToolManifest = path.join(
+      directory,
+      "approved-tool-manifest.json",
+    );
+    if (await sha256File(capturedApprovedToolManifest) !== approvedToolManifestSha256) {
+      fail("captured approved tool manifest SHA-256 does not match");
+    }
+    const approvedManifest = validateApprovedToolManifest(
+      await parseJsonFile(capturedApprovedToolManifest),
+      expected.gitCommit,
+    );
+    if (approvedManifest.captureToolsetSha256 !== metadata.captureToolsetSha256) {
+      fail("capture toolset is not the independently approved toolset");
     }
     if (metadata.postgres.image !== requireOption(options, "postgres-image")) {
       fail("capture PostgreSQL image does not match");
@@ -957,9 +1335,15 @@ switch (command) {
       await parseJsonFile(path.join(directory, "relation-sequence-counts.json")),
       expected.projectRef,
     );
-    validateMigrationHistory(
+    const verifiedHistoryState = validateMigrationHistory(
       await parseJsonFile(path.join(directory, "migration-history.json")),
       expected.projectRef,
+    );
+    validateDumpContract(
+      await parseJsonFile(path.join(directory, "dump-contract.json")),
+      verifiedHistoryState,
+      metadata.supabaseCli.sha256,
+      metadata.postgres.imageId,
     );
     await validateManagedApplicationDdl(
       path.join(directory, "managed-application-ddl.sql"),
@@ -983,17 +1367,28 @@ switch (command) {
       }
     })();
     await validateDataDump(path.join(directory, "data.sql"));
-    const manifestSha256 = await verifyManifest(directory, "capture");
+    const manifestSha256 = await verifyManifest(
+      directory,
+      "capture",
+      allowIncomplete,
+    );
     const marker = await parseJsonFile(path.join(directory, "CAPTURE_COMPLETE.json"));
     requireObject(marker, "capture marker");
     if (
       marker.schemaVersion !== 1
       || marker.artifactContract !== "dominion-production-backup/v1"
       || marker.captureId !== expected.captureId
+      || marker.writerQuiescedAt !== metadata.writerQuiescedAt
+      || marker.captureStartedAt !== metadata.captureStartedAt
       || marker.capturedAt !== metadata.capturedAt
       || marker.projectRef !== expected.projectRef
       || marker.gitCommit !== expected.gitCommit
       || marker.manifestSha256 !== manifestSha256
+      || marker.captureToolsetSha256 !== metadata.captureToolsetSha256
+      || marker.approvedToolManifestSha256 !== approvedToolManifestSha256
+      || marker.dumpContractSha256 !== await sha256File(
+        path.join(directory, "dump-contract.json"),
+      )
       || marker.sourceManifestSha256 !== await sha256File(
         path.join(directory, "source-manifest.jsonl"),
       )
@@ -1032,20 +1427,31 @@ switch (command) {
   }
   case "write-restore-metadata": {
     requireExactOptions(options, [
+      "approved-tool-manifest-sha256",
       "backup-manifest-sha256",
       "capture-id",
       "completed-at",
       "database-name",
+      ...restoreToolOptions.map(([name]) => name),
       "output",
       "postgres-image",
       "postgres-image-id",
       "project-ref",
       "restore-id",
+      "restore-toolset-sha256",
     ]);
     const backupManifestSha256 = requireOption(options, "backup-manifest-sha256");
     assertHash(backupManifestSha256, "backup manifest SHA-256");
     const imageId = requireOption(options, "postgres-image-id");
     assertImageId(imageId);
+    const operatorTools = toolsetFromOptions(options, restoreToolOptions);
+    const restoreToolsetSha256 = requireOption(options, "restore-toolset-sha256");
+    validateToolset(
+      operatorTools,
+      restoreToolNames,
+      restoreToolsetSha256,
+      "restore",
+    );
     const metadata = {
       schemaVersion: 1,
       artifactContract: "dominion-production-restore/v1",
@@ -1054,6 +1460,12 @@ switch (command) {
       completedAt: requireOption(options, "completed-at"),
       projectRef: requireOption(options, "project-ref"),
       backupManifestSha256,
+      operatorTools,
+      restoreToolsetSha256,
+      approvedToolManifestSha256: requireOption(
+        options,
+        "approved-tool-manifest-sha256",
+      ),
       postgres: {
         image: requireOption(options, "postgres-image"),
         imageId,
@@ -1073,20 +1485,28 @@ switch (command) {
   }
   case "write-restore-marker": {
     requireExactOptions(options, [
+      "approved-tool-manifest-sha256",
       "backup-manifest-sha256",
       "capture-id",
       "directory",
       "restore-id",
+      "restore-toolset-sha256",
     ]);
     await writeMarker(requireOption(options, "directory"), "restore", {
       backupManifestSha256: requireOption(options, "backup-manifest-sha256"),
       captureId: requireOption(options, "capture-id"),
       restoreId: requireOption(options, "restore-id"),
+      restoreToolsetSha256: requireOption(options, "restore-toolset-sha256"),
+      approvedToolManifestSha256: requireOption(
+        options,
+        "approved-tool-manifest-sha256",
+      ),
     });
     break;
   }
   case "verify-restore": {
-    requireExactOptions(options, [
+    const expectedOptions = [
+      "approved-tool-manifest-sha256",
       "backup-manifest-sha256",
       "capture-id",
       "database-name",
@@ -1095,9 +1515,20 @@ switch (command) {
       "postgres-image-id",
       "project-ref",
       "restore-id",
-    ]);
+      "restore-toolset-sha256",
+    ];
+    const allowIncomplete = Object.hasOwn(options, "allow-incomplete-marker");
+    if (allowIncomplete) expectedOptions.push("allow-incomplete-marker");
+    requireExactOptions(options, expectedOptions);
+    if (allowIncomplete && options["allow-incomplete-marker"] !== "true") {
+      fail("--allow-incomplete-marker must be exactly true");
+    }
     const directory = requireOption(options, "directory");
-    const manifestSha256 = await verifyManifest(directory, "restore");
+    const manifestSha256 = await verifyManifest(
+      directory,
+      "restore",
+      allowIncomplete,
+    );
     const metadata = await parseJsonFile(path.join(directory, "restore.json"));
     const expectedPairs = {
       captureId: requireOption(options, "capture-id"),
@@ -1120,6 +1551,25 @@ switch (command) {
     ) {
       fail("restore metadata does not satisfy the v1 contract");
     }
+    const approvedToolManifestSha256 = requireOption(
+      options,
+      "approved-tool-manifest-sha256",
+    );
+    if (metadata.approvedToolManifestSha256 !== approvedToolManifestSha256) {
+      fail("restore approved tool manifest SHA-256 does not match");
+    }
+    validateToolset(
+      metadata.operatorTools,
+      restoreToolNames,
+      metadata.restoreToolsetSha256,
+      "restore",
+    );
+    if (
+      metadata.restoreToolsetSha256
+      !== requireOption(options, "restore-toolset-sha256")
+    ) {
+      fail("restore toolset SHA-256 does not match");
+    }
     requireRfc3339UtcSecond(metadata.completedAt, "restore completedAt");
     validateRestoreVerification(
       await parseJsonFile(path.join(directory, "restore-verification.json")),
@@ -1136,6 +1586,8 @@ switch (command) {
       || marker.captureId !== expectedPairs.captureId
       || marker.restoreId !== expectedPairs.restoreId
       || marker.backupManifestSha256 !== expectedPairs.backupManifestSha256
+      || marker.restoreToolsetSha256 !== metadata.restoreToolsetSha256
+      || marker.approvedToolManifestSha256 !== approvedToolManifestSha256
       || marker.manifestSha256 !== manifestSha256
     ) {
       fail("RESTORE_COMPLETE.json does not match the verified restore evidence");

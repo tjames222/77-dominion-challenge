@@ -9,6 +9,8 @@ import {
   readdir,
   rm,
   stat,
+  symlink,
+  unlink,
   writeFile,
 } from "node:fs/promises";
 import os from "node:os";
@@ -26,6 +28,14 @@ const restoreScript = path.join(
 const verifyScript = path.join(
   scriptDirectory,
   "verify-production-backup-evidence.sh",
+);
+const credentialValidator = path.join(
+  scriptDirectory,
+  "validate-postgres-credentials.mjs",
+);
+const dumpScriptTransformer = path.join(
+  scriptDirectory,
+  "prepare-supabase-dump-script.mjs",
 );
 const projectRef = "abcdefghijklmnopqrst";
 const commit = "1".repeat(40);
@@ -47,22 +57,39 @@ async function makeExecutable(filename, contents) {
 }
 
 function run(script, args, fixture, extraEnv = {}) {
+  const environment = {
+    ...process.env,
+    FAKE_BOUNDARY_LOG: fixture.log,
+    FAKE_DOCKER_STATE: fixture.dockerState,
+    FAKE_GIT_BRANCH: "main",
+    FAKE_GIT_COMMIT: commit,
+    FAKE_IMAGE_ID: imageId,
+    FAKE_PROJECT_REF: projectRef,
+    FAKE_CONTAINER_ID: containerId,
+    PATH: `${path.dirname(fixture.git)}:${process.env.PATH}`,
+    ...extraEnv,
+  };
+  for (const name of [
+    "DATABASE_URL", "PGAPPNAME", "PGCHANNELBINDING", "PGCLIENTENCODING",
+    "PGCONNECT_TIMEOUT", "PGDATABASE", "PGHOST", "PGHOSTADDR", "PGOPTIONS",
+    "PGPASSFILE", "PGPASSWORD", "PGPORT", "PGREQUIRESSL", "PGSERVICE",
+    "PGSERVICEFILE", "PGSSLCERT", "PGSSLCRL", "PGSSLCRLDIR", "PGSSLKEY",
+    "PGSSLMODE", "PGSSLROOTCERT", "PGTARGETSESSIONATTRS", "PGTZ", "PGUSER",
+    "POSTGRES_PASSWORD", "SUPABASE_ACCESS_TOKEN", "SUPABASE_DB_PASSWORD",
+    "BASH_ENV", "CDPATH", "DOCKER_CERT_PATH", "DOCKER_CONFIG", "DOCKER_CONTEXT",
+    "DOCKER_HOST", "DOCKER_TLS_VERIFY", "DYLD_INSERT_LIBRARIES",
+    "DYLD_LIBRARY_PATH", "ENV", "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+    "GIT_CEILING_DIRECTORIES", "GIT_CONFIG_COUNT", "GIT_CONFIG_GLOBAL",
+    "GIT_CONFIG_NOSYSTEM", "GIT_CONFIG_SYSTEM", "GIT_DIR", "GIT_INDEX_FILE",
+    "GIT_OBJECT_DIRECTORY", "GIT_WORK_TREE", "LD_LIBRARY_PATH", "LD_PRELOAD",
+    "NODE_OPTIONS", "NODE_PATH",
+  ]) {
+    if (!Object.hasOwn(extraEnv, name)) delete environment[name];
+  }
   return spawnSync("bash", [script, ...args], {
     cwd: repositoryRoot,
     encoding: "utf8",
-    env: {
-      ...process.env,
-      FAKE_BOUNDARY_LOG: fixture.log,
-      FAKE_DOCKER_STATE: fixture.dockerState,
-      FAKE_GIT_BRANCH: "main",
-      FAKE_GIT_COMMIT: commit,
-      FAKE_IMAGE_ID: imageId,
-      FAKE_PROJECT_REF: projectRef,
-      FAKE_CONTAINER_ID: containerId,
-      GIT_BIN: fixture.git,
-      NODE_BIN: process.execPath,
-      ...extraEnv,
-    },
+    env: environment,
   });
 }
 
@@ -78,16 +105,23 @@ async function buildFixture() {
 
   const passphrase = path.join(root, "passphrase");
   const databaseUrl = path.join(root, "database-url");
+  const databasePassfile = path.join(root, "database-passfile");
   const accessToken = path.join(root, "access-token");
   await writeFile(passphrase, "correct horse battery staple\n", { mode: 0o600 });
   await writeFile(
     databaseUrl,
-    `postgresql://postgres.${projectRef}:database-password@aws-0-us-east-1.pooler.supabase.com:5432/postgres\n`,
+    `postgresql://postgres.${projectRef}@aws-0-us-east-1.pooler.supabase.com:5432/postgres?sslmode=require\n`,
+    { mode: 0o600 },
+  );
+  await writeFile(
+    databasePassfile,
+    `aws-0-us-east-1.pooler.supabase.com:5432:postgres:postgres.${projectRef}:database-password\n`,
     { mode: 0o600 },
   );
   await writeFile(accessToken, "supabase-access-token\n", { mode: 0o600 });
   await chmod(passphrase, 0o600);
   await chmod(databaseUrl, 0o600);
+  await chmod(databasePassfile, 0o600);
   await chmod(accessToken, 0o600);
 
   const git = await makeExecutable(
@@ -108,12 +142,24 @@ esac
     path.join(tools, "supabase"),
     `#!/usr/bin/env bash
 set -eu
+boundary_log="\${FAKE_BOUNDARY_LOG:-${log}}"
 if [[ "\${1:-}" == "--version" ]]; then printf '%s\\n' '2.109.0'; exit 0; fi
 [[ "\${1:-}" == "db" && "\${2:-}" == "dump" ]] || exit 64
 shift 2
+printf 'local:supabase-argv:%s\n' "$*" >>"$boundary_log"
+[[ -z "\${PGPASSWORD:-}" && -z "\${PGPASSFILE:-}" ]]
+[[ "$*" != *'database-password'* ]]
 if [[ " $* " == *' --dry-run '* ]]; then
   printf '%s\\n' \\
     '#!/usr/bin/env bash' \\
+    'set -euo pipefail' \\
+    '' \\
+    'export PGHOST="aws-0-us-east-1.pooler.supabase.com"' \\
+    'export PGPORT="5432"' \\
+    'export PGUSER="postgres.${projectRef}"' \\
+    'export PGPASSWORD=""' \\
+    'export PGDATABASE="postgres"' \\
+    '' \\
     'pg_dump \\' \\
     '    --data-only \\' \\
     '    --exclude-schema "information_schema|pg_*|realtime|supabase_migrations" \\' \\
@@ -137,7 +183,7 @@ while (( $# > 0 )); do
   esac
 done
 [[ -n "$output" ]]
-printf 'remote:db-dump:%s\\n' "$output" >>"$FAKE_BOUNDARY_LOG"
+printf 'remote:db-dump:%s\\n' "$output" >>"$boundary_log"
 if [[ "$data_only" == 'true' && -z "$schema" ]]; then
   printf '%s\\n' \\
     'COPY "auth"."users" ("id") FROM stdin;' \\
@@ -176,16 +222,19 @@ printf 'DOMINION_ENCRYPTED_VOLUME_OK=%s\\n' "$destination"
     path.join(tools, "edge-hook"),
     `#!/usr/bin/env bash
 set -eu
-output=''; project=''
+output=''; project=''; access_token_file=''
+printf 'remote:edge-argv:%s\\n' "$*" >>"$FAKE_BOUNDARY_LOG"
 while (( $# > 0 )); do
   case "$1" in
     --supabase-cli) shift 2 ;;
+    --access-token-file) access_token_file="$2"; shift 2 ;;
     --project-ref) project="$2"; shift 2 ;;
     --output) output="$2"; shift 2 ;;
     *) exit 64 ;;
   esac
 done
-[[ -n "\${SUPABASE_ACCESS_TOKEN:-}" ]]
+[[ -z "\${SUPABASE_ACCESS_TOKEN:-}" ]]
+[[ "$(tr -d '\\r\\n' <"$access_token_file")" == 'supabase-access-token' ]]
 printf 'remote:edge-inventory:%s\\n' "$output" >>"$FAKE_BOUNDARY_LOG"
 printf '{"schemaVersion":1,"projectRef":"%s","functions":[{"name":"checkout","slug":"checkout","status":"ACTIVE","version":1,"verifyJwt":true}]}\\n' "$project" >"$output"
 `,
@@ -195,18 +244,29 @@ printf '{"schemaVersion":1,"projectRef":"%s","functions":[{"name":"checkout","sl
     path.join(tools, "storage-hook"),
     `#!/usr/bin/env bash
 set -eu
-output=''; project=''
+output=''; project=''; passfile=''
 while (( $# > 0 )); do
   case "$1" in
+    --database-client-contract) [[ "$2" == 'exact-docker-pgpass/v1' ]]; shift 2 ;;
     --database-url-file) [[ -s "$2" ]]; shift 2 ;;
+    --database-passfile) [[ -s "$2" ]]; passfile="$2"; shift 2 ;;
     --project-ref) project="$2"; shift 2 ;;
+    --docker-bin|--postgres-image|--postgres-image-id) shift 2 ;;
     --output) output="$2"; shift 2 ;;
     *) exit 64 ;;
   esac
 done
 objects="\${FAKE_STORAGE_OBJECT_COUNT:-0}"
+vectors="\${FAKE_STORAGE_VECTOR_COUNT:-0}"
+vectors_present="\${FAKE_STORAGE_VECTOR_PRESENT:-true}"
+vectors_row_count="$vectors"
+if [[ "$vectors_present" == 'false' ]]; then vectors_row_count='null'; fi
 printf 'remote:storage-inventory:%s\\n' "$output" >>"$FAKE_BOUNDARY_LOG"
-printf '{"schemaVersion":1,"projectRef":"%s","relations":{"storage.buckets":{"present":true,"rowCount":1},"storage.buckets_analytics":{"present":false,"rowCount":null},"storage.buckets_vectors":{"present":false,"rowCount":null},"storage.iceberg_namespaces":{"present":false,"rowCount":null},"storage.iceberg_tables":{"present":false,"rowCount":null},"storage.objects":{"present":true,"rowCount":%s},"storage.s3_multipart_uploads":{"present":true,"rowCount":0},"storage.s3_multipart_uploads_parts":{"present":true,"rowCount":0},"storage.vector_indexes":{"present":false,"rowCount":null}},"buckets":[{"id":"journal-progress","name":"journal-progress","ownerId":null,"public":false,"fileSizeLimit":null,"allowedMimeTypes":null,"type":"STANDARD"}],"applicationPolicyCount":0,"applicationPolicies":[]}\\n' "$project" "$objects" >"$output"
+printf '{"schemaVersion":1,"projectRef":"%s","relations":{"storage.buckets":{"present":true,"rowCount":1},"storage.buckets_analytics":{"present":true,"rowCount":0},"storage.buckets_vectors":{"present":%s,"rowCount":%s},"storage.iceberg_namespaces":{"present":false,"rowCount":null},"storage.iceberg_tables":{"present":false,"rowCount":null},"storage.objects":{"present":true,"rowCount":%s},"storage.s3_multipart_uploads":{"present":true,"rowCount":0},"storage.s3_multipart_uploads_parts":{"present":true,"rowCount":0},"storage.vector_indexes":{"present":true,"rowCount":%s}},"buckets":[{"id":"journal-progress","name":"journal-progress","ownerId":null,"public":false,"fileSizeLimit":null,"allowedMimeTypes":null,"type":"STANDARD"}],"applicationPolicyCount":0,"applicationPolicies":[]}\\n' "$project" "$vectors_present" "$vectors_row_count" "$objects" "$vectors" >"$output"
+if [[ "\${FAKE_SWAP_DATABASE_PASSFILE:-false}" == 'true' ]]; then
+  printf '%s\\n' 'swapped:5432:postgres:postgres:changed' >"$passfile"
+  chmod 600 "$passfile"
+fi
 `,
   );
 
@@ -217,7 +277,9 @@ set -eu
 output=''
 while (( $# > 0 )); do
   case "$1" in
-    --database-url-file|--project-ref) shift 2 ;;
+    --database-client-contract) [[ "$2" == 'exact-docker-pgpass/v1' ]]; shift 2 ;;
+    --database-url-file|--database-passfile|--project-ref) shift 2 ;;
+    --docker-bin|--postgres-image|--postgres-image-id) shift 2 ;;
     --output) output="$2"; shift 2 ;;
     *) exit 64 ;;
   esac
@@ -234,7 +296,9 @@ set -eu
 output=''
 while (( $# > 0 )); do
   case "$1" in
-    --database-url-file|--project-ref) shift 2 ;;
+    --database-client-contract) [[ "$2" == 'exact-docker-pgpass/v1' ]]; shift 2 ;;
+    --database-url-file|--database-passfile|--project-ref) shift 2 ;;
+    --docker-bin|--postgres-image|--postgres-image-id) shift 2 ;;
     --output) output="$2"; shift 2 ;;
     *) exit 64 ;;
   esac
@@ -251,7 +315,9 @@ set -eu
 output=''; project=''
 while (( $# > 0 )); do
   case "$1" in
-    --database-url-file) shift 2 ;;
+    --database-client-contract) [[ "$2" == 'exact-docker-pgpass/v1' ]]; shift 2 ;;
+    --database-url-file|--database-passfile) shift 2 ;;
+    --docker-bin|--postgres-image|--postgres-image-id) shift 2 ;;
     --project-ref) project="$2"; shift 2 ;;
     --output) output="$2"; shift 2 ;;
     *) exit 64 ;;
@@ -269,7 +335,9 @@ set -eu
 output=''; project=''
 while (( $# > 0 )); do
   case "$1" in
-    --database-url-file) shift 2 ;;
+    --database-client-contract) [[ "$2" == 'exact-docker-pgpass/v1' ]]; shift 2 ;;
+    --database-url-file|--database-passfile) shift 2 ;;
+    --docker-bin|--postgres-image|--postgres-image-id) shift 2 ;;
     --project-ref) project="$2"; shift 2 ;;
     --output) output="$2"; shift 2 ;;
     *) exit 64 ;;
@@ -291,7 +359,9 @@ set -eu
 output=''
 while (( $# > 0 )); do
   case "$1" in
-    --database-url-file) [[ -s "$2" ]]; shift 2 ;;
+    --database-client-contract) [[ "$2" == 'exact-docker-pgpass/v1' ]]; shift 2 ;;
+    --database-url-file|--database-passfile) [[ -s "$2" ]]; shift 2 ;;
+    --docker-bin|--postgres-image|--postgres-image-id) shift 2 ;;
     --project-ref) [[ "$2" == "$FAKE_PROJECT_REF" ]]; shift 2 ;;
     --output) output="$2"; shift 2 ;;
     *) exit 64 ;;
@@ -311,6 +381,10 @@ set -eu
 command="\${1:-}"; shift || true
 state="$FAKE_DOCKER_STATE"
 case "$command" in
+  context)
+    [[ "\${1:-}" == 'inspect' ]]
+    printf '%s\\n' "\${FAKE_DOCKER_ENDPOINT:-unix:///var/run/docker.sock}"
+    ;;
   image)
     [[ "\${1:-}" == 'inspect' ]]
     printf '%s\\n' "$FAKE_IMAGE_ID"
@@ -318,20 +392,58 @@ case "$command" in
   container)
     [[ "\${1:-}" == 'inspect' ]] || exit 64
     shift
+    target="\${1:-}"; shift || true
     [[ -f "$state/present" ]] || exit 1
+    [[ "$target" == "$FAKE_CONTAINER_ID" || "$target" == dominion-restore-* ]] || exit 66
     if [[ "$*" == *'--format'* ]]; then
       token="$(cat "$state/token")"
       if [[ "\${FAKE_DOCKER_OWNERSHIP_MODE:-matched}" == 'mismatch' ]]; then token='changed'; fi
       printf '%s|%s|%s|true|%s|%s|%s\\n' \
-        "$FAKE_CONTAINER_ID" "$FAKE_IMAGE_ID" '${image}' \
+        "$FAKE_CONTAINER_ID" "$FAKE_IMAGE_ID" "$FAKE_IMAGE_ID" \
         "$(cat "$state/capture")" "$(cat "$state/restore")" "$token"
     else
       printf '%s\\n' '[]'
     fi
     ;;
   run)
+    original_args="$*"
+    [[ "$original_args" != *'database-password'* ]]
+    if [[ "$original_args" == *'/dominion-dump/run.sh'* ]]; then
+      printf 'remote:docker-dump:%s\\n' "$original_args" >>"$FAKE_BOUNDARY_LOG"
+      [[ "$original_args" == *"$FAKE_IMAGE_ID /dominion-dump/run.sh"* ]]
+      [[ "$original_args" == *'target=/dominion-private/pgpass,readonly'* ]]
+      [[ "$original_args" == *'PGPASSFILE=/dominion-private/pgpass'* ]]
+      dump_script=''
+      for argument in "$@"; do
+        case "$argument" in
+          type=bind,source=*,target=/dominion-dump/run.sh,readonly)
+            dump_script="\${argument#*source=}"
+            dump_script="\${dump_script%%,target=*}"
+            ;;
+        esac
+      done
+      [[ -s "$dump_script" ]]
+      grep -F 'unset PGPASSWORD' "$dump_script" >/dev/null
+      grep -F 'export PGPASSFILE="/dominion-private/pgpass"' "$dump_script" >/dev/null
+      ! grep -F 'database-password' "$dump_script" >/dev/null
+      if [[ "$original_args" == *'.history-'* && "\${FAKE_HISTORY_DUMP_FAIL:-false}" == 'true' ]]; then
+        exit 75
+      fi
+      if [[ "$original_args" == *'.data.sql.run.sh'* ]]; then
+        printf '%s\\n' \\
+          'COPY "auth"."users" ("id") FROM stdin;' \\
+          '\\.' \\
+          'COPY "storage"."buckets" ("id") FROM stdin;' \\
+          '\\.'
+      elif [[ "$original_args" == *'.history-'* ]]; then
+        printf '%s\\n' '-- deterministic supabase_migrations SQL'
+      else
+        printf '%s\\n' '-- deterministic fake SQL'
+      fi
+      exit 0
+    fi
     printf 'local:docker-run' >>"$FAKE_BOUNDARY_LOG"
-    capture=''; restore=''; token=''
+    capture=''; restore=''; token=''; cidfile=''
     while (( $# > 0 )); do
       printf ':%s' "$1" >>"$FAKE_BOUNDARY_LOG"
       case "$1" in
@@ -341,6 +453,11 @@ case "$command" in
             com.dominion.restore-id=*) restore="\${2#*=}" ;;
             com.dominion.ownership-token=*) token="\${2#*=}" ;;
           esac
+          printf ':%s' "$2" >>"$FAKE_BOUNDARY_LOG"
+          shift 2
+          ;;
+        --cidfile)
+          cidfile="$2"
           printf ':%s' "$2" >>"$FAKE_BOUNDARY_LOG"
           shift 2
           ;;
@@ -357,6 +474,13 @@ case "$command" in
     printf '%s\\n' "$restore" >"$state/restore"
     printf '%s\\n' "$token" >"$state/token"
     : >"$state/present"
+    [[ -n "$cidfile" ]]
+    if [[ "\${FAKE_DOCKER_SKIP_CIDFILE:-false}" != 'true' ]]; then
+      printf '%s\\n' "$FAKE_CONTAINER_ID" >"$cidfile"
+    fi
+    if [[ "\${FAKE_DOCKER_RUN_FAIL_AFTER_CREATE:-false}" == 'true' ]]; then
+      exit 75
+    fi
     printf '%s\\n' "$FAKE_CONTAINER_ID"
     ;;
   exec)
@@ -364,6 +488,7 @@ case "$command" in
     if [[ "$*" == *'show server_version_num'* ]]; then printf '%s\\n' '170006'; fi
     ;;
   rm)
+    [[ "$*" == "--force $FAKE_CONTAINER_ID" ]] || exit 67
     printf 'local:docker-rm:%s\\n' "$*" >>"$FAKE_BOUNDARY_LOG"
     rm -f "$state/present" "$state/capture" "$state/restore" "$state/token"
     ;;
@@ -395,8 +520,47 @@ printf '{"schemaVersion":1,"captureId":"%s","restoreId":"%s","databaseName":"%s"
 `,
   );
 
+  const captureTools = {
+    credentialValidatorSha256: await sha256(credentialValidator),
+    dockerBinSha256: await sha256(docker),
+    dumpScriptTransformerSha256: await sha256(dumpScriptTransformer),
+    edgeFunctionsInventoryHookSha256: await sha256(edgeHook),
+    encryptedVolumeCheckHookSha256: await sha256(volumeHook),
+    managedApplicationDdlHookSha256: await sha256(managedApplicationDdlHook),
+    migrationHistoryHookSha256: await sha256(migrationHistoryHook),
+    relationCountsHookSha256: await sha256(relationCountsHook),
+    sourceFingerprintHookSha256: await sha256(sourceFingerprintHook),
+    sourceManifestHookSha256: await sha256(sourceManifestHook),
+    storageInventoryHookSha256: await sha256(storageHook),
+    supabaseCliSha256: await sha256(supabase),
+  };
+  const restoreTools = {
+    dockerBinSha256: await sha256(docker),
+    encryptedVolumeCheckHookSha256: await sha256(volumeHook),
+    restoreVerificationHookSha256: await sha256(restoreVerificationHook),
+  };
+  const hashObject = (value) =>
+    createHash("sha256").update(JSON.stringify(value)).digest("hex");
+  const approvedToolManifest = path.join(root, "approved-tool-manifest.json");
+  await writeFile(
+    approvedToolManifest,
+    `${JSON.stringify({
+      schemaVersion: 1,
+      artifactContract: "dominion-production-backup-approved-tools/v1",
+      releaseCommit: commit,
+      captureTools,
+      captureToolsetSha256: hashObject(captureTools),
+      restoreTools,
+      restoreToolsetSha256: hashObject(restoreTools),
+    }, null, 2)}\n`,
+    { mode: 0o600 },
+  );
+  await chmod(approvedToolManifest, 0o600);
+
   return {
     accessToken,
+    approvedToolManifest,
+    databasePassfile,
     databaseUrl,
     destination,
     docker,
@@ -428,6 +592,14 @@ async function captureArguments(fixture, id = captureId) {
     "--supabase-cli-sha256", await sha256(fixture.supabase),
     "--database-url-file", fixture.databaseUrl,
     "--database-url-sha256", await sha256(fixture.databaseUrl),
+    "--database-passfile", fixture.databasePassfile,
+    "--database-passfile-sha256", await sha256(fixture.databasePassfile),
+    "--credential-validator-sha256", await sha256(credentialValidator),
+    "--docker-bin", fixture.docker,
+    "--docker-bin-sha256", await sha256(fixture.docker),
+    "--dump-script-transformer-sha256", await sha256(dumpScriptTransformer),
+    "--approved-tool-manifest", fixture.approvedToolManifest,
+    "--approved-tool-manifest-sha256", await sha256(fixture.approvedToolManifest),
     "--access-token-file", fixture.accessToken,
     "--access-token-sha256", await sha256(fixture.accessToken),
     "--destination", fixture.destination,
@@ -451,11 +623,15 @@ async function captureArguments(fixture, id = captureId) {
     "--managed-application-ddl-hook-sha256", await sha256(fixture.managedApplicationDdlHook),
     "--postgres-image", image,
     "--postgres-image-id", imageId,
+    "--writer-quiesced-at", "2000-01-01T00:00:00Z",
     "--confirm-read-only-capture", `CAPTURE ${projectRef} ${commit}`,
   ];
 }
 
 async function restoreArguments(fixture, capture = captureId, restore = restoreId) {
+  const captureMetadata = JSON.parse(
+    await readFile(path.join(fixture.destination, capture, "capture.json"), "utf8"),
+  );
   return [
     "--capture-id", capture,
     "--restore-id", restore,
@@ -463,6 +639,9 @@ async function restoreArguments(fixture, capture = captureId, restore = restoreI
     "--expected-branch", "main",
     "--expected-commit", commit,
     "--supabase-cli-sha256", await sha256(fixture.supabase),
+    "--capture-toolset-sha256", captureMetadata.captureToolsetSha256,
+    "--approved-tool-manifest", fixture.approvedToolManifest,
+    "--approved-tool-manifest-sha256", await sha256(fixture.approvedToolManifest),
     "--destination", fixture.destination,
     "--passphrase-file", fixture.passphrase,
     "--passphrase-sha256", await sha256(fixture.passphrase),
@@ -488,12 +667,34 @@ async function verifyArguments(fixture, capture = captureId, restore = restoreId
     "--expected-commit", commit,
     "--supabase-cli", fixture.supabase,
     "--supabase-cli-sha256", await sha256(fixture.supabase),
+    "--credential-validator-sha256", await sha256(credentialValidator),
+    "--dump-script-transformer-sha256", await sha256(dumpScriptTransformer),
+    "--approved-tool-manifest", fixture.approvedToolManifest,
+    "--approved-tool-manifest-sha256", await sha256(fixture.approvedToolManifest),
+    "--edge-functions-inventory-hook", fixture.edgeHook,
+    "--edge-functions-inventory-hook-sha256", await sha256(fixture.edgeHook),
+    "--storage-inventory-hook", fixture.storageHook,
+    "--storage-inventory-hook-sha256", await sha256(fixture.storageHook),
+    "--source-manifest-hook", fixture.sourceManifestHook,
+    "--source-manifest-hook-sha256", await sha256(fixture.sourceManifestHook),
+    "--source-fingerprint-hook", fixture.sourceFingerprintHook,
+    "--source-fingerprint-hook-sha256", await sha256(fixture.sourceFingerprintHook),
+    "--relation-counts-hook", fixture.relationCountsHook,
+    "--relation-counts-hook-sha256", await sha256(fixture.relationCountsHook),
+    "--migration-history-hook", fixture.migrationHistoryHook,
+    "--migration-history-hook-sha256", await sha256(fixture.migrationHistoryHook),
+    "--managed-application-ddl-hook", fixture.managedApplicationDdlHook,
+    "--managed-application-ddl-hook-sha256", await sha256(fixture.managedApplicationDdlHook),
     "--postgres-image", image,
     "--postgres-image-id", imageId,
     "--passphrase-file", fixture.passphrase,
     "--passphrase-sha256", await sha256(fixture.passphrase),
     "--encrypted-volume-check-hook", fixture.volumeHook,
     "--encrypted-volume-check-hook-sha256", await sha256(fixture.volumeHook),
+    "--docker-bin", fixture.docker,
+    "--docker-bin-sha256", await sha256(fixture.docker),
+    "--restore-verification-hook", fixture.restoreVerificationHook,
+    "--restore-verification-hook-sha256", await sha256(fixture.restoreVerificationHook),
   ];
 }
 
@@ -557,6 +758,48 @@ test("branch mismatch fails before destination verification or remote access", a
   assert.equal(log, "");
 });
 
+test("capture rejects ambient database credentials before any tool boundary", async (t) => {
+  const fixture = await buildFixture();
+  t.after(() => rm(fixture.root, { force: true, recursive: true }));
+  const result = run(
+    captureScript,
+    await captureArguments(fixture),
+    fixture,
+    { PGPASSWORD: "ambient-secret" },
+  );
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /unset ambient PGPASSWORD/);
+  assert.equal(await readFile(fixture.log, "utf8").catch(() => ""), "");
+});
+
+test("capture rejects ambient runtime injection before Node or Git", async (t) => {
+  const fixture = await buildFixture();
+  t.after(() => rm(fixture.root, { force: true, recursive: true }));
+  const result = run(
+    captureScript,
+    await captureArguments(fixture),
+    fixture,
+    { NODE_OPTIONS: "--require=/definitely-not-loaded.js" },
+  );
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /unset ambient NODE_OPTIONS/);
+  assert.equal(await readFile(fixture.log, "utf8").catch(() => ""), "");
+});
+
+test("capture rejects a remote Docker context before image or hosted access", async (t) => {
+  const fixture = await buildFixture();
+  t.after(() => rm(fixture.root, { force: true, recursive: true }));
+  const result = run(
+    captureScript,
+    await captureArguments(fixture),
+    fixture,
+    { FAKE_DOCKER_ENDPOINT: "ssh://remote-builder" },
+  );
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /local unix-socket context/);
+  assert.doesNotMatch(await readFile(fixture.log, "utf8"), /remote:/);
+});
+
 test("exact tool, image, credential, and passphrase mismatches all fail before remote access", async (t) => {
   const cases = [
     ["CLI hash", "--supabase-cli-sha256", "f".repeat(64)],
@@ -579,6 +822,109 @@ test("exact tool, image, credential, and passphrase mismatches all fail before r
   }
 });
 
+test("credential scope rejects argv passwords and noncanonical pgpass escapes before remote access", async (t) => {
+  for (const mode of ["url-password", "noncanonical-pgpass"]) {
+    await t.test(mode, async (nested) => {
+      const fixture = await buildFixture();
+      nested.after(() => rm(fixture.root, { force: true, recursive: true }));
+      if (mode === "url-password") {
+        await writeFile(
+          fixture.databaseUrl,
+          `postgresql://postgres.${projectRef}:database-password@aws-0-us-east-1.pooler.supabase.com:5432/postgres?sslmode=require\n`,
+          { mode: 0o600 },
+        );
+      } else {
+        await writeFile(
+          fixture.databasePassfile,
+          `aws-0-us-east-1.pooler.supabase.com:5432:postgres:postgres.${projectRef}:bad\\q\n`,
+          { mode: 0o600 },
+        );
+      }
+      const result = run(captureScript, await captureArguments(fixture), fixture);
+      assert.notEqual(result.status, 0);
+      assert.match(
+        result.stderr,
+        mode === "url-password" ? /must not contain a password/ : /noncanonical escape/,
+      );
+      assert.doesNotMatch(await readFile(fixture.log, "utf8").catch(() => ""), /remote:/);
+    });
+  }
+});
+
+test("credential files fail closed on wrong scope, wildcard, duplicate, permissions, and symlink", async (t) => {
+  const cases = [
+    ["wrong project scope", async (fixture) => {
+      await writeFile(
+        fixture.databaseUrl,
+        "postgresql://postgres.wrongprojectref0000@aws-0-us-east-1.pooler.supabase.com:5432/postgres?sslmode=require\n",
+        { mode: 0o600 },
+      );
+    }],
+    ["mismatched passfile", async (fixture) => {
+      await writeFile(
+        fixture.databasePassfile,
+        `other.pooler.supabase.com:5432:postgres:postgres.${projectRef}:fixture\n`,
+        { mode: 0o600 },
+      );
+    }],
+    ["wildcard passfile", async (fixture) => {
+      await writeFile(fixture.databasePassfile, "*:5432:postgres:postgres:fixture\n", { mode: 0o600 });
+    }],
+    ["multiple passfile rows", async (fixture) => {
+      const row = `aws-0-us-east-1.pooler.supabase.com:5432:postgres:postgres.${projectRef}:fixture`;
+      await writeFile(fixture.databasePassfile, `${row}\n${row}\n`, { mode: 0o600 });
+    }],
+    ["bad permissions", async (fixture) => chmod(fixture.databasePassfile, 0o644)],
+    ["symlink", async (fixture) => {
+      const target = `${fixture.databasePassfile}.target`;
+      await writeFile(target, await readFile(fixture.databasePassfile), { mode: 0o600 });
+      await unlink(fixture.databasePassfile);
+      await symlink(target, fixture.databasePassfile);
+    }],
+  ];
+  for (const [label, mutate] of cases) {
+    await t.test(label, async (nested) => {
+      const fixture = await buildFixture();
+      nested.after(() => rm(fixture.root, { force: true, recursive: true }));
+      await mutate(fixture);
+      const result = run(captureScript, await captureArguments(fixture), fixture);
+      assert.notEqual(result.status, 0);
+      assert.equal(await readFile(fixture.log, "utf8").catch(() => ""), "");
+      await assert.rejects(stat(path.join(fixture.destination, captureId)));
+    });
+  }
+});
+
+test("approved tool manifest is release-bound and checked before remote access", async (t) => {
+  const fixture = await buildFixture();
+  t.after(() => rm(fixture.root, { force: true, recursive: true }));
+  const manifest = JSON.parse(await readFile(fixture.approvedToolManifest, "utf8"));
+  manifest.releaseCommit = "3".repeat(40);
+  await writeFile(
+    fixture.approvedToolManifest,
+    `${JSON.stringify(manifest, null, 2)}\n`,
+    { mode: 0o600 },
+  );
+  const result = run(captureScript, await captureArguments(fixture), fixture);
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /not bound to the exact release commit/);
+  assert.equal(await readFile(fixture.log, "utf8").catch(() => ""), "");
+});
+
+test("capture start cannot precede the explicit writer-quiescence boundary", async (t) => {
+  const fixture = await buildFixture();
+  t.after(() => rm(fixture.root, { force: true, recursive: true }));
+  const args = replaceArgument(
+    await captureArguments(fixture),
+    "--writer-quiesced-at",
+    "2999-01-01T00:00:00Z",
+  );
+  const result = run(captureScript, args, fixture);
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /capture started before writer quiescence/);
+  assert.doesNotMatch(await readFile(fixture.log, "utf8"), /remote:/);
+});
+
 test("capture writes every artifact directly under the encrypted destination and verifies it", async (t) => {
   const fixture = await buildFixture();
   t.after(() => rm(fixture.root, { force: true, recursive: true }));
@@ -587,8 +933,10 @@ test("capture writes every artifact directly under the encrypted destination and
   assert.deepEqual((await readdir(captureDirectory)).sort(), [
     "CAPTURE_COMPLETE.json",
     "SHA256SUMS",
+    "approved-tool-manifest.json",
     "capture.json",
     "data.sql",
+    "dump-contract.json",
     "edge-functions.json",
     "history-data.sql",
     "history-schema.sql",
@@ -616,10 +964,12 @@ test("capture writes every artifact directly under the encrypted destination and
 
   const log = await readFile(fixture.log, "utf8");
   assert.ok(log.indexOf("local:encrypted-volume-verified") < log.indexOf("remote:"));
-  for (const line of log.split("\n").filter((entry) => entry.startsWith("remote:db-dump:"))) {
+  assert.match(log, /local:supabase-argv:--db-url postgresql:\/\/postgres\./);
+  assert.match(log, /local:supabase-argv:[^\n]*--dry-run/);
+  for (const line of log.split("\n").filter((entry) => entry.startsWith("remote:docker-dump:"))) {
     assert.ok(line.includes(`${captureDirectory}/.`), line);
   }
-  const combined = `${result.stdout}\n${result.stderr}\n${await Promise.all(
+  const combined = `${result.stdout}\n${result.stderr}\n${log}\n${await Promise.all(
     (await readdir(captureDirectory)).map((name) => readFile(path.join(captureDirectory, name), "utf8")),
   )}`;
   assert.doesNotMatch(combined, /database-password|supabase-access-token|correct horse/);
@@ -644,7 +994,7 @@ test("absent migration history uses deterministic no-op restore artifacts", asyn
     "-- dominion migration history data: supabase_migrations schema absent\n",
   );
   const log = await readFile(fixture.log, "utf8");
-  assert.doesNotMatch(log, /db-dump:.*history-(schema|data)\.sql/);
+  assert.doesNotMatch(log, /docker-dump:.*history-(schema|data)\.sql/);
 });
 
 test("present empty migration history is dumped and remains distinct from absence", async (t) => {
@@ -669,8 +1019,8 @@ test("present empty migration history is dumped and remains distinct from absenc
     /supabase_migrations/,
   );
   const log = await readFile(fixture.log, "utf8");
-  assert.match(log, /db-dump:.*history-schema\.sql\.partial/);
-  assert.match(log, /db-dump:.*history-data\.sql\.partial/);
+  assert.match(log, /docker-dump:.*history-schema\.sql\.run\.sh/);
+  assert.match(log, /docker-dump:.*history-data\.sql\.run\.sh/);
 });
 
 test("a present migration-history dump failure is never reinterpreted as absence", async (t) => {
@@ -706,11 +1056,52 @@ test("nonzero Storage objects stop before database dumps", async (t) => {
   assert.notEqual(result.status, 0);
   assert.match(result.stderr, /export Storage blobs through the Storage API/);
   const log = await readFile(fixture.log, "utf8");
-  assert.doesNotMatch(log, /remote:db-dump:/);
+  assert.doesNotMatch(log, /remote:docker-dump:/);
   assert.equal(
     (await readFile(path.join(fixture.destination, captureId, "CAPTURE_INCOMPLETE"), "utf8")).trim(),
     "capture did not complete",
   );
+});
+
+test("nonzero excluded vector data and missing mandatory vector relations stop before dumps", async (t) => {
+  for (const extraEnv of [
+    { FAKE_STORAGE_VECTOR_COUNT: "1" },
+    { FAKE_STORAGE_VECTOR_PRESENT: "false" },
+  ]) {
+    await t.test(JSON.stringify(extraEnv), async (nested) => {
+      const fixture = await buildFixture();
+      nested.after(() => rm(fixture.root, { force: true, recursive: true }));
+      const result = run(
+        captureScript,
+        await captureArguments(fixture),
+        fixture,
+        extraEnv,
+      );
+      assert.notEqual(result.status, 0);
+      assert.match(
+        result.stderr,
+        /export Storage blobs through the Storage API|must be present for a complete blob inventory/,
+      );
+      assert.doesNotMatch(await readFile(fixture.log, "utf8"), /remote:docker-dump:/);
+    });
+  }
+});
+
+test("credential file swap after inventory is detected before any dump", async (t) => {
+  const fixture = await buildFixture();
+  t.after(() => rm(fixture.root, { force: true, recursive: true }));
+  const result = run(
+    captureScript,
+    await captureArguments(fixture),
+    fixture,
+    { FAKE_SWAP_DATABASE_PASSFILE: "true" },
+  );
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /database passfile changed during inventory/);
+  assert.doesNotMatch(await readFile(fixture.log, "utf8"), /remote:docker-dump:/);
+  const captureDirectory = path.join(fixture.destination, captureId);
+  await stat(path.join(captureDirectory, "CAPTURE_INCOMPLETE"));
+  await assert.rejects(stat(path.join(captureDirectory, "CAPTURE_COMPLETE.json")));
 });
 
 test("restore verifies the manifest before touching Docker", async (t) => {
@@ -725,6 +1116,39 @@ test("restore verifies the manifest before touching Docker", async (t) => {
   assert.equal(await readFile(fixture.log, "utf8"), "local:encrypted-volume-verified\n");
 });
 
+test("dump contract, toolset, and quiescence tampering all fail before Docker", async (t) => {
+  const cases = [
+    ["dump contract", "dump-contract.json", async (filename) => writeFile(filename, "{}\n")],
+    ["capture toolset", "capture.json", async (filename) => {
+      const metadata = JSON.parse(await readFile(filename, "utf8"));
+      metadata.captureToolsetSha256 = "f".repeat(64);
+      await writeFile(filename, `${JSON.stringify(metadata, null, 2)}\n`);
+    }],
+    ["writer quiescence", "capture.json", async (filename) => {
+      const metadata = JSON.parse(await readFile(filename, "utf8"));
+      metadata.writerQuiescedAt = "2999-01-01T00:00:00Z";
+      await writeFile(filename, `${JSON.stringify(metadata, null, 2)}\n`);
+    }],
+  ];
+  for (const [label, artifact, tamper] of cases) {
+    await t.test(label, async (nested) => {
+      const fixture = await buildFixture();
+      nested.after(() => rm(fixture.root, { force: true, recursive: true }));
+      await successfulCapture(fixture);
+      const restoreArgs = await restoreArguments(fixture);
+      await tamper(path.join(fixture.destination, captureId, artifact));
+      await writeFile(fixture.log, "");
+      const result = run(restoreScript, restoreArgs, fixture);
+      assert.notEqual(result.status, 0);
+      assert.match(
+        result.stderr,
+        /SHA-256 mismatch|dump contract identity|toolset SHA-256|capture started before writer quiescence/,
+      );
+      assert.doesNotMatch(await readFile(fixture.log, "utf8"), /docker/);
+    });
+  }
+});
+
 test("restore uses a unique no-network exact-image tmpfs container and records verified cleanup", async (t) => {
   const fixture = await buildFixture();
   t.after(() => rm(fixture.root, { force: true, recursive: true }));
@@ -735,9 +1159,12 @@ test("restore uses a unique no-network exact-image tmpfs container and records v
   assert.match(log, /local:docker-run:[^\n]*:--pull:never/);
   assert.match(log, /local:docker-run:[^\n]*:--network:none/);
   assert.match(log, /local:docker-run:[^\n]*:--log-driver:none/);
+  assert.match(log, /local:docker-run:[^\n]*:--cidfile:/);
+  assert.match(log, new RegExp(`local:docker-run:[^\\n]*:${imageId.replace(/[.*+?^${}()|[\\]\\]/g, "\\$&")}`));
   assert.match(log, /target=\/dominion-backup,readonly/);
   assert.match(log, /\/var\/lib\/postgresql\/data:rw,nosuid,nodev/);
-  assert.match(log, /local:docker-rm:--force dominion-restore-restore-20260825/);
+  assert.match(log, new RegExp(`local:docker-rm:--force ${containerId}`));
+  assert.doesNotMatch(log, /local:docker-rm:--force dominion-restore-/);
   assert.match(log, /--file \/dominion-backup\/managed-application-ddl\.sql/);
   await assert.rejects(stat(path.join(fixture.dockerState, "present")));
 
@@ -768,7 +1195,50 @@ test("ownership mismatch refuses destructive container cleanup", async (t) => {
     { FAKE_DOCKER_OWNERSHIP_MODE: "mismatch" },
   );
   assert.notEqual(result.status, 0);
-  assert.match(result.stderr, /refusing an unverified container left by the create attempt/);
+  assert.match(result.stderr, /refusing cleanup because container ownership changed/);
+  const log = await readFile(fixture.log, "utf8");
+  assert.doesNotMatch(log, /local:docker-rm:/);
+  await stat(path.join(fixture.dockerState, "present"));
+});
+
+test("failed container creation adopts only the private full-ID cidfile for cleanup", async (t) => {
+  const fixture = await buildFixture();
+  t.after(() => rm(fixture.root, { force: true, recursive: true }));
+  await successfulCapture(fixture);
+  const result = run(
+    restoreScript,
+    await restoreArguments(fixture),
+    fixture,
+    { FAKE_DOCKER_RUN_FAIL_AFTER_CREATE: "true" },
+  );
+  assert.notEqual(result.status, 0);
+  const log = await readFile(fixture.log, "utf8");
+  assert.match(log, new RegExp("local:docker-rm:--force " + containerId));
+  assert.doesNotMatch(log, /local:docker-rm:--force dominion-restore-/);
+  await assert.rejects(stat(path.join(fixture.dockerState, "present")));
+  const evidence = path.join(
+    fixture.destination,
+    "restore-" + captureId + "-" + restoreId,
+  );
+  await stat(path.join(evidence, "RESTORE_INCOMPLETE"));
+  await assert.rejects(stat(path.join(evidence, "RESTORE_COMPLETE.json")));
+});
+
+test("a create attempt without the private cidfile is never adopted by name", async (t) => {
+  const fixture = await buildFixture();
+  t.after(() => rm(fixture.root, { force: true, recursive: true }));
+  await successfulCapture(fixture);
+  const result = run(
+    restoreScript,
+    await restoreArguments(fixture),
+    fixture,
+    { FAKE_DOCKER_SKIP_CIDFILE: "true" },
+  );
+  assert.notEqual(result.status, 0);
+  assert.match(
+    result.stderr,
+    /refusing an unverified container left by the create attempt/,
+  );
   const log = await readFile(fixture.log, "utf8");
   assert.doesNotMatch(log, /local:docker-rm:/);
   await stat(path.join(fixture.dockerState, "present"));
@@ -790,11 +1260,68 @@ test("standalone verifier emits stable evidence identities without Docker access
   assert.match(result.stdout, /^RELATION_SEQUENCE_COUNTS_SHA256=[a-f0-9]{64}$/m);
   assert.match(result.stdout, /^MIGRATION_HISTORY_SHA256=[a-f0-9]{64}$/m);
   assert.match(result.stdout, /^MANAGED_APPLICATION_DDL_SHA256=[a-f0-9]{64}$/m);
+  assert.match(result.stdout, /^CAPTURE_TOOLSET_SHA256=[a-f0-9]{64}$/m);
+  assert.match(result.stdout, /^RESTORE_TOOLSET_SHA256=[a-f0-9]{64}$/m);
+  assert.match(
+    result.stdout,
+    new RegExp(`^APPROVED_TOOL_MANIFEST_SHA256=${await sha256(fixture.approvedToolManifest)}$`, "m"),
+  );
   assert.match(result.stdout, /^MIGRATION_HISTORY_STATE=absent$/m);
   assert.match(result.stdout, new RegExp(`^SUPABASE_CLI_SHA256=${await sha256(fixture.supabase)}$`, "m"));
   assert.match(result.stdout, new RegExp(`^POSTGRES_IMAGE_ID=${imageId}$`, "m"));
+  assert.match(result.stdout, /^WRITER_QUIESCED_AT=\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/m);
+  assert.match(result.stdout, /^CAPTURE_STARTED_AT=\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/m);
   assert.match(result.stdout, /^CAPTURED_AT=\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/m);
   assert.doesNotMatch(await readFile(fixture.log, "utf8"), /docker/);
+});
+
+test("standalone verifier rejects restore-evidence tampering", async (t) => {
+  const fixture = await buildFixture();
+  t.after(() => rm(fixture.root, { force: true, recursive: true }));
+  await successfulCapture(fixture);
+  const restore = run(restoreScript, await restoreArguments(fixture), fixture);
+  assert.equal(restore.status, 0, restore.stderr);
+  const verification = path.join(
+    fixture.destination,
+    `restore-${captureId}-${restoreId}`,
+    "restore-verification.json",
+  );
+  await writeFile(verification, "{}\n");
+  await writeFile(fixture.log, "");
+  const result = run(verifyScript, await verifyArguments(fixture), fixture);
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /SHA-256 mismatch/);
+  assert.doesNotMatch(await readFile(fixture.log, "utf8"), /docker/);
+});
+
+test("standalone verifier rejects incomplete markers beside completion evidence", async (t) => {
+  const fixture = await buildFixture();
+  t.after(() => rm(fixture.root, { force: true, recursive: true }));
+  await successfulCapture(fixture);
+  const restore = run(restoreScript, await restoreArguments(fixture), fixture);
+  assert.equal(restore.status, 0, restore.stderr);
+  const args = await verifyArguments(fixture);
+
+  const captureIncomplete = path.join(
+    fixture.destination,
+    captureId,
+    "CAPTURE_INCOMPLETE",
+  );
+  await writeFile(captureIncomplete, "capture did not complete\n", { mode: 0o600 });
+  let result = run(verifyScript, args, fixture);
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /artifact inventory does not match/);
+  await unlink(captureIncomplete);
+
+  const restoreIncomplete = path.join(
+    fixture.destination,
+    `restore-${captureId}-${restoreId}`,
+    "RESTORE_INCOMPLETE",
+  );
+  await writeFile(restoreIncomplete, "restore did not complete\n", { mode: 0o600 });
+  result = run(verifyScript, args, fixture);
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /artifact inventory does not match/);
 });
 
 test("package commands expose capture, restore, verification, and fake-boundary tests", async () => {
@@ -817,9 +1344,25 @@ test("package commands expose capture, restore, verification, and fake-boundary 
     packageJson.scripts["test:production-backup-restore"],
     "node --test scripts/production-backup-restore.test.mjs",
   );
+  assert.equal(
+    packageJson.scripts["test:production-reconciliation"],
+    "node --test scripts/verify-production-reconciliation-preflight.test.mjs scripts/run-production-reconciliation-step.test.mjs",
+  );
+  assert.equal(
+    packageJson.scripts["run:production-reconciliation-step"],
+    "bash scripts/run-production-reconciliation-step.sh",
+  );
+  assert.equal(
+    packageJson.scripts["prepare:production-reconciliation-plan"],
+    "node scripts/production-reconciliation-artifacts.mjs prepare-plan",
+  );
+  assert.equal(
+    packageJson.scripts["verify:production-reconciliation-completion"],
+    "node scripts/production-reconciliation-artifacts.mjs verify-completion",
+  );
   assert.match(
     packageJson.scripts["check:database"],
-    /pnpm run test:reconciliation-stage && pnpm run test:production-backup-restore && pnpm run test:database-manifest/u,
+    /pnpm run test:reconciliation-stage && pnpm run test:production-backup-restore && pnpm run test:production-reconciliation && pnpm run test:database-manifest/u,
   );
   const ciWorkflow = await readFile(
     path.join(repositoryRoot, ".github", "workflows", "ci.yml"),
@@ -828,5 +1371,9 @@ test("package commands expose capture, restore, verification, and fake-boundary 
   assert.match(
     ciWorkflow,
     /Test production backup and restore evidence boundaries\n\s+run: pnpm run test:production-backup-restore/u,
+  );
+  assert.match(
+    ciWorkflow,
+    /Test production one-version reconciliation boundaries\n\s+run: pnpm run test:production-reconciliation/u,
   );
 });

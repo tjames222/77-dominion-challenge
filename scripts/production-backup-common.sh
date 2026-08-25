@@ -101,6 +101,37 @@ production_backup_hashed_executable() {
     || production_backup_fail "$production_backup_executable_label SHA-256 does not match."
 }
 
+production_backup_hashed_regular_file() {
+  production_backup_regular_path="$1"
+  production_backup_regular_hash="$2"
+  production_backup_regular_label="$3"
+  production_backup_require_absolute_path \
+    "$production_backup_regular_path" "$production_backup_regular_label"
+  [[ -f "$production_backup_regular_path" && ! -L "$production_backup_regular_path" ]] \
+    || production_backup_fail \
+      "$production_backup_regular_label must be a regular, non-symlink file."
+  production_backup_require_hash \
+    "$production_backup_regular_hash" "$production_backup_regular_label SHA-256"
+  production_backup_regular_actual_hash="$(
+    production_backup_sha256_file "$production_backup_regular_path"
+  )"
+  [[ "$production_backup_regular_actual_hash" == "$production_backup_regular_hash" ]] \
+    || production_backup_fail "$production_backup_regular_label SHA-256 does not match."
+}
+
+production_backup_require_local_docker_context() {
+  production_backup_context_docker="$1"
+  production_backup_docker_endpoint="$(
+    "$production_backup_context_docker" context inspect \
+      --format '{{(index .Endpoints "docker").Host}}' 2>/dev/null
+  )" || production_backup_fail "could not inspect the active Docker context."
+  case "$production_backup_docker_endpoint" in
+    unix:///*) ;;
+    *) production_backup_fail \
+      "Docker must use a local unix-socket context; remote Docker contexts are forbidden." ;;
+  esac
+}
+
 production_backup_canonical_directory() {
   production_backup_directory_path="$1"
   production_backup_directory_label="$2"
@@ -138,7 +169,8 @@ production_backup_verify_encrypted_destination() {
   production_backup_volume_output="$(
     "$production_backup_volume_hook" \
       --destination "$production_backup_destination" \
-      --passphrase-file "$production_backup_passphrase_file"
+      --passphrase-file "$production_backup_passphrase_file" \
+      2>/dev/null
   )" || production_backup_fail "encrypted destination verification hook failed."
   [[ "$production_backup_volume_output" \
     == "DOMINION_ENCRYPTED_VOLUME_OK=$production_backup_destination" ]] \
@@ -169,10 +201,71 @@ production_backup_require_branch() {
     "expected branch contains unsupported characters."
 }
 
-production_backup_read_private_value() {
-  production_backup_read_path="$1"
-  production_backup_read_value="$(tr -d '\r\n' <"$production_backup_read_path")"
-  [[ -n "$production_backup_read_value" ]] || production_backup_fail \
-    "private input file resolved to an empty value."
-  printf '%s' "$production_backup_read_value"
+production_backup_reject_ambient_database_environment() {
+  for production_backup_ambient_name in \
+    DATABASE_URL \
+    PGAPPNAME \
+    PGCHANNELBINDING \
+    PGCLIENTENCODING \
+    PGCONNECT_TIMEOUT \
+    PGDATABASE \
+    PGHOST \
+    PGHOSTADDR \
+    PGOPTIONS \
+    PGPASSFILE \
+    PGPASSWORD \
+    PGPORT \
+    PGREQUIRESSL \
+    PGSERVICE \
+    PGSERVICEFILE \
+    PGSSLCERT \
+    PGSSLCRL \
+    PGSSLCRLDIR \
+    PGSSLKEY \
+    PGSSLMODE \
+    PGSSLROOTCERT \
+    PGTARGETSESSIONATTRS \
+    PGTZ \
+    PGUSER \
+    POSTGRES_PASSWORD \
+    SUPABASE_ACCESS_TOKEN \
+    SUPABASE_DB_PASSWORD; do
+    if [[ -n "${!production_backup_ambient_name+x}" ]]; then
+      production_backup_fail \
+        "unset ambient $production_backup_ambient_name before running this operator command."
+    fi
+  done
+}
+
+production_backup_reject_ambient_runtime_environment() {
+  for production_backup_ambient_name in \
+    BASH_ENV \
+    CDPATH \
+    DOCKER_CERT_PATH \
+    DOCKER_CONFIG \
+    DOCKER_CONTEXT \
+    DOCKER_HOST \
+    DOCKER_TLS_VERIFY \
+    DYLD_INSERT_LIBRARIES \
+    DYLD_LIBRARY_PATH \
+    ENV \
+    GIT_ALTERNATE_OBJECT_DIRECTORIES \
+    GIT_CEILING_DIRECTORIES \
+    GIT_CONFIG_COUNT \
+    GIT_CONFIG_GLOBAL \
+    GIT_CONFIG_NOSYSTEM \
+    GIT_CONFIG_SYSTEM \
+    GIT_DIR \
+    GIT_INDEX_FILE \
+    GIT_OBJECT_DIRECTORY \
+    GIT_WORK_TREE \
+    LD_LIBRARY_PATH \
+    LD_PRELOAD \
+    NODE_OPTIONS \
+    NODE_PATH; do
+    if [[ -n "${!production_backup_ambient_name+x}" ]]; then
+      production_backup_fail \
+        "unset ambient $production_backup_ambient_name before running this operator command."
+    fi
+  done
 }
