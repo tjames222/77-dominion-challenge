@@ -167,7 +167,7 @@ test("package checks run both staging tests and include them in database validat
   const packageJson = JSON.parse(await readFile(packagePath, "utf8"));
   assert.equal(
     packageJson.scripts["test:reconciliation-stage"],
-    "node --test scripts/prepare-reconciliation-stage.test.mjs scripts/rehearse-history-reconciliation.test.mjs",
+    "node --test scripts/prepare-reconciliation-stage.test.mjs scripts/verify-reconciliation-history.test.mjs scripts/rehearse-history-reconciliation.test.mjs",
   );
   assert.equal(
     packageJson.scripts["rehearse:history-reconciliation"],
@@ -190,7 +190,16 @@ test("static contract is local-only, one-version-at-a-time, and checkpointed", a
   assert.match(source, /90000000-0000-4000-8000-000000000009/u);
   assert.match(source, /assert_release_file_matches/u);
   assert.match(source, /assert_head_file_matches/u);
+  assert.match(
+    source,
+    /assert_head_file_matches "\$\{frozen_file#"\$repository_root\/"\}"/u,
+  );
   assert.match(source, /current committed integration head/u);
+  assert.match(source, /check-migration-compatibility\.mjs/u);
+  assert.match(
+    source,
+    /"\$node_cli" "\$compatibility_gate" "\$stage_root\/supabase\/migrations"/u,
+  );
   assert.match(source, /prepare-reconciliation-stage\.mjs/u);
   assert.match(source, /--through-version "\$migration_version"/u);
   assert.match(source, /assert_history_prefix \$\(\(stage_number - 1\)\)/u);

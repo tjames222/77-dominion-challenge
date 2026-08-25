@@ -23,7 +23,7 @@
     "supabase:reset": "bash scripts/reset-local-database.sh",
     "check:migrations": "node scripts/check-migration-compatibility.mjs",
     "test:migration-compatibility": "node --test scripts/check-migration-compatibility.test.mjs",
-    "test:reconciliation-stage": "node --test scripts/prepare-reconciliation-stage.test.mjs scripts/rehearse-history-reconciliation.test.mjs",
+    "test:reconciliation-stage": "node --test scripts/prepare-reconciliation-stage.test.mjs scripts/verify-reconciliation-history.test.mjs scripts/rehearse-history-reconciliation.test.mjs",
     "test:migration-atomicity": "bash scripts/test-migration-atomicity.sh",
     "test:profile-photo-cleanup-cron": "node --test scripts/profile-photo-cleanup-cron-rehearsal.test.mjs",
     "rehearse:profile-photo-cleanup-cron": "bash scripts/rehearse-profile-photo-cleanup-cron.sh",

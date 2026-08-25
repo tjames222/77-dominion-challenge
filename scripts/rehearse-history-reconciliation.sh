@@ -15,6 +15,7 @@ script_directory="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 repository_root="$(cd "$script_directory/.." && pwd -P)"
 fixture_directory="$repository_root/supabase/tests/reconciliation"
 stage_preparer="$script_directory/prepare-reconciliation-stage.mjs"
+compatibility_gate="$script_directory/check-migration-compatibility.mjs"
 capture_helper="$script_directory/capture-database-manifest.sh"
 manifest_comparator="$script_directory/compare-database-manifests.mjs"
 source_manifest="$fixture_directory/legacy-migration-2.source.manifest.jsonl"
@@ -168,9 +169,11 @@ assert_release_file_matches \
 for integration_fixture in \
   scripts/baseline-data-fingerprint.sql \
   scripts/capture-database-manifest.sh \
+  scripts/check-migration-compatibility.mjs \
   scripts/compare-database-manifests.mjs \
   scripts/database-manifest.sql \
   scripts/prepare-reconciliation-stage.mjs \
+  scripts/rehearse-history-reconciliation.sh \
   supabase/tests/reconciliation/legacy-migration-2.source.manifest.jsonl \
   supabase/tests/reconciliation/migration-3.target.manifest.jsonl; do
   assert_head_file_matches "$integration_fixture"
@@ -222,6 +225,7 @@ if [[ "$mode" == "verify" ]]; then
     "$migration_13_manifest" \
     "$migration_13_fingerprint"; do
     [[ -f "$frozen_file" ]] || fail "missing frozen checkpoint file $frozen_file."
+    assert_head_file_matches "${frozen_file#"$repository_root/"}"
     if grep -Fqx "$generation_sentinel" "$frozen_file"; then
       fail "frozen checkpoints have not been generated. Run this exact isolated rehearsal with --regenerate, review all three artifacts, and commit them."
     fi
@@ -581,6 +585,7 @@ for migration_version in "${migration_versions[@]}"; do
     --release-commit "$release_commit" \
     --through-version "$migration_version" \
     --verify-stage "$stage_root" >/dev/null
+  "$node_cli" "$compatibility_gate" "$stage_root/supabase/migrations" >/dev/null
   staged_migration_count="$(find "$stage_root/supabase/migrations" \
     -maxdepth 1 -type f -name '*.sql' | wc -l | tr -d '[:space:]')"
   [[ "$staged_migration_count" == "$stage_number" ]] \
