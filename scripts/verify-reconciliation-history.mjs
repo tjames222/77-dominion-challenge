@@ -51,14 +51,13 @@ export function parseMigrationList(output) {
   );
   if (
     separatorCells.length !== 3
-    || separatorCells[0] !== "------------------"
-    || separatorCells[1] !== "------------------"
-    || separatorCells[2] !== "-----------------------"
+    || separatorCells.some((cell) => !/^-+$/u.test(cell))
   ) {
     fail("migration list is missing the exact pinned CLI separator.");
   }
   lineIndex += 1;
 
+  const renderedCellWidths = headerCells.map((cell) => cell.length);
   let sawTrailingWhitespace = false;
   for (; lineIndex < lines.length; lineIndex += 1) {
     const rawLine = lines[lineIndex];
@@ -71,6 +70,12 @@ export function parseMigrationList(output) {
     }
     const cells = rawLine.split("|");
     if (cells.length !== 3) fail("migration list contains a malformed table row.");
+    for (let cellIndex = 0; cellIndex < cells.length; cellIndex += 1) {
+      renderedCellWidths[cellIndex] = Math.max(
+        renderedCellWidths[cellIndex],
+        cells[cellIndex].trim().length,
+      );
+    }
     const localValue = parseQuotedCell(cells[0], "local version");
     const remoteValue = parseQuotedCell(cells[1], "remote version");
     const timestampValue = parseQuotedCell(cells[2], "timestamp");
@@ -96,6 +101,11 @@ export function parseMigrationList(output) {
     }
     if (localIsVersion) local.push(localValue);
     if (remoteIsVersion) remote.push(remoteValue);
+  }
+  for (let cellIndex = 0; cellIndex < separatorCells.length; cellIndex += 1) {
+    if (separatorCells[cellIndex].length !== renderedCellWidths[cellIndex] + 2) {
+      fail("migration list separator widths do not match the pinned CLI table.");
+    }
   }
   if (new Set(local).size !== local.length) {
     fail("local migration list contains duplicate versions.");

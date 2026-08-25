@@ -206,7 +206,11 @@ test("static contract is local-only, one-version-at-a-time, and checkpointed", a
   assert.match(source, /assert_history_prefix "\$stage_number"/u);
   assert.match(
     source,
-    /select version from supabase_migrations\.schema_migrations order by version/u,
+    /from supabase_migrations\.schema_migrations order by version/u,
+  );
+  assert.match(
+    source,
+    /history_output="\$\(history_versions "\$database_name"\)" \\\n+    \|\| fail "could not read the authoritative migration-history inventory\."/u,
   );
   assert.doesNotMatch(source, /git -C "\$repository_root"/u);
   assert.match(source, /git --no-replace-objects -C "\$repository_root"/u);
@@ -230,6 +234,48 @@ test("static contract is local-only, one-version-at-a-time, and checkpointed", a
   assert.doesNotMatch(source, /\bsupabase[ ]+link\b/u);
   assert.doesNotMatch(source, /api\.supabase\.com/u);
   assert.doesNotMatch(source, /mimolwojppbtsbvtqwpo/u);
+});
+
+test("an authoritative history query failure cannot pass the zero-row checkpoint", async () => {
+  const source = await readFile(rehearsalPath, "utf8");
+  const functionBlock = /history_versions\(\) \{(?<body>[\s\S]*?)\n\}\n\nassert_history_prefix\(\) \{(?<assertBody>[\s\S]*?)\n\}\n\ncapture_manifest\(\)/u.exec(
+    source,
+  );
+  assert.ok(functionBlock?.groups?.body);
+  assert.ok(functionBlock?.groups?.assertBody);
+  const fixtureRoot = await mkdtemp(
+    path.join(os.tmpdir(), "fou762-history-query-failure-"),
+  );
+  try {
+    const fakeDocker = path.join(fixtureRoot, "docker");
+    const harness = path.join(fixtureRoot, "harness.sh");
+    await writeFile(fakeDocker, "#!/bin/sh\nexit 42\n");
+    await chmod(fakeDocker, 0o700);
+    await writeFile(
+      harness,
+      `#!/bin/bash
+set -euo pipefail
+fail() { printf '%s\\n' "$1" >&2; exit 97; }
+docker_cli=${JSON.stringify(fakeDocker)}
+expected_database_container=local-only
+database_name=fixture
+migration_versions=(20260707170000)
+history_versions() {${functionBlock.groups.body}
+}
+assert_history_prefix() {${functionBlock.groups.assertBody}
+}
+assert_history_prefix 0
+printf 'migration-up-boundary-reached\\n'
+`,
+    );
+    await chmod(harness, 0o700);
+    const result = spawnSync("/bin/bash", [harness], { encoding: "utf8" });
+    assert.equal(result.status, 97, result.stderr);
+    assert.match(result.stderr, /could not read the authoritative migration-history inventory/u);
+    assert.doesNotMatch(result.stdout, /migration-up-boundary-reached/u);
+  } finally {
+    await rm(fixtureRoot, { force: true, recursive: true });
+  }
 });
 
 test("frozen checkpoint artifacts are canonical JSONL once generated", async () => {

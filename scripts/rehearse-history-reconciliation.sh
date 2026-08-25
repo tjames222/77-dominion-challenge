@@ -419,23 +419,34 @@ history_versions() {
   history_relation="$($docker_cli exec "$expected_database_container" \
     psql --username postgres --dbname "$target_database" --tuples-only --no-align \
       --no-psqlrc --set ON_ERROR_STOP=1 \
-      --command "select coalesce(to_regclass('supabase_migrations.schema_migrations')::text, '')")"
-  if [[ -n "$history_relation" ]]; then
+      --command "select case when to_regclass('supabase_migrations.schema_migrations') is null then 'absent' else 'present' end")" \
+    || return 1
+  if [[ "$history_relation" == "present" ]]; then
     "$docker_cli" exec "$expected_database_container" \
       psql --username postgres --dbname "$target_database" --tuples-only --no-align \
         --no-psqlrc --set ON_ERROR_STOP=1 \
-        --command 'select version from supabase_migrations.schema_migrations order by version'
+        --command "select 'version:' || coalesce(version, '') from supabase_migrations.schema_migrations order by version" \
+      || return 1
+  elif [[ "$history_relation" != "absent" ]]; then
+    return 1
   fi
 }
 
 assert_history_prefix() {
   local expected_count="$1"
   local actual_history=()
+  local history_output
   local history_version
   local history_index
-  while IFS= read -r history_version; do
-    [[ -n "$history_version" ]] && actual_history+=("$history_version")
-  done < <(history_versions "$database_name")
+  history_output="$(history_versions "$database_name")" \
+    || fail "could not read the authoritative migration-history inventory."
+  if [[ -n "$history_output" ]]; then
+    while IFS= read -r history_version; do
+      [[ "$history_version" =~ ^version:([0-9]{14})$ ]] \
+        || fail "migration history contains an invalid or unencoded version row."
+      actual_history+=("${BASH_REMATCH[1]}")
+    done <<<"$history_output"
+  fi
   (( ${#actual_history[@]} == expected_count )) \
     || fail "expected $expected_count migration-history row(s), found ${#actual_history[@]}."
   for (( history_index = 0; history_index < expected_count; history_index += 1 )); do

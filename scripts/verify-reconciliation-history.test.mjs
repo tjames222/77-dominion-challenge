@@ -16,21 +16,27 @@ const scriptPath = path.join(scriptDirectory, "verify-reconciliation-history.mjs
 
 function migrationList(localVersions, remoteVersions) {
   const count = Math.max(localVersions.length, remoteVersions.length);
-  const rows = [
-    "   Local            | Remote           | Time (UTC)",
-    "  ------------------|------------------|-----------------------",
-  ];
+  const headers = ["Local", "Remote", "Time (UTC)"];
+  const values = [];
   for (let index = 0; index < count; index += 1) {
     const local = localVersions[index] ? `\`${localVersions[index]}\`` : "` `";
     const remote = remoteVersions[index] ? `\`${remoteVersions[index]}\`` : "` `";
     const version = localVersions[index] || remoteVersions[index];
     const timestamp = `${version.slice(0, 4)}-${version.slice(4, 6)}-${version.slice(6, 8)} `
       + `${version.slice(8, 10)}:${version.slice(10, 12)}:${version.slice(12, 14)}`;
-    rows.push(
-      `   ${local.padEnd(18)} | ${remote.padEnd(18)} | \`${timestamp}\` `,
-    );
+    values.push([local, remote, `\`${timestamp}\``]);
   }
-  return `${rows.join("\n")}\n`;
+  const widths = headers.map((header, cellIndex) =>
+    Math.max(header.length, ...values.map((row) => row[cellIndex].length))
+  );
+  const rows = [
+    `   ${headers.map((header, index) => header.padEnd(widths[index])).join(" | ")} `,
+    `  ${widths.map((width) => "-".repeat(width + 2)).join("|")}`,
+    ...values.map((row) =>
+      `   ${row.map((cell, index) => cell.padEnd(widths[index])).join(" | ")} `
+    ),
+  ];
+  return `\n  \n${rows.join("\n")}\n`;
 }
 
 const PINNED_CLI_2_109_TABLE = [
@@ -38,8 +44,8 @@ const PINNED_CLI_2_109_TABLE = [
   "  ",
   "   Local            | Remote           | Time (UTC)             ",
   "  ------------------|------------------|-----------------------",
-  "   `20260707170000`   | `20260707170000`   | `2026-07-07 17:00:00` ",
-  "   `20260708154000`   | ` `                  | `2026-07-08 15:40:00` ",
+  "   `20260707170000` | `20260707170000` | `2026-07-07 17:00:00` ",
+  "   `20260708154000` | ` `              | `2026-07-08 15:40:00` ",
   "",
 ].join("\n");
 
@@ -86,7 +92,7 @@ test("rejects malformed, legacy, and versionless data rows", () => {
 });
 
 test("requires the exact pinned CLI table grammar", () => {
-  const validRow = "   `20260707170000`   | ` `                  | `2026-07-07 17:00:00`";
+  const validRow = "   `20260707170000` | ` `    | `2026-07-07 17:00:00`";
   for (const invalidOutput of [
     `${validRow}\n`,
     `  ------------------|------------------|-----------------------\n`
@@ -110,6 +116,27 @@ test("requires the exact pinned CLI table grammar", () => {
       /header|separator|quoted|timestamp|trailing whitespace/u,
     );
   }
+});
+
+test("accepts dynamic pinned widths for stage-one and remote-only tables", () => {
+  const firstVersion = HISTORICAL_RECONCILIATION_VERSIONS[0];
+  assert.deepEqual(parseMigrationList(migrationList([firstVersion], [])), {
+    local: [firstVersion],
+    remote: [],
+  });
+  assert.deepEqual(parseMigrationList(migrationList([], [firstVersion])), {
+    local: [],
+    remote: [firstVersion],
+  });
+  assert.throws(
+    () => parseMigrationList(
+      migrationList([firstVersion], []).replace(
+        "------------------|--------|-----------------------",
+        "------------------|------------------|-----------------------",
+      ),
+    ),
+    /separator widths/u,
+  );
 });
 
 test("an extra short numeric row cannot be hidden by the table parser", () => {
