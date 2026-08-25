@@ -364,6 +364,18 @@ separately reviewed change and the exact restored-snapshot rehearsal passes:
    if the fresh object or multipart inventory is nonzero, and separately
    disposition any analytics/vector catalog rows. Checksum every artifact and
    test-restore the backup locally before continuing.
+
+   Use the fail-closed operator helpers in
+   [`production-backup-restore.md`](production-backup-restore.md). They require
+   a clean exact release tree, pinned CLI and image identities, separately
+   hashed read-only inventory hooks, credentials in private files, and a
+   pre-mounted encrypted destination before the first remote access. The
+   standalone evidence verifier binds the source manifest, complete
+   Auth/private/public/Storage/migration-history data fingerprint, canonical
+   relation/sequence counts, reviewed application-owned Auth/Storage DDL,
+   capture time, and isolated restore cleanup proof.
+   A loose dump path or an incomplete capture/restore directory is not release
+   evidence.
 3. In an isolated worktree containing only migrations 1–3, pin the exact hosted
    Postgres image (`17.6.1.141`) and build a clean checkpoint without the
    final-schema seed:
