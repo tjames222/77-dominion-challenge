@@ -201,6 +201,7 @@ test("static contract is local-only, one-version-at-a-time, and checkpointed", a
     /"\$node_cli" "\$compatibility_gate" "\$stage_root\/supabase\/migrations"/u,
   );
   assert.match(source, /prepare-reconciliation-stage\.mjs/u);
+  assert.match(source, /verify-reconciliation-history\.mjs/u);
   assert.match(source, /--through-version "\$migration_version"/u);
   assert.match(source, /assert_history_prefix \$\(\(stage_number - 1\)\)/u);
   assert.match(source, /assert_history_prefix "\$stage_number"/u);
@@ -215,6 +216,10 @@ test("static contract is local-only, one-version-at-a-time, and checkpointed", a
   assert.doesNotMatch(source, /git -C "\$repository_root"/u);
   assert.match(source, /git --no-replace-objects -C "\$repository_root"/u);
   assert.match(source, /migration up[\s\S]*--db-url "\$local_database_url"/u);
+  assert.match(
+    source,
+    /migration list[\s\S]*--phase before[\s\S]*migration up[\s\S]*--phase after/u,
+  );
   assert.match(
     source,
     /postgresql:\/\/postgres:postgres@127\.0\.0\.1:54322\/\$\{database_name\}/u,

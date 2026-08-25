@@ -16,6 +16,7 @@ repository_root="$(cd "$script_directory/.." && pwd -P)"
 fixture_directory="$repository_root/supabase/tests/reconciliation"
 stage_preparer="$script_directory/prepare-reconciliation-stage.mjs"
 compatibility_gate="$script_directory/check-migration-compatibility.mjs"
+history_checker="$script_directory/verify-reconciliation-history.mjs"
 capture_helper="$script_directory/capture-database-manifest.sh"
 manifest_comparator="$script_directory/compare-database-manifests.mjs"
 source_manifest="$fixture_directory/legacy-migration-2.source.manifest.jsonl"
@@ -182,12 +183,14 @@ for integration_fixture in \
   scripts/database-manifest.sql \
   scripts/prepare-reconciliation-stage.mjs \
   scripts/rehearse-history-reconciliation.sh \
+  scripts/verify-reconciliation-history.mjs \
   supabase/tests/reconciliation/legacy-migration-2.source.manifest.jsonl \
   supabase/tests/reconciliation/migration-3.target.manifest.jsonl; do
   assert_head_file_matches "$integration_fixture"
 done
 
 [[ -f "$stage_preparer" ]] || fail "missing $stage_preparer."
+[[ -f "$history_checker" ]] || fail "missing $history_checker."
 [[ -f "$capture_helper" ]] || fail "missing $capture_helper."
 [[ -f "$manifest_comparator" ]] || fail "missing $manifest_comparator."
 
@@ -615,6 +618,16 @@ for migration_version in "${migration_versions[@]}"; do
     || fail "stage $stage_number does not contain exactly one migration for $migration_version."
 
   local_database_url="postgresql://postgres:postgres@127.0.0.1:54322/${database_name}"
+  before_history_table="$rehearsal_root/stage-$(printf '%02d' "$stage_number").before-history.txt"
+  "$supabase_cli" migration list \
+    --db-url "$local_database_url" \
+    --output-format text \
+    --workdir "$stage_root" \
+    >"$before_history_table"
+  "$node_cli" "$history_checker" \
+    --input "$before_history_table" \
+    --phase before \
+    --through-version "$migration_version" >/dev/null
   "$supabase_cli" migration up \
     --db-url "$local_database_url" \
     --include-all \
@@ -623,6 +636,16 @@ for migration_version in "${migration_versions[@]}"; do
     --workdir "$stage_root" \
     >"$rehearsal_root/stage-$(printf '%02d' "$stage_number").log"
   assert_history_prefix "$stage_number"
+  after_history_table="$rehearsal_root/stage-$(printf '%02d' "$stage_number").after-history.txt"
+  "$supabase_cli" migration list \
+    --db-url "$local_database_url" \
+    --output-format text \
+    --workdir "$stage_root" \
+    >"$after_history_table"
+  "$node_cli" "$history_checker" \
+    --input "$after_history_table" \
+    --phase after \
+    --through-version "$migration_version" >/dev/null
 
   if [[ "$stage_number" == "3" || "$stage_number" == "13" ]]; then
     checkpoint_stage "$stage_number"
