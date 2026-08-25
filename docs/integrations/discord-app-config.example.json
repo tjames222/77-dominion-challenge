@@ -1,0 +1,17 @@
+{
+  "displayName": "77 Dominion Updates ENVIRONMENT",
+  "description": "Private-group progress updates for the 77 Dominion Challenge.",
+  "oauthRedirectUri": "https://PROJECT_REF.supabase.co/functions/v1/discord-oauth-callback",
+  "install": {
+    "scopes": ["bot", "identify"],
+    "permissions": "3072",
+    "permissionExplanation": ["VIEW_CHANNEL", "SEND_MESSAGES"],
+    "requireOAuth2CodeGrant": true,
+    "publicBot": true
+  },
+  "gatewayIntents": [],
+  "notes": [
+    "This is a reviewed configuration record; Discord does not import it as an application manifest.",
+    "Create separate non-production and production applications and replace ENVIRONMENT and PROJECT_REF before review."
+  ]
+}

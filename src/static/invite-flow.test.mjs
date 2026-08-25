@@ -1,0 +1,235 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {
+  INVITE_CONTINUATION_STORAGE_KEY,
+  buildInviteAuthHref,
+  captureInviteCredential,
+  captureInviteSecret,
+  cleanInviteLocation,
+  clearInviteContinuation,
+  getStoredInviteContinuation,
+  inviteStatusContent,
+  isInviteReturnPath,
+  normalizeInviteCode,
+  readInviteCredential,
+  readInviteSecret,
+  storeInviteContinuation,
+} from './invite-flow.mjs';
+
+test('fragment invites take precedence and are removed before continuation work', () => {
+  const calls = [];
+  const fakeWindow = {
+    location: {
+      pathname: '/invite.html',
+      search: '?campaign=crew',
+      hash: '#invite=fragment-secret-12345',
+    },
+    history: { replaceState: (...args) => calls.push(args) },
+  };
+
+  assert.deepEqual(captureInviteSecret(fakeWindow), {
+    secret: 'fragment-secret-12345',
+    source: 'fragment',
+  });
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0][2], '/invite.html?campaign=crew');
+  assert.equal(calls[0][2].includes('fragment-secret'), false);
+});
+
+test('legacy query invites are accepted only for migration and stripped immediately', () => {
+  const location = {
+    pathname: '/invite.html',
+    search: '?invite=legacy-secret-12345&source=old-link',
+    hash: '',
+  };
+  assert.deepEqual(readInviteSecret(location), {
+    secret: 'legacy-secret-12345',
+    source: 'legacy-query',
+  });
+  assert.equal(cleanInviteLocation(location), '/invite.html?source=old-link');
+});
+
+test('join codes are case-insensitive, tolerate grouping, and are stripped before lookup', () => {
+  const calls = [];
+  const fakeWindow = {
+    location: {
+      pathname: '/invite.html',
+      search: '?campaign=code-card',
+      hash: '#code=3467-9acd-efgh-jkmn',
+    },
+    history: { replaceState: (...args) => calls.push(args) },
+  };
+
+  assert.equal(normalizeInviteCode('3467 9acd-efgh jkmn'), '34679ACDEFGHJKMN');
+  assert.deepEqual(readInviteCredential(fakeWindow.location), {
+    type: 'code',
+    value: '34679ACDEFGHJKMN',
+    source: 'fragment',
+  });
+  assert.deepEqual(captureInviteCredential(fakeWindow), {
+    type: 'code',
+    value: '34679ACDEFGHJKMN',
+    source: 'fragment',
+  });
+  assert.equal(calls[0][2], '/invite.html?campaign=code-card');
+  assert.equal(calls[0][2].includes('3467'), false);
+});
+
+test('link credentials win over a conflicting code and code query parameters are never accepted', () => {
+  assert.deepEqual(readInviteCredential({
+    hash: '#invite=valid-link-secret-12345&code=34679ACDEFGHJKMN',
+  }), {
+    type: 'token',
+    value: 'valid-link-secret-12345',
+    source: 'fragment',
+  });
+  assert.deepEqual(readInviteCredential({ search: '?code=34679ACDEFGHJKMN' }), {
+    type: '',
+    value: '',
+    source: '',
+  });
+  assert.equal(cleanInviteLocation({
+    pathname: '/invite.html',
+    search: '?code=34679ACDEFGHJKMN&campaign=safe',
+  }), '/invite.html?campaign=safe');
+});
+
+test('rejected query credentials are stripped while unrelated URL parts are retained', () => {
+  for (const search of [
+    '?code=not-a-supported-code&campaign=safe',
+    '?invite=short&campaign=safe',
+  ]) {
+    const calls = [];
+    const fakeWindow = {
+      location: {
+        pathname: '/invite.html',
+        search,
+        hash: '#panel=details',
+      },
+      history: { replaceState: (...args) => calls.push(args) },
+    };
+
+    assert.deepEqual(captureInviteCredential(fakeWindow), {
+      type: '',
+      value: '',
+      source: '',
+    });
+    assert.deepEqual(calls, [[{}, '', '/invite.html?campaign=safe#panel=details']]);
+  }
+});
+
+test('malformed fragment credentials are stripped while unrelated query and fragment data remain', () => {
+  for (const hash of [
+    '#invite=%3Cscript%3Ealert(1)%3C%2Fscript%3E&panel=details',
+    '#code=3467-NOT-A-JOIN-CODE&panel=details',
+  ]) {
+    const calls = [];
+    const fakeWindow = {
+      location: {
+        pathname: '/invite.html',
+        search: '?campaign=safe',
+        hash,
+      },
+      history: { replaceState: (...args) => calls.push(args) },
+    };
+
+    assert.deepEqual(captureInviteCredential(fakeWindow), {
+      type: '',
+      value: '',
+      source: '',
+    });
+    assert.deepEqual(calls, [[{}, '', '/invite.html?campaign=safe#panel=details']]);
+  }
+});
+
+test('capture leaves credential-free locations unchanged', () => {
+  const calls = [];
+  const fakeWindow = {
+    location: {
+      pathname: '/invite.html',
+      search: '?campaign=safe',
+      hash: '#panel=details',
+    },
+    history: { replaceState: (...args) => calls.push(args) },
+  };
+
+  assert.deepEqual(captureInviteCredential(fakeWindow), {
+    type: '',
+    value: '',
+    source: '',
+  });
+  assert.deepEqual(calls, []);
+});
+
+test('short, malformed, and script-like secrets are ignored', () => {
+  assert.equal(readInviteSecret({ hash: '#invite=short' }).secret, '');
+  assert.equal(readInviteSecret({ hash: '#invite=%3Cscript%3Ealert(1)%3C%2Fscript%3E' }).secret, '');
+  assert.equal(readInviteSecret({ hash: '#invite=valid_secret-token-123' }).secret, 'valid_secret-token-123');
+});
+
+test('code entry copy states that preview and confirmation are separate', () => {
+  const content = inviteStatusContent('enter_code');
+  assert.match(content.title, /Enter your join code/);
+  assert.match(content.message, /never joins/i);
+  assert.match(content.message, /confirm/i);
+});
+
+test('auth continuation is fixed to the invite page and cannot carry secrets', () => {
+  assert.equal(buildInviteAuthHref('login'), './login.html?returnTo=.%2Finvite.html');
+  assert.equal(buildInviteAuthHref('register'), './register.html?returnTo=.%2Finvite.html');
+  assert.equal(isInviteReturnPath('./invite.html'), true);
+  assert.equal(isInviteReturnPath('./invite.html?invite=secret-secret-123'), false);
+  assert.equal(isInviteReturnPath('https://evil.example/invite.html'), false);
+  assert.equal(isInviteReturnPath('//evil.example/invite.html'), false);
+});
+
+test('continuations use session-style storage and reject invalid values', () => {
+  const values = new Map();
+  const storage = {
+    getItem: (key) => values.get(key) || null,
+    setItem: (key, value) => values.set(key, value),
+    removeItem: (key) => values.delete(key),
+  };
+
+  assert.equal(storeInviteContinuation(storage, 'valid-continuation-12345'), true);
+  assert.equal(values.get(INVITE_CONTINUATION_STORAGE_KEY), 'valid-continuation-12345');
+  assert.equal(getStoredInviteContinuation(storage), 'valid-continuation-12345');
+  clearInviteContinuation(storage);
+  assert.equal(getStoredInviteContinuation(storage), '');
+  assert.equal(storeInviteContinuation(storage, 'bad'), false);
+});
+
+test('privacy-safe failure copy does not include private group or inviter data', () => {
+  for (const status of ['invalid', 'expired', 'revoked', 'already_used', 'full', 'wrong_account']) {
+    const content = inviteStatusContent(status, {
+      groupName: 'Secret Group Name',
+      inviterName: 'Private Person',
+    });
+    const combined = `${content.eyebrow} ${content.title} ${content.message}`;
+    assert.equal(combined.includes('Secret Group Name'), false, status);
+    assert.equal(combined.includes('Private Person'), false, status);
+  }
+});
+
+test('ready and joined states name only the privacy-safe preview fields', () => {
+  const ready = inviteStatusContent('ready', { groupName: 'Morning Crew', inviterName: 'Alex' });
+  assert.match(ready.title, /Morning Crew/);
+  assert.match(ready.message, /Alex/);
+  const joined = inviteStatusContent('joined', { groupName: 'Morning Crew' });
+  assert.match(joined.title, /Morning Crew/);
+  const pending = inviteStatusContent('activation_pending', { groupName: 'Morning Crew' });
+  assert.match(pending.title, /Morning Crew/);
+  assert.match(pending.message, /membership is active/i);
+  assert.equal(pending.recoverable, true);
+  const started = inviteStatusContent('challenge_started', { groupName: 'Morning Crew' });
+  assert.match(started.title, /Morning Crew/);
+  assert.equal(started.recoverable, false);
+});
+
+test('a second-crew conflict explains the safe recovery without changing membership', () => {
+  const content = inviteStatusContent('current_crew_conflict', { groupName: 'Morning Crew' });
+  assert.match(content.title, /already belong/i);
+  assert.match(content.message, /Leave your current group/i);
+  assert.match(content.message, /No membership change was made/i);
+  assert.equal(content.recoverable, true);
+});

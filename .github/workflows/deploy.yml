@@ -1,48 +1,523 @@
-name: Deploy to GitHub Pages
+name: Release production
 
 on:
-  push:
-    branches:
-      - main
   workflow_dispatch:
+    inputs:
+      release_scope:
+        description: Choose a full release or rebuild only the frontend from a backend-compatible commit.
+        required: true
+        default: full
+        type: choice
+        options:
+          - full
+          - frontend-only
 
 permissions:
   contents: read
-  pages: write
-  id-token: write
+  deployments: write
 
 concurrency:
-  group: pages
+  group: production-release
   cancel-in-progress: false
 
 jobs:
-  build:
+  authorize:
+    name: Authorize manual production release
     runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Require the protected main branch
+        shell: bash
+        run: |
+          if [[ "${GITHUB_REF}" != "refs/heads/main" ]]; then
+            echo "::error::Production releases must be dispatched from the protected main branch."
+            exit 1
+          fi
+
+  validation:
+    name: Validate release candidate
+    needs: authorize
+    uses: ./.github/workflows/ci.yml
+
+  backend:
+    name: Migrate, deploy, and verify backend
+    needs: validation
+    if: inputs.release_scope == 'full'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: production
+    env:
+      SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+      SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+      SUPABASE_PROJECT_REF: ${{ vars.SUPABASE_PROJECT_REF }}
+      STRIPE_SECRET_KEY: ${{ secrets.STRIPE_SECRET_KEY }}
+      STRIPE_WEBHOOK_SECRET: ${{ secrets.STRIPE_WEBHOOK_SECRET }}
+      STRIPE_MEMBERSHIP_PRICE_ID: ${{ secrets.STRIPE_MEMBERSHIP_PRICE_ID }}
+      INTEGRATION_WORKER_SECRET: ${{ secrets.INTEGRATION_WORKER_SECRET }}
+      INTEGRATION_CREDENTIAL_KEYS: ${{ secrets.INTEGRATION_CREDENTIAL_KEYS }}
+      INTEGRATION_OAUTH_STATE_SECRET: ${{ secrets.INTEGRATION_OAUTH_STATE_SECRET }}
+      RETIRED_COMMUNITY_WORKER_SECRET: ${{ secrets.RETIRED_COMMUNITY_WORKER_SECRET }}
+      RETIRED_COMMUNITY_DR_HMAC_SECRET: ${{ secrets.RETIRED_COMMUNITY_DR_HMAC_SECRET }}
+      PROFILE_PHOTO_WORKER_SECRET: ${{ secrets.PROFILE_PHOTO_WORKER_SECRET }}
+      SLACK_CLIENT_ID: ${{ secrets.SLACK_CLIENT_ID }}
+      SLACK_CLIENT_SECRET: ${{ secrets.SLACK_CLIENT_SECRET }}
+      SLACK_SIGNING_SECRET: ${{ secrets.SLACK_SIGNING_SECRET }}
+      DISCORD_CLIENT_ID: ${{ secrets.DISCORD_CLIENT_ID }}
+      DISCORD_CLIENT_SECRET: ${{ secrets.DISCORD_CLIENT_SECRET }}
+      DISCORD_PUBLIC_KEY: ${{ secrets.DISCORD_PUBLIC_KEY }}
+      DISCORD_BOT_TOKEN: ${{ secrets.DISCORD_BOT_TOKEN }}
+      PUBLIC_SITE_URL: ${{ vars.PUBLIC_SITE_URL }}
+      PUBLIC_SHARE_URL: ${{ vars.PUBLIC_SHARE_URL }}
+      PUBLIC_ALLOWED_SITE_URLS: ${{ vars.PUBLIC_ALLOWED_SITE_URLS }}
+      VITE_SUPABASE_URL: ${{ vars.VITE_SUPABASE_URL }}
+      VITE_SUPABASE_PUBLISHABLE_KEY: ${{ vars.VITE_SUPABASE_PUBLISHABLE_KEY }}
+      SUPABASE_TELEMETRY_DISABLED: "1"
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 22
-      - name: Install dependencies
-        run: npm install
-      - name: Build
-        run: npm run build
-      - name: Setup Pages
-        uses: actions/configure-pages@v5
-      - name: Upload artifact
-        uses: actions/upload-pages-artifact@v3
+      - name: Setup Supabase CLI
+        uses: supabase/setup-cli@3c2f5e2ae34c34e428e8e206e2c4d21fa2d20fbf # v2
         with:
+          version: 2.109.0
+      - name: Reject migrations incompatible with atomic CLI execution
+        run: node scripts/check-migration-compatibility.mjs
+      - name: Validate the production release gate
+        shell: bash
+        run: |
+          required=(
+            SUPABASE_ACCESS_TOKEN
+            SUPABASE_DB_PASSWORD
+            SUPABASE_PROJECT_REF
+            STRIPE_SECRET_KEY
+            STRIPE_WEBHOOK_SECRET
+            STRIPE_MEMBERSHIP_PRICE_ID
+            PROFILE_PHOTO_WORKER_SECRET
+            PUBLIC_SITE_URL
+            VITE_SUPABASE_URL
+            VITE_SUPABASE_PUBLISHABLE_KEY
+          )
+          for name in "${required[@]}"; do
+            if [[ -z "${!name:-}" ]]; then
+              echo "::error::Missing production environment value: ${name}"
+              exit 1
+            fi
+          done
+          expected_supabase_url="https://${SUPABASE_PROJECT_REF}.supabase.co"
+          if [[ "${VITE_SUPABASE_URL%/}" != "${expected_supabase_url}" ]]; then
+            echo "::error::The frontend Supabase URL must target the same project migrated by this release."
+            exit 1
+          fi
+          if [[ "${PUBLIC_SITE_URL}" != https://* ]]; then
+            echo "::error::PUBLIC_SITE_URL must be an HTTPS production origin."
+            exit 1
+          fi
+      - name: Link production Supabase project
+        run: supabase link --project-ref "$SUPABASE_PROJECT_REF" --password "$SUPABASE_DB_PASSWORD"
+      - name: Require reconciled historical migration records
+        shell: bash
+        run: |
+          history="$(supabase migration list --linked --password "$SUPABASE_DB_PASSWORD")"
+          printf '%s\n' "$history"
+
+          required_history=(
+            20260707170000
+            20260708154000
+            20260708155500
+            20260708160000
+            20260709163000
+            20260710120000
+            20260710123000
+            20260713120000
+            20260714120000
+            20260715190000
+            20260716061500
+            20260716153000
+            20260716163000
+          )
+          for version in "${required_history[@]}"; do
+            if ! awk -F'|' -v expected="$version" \
+              '$1 ~ expected && $2 ~ expected { found=1 } END { exit found ? 0 : 1 }' \
+              <<< "$history"; then
+              echo "::error::Historical migration ${version} is not reconciled on production. Follow docs/backend-release-runbook.md; the workflow will not replay historical SQL."
+              exit 1
+            fi
+          done
+      - name: Verify migration history and preview the migration plan
+        run: supabase db push --linked --dry-run --password "$SUPABASE_DB_PASSWORD"
+      - name: Apply database migrations
+        run: supabase migration up --linked
+      - name: Synchronize Edge Function secrets
+        id: function-secrets
+        shell: bash
+        run: |
+          function_secrets=(
+            "STRIPE_SECRET_KEY=${STRIPE_SECRET_KEY}"
+            "STRIPE_WEBHOOK_SECRET=${STRIPE_WEBHOOK_SECRET}"
+            "STRIPE_MEMBERSHIP_PRICE_ID=${STRIPE_MEMBERSHIP_PRICE_ID}"
+            "PUBLIC_SITE_URL=${PUBLIC_SITE_URL}"
+          )
+          if (( ${#PROFILE_PHOTO_WORKER_SECRET} < 32 )); then
+            echo "::error::PROFILE_PHOTO_WORKER_SECRET must contain at least 32 characters."
+            exit 1
+          fi
+          for existing_secret in \
+            "${INTEGRATION_WORKER_SECRET:-}" \
+            "${RETIRED_COMMUNITY_WORKER_SECRET:-}" \
+            "${RETIRED_COMMUNITY_DR_HMAC_SECRET:-}"; do
+            if [[ -n "$existing_secret" && "$PROFILE_PHOTO_WORKER_SECRET" == "$existing_secret" ]]; then
+              echo "::error::PROFILE_PHOTO_WORKER_SECRET must be distinct from every other worker or DR secret."
+              exit 1
+            fi
+          done
+          function_secrets+=("PROFILE_PHOTO_WORKER_SECRET=${PROFILE_PHOTO_WORKER_SECRET}")
+          if [[ -n "${PUBLIC_SHARE_URL:-}" ]]; then
+            function_secrets+=("PUBLIC_SHARE_URL=${PUBLIC_SHARE_URL}")
+          fi
+          if [[ -n "${PUBLIC_ALLOWED_SITE_URLS:-}" ]]; then
+            function_secrets+=("PUBLIC_ALLOWED_SITE_URLS=${PUBLIC_ALLOWED_SITE_URLS}")
+          fi
+          integration_runtime_enabled=false
+          if [[ -n "${INTEGRATION_WORKER_SECRET:-}" ]]; then
+            if [[ -z "${INTEGRATION_CREDENTIAL_KEYS:-}" ]]; then
+              echo "::error::INTEGRATION_WORKER_SECRET requires INTEGRATION_CREDENTIAL_KEYS."
+              exit 1
+            fi
+            function_secrets+=(
+              "INTEGRATION_WORKER_SECRET=${INTEGRATION_WORKER_SECRET}"
+              "INTEGRATION_CREDENTIAL_KEYS=${INTEGRATION_CREDENTIAL_KEYS}"
+            )
+            integration_runtime_enabled=true
+            echo "integration_runtime_enabled=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "integration_runtime_enabled=false" >> "$GITHUB_OUTPUT"
+          fi
+          retention_values_present=0
+          for name in RETIRED_COMMUNITY_WORKER_SECRET RETIRED_COMMUNITY_DR_HMAC_SECRET; do
+            if [[ -n "${!name:-}" ]]; then
+              retention_values_present=$((retention_values_present + 1))
+            fi
+          done
+          if (( retention_values_present == 1 )); then
+            echo "::error::RETIRED_COMMUNITY_WORKER_SECRET and RETIRED_COMMUNITY_DR_HMAC_SECRET must be configured together."
+            exit 1
+          fi
+          if (( retention_values_present == 2 )); then
+            if (( ${#RETIRED_COMMUNITY_WORKER_SECRET} < 32 || ${#RETIRED_COMMUNITY_DR_HMAC_SECRET} < 32 )); then
+              echo "::error::Retired Community worker and DR secrets must each contain at least 32 characters."
+              exit 1
+            fi
+            if [[ "${RETIRED_COMMUNITY_WORKER_SECRET}" == "${RETIRED_COMMUNITY_DR_HMAC_SECRET}" \
+              || "${RETIRED_COMMUNITY_WORKER_SECRET}" == "${INTEGRATION_WORKER_SECRET:-}" \
+              || "${RETIRED_COMMUNITY_DR_HMAC_SECRET}" == "${INTEGRATION_WORKER_SECRET:-}" ]]; then
+              echo "::error::Retired Community worker, DR, and integration worker secrets must be distinct."
+              exit 1
+            fi
+            if [[ -z "${INTEGRATION_CREDENTIAL_KEYS:-}" ]]; then
+              echo "::error::The retired Community worker requires INTEGRATION_CREDENTIAL_KEYS for provider revocation."
+              exit 1
+            fi
+            function_secrets+=(
+              "RETIRED_COMMUNITY_WORKER_SECRET=${RETIRED_COMMUNITY_WORKER_SECRET}"
+              "RETIRED_COMMUNITY_DR_HMAC_SECRET=${RETIRED_COMMUNITY_DR_HMAC_SECRET}"
+            )
+            if [[ "${integration_runtime_enabled}" == "false" ]]; then
+              function_secrets+=("INTEGRATION_CREDENTIAL_KEYS=${INTEGRATION_CREDENTIAL_KEYS}")
+            fi
+            echo "retention_runtime_enabled=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "retention_runtime_enabled=false" >> "$GITHUB_OUTPUT"
+          fi
+          provider_connection_values=(
+            INTEGRATION_OAUTH_STATE_SECRET
+            SLACK_CLIENT_ID
+            SLACK_CLIENT_SECRET
+            SLACK_SIGNING_SECRET
+            DISCORD_CLIENT_ID
+            DISCORD_CLIENT_SECRET
+            DISCORD_PUBLIC_KEY
+            DISCORD_BOT_TOKEN
+          )
+          provider_values_present=0
+          for name in "${provider_connection_values[@]}"; do
+            if [[ -n "${!name:-}" ]]; then
+              provider_values_present=$((provider_values_present + 1))
+            fi
+          done
+          if (( provider_values_present > 0 && provider_values_present < ${#provider_connection_values[@]} )); then
+            echo "::error::Slack/Discord connection secrets must be configured as a complete set."
+            exit 1
+          fi
+          if (( provider_values_present == ${#provider_connection_values[@]} )); then
+            if [[ "${integration_runtime_enabled:-false}" == "false" ]]; then
+              echo "::error::Provider connections require the integration runtime secrets."
+              exit 1
+            fi
+            for name in "${provider_connection_values[@]}"; do
+              function_secrets+=("${name}=${!name}")
+            done
+            echo "provider_connections_enabled=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "provider_connections_enabled=false" >> "$GITHUB_OUTPUT"
+          fi
+          supabase secrets set --project-ref "$SUPABASE_PROJECT_REF" "${function_secrets[@]}"
+      - name: Deploy authenticated Edge Functions
+        run: |
+          supabase functions deploy cancel-membership --project-ref "$SUPABASE_PROJECT_REF"
+          supabase functions deploy create-checkout-session --project-ref "$SUPABASE_PROJECT_REF"
+          supabase functions deploy create-customer-portal-session --project-ref "$SUPABASE_PROJECT_REF"
+          supabase functions deploy reward-download --project-ref "$SUPABASE_PROJECT_REF"
+          supabase functions deploy retired-community-export --project-ref "$SUPABASE_PROJECT_REF"
+          supabase functions deploy upload-profile-photo --project-ref "$SUPABASE_PROJECT_REF"
+      - name: Deploy Stripe webhook
+        run: supabase functions deploy stripe-webhook --project-ref "$SUPABASE_PROJECT_REF" --no-verify-jwt
+      - name: Deploy public share renderer
+        run: supabase functions deploy share-snapshot --project-ref "$SUPABASE_PROJECT_REF" --no-verify-jwt
+      - name: Deploy integration delivery worker
+        if: steps.function-secrets.outputs.integration_runtime_enabled == 'true'
+        run: supabase functions deploy process-integration-outbox --project-ref "$SUPABASE_PROJECT_REF" --no-verify-jwt
+      - name: Deploy retired Community deletion worker
+        if: steps.function-secrets.outputs.retention_runtime_enabled == 'true'
+        run: supabase functions deploy process-retired-community-deletions --project-ref "$SUPABASE_PROJECT_REF" --no-verify-jwt
+      - name: Deploy profile-photo cleanup worker
+        run: supabase functions deploy process-profile-photo-cleanup --project-ref "$SUPABASE_PROJECT_REF" --no-verify-jwt
+      - name: Deploy provider connection functions
+        if: steps.function-secrets.outputs.provider_connections_enabled == 'true'
+        run: |
+          supabase functions deploy group-integrations --project-ref "$SUPABASE_PROJECT_REF"
+          supabase functions deploy slack-oauth-callback --project-ref "$SUPABASE_PROJECT_REF" --no-verify-jwt
+          supabase functions deploy discord-oauth-callback --project-ref "$SUPABASE_PROJECT_REF" --no-verify-jwt
+      - name: Verify migrations and deployed functions
+        shell: bash
+        run: |
+          supabase migration list --linked --password "$SUPABASE_DB_PASSWORD"
+          supabase functions list --project-ref "$SUPABASE_PROJECT_REF"
+
+          response_file="${RUNNER_TEMP}/cancel-membership-response.json"
+          status="$(curl --silent --show-error --output "$response_file" --write-out '%{http_code}' \
+            --request POST \
+            --header "apikey: ${VITE_SUPABASE_PUBLISHABLE_KEY}" \
+            --header "Origin: ${PUBLIC_SITE_URL}" \
+            "${VITE_SUPABASE_URL}/functions/v1/cancel-membership")"
+          if [[ "$status" != "401" ]]; then
+            echo "::error::Expected the unauthenticated function smoke test to return 401; received ${status}."
+            exit 1
+          fi
+
+          share_status="$(curl --silent --show-error --output "${RUNNER_TEMP}/share-snapshot-response.html" --write-out '%{http_code}' \
+            "${VITE_SUPABASE_URL}/functions/v1/share-snapshot")"
+          if [[ "$share_status" != "404" ]]; then
+            echo "::error::Expected the tokenless public-share smoke test to return 404; received ${share_status}."
+            exit 1
+          fi
+
+          export_response="${RUNNER_TEMP}/retired-community-export-response.json"
+          export_status="$(curl --silent --show-error --output "$export_response" --write-out '%{http_code}' \
+            --request POST \
+            --header "apikey: ${VITE_SUPABASE_PUBLISHABLE_KEY}" \
+            --header "Origin: ${PUBLIC_SITE_URL}" \
+            "${VITE_SUPABASE_URL}/functions/v1/retired-community-export")"
+          if [[ "$export_status" != "401" ]]; then
+            echo "::error::Expected the unauthenticated retired Community export smoke test to return 401; received ${export_status}."
+            exit 1
+          fi
+
+          profile_upload_response="${RUNNER_TEMP}/profile-photo-upload-response.json"
+          profile_upload_status="$(curl --silent --show-error --output "$profile_upload_response" --write-out '%{http_code}' \
+            --request POST \
+            --header "apikey: ${VITE_SUPABASE_PUBLISHABLE_KEY}" \
+            --header "Origin: ${PUBLIC_SITE_URL}" \
+            --header "Content-Type: image/webp" \
+            --header "x-profile-user-id: 00000000-0000-4000-8000-000000000000" \
+            --header "x-profile-upload-request-id: 00000000-0000-4000-8000-000000000001" \
+            --data-binary 'unauthenticated' \
+            "${VITE_SUPABASE_URL}/functions/v1/upload-profile-photo")"
+          if [[ "$profile_upload_status" != "401" ]]; then
+            echo "::error::Expected the unauthenticated profile-picture upload smoke test to return 401; received ${profile_upload_status}."
+            exit 1
+          fi
+
+          reward_download_response="${RUNNER_TEMP}/reward-download-response.json"
+          reward_download_status="$(curl --silent --show-error --output "$reward_download_response" --write-out '%{http_code}' \
+            --request POST \
+            --header "apikey: ${VITE_SUPABASE_PUBLISHABLE_KEY}" \
+            --header "Origin: ${PUBLIC_SITE_URL}" \
+            --header "Content-Type: application/json" \
+            --data '{"rewardKey":"nehemiah_leadership_handbook","expectedUserId":"00000000-0000-4000-8000-000000000000"}' \
+            "${VITE_SUPABASE_URL}/functions/v1/reward-download")"
+          if [[ "$reward_download_status" != "401" ]]; then
+            echo "::error::Expected the unauthenticated reward-download smoke test to return 401; received ${reward_download_status}."
+            exit 1
+          fi
+
+          if [[ "${{ steps.function-secrets.outputs.integration_runtime_enabled }}" == "true" ]]; then
+            integration_response="${RUNNER_TEMP}/integration-health-response.json"
+            integration_status="$(curl --silent --show-error --output "$integration_response" --write-out '%{http_code}' \
+              --request POST \
+              --header "Content-Type: application/json" \
+              --header "x-dominion-worker-key: ${INTEGRATION_WORKER_SECRET}" \
+              --data '{"mode":"health"}' \
+              "${VITE_SUPABASE_URL}/functions/v1/process-integration-outbox")"
+            if [[ "$integration_status" != "200" ]]; then
+              echo "::error::Expected the integration worker health check to return 200; received ${integration_status}."
+              exit 1
+            fi
+          fi
+
+          if [[ "${{ steps.function-secrets.outputs.retention_runtime_enabled }}" == "true" ]]; then
+            retention_response="${RUNNER_TEMP}/retired-community-health-response.json"
+            retention_status="$(curl --silent --show-error --output "$retention_response" --write-out '%{http_code}' \
+              --request POST \
+              --header "Content-Type: application/json" \
+              --header "x-dominion-worker-key: ${RETIRED_COMMUNITY_WORKER_SECRET}" \
+              --data '{"mode":"health"}' \
+              "${VITE_SUPABASE_URL}/functions/v1/process-retired-community-deletions")"
+            if [[ "$retention_status" != "200" ]]; then
+              echo "::error::Expected the retired Community worker health check to return 200; received ${retention_status}."
+              exit 1
+            fi
+          fi
+
+          profile_photo_cleanup_response="${RUNNER_TEMP}/profile-photo-cleanup-health-response.json"
+          profile_photo_cleanup_status="$(curl --silent --show-error --output "$profile_photo_cleanup_response" --write-out '%{http_code}' \
+            --request POST \
+            --header "Content-Type: application/json" \
+            --header "x-dominion-worker-key: ${PROFILE_PHOTO_WORKER_SECRET}" \
+            --data '{"mode":"health"}' \
+            "${VITE_SUPABASE_URL}/functions/v1/process-profile-photo-cleanup")"
+          if [[ "$profile_photo_cleanup_status" != "200" ]]; then
+            echo "::error::Expected the profile-photo cleanup health check to return 200; received ${profile_photo_cleanup_status}."
+            exit 1
+          fi
+
+          if [[ "${{ steps.function-secrets.outputs.provider_connections_enabled }}" == "true" ]]; then
+            provider_response="${RUNNER_TEMP}/provider-connection-response.json"
+            provider_status="$(curl --silent --show-error --output "$provider_response" --write-out '%{http_code}' \
+              --request POST \
+              --header "apikey: ${VITE_SUPABASE_PUBLISHABLE_KEY}" \
+              --header "Content-Type: application/json" \
+              --header "Origin: ${PUBLIC_SITE_URL}" \
+              --data '{"action":"list","crewId":"00000000-0000-4000-8000-000000000000"}' \
+              "${VITE_SUPABASE_URL}/functions/v1/group-integrations")"
+            if [[ "$provider_status" != "401" ]]; then
+              echo "::error::Expected the unauthenticated provider connection smoke test to return 401; received ${provider_status}."
+              exit 1
+            fi
+          fi
+      - name: Release backend feature gates
+        run: |
+          echo "Backend verification passed. Frontend build-time feature gates may now be released." >> "$GITHUB_STEP_SUMMARY"
+
+  frontend:
+    name: Build production frontend
+    needs:
+      - validation
+      - backend
+    if: >-
+      always() &&
+      needs.validation.result == 'success' &&
+      (needs.backend.result == 'success' ||
+        (inputs.release_scope == 'frontend-only' && needs.backend.result == 'skipped'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: production
+    env:
+      CF_PAGES: "1"
+      CF_PAGES_BRANCH: main
+      SUPABASE_PROJECT_REF: ${{ vars.SUPABASE_PROJECT_REF }}
+      VITE_SUPABASE_URL: ${{ vars.VITE_SUPABASE_URL }}
+      VITE_SUPABASE_PUBLISHABLE_KEY: ${{ vars.VITE_SUPABASE_PUBLISHABLE_KEY }}
+      VITE_ENABLE_MOCKS: "false"
+      VITE_ENABLE_PRODUCTION_CONNECTIONS: "true"
+      VITE_ENABLE_GROUP_INTEGRATIONS: "false"
+      VITE_YOUVERSION_VERSE_URL: ${{ vars.VITE_YOUVERSION_VERSE_URL }}
+      VITE_YOUVERSION_APP_URL: ${{ vars.VITE_YOUVERSION_APP_URL }}
+      VITE_YOUVERSION_PRAYER_URL: ${{ vars.VITE_YOUVERSION_PRAYER_URL }}
+      VITE_APPLE_FITNESS_URL: ${{ vars.VITE_APPLE_FITNESS_URL }}
+      VITE_WALK_ALARM_URL: ${{ vars.VITE_WALK_ALARM_URL }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Setup pnpm
+        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+        with:
+          version: 10.17.1
+          run_install: false
+      - name: Setup Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Validate frontend production configuration
+        shell: bash
+        run: |
+          if [[ -z "${VITE_SUPABASE_URL:-}" || -z "${VITE_SUPABASE_PUBLISHABLE_KEY:-}" ]]; then
+            echo "::error::Production Supabase public configuration is missing."
+            exit 1
+          fi
+          if [[ "${VITE_ENABLE_MOCKS}" != "false" ]]; then
+            echo "::error::Production builds must disable mock data."
+            exit 1
+          fi
+          if [[ "${VITE_ENABLE_PRODUCTION_CONNECTIONS}" != "true" ]]; then
+            echo "::error::Production builds must explicitly enable production connections."
+            exit 1
+          fi
+          if [[ "${VITE_ENABLE_GROUP_INTEGRATIONS}" != "false" ]]; then
+            echo "::error::Slack and Discord must remain safely off until FOU-764's enabled-path approval is complete."
+            exit 1
+          fi
+          expected_supabase_url="https://${SUPABASE_PROJECT_REF}.supabase.co"
+          if [[ "${VITE_SUPABASE_URL%/}" != "${expected_supabase_url}" ]]; then
+            echo "::error::The frontend Supabase URL must target the same project migrated by this release."
+            exit 1
+          fi
+      - name: Build production frontend
+        run: pnpm run build
+      - name: Upload frontend artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: production-frontend-${{ github.sha }}
           path: ./dist
+          if-no-files-found: error
+          retention-days: 7
 
   deploy:
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
+    name: Deploy frontend to Cloudflare Pages
+    needs: frontend
+    environment: production
     runs-on: ubuntu-latest
-    needs: build
+    timeout-minutes: 15
     steps:
-      - name: Deploy to GitHub Pages
+      - name: Download immutable frontend artifact
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: production-frontend-${{ github.sha }}
+          path: ./dist
+      - name: Deploy to Cloudflare Pages
         id: deployment
-        uses: actions/deploy-pages@v4
+        uses: cloudflare/wrangler-action@9acf94ace14e7dc412b076f2c5c20b8ce93c79cd # v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: >-
+            pages deploy dist
+            --project-name=77-dominion-challenge
+            --branch=main
+            --commit-hash=${{ github.sha }}
+          gitHubToken: ${{ secrets.GITHUB_TOKEN }}
+      - name: Record production deployment
+        env:
+          DEPLOYMENT_URL: ${{ steps.deployment.outputs.deployment-url }}
+        run: |
+          if [[ -z "${DEPLOYMENT_URL:-}" ]]; then
+            echo "::error::Cloudflare did not return a deployment URL."
+            exit 1
+          fi
+          echo "Cloudflare deployment: ${DEPLOYMENT_URL}" >> "$GITHUB_STEP_SUMMARY"
+          echo "Release commit: ${{ github.sha }}" >> "$GITHUB_STEP_SUMMARY"

@@ -1,32 +1,33 @@
 import { initReveal } from './reveal';
+import { buildInviteAuthHref, isInviteReturnPath } from './invite-flow.mjs';
+import {
+  buildChallengeStartAuthHref,
+  isChallengeStartReturnPath,
+} from './challenge-start-intent.mjs';
 import {
   getBillingState,
-  hasSupabaseAuth,
+  hasSupabaseAuthentication,
   isLocalDemoMode,
+  saveLocalMockUser,
   saveLocalUserFromSession,
   sanitizeReturnTo,
   signInWithPassword,
   signUpWithPassword,
 } from './api';
 
-const load = (key, fallback) => JSON.parse(localStorage.getItem(key) || JSON.stringify(fallback));
-const save = (key, value) => localStorage.setItem(key, JSON.stringify(value));
-let theme = load('dominion:theme', 'dark');
-const themeToggle = document.getElementById('themeToggle');
-function applyTheme() {
-  document.documentElement.dataset.theme = theme;
-  if (themeToggle) themeToggle.textContent = `${theme === 'dark' ? 'Dark' : 'Light'} Theme`;
-}
-if (themeToggle) {
-  themeToggle.addEventListener('click', () => {
-    theme = theme === 'dark' ? 'light' : 'dark';
-    save('dominion:theme', theme);
-    applyTheme();
-  });
-}
-applyTheme();
-
 const form = document.getElementById('authForm');
+const rawReturnTo = new URLSearchParams(window.location.search).get('returnTo');
+const returnTo = sanitizeReturnTo(rawReturnTo);
+const inviteReturn = isInviteReturnPath(returnTo);
+const groupStartReturn = isChallengeStartReturnPath(returnTo);
+const authSwitchLink = document.querySelector('[data-auth-switch]');
+if (authSwitchLink && (inviteReturn || groupStartReturn)) {
+  const switchingToRegister = Boolean(document.getElementById('email') && !document.getElementById('name'));
+  authSwitchLink.href = inviteReturn
+    ? buildInviteAuthHref(switchingToRegister ? 'register' : 'login')
+    : buildChallengeStartAuthHref(switchingToRegister ? 'register' : 'login');
+  if (switchingToRegister) authSwitchLink.textContent = 'Create an account';
+}
 if (form) {
   form.addEventListener('submit', async (event) => {
     event.preventDefault();
@@ -45,7 +46,7 @@ if (form) {
     }
 
     try {
-      if (hasSupabaseAuth()) {
+      if (hasSupabaseAuthentication()) {
         const result = nameInput
           ? await signUpWithPassword({ name, email, password })
           : await signInWithPassword({ email, password });
@@ -56,14 +57,13 @@ if (form) {
         }
 
         saveLocalUserFromSession(result.session, name);
-        const returnTo = sanitizeReturnTo(new URLSearchParams(window.location.search).get('returnTo'));
         if (returnTo && returnTo !== './dashboard.html') {
           window.location.href = returnTo;
           return;
         }
 
         const billing = await getBillingState();
-        window.location.href = billing.challengeAccess ? './dashboard.html' : './billing.html';
+        window.location.href = billing.appAccess ? './dashboard.html' : './billing.html';
         return;
       }
 
@@ -72,14 +72,11 @@ if (form) {
         return;
       }
 
-      const user = {
+      saveLocalMockUser({
         name,
         email,
-        authenticated: true,
-      };
-      save('dominion:user', user);
-      if (user.name) save('dominion:memberName', user.name);
-      window.location.href = './dashboard.html';
+      });
+      window.location.href = returnTo || './dashboard.html';
     } catch (error) {
       window.alert(error?.message || 'Unable to authenticate right now.');
     } finally {

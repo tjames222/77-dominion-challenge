@@ -1,0 +1,283 @@
+body[data-dialog-open] {
+  overflow: hidden;
+  overscroll-behavior: none;
+}
+
+.app-dialog-layer[hidden] {
+  display: none;
+}
+
+.app-dialog-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: grid;
+  place-items: center;
+  min-width: 0;
+  padding:
+    max(16px, env(safe-area-inset-top))
+    max(16px, env(safe-area-inset-right))
+    max(16px, env(safe-area-inset-bottom))
+    max(16px, env(safe-area-inset-left));
+  isolation: isolate;
+}
+
+.app-dialog-backdrop {
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  background: color-mix(in srgb, #000 76%, transparent);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  opacity: 0;
+}
+
+.app-dialog-panel {
+  width: min(100%, 560px);
+  max-height: calc(100dvh - max(32px, env(safe-area-inset-top) + env(safe-area-inset-bottom)));
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto auto;
+  overflow: hidden;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid color-mix(in srgb, var(--accent) 24%, var(--border));
+  border-radius: 24px;
+  box-shadow: var(--shadow);
+  opacity: 0;
+  transform: translateY(12px) scale(.985);
+}
+
+.app-dialog-layer[data-open] .app-dialog-backdrop {
+  animation: app-dialog-backdrop-in 180ms ease-out both;
+}
+
+.app-dialog-layer[data-open] .app-dialog-panel {
+  animation: app-dialog-panel-in 220ms cubic-bezier(.2, .8, .2, 1) both;
+}
+
+.app-dialog-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 18px;
+  padding: clamp(18px, 4vw, 24px);
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--border);
+}
+
+.app-dialog-heading {
+  min-width: 0;
+}
+
+.app-dialog-heading h2 {
+  margin: 0;
+  color: var(--text);
+  font-size: clamp(1.3rem, 5vw, 1.75rem);
+  line-height: 1.12;
+  text-wrap: balance;
+}
+
+.app-dialog-eyebrow {
+  margin: 0 0 7px;
+  color: var(--accent-strong);
+  font-size: .68rem;
+  font-weight: 900;
+  letter-spacing: .14em;
+  text-transform: uppercase;
+}
+
+.app-dialog-close {
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  margin: -6px -6px 0 0;
+  padding: 0;
+  color: var(--text);
+  background: var(--surface-elevated);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  font-size: 1.6rem;
+  line-height: 1;
+}
+
+.app-dialog-body {
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+  padding: clamp(18px, 4vw, 24px);
+  scrollbar-gutter: stable;
+}
+
+.app-dialog-description {
+  margin: 0 0 18px;
+  color: var(--text-muted);
+  line-height: 1.55;
+}
+
+.app-dialog-content {
+  min-width: 0;
+}
+
+.app-dialog-status:empty,
+.app-dialog-progress[hidden],
+.app-dialog-error[hidden] {
+  display: none;
+}
+
+.app-dialog-progress,
+.app-dialog-error {
+  margin: 0;
+  padding: 12px clamp(18px, 4vw, 24px);
+  border-top: 1px solid var(--border);
+  font-size: .85rem;
+  font-weight: 750;
+  line-height: 1.4;
+}
+
+.app-dialog-progress {
+  color: var(--accent-strong);
+  background: color-mix(in srgb, var(--accent) 8%, var(--surface));
+}
+
+.app-dialog-error {
+  color: color-mix(in srgb, var(--danger) 78%, var(--text));
+  background: color-mix(in srgb, var(--danger) 11%, var(--surface));
+}
+
+.app-dialog-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 10px;
+  padding: 14px clamp(18px, 4vw, 24px) max(14px, env(safe-area-inset-bottom));
+  border-top: 1px solid var(--border);
+  background: color-mix(in srgb, var(--surface) 94%, var(--background));
+}
+
+.app-dialog-actions[hidden] {
+  display: none;
+}
+
+.app-dialog-action {
+  min-height: 44px;
+  padding: 10px 16px;
+  color: var(--text);
+  background: var(--surface-elevated);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  font-weight: 850;
+}
+
+.app-dialog-action.is-primary {
+  color: #080706;
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+.app-dialog-action.is-danger {
+  color: #fff;
+  background: var(--danger);
+  border-color: var(--danger);
+}
+
+.app-dialog-action:disabled,
+.app-dialog-layer[data-busy="true"] [aria-disabled="true"] {
+  cursor: wait;
+  opacity: .58;
+}
+
+.app-dialog-close:focus-visible,
+.app-dialog-action:focus-visible,
+.app-dialog-panel:focus-visible {
+  outline: 3px solid color-mix(in srgb, var(--accent-strong) 82%, white);
+  outline-offset: 3px;
+}
+
+.app-dialog-actions[data-pattern="action-list"] {
+  display: grid;
+  grid-template-columns: 1fr;
+}
+
+.app-dialog-actions[data-pattern="action-list"] .app-dialog-action {
+  width: 100%;
+  text-align: left;
+}
+
+.app-dialog-layer[data-presentation="sheet"] {
+  align-items: end;
+  padding-bottom: 0;
+}
+
+.app-dialog-layer[data-presentation="sheet"] .app-dialog-panel {
+  width: min(100%, 720px);
+  max-height: calc(100dvh - max(16px, env(safe-area-inset-top)));
+  border-radius: 24px 24px 0 0;
+  transform: translateY(24px);
+}
+
+@media (max-width: 640px) {
+  .app-dialog-layer[data-presentation="responsive"] {
+    align-items: end;
+    padding: max(12px, env(safe-area-inset-top)) 0 0;
+  }
+
+  .app-dialog-layer[data-presentation="responsive"] .app-dialog-panel {
+    width: 100%;
+    max-height: calc(100dvh - max(12px, env(safe-area-inset-top)));
+    border-right: 0;
+    border-bottom: 0;
+    border-left: 0;
+    border-radius: 24px 24px 0 0;
+    transform: translateY(24px);
+  }
+
+  .app-dialog-layer[data-presentation="dialog"] {
+    padding:
+      max(12px, env(safe-area-inset-top))
+      max(12px, env(safe-area-inset-right))
+      max(12px, env(safe-area-inset-bottom))
+      max(12px, env(safe-area-inset-left));
+  }
+
+  .app-dialog-actions[data-pattern="confirmation"] {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 380px) {
+  .app-dialog-actions[data-pattern="confirmation"] {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .app-dialog-layer[data-open] .app-dialog-backdrop,
+  .app-dialog-layer[data-open] .app-dialog-panel {
+    animation: none;
+  }
+
+  .app-dialog-backdrop,
+  .app-dialog-panel {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@media (forced-colors: active) {
+  .app-dialog-panel,
+  .app-dialog-close,
+  .app-dialog-action {
+    border: 2px solid CanvasText;
+  }
+}
+
+@keyframes app-dialog-backdrop-in {
+  to { opacity: 1; }
+}
+
+@keyframes app-dialog-panel-in {
+  to { opacity: 1; transform: none; }
+}

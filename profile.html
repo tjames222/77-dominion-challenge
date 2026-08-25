@@ -2,12 +2,16 @@
 <html lang="en" data-theme="dark">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
     <meta name="theme-color" content="#0e1116" />
+    <script vite-ignore src="./theme-bootstrap.js" data-enable-dominion-night="false"></script>
     <title>Profile | Dominion</title>
     <link rel="stylesheet" href="./src/assets/styles.css" />
     <link rel="stylesheet" href="./src/assets/product.css" />
+    <link rel="stylesheet" href="./src/assets/dialog.css" />
     <link rel="stylesheet" href="./src/assets/menu.css" />
+    <link rel="stylesheet" href="./src/assets/dominion-night.css" />
+    <link rel="stylesheet" href="./src/assets/dominion-platinum.css" />
   </head>
   <body>
     <main class="app-shell dashboard-shell">
@@ -15,46 +19,191 @@
         <a class="back-link" href="./dashboard.html">Dashboard</a>
       </header>
 
-      <section class="dashboard-hero compact-hero reveal is-visible">
+      <section class="dashboard-hero compact-hero reveal is-visible" data-section-surface="plain">
         <p class="eyebrow">Profile</p>
-        <h1>Your Dominion</h1>
-        <p class="lead">Manage your challenge identity, group, and account details.</p>
+        <h1>Your profile</h1>
+        <p class="lead">Update your account, billing, challenge status, and app theme.</p>
       </section>
 
-      <section class="card reveal">
+      <section class="card reveal profile-account-card" data-section-surface="accent" data-training-target="profile-account">
         <p class="eyebrow">Account</p>
-        <h2 id="profileName">Member</h2>
-        <p class="section-copy" id="profileEmail">Logged in</p>
+        <div class="profile-account-summary">
+          <div class="profile-avatar-frame" aria-hidden="true">
+            <img id="profileAvatarImage" alt="" hidden />
+            <span id="profileAvatarFallback">M</span>
+          </div>
+          <div>
+            <h2 id="profileName">Member</h2>
+            <p class="section-copy" id="profileEmail">Logged in</p>
+          </div>
+        </div>
+        <form class="profile-form" id="profileForm">
+          <div class="profile-photo-field" id="profilePhotoField" role="group" aria-labelledby="profilePhotoLabel">
+            <span class="profile-photo-label" id="profilePhotoLabel">Profile picture</span>
+            <div class="profile-photo-control">
+              <input
+                class="profile-photo-input"
+                id="profilePhotoInput"
+                type="file"
+                disabled
+                accept="image/jpeg,image/png,image/webp,image/heic,image/heif"
+                aria-labelledby="profilePhotoLabel profilePhotoTriggerText"
+                aria-describedby="profilePhotoFilename profilePhotoHint"
+              />
+              <label class="profile-photo-trigger" for="profilePhotoInput">
+                <span id="profilePhotoTriggerText">Choose photo</span>
+                <span class="profile-photo-trigger-mark" aria-hidden="true">+</span>
+              </label>
+              <span class="profile-photo-selection">
+                <strong id="profilePhotoFilename">No new photo selected</strong>
+                <small id="profilePhotoHint">JPG, PNG, WebP, HEIC or HEIF · 5 MB input max · cropped to a square thumbnail up to 256×256 and 150 KB</small>
+              </span>
+            </div>
+          </div>
+          <label>
+            Name
+            <input id="profileNameInput" type="text" autocomplete="name" required />
+          </label>
+          <label>
+            Email
+            <input id="profileEmailInput" type="email" autocomplete="email" required />
+          </label>
+          <p class="profile-feedback" id="profileFeedback" role="status" aria-live="polite"></p>
+          <button class="primary" type="submit">Save profile</button>
+        </form>
       </section>
 
-      <section class="card reveal">
+      <section class="card reveal" data-section-surface="plain" data-training-target="profile-challenge-status">
         <p class="eyebrow">Challenge</p>
         <h2>77-Day Dominion Challenge</h2>
         <p class="section-copy">Group: San Marcos Men</p>
         <p class="section-copy" id="profileChallengeStatus">Status: Checking access</p>
       </section>
 
-      <section class="card reveal profile-billing" id="billing">
+      <section class="card reveal profile-preview-tools" id="profilePreviewTools" data-section-surface="plain" aria-labelledby="profilePreviewTitle" hidden>
+        <p class="eyebrow">Preview Tools</p>
+        <h2 id="profilePreviewTitle">77-day test mode</h2>
+        <p class="section-copy" id="profilePreviewDescription">Each preview check-in moves to the next simulated challenge day. Your app streak increases every day, and a 7/7 check-in also increases your perfect-day streak.</p>
+        <label class="profile-preview-switch" for="profilePreviewChallengeSwitch">
+          <span>
+            <strong>Advance after every preview check-in</strong>
+            <small>Pause or resume the simulated challenge without changing production behavior.</small>
+          </span>
+          <input id="profilePreviewChallengeSwitch" type="checkbox" role="switch" aria-describedby="profilePreviewDescription profilePreviewStatus" />
+        </label>
+        <p class="profile-preview-status" id="profilePreviewStatus" role="status" aria-live="polite"></p>
+        <button class="secondary" id="resetPreviewChallengeButton" type="button" aria-label="Reset unavailable. A new full run must clear this preview account’s saved progress and rewards together." title="A new full run must clear this preview account’s saved progress and rewards together." disabled>Reset unavailable</button>
+      </section>
+
+      <section class="card reveal profile-billing" id="billing" data-section-surface="accent" data-training-target="profile-billing">
         <p class="eyebrow">Billing</p>
         <h2 id="profileBillingTitle">Billing access</h2>
-        <p class="section-copy" id="profileBillingCopy">Loading your challenge and membership details.</p>
+        <p class="section-copy" id="profileBillingCopy">Loading your subscription details.</p>
         <div class="billing-pill-row">
-          <span class="billing-pill" id="profileChallengePill">Challenge locked</span>
-          <span class="billing-pill" id="profileMembershipPill">Membership inactive</span>
+          <span class="billing-pill" id="profileSubscriptionPill">Subscription needed</span>
         </div>
         <div class="profile-billing-actions">
           <a class="primary" href="./billing.html">Open billing</a>
-          <button class="secondary-button" id="profileManageBillingButton" type="button" hidden>Manage subscription</button>
         </div>
       </section>
 
-      <section class="card reveal profile-appearance">
+      <section class="card reveal profile-appearance" id="appearance" data-section-surface="plain" data-training-target="profile-themes" aria-labelledby="appearanceTitle">
         <p class="eyebrow">Appearance</p>
-        <h2>Theme</h2>
+        <h2 id="appearanceTitle">Theme</h2>
         <p class="section-copy">Choose the look that feels best for your daily check-ins.</p>
-        <div class="appearance-toggle" role="group" aria-label="Theme selection">
-          <button class="appearance-option" type="button" data-theme-mode="dark" aria-pressed="false">Dark</button>
-          <button class="appearance-option" type="button" data-theme-mode="light" aria-pressed="false">Light</button>
+        <div class="appearance-toggle" role="group" aria-label="Theme selection" aria-describedby="themeSelectionStatus">
+          <button class="appearance-option" type="button" data-theme-mode="dark" aria-pressed="false">
+            <span class="appearance-swatch appearance-swatch-dark" aria-hidden="true"><i></i><i></i><i></i></span>
+            <span class="appearance-option-copy"><strong>Dark</strong><small>Available</small></span>
+          </button>
+          <button class="appearance-option" type="button" data-theme-mode="light" aria-pressed="false">
+            <span class="appearance-swatch appearance-swatch-light" aria-hidden="true"><i></i><i></i><i></i></span>
+            <span class="appearance-option-copy"><strong>Light</strong><small>Available</small></span>
+          </button>
+          <div class="appearance-reward-choice">
+            <button
+              class="appearance-option appearance-option-reward is-loading"
+              type="button"
+              data-theme-mode="dominion-night"
+              aria-pressed="false"
+              aria-disabled="true"
+              aria-describedby="dominionNightStatus dominionNightProgressLabel"
+            >
+              <span class="appearance-swatch appearance-swatch-night" aria-hidden="true"><i></i><i></i><i></i></span>
+              <span class="appearance-option-copy">
+                <strong>Dominion Night</strong>
+                <small id="dominionNightStatus">Locked reward · checking ownership…</small>
+              </span>
+            </button>
+            <div class="appearance-reward-progress">
+              <div
+              class="appearance-progress"
+              id="dominionNightProgress"
+              role="progressbar"
+              aria-labelledby="dominionNightProgressLabel"
+              aria-valuemin="0"
+              aria-valuemax="100"
+              aria-valuenow="0"
+              ><i></i></div>
+              <span class="appearance-progress-label" id="dominionNightProgressLabel">Reward progress is loading.</span>
+            </div>
+          </div>
+          <div class="appearance-reward-choice">
+            <button
+              class="appearance-option appearance-option-reward is-loading"
+              type="button"
+              data-theme-mode="dominion-platinum"
+              aria-pressed="false"
+              aria-disabled="true"
+              aria-describedby="dominionPlatinumStatus dominionPlatinumProgressLabel"
+            >
+              <span class="appearance-swatch appearance-swatch-platinum" aria-hidden="true"><i></i><i></i><i></i></span>
+              <span class="appearance-option-copy">
+                <strong>Dominion Platinum</strong>
+                <small id="dominionPlatinumStatus">Locked reward · checking ownership…</small>
+              </span>
+            </button>
+            <div class="appearance-reward-progress">
+              <div
+              class="appearance-progress"
+              id="dominionPlatinumProgress"
+              role="progressbar"
+              aria-labelledby="dominionPlatinumProgressLabel"
+              aria-valuemin="0"
+              aria-valuemax="100"
+              aria-valuenow="0"
+              ><i></i></div>
+              <span class="appearance-progress-label" id="dominionPlatinumProgressLabel">Reward progress is loading.</span>
+            </div>
+          </div>
+        </div>
+        <p class="profile-theme-status" id="themeSelectionStatus" role="status" aria-live="polite">Theme rewards are checked securely from your account.</p>
+      </section>
+
+      <section class="card reveal account-data-card" id="account-data" data-section-surface="accent" aria-labelledby="accountDataTitle">
+        <p class="eyebrow">Data and Privacy</p>
+        <h2 id="accountDataTitle">Manage your account data.</h2>
+        <p class="section-copy">Send a tracked request for a copy of your Dominion data or for account deletion. A new request will not be duplicated while one of the same type is active.</p>
+        <div class="account-request-grid">
+          <article>
+            <h3>Account data export</h3>
+            <p>Request a portable copy of the account information Dominion holds for you.</p>
+            <p class="account-request-status" id="dataExportRequestStatus">Checking request status...</p>
+            <button class="secondary-button" id="requestDataExportButton" type="button" disabled>Request data export</button>
+          </article>
+          <article class="account-deletion-option">
+            <h3>Delete account</h3>
+            <p>Request permanent deletion of the account and associated Dominion data. Subscription cancellation is handled separately in Billing.</p>
+            <p class="account-request-status" id="accountDeletionRequestStatus">Checking request status...</p>
+            <button class="danger-button" id="requestAccountDeletionButton" type="button" disabled>Request account deletion</button>
+          </article>
+        </div>
+        <p class="profile-feedback" id="accountRequestFeedback" role="status" aria-live="polite"></p>
+        <div class="policy-link-row">
+          <a href="./privacy.html">Privacy</a>
+          <a href="./terms.html">Terms</a>
+          <a href="./cancellation-refunds.html">Cancellation and refunds</a>
+          <a href="./support.html">Support</a>
         </div>
       </section>
     </main>

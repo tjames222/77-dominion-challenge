@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
+    <meta name="theme-color" content="#0e1116" />
+    <script vite-ignore src="./theme-bootstrap.js" data-enable-dominion-night="false"></script>
+    <title>Privacy | Dominion</title>
+    <link rel="stylesheet" href="./src/assets/styles.css" />
+    <link rel="stylesheet" href="./src/assets/product.css" />
+    <link rel="stylesheet" href="./src/assets/dialog.css" />
+    <link rel="stylesheet" href="./src/assets/menu.css" />
+    <link rel="stylesheet" href="./src/assets/dominion-night.css" />
+    <link rel="stylesheet" href="./src/assets/dominion-platinum.css" />
+  </head>
+  <body>
+    <!-- FOU-761 release gate: owner/legal counsel must approve this behavior-based draft before production launch. -->
+    <main class="app-shell legal-shell">
+      <header class="topbar"><a class="back-link" href="./index.html">Dominion</a></header>
+      <section class="legal-hero reveal is-visible" data-section-surface="plain">
+        <p class="eyebrow">Privacy</p>
+        <h1>How Dominion handles your information.</h1>
+        <p class="lead">Last updated August 13, 2026. This page explains the data used to run the app and the choices available to you.</p>
+      </section>
+      <section class="card legal-content reveal" data-section-surface="accent">
+        <h2>Information we use</h2>
+        <p>Dominion stores account and profile details, challenge participation, daily check-ins, points, badges, rewards, private-group membership, subscription status, and the settings needed to operate your account.</p>
+        <p>Your private journal entries are available only to your account. Group information is visible only to members of that group. If you deliberately create a public progress share, the link shows the limited progress summary described before you share it; it does not include your journal, email, exact activity dates, or group details.</p>
+        <p>If you add a profile picture, Dominion stores the prepared thumbnail, not the original image selected on your device. Payment card details are handled by Stripe and are not stored in Dominion's database.</p>
+
+        <h2>Why we use it</h2>
+        <p>We use this information to authenticate you, provide the challenge and membership, save progress, calculate points and streaks, support private groups, process billing, prevent abuse, resolve support requests, and protect the service.</p>
+
+        <h2>Service providers</h2>
+        <p>Dominion uses Supabase for authentication, database, storage, and server functions; Stripe for checkout and subscription management; and Cloudflare for web hosting and delivery. Those providers process only the information needed for their role under their own terms and privacy commitments.</p>
+        <p>Slack and Discord group delivery is off for launch. If it is enabled later, nothing is sent until a group administrator connects a destination and each member saves explicit sharing choices. Data sent to an external service is then also covered by that service's policies.</p>
+      </section>
+      <section class="legal-content reveal" data-section-surface="plain">
+        <h2>Retention and your choices</h2>
+        <p>We keep information while your account is active and as needed for billing, security, legal obligations, dispute resolution, and backup recovery. Some records may be retained in limited or de-identified form when required to protect the service or document a completed request.</p>
+        <p>Signed-in members can request a copy of their account data or request account deletion from <a href="./profile.html#account-data">Profile</a>. The request page shows its current status. Canceling a subscription does not by itself delete an account.</p>
+        <p>For privacy questions or to report a concern, visit <a href="./support.html">Support</a>. Also review the <a href="./terms.html">Terms</a> and <a href="./cancellation-refunds.html">Cancellation and Refund Policy</a>.</p>
+      </section>
+    </main>
+    <script type="module" src="./src/static/menu.js"></script>
+    <script type="module" src="./src/static/legal.js"></script>
+  </body>
+</html>

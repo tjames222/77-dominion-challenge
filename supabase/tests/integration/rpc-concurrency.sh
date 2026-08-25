@@ -1,0 +1,669 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+database_url="${SUPABASE_DB_URL:-postgresql://postgres:postgres@127.0.0.1:54322/postgres}"
+
+case "$database_url" in
+  postgresql://*@127.0.0.1:54322/*|postgres://*@127.0.0.1:54322/*|postgresql://*@localhost:54322/*|postgres://*@localhost:54322/*)
+    ;;
+  *)
+    echo "Refusing to run the concurrency test against a non-local database." >&2
+    exit 2
+    ;;
+esac
+
+if ! command -v psql >/dev/null 2>&1; then
+  echo "psql is required for the RPC concurrency test." >&2
+  exit 2
+fi
+
+test_directory="$(mktemp -d)"
+cleanup() {
+  rm -rf "$test_directory"
+}
+trap cleanup EXIT
+
+fixture_user="30000000-0000-4000-8000-000000000003"
+
+psql "$database_url" --set=ON_ERROR_STOP=1 --quiet <<SQL
+delete from public.sharing_reward_intents where user_id = '$fixture_user';
+delete from public.game_point_events where user_id = '$fixture_user';
+delete from public.user_badges where user_id = '$fixture_user';
+delete from public.user_challenge_states where user_id = '$fixture_user';
+delete from public.user_reward_entitlements
+where user_id = '$fixture_user'
+   or reward_key = 'concurrency_reward';
+delete from public.reward_definitions where reward_key = 'concurrency_reward';
+delete from public.user_game_stats where user_id = '$fixture_user';
+insert into public.user_game_stats (user_id) values ('$fixture_user');
+SQL
+
+rpc_call=$(cat <<SQL
+begin;
+set local role authenticated;
+select set_config('request.jwt.claim.sub', '$fixture_user', true);
+select set_config(
+  'request.jwt.claims',
+  '{"sub":"$fixture_user","role":"authenticated","email":"carol@example.test"}',
+  true
+);
+select * from public.record_app_visit('$fixture_user');
+commit;
+SQL
+)
+
+psql "$database_url" --set=ON_ERROR_STOP=1 --quiet --command "$rpc_call" >"$test_directory/first.log" 2>&1 &
+first_pid=$!
+psql "$database_url" --set=ON_ERROR_STOP=1 --quiet --command "$rpc_call" >"$test_directory/second.log" 2>&1 &
+second_pid=$!
+
+first_status=0
+second_status=0
+wait "$first_pid" || first_status=$?
+wait "$second_pid" || second_status=$?
+
+if (( first_status != 0 || second_status != 0 )); then
+  cat "$test_directory/first.log" >&2
+  cat "$test_directory/second.log" >&2
+  echo "Concurrent record_app_visit RPC calls did not both complete." >&2
+  exit 1
+fi
+
+read -r legacy_point_count cached_points ledger_points current_streak <<<"$(
+  psql "$database_url" --set=ON_ERROR_STOP=1 --tuples-only --no-align --field-separator=' ' --command "
+    select
+      count(*) filter (where event_type = 'app_visit'),
+      max(stats.total_points),
+      coalesce(sum(events.points), 0),
+      max(stats.current_app_streak)
+    from public.user_game_stats stats
+    left join public.game_point_events events on events.user_id = stats.user_id
+    where stats.user_id = '$fixture_user'
+    group by stats.user_id;
+  "
+)"
+
+if [[ "$legacy_point_count" != "0" ]]; then
+  echo "Expected app visits to remain outside the simplified point ledger; found $legacy_point_count event(s)." >&2
+  exit 1
+fi
+
+if [[ "$cached_points" != "$ledger_points" ]]; then
+  echo "Cached points ($cached_points) diverged from the ledger ($ledger_points)." >&2
+  exit 1
+fi
+
+if [[ "$cached_points" != "0" ]]; then
+  echo "Expected app visits to award zero points; found $cached_points cached points." >&2
+  exit 1
+fi
+
+if [[ "$current_streak" != "1" ]]; then
+  echo "Expected the concurrent visit retry to advance the streak once; found $current_streak." >&2
+  exit 1
+fi
+
+psql "$database_url" --set=ON_ERROR_STOP=1 --quiet <<SQL
+begin;
+update public.user_game_stats
+set total_points = 560,
+    challenge_points = 560
+where user_id = '$fixture_user';
+alter table public.reward_definitions disable trigger sync_reward_definition_entitlements;
+insert into public.reward_definitions (
+  reward_key,
+  reward_type,
+  state_model,
+  title,
+  points_required,
+  fulfillment_key,
+  icon,
+  sort_order
+) values (
+  'concurrency_reward',
+  'cosmetic',
+  'ownership',
+  'Concurrency Reward',
+  560,
+  'concurrency_reward_asset',
+  'gift',
+  999
+);
+alter table public.reward_definitions enable trigger sync_reward_definition_entitlements;
+commit;
+SQL
+
+grant_call="select public.grant_reward_entitlement('$fixture_user', 'concurrency_reward', 'concurrency_test', 'shared_source', false);"
+
+psql "$database_url" --set=ON_ERROR_STOP=1 --tuples-only --no-align --quiet --command "$grant_call" >"$test_directory/grant-first.log" 2>&1 &
+first_grant_pid=$!
+psql "$database_url" --set=ON_ERROR_STOP=1 --tuples-only --no-align --quiet --command "$grant_call" >"$test_directory/grant-second.log" 2>&1 &
+second_grant_pid=$!
+
+first_grant_status=0
+second_grant_status=0
+wait "$first_grant_pid" || first_grant_status=$?
+wait "$second_grant_pid" || second_grant_status=$?
+
+if (( first_grant_status != 0 || second_grant_status != 0 )); then
+  cat "$test_directory/grant-first.log" >&2
+  cat "$test_directory/grant-second.log" >&2
+  echo "Concurrent reward grants did not both complete." >&2
+  exit 1
+fi
+
+successful_grants="$(
+  { grep -h '^t$' "$test_directory/grant-first.log" "$test_directory/grant-second.log" || true; } \
+    | wc -l \
+    | tr -d ' '
+)"
+
+entitlement_count="$(psql "$database_url" --set=ON_ERROR_STOP=1 --tuples-only --no-align --quiet --command "
+  select count(*)
+  from public.user_reward_entitlements
+  where user_id = '$fixture_user'
+    and reward_key = 'concurrency_reward';
+")"
+
+if [[ "$successful_grants" != "1" || "$entitlement_count" != "1" ]]; then
+  echo "Expected one successful concurrent grant and one entitlement; found $successful_grants grant(s) and $entitlement_count row(s)." >&2
+  exit 1
+fi
+
+claim_call=$(cat <<SQL
+begin;
+set local role authenticated;
+select set_config('request.jwt.claim.sub', '$fixture_user', true);
+select set_config(
+  'request.jwt.claims',
+  '{"sub":"$fixture_user","role":"authenticated","email":"carol@example.test"}',
+  true
+);
+select public.claim_reward_entitlement_unlocks('$fixture_user') -> 'claimedKeys';
+commit;
+SQL
+)
+
+psql "$database_url" --set=ON_ERROR_STOP=1 --tuples-only --no-align --quiet --command "$claim_call" >"$test_directory/claim-first.log" 2>&1 &
+first_claim_pid=$!
+psql "$database_url" --set=ON_ERROR_STOP=1 --tuples-only --no-align --quiet --command "$claim_call" >"$test_directory/claim-second.log" 2>&1 &
+second_claim_pid=$!
+
+first_claim_status=0
+second_claim_status=0
+wait "$first_claim_pid" || first_claim_status=$?
+wait "$second_claim_pid" || second_claim_status=$?
+
+if (( first_claim_status != 0 || second_claim_status != 0 )); then
+  cat "$test_directory/claim-first.log" >&2
+  cat "$test_directory/claim-second.log" >&2
+  echo "Concurrent reward claims did not both complete." >&2
+  exit 1
+fi
+
+claimed_occurrences="$(
+  { grep -h 'concurrency_reward' "$test_directory/claim-first.log" "$test_directory/claim-second.log" || true; } \
+    | wc -l \
+    | tr -d ' '
+)"
+if [[ "$claimed_occurrences" != "1" ]]; then
+  echo "Expected the concurrent celebration claim to return the reward once; found $claimed_occurrences." >&2
+  exit 1
+fi
+
+offer_configuration_id="ee000000-0000-4000-8000-000000000001"
+offer_code_id="ee000000-0000-4000-8000-000000000002"
+
+psql "$database_url" --set=ON_ERROR_STOP=1 --quiet <<SQL
+delete from private.user_reward_offer_claims
+where configuration_id = '$offer_configuration_id';
+delete from private.reward_offer_codes
+where id = '$offer_code_id';
+delete from private.reward_offer_configurations
+where id = '$offer_configuration_id';
+insert into private.reward_offer_configurations (
+  id,
+  reward_key,
+  campaign_key,
+  version,
+  partner_name,
+  website_url,
+  destination_url,
+  offer_title,
+  description,
+  terms,
+  expiration_copy,
+  usage_limit,
+  availability_state,
+  is_active,
+  approved_at
+) values (
+  '$offer_configuration_id',
+  'big_god_energy_tshirt_discount',
+  'concurrency-test',
+  1,
+  'Concurrency Test Store',
+  'https://store.example.test',
+  'https://store.example.test/redeem',
+  'Concurrent code allocation',
+  'Local concurrency fixture.',
+  'One claim per entitled member.',
+  'Test fixture only.',
+  1,
+  'active',
+  true,
+  pg_catalog.clock_timestamp()
+);
+insert into private.reward_offer_codes (
+  id,
+  configuration_id,
+  secret_code,
+  max_claims
+) values (
+  '$offer_code_id',
+  '$offer_configuration_id',
+  'CONCURRENT-SHIRT',
+  1
+);
+SQL
+
+offer_claim_call=$(cat <<SQL
+begin;
+set local role authenticated;
+select set_config('request.jwt.claim.sub', '$fixture_user', true);
+select set_config(
+  'request.jwt.claims',
+  '{"sub":"$fixture_user","role":"authenticated","email":"carol@example.test"}',
+  true
+);
+select public.claim_reward_offer(
+  'big_god_energy_tshirt_discount',
+  '$fixture_user'
+) ->> 'code';
+commit;
+SQL
+)
+
+psql "$database_url" --set=ON_ERROR_STOP=1 --tuples-only --no-align --quiet \
+  --command "$offer_claim_call" >"$test_directory/offer-first.log" 2>&1 &
+offer_first_pid=$!
+psql "$database_url" --set=ON_ERROR_STOP=1 --tuples-only --no-align --quiet \
+  --command "$offer_claim_call" >"$test_directory/offer-second.log" 2>&1 &
+offer_second_pid=$!
+
+offer_first_status=0
+offer_second_status=0
+wait "$offer_first_pid" || offer_first_status=$?
+wait "$offer_second_pid" || offer_second_status=$?
+
+if (( offer_first_status != 0 || offer_second_status != 0 )); then
+  cat "$test_directory/offer-first.log" >&2
+  cat "$test_directory/offer-second.log" >&2
+  echo "Concurrent discount-code claims did not both complete." >&2
+  exit 1
+fi
+
+offer_code_occurrences="$(
+  { grep -h '^CONCURRENT-SHIRT$' \
+      "$test_directory/offer-first.log" \
+      "$test_directory/offer-second.log" || true; } \
+    | wc -l \
+    | tr -d ' '
+)"
+
+read -r offer_claim_count offer_code_claim_count <<<"$(
+  psql "$database_url" --set=ON_ERROR_STOP=1 --tuples-only --no-align \
+    --field-separator=' ' --quiet --command "
+      select
+        (select count(*)
+         from private.user_reward_offer_claims
+         where user_id = '$fixture_user'
+           and configuration_id = '$offer_configuration_id'),
+        (select claim_count
+         from private.reward_offer_codes
+         where id = '$offer_code_id');
+    "
+)"
+
+if [[ "$offer_code_occurrences" != "2" \
+  || "$offer_claim_count" != "1" \
+  || "$offer_code_claim_count" != "1" ]]; then
+  cat "$test_directory/offer-first.log" >&2
+  cat "$test_directory/offer-second.log" >&2
+  echo "Concurrent discount claims must return one actor-bound code without double allocation; responses=$offer_code_occurrences claims=$offer_claim_count allocations=$offer_code_claim_count." >&2
+  exit 1
+fi
+
+psql "$database_url" --set=ON_ERROR_STOP=1 --quiet <<SQL
+delete from private.reward_audit_events
+where user_id = '$fixture_user'
+  and reward_key = 'big_god_energy_tshirt_discount'
+  and event_type = 'reward_offer_claimed';
+delete from private.user_reward_offer_claims
+where configuration_id = '$offer_configuration_id';
+delete from private.reward_offer_codes
+where id = '$offer_code_id';
+delete from private.reward_offer_configurations
+where id = '$offer_configuration_id';
+SQL
+
+download_asset_id="dd000000-0000-4000-8000-000000000001"
+
+psql "$database_url" --set=ON_ERROR_STOP=1 --quiet <<SQL
+delete from private.reward_download_tickets
+where user_id = '$fixture_user';
+delete from private.reward_download_assets
+where id = '$download_asset_id';
+insert into private.reward_download_assets (
+  id,
+  reward_key,
+  edition_key,
+  version,
+  public_title,
+  public_description,
+  download_filename,
+  object_path,
+  sha256_hex,
+  size_bytes,
+  is_approved,
+  approved_at,
+  is_active
+) values (
+  '$download_asset_id',
+  'nehemiah_leadership_handbook',
+  'concurrency-test',
+  1,
+  'Concurrency Test Handbook',
+  'Local rate-limit fixture.',
+  'Concurrency Test Handbook.pdf',
+  'test/concurrency-test-handbook.pdf',
+  repeat('a', 64),
+  4096,
+  true,
+  pg_catalog.clock_timestamp(),
+  true
+);
+SQL
+
+download_request_call=$(cat <<SQL
+begin;
+set local role authenticated;
+select set_config('request.jwt.claim.sub', '$fixture_user', true);
+select set_config(
+  'request.jwt.claims',
+  '{"sub":"$fixture_user","role":"authenticated","email":"carol@example.test"}',
+  true
+);
+select public.request_reward_download(
+  'nehemiah_leadership_handbook',
+  '$fixture_user'
+) ->> 'ticket';
+commit;
+SQL
+)
+
+download_pids=()
+download_logs=()
+for request_number in {1..12}; do
+  download_log="$test_directory/download-$request_number.log"
+  download_logs+=("$download_log")
+  psql "$database_url" --set=ON_ERROR_STOP=1 --tuples-only --no-align --quiet \
+    --command "$download_request_call" >"$download_log" 2>&1 &
+  download_pids+=("$!")
+done
+
+download_successes=0
+download_rate_limited=0
+for request_index in "${!download_pids[@]}"; do
+  if wait "${download_pids[$request_index]}"; then
+    download_successes=$((download_successes + 1))
+  else
+    if grep -q 'Too many download requests. Try again shortly.' \
+      "${download_logs[$request_index]}"; then
+      download_rate_limited=$((download_rate_limited + 1))
+    else
+      cat "${download_logs[$request_index]}" >&2
+      echo "A concurrent handbook ticket request failed for an unexpected reason." >&2
+      exit 1
+    fi
+  fi
+done
+
+download_ticket_count="$(psql "$database_url" --set=ON_ERROR_STOP=1 --tuples-only --no-align --quiet --command "
+  select count(*)
+  from private.reward_download_tickets
+  where user_id = '$fixture_user'
+    and asset_id = '$download_asset_id'
+    and created_at > pg_catalog.clock_timestamp() - interval '1 hour';
+")"
+
+if [[ "$download_successes" != "10" \
+  || "$download_rate_limited" != "2" \
+  || "$download_ticket_count" != "10" ]]; then
+  for download_log in "${download_logs[@]}"; do
+    cat "$download_log" >&2
+  done
+  echo "Concurrent handbook requests must create ten tickets and rate-limit two; successes=$download_successes limited=$download_rate_limited tickets=$download_ticket_count." >&2
+  exit 1
+fi
+
+psql "$database_url" --set=ON_ERROR_STOP=1 --quiet <<SQL
+delete from private.reward_download_tickets
+where user_id = '$fixture_user'
+  and asset_id = '$download_asset_id';
+delete from private.reward_download_assets
+where id = '$download_asset_id';
+SQL
+
+# Restore the point cache before the independent Sharing race below. Ownership
+# remains permanent, which is part of the reward contract being exercised.
+psql "$database_url" --set=ON_ERROR_STOP=1 --quiet --command "
+  update public.user_game_stats
+  set total_points = 0,
+      challenge_points = 0
+  where user_id = '$fixture_user';
+"
+
+sharing_token="$(
+  psql "$database_url" --set=ON_ERROR_STOP=1 --quiet --tuples-only --no-align --command "
+    begin;
+    set local role authenticated;
+    set local \"request.jwt.claim.sub\" = '$fixture_user';
+    set local \"request.jwt.claims\" = '{\"sub\":\"$fixture_user\",\"role\":\"authenticated\",\"email\":\"carol@example.test\"}';
+    select public.create_sharing_reward_intent('copy_link') ->> 'completionToken';
+    commit;
+  " | sed -nE '/^[0-9a-f]{64}$/p'
+)"
+
+if [[ ! "$sharing_token" =~ ^[0-9a-f]{64}$ ]]; then
+  echo "The Sharing intent did not return a valid completion token." >&2
+  exit 1
+fi
+
+sharing_rpc_call=$(cat <<SQL
+begin;
+set local role authenticated;
+select set_config('request.jwt.claim.sub', '$fixture_user', true);
+select set_config(
+  'request.jwt.claims',
+  '{"sub":"$fixture_user","role":"authenticated","email":"carol@example.test"}',
+  true
+);
+select public.complete_sharing_reward('$sharing_token');
+commit;
+SQL
+)
+
+psql "$database_url" --set=ON_ERROR_STOP=1 --quiet --command "$sharing_rpc_call" >"$test_directory/sharing-first.log" 2>&1 &
+sharing_first_pid=$!
+psql "$database_url" --set=ON_ERROR_STOP=1 --quiet --command "$sharing_rpc_call" >"$test_directory/sharing-second.log" 2>&1 &
+sharing_second_pid=$!
+
+sharing_first_status=0
+sharing_second_status=0
+wait "$sharing_first_pid" || sharing_first_status=$?
+wait "$sharing_second_pid" || sharing_second_status=$?
+
+if (( sharing_first_status != 0 || sharing_second_status != 0 )); then
+  cat "$test_directory/sharing-first.log" >&2
+  cat "$test_directory/sharing-second.log" >&2
+  echo "Concurrent Sharing reward completions did not both complete." >&2
+  exit 1
+fi
+
+read -r sharing_event_count sharing_badge_count sharing_grant_count sharing_evidence_count cached_points ledger_points <<<"$(
+  psql "$database_url" --set=ON_ERROR_STOP=1 --tuples-only --no-align --field-separator=' ' --command "
+    select
+      (select count(*) from public.game_point_events where user_id = '$fixture_user' and event_type = 'sharing_bonus'),
+      (select count(*) from public.user_badges where user_id = '$fixture_user' and badge_key = 'sharing'),
+      (select count(*) from public.sharing_reward_grants where user_id = '$fixture_user'),
+      (select count(*) from public.sharing_reward_evidence where user_id = '$fixture_user'),
+      (select total_points from public.user_game_stats where user_id = '$fixture_user'),
+      (select coalesce(sum(points), 0) from public.game_point_events where user_id = '$fixture_user');
+  "
+)"
+
+if [[ "$sharing_event_count" != "1" || "$sharing_badge_count" != "1" || "$sharing_grant_count" != "1" || "$sharing_evidence_count" != "1" ]]; then
+  echo "Concurrent Sharing completions must produce one event, badge, grant, and evidence record; found $sharing_event_count/$sharing_badge_count/$sharing_grant_count/$sharing_evidence_count." >&2
+  exit 1
+fi
+
+if [[ "$cached_points" != "14" || "$ledger_points" != "14" ]]; then
+  echo "Concurrent Sharing completions must add exactly 14 points; cached=$cached_points ledger=$ledger_points." >&2
+  exit 1
+fi
+
+echo "Concurrent RPC retries preserved one streak advance and one atomic 14-point Sharing reward."
+
+invite_crew="cc000000-0000-4000-8000-000000000001"
+invite_id="cc100000-0000-4000-8000-000000000001"
+invite_secret="concurrent-invite-secret-12345"
+alice_user="10000000-0000-4000-8000-000000000001"
+bob_user="20000000-0000-4000-8000-000000000002"
+carol_user="30000000-0000-4000-8000-000000000003"
+
+psql "$database_url" --set=ON_ERROR_STOP=1 --quiet <<SQL
+delete from public.crews where id = '$invite_crew';
+delete from public.crew_members
+where user_id in ('$alice_user', '$bob_user', '$carol_user');
+insert into public.crews (id, name, created_by)
+values ('$invite_crew', 'Concurrent Invite Crew', '$alice_user');
+insert into public.crew_members (crew_id, user_id, display_name, role)
+values ('$invite_crew', '$alice_user', 'Alice Example', 'owner');
+insert into public.crew_invites (id, crew_id, token_hash, token_hint, created_by, expires_at)
+values (
+  '$invite_id',
+  '$invite_crew',
+  public.crew_invite_secret_hash('$invite_secret'),
+  '12345',
+  '$alice_user',
+  now() + interval '1 day'
+);
+SQL
+
+preview_for_user() {
+  local recipient_id="$1"
+  local recipient_email="$2"
+  psql "$database_url" --set=ON_ERROR_STOP=1 --tuples-only --no-align --quiet --command "
+    begin;
+    set local role authenticated;
+    with subject as materialized (
+      select set_config('request.jwt.claim.sub', '$recipient_id', true)
+    ), claims as materialized (
+      select set_config(
+        'request.jwt.claims',
+        '{\"sub\":\"$recipient_id\",\"role\":\"authenticated\",\"email\":\"$recipient_email\"}',
+        true
+      ) from subject
+    )
+    select public.preview_crew_invite('$invite_secret', null) ->> 'continuationToken'
+    from claims;
+    commit;
+  "
+}
+
+bob_continuation="$(preview_for_user "$bob_user" "bob@example.test")"
+carol_continuation="$(preview_for_user "$carol_user" "carol@example.test")"
+
+confirm_for_user() {
+  local recipient_id="$1"
+  local recipient_email="$2"
+  local continuation="$3"
+  local output_file="$4"
+  psql "$database_url" --set=ON_ERROR_STOP=1 --tuples-only --no-align --quiet --command "
+    begin;
+    set local role authenticated;
+    with subject as materialized (
+      select set_config('request.jwt.claim.sub', '$recipient_id', true)
+    ), claims as materialized (
+      select set_config(
+        'request.jwt.claims',
+        '{\"sub\":\"$recipient_id\",\"role\":\"authenticated\",\"email\":\"$recipient_email\"}',
+        true
+      ) from subject
+    )
+    select public.confirm_crew_invite('$continuation') ->> 'status'
+    from claims;
+    commit;
+  " >"$output_file" 2>&1
+}
+
+confirm_for_user "$bob_user" "bob@example.test" "$bob_continuation" "$test_directory/invite-bob.log" &
+invite_bob_pid=$!
+confirm_for_user "$carol_user" "carol@example.test" "$carol_continuation" "$test_directory/invite-carol.log" &
+invite_carol_pid=$!
+
+invite_bob_status=0
+invite_carol_status=0
+wait "$invite_bob_pid" || invite_bob_status=$?
+wait "$invite_carol_pid" || invite_carol_status=$?
+
+if (( invite_bob_status != 0 || invite_carol_status != 0 )); then
+  cat "$test_directory/invite-bob.log" >&2
+  cat "$test_directory/invite-carol.log" >&2
+  echo "Concurrent invite confirmations did not both complete." >&2
+  exit 1
+fi
+
+read -r invite_member_count invite_attribution_count invite_redeemed_count <<<"$(
+  psql "$database_url" --set=ON_ERROR_STOP=1 --tuples-only --no-align --field-separator=' ' --command "
+    select
+      count(distinct members.user_id),
+      count(distinct attributions.id),
+      count(distinct invites.redeemed_by)
+    from public.crews crews
+    left join public.crew_members members on members.crew_id = crews.id
+    left join public.crew_invite_attributions attributions on attributions.crew_id = crews.id
+    left join public.crew_invites invites on invites.crew_id = crews.id
+    where crews.id = '$invite_crew'
+    group by crews.id;
+  "
+)"
+
+joined_results="$(grep -h -c '^joined$' "$test_directory/invite-bob.log" "$test_directory/invite-carol.log" | awk '{ total += $1 } END { print total + 0 }')"
+used_results="$(grep -h -c '^already_used$' "$test_directory/invite-bob.log" "$test_directory/invite-carol.log" | awk '{ total += $1 } END { print total + 0 }')"
+
+if [[ "$invite_member_count" != "2" || "$invite_attribution_count" != "1" || "$invite_redeemed_count" != "1" ]]; then
+  cat "$test_directory/invite-bob.log" >&2
+  cat "$test_directory/invite-carol.log" >&2
+  echo "Concurrent confirmation created an unexpected membership or attribution count." >&2
+  exit 1
+fi
+
+if [[ "$joined_results" != "1" || "$used_results" != "1" ]]; then
+  cat "$test_directory/invite-bob.log" >&2
+  cat "$test_directory/invite-carol.log" >&2
+  echo "Expected one joined result and one already_used result under invite contention." >&2
+  exit 1
+fi
+
+psql "$database_url" --set=ON_ERROR_STOP=1 --quiet <<SQL
+delete from public.crews where id = '$invite_crew';
+insert into public.crew_members (crew_id, user_id, display_name, role, joined_at)
+values
+  ('a0000000-0000-4000-8000-000000000001', '$alice_user', 'Alice Example', 'owner', '2026-07-01 12:00:00+00'),
+  ('a0000000-0000-4000-8000-000000000001', '$carol_user', 'Carol Example', 'member', '2026-07-01 12:01:00+00'),
+  ('b0000000-0000-4000-8000-000000000002', '$bob_user', 'Bob Example', 'owner', '2026-07-01 12:00:00+00');
+SQL
+
+echo "Concurrent invite confirmation created one membership and one immutable attribution."

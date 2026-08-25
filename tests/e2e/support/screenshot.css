@@ -1,0 +1,85 @@
+*,
+*::before,
+*::after {
+  animation-delay: 0s !important;
+  animation-duration: 0s !important;
+  caret-color: transparent !important;
+  scroll-behavior: auto !important;
+  transition-delay: 0s !important;
+  transition-duration: 0s !important;
+}
+
+.pending-reveal,
+.reveal {
+  filter: none !important;
+  opacity: 1 !important;
+  transform: none !important;
+  visibility: visible !important;
+  will-change: auto !important;
+}
+
+.pending-reveal .app-icon,
+.pending-reveal .science-icon,
+.pending-reveal .summary-icon,
+.pending-reveal .feed-item,
+.pending-reveal .landing-grid article,
+.pending-reveal .mini-proof-grid article,
+.pending-reveal .timeline article,
+.pending-reveal .standard-stack article,
+.pending-reveal .verse-grid article,
+.pending-reveal .stat-card,
+.pending-reveal.stat-card {
+  animation: none !important;
+  filter: none !important;
+  opacity: 1 !important;
+  transform: none !important;
+  visibility: visible !important;
+}
+
+html,
+body {
+  scroll-behavior: auto !important;
+}
+
+/*
+ * Chromium scrolls the document while stitching a full-page screenshot. The
+ * scroll-responsive header reacts to those synthetic scroll events by compacting,
+ * which changes the document height partway through capture. Keep the visual
+ * fixture at its top-of-page geometry while leaving the production behavior
+ * untouched.
+ */
+.topbar.topbar-scrolled::before {
+  border-bottom-color: transparent !important;
+  box-shadow: none !important;
+}
+
+.topbar.topbar-collapsed::before {
+  opacity: 1 !important;
+  background: color-mix(in srgb, var(--background) 94%, transparent) !important;
+  transform: none !important;
+}
+
+.topbar.topbar-collapsed > * {
+  opacity: 1 !important;
+  transform: none !important;
+}
+
+.topbar.topbar-collapsed .shared-header-action > *,
+.topbar.topbar-collapsed .global-menu-button::before {
+  transform: none !important;
+}
+
+.topbar.topbar-collapsed .global-menu-button span:nth-child(1) {
+  width: 20px !important;
+  transform: translateY(-7px) !important;
+}
+
+.topbar.topbar-collapsed .global-menu-button span:nth-child(2) {
+  width: 13px !important;
+  transform: translateX(3px) !important;
+}
+
+.topbar.topbar-collapsed .global-menu-button span:nth-child(3) {
+  width: 20px !important;
+  transform: translateY(7px) !important;
+}

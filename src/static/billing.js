@@ -1,7 +1,7 @@
 import {
+  cancelMembership,
   createCheckoutSession,
   createCustomerPortalSession,
-  formatCurrency,
   formatDateLabel,
   getBillingState,
   hasSupabaseAuth,
@@ -9,27 +9,37 @@ import {
   redirectToLogin,
 } from './api';
 import { initReveal } from './reveal';
+import { INVITE_PAGE_PATH, getStoredInviteContinuation } from './invite-flow.mjs';
+import {
+  CHALLENGE_START_INTENT_PATH,
+  readChallengeStartIntent,
+} from './challenge-start-intent.mjs';
+
+const SUBSCRIPTION_PRODUCT_KEY = 'dominion_membership';
 
 const FEEDBACK = {
-  challenge_77: {
-    success: 'Payment received. We are unlocking your 77-day challenge access now.',
-    canceled: 'Checkout was canceled. Your challenge spot is still waiting for you.',
-  },
-  dominion_membership: {
-    success: 'Membership purchase received. We are syncing your premium access now.',
-    canceled: 'Membership checkout was canceled. You can come back anytime.',
-  },
+  success: 'Subscription received. We are syncing your access now.',
+  canceled: 'Checkout was canceled. You can come back anytime.',
 };
 
-const challengeButton = document.getElementById('challengeCheckoutButton');
-const membershipButton = document.getElementById('membershipCheckoutButton');
+const subscriptionButton = document.getElementById('subscriptionCheckoutButton');
 const manageBillingButton = document.getElementById('manageBillingButton');
+const paymentMethodButton = document.getElementById('paymentMethodButton');
+const cancelMembershipButton = document.getElementById('cancelMembershipButton');
+const billingHeroStep = document.getElementById('billingHeroStep');
+const billingHeroTitle = document.getElementById('billingHeroTitle');
+const billingHeroLead = document.getElementById('billingHeroLead');
 const billingStatusTitle = document.getElementById('billingStatusTitle');
 const billingStatusCopy = document.getElementById('billingStatusCopy');
 const billingFeedback = document.getElementById('billingFeedback');
-const challengeStatusPill = document.getElementById('challengeStatusPill');
-const membershipStatusPill = document.getElementById('membershipStatusPill');
+const subscriptionStatusPill = document.getElementById('subscriptionStatusPill');
 const billingDashboardLink = document.getElementById('billingDashboardLink');
+
+function continuationDestination() {
+  if (getStoredInviteContinuation(sessionStorage)) return INVITE_PAGE_PATH;
+  if (readChallengeStartIntent(sessionStorage)) return CHALLENGE_START_INTENT_PATH;
+  return './dashboard.html';
+}
 
 function setButtonBusy(button, label) {
   if (!button) return () => {};
@@ -43,71 +53,79 @@ function setButtonBusy(button, label) {
 }
 
 function renderStatus(state) {
-  const challengeDate = state.challengePurchase?.purchasedAt ? formatDateLabel(state.challengePurchase.purchasedAt) : null;
-  const membershipDate = state.membershipSubscription?.currentPeriodEnd
-    ? formatDateLabel(state.membershipSubscription.currentPeriodEnd)
+  const renewalDate = state.subscription?.currentPeriodEnd
+    ? formatDateLabel(state.subscription.currentPeriodEnd)
     : null;
+  const isPreviewBilling = state.billingEnabled === false;
 
-  if (billingDashboardLink) billingDashboardLink.hidden = !state.challengeAccess;
-  if (challengeStatusPill) challengeStatusPill.textContent = state.challengeAccess ? 'Challenge unlocked' : 'Challenge locked';
-  if (membershipStatusPill) membershipStatusPill.textContent = state.membershipActive ? 'Membership active' : 'Membership inactive';
+  if (billingHeroStep) billingHeroStep.textContent = state.subscriptionActive ? 'Membership active' : 'Step 2 of 2';
+  if (billingHeroTitle) billingHeroTitle.textContent = state.subscriptionActive ? 'Your membership is active.' : 'Activate your membership.';
+  if (billingHeroLead) {
+    billingHeroLead.textContent = state.subscriptionActive
+      ? 'Your Dominion membership is active. You can use the dashboard, Daily Actions, private groups, journal, and other member tools.'
+      : 'Subscribe to open the dashboard, Daily Actions, private groups, and private journal.';
+  }
 
-  if (state.challengeAccess && state.membershipActive) {
-    billingStatusTitle.textContent = 'You have both the challenge and membership active.';
-    billingStatusCopy.textContent = membershipDate
-      ? `Your membership is active through ${membershipDate}. Keep moving after the 77-day challenge with new programs and premium community.`
-      : 'Your flagship challenge and membership are both active.';
-  } else if (state.challengeAccess) {
-    billingStatusTitle.textContent = 'Your 77-day challenge is unlocked.';
-    billingStatusCopy.textContent = challengeDate
-      ? `Challenge access was purchased on ${challengeDate}. Membership is optional if you want fresh programs and premium community after day 77.`
-      : 'Challenge access is active. Membership is optional if you want fresh programs and premium community after day 77.';
+  if (billingDashboardLink) {
+    billingDashboardLink.hidden = !state.appAccess;
+    billingDashboardLink.href = continuationDestination();
+    billingDashboardLink.textContent = getStoredInviteContinuation(sessionStorage)
+      ? 'Return to invitation'
+      : readChallengeStartIntent(sessionStorage)
+        ? 'Continue Group challenge start'
+        : 'Go to dashboard';
+  }
+  if (subscriptionStatusPill) {
+    subscriptionStatusPill.textContent = isPreviewBilling
+      ? 'Preview mock'
+      : state.subscriptionActive ? 'Subscription active' : 'Subscription needed';
+  }
+
+  if (state.subscriptionActive && isPreviewBilling) {
+    billingStatusTitle.textContent = 'Preview membership is active.';
+    billingStatusCopy.textContent = renewalDate
+      ? `Your mock $7/month membership is active through ${renewalDate}. Dashboard, daily actions, community, and journal are open in this preview.`
+      : 'Your mock $7/month membership is active. Dashboard, daily actions, community, and journal are open in this preview.';
+  } else if (state.subscriptionActive) {
+    billingStatusTitle.textContent = 'Your Dominion subscription is active.';
+    billingStatusCopy.textContent = renewalDate
+      ? `Your $7/month subscription is active through ${renewalDate}. Dashboard, daily actions, community, and journal are open.`
+      : 'Your $7/month subscription is active. Dashboard, daily actions, community, and journal are open.';
+  } else if (isPreviewBilling) {
+    billingStatusTitle.textContent = 'Preview membership checkout.';
+    billingStatusCopy.textContent = 'Activate a mock $7/month membership to test the dashboard, daily actions, community, and journal without touching Stripe.';
   } else {
-    billingStatusTitle.textContent = 'Challenge access is still locked.';
-    billingStatusCopy.textContent = 'Buy the flagship challenge to unlock the dashboard, daily action page, and your full 77-day tracking flow.';
+    billingStatusTitle.textContent = 'Finish setting up your membership.';
+    billingStatusCopy.textContent = 'Activate membership for $7/month to use all member features.';
   }
 
-  if (challengeButton) {
-    challengeButton.disabled = state.challengeAccess;
-    challengeButton.textContent = state.challengeAccess
-      ? `Challenge unlocked${state.challengePurchase?.amountTotal ? ` · ${formatCurrency(state.challengePurchase.amountTotal, state.challengePurchase.currency)}` : ''}`
-      : 'Join the 77 for $77';
+  if (subscriptionButton) {
+    subscriptionButton.disabled = state.subscriptionActive;
+    subscriptionButton.textContent = state.subscriptionActive
+      ? `${isPreviewBilling ? 'Preview active' : 'Subscribed'}${renewalDate ? ` · renews ${renewalDate}` : ''}`
+      : isPreviewBilling ? 'Activate preview membership' : 'Activate membership';
   }
 
-  if (membershipButton) {
-    membershipButton.disabled = state.membershipActive;
-    membershipButton.textContent = state.membershipActive
-      ? `Membership active${membershipDate ? ` · renews ${membershipDate}` : ''}`
-      : 'Unlock membership';
+  if (manageBillingButton) manageBillingButton.hidden = !state.subscription;
+  if (paymentMethodButton) {
+    paymentMethodButton.hidden = false;
+    paymentMethodButton.textContent = state.subscriptionActive ? 'Edit payment information' : 'Add payment information';
   }
-
-  if (manageBillingButton) manageBillingButton.hidden = !state.challengePurchase && !state.membershipSubscription;
+  if (cancelMembershipButton) cancelMembershipButton.hidden = !state.subscriptionActive;
 }
 
-async function pollAfterCheckout(productKey) {
+async function pollAfterCheckout() {
   for (let attempt = 0; attempt < 6; attempt += 1) {
     const state = await getBillingState();
     renderStatus(state);
-    const satisfied = productKey === 'challenge_77' ? state.challengeAccess : state.membershipActive;
-    if (satisfied) return state;
+    if (state.subscriptionActive) return state;
     await new Promise((resolve) => window.setTimeout(resolve, 1500));
   }
   return getBillingState();
 }
 
 async function hydrateBillingPage() {
-  if (!hasSupabaseAuth() && isLocalDemoMode()) {
-    billingStatusTitle.textContent = 'Billing is bypassed in local demo mode.';
-    billingStatusCopy.textContent = 'Supabase or Stripe is not configured here, so the challenge stays open for local development.';
-    if (challengeStatusPill) challengeStatusPill.textContent = 'Challenge open';
-    if (membershipStatusPill) membershipStatusPill.textContent = 'Membership unavailable';
-    if (challengeButton) challengeButton.textContent = 'Open dashboard';
-    if (membershipButton) membershipButton.hidden = true;
-    if (manageBillingButton) manageBillingButton.hidden = true;
-    return;
-  }
-
-  if (!hasSupabaseAuth()) {
+  if (!hasSupabaseAuth() && !isLocalDemoMode()) {
     redirectToLogin('./billing.html');
     return;
   }
@@ -122,30 +140,37 @@ async function hydrateBillingPage() {
 
   const searchParams = new URLSearchParams(window.location.search);
   const checkoutStatus = searchParams.get('checkout');
-  const productKey = searchParams.get('product');
-  if (checkoutStatus && productKey && billingFeedback) {
-    billingFeedback.textContent = FEEDBACK[productKey]?.[checkoutStatus] || '';
+  const paymentStatus = searchParams.get('payment');
+  const canceledStatus = searchParams.get('membership');
+  if (checkoutStatus && billingFeedback) {
+    billingFeedback.textContent = FEEDBACK[checkoutStatus] || '';
     if (checkoutStatus === 'success') {
-      const settledState = await pollAfterCheckout(productKey);
+      const settledState = await pollAfterCheckout();
       renderStatus(settledState);
-      if (productKey === 'challenge_77' && settledState.challengeAccess) {
-        billingFeedback.textContent = 'Challenge unlocked. Taking you to the dashboard.';
+      if (settledState.appAccess) {
+        billingFeedback.textContent = 'Subscription active. Taking you to the dashboard.';
         window.setTimeout(() => {
-          window.location.href = './dashboard.html';
+          window.location.href = continuationDestination();
         }, 1200);
       }
     }
   }
+  if (paymentStatus === 'updated' && billingFeedback) {
+    billingFeedback.textContent = 'Payment information updated in Stripe.';
+  }
+  if (canceledStatus === 'canceled' && billingFeedback) {
+    billingFeedback.textContent = 'Membership canceled. App access has been removed.';
+  }
 }
 
-challengeButton?.addEventListener('click', async () => {
-  if (!hasSupabaseAuth()) {
-    window.location.href = './dashboard.html';
+subscriptionButton?.addEventListener('click', async () => {
+  if (!hasSupabaseAuth() && !isLocalDemoMode()) {
+    redirectToLogin('./billing.html');
     return;
   }
-  const release = setButtonBusy(challengeButton, 'Opening checkout...');
+  const release = setButtonBusy(subscriptionButton, 'Opening checkout...');
   try {
-    const { url } = await createCheckoutSession('challenge_77');
+    const { url } = await createCheckoutSession(SUBSCRIPTION_PRODUCT_KEY);
     window.location.href = url;
   } catch (error) {
     window.alert(error?.message || 'Unable to open checkout right now.');
@@ -153,20 +178,8 @@ challengeButton?.addEventListener('click', async () => {
   }
 });
 
-membershipButton?.addEventListener('click', async () => {
-  if (!hasSupabaseAuth()) return;
-  const release = setButtonBusy(membershipButton, 'Opening checkout...');
-  try {
-    const { url } = await createCheckoutSession('dominion_membership');
-    window.location.href = url;
-  } catch (error) {
-    window.alert(error?.message || 'Unable to open membership checkout right now.');
-    release();
-  }
-});
-
 manageBillingButton?.addEventListener('click', async () => {
-  if (!hasSupabaseAuth()) return;
+  if (!hasSupabaseAuth() && !isLocalDemoMode()) return;
   const release = setButtonBusy(manageBillingButton, 'Opening portal...');
   try {
     const { url } = await createCustomerPortalSession();
@@ -177,10 +190,46 @@ manageBillingButton?.addEventListener('click', async () => {
   }
 });
 
+paymentMethodButton?.addEventListener('click', async () => {
+  if (!hasSupabaseAuth() && !isLocalDemoMode()) {
+    redirectToLogin('./billing.html');
+    return;
+  }
+  const release = setButtonBusy(paymentMethodButton, 'Opening Stripe...');
+  try {
+    const { url } = await createCustomerPortalSession({
+      flow: 'payment_method_update',
+      returnPath: './billing.html?payment=updated',
+    });
+    window.location.href = url;
+  } catch (error) {
+    window.alert(error?.message || 'Unable to open payment information right now.');
+    release();
+  }
+});
+
+cancelMembershipButton?.addEventListener('click', async () => {
+  if (!hasSupabaseAuth() && !isLocalDemoMode()) return;
+  const confirmed = window.confirm('Cancel your membership now? This removes access to the dashboard, daily actions, community, and journal immediately.');
+  if (!confirmed) return;
+
+  const release = setButtonBusy(cancelMembershipButton, 'Canceling...');
+  try {
+    await cancelMembership();
+    const state = await getBillingState();
+    renderStatus(state);
+    if (billingFeedback) billingFeedback.textContent = 'Membership canceled. App access has been removed.';
+  } catch (error) {
+    window.alert(error?.message || 'Unable to cancel membership right now.');
+  } finally {
+    release();
+  }
+});
+
 hydrateBillingPage().catch((error) => {
   console.warn('Unable to hydrate billing page', error);
   if (billingStatusTitle) billingStatusTitle.textContent = 'Billing is temporarily unavailable.';
-  if (billingStatusCopy) billingStatusCopy.textContent = 'We could not load your access state right now. Try refreshing in a moment.';
+  if (billingStatusCopy) billingStatusCopy.textContent = 'We could not load your subscription state right now. Try refreshing in a moment.';
 });
 
 initReveal();

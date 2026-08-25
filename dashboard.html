@@ -2,12 +2,16 @@
 <html lang="en" data-theme="dark">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
     <meta name="theme-color" content="#0e1116" />
+    <script vite-ignore src="./theme-bootstrap.js" data-enable-dominion-night="false"></script>
     <title>Dominion Dashboard</title>
     <link rel="stylesheet" href="./src/assets/styles.css" />
     <link rel="stylesheet" href="./src/assets/product.css" />
+    <link rel="stylesheet" href="./src/assets/dialog.css" />
     <link rel="stylesheet" href="./src/assets/menu.css" />
+    <link rel="stylesheet" href="./src/assets/dominion-night.css" />
+    <link rel="stylesheet" href="./src/assets/dominion-platinum.css" />
   </head>
   <body>
     <main class="app-shell dashboard-shell">
@@ -15,18 +19,66 @@
         <a class="back-link" href="./index.html">Dominion</a>
       </header>
 
-      <section class="dashboard-hero compact-hero reveal">
+      <nav class="member-tabs" aria-label="Member sections" data-member-tabs>
+        <a class="member-tab" href="./dashboard.html" aria-current="page"><span class="member-tab-icon app-icon icon-home" aria-hidden="true"></span><span class="member-tab-label">Dashboard</span></a>
+        <a class="member-tab" href="./badges-rewards.html"><span class="member-tab-icon app-icon icon-gift" aria-hidden="true"></span><span class="member-tab-label">Rewards</span></a>
+        <a class="member-tab" href="./community.html" data-training-target="dashboard-community"><span class="member-tab-icon app-icon icon-users" aria-hidden="true"></span><span class="member-tab-label">Community</span></a>
+        <a class="member-tab" href="./private-journal.html" aria-label="Private Journal"><span class="member-tab-icon app-icon icon-book" aria-hidden="true"></span><span class="member-tab-label"><span class="member-tab-label-prefix">Private </span>Journal</span></a>
+      </nav>
+
+      <section class="dashboard-hero compact-hero reveal" data-section-surface="plain">
         <p class="eyebrow">Member Dashboard</p>
-        <h1>Today’s Dominion</h1>
-        <p class="lead">Track your standards, post your check-in, and stay honest.</p>
+        <h1 id="dashboardTitle">Today’s Dominion</h1>
+        <p class="lead" id="dashboardLead">Track today’s actions and post your check-in.</p>
       </section>
 
-      <section class="countdown-card spotlight-panel reveal" id="countdownCard">
+      <section
+        class="challenge-start-gate spotlight-panel reveal"
+        id="challengeStartGate"
+        data-section-surface="accent"
+        aria-labelledby="challengeStartGateTitle"
+        hidden
+      >
+        <div class="challenge-start-gate-copy">
+          <p class="eyebrow">Challenge Setup</p>
+          <h2 id="challengeStartGateTitle">Choose how you want to take the challenge.</h2>
+          <p id="challengeStartGateDescription">Start on your own or with a private group, then choose your start date.</p>
+        </div>
+        <div class="challenge-start-gate-actions">
+          <button
+            class="primary"
+            id="startChallengeButton"
+            type="button"
+            aria-haspopup="dialog"
+            aria-controls="challengeStartDialog"
+            aria-describedby="challengeStartGateDescription"
+            disabled
+          >Start Challenge</button>
+          <button class="secondary" id="retryChallengeActivationButton" type="button" hidden disabled>Retry activation status</button>
+        </div>
+      </section>
+      <p class="sr-only" id="dashboardActivationStatus" role="status" aria-live="polite" aria-atomic="true" tabindex="-1"></p>
+
+      <section class="progress dashboard-section dashboard-tracking reveal" data-section-surface="plain" data-training-target="dashboard-progress" aria-labelledby="trackingTitle">
+        <h2 class="sr-only" id="trackingTitle">Challenge and daily progress</h2>
+        <div class="rings" role="group" aria-labelledby="trackingTitle">
+          <div class="ring" id="challengeRing"><div class="ring-inner"><strong id="challengePercent">—</strong><span>Challenge</span><small id="challengeDay">Confirming…</small></div></div>
+          <div class="ring" id="todayRing"><div class="ring-inner"><strong id="todayPercent">0%</strong><span>Today</span><small id="todayCount">0 of 7 done</small></div></div>
+        </div>
+      </section>
+
+      <section class="challenge-complete-panel reveal" id="challengeCompletePanel" data-section-surface="plain" hidden>
+        <p class="eyebrow">77 Days Complete</p>
+        <h2>You finished the Dominion Challenge.</h2>
+        <p>Review your rewards and choose another challenge when you’re ready.</p>
+      </section>
+
+      <section class="countdown-card spotlight-panel reveal" id="countdownCard" data-section-surface="accent">
         <div class="countdown-topline">
           <span class="app-icon icon-clock countdown-icon" aria-hidden="true"></span>
           <div>
-            <p class="eyebrow">Daily Countdown</p>
-            <h2>Today is moving</h2>
+            <p class="eyebrow">Time Left Today</p>
+            <h2>Finish today’s actions</h2>
           </div>
         </div>
         <div class="countdown-display">
@@ -36,63 +88,78 @@
         <div class="countdown-progress" aria-hidden="true">
           <span id="countdownProgress"></span>
         </div>
-        <p class="countdown-callout" id="countdownCallout" aria-live="polite">A fresh challenge reminder will load here.</p>
+        <p class="countdown-callout" id="countdownCallout" aria-live="polite">Loading today’s reminder…</p>
         <div class="countdown-meta">
           <span id="countdownProgressLabel">0% of the day used</span>
           <span id="countdownActionsLabel">0 of 7 actions complete</span>
         </div>
-        <button class="action-button countdown-action" type="button" id="countdownCheckInButton">Go to check-in</button>
+        <button class="action-button countdown-action" type="button" id="countdownCheckInButton" aria-controls="check-in" disabled>Go to check-in</button>
       </section>
 
-      <section class="dashboard-brand-panel reveal" aria-label="77 Dominion Challenge mark">
-        <img src="/images/dominion-77-mark.jpg" alt="77 Dominion Challenge" />
-      </section>
-
-      <section class="actions-handoff dashboard-section reveal">
-        <div>
-          <p class="eyebrow">Today's Actions</p>
-          <h2>Open the full playbook</h2>
-          <p>The dashboard keeps score. The action page gives you the details, links, and recommendations for each standard.</p>
-        </div>
-        <a class="action-button with-icon actions-handoff-link" href="./today-actions.html">
-          <span class="app-icon icon-check action-button-icon" aria-hidden="true"></span>
-          <span>Go to today’s actions</span>
-          <span aria-hidden="true">↗</span>
-        </a>
-      </section>
-
-      <section class="progress dashboard-section reveal" id="check-in">
-        <div class="progress-intro">
-          <div class="section-heading">
-            <p class="eyebrow">Progress</p>
-            <h2>How today is tracking</h2>
+      <section class="progress dashboard-section dashboard-scorecard reveal" id="check-in" tabindex="-1" data-section-surface="plain" aria-labelledby="todaysScorecardTitle">
+        <div class="progress-standard" id="daily-standards" data-training-target="dashboard-standards">
+          <div class="section-heading"><p class="eyebrow">Today's Scorecard</p><h2 id="todaysScorecardTitle">Mind, Spirit, Body</h2></div>
+          <div class="scorecard-checklist-heading">
+            <div>
+              <p>Daily actions</p>
+              <span id="scorecardSelectionStatus" role="status" aria-live="polite" aria-atomic="true">0 of 7 complete</span>
+            </div>
+            <button class="scorecard-select-all" id="selectAllActionsButton" type="button" aria-controls="checklist" disabled>
+              <span class="app-icon icon-check" aria-hidden="true"></span>
+              <span id="selectAllActionsLabel">Mark all complete</span>
+            </button>
           </div>
-          <label>Challenge start date<input id="startDate" type="date" /></label>
-        </div>
-        <div class="rings">
-          <div class="ring" id="challengeRing"><div class="ring-inner"><strong id="challengePercent">1%</strong><span>Challenge</span><small id="challengeDay">Day 1 of 77</small></div></div>
-          <div class="ring" id="todayRing"><div class="ring-inner"><strong id="todayPercent">0%</strong><span>Today</span><small id="todayCount">0 of 7 done</small></div></div>
-        </div>
-        <div class="progress-standard">
-          <div class="section-heading"><p class="eyebrow">Today's Scorecard</p><h3>Mind, Spirit, Body</h3></div>
           <div id="checklist"></div>
-          <div class="scorecard-actions">
-            <button class="scheduled" id="scheduledButton">Scheduled miss day planned ahead</button>
-            <button class="primary" id="checkInButton" disabled>Post Check-In</button>
+          <div class="scorecard-actions" data-training-target="dashboard-check-in">
+            <button class="primary" id="checkInButton" type="button" aria-describedby="checkInStatus" disabled>Post Check-In</button>
+            <p class="check-in-status" id="checkInStatus" role="status" aria-live="polite" aria-atomic="true" tabindex="-1"></p>
           </div>
         </div>
       </section>
 
-      <section class="community dashboard-section reveal">
-        <div class="section-heading"><p class="eyebrow">Accountability</p><h2 id="completedToday">3 people completed today</h2></div>
-        <div id="feed"></div>
-        <a class="action-button with-icon actions-handoff-link" href="./community.html">
-          <span class="app-icon icon-users action-button-icon" aria-hidden="true"></span>
-          <span>Open Community</span>
-          <span aria-hidden="true">↗</span>
-        </a>
+      <section class="dashboard-brand-panel reveal" data-section-surface="accent" aria-label="77 Dominion Challenge mark">
+        <img
+          data-theme-asset
+          src="/images/dominion-77-mark.jpg"
+          data-theme-src-dark="/images/dominion-77-mark.jpg"
+          data-theme-src-light="https://pub-53499389187a4de4984349b4f9b36b74.r2.dev/photo_1783730958.105418.png"
+          alt="77 Dominion Challenge"
+          decoding="async"
+        />
       </section>
+
     </main>
+    <div class="confetti-layer" id="confettiLayer" aria-hidden="true"></div>
+    <div id="rewardCelebrationLayer">
+      <div class="reward-backdrop" id="rewardBackdrop" aria-hidden="true" hidden></div>
+      <div class="reward-toast" id="rewardToast" role="dialog" aria-modal="true" aria-live="polite" aria-atomic="true" aria-labelledby="rewardTitle" aria-describedby="rewardCopy" hidden>
+        <button class="celebration-close" type="button" data-dismiss-celebration aria-label="Dismiss day complete celebration"><span aria-hidden="true">×</span></button>
+        <p class="eyebrow">Day Complete</p>
+        <h2 id="rewardTitle">Your day is complete.</h2>
+        <p id="rewardCopy">Updating your points and badges…</p>
+        <div class="badge-shelf" id="rewardBadges"></div>
+      </div>
+    </div>
+    <div class="badge-celebration" id="badgeCelebration" role="dialog" aria-modal="true" aria-live="polite" aria-atomic="true" aria-labelledby="badgeCelebrationTitle" aria-describedby="badgeCelebrationCopy" hidden>
+      <div class="badge-rays" aria-hidden="true"></div>
+      <article class="badge-medal">
+        <button class="celebration-close" type="button" data-dismiss-celebration aria-label="Dismiss badge celebration"><span aria-hidden="true">×</span></button>
+        <span class="badge-medal-icon app-icon icon-shield" id="badgeCelebrationIcon" aria-hidden="true"></span>
+        <p class="eyebrow" id="badgeCelebrationEyebrow">Bronze Badge Earned</p>
+        <h2 id="badgeCelebrationTitle">Faithful Start</h2>
+        <p id="badgeCelebrationCopy">A new badge has been added to your shelf.</p>
+      </article>
+    </div>
+    <div class="badge-celebration challenge-unlock-celebration" id="challengeUnlockCelebration" role="dialog" aria-modal="true" aria-live="polite" aria-atomic="true" aria-labelledby="challengeUnlockTitle" aria-describedby="challengeUnlockCopy" hidden>
+      <div class="badge-rays" aria-hidden="true"></div>
+      <article class="badge-medal">
+        <button class="celebration-close" type="button" data-dismiss-celebration aria-label="Dismiss challenge unlock celebration"><span aria-hidden="true">×</span></button>
+        <span class="badge-medal-icon app-icon icon-spark" id="challengeUnlockIcon" aria-hidden="true"></span>
+        <p class="eyebrow">Challenge Unlocked</p>
+        <h2 id="challengeUnlockTitle">You earned a new challenge.</h2>
+        <p id="challengeUnlockCopy">You can find it on the Rewards page.</p>
+      </article>
+    </div>
     <script type="module" src="./src/static/menu.js"></script>
     <script type="module" src="./src/static/dashboard.js"></script>
   </body>

@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
+    <meta name="theme-color" content="#0e1116" />
+    <script vite-ignore src="./theme-bootstrap.js" data-enable-dominion-night="false"></script>
+    <title>Private Journal | Dominion</title>
+    <link rel="stylesheet" href="./src/assets/styles.css" />
+    <link rel="stylesheet" href="./src/assets/product.css" />
+    <link rel="stylesheet" href="./src/assets/dialog.css" />
+    <link rel="stylesheet" href="./src/assets/share-composer.css" />
+    <link rel="stylesheet" href="./src/assets/community.css" />
+    <link rel="stylesheet" href="./src/assets/menu.css" />
+    <link rel="stylesheet" href="./src/assets/dominion-night.css" />
+    <link rel="stylesheet" href="./src/assets/dominion-platinum.css" />
+  </head>
+  <body>
+    <main class="app-shell community-shell">
+      <header class="topbar">
+        <a class="back-link" href="./dashboard.html">Dashboard</a>
+        <span class="brand-name">Private Journal</span>
+      </header>
+
+      <nav class="member-tabs" aria-label="Member sections" data-member-tabs data-training-target="private-journal-navigation">
+        <a class="member-tab" href="./dashboard.html"><span class="member-tab-icon app-icon icon-home" aria-hidden="true"></span><span class="member-tab-label">Dashboard</span></a>
+        <a class="member-tab" href="./badges-rewards.html"><span class="member-tab-icon app-icon icon-gift" aria-hidden="true"></span><span class="member-tab-label">Rewards</span></a>
+        <a class="member-tab" href="./community.html"><span class="member-tab-icon app-icon icon-users" aria-hidden="true"></span><span class="member-tab-label">Community</span></a>
+        <a class="member-tab" href="./private-journal.html" aria-label="Private Journal" aria-current="page"><span class="member-tab-icon app-icon icon-book" aria-hidden="true"></span><span class="member-tab-label"><span class="member-tab-label-prefix">Private </span>Journal</span></a>
+      </nav>
+
+      <section class="community-hero reveal is-visible" data-section-surface="plain">
+        <p class="eyebrow">77-Day Dominion Challenge</p>
+        <h1>Your private journal</h1>
+        <p class="lead">Write down what happened today, what you learned, and what you’re praying about.</p>
+      </section>
+
+      <div class="community-feedback" id="communityFeedback" role="status" aria-live="polite"></div>
+
+      <section class="community-view" id="journey" data-section-surface="plain" data-section-cadence aria-labelledby="journalTitle">
+        <div class="community-summary" data-section-surface="plain">
+          <span class="app-icon icon-book" aria-hidden="true"></span>
+          <div>
+            <p class="eyebrow">Private Journal</p>
+            <h2 id="journalTitle">Your entries</h2>
+            <p>Review your private notes, verses, prayers, and wins from the challenge.</p>
+          </div>
+        </div>
+
+        <section class="composer-card card" data-section-surface="accent">
+          <p class="eyebrow">New Entry</p>
+          <div id="journalCreateFormMount" data-training-target="private-journal-entry"></div>
+        </section>
+
+        <div class="journey-timeline" id="journalTimeline" data-section-surface="plain" data-training-target="private-journal-timeline"></div>
+      </section>
+    </main>
+
+    <template id="journalFormTemplate">
+      <form class="journal-form">
+        <div class="journal-field" data-journal-field="date">
+          <label><span data-journal-field-label>Date</span></label>
+          <input name="date" type="date" required />
+        </div>
+        <label>
+          <span data-journal-field-label>Mood</span>
+          <select name="mood">
+            <option value="">Choose one</option>
+            <option>Steady</option>
+            <option>Focused</option>
+            <option>Tired</option>
+            <option>Tested</option>
+            <option>Grateful</option>
+          </select>
+        </label>
+        <label>
+          <span data-journal-field-label>Energy</span>
+          <select name="energy">
+            <option value="">Choose one</option>
+            <option>Low</option>
+            <option>Medium</option>
+            <option>High</option>
+          </select>
+        </label>
+        <label class="full-span">
+          <span data-journal-field-label>What did today reveal?</span>
+          <textarea name="note" placeholder="What did today reveal about your discipline, prayer, body, or attention?"></textarea>
+        </label>
+        <label class="full-span">
+          <span data-journal-field-label>Win</span>
+          <input name="win" type="text" placeholder="Name one concrete win from today." />
+        </label>
+        <label class="full-span">
+          <span data-journal-field-label>Prayer or reflection</span>
+          <textarea name="prayer" placeholder="What are you praying through or surrendering?"></textarea>
+        </label>
+        <div class="journal-form-actions full-span">
+          <button class="secondary" type="button" data-journal-cancel hidden>Cancel</button>
+          <button class="primary" type="submit" data-journal-submit>Save private entry</button>
+        </div>
+      </form>
+    </template>
+
+    <script type="module" src="./src/static/menu.js"></script>
+    <script type="module" src="./src/static/private-journal.js"></script>
+    <script type="module" src="./src/static/share-composer.js"></script>
+  </body>
+</html>
