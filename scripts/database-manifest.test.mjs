@@ -1,5 +1,15 @@
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import {
+  chmodSync,
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import test from 'node:test';
 
 import {
@@ -9,8 +19,32 @@ import {
   recordSha256,
   stableStringify,
   validateAllowlist,
+  platformPresenceSuppressionRule,
 } from './compare-database-manifests.mjs';
-import { isPlatformDifferenceKey } from './build-platform-diff-allowlist.mjs';
+import {
+  buildPlatformAllowlist,
+  isPlatformDifferenceKey,
+} from './build-platform-diff-allowlist.mjs';
+
+function databaseSafeEnvironment(overrides = {}) {
+  const environment = { ...process.env, ...overrides };
+  for (const name of [
+    'DATABASE_URL', 'PGAPPNAME', 'PGCHANNELBINDING', 'PGCLIENTENCODING',
+    'PGCONNECT_TIMEOUT', 'PGDATABASE', 'PGHOST', 'PGHOSTADDR', 'PGOPTIONS',
+    'PGPASSFILE', 'PGPASSWORD', 'PGPORT', 'PGREQUIRESSL', 'PGSERVICE',
+    'PGSERVICEFILE', 'PGSSLCERT', 'PGSSLCRL', 'PGSSLCRLDIR', 'PGSSLKEY',
+    'PGSSLMODE', 'PGSSLROOTCERT', 'PGTARGETSESSIONATTRS', 'PGTZ', 'PGUSER',
+    'POSTGRES_PASSWORD', 'SUPABASE_ACCESS_TOKEN', 'SUPABASE_DB_PASSWORD',
+    'BASH_ENV', 'CDPATH', 'DOCKER_CERT_PATH', 'DOCKER_CONFIG', 'DOCKER_CONTEXT',
+    'DOCKER_HOST', 'DOCKER_TLS_VERIFY', 'DYLD_INSERT_LIBRARIES',
+    'DYLD_LIBRARY_PATH', 'ENV', 'GIT_ALTERNATE_OBJECT_DIRECTORIES',
+    'GIT_CEILING_DIRECTORIES', 'GIT_CONFIG_COUNT', 'GIT_CONFIG_GLOBAL',
+    'GIT_CONFIG_NOSYSTEM', 'GIT_CONFIG_SYSTEM', 'GIT_DIR', 'GIT_INDEX_FILE',
+    'GIT_OBJECT_DIRECTORY', 'GIT_WORK_TREE', 'LD_LIBRARY_PATH', 'LD_PRELOAD',
+    'NODE_OPTIONS', 'NODE_PATH',
+  ]) delete environment[name];
+  return { ...environment, ...overrides };
+}
 
 function manifestRecord(key, value = key) {
   return {
@@ -23,6 +57,28 @@ function manifestRecord(key, value = key) {
 
 function manifestText(...records) {
   return `${records.map((record) => JSON.stringify(record)).join('\n')}\n`;
+}
+
+function manifestMap(...records) {
+  return new Map(records.map((record) => [record.key, record]));
+}
+
+function platformPresenceRecord(identity, present, required = false) {
+  return {
+    key: `platform-relation-presence/${identity}`,
+    kind: 'platform-relation-presence',
+    identity,
+    definition: { present, required },
+  };
+}
+
+function exactAllowlistEntry(difference) {
+  return {
+    key: difference.key,
+    expectedSha256: difference.expectedSha256,
+    actualSha256: difference.actualSha256,
+    reason: 'Exact reviewed optional platform relation presence difference.',
+  };
 }
 
 test('stableStringify and whole-record hashes ignore object property insertion order', () => {
@@ -132,11 +188,277 @@ test('allowlist fails closed on wildcards, mismatched hashes, and unused entries
   assert.throws(() => applyAllowlist(differences, unused), /unused entries/u);
 });
 
+test('an exact optional-presence allowlist suppresses only records that cannot exist on the absent side', () => {
+  const identity = 'storage.iceberg_namespaces';
+  const expected = manifestMap(
+    platformPresenceRecord(identity, true),
+    {
+      key: `platform-relation/${identity}`,
+      kind: 'platform-relation',
+      identity,
+      definition: { owner: 'postgres' },
+    },
+    {
+      key: `direct-acl/platform-relation-acl/${identity}/postgres/anon/SELECT`,
+      kind: 'direct-acl',
+      identity,
+      definition: { objectKind: 'platform-relation-acl', grantor: 'postgres' },
+    },
+    {
+      key: `direct-acl/platform-column-acl/${identity}.id/postgres/anon/SELECT`,
+      kind: 'direct-acl',
+      identity: `${identity}.id`,
+      definition: { objectKind: 'platform-column-acl', grantor: 'postgres' },
+    },
+    {
+      key: `effective-acl/relation/${identity}/anon`,
+      kind: 'effective-acl',
+      identity,
+      definition: { objectKind: 'relation', role: 'anon' },
+    },
+    {
+      key: `effective-acl/column/${identity}.id/anon`,
+      kind: 'effective-acl',
+      identity: `${identity}.id`,
+      definition: { objectKind: 'column', role: 'anon' },
+    },
+    {
+      key: `platform-trigger/${identity}/platform_refresh`,
+      kind: 'platform-trigger',
+      identity: `${identity}.platform_refresh`,
+      definition: { enabled: 'O' },
+    },
+    {
+      key: 'storage-row-inventory/iceberg_namespaces',
+      kind: 'storage-row-inventory',
+      identity: `${identity}/all-rows`,
+      definition: { rowCount: 0, rowsSha256: 'empty' },
+    },
+  );
+  const actual = manifestMap(
+    platformPresenceRecord(identity, false),
+    {
+      key: 'storage-row-inventory/iceberg_namespaces',
+      kind: 'storage-row-inventory',
+      identity: `${identity}/all-rows`,
+      definition: { rowCount: 0, rowsSha256: 'empty' },
+    },
+  );
+  const differences = compareManifests(expected, actual);
+  const presenceDifference = differences.find(({ key }) => (
+    key === `platform-relation-presence/${identity}`
+  ));
+  assert.deepEqual(platformPresenceSuppressionRule(presenceDifference), {
+    identity,
+    absentSide: 'actual',
+  });
+  const entries = validateAllowlist({
+    schemaVersion: 1,
+    postgresImage: '17.6.1.141',
+    differences: [exactAllowlistEntry(presenceDifference)],
+  }, '17.6.1.141');
+  assert.deepEqual(applyAllowlist(differences, entries), []);
+});
+
+test('presence suppression cannot hide row data, policies, unrelated objects, or present-side drift', () => {
+  const identity = 'storage.iceberg_tables';
+  const expected = manifestMap(
+    platformPresenceRecord(identity, true),
+    {
+      key: `platform-relation/${identity}`,
+      kind: 'platform-relation',
+      identity,
+      definition: { owner: 'postgres', shape: 'expected' },
+    },
+    {
+      key: 'platform-relation/storage.objects',
+      kind: 'platform-relation',
+      identity: 'storage.objects',
+      definition: { owner: 'postgres' },
+    },
+    {
+      key: 'policy/storage.iceberg_tables/application_policy',
+      kind: 'policy',
+      identity: 'storage.iceberg_tables.application_policy',
+      definition: { command: 'r' },
+    },
+    {
+      key: 'storage-row-inventory/iceberg_tables',
+      kind: 'storage-row-inventory',
+      identity: `${identity}/all-rows`,
+      definition: { rowCount: 1, rowsSha256: 'nonempty' },
+    },
+  );
+  const actual = manifestMap(
+    platformPresenceRecord(identity, false),
+    {
+      key: `platform-relation/${identity}`,
+      kind: 'platform-relation',
+      identity,
+      definition: { owner: 'postgres', shape: 'unexpected-record-on-absent-side' },
+    },
+    {
+      key: 'storage-row-inventory/iceberg_tables',
+      kind: 'storage-row-inventory',
+      identity: `${identity}/all-rows`,
+      definition: { rowCount: 0, rowsSha256: 'empty' },
+    },
+  );
+  const differences = compareManifests(expected, actual);
+  const presenceDifference = differences.find(({ key }) => (
+    key === `platform-relation-presence/${identity}`
+  ));
+  const entries = validateAllowlist({
+    schemaVersion: 1,
+    postgresImage: '17.6.1.141',
+    differences: [exactAllowlistEntry(presenceDifference)],
+  }, '17.6.1.141');
+  assert.deepEqual(
+    applyAllowlist(differences, entries).map(({ key }) => key),
+    [
+      'platform-relation/storage.iceberg_tables',
+      'platform-relation/storage.objects',
+      'policy/storage.iceberg_tables/application_policy',
+      'storage-row-inventory/iceberg_tables',
+    ],
+  );
+});
+
+test('allowlist validation categorically rejects Storage manifest and fingerprint rows', () => {
+  const baseEntry = {
+    expectedSha256: '0'.repeat(64),
+    actualSha256: '1'.repeat(64),
+    reason: 'Attempted exact Storage inventory exception must be rejected.',
+  };
+  for (const key of [
+    'storage-row-inventory/iceberg_tables',
+    'data/storage.iceberg_tables/all-rows',
+  ]) {
+    assert.throws(() => validateAllowlist({
+      schemaVersion: 1,
+      postgresImage: '17.6.1.141',
+      differences: [{ ...baseEntry, key }],
+    }, '17.6.1.141'), /Storage row inventory and cannot be allowlisted/u);
+  }
+});
+
+test('candidate builder emits only optional presence while preserving empty inventories', () => {
+  const identity = 'storage.iceberg_tables';
+  const inventory = {
+    key: 'storage-row-inventory/iceberg_tables',
+    kind: 'storage-row-inventory',
+    identity: `${identity}/all-rows`,
+    definition: { rowCount: 0, rowsSha256: 'empty' },
+  };
+  const expected = manifestMap(
+    platformPresenceRecord(identity, true),
+    {
+      key: `platform-relation/${identity}`,
+      kind: 'platform-relation',
+      identity,
+      definition: { owner: 'postgres' },
+    },
+    inventory,
+  );
+  const actual = manifestMap(platformPresenceRecord(identity, false), inventory);
+  const allowlist = buildPlatformAllowlist(expected, actual, '17.6.1.141');
+  assert.deepEqual(
+    allowlist.differences.map(({ key }) => key),
+    [`platform-relation-presence/${identity}`],
+  );
+
+  const changedInventory = {
+    ...inventory,
+    definition: { rowCount: 1, rowsSha256: 'nonempty' },
+  };
+  assert.throws(
+    () => buildPlatformAllowlist(expected, manifestMap(
+      platformPresenceRecord(identity, false),
+      changedInventory,
+    ), '17.6.1.141'),
+    /storage-row-inventory\/iceberg_tables/u,
+  );
+});
+
+test('candidate builder refuses an absent mandatory vector relation', () => {
+  const identity = 'storage.vector_indexes';
+  const differences = compareManifests(
+    manifestMap(platformPresenceRecord(identity, true, true)),
+    manifestMap(platformPresenceRecord(identity, false, true)),
+  );
+  assert.throws(
+    () => buildPlatformAllowlist(
+      manifestMap(platformPresenceRecord(identity, true, true)),
+      manifestMap(platformPresenceRecord(identity, false, true)),
+      '17.6.1.141',
+    ),
+    /platform-relation-presence\/storage\.vector_indexes/u,
+  );
+  assert.throws(() => validateAllowlist({
+    schemaVersion: 1,
+    postgresImage: '17.6.1.141',
+    differences: [exactAllowlistEntry(differences[0])],
+  }, '17.6.1.141'), /not an optional platform relation presence record/u);
+});
+
+test('a malformed optional presence record cannot be directly allowlisted', () => {
+  const identity = 'storage.iceberg_tables';
+  const differences = compareManifests(
+    manifestMap(platformPresenceRecord(identity, true)),
+    manifestMap(platformPresenceRecord(identity, false, true)),
+  );
+  const entries = validateAllowlist({
+    schemaVersion: 1,
+    postgresImage: '17.6.1.141',
+    differences: [exactAllowlistEntry(differences[0])],
+  }, '17.6.1.141');
+  assert.throws(
+    () => applyAllowlist(differences, entries),
+    /not an exact optional absent\/present transition/u,
+  );
+});
+
+test('optional platform relation structure must match exactly when both sides are present', () => {
+  const identity = 'storage.iceberg_namespaces';
+  const expected = manifestMap(
+    platformPresenceRecord(identity, true),
+    {
+      key: `platform-relation/${identity}`,
+      kind: 'platform-relation',
+      identity,
+      definition: { owner: 'postgres', shape: 'expected' },
+    },
+  );
+  const actual = manifestMap(
+    platformPresenceRecord(identity, true),
+    {
+      key: `platform-relation/${identity}`,
+      kind: 'platform-relation',
+      identity,
+      definition: { owner: 'postgres', shape: 'drifted' },
+    },
+  );
+  assert.throws(
+    () => buildPlatformAllowlist(expected, actual, '17.6.1.141'),
+    /platform-relation\/storage\.iceberg_namespaces/u,
+  );
+  const [difference] = compareManifests(expected, actual);
+  assert.throws(() => validateAllowlist({
+    schemaVersion: 1,
+    postgresImage: '17.6.1.141',
+    differences: [exactAllowlistEntry(difference)],
+  }, '17.6.1.141'), /only its exact presence transition can be allowlisted/u);
+});
+
 test('allowlist candidate builder recognizes only named platform object classes', () => {
   assert.equal(isPlatformDifferenceKey('platform-function/storage.filename(text)'), true);
   assert.equal(isPlatformDifferenceKey('platform-event-trigger/pgrst_ddl_watch'), true);
   assert.equal(isPlatformDifferenceKey('platform-trigger/storage.buckets/enforce_bucket_name_length_trigger'), true);
   assert.equal(isPlatformDifferenceKey('platform-extension/pg_graphql'), true);
+  assert.equal(
+    isPlatformDifferenceKey('platform-relation-presence/storage.iceberg_tables'),
+    false,
+  );
   assert.equal(
     isPlatformDifferenceKey('direct-acl/platform-relation-acl/storage.objects/postgres/anon/SELECT'),
     true,
@@ -270,6 +592,15 @@ test('frozen checkpoints contain the exact legacy Storage policy and inventory s
     }
 
     for (const relationName of storageRelations) {
+      const presence = records.get(`platform-relation-presence/storage.${relationName}`);
+      assert.deepEqual(
+        presence?.definition,
+        {
+          present: true,
+          required: !['iceberg_namespaces', 'iceberg_tables'].includes(relationName),
+        },
+        `${manifestName} is missing the ${relationName} presence contract`,
+      );
       const relation = records.get(`platform-relation/storage.${relationName}`);
       assert.ok(relation, `${manifestName} is missing the ${relationName} definition`);
       for (const roleName of ['anon', 'authenticated', 'service_role']) {
@@ -457,4 +788,206 @@ test('rehearsal and migration gate every pinned Storage inventory relation', () 
     rehearsal,
     /changed-storage-policy-helper-function-acl \\/u,
   );
+  assert.match(rehearsal, /source-drift\/absent-iceberg-relations\.sql/u);
+  assert.match(rehearsal, /source-drift\/absent-vector-relation\.sql/u);
+  assert.match(rehearsal, /source-drift\/nonempty-iceberg-namespace\.sql/u);
+  assert.match(rehearsal, /optional-iceberg\.allowlist\.json/u);
+  assert.match(rehearsal, /exactly two presence entries/u);
+  assert.match(rehearsal, /storage-row-inventory\/iceberg_namespaces/u);
+});
+
+test('manifest and fingerprint resolve optional Iceberg without querying an absent relation', () => {
+  const manifestSql = readFileSync(new URL('./database-manifest.sql', import.meta.url), 'utf8');
+  const fingerprintSql = readFileSync(
+    new URL('./baseline-data-fingerprint.sql', import.meta.url),
+    'utf8',
+  );
+  for (const sql of [manifestSql, fingerprintSql]) {
+    assert.match(sql, /pg_catalog\.to_regclass\(pg_catalog\.format\(/u);
+    assert.match(sql, /\('storage', 'buckets_vectors', true\)/u);
+    assert.match(sql, /\('storage', 'vector_indexes', true\)/u);
+    assert.match(sql, /\('storage', 'iceberg_namespaces', false\)/u);
+    assert.match(sql, /\('storage', 'iceberg_tables', false\)/u);
+    assert.match(sql, /if relation_oid is null then[\s\S]*row_count := 0;[\s\S]*digest\(convert_to\('', 'UTF8'\), 'sha256'\)/u);
+    assert.match(sql, /from %s source_row/u);
+    assert.doesNotMatch(sql, /from storage\.%I source_row/u);
+  }
+  assert.match(manifestSql, /platform-relation-presence\/%I\.%I/u);
+  assert.match(manifestSql, /'present', inventory\.relation_oid is not null/u);
+  assert.match(manifestSql, /'required', inventory\.required/u);
+  assert.match(manifestSql, /Database manifest refused: required platform relation\(s\) are absent/u);
+  assert.match(fingerprintSql, /Baseline fingerprint refused: required platform relation\(s\) are absent/u);
+});
+
+test('db-url capture falls back to the pinned Docker psql client', () => {
+  const fixtureRoot = mkdtempSync(join(tmpdir(), 'database-manifest-docker-psql.'));
+  try {
+    const projectRef = 'abcdefghijklmnopqrst';
+    const fakeDocker = join(fixtureRoot, 'docker');
+    const dockerLog = join(fixtureRoot, 'docker.log');
+    const output = join(fixtureRoot, 'manifest.jsonl');
+    const databaseUrlFile = join(fixtureRoot, 'database-url');
+    const databasePassfile = join(fixtureRoot, 'database.pgpass');
+    const postgresImageId = `sha256:${'9'.repeat(64)}`;
+    writeFileSync(
+      databaseUrlFile,
+      `postgresql://postgres.${projectRef}@aws-0-us-east-1.pooler.supabase.com:5432/postgres?sslmode=require\n`,
+      { mode: 0o600 },
+    );
+    writeFileSync(
+      databasePassfile,
+      `aws-0-us-east-1.pooler.supabase.com:5432:postgres:postgres.${projectRef}:fixture-secret\n`,
+      { mode: 0o600 },
+    );
+    chmodSync(databaseUrlFile, 0o600);
+    chmodSync(databasePassfile, 0o600);
+    writeFileSync(fakeDocker, [
+      '#!/usr/bin/env bash',
+      'set -euo pipefail',
+      'printf \'%s\\n\' "$*" >>"$FAKE_DOCKER_LOG"',
+      'if [[ "${1:-} ${2:-}" == "context inspect" ]]; then',
+      '  printf \'%s\\n\' \'unix:///var/run/docker.sock\'',
+      '  exit 0',
+      'fi',
+      'if [[ "${1:-} ${2:-}" == "image inspect" ]]; then',
+      '  printf \'%s\\n\' "$FAKE_POSTGRES_IMAGE_ID"',
+      '  exit 0',
+      'fi',
+      '[[ "${1:-}" == "run" ]]',
+      'printf \'%s\\n\' \'{"key":"fixture/docker","kind":"fixture","identity":"docker","definition":{}}\'',
+    ].join('\n'));
+    chmodSync(fakeDocker, 0o755);
+
+    execFileSync('bash', [
+      new URL('./capture-database-manifest.sh', import.meta.url).pathname,
+      '--db-url-file',
+      databaseUrlFile,
+      '--database-client-contract',
+      'exact-docker-pgpass/v1',
+      '--database-passfile',
+      databasePassfile,
+      '--project-ref',
+      projectRef,
+      '--docker-bin',
+      fakeDocker,
+      '--postgres-image',
+      'public.ecr.aws/supabase/postgres:17.6.1.141',
+      '--postgres-image-id',
+      postgresImageId,
+      '--output',
+      output,
+    ], {
+      env: databaseSafeEnvironment({
+        FAKE_DOCKER_LOG: dockerLog,
+        FAKE_POSTGRES_IMAGE_ID: postgresImageId,
+        SUPABASE_INTERNAL_IMAGE_REGISTRY: 'public.ecr.aws',
+      }),
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+
+    assert.match(
+      readFileSync(dockerLog, 'utf8'),
+      new RegExp(`run --rm --pull never --network bridge --log-driver none --interactive [^\\n]* --entrypoint psql ${postgresImageId} postgresql://postgres\\.abcdefghijklmnopqrst@aws-0-us-east-1\\.pooler\\.supabase\\.com:5432/postgres\\?sslmode=require --no-psqlrc --quiet --set ON_ERROR_STOP=1 --file -`, 'u'),
+    );
+    assert.match(readFileSync(dockerLog, 'utf8'), /image inspect public\.ecr\.aws\/supabase\/postgres:17\.6\.1\.141 --format \{\{\.Id\}\}/u);
+    assert.doesNotMatch(readFileSync(dockerLog, 'utf8'), /fixture-secret/u);
+    assert.deepEqual(
+      [...parseManifestText(readFileSync(output, 'utf8')).keys()],
+      ['fixture/docker'],
+    );
+  } finally {
+    rmSync(fixtureRoot, { recursive: true, force: true });
+  }
+});
+
+test('host psql manifest capture uses only the explicit pgpass boundary', () => {
+  const fixtureRoot = mkdtempSync(join(tmpdir(), 'database-manifest-host-psql.'));
+  try {
+    const projectRef = 'abcdefghijklmnopqrst';
+    const fakePsql = join(fixtureRoot, 'psql');
+    const psqlLog = join(fixtureRoot, 'psql.log');
+    const output = join(fixtureRoot, 'manifest.jsonl');
+    const databaseUrlFile = join(fixtureRoot, 'database-url');
+    const databasePassfile = join(fixtureRoot, 'database.pgpass');
+    writeFileSync(
+      databaseUrlFile,
+      `postgresql://postgres.${projectRef}@aws-0-us-east-1.pooler.supabase.com:5432/postgres?sslmode=require\n`,
+      { mode: 0o600 },
+    );
+    writeFileSync(
+      databasePassfile,
+      `aws-0-us-east-1.pooler.supabase.com:5432:postgres:postgres.${projectRef}:fixture-secret\n`,
+      { mode: 0o600 },
+    );
+    writeFileSync(fakePsql, [
+      '#!/usr/bin/env bash',
+      'set -euo pipefail',
+      '[[ -z "${PGPASSWORD:-}" && -z "${PGOPTIONS:-}" && -z "${PGSERVICE:-}" ]]',
+      `[[ "\${PGPASSFILE:-}" == '${databasePassfile}' ]]`,
+      `printf '%s\\n' "$*" >'${psqlLog}'`,
+      'printf \'%s\\n\' \'{"key":"fixture/host","kind":"fixture","identity":"host","definition":{}}\'',
+    ].join('\n'));
+    chmodSync(fakePsql, 0o755);
+    chmodSync(databaseUrlFile, 0o600);
+    chmodSync(databasePassfile, 0o600);
+
+    execFileSync('bash', [
+      new URL('./capture-database-manifest.sh', import.meta.url).pathname,
+      '--db-url-file', databaseUrlFile,
+      '--database-passfile', databasePassfile,
+      '--project-ref', projectRef,
+      '--output', output,
+    ], {
+      env: databaseSafeEnvironment({ PSQL_BIN: fakePsql }),
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+
+    assert.match(readFileSync(psqlLog, 'utf8'), /--dbname postgresql:\/\/postgres\.abcdefghijklmnopqrst@/u);
+    assert.doesNotMatch(readFileSync(psqlLog, 'utf8'), /fixture-secret/u);
+    assert.deepEqual(
+      [...parseManifestText(readFileSync(output, 'utf8')).keys()],
+      ['fixture/host'],
+    );
+  } finally {
+    rmSync(fixtureRoot, { recursive: true, force: true });
+  }
+});
+
+test('remote manifest capture rejects ambient libpq credentials before psql', () => {
+  const fixtureRoot = mkdtempSync(join(tmpdir(), 'database-manifest-ambient.'));
+  try {
+    const projectRef = 'abcdefghijklmnopqrst';
+    const fakePsql = join(fixtureRoot, 'psql');
+    const touched = join(fixtureRoot, 'psql-ran');
+    const databaseUrlFile = join(fixtureRoot, 'database-url');
+    const databasePassfile = join(fixtureRoot, 'database.pgpass');
+    writeFileSync(
+      databaseUrlFile,
+      `postgresql://postgres.${projectRef}@aws-0-us-east-1.pooler.supabase.com:5432/postgres?sslmode=require\n`,
+      { mode: 0o600 },
+    );
+    writeFileSync(
+      databasePassfile,
+      `aws-0-us-east-1.pooler.supabase.com:5432:postgres:postgres.${projectRef}:fixture-secret\n`,
+      { mode: 0o600 },
+    );
+    writeFileSync(fakePsql, `#!/usr/bin/env bash\ntouch '${touched}'\n`, { mode: 0o755 });
+    chmodSync(fakePsql, 0o755);
+    chmodSync(databaseUrlFile, 0o600);
+    chmodSync(databasePassfile, 0o600);
+
+    assert.throws(() => execFileSync('bash', [
+      new URL('./capture-database-manifest.sh', import.meta.url).pathname,
+      '--db-url-file', databaseUrlFile,
+      '--database-passfile', databasePassfile,
+      '--project-ref', projectRef,
+      '--output', join(fixtureRoot, 'manifest.jsonl'),
+    ], {
+      env: { ...process.env, PSQL_BIN: fakePsql, PGPASSWORD: 'ambient-secret' },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    }), /Command failed/u);
+    assert.equal(existsSync(touched), false);
+  } finally {
+    rmSync(fixtureRoot, { recursive: true, force: true });
+  }
 });

@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+umask 077
 
 fail() {
   echo "Database manifest capture: $1" >&2
@@ -8,11 +9,38 @@ fail() {
 
 script_directory="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 repository_root="$(cd "$script_directory/.." && pwd -P)"
+# shellcheck source=production-backup-common.sh
+source "$script_directory/production-backup-common.sh"
 query_name="manifest"
 output_file=""
+database_url_file=""
+database_passfile=""
 database_url=""
+database_client_contract=""
+project_ref=""
 database_name="postgres"
 container_name=""
+docker_cli=""
+requested_postgres_image=""
+psql_cli=""
+force_docker_psql=false
+postgres_image_id=""
+
+resolve_docker_cli() {
+  if [[ -n "$docker_cli" ]]; then
+    [[ -x "$docker_cli" && -f "$docker_cli" && ! -L "$docker_cli" ]] \
+      || fail "--docker-bin is not an executable regular file: $docker_cli."
+  elif [[ -n "${DOCKER_BIN:-}" ]]; then
+    [[ -x "$DOCKER_BIN" ]] || fail "DOCKER_BIN is not executable: $DOCKER_BIN."
+    docker_cli="$DOCKER_BIN"
+  elif command -v docker >/dev/null 2>&1; then
+    docker_cli="$(command -v docker)"
+  elif [[ -x /opt/homebrew/bin/docker ]]; then
+    docker_cli="/opt/homebrew/bin/docker"
+  else
+    return 1
+  fi
+}
 
 while (( $# > 0 )); do
   case "$1" in
@@ -21,9 +49,24 @@ while (( $# > 0 )); do
       output_file="$2"
       shift 2
       ;;
-    --db-url)
-      (( $# >= 2 )) || fail "--db-url requires a PostgreSQL URL."
-      database_url="$2"
+    --db-url-file)
+      (( $# >= 2 )) || fail "--db-url-file requires a private file."
+      database_url_file="$2"
+      shift 2
+      ;;
+    --database-client-contract)
+      (( $# >= 2 )) || fail "--database-client-contract requires a value."
+      database_client_contract="$2"
+      shift 2
+      ;;
+    --database-passfile)
+      (( $# >= 2 )) || fail "--database-passfile requires a private pgpass file."
+      database_passfile="$2"
+      shift 2
+      ;;
+    --project-ref)
+      (( $# >= 2 )) || fail "--project-ref requires a value."
+      project_ref="$2"
       shift 2
       ;;
     --database)
@@ -40,17 +83,77 @@ while (( $# > 0 )); do
       query_name="fingerprint"
       shift
       ;;
+    --docker-psql)
+      force_docker_psql=true
+      shift
+      ;;
+    --postgres-image-id)
+      (( $# >= 2 )) || fail "--postgres-image-id requires an exact image ID."
+      postgres_image_id="$2"
+      shift 2
+      ;;
+    --docker-bin)
+      (( $# >= 2 )) || fail "--docker-bin requires an exact executable path."
+      docker_cli="$2"
+      shift 2
+      ;;
+    --postgres-image)
+      (( $# >= 2 )) || fail "--postgres-image requires an exact image ref."
+      requested_postgres_image="$2"
+      shift 2
+      ;;
     *)
       fail "unsupported argument: $1"
       ;;
   esac
 done
 
-[[ -n "$output_file" ]] || fail "usage: $0 --output <path> [--db-url <url> | --database <name>] [--fingerprint]."
+[[ -n "$output_file" ]] || fail \
+  "usage: $0 --output <path> [--db-url-file <passwordless-url-file> --database-passfile <pgpass-file> --project-ref <20-char-ref> [--docker-psql --postgres-image-id sha256:<64hex> | --docker-bin <absolute-path> --postgres-image public.ecr.aws/supabase/postgres:17.6.1.141 --postgres-image-id sha256:<64hex>] | --database <name>] [--fingerprint]."
 [[ "$database_name" =~ ^[A-Za-z0-9_][A-Za-z0-9_.-]*$ ]] \
   || fail "database names may contain letters, digits, underscores, dots, and hyphens only."
-if [[ -n "$database_url" && ( -n "$container_name" || "$database_name" != "postgres" ) ]]; then
-  fail "--db-url cannot be combined with --container or --database."
+if [[ -n "$database_url_file" && ( -n "$container_name" || "$database_name" != "postgres" ) ]]; then
+  fail "--db-url-file cannot be combined with --container or --database."
+fi
+if [[ -n "$database_url_file" && -z "$database_passfile" ]] \
+  || [[ -z "$database_url_file" && -n "$database_passfile" ]]; then
+  fail "--db-url-file and --database-passfile are required together."
+fi
+if [[ -n "$database_url_file" && ! "$project_ref" =~ ^[a-z0-9]{20}$ ]]; then
+  fail "remote capture requires an exact 20-character --project-ref."
+fi
+if [[ -z "$database_url_file" && -n "$project_ref" ]]; then
+  fail "--project-ref is only valid with --db-url-file."
+fi
+if [[ "$force_docker_psql" == "true" && -z "$database_url_file" ]]; then
+  fail "--docker-psql requires --db-url-file and --database-passfile."
+fi
+if [[ -n "$postgres_image_id" \
+  && ! "$postgres_image_id" =~ ^sha256:[a-f0-9]{64}$ ]]; then
+  fail "--postgres-image-id must be sha256 plus 64 lowercase hexadecimal characters."
+fi
+if [[ -z "$database_url_file" && -n "$postgres_image_id" ]]; then
+  fail "--postgres-image-id is only valid with remote --db-url-file capture."
+fi
+if [[ -n "$docker_cli" || -n "$requested_postgres_image" ]]; then
+  [[ -n "$docker_cli" && -n "$requested_postgres_image" \
+    && -n "$postgres_image_id" ]] || fail \
+    "explicit Docker capture requires --docker-bin, --postgres-image, and --postgres-image-id together."
+  case "$docker_cli" in
+    /*) ;;
+    *) fail "--docker-bin must be an absolute path." ;;
+  esac
+  [[ "$requested_postgres_image" \
+    == "public.ecr.aws/supabase/postgres:17.6.1.141" ]] || fail \
+    "--postgres-image must be exactly public.ecr.aws/supabase/postgres:17.6.1.141."
+  force_docker_psql=true
+fi
+if [[ -n "$database_client_contract" \
+  && "$database_client_contract" != "exact-docker-pgpass/v1" ]]; then
+  fail "--database-client-contract must be exactly exact-docker-pgpass/v1."
+fi
+if [[ -n "$database_client_contract" && "$force_docker_psql" != "true" ]]; then
+  fail "exact-docker-pgpass/v1 requires the complete explicit Docker/image boundary."
 fi
 
 case "$query_name" in
@@ -71,23 +174,93 @@ cleanup() {
 }
 trap cleanup EXIT
 
-if [[ -n "$database_url" ]]; then
-  if [[ -n "${PSQL_BIN:-}" ]]; then
-    [[ -x "$PSQL_BIN" ]] || fail "PSQL_BIN is not executable: $PSQL_BIN."
-    psql_cli="$PSQL_BIN"
-  elif command -v psql >/dev/null 2>&1; then
-    psql_cli="$(command -v psql)"
-  else
-    fail "psql is required for --db-url capture."
+if [[ -n "$database_url_file" ]]; then
+  production_backup_reject_ambient_database_environment
+  production_backup_reject_ambient_runtime_environment
+  database_url="$(
+    node "$script_directory/validate-postgres-credentials.mjs" \
+      --database-url-file "$database_url_file" \
+      --database-passfile "$database_passfile" \
+      --project-ref "$project_ref"
+  )" || fail "database credential validation failed."
+  if [[ "$force_docker_psql" == "false" ]]; then
+    if [[ -n "${PSQL_BIN:-}" ]]; then
+      [[ -x "$PSQL_BIN" ]] || fail "PSQL_BIN is not executable: $PSQL_BIN."
+      psql_cli="$PSQL_BIN"
+    elif command -v psql >/dev/null 2>&1; then
+      psql_cli="$(command -v psql)"
+    fi
+  fi
+  if [[ -z "$psql_cli" ]]; then
+    [[ -n "$postgres_image_id" ]] || fail \
+      "Docker psql requires --postgres-image-id; the helper never pulls or trusts a mutable tag."
+    resolve_docker_cli \
+      || fail "psql or Docker is required for --db-url capture."
+    postgres_version_file="$repository_root/supabase/.temp/postgres-version"
+    [[ -f "$postgres_version_file" ]] \
+      || fail "missing pinned Postgres version: $postgres_version_file."
+    postgres_image_version="$(tr -d '\r\n' <"$postgres_version_file")"
+    [[ "$postgres_image_version" == "17.6.1.141" ]] \
+      || fail "expected pinned Postgres image 17.6.1.141, found $postgres_image_version."
+    postgres_image_registry="${SUPABASE_INTERNAL_IMAGE_REGISTRY:-public.ecr.aws}"
+    postgres_image_registry="${postgres_image_registry%/}"
+    [[ -n "$postgres_image_registry" ]] \
+      || fail "Postgres image registry cannot be empty."
+    postgres_image_ref="${postgres_image_registry}/supabase/postgres:${postgres_image_version}"
+    if [[ -n "$requested_postgres_image" \
+      && "$requested_postgres_image" != "$postgres_image_ref" ]]; then
+      fail "the explicit PostgreSQL image does not match the pinned repository image."
+    fi
+    production_backup_require_local_docker_context "$docker_cli"
+    actual_postgres_image_id="$(
+      "$docker_cli" image inspect "$postgres_image_ref" --format '{{.Id}}'
+    )" || fail "the pinned PostgreSQL image is not present locally."
+    [[ "$actual_postgres_image_id" == "$postgres_image_id" ]] || fail \
+      "the pinned PostgreSQL tag does not resolve to the approved image ID."
+    case "$database_passfile" in
+      /*) ;;
+      *) fail "database passfile must be an absolute path." ;;
+    esac
+    case "$database_passfile" in
+      *,*) fail "database passfile path cannot contain a comma." ;;
+    esac
+
+    "$docker_cli" run \
+      --rm \
+      --pull never \
+      --network bridge \
+      --log-driver none \
+      --interactive \
+      --env PGAPPNAME=77dc-baseline-manifest-read-only \
+      --env PGPASSWORD= \
+      --env PGPASSFILE=/dominion-private/pgpass \
+      --mount "type=bind,source=$database_passfile,target=/dominion-private/pgpass,readonly" \
+      --entrypoint psql \
+      "$postgres_image_id" \
+      "$database_url" \
+        --no-psqlrc \
+        --quiet \
+        --set ON_ERROR_STOP=1 \
+        --file - \
+      <"$sql_file" \
+      >"$temporary_output"
+
+    psql_cli=""
   fi
 
-  PGAPPNAME="77dc-baseline-manifest-read-only" \
-    "$psql_cli" "$database_url" \
-      --no-psqlrc \
-      --quiet \
-      --set ON_ERROR_STOP=1 \
-      --file "$sql_file" \
-      >"$temporary_output"
+  if [[ -n "$psql_cli" ]]; then
+    env -i \
+      PATH="$PATH" \
+      PGAPPNAME="77dc-baseline-manifest-read-only" \
+      PGPASSFILE="$database_passfile" \
+      PGSSLMODE="require" \
+      "$psql_cli" --dbname "$database_url" \
+        --no-psqlrc \
+        --quiet \
+        --set ON_ERROR_STOP=1 \
+        --file "$sql_file" \
+        >"$temporary_output"
+  fi
 else
   config_file="$repository_root/supabase/config.toml"
   [[ -f "$config_file" ]] || fail "missing $config_file."
@@ -99,16 +272,8 @@ else
   [[ "$container_name" =~ ^[A-Za-z0-9_][A-Za-z0-9_.-]*$ ]] \
     || fail "container names may contain letters, digits, underscores, dots, and hyphens only."
 
-  if [[ -n "${DOCKER_BIN:-}" ]]; then
-    [[ -x "$DOCKER_BIN" ]] || fail "DOCKER_BIN is not executable: $DOCKER_BIN."
-    docker_cli="$DOCKER_BIN"
-  elif command -v docker >/dev/null 2>&1; then
-    docker_cli="$(command -v docker)"
-  elif [[ -x /opt/homebrew/bin/docker ]]; then
-    docker_cli="/opt/homebrew/bin/docker"
-  else
-    fail "Docker is required for local capture when psql is unavailable."
-  fi
+  resolve_docker_cli \
+    || fail "Docker is required for local capture when psql is unavailable."
 
   "$docker_cli" exec \
       --env PGAPPNAME=77dc-baseline-manifest-read-only \
