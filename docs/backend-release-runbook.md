@@ -265,16 +265,21 @@ its referenced functions, and direct and effective relation, function, and
 column privileges. The pinned Supabase CLI 2.109.0 Storage inventory relations are
 `buckets`, `buckets_analytics`, `buckets_vectors`, `iceberg_namespaces`,
 `iceberg_tables`, `objects`, `s3_multipart_uploads`,
-`s3_multipart_uploads_parts`, and `vector_indexes`. Compare all of those object
-classes and every row inventory independently, classifying
-platform-version noise through an explicit reviewed allowlist rather than
-silently discarding it. Also run these read-only queries in the production
-Supabase SQL editor. Compare the result exactly with the version-bounded local
-checkpoint manifest, including commands, roles, `qual`, and `with_check`
-expressions. Do not filter the inventory to expected IDs or policy names: an
-unknown row is itself a release blocker. For the migration-3 checkpoint below,
-the only standard bucket is `journal-progress`, every other Storage inventory
-relation has zero rows, and the only application Storage policies are its four
+`s3_multipart_uploads_parts`, and `vector_indexes`. Older hosted Storage
+releases may omit the two Iceberg relations. Capture records every selected
+relation's presence through `to_regclass`; all relations except those two are
+mandatory, including `buckets_vectors` and `vector_indexes`. An absent optional
+Iceberg relation receives the canonical empty row inventory without issuing a
+query against the missing relation. Compare every present object class and every
+row inventory independently, classifying platform-version noise through an
+explicit reviewed allowlist rather than silently discarding it. Also run these
+read-only queries in the production Supabase SQL editor. Compare the result
+exactly with the version-bounded local checkpoint manifest, including commands,
+roles, `qual`, and `with_check` expressions. Do not filter the inventory to
+expected IDs or policy names: an unknown row is itself a release blocker. For
+the migration-3 checkpoint below, the only standard bucket is
+`journal-progress`, every other Storage inventory relation has zero rows, and
+the only application Storage policies are its four
 `Users can ... journal photo objects` policies:
 
 ```sql
@@ -298,27 +303,29 @@ where schemaname = 'storage'
   )
 order by tablename, policyname;
 
-select relation_name, row_count
-from (
-  select 'storage.buckets_analytics' as relation_name, count(*) as row_count
-  from storage.buckets_analytics
-  union all
-  select 'storage.buckets_vectors', count(*) from storage.buckets_vectors
-  union all
-  select 'storage.iceberg_namespaces', count(*) from storage.iceberg_namespaces
-  union all
-  select 'storage.iceberg_tables', count(*) from storage.iceberg_tables
-  union all
-  select 'storage.objects', count(*) from storage.objects
-  union all
-  select 'storage.s3_multipart_uploads', count(*) from storage.s3_multipart_uploads
-  union all
-  select 'storage.s3_multipart_uploads_parts', count(*) from storage.s3_multipart_uploads_parts
-  union all
-  select 'storage.vector_indexes', count(*) from storage.vector_indexes
-) inventory
-order by relation_name;
+select
+  format('storage.%I', relation_name) as relation_name,
+  to_regclass(format('storage.%I', relation_name)) is not null as present,
+  required
+from (values
+  ('buckets', true),
+  ('buckets_analytics', true),
+  ('buckets_vectors', true),
+  ('iceberg_namespaces', false),
+  ('iceberg_tables', false),
+  ('objects', true),
+  ('s3_multipart_uploads', true),
+  ('s3_multipart_uploads_parts', true),
+  ('vector_indexes', true)
+) inventory(relation_name, required)
+order by relation_name collate "C";
 ```
+
+Do not compose a static `UNION` that names optional relations: PostgreSQL can
+fail while parsing it before a `WHERE to_regclass(...)` guard is evaluated.
+Use `scripts/database-manifest.sql` and `scripts/baseline-data-fingerprint.sql`
+for the row inventories; both resolve relation OIDs first and query only present
+relations.
 
 Migration repair records history without executing SQL. Never repair a version
 whose complete net effect is not already present, and never infer a repair range
@@ -488,8 +495,14 @@ separately reviewed change and the exact restored-snapshot rehearsal passes:
 
    The builder rejects every application-owned key. It emits exact keys and
    whole-record SHA-256 pairs only; wildcards, hash mismatches, version
-   mismatches, and unused entries fail comparison. A generated candidate is not
-   approval. Review it against direct dumps and then compare with:
+   mismatches, and unused entries fail comparison. For optional Iceberg absence,
+   only `platform-relation-presence/storage.iceberg_namespaces` and/or
+   `platform-relation-presence/storage.iceberg_tables` may be candidates. An
+   approved exact presence transition suppresses only platform shape and ACL
+   records that cannot exist on the absent side. It cannot suppress Storage
+   policies, unrelated relations, a shape change when both sides are present,
+   or any Storage row inventory or data fingerprint. A generated candidate is
+   not approval. Review it against direct dumps and then compare with:
 
    ```bash
    node scripts/compare-database-manifests.mjs \
@@ -506,6 +519,12 @@ separately reviewed change and the exact restored-snapshot rehearsal passes:
      --db-url "$RESTORED_READ_ONLY_DATABASE_URL" \
      --output /approved/off-repository/production.manifest.jsonl
    ```
+
+   If host `psql` is unavailable, capture automatically uses `psql` from the
+   pinned `public.ecr.aws/supabase/postgres:17.6.1.141` image. Pass
+   `--docker-psql` to force that reviewed fallback. The database hostname in the
+   URL must be reachable from the container; do not rewrite or expose the
+   read-only credential merely to make a localhost-only address work.
 
    Never commit a production manifest or data fingerprint; catalog definitions,
    role names, and aggregate hashes are release evidence and belong in the

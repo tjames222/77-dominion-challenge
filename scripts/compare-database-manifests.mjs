@@ -4,6 +4,26 @@ import { pathToFileURL } from 'node:url';
 
 const SHA256_PATTERN = /^[0-9a-f]{64}$/;
 const WILDCARD_PATTERN = /[*?\[\]]/;
+const PLATFORM_PRESENCE_KEY_PREFIX = 'platform-relation-presence/';
+const OPTIONAL_PLATFORM_RELATIONS = new Set([
+  'storage.iceberg_namespaces',
+  'storage.iceberg_tables',
+]);
+const NON_ALLOWLISTABLE_KEY_PATTERNS = [
+  /^storage-row-inventory\//u,
+  /^data\/storage\.[^/]+\/all-rows$/u,
+];
+
+export function isOptionalPlatformRelationStructureKey(key) {
+  return [...OPTIONAL_PLATFORM_RELATIONS].some((identity) => (
+    key === `platform-relation/${identity}`
+    || key.startsWith(`direct-acl/platform-relation-acl/${identity}/`)
+    || key.startsWith(`direct-acl/platform-column-acl/${identity}.`)
+    || key.startsWith(`effective-acl/relation/${identity}/`)
+    || key.startsWith(`effective-acl/column/${identity}.`)
+    || key.startsWith(`platform-trigger/${identity}/`)
+  ));
+}
 
 export function stableStringify(value) {
   if (value === null || typeof value !== 'object') {
@@ -87,6 +107,77 @@ export function compareManifests(expectedRecords, actualRecords) {
   return differences;
 }
 
+function hasExactKeys(value, keys) {
+  return Object.keys(value).sort().join(',') === [...keys].sort().join(',');
+}
+
+export function platformPresenceSuppressionRule(difference) {
+  if (!difference?.expected || !difference.actual) return null;
+
+  const { expected, actual, key } = difference;
+  if (
+    expected.kind !== 'platform-relation-presence'
+    || actual.kind !== 'platform-relation-presence'
+    || expected.identity !== actual.identity
+    || key !== `platform-relation-presence/${expected.identity}`
+    || !OPTIONAL_PLATFORM_RELATIONS.has(expected.identity)
+    || !hasExactKeys(expected.definition, ['present', 'required'])
+    || !hasExactKeys(actual.definition, ['present', 'required'])
+    || expected.definition.required !== false
+    || actual.definition.required !== false
+    || typeof expected.definition.present !== 'boolean'
+    || typeof actual.definition.present !== 'boolean'
+    || expected.definition.present === actual.definition.present
+  ) {
+    return null;
+  }
+
+  return {
+    identity: expected.identity,
+    absentSide: expected.definition.present ? 'actual' : 'expected',
+  };
+}
+
+function isRelatedPlatformRecord(record, key, identity) {
+  if (!record) return false;
+  if (key === `platform-relation/${identity}`) {
+    return record.kind === 'platform-relation' && record.identity === identity;
+  }
+  if (key.startsWith(`direct-acl/platform-relation-acl/${identity}/`)) {
+    return record.kind === 'direct-acl'
+      && record.identity === identity
+      && record.definition?.objectKind === 'platform-relation-acl';
+  }
+  if (key.startsWith(`direct-acl/platform-column-acl/${identity}.`)) {
+    return record.kind === 'direct-acl'
+      && record.identity.startsWith(`${identity}.`)
+      && record.definition?.objectKind === 'platform-column-acl';
+  }
+  if (key.startsWith(`effective-acl/relation/${identity}/`)) {
+    return record.kind === 'effective-acl'
+      && record.identity === identity
+      && record.definition?.objectKind === 'relation';
+  }
+  if (key.startsWith(`effective-acl/column/${identity}.`)) {
+    return record.kind === 'effective-acl'
+      && record.identity.startsWith(`${identity}.`)
+      && record.definition?.objectKind === 'column';
+  }
+  if (key.startsWith(`platform-trigger/${identity}/`)) {
+    return record.kind === 'platform-trigger'
+      && record.identity.startsWith(`${identity}.`);
+  }
+  return false;
+}
+
+function isPresenceDependentDifference(difference, rule) {
+  const absentRecord = difference[rule.absentSide];
+  const presentSide = rule.absentSide === 'expected' ? 'actual' : 'expected';
+  const presentRecord = difference[presentSide];
+  return absentRecord === null
+    && isRelatedPlatformRecord(presentRecord, difference.key, rule.identity);
+}
+
 export function validateAllowlist(allowlist, postgresImage, source = '<allowlist>') {
   if (!allowlist || Array.isArray(allowlist) || typeof allowlist !== 'object') {
     throw new Error(`${source}: allowlist must be a JSON object.`);
@@ -122,6 +213,25 @@ export function validateAllowlist(allowlist, postgresImage, source = '<allowlist
     if (typeof entry.key !== 'string' || !entry.key || WILDCARD_PATTERN.test(entry.key)) {
       throw new Error(`${source}: differences[${index}].key must be exact and contain no wildcard syntax.`);
     }
+    if (NON_ALLOWLISTABLE_KEY_PATTERNS.some((pattern) => pattern.test(entry.key))) {
+      throw new Error(
+        `${source}: differences[${index}].key is a Storage row inventory and cannot be allowlisted.`,
+      );
+    }
+    if (
+      entry.key.startsWith(PLATFORM_PRESENCE_KEY_PREFIX)
+      && !OPTIONAL_PLATFORM_RELATIONS.has(entry.key.slice(PLATFORM_PRESENCE_KEY_PREFIX.length))
+    ) {
+      throw new Error(
+        `${source}: differences[${index}].key is not an optional platform relation presence record.`,
+      );
+    }
+    if (isOptionalPlatformRelationStructureKey(entry.key)) {
+      throw new Error(
+        `${source}: differences[${index}].key is optional platform relation structure; `
+        + 'only its exact presence transition can be allowlisted.',
+      );
+    }
     if (previousKey !== null && Buffer.compare(Buffer.from(previousKey), Buffer.from(entry.key)) >= 0) {
       throw new Error(`${source}: differences must be strictly byte-sorted by key.`);
     }
@@ -146,8 +256,9 @@ export function validateAllowlist(allowlist, postgresImage, source = '<allowlist
 }
 
 export function applyAllowlist(differences, entries) {
-  const remaining = [];
+  const unmatched = [];
   const used = new Set();
+  const presenceRules = [];
   for (const difference of differences) {
     const entry = entries.get(difference.key);
     if (
@@ -156,10 +267,21 @@ export function applyAllowlist(differences, entries) {
       && entry.actualSha256 === difference.actualSha256
     ) {
       used.add(difference.key);
+      const presenceRule = platformPresenceSuppressionRule(difference);
+      if (difference.key.startsWith(PLATFORM_PRESENCE_KEY_PREFIX) && !presenceRule) {
+        throw new Error(
+          `allowlist entry ${difference.key} is not an exact optional absent/present transition.`,
+        );
+      }
+      if (presenceRule) presenceRules.push(presenceRule);
     } else {
-      remaining.push(difference);
+      unmatched.push(difference);
     }
   }
+
+  const remaining = unmatched.filter((difference) => !presenceRules.some(
+    (rule) => isPresenceDependentDifference(difference, rule),
+  ));
 
   const unused = [...entries.keys()].filter((key) => !used.has(key));
   if (unused.length > 0) {

@@ -13,6 +13,22 @@ output_file=""
 database_url=""
 database_name="postgres"
 container_name=""
+docker_cli=""
+psql_cli=""
+force_docker_psql=false
+
+resolve_docker_cli() {
+  if [[ -n "${DOCKER_BIN:-}" ]]; then
+    [[ -x "$DOCKER_BIN" ]] || fail "DOCKER_BIN is not executable: $DOCKER_BIN."
+    docker_cli="$DOCKER_BIN"
+  elif command -v docker >/dev/null 2>&1; then
+    docker_cli="$(command -v docker)"
+  elif [[ -x /opt/homebrew/bin/docker ]]; then
+    docker_cli="/opt/homebrew/bin/docker"
+  else
+    return 1
+  fi
+}
 
 while (( $# > 0 )); do
   case "$1" in
@@ -40,17 +56,25 @@ while (( $# > 0 )); do
       query_name="fingerprint"
       shift
       ;;
+    --docker-psql)
+      force_docker_psql=true
+      shift
+      ;;
     *)
       fail "unsupported argument: $1"
       ;;
   esac
 done
 
-[[ -n "$output_file" ]] || fail "usage: $0 --output <path> [--db-url <url> | --database <name>] [--fingerprint]."
+[[ -n "$output_file" ]] || fail \
+  "usage: $0 --output <path> [--db-url <url> [--docker-psql] | --database <name>] [--fingerprint]."
 [[ "$database_name" =~ ^[A-Za-z0-9_][A-Za-z0-9_.-]*$ ]] \
   || fail "database names may contain letters, digits, underscores, dots, and hyphens only."
 if [[ -n "$database_url" && ( -n "$container_name" || "$database_name" != "postgres" ) ]]; then
   fail "--db-url cannot be combined with --container or --database."
+fi
+if [[ "$force_docker_psql" == "true" && -z "$database_url" ]]; then
+  fail "--docker-psql requires --db-url."
 fi
 
 case "$query_name" in
@@ -72,22 +96,55 @@ cleanup() {
 trap cleanup EXIT
 
 if [[ -n "$database_url" ]]; then
-  if [[ -n "${PSQL_BIN:-}" ]]; then
-    [[ -x "$PSQL_BIN" ]] || fail "PSQL_BIN is not executable: $PSQL_BIN."
-    psql_cli="$PSQL_BIN"
-  elif command -v psql >/dev/null 2>&1; then
-    psql_cli="$(command -v psql)"
-  else
-    fail "psql is required for --db-url capture."
+  if [[ "$force_docker_psql" == "false" ]]; then
+    if [[ -n "${PSQL_BIN:-}" ]]; then
+      [[ -x "$PSQL_BIN" ]] || fail "PSQL_BIN is not executable: $PSQL_BIN."
+      psql_cli="$PSQL_BIN"
+    elif command -v psql >/dev/null 2>&1; then
+      psql_cli="$(command -v psql)"
+    fi
+  fi
+  if [[ -z "$psql_cli" ]]; then
+    resolve_docker_cli \
+      || fail "psql or Docker is required for --db-url capture."
+    postgres_version_file="$repository_root/supabase/.temp/postgres-version"
+    [[ -f "$postgres_version_file" ]] \
+      || fail "missing pinned Postgres version: $postgres_version_file."
+    postgres_image_version="$(tr -d '\r\n' <"$postgres_version_file")"
+    [[ "$postgres_image_version" == "17.6.1.141" ]] \
+      || fail "expected pinned Postgres image 17.6.1.141, found $postgres_image_version."
+    postgres_image_registry="${SUPABASE_INTERNAL_IMAGE_REGISTRY:-public.ecr.aws}"
+    postgres_image_registry="${postgres_image_registry%/}"
+    [[ -n "$postgres_image_registry" ]] \
+      || fail "Postgres image registry cannot be empty."
+    postgres_image_ref="${postgres_image_registry}/supabase/postgres:${postgres_image_version}"
+
+    "$docker_cli" run \
+      --rm \
+      --interactive \
+      --env PGAPPNAME=77dc-baseline-manifest-read-only \
+      --entrypoint psql \
+      "$postgres_image_ref" \
+      "$database_url" \
+        --no-psqlrc \
+        --quiet \
+        --set ON_ERROR_STOP=1 \
+        --file - \
+      <"$sql_file" \
+      >"$temporary_output"
+
+    psql_cli=""
   fi
 
-  PGAPPNAME="77dc-baseline-manifest-read-only" \
-    "$psql_cli" "$database_url" \
-      --no-psqlrc \
-      --quiet \
-      --set ON_ERROR_STOP=1 \
-      --file "$sql_file" \
-      >"$temporary_output"
+  if [[ -n "$psql_cli" ]]; then
+    PGAPPNAME="77dc-baseline-manifest-read-only" \
+      "$psql_cli" "$database_url" \
+        --no-psqlrc \
+        --quiet \
+        --set ON_ERROR_STOP=1 \
+        --file "$sql_file" \
+        >"$temporary_output"
+  fi
 else
   config_file="$repository_root/supabase/config.toml"
   [[ -f "$config_file" ]] || fail "missing $config_file."
@@ -99,16 +156,8 @@ else
   [[ "$container_name" =~ ^[A-Za-z0-9_][A-Za-z0-9_.-]*$ ]] \
     || fail "container names may contain letters, digits, underscores, dots, and hyphens only."
 
-  if [[ -n "${DOCKER_BIN:-}" ]]; then
-    [[ -x "$DOCKER_BIN" ]] || fail "DOCKER_BIN is not executable: $DOCKER_BIN."
-    docker_cli="$DOCKER_BIN"
-  elif command -v docker >/dev/null 2>&1; then
-    docker_cli="$(command -v docker)"
-  elif [[ -x /opt/homebrew/bin/docker ]]; then
-    docker_cli="/opt/homebrew/bin/docker"
-  else
-    fail "Docker is required for local capture when psql is unavailable."
-  fi
+  resolve_docker_cli \
+    || fail "Docker is required for local capture when psql is unavailable."
 
   "$docker_cli" exec \
       --env PGAPPNAME=77dc-baseline-manifest-read-only \

@@ -577,6 +577,124 @@ fi
 node "$script_directory/compare-database-manifests.mjs" \
   "$target_manifest" "$rehearsal_root/target.manifest.jsonl"
 
+# Older hosted Storage releases may omit the two platform-owned Iceberg catalog
+# relations. Prove that their absence is captured explicitly, never queried,
+# and reconciles to the modern empty target with only the two exact presence
+# records reviewed. Full shape and ACL records remain mandatory whenever both
+# sides contain the relation.
+optional_absent_database="${database_prefix}_optional_iceberg_absent"
+new_source_database "$optional_absent_database"
+execute_sql \
+  "$optional_absent_database" \
+  "$fixture_directory/source-drift/absent-iceberg-relations.sql"
+capture_manifest \
+  "$optional_absent_database" \
+  "$rehearsal_root/optional-iceberg.source.manifest.jsonl"
+capture_fingerprint \
+  "$optional_absent_database" \
+  "$rehearsal_root/optional-iceberg.source.fingerprint.jsonl"
+for migration_number in 1 2 3; do
+  optional_stage_root="$rehearsal_root/optional-iceberg-stage-${migration_number}"
+  make_stage "$optional_stage_root" "$migration_number"
+  apply_stage "$optional_absent_database" "$optional_stage_root"
+done
+capture_manifest \
+  "$optional_absent_database" \
+  "$rehearsal_root/optional-iceberg.target.manifest.jsonl"
+capture_fingerprint \
+  "$optional_absent_database" \
+  "$rehearsal_root/optional-iceberg.target.fingerprint.jsonl"
+optional_presence_allowlist="$rehearsal_root/optional-iceberg.allowlist.json"
+node "$script_directory/build-platform-diff-allowlist.mjs" \
+  "$target_manifest" \
+  "$rehearsal_root/optional-iceberg.target.manifest.jsonl" \
+  --postgres-image "$expected_postgres_image" \
+  --output "$optional_presence_allowlist"
+[[ "$(grep -c '"key":' "$optional_presence_allowlist")" == "2" ]] \
+  || fail "optional Iceberg candidate did not contain exactly two presence entries."
+grep -Fq '"key": "platform-relation-presence/storage.iceberg_namespaces"' \
+  "$optional_presence_allowlist" \
+  || fail "optional Iceberg candidate omitted the namespace presence entry."
+grep -Fq '"key": "platform-relation-presence/storage.iceberg_tables"' \
+  "$optional_presence_allowlist" \
+  || fail "optional Iceberg candidate omitted the table presence entry."
+node "$script_directory/compare-database-manifests.mjs" \
+  "$target_manifest" \
+  "$rehearsal_root/optional-iceberg.target.manifest.jsonl" \
+  --postgres-image "$expected_postgres_image" \
+  --allowlist "$optional_presence_allowlist"
+grep -F '"key": "data/storage.iceberg_' \
+  "$rehearsal_root/target.fingerprint.jsonl" \
+  >"$rehearsal_root/modern-target.iceberg.fingerprint.jsonl"
+grep -F '"key": "data/storage.iceberg_' \
+  "$rehearsal_root/optional-iceberg.target.fingerprint.jsonl" \
+  >"$rehearsal_root/optional-target.iceberg.fingerprint.jsonl"
+node "$script_directory/compare-database-manifests.mjs" \
+  "$rehearsal_root/modern-target.iceberg.fingerprint.jsonl" \
+  "$rehearsal_root/optional-target.iceberg.fingerprint.jsonl"
+
+# A missing vector inventory relation is never optional. Both catalog capture
+# and data fingerprint capture must stop before producing an artifact.
+missing_vector_database="${database_prefix}_missing_vector"
+new_source_database "$missing_vector_database"
+execute_sql \
+  "$missing_vector_database" \
+  "$fixture_directory/source-drift/absent-vector-relation.sql" \
+  supabase_admin
+if capture_manifest \
+    "$missing_vector_database" \
+    "$rehearsal_root/missing-vector.manifest.jsonl" \
+    >"$rehearsal_root/missing-vector.manifest.log" 2>&1; then
+  fail "manifest capture accepted an absent mandatory vector relation."
+fi
+grep -Fq 'required platform relation(s) are absent: storage.vector_indexes' \
+  "$rehearsal_root/missing-vector.manifest.log" \
+  || fail "manifest capture did not identify the absent vector relation."
+if capture_fingerprint \
+    "$missing_vector_database" \
+    "$rehearsal_root/missing-vector.fingerprint.jsonl" \
+    >"$rehearsal_root/missing-vector.fingerprint.log" 2>&1; then
+  fail "fingerprint capture accepted an absent mandatory vector relation."
+fi
+grep -Fq 'required platform relation(s) are absent: storage.vector_indexes' \
+  "$rehearsal_root/missing-vector.fingerprint.log" \
+  || fail "fingerprint capture did not identify the absent vector relation."
+
+# Absence and an empty optional relation share only the canonical zero-row
+# inventory. A present non-empty optional relation is data and can never be
+# converted into a platform exception.
+nonempty_optional_database="${database_prefix}_nonempty_optional"
+new_source_database "$nonempty_optional_database"
+execute_sql \
+  "$nonempty_optional_database" \
+  "$fixture_directory/source-drift/nonempty-iceberg-namespace.sql"
+capture_manifest \
+  "$nonempty_optional_database" \
+  "$rehearsal_root/nonempty-optional.manifest.jsonl"
+capture_fingerprint \
+  "$nonempty_optional_database" \
+  "$rehearsal_root/nonempty-optional.fingerprint.jsonl"
+if node "$script_directory/build-platform-diff-allowlist.mjs" \
+    "$source_manifest" \
+    "$rehearsal_root/nonempty-optional.manifest.jsonl" \
+    --postgres-image "$expected_postgres_image" \
+    --output "$rehearsal_root/nonempty-optional.allowlist.json" \
+    >"$rehearsal_root/nonempty-optional.allowlist.log" 2>&1; then
+  fail "allowlist builder accepted a non-empty optional Storage inventory."
+fi
+grep -Fq 'storage-row-inventory/iceberg_namespaces' \
+  "$rehearsal_root/nonempty-optional.allowlist.log" \
+  || fail "allowlist builder did not identify the non-empty optional inventory."
+if node "$script_directory/compare-database-manifests.mjs" \
+    "$rehearsal_root/source.fingerprint.jsonl" \
+    "$rehearsal_root/nonempty-optional.fingerprint.jsonl" \
+    >"$rehearsal_root/nonempty-optional.fingerprint.log" 2>&1; then
+  fail "fingerprint comparison accepted a non-empty optional Storage inventory."
+fi
+grep -Fq 'data/storage.iceberg_namespaces/all-rows' \
+  "$rehearsal_root/nonempty-optional.fingerprint.log" \
+  || fail "fingerprint comparison did not identify the non-empty optional inventory."
+
 expect_failure_without_change() {
   local case_name="$1"
   local mutation_file="$2"
