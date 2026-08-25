@@ -1,11 +1,13 @@
-import { writeFile } from 'node:fs/promises';
+import { readFile, writeFile } from 'node:fs/promises';
 import { pathToFileURL } from 'node:url';
 
 import {
+  applyAllowlist,
   compareManifests,
+  isOptionalPlatformRelationStructureKey,
   parseManifestText,
+  platformPresenceSuppressionRule,
 } from './compare-database-manifests.mjs';
-import { readFile } from 'node:fs/promises';
 
 const ALLOWED_PLATFORM_KEY_PATTERNS = [
   /^platform-extension\//u,
@@ -18,8 +20,59 @@ const ALLOWED_PLATFORM_KEY_PATTERNS = [
   /^effective-acl\/function\/public\.rls_auto_enable\(\)\//u,
 ];
 
+const PLATFORM_PRESENCE_KEY_PREFIX = 'platform-relation-presence/';
+
 export function isPlatformDifferenceKey(key) {
   return ALLOWED_PLATFORM_KEY_PATTERNS.some((pattern) => pattern.test(key));
+}
+
+function allowlistEntry(difference) {
+  return {
+    key: difference.key,
+    expectedSha256: difference.expectedSha256,
+    actualSha256: difference.actualSha256,
+    reason: difference.key.startsWith(PLATFORM_PRESENCE_KEY_PREFIX)
+      ? 'Exact reviewed optional Supabase platform relation presence difference on Postgres 17.6.1.141.'
+      : 'Exact reviewed Supabase platform object difference on Postgres 17.6.1.141.',
+  };
+}
+
+export function buildPlatformAllowlist(expected, actual, postgresImage) {
+  if (postgresImage !== '17.6.1.141') {
+    throw new Error(`only the reviewed Postgres image 17.6.1.141 is accepted, found ${postgresImage}.`);
+  }
+
+  const differences = compareManifests(expected, actual);
+  const presenceDifferences = differences.filter((difference) => (
+    platformPresenceSuppressionRule(difference) !== null
+  ));
+  const presenceEntries = new Map(presenceDifferences.map((difference) => [
+    difference.key,
+    allowlistEntry(difference),
+  ]));
+  const remainingDifferences = applyAllowlist(differences, presenceEntries);
+  const applicationDifferences = remainingDifferences.filter(({ key }) => (
+    key.startsWith(PLATFORM_PRESENCE_KEY_PREFIX)
+    || isOptionalPlatformRelationStructureKey(key)
+    || !isPlatformDifferenceKey(key)
+  ));
+  if (applicationDifferences.length > 0) {
+    throw new Error(
+      'refusing to allowlist application-owned or unsafe differences: '
+      + applicationDifferences.map(({ key }) => key).join(', '),
+    );
+  }
+
+  const candidateDifferences = [
+    ...presenceDifferences,
+    ...remainingDifferences,
+  ].sort((left, right) => Buffer.compare(Buffer.from(left.key), Buffer.from(right.key)));
+
+  return {
+    schemaVersion: 1,
+    postgresImage,
+    differences: candidateDifferences.map(allowlistEntry),
+  };
 }
 
 async function main(argv) {
@@ -44,34 +97,12 @@ async function main(argv) {
       + '--postgres-image <version> --output <allowlist.json>',
     );
   }
-  if (postgresImage !== '17.6.1.141') {
-    throw new Error(`only the reviewed Postgres image 17.6.1.141 is accepted, found ${postgresImage}.`);
-  }
-
   const expected = parseManifestText(await readFile(positional[0], 'utf8'), positional[0]);
   const actual = parseManifestText(await readFile(positional[1], 'utf8'), positional[1]);
-  const differences = compareManifests(expected, actual);
-  const applicationDifferences = differences.filter(({ key }) => !isPlatformDifferenceKey(key));
-  if (applicationDifferences.length > 0) {
-    throw new Error(
-      'refusing to allowlist application-owned differences: '
-      + applicationDifferences.map(({ key }) => key).join(', '),
-    );
-  }
-
-  const allowlist = {
-    schemaVersion: 1,
-    postgresImage,
-    differences: differences.map(({ key, expectedSha256, actualSha256 }) => ({
-      key,
-      expectedSha256,
-      actualSha256,
-      reason: 'Exact reviewed Supabase platform object difference on Postgres 17.6.1.141.',
-    })),
-  };
+  const allowlist = buildPlatformAllowlist(expected, actual, postgresImage);
   await writeFile(output, `${JSON.stringify(allowlist, null, 2)}\n`, { flag: 'wx' });
   process.stdout.write(
-    `Wrote ${differences.length} exact platform difference(s) to ${output}. Review every entry before use.\n`,
+    `Wrote ${allowlist.differences.length} exact platform difference(s) to ${output}. Review every entry before use.\n`,
   );
 }
 

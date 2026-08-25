@@ -8,10 +8,110 @@ create temporary table database_manifest_records (
   record jsonb not null
 );
 
+create temporary table platform_relation_inventory (
+  schema_name text not null,
+  relation_name text not null,
+  required boolean not null,
+  relation_oid oid,
+  primary key (schema_name, relation_name)
+);
+
 begin transaction read only;
 set local statement_timeout = '60s';
 set local lock_timeout = '5s';
 set local idle_in_transaction_session_timeout = '70s';
+
+-- Platform releases do not always expose the same optional Storage catalogs.
+-- Resolve every selected relation without parsing it, record absence explicitly,
+-- and fail before any shape or row query if a relation used by the application
+-- or vector safety gate is missing. Iceberg is platform-owned and optional, but
+-- a present instance is still captured in full below.
+insert into platform_relation_inventory (
+  schema_name,
+  relation_name,
+  required,
+  relation_oid
+)
+select
+  relation_value.schema_name,
+  relation_value.relation_name,
+  relation_value.required,
+  pg_catalog.to_regclass(pg_catalog.format(
+    '%I.%I',
+    relation_value.schema_name,
+    relation_value.relation_name
+  ))
+from (values
+  ('storage', 'buckets', true),
+  ('storage', 'buckets_analytics', true),
+  ('storage', 'buckets_vectors', true),
+  ('storage', 'iceberg_namespaces', false),
+  ('storage', 'iceberg_tables', false),
+  ('storage', 'objects', true),
+  ('storage', 's3_multipart_uploads', true),
+  ('storage', 's3_multipart_uploads_parts', true),
+  ('storage', 'vector_indexes', true)
+) relation_value(schema_name, relation_name, required);
+
+do $platform_relation_preflight$
+declare
+  invalid_relations text;
+  missing_relations text;
+begin
+  select string_agg(
+    pg_catalog.format('%I.%I', inventory.schema_name, inventory.relation_name),
+    ', ' order by inventory.schema_name collate "C", inventory.relation_name collate "C"
+  )
+  into missing_relations
+  from platform_relation_inventory inventory
+  where inventory.required
+    and inventory.relation_oid is null;
+
+  if missing_relations is not null then
+    raise exception using
+      errcode = 'P0001',
+      message = pg_catalog.format(
+        'Database manifest refused: required platform relation(s) are absent: %s.',
+        missing_relations
+      );
+  end if;
+
+  select string_agg(
+    pg_catalog.format('%I.%I', inventory.schema_name, inventory.relation_name),
+    ', ' order by inventory.schema_name collate "C", inventory.relation_name collate "C"
+  )
+  into invalid_relations
+  from platform_relation_inventory inventory
+  join pg_catalog.pg_class relation on relation.oid = inventory.relation_oid
+  where relation.relkind not in ('r', 'p', 'v', 'm', 'S', 'f');
+
+  if invalid_relations is not null then
+    raise exception using
+      errcode = 'P0001',
+      message = pg_catalog.format(
+        'Database manifest refused: selected platform object(s) are not relations: %s.',
+        invalid_relations
+      );
+  end if;
+end;
+$platform_relation_preflight$;
+
+insert into database_manifest_records (key, record)
+select
+  pg_catalog.format(
+    'platform-relation-presence/%I.%I',
+    inventory.schema_name,
+    inventory.relation_name
+  ),
+  jsonb_build_object(
+    'kind', 'platform-relation-presence',
+    'identity', pg_catalog.format('%I.%I', inventory.schema_name, inventory.relation_name),
+    'definition', jsonb_build_object(
+      'present', inventory.relation_oid is not null,
+      'required', inventory.required
+    )
+  )
+from platform_relation_inventory inventory;
 
 insert into database_manifest_records (key, record)
 select
@@ -56,21 +156,10 @@ with scoped_relations as (
     )
     and relation.relkind in ('r', 'p', 'v', 'm', 'S', 'f')
 ), platform_relations as (
-  select relation.*, namespace.nspname as schema_name
-  from pg_class relation
-  join pg_namespace namespace on namespace.oid = relation.relnamespace
-  where namespace.nspname = 'storage'
-    and relation.relname in (
-      'buckets',
-      'buckets_analytics',
-      'buckets_vectors',
-      'iceberg_namespaces',
-      'iceberg_tables',
-      'objects',
-      's3_multipart_uploads',
-      's3_multipart_uploads_parts',
-      'vector_indexes'
-    )
+  select relation.*, inventory.schema_name
+  from platform_relation_inventory inventory
+  join pg_class relation on relation.oid = inventory.relation_oid
+  where inventory.relation_oid is not null
     and relation.relkind in ('r', 'p', 'v', 'm', 'S', 'f')
 )
 insert into database_manifest_records (key, record)
@@ -1045,47 +1134,48 @@ from storage.buckets bucket;
 do $storage_row_inventories$
 declare
   relation_name text;
+  relation_oid oid;
   row_count bigint;
   row_hash text;
 begin
-  for relation_name in
-    select inventory_relation.relation_name
-    from (values
-      ('buckets_analytics'),
-      ('buckets_vectors'),
-      ('iceberg_namespaces'),
-      ('iceberg_tables'),
-      ('objects'),
-      ('s3_multipart_uploads'),
-      ('s3_multipart_uploads_parts'),
-      ('vector_indexes')
-    ) inventory_relation(relation_name)
-    order by inventory_relation.relation_name collate "C"
+  for relation_name, relation_oid in
+    select inventory.relation_name, inventory.relation_oid
+    from platform_relation_inventory inventory
+    where inventory.relation_name <> 'buckets'
+    order by inventory.relation_name collate "C"
   loop
-    execute format(
-      $query$
-        select
-          count(*),
-          encode(
-            digest(
-              convert_to(
-                coalesce(
-                  string_agg(
-                    encode(digest(convert_to(to_jsonb(source_row)::text, 'UTF8'), 'sha256'), 'hex'),
-                    '' order by to_jsonb(source_row)::text collate "C"
+    if relation_oid is null then
+      -- Presence is represented independently. An absent optional relation has
+      -- the same data inventory as a present empty relation, while a present
+      -- non-empty catalog remains a non-allowlistable row-inventory change.
+      row_count := 0;
+      row_hash := encode(digest(convert_to('', 'UTF8'), 'sha256'), 'hex');
+    else
+      execute format(
+        $query$
+          select
+            count(*),
+            encode(
+              digest(
+                convert_to(
+                  coalesce(
+                    string_agg(
+                      encode(digest(convert_to(to_jsonb(source_row)::text, 'UTF8'), 'sha256'), 'hex'),
+                      '' order by to_jsonb(source_row)::text collate "C"
+                    ),
+                    ''
                   ),
-                  ''
+                  'UTF8'
                 ),
-                'UTF8'
+                'sha256'
               ),
-              'sha256'
-            ),
-            'hex'
-          )
-        from storage.%I source_row
-      $query$,
-      relation_name
-    ) into row_count, row_hash;
+              'hex'
+            )
+          from %s source_row
+        $query$,
+        relation_oid::regclass
+      ) into row_count, row_hash;
+    end if;
 
     insert into database_manifest_records (key, record)
     values (
