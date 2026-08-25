@@ -806,4 +806,16 @@ test("package commands expose capture, restore, verification, and fake-boundary 
     packageJson.scripts["test:production-backup-restore"],
     "node --test scripts/production-backup-restore.test.mjs",
   );
+  assert.match(
+    packageJson.scripts["check:database"],
+    /pnpm run test:reconciliation-stage && pnpm run test:production-backup-restore && pnpm run test:database-manifest/u,
+  );
+  const ciWorkflow = await readFile(
+    path.join(repositoryRoot, ".github", "workflows", "ci.yml"),
+    "utf8",
+  );
+  assert.match(
+    ciWorkflow,
+    /Test production backup and restore evidence boundaries\n\s+run: pnpm run test:production-backup-restore/u,
+  );
 });

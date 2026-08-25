@@ -42,7 +42,7 @@
     "check:schema": "bash scripts/check-schema-drift.sh",
     "check:functions": "cd supabase && deno task fmt:check && deno task check",
     "test:functions": "cd supabase && deno task test",
-    "check:database": "pnpm run check:migrations && pnpm run test:migration-compatibility && pnpm run test:reconciliation-stage && pnpm run test:database-manifest && pnpm run supabase:reset && pnpm run test:migration-atomicity && pnpm run test:database && pnpm run test:rpc && pnpm run check:schema",
+    "check:database": "pnpm run check:migrations && pnpm run test:migration-compatibility && pnpm run test:reconciliation-stage && pnpm run test:production-backup-restore && pnpm run test:database-manifest && pnpm run supabase:reset && pnpm run test:migration-atomicity && pnpm run test:database && pnpm run test:rpc && pnpm run check:schema",
     "check:backend": "pnpm run test:profile-photo-cleanup-cron && pnpm run check:database && pnpm run check:functions && pnpm run test:functions"
   },
   "dependencies": {
