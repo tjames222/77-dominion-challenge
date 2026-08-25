@@ -165,6 +165,10 @@ test("pins the exact cumulative 1-13 migration inventory", async () => {
 
 test("package checks run both staging tests and include them in database validation", async () => {
   const packageJson = JSON.parse(await readFile(packagePath, "utf8"));
+  const ciWorkflow = await readFile(
+    path.join(repositoryRoot, ".github", "workflows", "ci.yml"),
+    "utf8",
+  );
   assert.equal(
     packageJson.scripts["test:reconciliation-stage"],
     "node --test scripts/prepare-reconciliation-stage.test.mjs scripts/verify-reconciliation-history.test.mjs scripts/rehearse-history-reconciliation.test.mjs",
@@ -176,6 +180,10 @@ test("package checks run both staging tests and include them in database validat
   assert.match(
     packageJson.scripts["check:database"],
     /pnpm run test:reconciliation-stage/u,
+  );
+  assert.match(
+    ciWorkflow,
+    /Test immutable reconciliation staging and history\n\s+run: pnpm run test:reconciliation-stage/u,
   );
 });
 

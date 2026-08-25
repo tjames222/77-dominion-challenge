@@ -531,6 +531,17 @@ test("capture rejects incomplete input before any remote boundary", async (t) =>
   assert.doesNotMatch(log, /remote:/);
 });
 
+test("package argument separators reach all three operator parsers", async (t) => {
+  const fixture = await buildFixture();
+  t.after(() => rm(fixture.root, { force: true, recursive: true }));
+  for (const script of [captureScript, restoreScript, verifyScript]) {
+    const result = run(script, ["--", "--capture-id", captureId], fixture);
+    assert.notEqual(result.status, 0);
+    assert.doesNotMatch(result.stderr, /^Usage:/mu);
+  }
+  assert.equal(await readFile(fixture.log, "utf8").catch(() => ""), "");
+});
+
 test("branch mismatch fails before destination verification or remote access", async (t) => {
   const fixture = await buildFixture();
   t.after(() => rm(fixture.root, { force: true, recursive: true }));

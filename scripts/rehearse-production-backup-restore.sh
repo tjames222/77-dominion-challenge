@@ -45,6 +45,10 @@ postgres_image=""
 postgres_image_id=""
 confirmation=""
 
+if [[ "${1:-}" == "--" ]]; then
+  shift
+fi
+
 while (( $# > 0 )); do
   (( $# >= 2 )) || usage
   case "$1" in

@@ -70,6 +70,8 @@ jobs:
         run: pnpm run check:migrations
       - name: Test the migration compatibility gate
         run: pnpm run test:migration-compatibility
+      - name: Test immutable reconciliation staging and history
+        run: pnpm run test:reconciliation-stage
       - name: Test production backup and restore evidence boundaries
         run: pnpm run test:production-backup-restore
       - name: Test canonical database manifest gates

@@ -37,6 +37,10 @@ passphrase_sha256=""
 encrypted_volume_check_hook=""
 encrypted_volume_check_hook_sha256=""
 
+if [[ "${1:-}" == "--" ]]; then
+  shift
+fi
+
 while (( $# > 0 )); do
   (( $# >= 2 )) || usage
   case "$1" in
