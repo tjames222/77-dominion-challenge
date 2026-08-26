@@ -39,9 +39,30 @@ jobs:
     needs: authorize
     uses: ./.github/workflows/ci.yml
 
+  canary-policy:
+    name: Verify closed production canary policy
+    needs: validation
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    environment: production
+    env:
+      SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+      SUPABASE_PROJECT_REF: ${{ vars.SUPABASE_PROJECT_REF }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Setup Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+      - name: Require closed Supabase Auth signup paths
+        run: node scripts/verify-production-auth-canary.mjs
+
   backend:
     name: Migrate, deploy, and verify backend
-    needs: validation
+    needs:
+      - validation
+      - canary-policy
     if: inputs.release_scope == 'full'
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -50,9 +71,7 @@ jobs:
       SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
       SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
       SUPABASE_PROJECT_REF: ${{ vars.SUPABASE_PROJECT_REF }}
-      STRIPE_SECRET_KEY: ${{ secrets.STRIPE_SECRET_KEY }}
-      STRIPE_WEBHOOK_SECRET: ${{ secrets.STRIPE_WEBHOOK_SECRET }}
-      STRIPE_MEMBERSHIP_PRICE_ID: ${{ secrets.STRIPE_MEMBERSHIP_PRICE_ID }}
+      BILLING_ENABLED: "false"
       INTEGRATION_WORKER_SECRET: ${{ secrets.INTEGRATION_WORKER_SECRET }}
       INTEGRATION_CREDENTIAL_KEYS: ${{ secrets.INTEGRATION_CREDENTIAL_KEYS }}
       INTEGRATION_OAUTH_STATE_SECRET: ${{ secrets.INTEGRATION_OAUTH_STATE_SECRET }}
@@ -92,14 +111,15 @@ jobs:
             SUPABASE_ACCESS_TOKEN
             SUPABASE_DB_PASSWORD
             SUPABASE_PROJECT_REF
-            STRIPE_SECRET_KEY
-            STRIPE_WEBHOOK_SECRET
-            STRIPE_MEMBERSHIP_PRICE_ID
             PROFILE_PHOTO_WORKER_SECRET
             PUBLIC_SITE_URL
             VITE_SUPABASE_URL
             VITE_SUPABASE_PUBLISHABLE_KEY
           )
+          if [[ "${BILLING_ENABLED}" != "true" && "${BILLING_ENABLED}" != "false" ]]; then
+            echo "::error::BILLING_ENABLED must be exactly true or false."
+            exit 1
+          fi
           for name in "${required[@]}"; do
             if [[ -z "${!name:-}" ]]; then
               echo "::error::Missing production environment value: ${name}"
@@ -115,6 +135,23 @@ jobs:
             echo "::error::PUBLIC_SITE_URL must be an HTTPS production origin."
             exit 1
           fi
+      - name: Validate enabled billing configuration
+        if: env.BILLING_ENABLED == 'true'
+        shell: bash
+        env:
+          STRIPE_SECRET_KEY: ${{ secrets.STRIPE_SECRET_KEY }}
+          STRIPE_WEBHOOK_SECRET: ${{ secrets.STRIPE_WEBHOOK_SECRET }}
+          STRIPE_MEMBERSHIP_PRICE_ID: ${{ secrets.STRIPE_MEMBERSHIP_PRICE_ID }}
+        run: |
+          for name in \
+            STRIPE_SECRET_KEY \
+            STRIPE_WEBHOOK_SECRET \
+            STRIPE_MEMBERSHIP_PRICE_ID; do
+            if [[ -z "${!name:-}" ]]; then
+              echo "::error::Missing enabled billing value: ${name}"
+              exit 1
+            fi
+          done
       - name: Link production Supabase project
         run: supabase link --project-ref "$SUPABASE_PROJECT_REF" --password "$SUPABASE_DB_PASSWORD"
       - name: Require reconciled historical migration records
@@ -155,9 +192,7 @@ jobs:
         shell: bash
         run: |
           function_secrets=(
-            "STRIPE_SECRET_KEY=${STRIPE_SECRET_KEY}"
-            "STRIPE_WEBHOOK_SECRET=${STRIPE_WEBHOOK_SECRET}"
-            "STRIPE_MEMBERSHIP_PRICE_ID=${STRIPE_MEMBERSHIP_PRICE_ID}"
+            "BILLING_ENABLED=${BILLING_ENABLED}"
             "PUBLIC_SITE_URL=${PUBLIC_SITE_URL}"
           )
           if (( ${#PROFILE_PHOTO_WORKER_SECRET} < 32 )); then
@@ -264,6 +299,17 @@ jobs:
             echo "provider_connections_enabled=false" >> "$GITHUB_OUTPUT"
           fi
           supabase secrets set --project-ref "$SUPABASE_PROJECT_REF" "${function_secrets[@]}"
+      - name: Synchronize enabled Stripe Function secrets
+        if: env.BILLING_ENABLED == 'true'
+        env:
+          STRIPE_SECRET_KEY: ${{ secrets.STRIPE_SECRET_KEY }}
+          STRIPE_WEBHOOK_SECRET: ${{ secrets.STRIPE_WEBHOOK_SECRET }}
+          STRIPE_MEMBERSHIP_PRICE_ID: ${{ secrets.STRIPE_MEMBERSHIP_PRICE_ID }}
+        run: >-
+          supabase secrets set --project-ref "$SUPABASE_PROJECT_REF"
+          "STRIPE_SECRET_KEY=${STRIPE_SECRET_KEY}"
+          "STRIPE_WEBHOOK_SECRET=${STRIPE_WEBHOOK_SECRET}"
+          "STRIPE_MEMBERSHIP_PRICE_ID=${STRIPE_MEMBERSHIP_PRICE_ID}"
       - name: Deploy authenticated Edge Functions
         run: |
           supabase functions deploy cancel-membership --project-ref "$SUPABASE_PROJECT_REF"
@@ -296,14 +342,35 @@ jobs:
           supabase migration list --linked --password "$SUPABASE_DB_PASSWORD"
           supabase functions list --project-ref "$SUPABASE_PROJECT_REF"
 
-          response_file="${RUNNER_TEMP}/cancel-membership-response.json"
-          status="$(curl --silent --show-error --output "$response_file" --write-out '%{http_code}' \
+          for billing_function in \
+            cancel-membership \
+            create-checkout-session \
+            create-customer-portal-session; do
+            billing_response="${RUNNER_TEMP}/${billing_function}-response.json"
+            billing_status="$(curl --silent --show-error --output "$billing_response" --write-out '%{http_code}' \
+              --request POST \
+              --header "apikey: ${VITE_SUPABASE_PUBLISHABLE_KEY}" \
+              --header "Content-Type: application/json" \
+              --header "Origin: ${PUBLIC_SITE_URL}" \
+              --data '{}' \
+              "${VITE_SUPABASE_URL}/functions/v1/${billing_function}")"
+            if [[ "$billing_status" != "401" ]]; then
+              echo "::error::Expected the unauthenticated ${billing_function} gateway smoke test to return 401; received ${billing_status}."
+              exit 1
+            fi
+          done
+
+          webhook_expected_status="400"
+          if [[ "${BILLING_ENABLED}" == "false" ]]; then
+            webhook_expected_status="503"
+          fi
+          webhook_status="$(curl --silent --show-error --output "${RUNNER_TEMP}/stripe-webhook-response.json" --write-out '%{http_code}' \
             --request POST \
-            --header "apikey: ${VITE_SUPABASE_PUBLISHABLE_KEY}" \
-            --header "Origin: ${PUBLIC_SITE_URL}" \
-            "${VITE_SUPABASE_URL}/functions/v1/cancel-membership")"
-          if [[ "$status" != "401" ]]; then
-            echo "::error::Expected the unauthenticated function smoke test to return 401; received ${status}."
+            --header "Content-Type: application/json" \
+            --data '{}' \
+            "${VITE_SUPABASE_URL}/functions/v1/stripe-webhook")"
+          if [[ "$webhook_status" != "$webhook_expected_status" ]]; then
+            echo "::error::Expected stripe-webhook to return ${webhook_expected_status}; received ${webhook_status}."
             exit 1
           fi
 
@@ -415,10 +482,12 @@ jobs:
     name: Build production frontend
     needs:
       - validation
+      - canary-policy
       - backend
     if: >-
       always() &&
       needs.validation.result == 'success' &&
+      needs.canary-policy.result == 'success' &&
       (needs.backend.result == 'success' ||
         (inputs.release_scope == 'frontend-only' && needs.backend.result == 'skipped'))
     runs-on: ubuntu-latest
@@ -433,6 +502,8 @@ jobs:
       VITE_ENABLE_MOCKS: "false"
       VITE_ENABLE_PRODUCTION_CONNECTIONS: "true"
       VITE_ENABLE_GROUP_INTEGRATIONS: "false"
+      VITE_ENABLE_BILLING: "false"
+      VITE_ENABLE_PUBLIC_SIGNUP: "false"
       VITE_YOUVERSION_VERSE_URL: ${{ vars.VITE_YOUVERSION_VERSE_URL }}
       VITE_YOUVERSION_APP_URL: ${{ vars.VITE_YOUVERSION_APP_URL }}
       VITE_YOUVERSION_PRAYER_URL: ${{ vars.VITE_YOUVERSION_PRAYER_URL }}
@@ -470,6 +541,14 @@ jobs:
           fi
           if [[ "${VITE_ENABLE_GROUP_INTEGRATIONS}" != "false" ]]; then
             echo "::error::Slack and Discord must remain safely off until FOU-764's enabled-path approval is complete."
+            exit 1
+          fi
+          if [[ "${VITE_ENABLE_BILLING}" != "false" ]]; then
+            echo "::error::Billing must remain disabled for the production canary."
+            exit 1
+          fi
+          if [[ "${VITE_ENABLE_PUBLIC_SIGNUP}" != "false" ]]; then
+            echo "::error::Public signup must remain disabled for the production canary."
             exit 1
           fi
           expected_supabase_url="https://${SUPABASE_PROJECT_REF}.supabase.co"

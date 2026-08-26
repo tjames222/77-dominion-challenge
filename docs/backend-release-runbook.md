@@ -91,8 +91,9 @@ The prelaunch environment model deliberately uses no paid staging project:
   every backend/provider connection. They require `VITE_ENABLE_MOCKS=true` and
   must not enable `VITE_ENABLE_SUPABASE_AUTH_IN_MOCKS` or
   `VITE_ENABLE_PRODUCTION_CONNECTIONS`.
-- the one hosted Supabase project, Auth tenant, and Stripe configuration belong
-  only to the protected `main`/`production` environment;
+- the one hosted Supabase project and Auth tenant belong only to the protected
+  `main`/`production` environment; Stripe will also belong there when billing is
+  enabled, but it is deliberately deferred for the closed production canary;
 - local CI still replays the full schema and stubs external providers, so code is
   validated without connecting `develop` to production.
 
@@ -100,11 +101,11 @@ The prelaunch environment model deliberately uses no paid staging project:
 
 | Name | Purpose | Rotation owner |
 | --- | --- | --- |
-| `SUPABASE_ACCESS_TOKEN` | Authorizes the Supabase CLI release | Supabase organization administrator |
+| `SUPABASE_ACCESS_TOKEN` | Authorizes the Supabase CLI release and the read-only Auth gate; a fine-grained token needs `auth_config_read` | Supabase organization administrator |
 | `SUPABASE_DB_PASSWORD` | Links and migrates the production database | Supabase project administrator |
-| `STRIPE_SECRET_KEY` | Calls Stripe from Edge Functions | Stripe administrator |
-| `STRIPE_WEBHOOK_SECRET` | Verifies Stripe webhook signatures | Stripe administrator |
-| `STRIPE_MEMBERSHIP_PRICE_ID` | Selects the approved recurring membership price | Billing owner |
+| `STRIPE_SECRET_KEY` | Calls Stripe from Edge Functions; required only when reviewed code sets `BILLING_ENABLED=true` | Stripe administrator |
+| `STRIPE_WEBHOOK_SECRET` | Verifies Stripe webhook signatures; required only when reviewed code sets `BILLING_ENABLED=true` | Stripe administrator |
+| `STRIPE_MEMBERSHIP_PRICE_ID` | Selects the approved recurring membership price; required only when reviewed code sets `BILLING_ENABLED=true` | Billing owner |
 | `CLOUDFLARE_API_TOKEN` | Deploys the verified immutable frontend artifact to the single Pages project | Cloudflare administrator |
 | `CLOUDFLARE_ACCOUNT_ID` | Selects the account that owns the production Pages project | Cloudflare administrator |
 | `PROFILE_PHOTO_WORKER_SECRET` | Authorizes only the unattended expired profile-photo cleanup worker | Security administrator |
@@ -142,7 +143,11 @@ The prelaunch environment model deliberately uses no paid staging project:
 second gate ensures that production-mode builds outside the protected release
 cannot initialize hosted connections merely because public values are present.
 `VITE_ENABLE_GROUP_INTEGRATIONS` is deliberately hard-coded to `false`
-for the safe-off launch path. Treat any future `VITE_*` release toggle as a build-time feature gate:
+for the safe-off launch path. For the closed production canary,
+`VITE_ENABLE_BILLING=false`, `VITE_ENABLE_PUBLIC_SIGNUP=false`, and the Edge
+Function secret `BILLING_ENABLED=false` are also hard-coded in the workflow.
+Changing any of these values requires a reviewed code change; an environment
+variable override cannot enable them. Treat any future `VITE_*` release toggle as a build-time feature gate:
 document its safe default here, leave it disabled until its backend is deployed
 and verified, and record who approved enabling it.
 
@@ -151,8 +156,12 @@ feature-preview, or localhost origins to the production value.
 
 Supabase injects `SUPABASE_URL`, `SUPABASE_ANON_KEY`, and
 `SUPABASE_SERVICE_ROLE_KEY` into deployed functions. Never duplicate those values
-in GitHub. The workflow synchronizes the Stripe and allowed-origin values above
-to Supabase Function Secrets before function deployment. `ALLOWED_SITE_ORIGINS`
+in GitHub. The workflow always synchronizes `BILLING_ENABLED` and the configured
+allowed-origin values to Supabase Function Secrets before function deployment.
+It requires and synchronizes the three Stripe values only after reviewed code
+sets `BILLING_ENABLED=true`; with the current value `false`, the guarded billing
+Functions remain deployed but return `503` without contacting Stripe.
+`ALLOWED_SITE_ORIGINS`
 is supported only as a compatibility alias; new configuration should use
 `PUBLIC_ALLOWED_SITE_URLS`.
 
@@ -195,6 +204,14 @@ Before approving the GitHub `production` environment deployment, confirm:
    dispatches **Release production** from the protected `main` branch and selects
    the reviewed release scope. This keeps the first two-stage cutover and every
    later production mutation explicit.
+9. Supabase Auth is already closed: the official Management API Auth config must
+   report `disable_signup=true` and
+   `external_anonymous_users_enabled=false`. The workflow checks these exact
+   values before either a full or frontend-only release and before `supabase
+   link`, migrations, Function secrets, or Function deployment. It never prints
+   the Auth response. See
+   [`production-canary-operator-runbook.md`](production-canary-operator-runbook.md)
+   for the UUID-bound owner canary procedure.
 
 ### One-time migration-history reconciliation
 
@@ -725,12 +742,17 @@ next stage when one fails:
 
 1. **Validate:** run the full reusable local CI workflow. No production access is
    available in this stage.
-2. **Migrate:** link the intended project, preview with
+2. **Verify the closed Auth policy:** read the hosted Auth configuration through
+   Supabase's official Management API and require `disable_signup=true` plus
+   `external_anonymous_users_enabled=false`. This read-only step gates both
+   release scopes and completes before the workflow can link or mutate the
+   backend.
+3. **Migrate:** link the intended project, preview with
    `supabase db push --linked --dry-run`, and apply only migrations that follow the
    reconciled remote history with pinned `supabase migration up --linked`. The
    dry-run is a plan only; `db push` must never perform the actual mutation.
    Never use `--include-all` or run `supabase/schema.sql` manually in production.
-3. **Synchronize secrets and deploy functions:** update Function Secrets, deploy
+4. **Synchronize secrets and deploy functions:** update Function Secrets, deploy
    the three JWT-protected billing functions and the JWT-protected
    `retired-community-export`, then deploy `stripe-webhook` with JWT verification
    disabled because Stripe authenticates it by signature and the public
@@ -744,11 +766,19 @@ next stage when one fails:
    than a user JWT. When both retired Community secrets and the credential key
    ring are present, also deploy the private-header-authenticated
    `process-retired-community-deletions` worker.
-4. **Verify backend and release feature gates:** list remote migrations and
-   functions, then confirm an unauthenticated billing-function request is rejected
-   before releasing the frontend build. Keep mock mode off and leave new
-   customer-facing flags disabled until the remaining checks below pass.
-5. **Build and deploy frontend:** build with production public configuration,
+   The current closed canary synchronizes `BILLING_ENABLED=false` without Stripe
+   values but still deploys all four guarded billing endpoints.
+5. **Verify backend and release feature gates:** list remote migrations and
+   functions, then require exact unauthenticated gateway `401` responses from
+   `cancel-membership`, `create-checkout-session`,
+   `create-customer-portal-session`, while the no-JWT `stripe-webhook` must
+   return exact `503`. This proves all four current deployments are reachable
+   without weakening the authenticated Functions' gateway protection. Response
+   bodies are retained only in private runner-temporary files and are never
+   printed. The owner canary uses its real session to require `503` from the
+   other three before sign-out. Keep mock mode off and leave billing and public
+   signup disabled.
+6. **Build and deploy frontend:** build with production public configuration,
    upload an immutable workflow artifact, and deploy it to Cloudflare Pages with
    the least-privilege token only after every backend stage succeeds. GitHub
    Pages is not a production target.
@@ -770,12 +800,19 @@ the release or incident record.
 3. Repeat an idempotent RPC request with the same key and confirm it returns the
    same result without a second point-ledger grant. Repeat a safe request after a
    simulated client retry and confirm invariants still hold.
-4. Exercise each authenticated billing function with a test member. Confirm an
-   unauthenticated request is rejected and an unapproved origin receives no CORS
-   access. Preview and create one share snapshot, inspect its server-rendered
-   metadata, revoke it, and confirm the same URL then returns the generic 404.
-5. Send a Stripe test-mode signed event to `stripe-webhook`; confirm one expected
-   subscription/entitlement transition and no duplicate transition on replay.
+4. During the closed canary, use the invited owner's real authenticated session
+   to confirm the three authenticated billing Functions each return `503`, and
+   confirm the workflow's unauthenticated `stripe-webhook` smoke returned `503`.
+   The frontend must expose no billing action,
+   and no Stripe or billing row is created. Preview and create one share snapshot,
+   inspect its server-rendered metadata, revoke it, and confirm the same URL then
+   returns the generic 404. After a separately reviewed billing enablement,
+   replace this check by exercising each authenticated billing function with a
+   test member and confirming an unapproved origin receives no CORS access.
+5. Skip Stripe lifecycle mutation while `BILLING_ENABLED=false`. After billing is
+   separately enabled, send a Stripe test-mode signed event to `stripe-webhook`;
+   confirm one expected subscription/entitlement transition and no duplicate
+   transition on replay.
 6. When the integration runtime is enabled, invoke health with the worker secret,
    confirm Cron history is healthy, and deliver one non-sensitive synthetic event
    to each canary-approved provider destination before enabling connection UI.
@@ -784,10 +821,13 @@ the release or incident record.
    member sees status but no management actions; then test, disconnect, and
    verify queued sends are canceled before reconnecting.
 8. Load the production frontend in a fresh browser profile. Confirm it targets
-   the production Supabase project, mock identities are unavailable, and core
-   Dashboard, Check-In, billing, and sign-out flows work.
-9. Review Supabase Function logs, Postgres logs, Stripe delivery logs, integration
-   health, and Cron history for new
+   the production Supabase project, mock identities are unavailable, public
+   signup and billing remain absent, and core Dashboard, Check-In, and sign-out
+   flows work. Follow
+   [`production-canary-operator-runbook.md`](production-canary-operator-runbook.md)
+   for the short-lived UUID-bound `membership_active` grant and revocation.
+9. Review Supabase Function logs, Postgres logs, and—only after billing is
+   enabled—Stripe delivery logs, plus integration health and Cron history for new
    authorization errors, repeated retries, or unexpected elevated-role access.
 10. Before enabling any retired Community deletion schedule, invoke its worker
     health endpoint and record the aggregate counts. Require no overdue account
