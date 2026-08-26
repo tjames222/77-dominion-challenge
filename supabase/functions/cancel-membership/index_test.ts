@@ -9,6 +9,10 @@ import {
 } from "../_shared/test_helpers.ts";
 import { createHandler } from "./index.ts";
 
+function billingEnv(value: string | undefined) {
+  return (name: string) => name === "BILLING_ENABLED" ? value : testEnv(name);
+}
+
 type SubscriptionRow = {
   id: string;
   stripe_subscription_id: string;
@@ -80,7 +84,7 @@ function cancelHandler(
         current_period_start: 1_799_900_000,
         current_period_end: 1_800_100_000,
       }),
-      env: testEnv,
+      env: billingEnv("true"),
       now: () => new Date("2027-01-15T08:00:00.000Z"),
       logger: quietLogger,
       ...overrides,
@@ -89,11 +93,40 @@ function cancelHandler(
 }
 
 Deno.test("cancellation handles preflight and rejects unsupported methods", async () => {
+  const { handler } = cancelHandler(null, { env: billingEnv(undefined) });
   assertEquals(
-    (await cancelHandler(null).handler(request("OPTIONS"))).status,
+    (await handler(request("OPTIONS"))).status,
     200,
   );
-  assertEquals((await cancelHandler(null).handler(request("GET"))).status, 405);
+  assertEquals((await handler(request("GET"))).status, 405);
+});
+
+Deno.test("cancellation returns a stable 503 without touching billing dependencies when disabled", async () => {
+  const calls = { auth: 0, admin: 0, stripe: 0 };
+  const post = request("POST");
+  const { handler } = cancelHandler(null, {
+    env: billingEnv("TRUE"),
+    requireUser: async () => {
+      calls.auth += 1;
+      return { id: "unexpected" };
+    },
+    createAdminClient: () => {
+      calls.admin += 1;
+      return cancellationAdmin(null).admin;
+    },
+    stripeRequest: async () => {
+      calls.stripe += 1;
+      return {};
+    },
+  });
+  const response = await handler(post);
+
+  assertEquals(response.status, 503);
+  assertEquals(await responseJson(response), {
+    error: "Billing is temporarily unavailable.",
+  });
+  assertEquals(post.bodyUsed, false);
+  assertEquals(calls, { auth: 0, admin: 0, stripe: 0 });
 });
 
 Deno.test("cancellation returns 401 when authentication fails", async () => {

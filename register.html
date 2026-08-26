@@ -19,20 +19,23 @@
         <a class="back-link" href="./membership.html">‹ Membership</a>
       </header>
       <section class="card auth-card" data-section-surface="accent">
-        <p class="eyebrow">Step 1 of 2</p>
-        <h1>Create your account</h1>
-        <p class="lead">Create an account to track your actions, check-ins, and progress through all 77 days.</p>
-        <div class="auth-encouragement">
+        <p class="eyebrow" id="signupEyebrow">Invite-only early access</p>
+        <h1 id="signupTitle">Dominion is opening gradually.</h1>
+        <p class="lead" id="signupLead">We are starting with a small invited group before opening account creation more broadly.</p>
+        <p class="auth-encouragement" id="signupUnavailable" role="status">
+          Already invited? Log in with the email connected to your early-access account.
+        </p>
+        <div class="auth-encouragement" id="signupEncouragement" hidden>
           <strong>Next, activate your membership.</strong>
           <span>After you create your account, you can activate membership and open your dashboard.</span>
         </div>
-        <form id="authForm">
+        <form id="authForm" hidden>
           <label>Name<input id="name" placeholder="Tim" required /></label>
           <label>Email<input id="email" type="email" placeholder="you@example.com" required /></label>
           <label>Password<input id="password" type="password" placeholder="••••••••" required /></label>
           <button class="primary" type="submit">Create account and continue</button>
         </form>
-        <p class="auth-legal-note">By creating an account, you agree to the <a href="./terms.html">Terms</a> and acknowledge the <a href="./privacy.html">Privacy Policy</a>.</p>
+        <p class="auth-legal-note" id="signupLegalNote" hidden>By creating an account, you agree to the <a href="./terms.html">Terms</a> and acknowledge the <a href="./privacy.html">Privacy Policy</a>.</p>
         <p class="auth-note">Already joined? <a data-auth-switch href="./login.html">Log in</a></p>
       </section>
     </main>

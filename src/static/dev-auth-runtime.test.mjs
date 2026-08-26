@@ -2,7 +2,9 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { describe, test } from 'node:test';
 
-import { frontendEnvironmentErrors } from '../../scripts/validate-frontend-env.mjs';
+import {
+  frontendEnvironmentErrors as rawFrontendEnvironmentErrors,
+} from '../../scripts/validate-frontend-env.mjs';
 import {
   PREVIEW_AUTH_OWNER_STORAGE_KEY,
   assertPreviewAuthEmail,
@@ -15,6 +17,11 @@ import {
 } from './preview-auth-runtime.mjs';
 
 const read = (relativePath) => readFile(new URL(relativePath, import.meta.url), 'utf8');
+const frontendEnvironmentErrors = (environment) => rawFrontendEnvironmentErrors({
+  VITE_ENABLE_BILLING: 'false',
+  VITE_ENABLE_PUBLIC_SIGNUP: 'false',
+  ...environment,
+});
 
 function memoryStorage(initial = {}) {
   const values = new Map(Object.entries(initial).map(([key, value]) => [key, String(value)]));
@@ -142,6 +149,8 @@ describe('dev authentication runtime', () => {
     assert.match(envExample, /^VITE_ENABLE_MOCKS=true$/m);
     assert.match(envExample, /^VITE_ENABLE_SUPABASE_AUTH_IN_MOCKS=false$/m);
     assert.match(envExample, /^VITE_ENABLE_PRODUCTION_CONNECTIONS=false$/m);
+    assert.match(envExample, /^VITE_ENABLE_BILLING=false$/m);
+    assert.match(envExample, /^VITE_ENABLE_PUBLIC_SIGNUP=false$/m);
   });
 
   test('keeps reward fulfillment fixtures inside the local browser E2E boundary', async () => {
@@ -159,6 +168,62 @@ describe('dev authentication runtime', () => {
 });
 
 describe('Cloudflare frontend environment gate', () => {
+  test('requires both production-canary flags to be exactly false on canonical branches', () => {
+    assert.deepEqual(rawFrontendEnvironmentErrors({
+      CF_PAGES: 'true',
+      CF_PAGES_BRANCH: 'develop',
+      VITE_ENABLE_MOCKS: 'true',
+    }), [
+      'VITE_ENABLE_BILLING must be false on develop',
+      'VITE_ENABLE_PUBLIC_SIGNUP must be false on develop',
+    ]);
+
+    assert.deepEqual(rawFrontendEnvironmentErrors({
+      CF_PAGES: 'true',
+      CF_PAGES_BRANCH: 'main',
+      VITE_ENABLE_MOCKS: 'false',
+      VITE_ENABLE_PRODUCTION_CONNECTIONS: 'true',
+      VITE_SUPABASE_URL: 'https://production-project.supabase.co',
+      VITE_SUPABASE_PUBLISHABLE_KEY: 'sb_publishable_example',
+      SUPABASE_PROJECT_REF: 'production-project',
+    }), [
+      'VITE_ENABLE_BILLING must be false on main',
+      'VITE_ENABLE_PUBLIC_SIGNUP must be false on main',
+    ]);
+
+    assert.deepEqual(rawFrontendEnvironmentErrors({
+      CF_PAGES: 'true',
+      CF_PAGES_BRANCH: 'main',
+      VITE_ENABLE_MOCKS: 'false',
+      VITE_ENABLE_PRODUCTION_CONNECTIONS: 'true',
+      VITE_ENABLE_BILLING: 'true',
+      VITE_ENABLE_PUBLIC_SIGNUP: 'true',
+      VITE_SUPABASE_URL: 'https://production-project.supabase.co',
+      VITE_SUPABASE_PUBLISHABLE_KEY: 'sb_publishable_example',
+      SUPABASE_PROJECT_REF: 'production-project',
+    }), [
+      'VITE_ENABLE_BILLING must be false on main',
+      'VITE_ENABLE_PUBLIC_SIGNUP must be false on main',
+    ]);
+
+    for (const nonExactFalse of ['FALSE', ' false', 'false ']) {
+      assert.deepEqual(rawFrontendEnvironmentErrors({
+        CF_PAGES: 'true',
+        CF_PAGES_BRANCH: 'main',
+        VITE_ENABLE_MOCKS: 'false',
+        VITE_ENABLE_PRODUCTION_CONNECTIONS: 'true',
+        VITE_ENABLE_BILLING: nonExactFalse,
+        VITE_ENABLE_PUBLIC_SIGNUP: nonExactFalse,
+        VITE_SUPABASE_URL: 'https://production-project.supabase.co',
+        VITE_SUPABASE_PUBLISHABLE_KEY: 'sb_publishable_example',
+        SUPABASE_PROJECT_REF: 'production-project',
+      }), [
+        'VITE_ENABLE_BILLING must be false on main',
+        'VITE_ENABLE_PUBLIC_SIGNUP must be false on main',
+      ]);
+    }
+  });
+
   test('accepts canonical develop without any hosted connection', () => {
     assert.deepEqual(frontendEnvironmentErrors({
       CF_PAGES: 'true',
@@ -271,6 +336,7 @@ describe('Cloudflare frontend environment gate', () => {
       'STRIPE_SECRET_KEY',
       'STRIPE_WEBHOOK_SECRET',
       'STRIPE_MEMBERSHIP_PRICE_ID',
+      'BILLING_ENABLED',
       'INTEGRATION_WORKER_SECRET',
       'INTEGRATION_CREDENTIAL_KEYS',
       'INTEGRATION_OAUTH_STATE_SECRET',

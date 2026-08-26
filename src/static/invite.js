@@ -28,6 +28,7 @@ import {
   storeInviteContinuation,
 } from './invite-flow.mjs';
 import { formatCrewInviteCode, normalizeCrewInviteCode } from './crew-invite.mjs';
+import { RELEASE_GATES } from './release-gates.mjs';
 
 const $ = (id) => document.getElementById(id);
 const capturedInvite = captureInviteCredential(window);
@@ -77,11 +78,31 @@ function visibleStatus(serverStatus) {
   return 'ready';
 }
 
+function releaseAwareInviteContent(status, preview) {
+  const content = inviteStatusContent(status, preview);
+  if (status === 'authentication_required' && !RELEASE_GATES.publicSignupEnabled) {
+    return {
+      ...content,
+      title: 'Log in with your invited account.',
+      message: 'Dominion is currently invite-only. This group invitation can continue after you log in with an existing early-access account.',
+    };
+  }
+  if (status === 'subscription_required' && !RELEASE_GATES.billingEnabled) {
+    return {
+      ...content,
+      eyebrow: 'Early access needed',
+      title: 'This account does not have early access yet.',
+      message: 'The group invitation is still valid, but billing is not open during early access. Ask the person who invited you to confirm that this is the expected account.',
+    };
+  }
+  return content;
+}
+
 function render(serverStatus, preview = {}) {
   latestServerStatus = serverStatus;
   latestPreview = preview;
   const status = visibleStatus(serverStatus);
-  const content = inviteStatusContent(status, preview);
+  const content = releaseAwareInviteContent(status, preview);
 
   $('inviteEyebrow').textContent = content.eyebrow;
   $('inviteTitle').textContent = content.title;
@@ -108,11 +129,15 @@ function render(serverStatus, preview = {}) {
   if (status === 'ready') $('confirmInviteButton').hidden = false;
   if (status === 'authentication_required') {
     $('loginInviteLink').href = buildInviteAuthHref('login');
-    $('registerInviteLink').href = buildInviteAuthHref('register');
     $('loginInviteLink').hidden = false;
-    $('registerInviteLink').hidden = false;
+    if (RELEASE_GATES.publicSignupEnabled) {
+      $('registerInviteLink').href = buildInviteAuthHref('register');
+      $('registerInviteLink').hidden = false;
+    }
   }
-  if (status === 'subscription_required') $('billingInviteLink').hidden = false;
+  if (status === 'subscription_required' && RELEASE_GATES.billingEnabled) {
+    $('billingInviteLink').hidden = false;
+  }
   if (['full', 'rate_limited'].includes(status)) $('retryInviteButton').hidden = false;
   if (status === 'activation_pending') $('continueGroupStartButton').hidden = false;
   if (['already_member', 'current_crew_conflict', 'joined'].includes(status)) $('openGroupLink').hidden = false;

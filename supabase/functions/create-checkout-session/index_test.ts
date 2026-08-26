@@ -9,6 +9,10 @@ import {
 } from "../_shared/test_helpers.ts";
 import { createHandler } from "./index.ts";
 
+function billingEnv(value: string | undefined) {
+  return (name: string) => name === "BILLING_ENABLED" ? value : testEnv(name);
+}
+
 function entitlementAdmin(
   data: Array<{ entitlement_key: string; status: string }> = [],
   error: Error | null = null,
@@ -32,15 +36,69 @@ function checkoutHandler(overrides: Record<string, unknown> = {}) {
     stripeRequest: async () => ({
       url: "https://checkout.stripe.test/session",
     }),
-    env: testEnv,
+    env: billingEnv("true"),
     logger: quietLogger,
     ...overrides,
   } as any);
 }
 
 Deno.test("checkout handles preflight and rejects unsupported methods", async () => {
-  assertEquals((await checkoutHandler()(request("OPTIONS"))).status, 200);
-  assertEquals((await checkoutHandler()(request("GET"))).status, 405);
+  const handler = checkoutHandler({ env: billingEnv(undefined) });
+  assertEquals((await handler(request("OPTIONS"))).status, 200);
+  assertEquals((await handler(request("GET"))).status, 405);
+});
+
+Deno.test("checkout returns a stable 503 without touching billing dependencies when disabled", async () => {
+  const calls = {
+    auth: 0,
+    admin: 0,
+    customer: 0,
+    siteUrl: 0,
+    price: 0,
+    stripe: 0,
+  };
+  const post = request("POST", "{");
+  const response = await checkoutHandler({
+    env: billingEnv(undefined),
+    requireUser: async () => {
+      calls.auth += 1;
+      return { id: "unexpected" };
+    },
+    createAdminClient: () => {
+      calls.admin += 1;
+      return entitlementAdmin();
+    },
+    getOrCreateStripeCustomer: async () => {
+      calls.customer += 1;
+      return "cus_unexpected";
+    },
+    getSiteUrl: () => {
+      calls.siteUrl += 1;
+      return "https://app.example.com";
+    },
+    getPriceId: () => {
+      calls.price += 1;
+      return "price_unexpected";
+    },
+    stripeRequest: async () => {
+      calls.stripe += 1;
+      return {};
+    },
+  })(post);
+
+  assertEquals(response.status, 503);
+  assertEquals(await responseJson(response), {
+    error: "Billing is temporarily unavailable.",
+  });
+  assertEquals(post.bodyUsed, false);
+  assertEquals(calls, {
+    auth: 0,
+    admin: 0,
+    customer: 0,
+    siteUrl: 0,
+    price: 0,
+    stripe: 0,
+  });
 });
 
 Deno.test("checkout returns 401 when authentication fails", async () => {

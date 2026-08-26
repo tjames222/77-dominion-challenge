@@ -4,6 +4,7 @@ const truthy = (value) => ['1', 'true', 'yes'].includes(
   String(value || '').trim().toLowerCase(),
 );
 const explicitlyEnabled = (value) => String(value || '').trim().toLowerCase() === 'true';
+const exactlyDisabled = (value) => value === 'false';
 
 export const DEVELOP_LIVE_CONNECTION_VARIABLES = Object.freeze([
   'VITE_SUPABASE_URL',
@@ -24,6 +25,7 @@ export const DEVELOP_LIVE_CONNECTION_VARIABLES = Object.freeze([
   'STRIPE_SECRET_KEY',
   'STRIPE_WEBHOOK_SECRET',
   'STRIPE_MEMBERSHIP_PRICE_ID',
+  'BILLING_ENABLED',
   'INTEGRATION_WORKER_SECRET',
   'INTEGRATION_CREDENTIAL_KEYS',
   'INTEGRATION_OAUTH_STATE_SECRET',
@@ -53,6 +55,8 @@ export function frontendEnvironmentErrors(environment = {}) {
     environment.VITE_ENABLE_PRODUCTION_CONNECTIONS,
   );
   const enablesE2eFixtures = explicitlyEnabled(environment.VITE_ENABLE_E2E_FIXTURES);
+  const disablesBilling = exactlyDisabled(environment.VITE_ENABLE_BILLING);
+  const disablesPublicSignup = exactlyDisabled(environment.VITE_ENABLE_PUBLIC_SIGNUP);
   const branch = String(environment.CF_PAGES_BRANCH || '').trim();
 
   if (!isCloudflareBuild) return [];
@@ -70,6 +74,12 @@ export function frontendEnvironmentErrors(environment = {}) {
   if (branch === 'main' && !enablesProductionConnections) {
     errors.push('VITE_ENABLE_PRODUCTION_CONNECTIONS must be true on main');
   }
+  if (branch === 'main' && !disablesBilling) {
+    errors.push('VITE_ENABLE_BILLING must be false on main');
+  }
+  if (branch === 'main' && !disablesPublicSignup) {
+    errors.push('VITE_ENABLE_PUBLIC_SIGNUP must be false on main');
+  }
   if (branch === 'develop' && !usesMockProductData) {
     errors.push('VITE_ENABLE_MOCKS must be true on develop');
   }
@@ -78,6 +88,12 @@ export function frontendEnvironmentErrors(environment = {}) {
   }
   if (branch === 'develop' && enablesProductionConnections) {
     errors.push('VITE_ENABLE_PRODUCTION_CONNECTIONS must be false on develop');
+  }
+  if (branch === 'develop' && !disablesBilling) {
+    errors.push('VITE_ENABLE_BILLING must be false on develop');
+  }
+  if (branch === 'develop' && !disablesPublicSignup) {
+    errors.push('VITE_ENABLE_PUBLIC_SIGNUP must be false on develop');
   }
   if (branch === 'develop' && explicitlyEnabled(environment.VITE_ENABLE_GROUP_INTEGRATIONS)) {
     errors.push('VITE_ENABLE_GROUP_INTEGRATIONS must be false on develop');

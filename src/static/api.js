@@ -124,6 +124,13 @@ import {
   normalizeAccountLifecycleRequest,
   normalizeAccountLifecycleRequests,
 } from './account-lifecycle.mjs';
+import {
+  BILLING_CLOSED_MESSAGE,
+  PUBLIC_SIGNUP_CLOSED_MESSAGE,
+  RELEASE_GATES,
+  runReleaseGatedAction,
+  runOptionalReleaseQuery,
+} from './release-gates.mjs';
 
 const SUPABASE_URL = (import.meta.env.VITE_SUPABASE_URL || '').replace(/\/$/, '');
 const SUPABASE_ORIGIN = (() => {
@@ -439,7 +446,7 @@ async function requireHybridPreviewUser(expectedUserId = '') {
 
 const lockedBillingState = () => ({
   authenticated: false,
-  billingEnabled: true,
+  billingEnabled: RELEASE_GATES.billingEnabled,
   appAccess: false,
   subscriptionActive: false,
   subscription: null,
@@ -671,24 +678,30 @@ export async function ensureProfile({ name, email, expectedUserId = '' } = {}) {
 }
 
 export async function signUpWithPassword({ name, email, password }) {
-  const client = requireSupabaseAuthentication();
-  const emailRedirectTo = !isHybridAuthPreview() || typeof window === 'undefined'
-    ? undefined
-    : new URL('./login.html', window.location.href).href;
-  const { data, error } = await client.auth.signUp({
-    email,
-    password,
-    options: {
-      data: { name },
-      ...(emailRedirectTo ? { emailRedirectTo } : {}),
+  return runReleaseGatedAction({
+    enabled: RELEASE_GATES.publicSignupEnabled,
+    message: PUBLIC_SIGNUP_CLOSED_MESSAGE,
+    action: async () => {
+      const client = requireSupabaseAuthentication();
+      const emailRedirectTo = !isHybridAuthPreview() || typeof window === 'undefined'
+        ? undefined
+        : new URL('./login.html', window.location.href).href;
+      const { data, error } = await client.auth.signUp({
+        email,
+        password,
+        options: {
+          data: { name },
+          ...(emailRedirectTo ? { emailRedirectTo } : {}),
+        },
+      });
+      if (error) throw error;
+      if (data.session?.access_token && hasSupabaseAuth()) {
+        await ensureProfile({ name, expectedUserId: data.user?.id });
+      }
+
+      return { session: data.session, user: data.user };
     },
   });
-  if (error) throw error;
-  if (data.session?.access_token && hasSupabaseAuth()) {
-    await ensureProfile({ name, expectedUserId: data.user?.id });
-  }
-
-  return { session: data.session, user: data.user };
 }
 
 export async function signInWithPassword({ email, password }) {
@@ -1295,7 +1308,7 @@ export async function getBillingState() {
   if (!session?.user) {
     return {
       authenticated: false,
-      billingEnabled: true,
+      billingEnabled: RELEASE_GATES.billingEnabled,
       appAccess: false,
       subscriptionActive: false,
       subscription: null,
@@ -1311,11 +1324,14 @@ export async function getBillingState() {
       .from('entitlements')
       .select('entitlement_key, status, starts_at, ends_at, source_type, source_id, metadata')
       .eq('user_id', userId),
-    client
-      .from('subscriptions')
-      .select('id, product_key, status, cancel_at_period_end, current_period_start, current_period_end, canceled_at, created_at')
-      .eq('user_id', userId)
-      .order('created_at', { ascending: false }),
+    runOptionalReleaseQuery({
+      enabled: RELEASE_GATES.billingEnabled,
+      query: () => client
+        .from('subscriptions')
+        .select('id, product_key, status, cancel_at_period_end, current_period_start, current_period_end, canceled_at, created_at')
+        .eq('user_id', userId)
+        .order('created_at', { ascending: false }),
+    }),
   ]);
 
   if (entitlementsResult.error) throw entitlementsResult.error;
@@ -1328,7 +1344,7 @@ export async function getBillingState() {
 
   return {
     authenticated: true,
-    billingEnabled: true,
+    billingEnabled: RELEASE_GATES.billingEnabled,
     appAccess: subscriptionActive,
     subscriptionActive,
     subscription,
@@ -1352,50 +1368,68 @@ async function invokeSupabaseFunction(name, body = {}) {
 }
 
 export async function createCheckoutSession(productKey) {
-  if (isLocalDemoMode()) {
-    await requireHybridPreviewUser();
-    if (productKey !== MEMBERSHIP_PRODUCT_KEY) throw new Error('Unsupported preview product selection.');
-    const now = new Date();
-    const currentPeriodEnd = new Date(now);
-    currentPeriodEnd.setMonth(currentPeriodEnd.getMonth() + 1);
-    const subscription = {
-      id: 'preview_subscription',
-      productKey,
-      status: 'active',
-      subscriptionActive: true,
-      cancelAtPeriodEnd: false,
-      currentPeriodStart: now.toISOString(),
-      currentPeriodEnd: currentPeriodEnd.toISOString(),
-      canceledAt: null,
-      createdAt: now.toISOString(),
-      preview: true,
-    };
-    writeMockUserValue(MOCK_SUBSCRIPTION_KEY, subscription);
-    return { url: './billing.html?checkout=success&preview=1', preview: true };
-  }
-  return invokeSupabaseFunction('create-checkout-session', { productKey });
+  return runReleaseGatedAction({
+    enabled: RELEASE_GATES.billingEnabled,
+    message: BILLING_CLOSED_MESSAGE,
+    action: async () => {
+      if (isLocalDemoMode()) {
+        await requireHybridPreviewUser();
+        if (productKey !== MEMBERSHIP_PRODUCT_KEY) throw new Error('Unsupported preview product selection.');
+        const now = new Date();
+        const currentPeriodEnd = new Date(now);
+        currentPeriodEnd.setMonth(currentPeriodEnd.getMonth() + 1);
+        const subscription = {
+          id: 'preview_subscription',
+          productKey,
+          status: 'active',
+          subscriptionActive: true,
+          cancelAtPeriodEnd: false,
+          currentPeriodStart: now.toISOString(),
+          currentPeriodEnd: currentPeriodEnd.toISOString(),
+          canceledAt: null,
+          createdAt: now.toISOString(),
+          preview: true,
+        };
+        writeMockUserValue(MOCK_SUBSCRIPTION_KEY, subscription);
+        return { url: './billing.html?checkout=success&preview=1', preview: true };
+      }
+      return invokeSupabaseFunction('create-checkout-session', { productKey });
+    },
+  });
 }
 
 export async function createCustomerPortalSession(options = {}) {
-  const flow = options?.flow || '';
-  const returnPath = options?.returnPath || '';
-  if (isLocalDemoMode()) {
-    await requireHybridPreviewUser();
-    const url = flow === 'payment_method_update'
-      ? './billing.html?payment=updated&preview=1'
-      : './profile.html#billing';
-    return { url, preview: true };
-  }
-  return invokeSupabaseFunction('create-customer-portal-session', { flow, returnPath });
+  return runReleaseGatedAction({
+    enabled: RELEASE_GATES.billingEnabled,
+    message: BILLING_CLOSED_MESSAGE,
+    action: async () => {
+      const flow = options?.flow || '';
+      const returnPath = options?.returnPath || '';
+      if (isLocalDemoMode()) {
+        await requireHybridPreviewUser();
+        const url = flow === 'payment_method_update'
+          ? './billing.html?payment=updated&preview=1'
+          : './profile.html#billing';
+        return { url, preview: true };
+      }
+      return invokeSupabaseFunction('create-customer-portal-session', { flow, returnPath });
+    },
+  });
 }
 
 export async function cancelMembership() {
-  if (isLocalDemoMode()) {
-    await requireHybridPreviewUser();
-    writeMockUserValue(MOCK_SUBSCRIPTION_KEY, null);
-    return { canceled: true, accessRemoved: true, preview: true };
-  }
-  return invokeSupabaseAction('cancel-membership');
+  return runReleaseGatedAction({
+    enabled: RELEASE_GATES.billingEnabled,
+    message: BILLING_CLOSED_MESSAGE,
+    action: async () => {
+      if (isLocalDemoMode()) {
+        await requireHybridPreviewUser();
+        writeMockUserValue(MOCK_SUBSCRIPTION_KEY, null);
+        return { canceled: true, accessRemoved: true, preview: true };
+      }
+      return invokeSupabaseAction('cancel-membership');
+    },
+  });
 }
 
 export async function manageGroupIntegration(action, values = {}) {
