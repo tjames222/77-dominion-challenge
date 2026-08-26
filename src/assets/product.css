@@ -3637,6 +3637,13 @@ body.challenge-finished .reward-backdrop {
   width: min(100%, 620px);
 }
 .auth-card form { display: grid; gap: 12px; margin-top: 18px; }
+.auth-card form[hidden],
+.auth-card .auth-encouragement[hidden],
+.auth-card .auth-legal-note[hidden],
+.billing-purchase-button[hidden],
+.policy-link-row a[hidden] {
+  display: none !important;
+}
 .auth-encouragement {
   display: grid;
   gap: 6px;
