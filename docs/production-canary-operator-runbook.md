@@ -115,7 +115,7 @@ begin
     execute 'select count(*) from public.purchases'
       into legacy_purchase_count;
     if legacy_purchase_count <> 0 then
-      raise exception 'Canary target has legacy purchase rows.';
+      raise exception 'Closed canary requires an empty legacy purchases table.';
     end if;
   end if;
 
@@ -163,6 +163,8 @@ select
   starts_at,
   ends_at,
   metadata ->> 'release_sha' as release_sha,
+  ends_at - starts_at <= interval '2 hours' as bounded_window,
+  metadata ->> 'release_sha' = :'release_sha' as exact_release_sha,
   status = 'active'
     and starts_at <= clock_timestamp()
     and ends_at > clock_timestamp() as active_now
