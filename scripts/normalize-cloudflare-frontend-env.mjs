@@ -9,6 +9,8 @@ const MOCK_ONLY_FLAGS = Object.freeze({
   VITE_ENABLE_SUPABASE_AUTH_IN_MOCKS: 'false',
   VITE_ENABLE_PRODUCTION_CONNECTIONS: 'false',
   VITE_ENABLE_GROUP_INTEGRATIONS: 'false',
+  VITE_ENABLE_BILLING: 'false',
+  VITE_ENABLE_PUBLIC_SIGNUP: 'false',
 });
 
 export function isCloudflarePreviewEnvironment(environment = {}) {

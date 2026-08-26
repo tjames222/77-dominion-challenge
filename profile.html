@@ -22,7 +22,7 @@
       <section class="dashboard-hero compact-hero reveal is-visible" data-section-surface="plain">
         <p class="eyebrow">Profile</p>
         <h1>Your profile</h1>
-        <p class="lead">Update your account, billing, challenge status, and app theme.</p>
+        <p class="lead" id="profileHeroLead">Update your account, access, challenge status, and app theme.</p>
       </section>
 
       <section class="card reveal profile-account-card" data-section-surface="accent" data-training-target="profile-account">
@@ -96,14 +96,14 @@
       </section>
 
       <section class="card reveal profile-billing" id="billing" data-section-surface="accent" data-training-target="profile-billing">
-        <p class="eyebrow">Billing</p>
-        <h2 id="profileBillingTitle">Billing access</h2>
-        <p class="section-copy" id="profileBillingCopy">Loading your subscription details.</p>
+        <p class="eyebrow" id="profileBillingEyebrow">Early access</p>
+        <h2 id="profileBillingTitle">Checking your access</h2>
+        <p class="section-copy" id="profileBillingCopy">Verifying whether this account is part of the invited group.</p>
         <div class="billing-pill-row">
-          <span class="billing-pill" id="profileSubscriptionPill">Subscription needed</span>
+          <span class="billing-pill" id="profileSubscriptionPill">Checking access</span>
         </div>
         <div class="profile-billing-actions">
-          <a class="primary" href="./billing.html">Open billing</a>
+          <a class="primary" id="profileBillingLink" href="./billing.html" hidden>Open billing</a>
         </div>
       </section>
 
@@ -193,7 +193,7 @@
           </article>
           <article class="account-deletion-option">
             <h3>Delete account</h3>
-            <p>Request permanent deletion of the account and associated Dominion data. Subscription cancellation is handled separately in Billing.</p>
+            <p id="profileAccountDeletionCopy">Request permanent deletion of the account and associated Dominion data. If billing is available for this account, cancellation is handled separately.</p>
             <p class="account-request-status" id="accountDeletionRequestStatus">Checking request status...</p>
             <button class="danger-button" id="requestAccountDeletionButton" type="button" disabled>Request account deletion</button>
           </article>
@@ -202,7 +202,7 @@
         <div class="policy-link-row">
           <a href="./privacy.html">Privacy</a>
           <a href="./terms.html">Terms</a>
-          <a href="./cancellation-refunds.html">Cancellation and refunds</a>
+          <a id="profileCancellationPolicyLink" href="./cancellation-refunds.html" hidden>Cancellation and refunds</a>
           <a href="./support.html">Support</a>
         </div>
       </section>

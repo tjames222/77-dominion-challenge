@@ -11,6 +11,9 @@ const workflows = [
 ];
 const headers = read('../../public/_headers');
 const setup = read('../../CLOUDFLARE_PAGES_SETUP.md');
+const functionEnvironmentExample = read('../../supabase/.env.example');
+const authCanaryVerifier = read('../../scripts/verify-production-auth-canary.mjs');
+const canaryRunbook = read('../../docs/production-canary-operator-runbook.md');
 const localProductionRunner = read('../../scripts/rehearse-local-production-stack.sh');
 const localProductionSpec = read('../../tests/e2e/local-production-stack.spec.mjs');
 const defaultPlaywrightConfig = read('../../playwright.config.mjs');
@@ -43,7 +46,42 @@ describe('production release configuration', () => {
     assert.doesNotMatch(workflow, /deploy-pages|configure-pages|github-pages/);
   });
 
-  test('fails production closed for mocks and provider connections', () => {
+  test('gates every production release on the closed hosted Auth policy', () => {
+    assert.match(workflow, /canary-policy:\s*\n[\s\S]*?environment: production/);
+    assert.match(
+      workflow,
+      /canary-policy:[\s\S]*?node scripts\/verify-production-auth-canary\.mjs/,
+    );
+    assert.match(
+      workflow,
+      /backend:[\s\S]*?needs:[\s\S]*?- validation[\s\S]*?- canary-policy/,
+    );
+    assert.match(
+      workflow,
+      /frontend:[\s\S]*?needs:[\s\S]*?- canary-policy[\s\S]*?needs\.canary-policy\.result == 'success'/,
+    );
+
+    const authGate = workflow.indexOf('canary-policy:');
+    const backend = workflow.indexOf('\n  backend:');
+    const firstBackendMutation = workflow.indexOf('supabase link --project-ref');
+    assert.ok(authGate !== -1 && authGate < backend && backend < firstBackendMutation);
+
+    assert.match(
+      authCanaryVerifier,
+      /https:\/\/api\.supabase\.com\/v1\/projects/,
+    );
+    assert.match(authCanaryVerifier, /\/config\/auth/);
+    assert.match(authCanaryVerifier, /method: 'GET'/);
+    assert.match(authCanaryVerifier, /config\.disable_signup !== true/);
+    assert.match(
+      authCanaryVerifier,
+      /config\.external_anonymous_users_enabled !== false/,
+    );
+    assert.doesNotMatch(authCanaryVerifier, /\bcurl\b|execFile|spawn/);
+    assert.doesNotMatch(authCanaryVerifier, /console\.(?:log|error)\([^\n]*(?:config|response)/);
+  });
+
+  test('fails production closed for mocks, signup, billing, and provider connections', () => {
     assert.match(workflow, /CF_PAGES: "1"/);
     assert.match(workflow, /CF_PAGES_BRANCH: main/);
     assert.match(workflow, /VITE_ENABLE_MOCKS: "false"/);
@@ -51,7 +89,99 @@ describe('production release configuration', () => {
     assert.match(workflow, /Production builds must explicitly enable production connections/);
     assert.match(workflow, /VITE_ENABLE_GROUP_INTEGRATIONS: "false"/);
     assert.match(workflow, /Slack and Discord must remain safely off/);
+    assert.match(workflow, /VITE_ENABLE_BILLING: "false"/);
+    assert.match(workflow, /Billing must remain disabled for the production canary/);
+    assert.match(workflow, /VITE_ENABLE_PUBLIC_SIGNUP: "false"/);
+    assert.match(workflow, /Public signup must remain disabled for the production canary/);
     assert.match(setup, /turn off[\s\S]*Enable automatic production branch deployments/i);
+  });
+
+  test('defers Stripe while preserving gateway auth and disabled billing proofs', () => {
+    assert.match(workflow, /BILLING_ENABLED: "false"/);
+    assert.match(functionEnvironmentExample, /^BILLING_ENABLED=false$/m);
+    const backendJobEnvironment = workflow.slice(
+      workflow.indexOf('\n  backend:'),
+      workflow.indexOf('\n    steps:', workflow.indexOf('\n  backend:')),
+    );
+    assert.doesNotMatch(backendJobEnvironment, /STRIPE_/);
+
+    const requiredValues = workflow.match(
+      /required=\(\n([\s\S]*?)\n\s*\)\n\s*if \[\[ "\$\{BILLING_ENABLED\}" != "true"/,
+    )?.[1];
+    assert.ok(requiredValues, 'production base required-value list must be present');
+    assert.doesNotMatch(requiredValues, /STRIPE_/);
+    assert.match(
+      workflow,
+      /name: Validate enabled billing configuration\s*\n\s*if: env\.BILLING_ENABLED == 'true'[\s\S]*?STRIPE_SECRET_KEY: \$\{\{ secrets\.STRIPE_SECRET_KEY \}\}[\s\S]*?STRIPE_WEBHOOK_SECRET: \$\{\{ secrets\.STRIPE_WEBHOOK_SECRET \}\}[\s\S]*?STRIPE_MEMBERSHIP_PRICE_ID: \$\{\{ secrets\.STRIPE_MEMBERSHIP_PRICE_ID \}\}/,
+    );
+    assert.match(workflow, /"BILLING_ENABLED=\$\{BILLING_ENABLED\}"/);
+    assert.match(
+      workflow,
+      /name: Synchronize enabled Stripe Function secrets\s*\n\s*if: env\.BILLING_ENABLED == 'true'[\s\S]*?supabase secrets set[\s\S]*?STRIPE_SECRET_KEY[\s\S]*?STRIPE_WEBHOOK_SECRET[\s\S]*?STRIPE_MEMBERSHIP_PRICE_ID/,
+    );
+    assert.ok(
+      workflow.indexOf('name: Validate enabled billing configuration')
+        < workflow.indexOf('supabase link --project-ref'),
+      'enabled billing secrets must be validated before the first backend mutation',
+    );
+
+    const guardedBillingFunctions = [
+      'cancel-membership',
+      'create-checkout-session',
+      'create-customer-portal-session',
+      'stripe-webhook',
+    ];
+    for (const functionName of guardedBillingFunctions) {
+      assert.match(
+        workflow,
+        new RegExp(`supabase functions deploy ${functionName} --project-ref`),
+      );
+    }
+    for (const functionName of guardedBillingFunctions.slice(0, 3)) {
+      const deploymentLine = workflow
+        .split('\n')
+        .find((line) => line.includes(`functions deploy ${functionName} `));
+      assert.ok(deploymentLine);
+      assert.doesNotMatch(deploymentLine, /--no-verify-jwt/);
+    }
+    assert.match(
+      workflow,
+      /supabase functions deploy stripe-webhook[^\n]*--no-verify-jwt/,
+    );
+
+    const authenticatedBillingSmoke = workflow.match(
+      /for billing_function in \\\n([\s\S]*?)\n\s*done/,
+    )?.[1];
+    assert.ok(authenticatedBillingSmoke, 'authenticated billing smoke loop must be present');
+    for (const functionName of guardedBillingFunctions.slice(0, 3)) {
+      assert.match(authenticatedBillingSmoke, new RegExp(functionName));
+    }
+    assert.match(workflow, /billing_status[\s\S]*?!= "401"/);
+    assert.match(workflow, /unauthenticated \$\{billing_function\} gateway smoke test/);
+    assert.match(
+      workflow,
+      /if \[\[ "\$\{BILLING_ENABLED\}" == "false" \]\]; then\s*webhook_expected_status="503"/,
+    );
+    assert.match(workflow, /webhook_status[\s\S]*?!= "\$webhook_expected_status"/);
+    assert.match(workflow, /functions\/v1\/stripe-webhook/);
+    assert.doesNotMatch(workflow, /cat [^\n]*(?:billing|stripe).*response/i);
+  });
+
+  test('documents a UUID-bound, expiring, auditable canary grant and rollback', () => {
+    assert.match(canaryRunbook, /target Auth user UUID/i);
+    assert.match(canaryRunbook, /'membership_active'/);
+    assert.match(canaryRunbook, /'production_canary'/);
+    assert.match(canaryRunbook, /interval '2 hours'/);
+    assert.match(canaryRunbook, /grant_start timestamptz := statement_timestamp\(\)/);
+    assert.match(canaryRunbook, /real (?:browser )?session/i);
+    assert.match(canaryRunbook, /cancel-membership[\s\S]*create-checkout-session[\s\S]*create-customer-portal-session[\s\S]*exact `503`/i);
+    assert.match(canaryRunbook, /canary_grant_id/);
+    assert.match(canaryRunbook, /billing_customers/);
+    assert.match(canaryRunbook, /subscriptions/);
+    assert.match(canaryRunbook, /legacy `purchases`/);
+    assert.match(canaryRunbook, /status = 'revoked'/);
+    assert.match(canaryRunbook, /frontend-only/);
+    assert.match(canaryRunbook, /roll forward[\s\S]*Never reset hosted/i);
   });
 
   test('builds the frontend for the same Supabase project migrated by the backend', () => {

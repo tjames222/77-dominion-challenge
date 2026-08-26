@@ -47,6 +47,7 @@ import {
   getThemeRegistry,
   setTheme,
 } from './theme-state';
+import { RELEASE_GATES } from './release-gates.mjs';
 
 const save = (key, value) => localStorage.setItem(key, JSON.stringify(value));
 const localDateKey = () => {
@@ -68,6 +69,28 @@ let themeModelsById = new Map(
   buildThemeOptionModels(null, getThemeRegistry()).map((model) => [model.themeId, model]),
 );
 let themePreferenceSaving = false;
+
+function renderOpenBillingShell() {
+  if (!RELEASE_GATES.billingEnabled) return;
+  const heroLead = document.getElementById('profileHeroLead');
+  const billingEyebrow = document.getElementById('profileBillingEyebrow');
+  const billingTitle = document.getElementById('profileBillingTitle');
+  const billingCopy = document.getElementById('profileBillingCopy');
+  const subscriptionPill = document.getElementById('profileSubscriptionPill');
+  const billingLink = document.getElementById('profileBillingLink');
+  const deletionCopy = document.getElementById('profileAccountDeletionCopy');
+  const cancellationLink = document.getElementById('profileCancellationPolicyLink');
+  if (heroLead) heroLead.textContent = 'Update your account, billing, challenge status, and app theme.';
+  if (billingEyebrow) billingEyebrow.textContent = 'Billing';
+  if (billingTitle) billingTitle.textContent = 'Billing access';
+  if (billingCopy) billingCopy.textContent = 'Loading your subscription details.';
+  if (subscriptionPill) subscriptionPill.textContent = 'Subscription needed';
+  if (billingLink) billingLink.hidden = false;
+  if (deletionCopy) {
+    deletionCopy.textContent = 'Request permanent deletion of the account and associated Dominion data. Subscription cancellation is handled separately in Billing.';
+  }
+  if (cancellationLink) cancellationLink.hidden = false;
+}
 
 function setThemeSelectionStatus(message, tone = '') {
   if (!themeSelectionStatus) return;
@@ -351,12 +374,18 @@ function invalidateProfileOwner(nextOwner = '') {
   renderAvatar(currentProfile);
   setProfileFeedback('Loading your profile…');
   const challengeStatus = document.getElementById('profileChallengeStatus');
+  const billingEyebrow = document.getElementById('profileBillingEyebrow');
   const billingTitle = document.getElementById('profileBillingTitle');
   const billingCopy = document.getElementById('profileBillingCopy');
   const subscriptionPill = document.getElementById('profileSubscriptionPill');
   if (challengeStatus) challengeStatus.textContent = 'Status: Checking access';
-  if (billingTitle) billingTitle.textContent = 'Billing access';
-  if (billingCopy) billingCopy.textContent = 'Loading your subscription details.';
+  if (billingEyebrow) billingEyebrow.textContent = RELEASE_GATES.billingEnabled ? 'Billing' : 'Early access';
+  if (billingTitle) billingTitle.textContent = RELEASE_GATES.billingEnabled ? 'Billing access' : 'Checking your access';
+  if (billingCopy) {
+    billingCopy.textContent = RELEASE_GATES.billingEnabled
+      ? 'Loading your subscription details.'
+      : 'Verifying whether this account is part of the invited group.';
+  }
   if (subscriptionPill) subscriptionPill.textContent = 'Checking access';
   integrationCrews = [];
   integrationConsentCrew?.replaceChildren(new Option('Loading groups…', ''));
@@ -520,9 +549,9 @@ async function submitAccountLifecycleRequest(requestType, button) {
   const owner = captureProfileOwner();
   if (!owner || !button) return;
   const deletion = requestType === ACCOUNT_REQUEST_TYPES.ACCOUNT_DELETION;
-  if (deletion && !window.confirm(
-    'Request permanent account deletion? This does not cancel billing by itself. The request will be tracked and reviewed before deletion is fulfilled.',
-  )) return;
+  if (deletion && !window.confirm(RELEASE_GATES.billingEnabled
+    ? 'Request permanent account deletion? This does not cancel billing by itself. The request will be tracked and reviewed before deletion is fulfilled.'
+    : 'Request permanent account deletion? The request will be tracked and reviewed before deletion is fulfilled.')) return;
 
   const idleLabel = button.textContent;
   button.disabled = true;
@@ -570,7 +599,28 @@ profileAvatarImageEl?.addEventListener('error', () => {
 });
 
 function updateBillingSummary(state) {
+  const billingEyebrow = document.getElementById('profileBillingEyebrow');
+  const billingLink = document.getElementById('profileBillingLink');
+  if (!RELEASE_GATES.billingEnabled) {
+    document.getElementById('profileChallengeStatus').textContent = state.appAccess
+      ? 'Status: Active'
+      : 'Status: Early access needed';
+    if (billingEyebrow) billingEyebrow.textContent = 'Early access';
+    document.getElementById('profileBillingTitle').textContent = state.appAccess
+      ? 'Early access active'
+      : 'Invitation required';
+    document.getElementById('profileBillingCopy').textContent = state.appAccess
+      ? 'This invited account can use the full Dominion experience. Billing is not open during early access.'
+      : 'This account is not in the invited group yet. If you were invited, make sure you used the same email.';
+    document.getElementById('profileSubscriptionPill').textContent = state.appAccess
+      ? 'Early access active'
+      : 'Invitation required';
+    if (billingLink) billingLink.hidden = true;
+    return;
+  }
+
   document.getElementById('profileChallengeStatus').textContent = state.appAccess ? 'Status: Active' : 'Status: Subscription required';
+  if (billingEyebrow) billingEyebrow.textContent = 'Billing';
   document.getElementById('profileBillingTitle').textContent = state.subscriptionActive
     ? 'Subscription active'
     : 'Subscription needed';
@@ -578,6 +628,7 @@ function updateBillingSummary(state) {
     ? 'Your $7/month subscription is active, so the dashboard, daily actions, community, journal, and future member content stay open.'
     : 'Subscribe for $7/month to use the dashboard, Daily Actions, private groups, journal, and progress tracking.';
   document.getElementById('profileSubscriptionPill').textContent = state.subscriptionActive ? 'Subscription active' : 'Subscription needed';
+  if (billingLink) billingLink.hidden = false;
 }
 
 function setIntegrationConsentFeedback(message, tone = '') {
@@ -988,6 +1039,7 @@ window.addEventListener('storage', (event) => {
   renderPreviewChallengeTools();
 });
 
+renderOpenBillingShell();
 renderPreviewChallengeTools();
 async function hydratePage(expectedOwnerId = observedProfileOwner) {
   const authenticated = await hydrateProfile(expectedOwnerId);

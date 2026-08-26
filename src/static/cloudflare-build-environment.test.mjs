@@ -31,6 +31,8 @@ describe('Cloudflare frontend build environment normalization', () => {
         VITE_ENABLE_SUPABASE_AUTH_IN_MOCKS: 'true',
         VITE_ENABLE_PRODUCTION_CONNECTIONS: 'true',
         VITE_ENABLE_GROUP_INTEGRATIONS: 'true',
+        VITE_ENABLE_BILLING: 'true',
+        VITE_ENABLE_PUBLIC_SIGNUP: 'true',
         VITE_ENABLE_E2E_FIXTURES: 'true',
         KEEP_UNRELATED_VALUE: 'preserved',
         ...inheritedLiveEnvironment(),
@@ -42,6 +44,8 @@ describe('Cloudflare frontend build environment normalization', () => {
       assert.equal(normalized.VITE_ENABLE_SUPABASE_AUTH_IN_MOCKS, 'false');
       assert.equal(normalized.VITE_ENABLE_PRODUCTION_CONNECTIONS, 'false');
       assert.equal(normalized.VITE_ENABLE_GROUP_INTEGRATIONS, 'false');
+      assert.equal(normalized.VITE_ENABLE_BILLING, 'false');
+      assert.equal(normalized.VITE_ENABLE_PUBLIC_SIGNUP, 'false');
       assert.equal(normalized.VITE_ENABLE_E2E_FIXTURES, undefined);
       assert.equal(normalized.KEEP_UNRELATED_VALUE, 'preserved');
       for (const name of DEVELOP_LIVE_CONNECTION_VARIABLES) {
@@ -62,6 +66,8 @@ describe('Cloudflare frontend build environment normalization', () => {
       CF_PAGES_BRANCH: 'main',
       VITE_ENABLE_MOCKS: 'false',
       VITE_ENABLE_PRODUCTION_CONNECTIONS: 'true',
+      VITE_ENABLE_BILLING: 'false',
+      VITE_ENABLE_PUBLIC_SIGNUP: 'false',
       VITE_SUPABASE_URL: 'https://production-project.supabase.co',
       VITE_SUPABASE_PUBLISHABLE_KEY: 'sb_publishable_example',
       SUPABASE_PROJECT_REF: 'production-project',
@@ -110,6 +116,8 @@ describe('Cloudflare frontend build environment normalization', () => {
       assert.deepEqual(call.args, FRONTEND_BUILD_STEPS[index].args);
       assert.equal(call.options.stdio, 'inherit');
       assert.equal(call.options.env.VITE_ENABLE_MOCKS, 'true');
+      assert.equal(call.options.env.VITE_ENABLE_BILLING, 'false');
+      assert.equal(call.options.env.VITE_ENABLE_PUBLIC_SIGNUP, 'false');
       assert.equal(call.options.env.VITE_ENABLE_E2E_FIXTURES, undefined);
       for (const name of DEVELOP_LIVE_CONNECTION_VARIABLES) {
         assert.equal(call.options.env[name], undefined, name);

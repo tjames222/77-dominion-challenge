@@ -355,19 +355,19 @@ const PAGES = [
   {
     id: 'profile', route: '/profile.html', contentVersion: 3, title: 'Profile',
     steps: [
-      orientation('Profile', 'Use Profile to update your account, check challenge status, open billing, and choose an app theme.'),
+      orientation('Profile', 'Use Profile to update your account, check challenge and access status, and choose an app theme.'),
       step('account', 'Update your account', 'Outside the walkthrough, you can change your name, email, and profile picture here. The walkthrough won’t edit or upload anything.', 'profile-account'),
       step('challenge-status', 'Check your challenge status', 'This card shows your current challenge and participation status without changing either one.', 'profile-challenge-status'),
-      step('billing', 'Open billing', 'Use this link to check or manage your subscription. The walkthrough won’t open checkout or change your membership.', 'profile-billing'),
+      step('billing', 'Review access', 'Use this section to check account access. When billing is open, its link also opens subscription controls.', 'profile-billing'),
       step('themes', 'Choose an available theme', 'Dark and Light are available now. Themes you earn will appear here too. The walkthrough won’t change your selection.', 'profile-themes', ['themes-available'], fallback('Theme controls aren’t available', 'Your theme won’t change while Dominion checks which options are available.')),
     ],
   },
   {
     id: 'billing', route: '/billing.html', contentVersion: 2, title: 'Billing',
     steps: [
-      orientation('Billing', 'This page shows your membership status and contains the app’s subscription and payment controls.'),
+      orientation('Billing', 'This page shows your access status. When billing is open, it also contains subscription and payment controls.'),
       step('membership-access', 'Check your membership', 'This card shows whether your account can use member features.', 'billing-membership-access'),
-      step('billing-management', 'Manage your membership', 'Billing buttons can open Stripe outside the walkthrough. The walkthrough won’t purchase, cancel, or change payment details.', 'billing-management', ['billing-management-available'], fallback('No billing action is available', 'There’s nothing to manage for this account right now. The walkthrough won’t start checkout or change your membership.')),
+      step('billing-management', 'Manage your membership', 'When billing is open, these buttons can open Stripe outside the walkthrough. The walkthrough won’t purchase, cancel, or change payment details.', 'billing-management', ['billing-management-available'], fallback('No billing action is available', 'There’s nothing to manage for this account right now. The walkthrough won’t start checkout or change your membership.')),
       step('membership-includes', 'See what’s included', 'Membership includes challenge tracking, Daily Actions, private groups, journaling, rewards, and more member content.', 'billing-membership-includes'),
     ],
   },

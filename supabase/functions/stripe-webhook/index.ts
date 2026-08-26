@@ -1,4 +1,5 @@
 import { createAdminClient } from "../_shared/supabase.ts";
+import { billingUnavailableResponse } from "../_shared/billing.ts";
 import {
   type EnvReader,
   errorResponse,
@@ -161,6 +162,11 @@ export function createHandler(overrides: Partial<Dependencies> = {}) {
         dependencies.env,
       );
     }
+    const unavailableResponse = billingUnavailableResponse(
+      req,
+      dependencies.env,
+    );
+    if (unavailableResponse) return unavailableResponse;
 
     const payload = await req.text();
 

@@ -18,6 +18,7 @@ import {
   createSoloFirstRunTraining,
 } from './solo-first-run-training.mjs';
 import { createPageTrainingControls } from './page-training-controls.mjs';
+import { RELEASE_GATES } from './release-gates.mjs';
 
 const topbar = document.querySelector('.topbar');
 const memberTabs = document.querySelector('[data-member-tabs]');
@@ -37,7 +38,7 @@ let pageTrainingControls = null;
 const loggedInLinks = [
   ['Dashboard', './dashboard.html'],
   ['Badges & Rewards', './badges-rewards.html'],
-  ['Billing', './billing.html'],
+  [RELEASE_GATES.billingEnabled ? 'Billing' : 'Early Access', './billing.html'],
   ['Community', './community.html'],
   ['Private Journal', './private-journal.html'],
   ['Check-In', './dashboard.html#check-in'],
@@ -46,7 +47,7 @@ const loggedInLinks = [
 
 const publicLinks = [
   ['Home', './index.html'],
-  ['Membership', './membership.html'],
+  [RELEASE_GATES.billingEnabled ? 'Membership' : 'Early Access', './membership.html'],
   ['Learn Why', './science.html'],
   ['Log In', './login.html'],
 ];
@@ -293,7 +294,11 @@ async function buildMenu() {
 
   const links = isLoggedIn ? loggedInLinks : publicLinks;
   const profileLabel = isLoggedIn ? (user?.name || 'Member') : 'Visitor';
-  const profileSubtext = isLoggedIn ? (user?.email || 'Logged in') : 'Join the 77-day challenge';
+  const profileSubtext = isLoggedIn
+    ? (user?.email || 'Logged in')
+    : RELEASE_GATES.publicSignupEnabled
+      ? 'Join the 77-day challenge'
+      : 'Invite-only early access';
 
   menu.innerHTML = `
     <div class="global-menu-header">
@@ -310,7 +315,9 @@ async function buildMenu() {
     <nav class="global-menu-policy-links" aria-label="Policies and support">
       <a href="./privacy.html">Privacy</a>
       <a href="./terms.html">Terms</a>
-      <a href="./cancellation-refunds.html">Cancellation &amp; Refunds</a>
+      ${RELEASE_GATES.billingEnabled
+        ? '<a href="./cancellation-refunds.html">Cancellation &amp; Refunds</a>'
+        : ''}
       <a href="./support.html">Support</a>
     </nav>
     ${isLoggedIn ? `

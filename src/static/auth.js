@@ -14,24 +14,62 @@ import {
   signInWithPassword,
   signUpWithPassword,
 } from './api';
+import {
+  PUBLIC_SIGNUP_CLOSED_MESSAGE,
+  RELEASE_GATES,
+} from './release-gates.mjs';
 
 const form = document.getElementById('authForm');
+const nameInput = document.getElementById('name');
+const signupPage = Boolean(nameInput);
+const signupEyebrow = document.getElementById('signupEyebrow');
+const signupTitle = document.getElementById('signupTitle');
+const signupLead = document.getElementById('signupLead');
+const signupUnavailable = document.getElementById('signupUnavailable');
+const signupEncouragement = document.getElementById('signupEncouragement');
+const signupLegalNote = document.getElementById('signupLegalNote');
+
+function hydrateSignupGate() {
+  if (!signupPage) return;
+  const signupOpen = RELEASE_GATES.publicSignupEnabled;
+  if (form) form.hidden = !signupOpen;
+  if (signupUnavailable) signupUnavailable.hidden = signupOpen;
+  if (signupEncouragement) signupEncouragement.hidden = !signupOpen;
+  if (signupLegalNote) signupLegalNote.hidden = !signupOpen;
+  if (!signupOpen) return;
+
+  if (signupEyebrow) signupEyebrow.textContent = 'Step 1 of 2';
+  if (signupTitle) signupTitle.textContent = 'Create your account';
+  if (signupLead) {
+    signupLead.textContent = 'Create an account to track your actions, check-ins, and progress through all 77 days.';
+  }
+}
+
+hydrateSignupGate();
+
 const rawReturnTo = new URLSearchParams(window.location.search).get('returnTo');
 const returnTo = sanitizeReturnTo(rawReturnTo);
 const inviteReturn = isInviteReturnPath(returnTo);
 const groupStartReturn = isChallengeStartReturnPath(returnTo);
 const authSwitchLink = document.querySelector('[data-auth-switch]');
 if (authSwitchLink && (inviteReturn || groupStartReturn)) {
-  const switchingToRegister = Boolean(document.getElementById('email') && !document.getElementById('name'));
-  authSwitchLink.href = inviteReturn
-    ? buildInviteAuthHref(switchingToRegister ? 'register' : 'login')
-    : buildChallengeStartAuthHref(switchingToRegister ? 'register' : 'login');
-  if (switchingToRegister) authSwitchLink.textContent = 'Create an account';
+  const switchingToRegister = Boolean(document.getElementById('email') && !nameInput);
+  if (switchingToRegister && !RELEASE_GATES.publicSignupEnabled) {
+    authSwitchLink.parentElement.textContent = 'Dominion is currently open to invited accounts only.';
+  } else {
+    authSwitchLink.href = inviteReturn
+      ? buildInviteAuthHref(switchingToRegister ? 'register' : 'login')
+      : buildChallengeStartAuthHref(switchingToRegister ? 'register' : 'login');
+    if (switchingToRegister) authSwitchLink.textContent = 'Create an account';
+  }
 }
 if (form) {
   form.addEventListener('submit', async (event) => {
     event.preventDefault();
-    const nameInput = document.getElementById('name');
+    if (signupPage && !RELEASE_GATES.publicSignupEnabled) {
+      window.alert(PUBLIC_SIGNUP_CLOSED_MESSAGE);
+      return;
+    }
     const emailInput = document.getElementById('email');
     const passwordInput = document.getElementById('password');
     const submitButton = form.querySelector('button[type="submit"]');

@@ -98,6 +98,10 @@ describe('shared sticky menu', () => {
           available: false,
           attachControls() {}, destroy() {}, refresh: async () => {},
         });
+        const RELEASE_GATES = Object.freeze({
+          billingEnabled: false,
+          publicSignupEnabled: false,
+        });
         ${menuJs.replace(/^import[\s\S]*?from .*;$/gm, '')}
       `;
       await import(`data:text/javascript;base64,${Buffer.from(executableSource).toString('base64')}`);
