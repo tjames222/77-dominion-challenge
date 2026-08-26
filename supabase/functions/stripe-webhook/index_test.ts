@@ -7,6 +7,10 @@ import {
 } from "../_shared/test_helpers.ts";
 import { createHandler } from "./index.ts";
 
+function billingEnv(value: string | undefined) {
+  return (name: string) => name === "BILLING_ENABLED" ? value : testEnv(name);
+}
+
 function webhookAdmin(
   errors: { subscription?: Error; entitlement?: Error } = {},
 ) {
@@ -106,7 +110,7 @@ function webhookHandler(
       verifyStripeSignature: async () => true,
       createAdminClient: () => fixture.admin,
       stripeRequest: async () => stripeSubscription(),
-      env: testEnv,
+      env: billingEnv("true"),
       now: () => new Date("2027-01-15T08:00:00.000Z"),
       logger: quietLogger,
       ...overrides,
@@ -119,11 +123,40 @@ function webhookRequest(body: unknown, signature = "t=1800000000,v1=test") {
 }
 
 Deno.test("webhook handles preflight and rejects unsupported methods", async () => {
+  const { handler } = webhookHandler({ env: billingEnv(undefined) });
   assertEquals(
-    (await webhookHandler().handler(request("OPTIONS"))).status,
+    (await handler(request("OPTIONS"))).status,
     200,
   );
-  assertEquals((await webhookHandler().handler(request("GET"))).status, 405);
+  assertEquals((await handler(request("GET"))).status, 405);
+});
+
+Deno.test("webhook returns a stable 503 before reading or verifying the payload when disabled", async () => {
+  const calls = { signature: 0, admin: 0, stripe: 0 };
+  const post = webhookRequest(subscriptionEvent());
+  const { handler } = webhookHandler({
+    env: billingEnv(" true "),
+    verifyStripeSignature: async () => {
+      calls.signature += 1;
+      return true;
+    },
+    createAdminClient: () => {
+      calls.admin += 1;
+      return webhookAdmin().admin;
+    },
+    stripeRequest: async () => {
+      calls.stripe += 1;
+      return stripeSubscription();
+    },
+  });
+  const response = await handler(post);
+
+  assertEquals(response.status, 503);
+  assertEquals(await responseJson(response), {
+    error: "Billing is temporarily unavailable.",
+  });
+  assertEquals(post.bodyUsed, false);
+  assertEquals(calls, { signature: 0, admin: 0, stripe: 0 });
 });
 
 Deno.test("webhook rejects invalid signatures before creating an admin client", async () => {

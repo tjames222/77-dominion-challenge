@@ -1,4 +1,24 @@
+import { type EnvReader, jsonResponse, readEnv } from "./http.ts";
 import { createFormBody, stripeRequest } from "./stripe.ts";
+
+export const billingUnavailableMessage = "Billing is temporarily unavailable.";
+
+export function isBillingEnabled(env: EnvReader = readEnv) {
+  return env("BILLING_ENABLED") === "true";
+}
+
+export function billingUnavailableResponse(
+  req?: Request,
+  env: EnvReader = readEnv,
+) {
+  if (isBillingEnabled(env)) return null;
+  return jsonResponse(
+    { error: billingUnavailableMessage },
+    503,
+    req,
+    env,
+  );
+}
 
 type SupabaseAdmin = {
   // Supabase query builders are promise-like and heavily generic; this shared

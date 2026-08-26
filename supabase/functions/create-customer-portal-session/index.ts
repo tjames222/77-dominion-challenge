@@ -1,5 +1,8 @@
 import { createAdminClient, requireUser } from "../_shared/supabase.ts";
-import { getOrCreateStripeCustomer } from "../_shared/billing.ts";
+import {
+  billingUnavailableResponse,
+  getOrCreateStripeCustomer,
+} from "../_shared/billing.ts";
 import {
   createFormBody,
   getSiteUrl,
@@ -64,6 +67,11 @@ export function createHandler(overrides: Partial<Dependencies> = {}) {
         dependencies.env,
       );
     }
+    const unavailableResponse = billingUnavailableResponse(
+      req,
+      dependencies.env,
+    );
+    if (unavailableResponse) return unavailableResponse;
 
     try {
       const user = await dependencies.requireUser(req);

@@ -9,6 +9,10 @@ import {
 } from "../_shared/test_helpers.ts";
 import { createHandler, resolveReturnUrl } from "./index.ts";
 
+function billingEnv(value: string | undefined) {
+  return (name: string) => name === "BILLING_ENABLED" ? value : testEnv(name);
+}
+
 function portalHandler(overrides: Record<string, unknown> = {}) {
   return createHandler({
     requireUser: async () => ({ id: "user-1", email: "member@example.com" }),
@@ -16,15 +20,63 @@ function portalHandler(overrides: Record<string, unknown> = {}) {
     getOrCreateStripeCustomer: async () => "cus_1",
     getSiteUrl: () => "https://app.example.com",
     stripeRequest: async () => ({ url: "https://billing.stripe.test/session" }),
-    env: testEnv,
+    env: billingEnv("true"),
     logger: quietLogger,
     ...overrides,
   } as any);
 }
 
 Deno.test("portal handles preflight and rejects unsupported methods", async () => {
-  assertEquals((await portalHandler()(request("OPTIONS"))).status, 200);
-  assertEquals((await portalHandler()(request("GET"))).status, 405);
+  const handler = portalHandler({ env: billingEnv(undefined) });
+  assertEquals((await handler(request("OPTIONS"))).status, 200);
+  assertEquals((await handler(request("GET"))).status, 405);
+});
+
+Deno.test("portal returns a stable 503 without touching billing dependencies when disabled", async () => {
+  const calls = {
+    auth: 0,
+    admin: 0,
+    customer: 0,
+    siteUrl: 0,
+    stripe: 0,
+  };
+  const post = request("POST", "{");
+  const response = await portalHandler({
+    env: billingEnv("false"),
+    requireUser: async () => {
+      calls.auth += 1;
+      return { id: "unexpected" };
+    },
+    createAdminClient: () => {
+      calls.admin += 1;
+      return {};
+    },
+    getOrCreateStripeCustomer: async () => {
+      calls.customer += 1;
+      return "cus_unexpected";
+    },
+    getSiteUrl: () => {
+      calls.siteUrl += 1;
+      return "https://app.example.com";
+    },
+    stripeRequest: async () => {
+      calls.stripe += 1;
+      return {};
+    },
+  })(post);
+
+  assertEquals(response.status, 503);
+  assertEquals(await responseJson(response), {
+    error: "Billing is temporarily unavailable.",
+  });
+  assertEquals(post.bodyUsed, false);
+  assertEquals(calls, {
+    auth: 0,
+    admin: 0,
+    customer: 0,
+    siteUrl: 0,
+    stripe: 0,
+  });
 });
 
 Deno.test("portal returns 401 when authentication fails", async () => {

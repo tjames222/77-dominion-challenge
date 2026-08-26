@@ -1,5 +1,5 @@
 import { assert, assertEquals } from "./test_helpers.ts";
-import { getOrCreateStripeCustomer } from "./billing.ts";
+import { getOrCreateStripeCustomer, isBillingEnabled } from "./billing.ts";
 
 type FixtureOptions = {
   customer?: { stripe_customer_id: string } | null;
@@ -68,6 +68,14 @@ async function assertRejectsWith(
     assertEquals(error.message, expectedMessage);
   }
 }
+
+Deno.test("billing is enabled only by the exact true value", () => {
+  assertEquals(isBillingEnabled(() => "true"), true);
+
+  for (const value of [undefined, "false", "TRUE", " true ", "1", ""]) {
+    assertEquals(isBillingEnabled(() => value), false);
+  }
+});
 
 Deno.test("billing customer lookup reuses the existing Stripe customer", async () => {
   const fixture = billingAdmin({
