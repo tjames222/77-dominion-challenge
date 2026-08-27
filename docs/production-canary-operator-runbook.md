@@ -18,6 +18,42 @@ keeps the management token in memory, and never prints the response body.
 The production Management API token must include the documented
 `auth_config_read` permission (or `auth:read` OAuth scope).
 
+## Close public signup before release
+
+When the read-only release gate reports that either path is open, use the
+manual **Close production Supabase Auth canary** workflow at
+`.github/workflows/configure-production-auth-canary.yml`. Dispatch it only from
+the protected `main` branch, select the explicit confirmation checkbox, and
+approve its protected `production` environment job. The workflow requires the
+production `SUPABASE_ACCESS_TOKEN` secret and `SUPABASE_PROJECT_REF` variable;
+the helper refuses any project reference other than the reviewed production
+project.
+
+The helper sends one request to Supabase's official
+[`PATCH /v1/projects/{ref}/config/auth`](https://supabase.com/docs/reference/api/v1-update-auth-service-config)
+endpoint with exactly this body:
+
+```json
+{
+  "disable_signup": true,
+  "external_anonymous_users_enabled": false
+}
+```
+
+It then performs the official GET and requires both exact boolean values before
+succeeding. Both requests reject redirects and use bounded timeouts. Error
+responses and configuration bodies are never printed, and failure messages
+contain at most the HTTP status. Do not broaden the body to synchronize the
+entire Auth object: the GET response can contain unrelated provider and SMTP
+configuration that this procedure is not approved to change.
+
+For a fine-grained Management API token, Supabase currently documents
+`auth_config_write` and `project_admin_write` for PATCH and `auth_config_read`
+for the verification GET (or the corresponding `auth:write` and `auth:read`
+OAuth scopes). Environment approval is authorization to make only this fixed,
+idempotent policy change; it is not approval to alter providers, URLs, email
+templates, existing users, or sessions.
+
 With billing disabled, Stripe credentials are not release prerequisites. The
 one-time `compatibility-cutover` deploys and verifies all four guards before it
 publishes the compatibility frontend, and the later full release redeploys them

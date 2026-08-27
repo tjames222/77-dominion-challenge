@@ -29,6 +29,7 @@
     "rehearse:profile-photo-cleanup-cron": "bash scripts/rehearse-profile-photo-cleanup-cron.sh",
     "test:production-backup-restore": "node --test scripts/production-backup-restore.test.mjs",
     "test:production-reconciliation": "node --test scripts/verify-production-reconciliation-preflight.test.mjs scripts/run-production-reconciliation-step.test.mjs",
+    "test:production-auth-canary-policy": "node --test scripts/production-auth-canary-policy.test.mjs",
     "capture:production-backup": "bash scripts/capture-production-backup.sh",
     "rehearse:production-backup-restore": "bash scripts/rehearse-production-backup-restore.sh",
     "verify:production-backup-evidence": "bash scripts/verify-production-backup-evidence.sh",

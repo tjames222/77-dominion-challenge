@@ -1,0 +1,56 @@
+name: Close production Supabase Auth canary
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm_closed_canary:
+        description: Disable public signup and anonymous sign-in in production.
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: production-supabase-auth-canary-policy
+  cancel-in-progress: false
+
+jobs:
+  authorize:
+    name: Authorize production Auth policy change
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    env:
+      CONFIRM_CLOSED_CANARY: ${{ inputs.confirm_closed_canary }}
+    steps:
+      - name: Require protected main and explicit confirmation
+        shell: bash
+        run: |
+          if [[ "${GITHUB_REF}" != "refs/heads/main" ]]; then
+            echo "::error::Production Auth policy changes must be dispatched from the protected main branch."
+            exit 1
+          fi
+          if [[ "${CONFIRM_CLOSED_CANARY}" != "true" ]]; then
+            echo "::error::Explicit closed-canary confirmation is required."
+            exit 1
+          fi
+
+  configure:
+    name: Close and verify production signup paths
+    needs: authorize
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    environment: production
+    env:
+      SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+      SUPABASE_PROJECT_REF: ${{ vars.SUPABASE_PROJECT_REF }}
+    steps:
+      - name: Checkout reviewed release code
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Setup Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+      - name: Disable and verify public Supabase Auth signup paths
+        run: node scripts/configure-production-auth-canary.mjs

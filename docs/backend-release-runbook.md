@@ -101,7 +101,7 @@ The prelaunch environment model deliberately uses no paid staging project:
 
 | Name | Purpose | Rotation owner |
 | --- | --- | --- |
-| `SUPABASE_ACCESS_TOKEN` | Authorizes the read-only Auth/history gates and the pinned CLI's temporary production login role; a fine-grained token needs `auth_config_read`, `database_read`, and `database_write` | Supabase organization administrator |
+| `SUPABASE_ACCESS_TOKEN` | Authorizes the pinned CLI's temporary login role, read-only Auth/history gates, and separately approved closed-canary Auth policy workflow; a fine-grained token needs `auth_config_read`, `auth_config_write`, `project_admin_write`, `database_read`, and `database_write` | Supabase organization administrator |
 | `STRIPE_SECRET_KEY` | Calls Stripe from Edge Functions; required only when reviewed code sets `BILLING_ENABLED=true` | Stripe administrator |
 | `STRIPE_WEBHOOK_SECRET` | Verifies Stripe webhook signatures; required only when reviewed code sets `BILLING_ENABLED=true` | Stripe administrator |
 | `STRIPE_MEMBERSHIP_PRICE_ID` | Selects the approved recurring membership price; required only when reviewed code sets `BILLING_ENABLED=true` | Billing owner |
@@ -215,6 +215,10 @@ Before approving the GitHub `production` environment deployment, confirm:
    the Auth response. See
    [`production-canary-operator-runbook.md`](production-canary-operator-runbook.md)
    for the UUID-bound owner canary procedure.
+   If either setting is still open, dispatch **Close production Supabase Auth
+   canary** from `main` and approve its protected `production` environment job
+   before dispatching the release. That separate workflow changes only those
+   two reviewed fields, rejects redirects, and GET-verifies the resulting state.
 
 ### One-time migration-history reconciliation
 
