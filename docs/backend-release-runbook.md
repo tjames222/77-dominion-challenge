@@ -182,6 +182,31 @@ For local function serving only, copy `supabase/.env.example` to
 pnpm exec supabase functions serve --env-file supabase/.env.local
 ```
 
+### Cloudflare Pages project policy
+
+Before the first protected release, dispatch **Configure Cloudflare Pages
+policy** from `main` and approve its `production` environment. The environment's
+`CLOUDFLARE_API_TOKEN` needs Cloudflare Pages Write permission only. The job
+uses `CLOUDFLARE_ACCOUNT_ID` to update only the
+`77-dominion-challenge` Pages project, then performs a separate GET and fails
+unless Cloudflare reports all of the following:
+
+- `main` is the production branch and automatic production deployments are
+  disabled;
+- automatic previews use the custom branch policy with exactly `develop`
+  included and no excluded preview branches;
+- the preview environment explicitly enables browser-local mocks, explicitly
+  disables hybrid Auth, production connections, billing, public signup, and
+  provider integrations, and contains none of the live-connection variables
+  rejected by `scripts/validate-frontend-env.mjs`.
+
+The same helper is available to protected release jobs as
+`pnpm run configure:cloudflare-pages-policy`. It sends credentials only in the
+Authorization header, rejects redirects, never prints API response bodies, and
+does not parse an HTTP error body. Rerun the policy workflow after any manual
+Cloudflare project configuration change and before releasing until the protected
+release workflow invokes the helper directly.
+
 ## Release gates
 
 Before approving the GitHub `production` environment deployment, confirm:
