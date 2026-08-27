@@ -444,8 +444,21 @@ test("package, CI, and production deploy run the gate before migrations", async 
   const deployDryRun = deployWorkflow.indexOf(
     "run: supabase db push --linked --dry-run",
   );
+  const deploySecretTopology = deployWorkflow.indexOf(
+    "name: Validate Edge Function secret topology",
+  );
+  const deployLink = deployWorkflow.indexOf(
+    'run: supabase link --project-ref "$SUPABASE_PROJECT_REF"',
+  );
   const deployApply = deployWorkflow.indexOf(
     "run: supabase migration up --linked",
+  );
+  const deploySecretSync = deployWorkflow.indexOf(
+    "name: Synchronize Edge Function secrets",
+  );
+  const deployCompletedHistory = deployWorkflow.indexOf(
+    "name: Require exact completed migration history",
+    deployApply,
   );
   const deployCutoverPlan = deployWorkflow.indexOf(
     "node scripts/verify-production-raw-migration-history.mjs",
@@ -465,24 +478,34 @@ test("package, CI, and production deploy run the gate before migrations", async 
       && deployGate !== -1
       && deployNode < deployGate
       && deployGate < deployDryRun
+      && deploySecretTopology > deployGate
+      && deploySecretTopology < deployLink
+      && deployLink < deployDryRun
       && deployCutoverPlan !== -1
       && deployCutoverPlan < deployDryRun
       && deployCutoverAttestation > deployCutoverPlan
       && deployCutoverAttestation < deployDryRun
-      && deployDryRun < deployApply,
+      && deployDryRun < deployApply
+      && deployApply < deployCompletedHistory
+      && deployCompletedHistory < deploySecretSync,
   );
   assert.match(deployWorkflow, /run: supabase db push --linked --dry-run/u);
   assert.match(
     deployWorkflow,
-    /post_migration_history[\s\S]*verify-production-raw-migration-history\.mjs/u,
+    /post_migration_history[\s\S]*verify-production-raw-migration-history\.mjs[\s\S]*--require-no-pending/u,
   );
 
   const compatibilityJobStart = deployWorkflow.indexOf("  compatibility-guards:");
+  const frontendRollbackHistoryStart = deployWorkflow.indexOf(
+    "  frontend-rollback-history:",
+  );
   const backendJobStart = deployWorkflow.indexOf("  backend:");
   assert.ok(
     compatibilityJobStart !== -1
+      && frontendRollbackHistoryStart !== -1
       && backendJobStart !== -1
-      && compatibilityJobStart < backendJobStart,
+      && compatibilityJobStart < frontendRollbackHistoryStart
+      && frontendRollbackHistoryStart < backendJobStart,
   );
   const compatibilityJob = deployWorkflow.slice(
     compatibilityJobStart,
@@ -538,6 +561,36 @@ test("package, CI, and production deploy run the gate before migrations", async 
   assert.match(
     deployWorkflow,
     /inputs\.release_scope == 'frontend-only'[\s\S]*needs\.backend\.result == 'skipped'[\s\S]*needs\.compatibility-guards\.result == 'skipped'/u,
+  );
+  const frontendRollbackHistoryJob = deployWorkflow.slice(
+    frontendRollbackHistoryStart,
+    backendJobStart,
+  );
+  assert.match(
+    frontendRollbackHistoryJob,
+    /if: inputs\.release_scope == 'frontend-only'/u,
+  );
+  assert.match(frontendRollbackHistoryJob, /verify-production-raw-migration-history\.mjs/u);
+  assert.match(frontendRollbackHistoryJob, /--require-no-pending/u);
+  assert.match(frontendRollbackHistoryJob, /"post-cutover"/u);
+  assert.doesNotMatch(
+    frontendRollbackHistoryJob,
+    /supabase (?:migration up|db push|secrets set|functions deploy)/u,
+  );
+  assert.match(
+    deployWorkflow,
+    /inputs\.release_scope == 'frontend-only'[\s\S]*needs\.frontend-rollback-history\.result == 'success'/u,
+  );
+
+  const topologyStep = deployWorkflow.slice(deploySecretTopology, deployLink);
+  assert.match(topologyStep, /PROFILE_PHOTO_WORKER_SECRET must contain at least 32/u);
+  assert.match(topologyStep, /INTEGRATION_WORKER_SECRET requires INTEGRATION_CREDENTIAL_KEYS/u);
+  assert.match(topologyStep, /must be configured together/u);
+  assert.match(topologyStep, /must be configured as a complete set/u);
+  const synchronizationStep = deployWorkflow.slice(deploySecretSync);
+  assert.doesNotMatch(
+    synchronizationStep,
+    /PROFILE_PHOTO_WORKER_SECRET must contain|requires INTEGRATION_CREDENTIAL_KEYS|must be configured together|must be configured as a complete set/u,
   );
   const cloudflareDeploy = deployWorkflow.indexOf("pages deploy dist");
   const compatibilityAttestationUpload = deployWorkflow.indexOf(

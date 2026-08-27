@@ -12,7 +12,7 @@ const workflows = [
 const headers = read('../../public/_headers');
 const setup = read('../../CLOUDFLARE_PAGES_SETUP.md');
 const functionEnvironmentExample = read('../../supabase/.env.example');
-const authCanaryVerifier = read('../../scripts/verify-production-auth-canary.mjs');
+const authCanaryVerifier = read('../../scripts/production-auth-canary-policy.mjs');
 const canaryRunbook = read('../../docs/production-canary-operator-runbook.md');
 const localProductionRunner = read('../../scripts/rehearse-local-production-stack.sh');
 const localProductionSpec = read('../../tests/e2e/local-production-stack.spec.mjs');
@@ -63,15 +63,21 @@ describe('production release configuration', () => {
 
     const authGate = workflow.indexOf('canary-policy:');
     const backend = workflow.indexOf('\n  backend:');
-    const firstBackendMutation = workflow.indexOf('supabase link --project-ref');
-    assert.ok(authGate !== -1 && authGate < backend && backend < firstBackendMutation);
+    const frontend = workflow.indexOf('\n  frontend:', backend);
+    const backendJob = workflow.slice(backend, frontend);
+    const firstBackendMutation = backendJob.indexOf('supabase link --project-ref');
+    assert.ok(authGate !== -1 && authGate < backend && firstBackendMutation !== -1);
+    assert.match(
+      workflow.slice(workflow.indexOf('\n  compatibility-guards:'), backend),
+      /compatibility-guards:[\s\S]*?- canary-policy[\s\S]*?- cloudflare-policy[\s\S]*?frontend-rollback-history:[\s\S]*?- canary-policy[\s\S]*?- cloudflare-policy/,
+    );
 
     assert.match(
       authCanaryVerifier,
       /https:\/\/api\.supabase\.com\/v1\/projects/,
     );
     assert.match(authCanaryVerifier, /\/config\/auth/);
-    assert.match(authCanaryVerifier, /method: 'GET'/);
+    assert.match(authCanaryVerifier, /method:\s*["']GET["']/);
     assert.match(authCanaryVerifier, /config\.disable_signup !== true/);
     assert.match(
       authCanaryVerifier,
@@ -119,9 +125,12 @@ describe('production release configuration', () => {
       workflow,
       /name: Synchronize enabled Stripe Function secrets\s*\n\s*if: env\.BILLING_ENABLED == 'true'[\s\S]*?supabase secrets set[\s\S]*?STRIPE_SECRET_KEY[\s\S]*?STRIPE_WEBHOOK_SECRET[\s\S]*?STRIPE_MEMBERSHIP_PRICE_ID/,
     );
+    const backendStart = workflow.indexOf('\n  backend:');
+    const frontendStart = workflow.indexOf('\n  frontend:', backendStart);
+    const backendJob = workflow.slice(backendStart, frontendStart);
     assert.ok(
-      workflow.indexOf('name: Validate enabled billing configuration')
-        < workflow.indexOf('supabase link --project-ref'),
+      backendJob.indexOf('name: Validate enabled billing configuration')
+        < backendJob.indexOf('supabase link --project-ref'),
       'enabled billing secrets must be validated before the first backend mutation',
     );
 
@@ -188,8 +197,8 @@ describe('production release configuration', () => {
     assert.match(workflow, /SUPABASE_PROJECT_REF: \$\{\{ vars\.SUPABASE_PROJECT_REF \}\}/);
     assert.equal(
       workflow.match(/expected_supabase_url="https:\/\/\$\{SUPABASE_PROJECT_REF\}\.supabase\.co"/g)?.length,
-      2,
-      'backend and frontend must both reject a cross-project configuration',
+      3,
+      'compatibility, backend, and frontend must all reject a cross-project configuration',
     );
     assert.match(workflow, /VITE_SUPABASE_URL%\//);
     assert.match(workflow, /PUBLIC_SITE_URL must be an HTTPS production origin/);

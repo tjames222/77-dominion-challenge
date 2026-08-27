@@ -193,6 +193,14 @@ unless Cloudflare reports all of the following:
 
 - `main` is the production branch and automatic production deployments are
   disabled;
+- both production and preview builds pin Node 22 and pnpm 10.17.1;
+- the production environment contains the exact protected
+  `SUPABASE_PROJECT_REF`, matching `VITE_SUPABASE_URL`, and public
+  `VITE_SUPABASE_PUBLISHABLE_KEY`; mocks and hybrid Auth are disabled,
+  production connections are enabled, and provider integrations, billing, and
+  public signup are disabled;
+- the production environment contains no E2E fixture flag, Stripe value,
+  server-side Supabase credential, worker secret, or other unapproved variable;
 - automatic previews use the custom branch policy with exactly `develop`
   included and no excluded preview branches;
 - the preview environment explicitly enables browser-local mocks, explicitly
@@ -203,9 +211,10 @@ unless Cloudflare reports all of the following:
 The same helper is available to protected release jobs as
 `pnpm run configure:cloudflare-pages-policy`. It sends credentials only in the
 Authorization header, rejects redirects, never prints API response bodies, and
-does not parse an HTTP error body. Rerun the policy workflow after any manual
-Cloudflare project configuration change and before releasing until the protected
-release workflow invokes the helper directly.
+does not parse an HTTP error body. Every protected release now invokes it after
+local validation and requires its separate PATCH/GET verification before a
+Supabase release mutation or frontend deployment. Rerun the standalone policy
+workflow after any manual Cloudflare project configuration change.
 
 ## Release gates
 
@@ -228,7 +237,8 @@ Before approving the GitHub `production` environment deployment, confirm:
    dispatches **Release production** from the protected `main` branch and selects
    the reviewed release scope. The one-time `compatibility-cutover` scope deploys
    only the four disabled billing guards before its frontend; `frontend-only`
-   remains a backend-preserving rollback path. This keeps the first two-stage
+   remains a post-cutover, backend-preserving rollback path and cannot run while
+   migrations 14–53 are pending. This keeps the first two-stage
    cutover and every later production mutation explicit. The initial `full`
    scope fails before migrations unless the same commit has a non-expired
    post-deployment compatibility-cutover attestation from this workflow.
@@ -834,12 +844,23 @@ next stage when one fails:
 
 1. **Validate:** run the full reusable local CI workflow. No production access is
    available in this stage.
-2. **Verify the closed Auth policy:** read the hosted Auth configuration through
+2. **Enforce the Cloudflare project policy:** patch only the fixed Pages project,
+   first require the exact reviewed Supabase project reference
+   `mimolwojppbtsbvtqwpo`, exact matching project URL, and a publishable key that
+   the fixed project's `/rest/v1/` gateway accepts. The proof uses only the
+   public `apikey` header, rejects redirects and non-200 responses, and never
+   reads or logs the response body or key. Then separately GET-verify exact
+   Node/pnpm pins, live production Supabase
+   wiring with every launch gate safe-off, automatic production deployment off,
+   and mock-only `develop` previews with no live connection variables. Every
+   release scope waits for this protected job before a Supabase mutation or
+   frontend deployment.
+3. **Verify the closed Auth policy:** read the hosted Auth configuration through
    Supabase's official Management API and require `disable_signup=true` plus
    `external_anonymous_users_enabled=false`. This read-only step gates all
    release scopes and completes before the workflow can link or mutate the
    backend.
-3. **Guard the compatibility cutover:** only for
+4. **Guard the compatibility cutover:** only for
    `release_scope=compatibility-cutover`, first prove the strict CLI and raw SQL
    histories are exactly reconciled through migration 13 and an aggregate-only
    read-only query proves the one bounded same-release canary grant plus zero
@@ -848,10 +869,13 @@ next stage when one fails:
    then allow the compatibility frontend to build. This scope links only to read
    and cross-check history; it does not run a migration or write application
    schema/data. Generic `frontend-only` does not redeploy a Function and remains
-   reserved for a backend-compatible rollback. Only after
+   reserved for a backend-compatible rollback after the full cutover. Its
+   dedicated gate uses the strict CLI and raw SQL inventories and requires
+   post-cutover history with no pending migration; it cannot substitute for the
+   initial compatibility scope. Only after
    Cloudflare accepts that frontend does the workflow publish a seven-day,
    exact-commit compatibility attestation.
-4. **Migrate:** for `release_scope=full`, link the intended project without a
+5. **Migrate:** for `release_scope=full`, link the intended project without a
    stored database password, require the strict pinned-CLI history, and compare
    it with an authoritative read-only SQL inventory of
    `supabase_migrations.schema_migrations`. The raw inventory rejects any
@@ -862,11 +886,17 @@ next stage when one fails:
    reconciled remote history with pinned `supabase migration up --linked`. The
    dry-run is a plan only; `db push` must never perform the actual mutation.
    Never use `--include-all` or run `supabase/schema.sql` manually in production.
-   Supabase CLI 2.109.0 obtains its short-lived login role from the Management
+   After `migration up`, the strict CLI/raw comparison runs again and requires
+   zero pending local migrations before any Function secret is synchronized or
+   any Function is deployed. Supabase CLI 2.109.0 obtains its short-lived login role from the Management
    API using `SUPABASE_ACCESS_TOKEN`; no database password is placed in workflow
    arguments, environment variables, or logs. The same raw inventory is checked
    again after migration.
-5. **Synchronize secrets and deploy functions:** update Function Secrets, deploy
+6. **Synchronize secrets and deploy functions:** before linking or applying a
+   migration, validate every deterministic worker/provider/retention secret
+   pairing, minimum length, and distinctness rule without printing a secret.
+   Only after the exact post-migration zero-pending gate succeeds, update
+   Function Secrets and deploy
    the three JWT-protected billing functions and the JWT-protected
    `retired-community-export`, then deploy `stripe-webhook` with JWT verification
    disabled because Stripe authenticates it by signature and the public
@@ -882,7 +912,7 @@ next stage when one fails:
    `process-retired-community-deletions` worker.
    The current closed canary synchronizes `BILLING_ENABLED=false` without Stripe
    values but still deploys all four guarded billing endpoints.
-6. **Verify backend and release feature gates:** list remote migrations and
+7. **Verify backend and release feature gates:** list remote migrations and
    functions, then require exact unauthenticated gateway `401` responses from
    `cancel-membership`, `create-checkout-session`,
    `create-customer-portal-session`, while the no-JWT `stripe-webhook` must
@@ -892,7 +922,7 @@ next stage when one fails:
    printed. The owner canary uses its real session to require `503` from the
    other three before sign-out. Keep mock mode off and leave billing and public
    signup disabled.
-7. **Build and deploy frontend:** build with production public configuration,
+8. **Build and deploy frontend:** build with production public configuration,
    upload an immutable workflow artifact, and deploy it to Cloudflare Pages with
    the least-privilege token only after every backend stage succeeds. GitHub
    Pages is not a production target.
@@ -965,11 +995,14 @@ frontend release; do not redeploy or rerun migrations just to change the flag.
   redeploy the last known-good function source from an immutable release commit.
   Rotate or restore a secret only when its value is known to be the cause; never
   blank secrets as a rollback technique.
-- **Frontend regression:** disable the affected feature flag when available, then
-  dispatch the release workflow from the last known-good frontend commit with
-  `release_scope` set to `frontend-only`. That path validates and rebuilds the
-  frontend without rerunning migrations or redeploying functions. Its backend
-  contract must remain compatible with the already-applied schema.
+- **Frontend regression:** disable the affected feature flag when available,
+  restore the known-good frontend in a reviewed rollback commit on protected
+  `main` while preserving the complete applied migration tree, then dispatch
+  with `release_scope=frontend-only`. That path fails unless strict CLI and raw
+  histories prove the full cutover is applied with no pending migration, then
+  validates and rebuilds the frontend without rerunning migrations or
+  redeploying functions. Its backend contract must remain compatible with the
+  already-applied schema.
 - **Data integrity or credential incident:** disable the affected feature/provider,
   preserve logs, rotate exposed credentials, and follow the Supabase backup or
   point-in-time recovery procedure. Do not improvise SQL deletes in production.

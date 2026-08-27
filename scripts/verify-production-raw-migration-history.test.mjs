@@ -4,6 +4,7 @@ import {
   authoritativeMigrationHistoryQuery,
   fetchRawMigrationHistory,
   parseRawMigrationHistoryResponse,
+  requireNoPendingPostCutover,
   verifyRawMigrationHistory,
 } from "./verify-production-raw-migration-history.mjs";
 
@@ -50,6 +51,23 @@ test("requires the raw table and strict CLI remote inventory to match exactly", 
     }),
     /does not exactly match/u,
   );
+});
+
+test("frontend-only accepts only completed post-cutover history with nothing pending", () => {
+  assert.deepEqual(
+    requireNoPendingPostCutover({ mode: "post-cutover", pending: [] }),
+    { mode: "post-cutover", pending: [] },
+  );
+  for (const plan of [
+    { mode: "initial-cutover", pending: [] },
+    { mode: "post-cutover", pending: ["20260825000000"] },
+    null,
+  ]) {
+    assert.throws(
+      () => requireNoPendingPostCutover(plan),
+      /frontend-only requires a completed post-cutover history/u,
+    );
+  }
 });
 
 test("queries the schema-qualified history table through the read-only Management API", async () => {

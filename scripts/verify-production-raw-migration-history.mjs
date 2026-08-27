@@ -69,6 +69,20 @@ export function verifyRawMigrationHistory({ rawResponse, cliRemote } = {}) {
   return rawVersions;
 }
 
+export function requireNoPendingPostCutover(plan) {
+  if (
+    !plan
+    || plan.mode !== "post-cutover"
+    || !Array.isArray(plan.pending)
+    || plan.pending.length !== 0
+  ) {
+    fail(
+      "frontend-only requires a completed post-cutover history with no pending migrations",
+    );
+  }
+  return plan;
+}
+
 export async function runReadOnlyManagementQuery({
   projectRef,
   accessToken,
@@ -147,6 +161,7 @@ export async function fetchRawMigrationHistory(options = {}) {
 function parseArguments(argumentsList) {
   let cliHistory = "";
   let modeOnly = false;
+  let requireNoPending = false;
   for (let index = 0; index < argumentsList.length; index += 1) {
     const argument = argumentsList[index];
     if (argument === "--cli-history") {
@@ -162,10 +177,14 @@ function parseArguments(argumentsList) {
       modeOnly = true;
       continue;
     }
+    if (argument === "--require-no-pending" && !requireNoPending) {
+      requireNoPending = true;
+      continue;
+    }
     fail(`unsupported or duplicate argument: ${argument}`);
   }
   if (!cliHistory) fail("--cli-history is required");
-  return { cliHistory, modeOnly };
+  return { cliHistory, modeOnly, requireNoPending };
 }
 
 async function main() {
@@ -173,6 +192,7 @@ async function main() {
   const cliOutput = await readFile(options.cliHistory, "utf8");
   const parsedCli = parseMigrationList(cliOutput);
   const plan = verifyProductionMigrationCutoverPlan(parsedCli);
+  if (options.requireNoPending) requireNoPendingPostCutover(plan);
   const rawResponse = await fetchRawMigrationHistory({
     projectRef: process.env.SUPABASE_PROJECT_REF,
     accessToken: process.env.SUPABASE_ACCESS_TOKEN,

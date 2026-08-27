@@ -12,13 +12,16 @@ concurrency:
 
 jobs:
   configure:
-    name: Disable automatic production and isolate develop preview
+    name: Pin live production and isolate develop preview
     runs-on: ubuntu-latest
     timeout-minutes: 5
     environment: production
     env:
       CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      SUPABASE_PROJECT_REF: ${{ vars.SUPABASE_PROJECT_REF }}
+      VITE_SUPABASE_URL: ${{ vars.VITE_SUPABASE_URL }}
+      VITE_SUPABASE_PUBLISHABLE_KEY: ${{ vars.VITE_SUPABASE_PUBLISHABLE_KEY }}
     steps:
       - name: Require the protected main branch
         shell: bash

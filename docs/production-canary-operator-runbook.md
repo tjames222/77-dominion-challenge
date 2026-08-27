@@ -354,9 +354,12 @@ revoked row plus UTC revocation time to the release record.
 
 - Revoke the canary grant first. Keep Auth signup closed and all three feature
   gates `false` throughout rollback.
-- For a frontend-only regression, dispatch the protected workflow from a known
-  backend-compatible commit with `release_scope=frontend-only`. The Auth policy
-  gate still runs; never publish a Cloudflare artifact directly.
+- For a frontend-only regression after the full cutover, land a reviewed
+  backend-compatible rollback commit on protected `main` while preserving the
+  complete applied migration tree, then dispatch with
+  `release_scope=frontend-only`. The workflow's strict CLI/raw history gate
+  requires post-cutover history with nothing pending; never use this scope in
+  place of the initial compatibility cutover or publish Cloudflare directly.
 - For a Function regression with compatible schema, redeploy reviewed known-good
   function source. Do not blank secrets to disable code.
 - After a migration, roll forward with a reviewed migration. Never reset hosted
