@@ -447,16 +447,109 @@ test("package, CI, and production deploy run the gate before migrations", async 
   const deployApply = deployWorkflow.indexOf(
     "run: supabase migration up --linked",
   );
+  const deployCutoverPlan = deployWorkflow.indexOf(
+    "node scripts/verify-production-raw-migration-history.mjs",
+    deployGate,
+  );
+  const deployCutoverAttestation = deployWorkflow.indexOf(
+    'attestation_name="production-compatibility-cutover-${GITHUB_SHA}"',
+  );
+  assert.match(deployWorkflow, /migration list --linked --output-format text/u);
+  assert.doesNotMatch(deployWorkflow, /SUPABASE_DB_PASSWORD|--password/u);
+  assert.match(
+    deployWorkflow,
+    /verify-production-raw-migration-history\.mjs --cli-history "\$history_file" --mode-only/u,
+  );
   assert.ok(
     deployNode !== -1
       && deployGate !== -1
       && deployNode < deployGate
       && deployGate < deployDryRun
+      && deployCutoverPlan !== -1
+      && deployCutoverPlan < deployDryRun
+      && deployCutoverAttestation > deployCutoverPlan
+      && deployCutoverAttestation < deployDryRun
       && deployDryRun < deployApply,
   );
-  assert.doesNotMatch(
+  assert.match(deployWorkflow, /run: supabase db push --linked --dry-run/u);
+  assert.match(
     deployWorkflow,
-    /run: supabase db push --linked --password/,
+    /post_migration_history[\s\S]*verify-production-raw-migration-history\.mjs/u,
+  );
+
+  const compatibilityJobStart = deployWorkflow.indexOf("  compatibility-guards:");
+  const backendJobStart = deployWorkflow.indexOf("  backend:");
+  assert.ok(
+    compatibilityJobStart !== -1
+      && backendJobStart !== -1
+      && compatibilityJobStart < backendJobStart,
+  );
+  const compatibilityJob = deployWorkflow.slice(
+    compatibilityJobStart,
+    backendJobStart,
+  );
+  assert.match(
+    compatibilityJob,
+    /if: inputs\.release_scope == 'compatibility-cutover'/u,
+  );
+  assert.match(compatibilityJob, /BILLING_ENABLED: "false"/u);
+  const disabledSecret = compatibilityJob.indexOf(
+    '"BILLING_ENABLED=${BILLING_ENABLED}"',
+  );
+  const compatibilityLink = compatibilityJob.indexOf(
+    'supabase link --project-ref "$SUPABASE_PROJECT_REF"',
+  );
+  const compatibilityRawHistory = compatibilityJob.indexOf(
+    "verify-production-raw-migration-history.mjs",
+  );
+  const compatibilityCanaryGate = compatibilityJob.indexOf(
+    "verify-production-canary-cutover-gate.mjs",
+  );
+  const webhookDeploy = compatibilityJob.indexOf(
+    'supabase functions deploy stripe-webhook --project-ref "$SUPABASE_PROJECT_REF" --no-verify-jwt',
+  );
+  const webhook503 = compatibilityJob.indexOf(
+    'if [[ "$webhook_status" != "503" ]]',
+  );
+  const authenticatedDeploy = compatibilityJob.indexOf(
+    'supabase functions deploy cancel-membership --project-ref "$SUPABASE_PROJECT_REF"',
+  );
+  const authenticated401 = compatibilityJob.indexOf(
+    'if [[ "$billing_status" != "401" ]]',
+  );
+  assert.ok(
+    compatibilityLink !== -1
+      && compatibilityRawHistory !== -1
+      && compatibilityCanaryGate !== -1
+      && disabledSecret !== -1
+      && webhookDeploy !== -1
+      && webhook503 !== -1
+      && authenticatedDeploy !== -1
+      && authenticated401 !== -1
+      && compatibilityLink < compatibilityRawHistory
+      && compatibilityRawHistory < compatibilityCanaryGate
+      && compatibilityCanaryGate < disabledSecret
+      && disabledSecret < webhookDeploy
+      && webhookDeploy < webhook503
+      && webhook503 < authenticatedDeploy
+      && authenticatedDeploy < authenticated401,
+  );
+  assert.doesNotMatch(compatibilityJob, /supabase (?:migration up|db push)/u);
+  assert.match(
+    deployWorkflow,
+    /inputs\.release_scope == 'frontend-only'[\s\S]*needs\.backend\.result == 'skipped'[\s\S]*needs\.compatibility-guards\.result == 'skipped'/u,
+  );
+  const cloudflareDeploy = deployWorkflow.indexOf("pages deploy dist");
+  const compatibilityAttestationUpload = deployWorkflow.indexOf(
+    "name: production-compatibility-cutover-${{ github.sha }}",
+  );
+  assert.ok(
+    cloudflareDeploy !== -1
+      && compatibilityAttestationUpload > cloudflareDeploy,
+  );
+  assert.match(
+    deployWorkflow,
+    /if: inputs\.release_scope == 'compatibility-cutover'[\s\S]*name: production-compatibility-cutover-\$\{\{ github\.sha \}\}/u,
   );
 });
 

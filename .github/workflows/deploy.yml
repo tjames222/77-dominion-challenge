@@ -4,15 +4,17 @@ on:
   workflow_dispatch:
     inputs:
       release_scope:
-        description: Choose a full release or rebuild only the frontend from a backend-compatible commit.
+        description: Choose the one-time compatibility cutover, a full release, or a frontend-only rollback.
         required: true
         default: full
         type: choice
         options:
           - full
+          - compatibility-cutover
           - frontend-only
 
 permissions:
+  actions: read
   contents: read
   deployments: write
 
@@ -58,6 +60,127 @@ jobs:
       - name: Require closed Supabase Auth signup paths
         run: node scripts/verify-production-auth-canary.mjs
 
+  compatibility-guards:
+    name: Deploy disabled billing guards for compatibility cutover
+    needs:
+      - validation
+      - canary-policy
+    if: inputs.release_scope == 'compatibility-cutover'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: production
+    env:
+      SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+      SUPABASE_PROJECT_REF: ${{ vars.SUPABASE_PROJECT_REF }}
+      BILLING_ENABLED: "false"
+      PUBLIC_SITE_URL: ${{ vars.PUBLIC_SITE_URL }}
+      PUBLIC_ALLOWED_SITE_URLS: ${{ vars.PUBLIC_ALLOWED_SITE_URLS }}
+      VITE_SUPABASE_URL: ${{ vars.VITE_SUPABASE_URL }}
+      VITE_SUPABASE_PUBLISHABLE_KEY: ${{ vars.VITE_SUPABASE_PUBLISHABLE_KEY }}
+      SUPABASE_TELEMETRY_DISABLED: "1"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Setup Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+      - name: Setup Supabase CLI
+        uses: supabase/setup-cli@3c2f5e2ae34c34e428e8e206e2c4d21fa2d20fbf # v2
+        with:
+          version: 2.109.0
+      - name: Validate the compatibility-cutover guard gate
+        shell: bash
+        run: |
+          required=(
+            SUPABASE_ACCESS_TOKEN
+            SUPABASE_PROJECT_REF
+            PUBLIC_SITE_URL
+            VITE_SUPABASE_URL
+            VITE_SUPABASE_PUBLISHABLE_KEY
+          )
+          for name in "${required[@]}"; do
+            if [[ -z "${!name:-}" ]]; then
+              echo "::error::Missing production compatibility-cutover value: ${name}"
+              exit 1
+            fi
+          done
+          if [[ "${BILLING_ENABLED}" != "false" ]]; then
+            echo "::error::The compatibility cutover may deploy billing only in its disabled state."
+            exit 1
+          fi
+          expected_supabase_url="https://${SUPABASE_PROJECT_REF}.supabase.co"
+          if [[ "${VITE_SUPABASE_URL%/}" != "${expected_supabase_url}" ]]; then
+            echo "::error::The compatibility-cutover Supabase URL must target the selected production project."
+            exit 1
+          fi
+          if [[ "${PUBLIC_SITE_URL}" != https://* ]]; then
+            echo "::error::PUBLIC_SITE_URL must be an HTTPS production origin."
+            exit 1
+          fi
+      - name: Require exact reconciled history and the bounded canary grant
+        shell: bash
+        run: |
+          supabase link --project-ref "$SUPABASE_PROJECT_REF"
+          history="$(supabase migration list --linked --output-format text)"
+          history_file="${RUNNER_TEMP}/compatibility-migration-list.txt"
+          printf '%s\n' "$history" > "$history_file"
+          plan_mode="$(node scripts/verify-production-raw-migration-history.mjs --cli-history "$history_file" --mode-only)"
+          if [[ "$plan_mode" != "initial-cutover" ]]; then
+            echo "::error::The one-time compatibility cutover requires exact production history through migration 13 with migrations 14-53 pending."
+            exit 1
+          fi
+          node scripts/verify-production-canary-cutover-gate.mjs --release-sha "$GITHUB_SHA"
+      - name: Synchronize disabled billing guard secrets
+        shell: bash
+        run: |
+          guard_secrets=(
+            "BILLING_ENABLED=${BILLING_ENABLED}"
+            "PUBLIC_SITE_URL=${PUBLIC_SITE_URL}"
+          )
+          if [[ -n "${PUBLIC_ALLOWED_SITE_URLS:-}" ]]; then
+            guard_secrets+=("PUBLIC_ALLOWED_SITE_URLS=${PUBLIC_ALLOWED_SITE_URLS}")
+          fi
+          supabase secrets set --project-ref "$SUPABASE_PROJECT_REF" "${guard_secrets[@]}"
+      - name: Deploy and verify the disabled public Stripe webhook guard
+        shell: bash
+        run: |
+          supabase functions deploy stripe-webhook --project-ref "$SUPABASE_PROJECT_REF" --no-verify-jwt
+          webhook_status="$(curl --silent --show-error --output "${RUNNER_TEMP}/compatibility-stripe-webhook-response.json" --write-out '%{http_code}' \
+            --request POST \
+            --header "Content-Type: application/json" \
+            --data '{}' \
+            "${VITE_SUPABASE_URL}/functions/v1/stripe-webhook")"
+          if [[ "$webhook_status" != "503" ]]; then
+            echo "::error::Expected the disabled stripe-webhook guard to return 503; received ${webhook_status}."
+            exit 1
+          fi
+      - name: Deploy disabled authenticated billing guards
+        run: |
+          supabase functions deploy cancel-membership --project-ref "$SUPABASE_PROJECT_REF"
+          supabase functions deploy create-checkout-session --project-ref "$SUPABASE_PROJECT_REF"
+          supabase functions deploy create-customer-portal-session --project-ref "$SUPABASE_PROJECT_REF"
+      - name: Verify authenticated billing gateway guards
+        shell: bash
+        run: |
+          supabase functions list --project-ref "$SUPABASE_PROJECT_REF"
+          for billing_function in \
+            cancel-membership \
+            create-checkout-session \
+            create-customer-portal-session; do
+            billing_status="$(curl --silent --show-error --output "${RUNNER_TEMP}/compatibility-${billing_function}-response.json" --write-out '%{http_code}' \
+              --request POST \
+              --header "apikey: ${VITE_SUPABASE_PUBLISHABLE_KEY}" \
+              --header "Content-Type: application/json" \
+              --header "Origin: ${PUBLIC_SITE_URL}" \
+              --data '{}' \
+              "${VITE_SUPABASE_URL}/functions/v1/${billing_function}")"
+            if [[ "$billing_status" != "401" ]]; then
+              echo "::error::Expected the unauthenticated ${billing_function} gateway guard to return 401; received ${billing_status}."
+              exit 1
+            fi
+          done
+
   backend:
     name: Migrate, deploy, and verify backend
     needs:
@@ -69,7 +192,6 @@ jobs:
     environment: production
     env:
       SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
-      SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
       SUPABASE_PROJECT_REF: ${{ vars.SUPABASE_PROJECT_REF }}
       BILLING_ENABLED: "false"
       INTEGRATION_WORKER_SECRET: ${{ secrets.INTEGRATION_WORKER_SECRET }}
@@ -109,7 +231,6 @@ jobs:
         run: |
           required=(
             SUPABASE_ACCESS_TOKEN
-            SUPABASE_DB_PASSWORD
             SUPABASE_PROJECT_REF
             PROFILE_PHOTO_WORKER_SECRET
             PUBLIC_SITE_URL
@@ -153,40 +274,49 @@ jobs:
             fi
           done
       - name: Link production Supabase project
-        run: supabase link --project-ref "$SUPABASE_PROJECT_REF" --password "$SUPABASE_DB_PASSWORD"
-      - name: Require reconciled historical migration records
+        run: supabase link --project-ref "$SUPABASE_PROJECT_REF"
+      - name: Require exact authoritative migration history
+        id: cutover-plan
+        env:
+          GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
-          history="$(supabase migration list --linked --password "$SUPABASE_DB_PASSWORD")"
+          history="$(supabase migration list --linked --output-format text)"
           printf '%s\n' "$history"
-
-          required_history=(
-            20260707170000
-            20260708154000
-            20260708155500
-            20260708160000
-            20260709163000
-            20260710120000
-            20260710123000
-            20260713120000
-            20260714120000
-            20260715190000
-            20260716061500
-            20260716153000
-            20260716163000
-          )
-          for version in "${required_history[@]}"; do
-            if ! awk -F'|' -v expected="$version" \
-              '$1 ~ expected && $2 ~ expected { found=1 } END { exit found ? 0 : 1 }' \
-              <<< "$history"; then
-              echo "::error::Historical migration ${version} is not reconciled on production. Follow docs/backend-release-runbook.md; the workflow will not replay historical SQL."
+          history_file="${RUNNER_TEMP}/production-migration-list.txt"
+          printf '%s\n' "$history" > "$history_file"
+          plan_mode="$(node scripts/verify-production-raw-migration-history.mjs --cli-history "$history_file" --mode-only)"
+          if [[ "$plan_mode" == "initial-cutover" ]]; then
+            node scripts/verify-production-canary-cutover-gate.mjs --release-sha "$GITHUB_SHA"
+            attestation_name="production-compatibility-cutover-${GITHUB_SHA}"
+            artifacts="$(gh api "/repos/${GITHUB_REPOSITORY}/actions/artifacts?name=${attestation_name}&per_page=100")"
+            if ! jq -e \
+              --arg expected_name "$attestation_name" \
+              --arg expected_sha "$GITHUB_SHA" \
+              '[.artifacts[] | select(
+                .name == $expected_name and
+                .expired == false and
+                .workflow_run.head_sha == $expected_sha
+              )] | length > 0' \
+              <<< "$artifacts" >/dev/null; then
+              echo "::error::The initial full release requires a successful compatibility-cutover deployment from this exact commit."
               exit 1
             fi
-          done
+            echo "Initial migration plan and same-commit compatibility-cutover attestation verified."
+          elif [[ "$plan_mode" == "post-cutover" ]]; then
+            echo "Completed cutover history remains an exact local prefix."
+          else
+            echo "::error::Unexpected migration cutover plan mode."
+            exit 1
+          fi
+          echo "mode=$plan_mode" >> "$GITHUB_OUTPUT"
       - name: Verify migration history and preview the migration plan
-        run: supabase db push --linked --dry-run --password "$SUPABASE_DB_PASSWORD"
+        run: supabase db push --linked --dry-run
       - name: Apply database migrations
         run: supabase migration up --linked
+      - name: Reverify the bounded canary and zero billing state
+        if: steps.cutover-plan.outputs.mode == 'initial-cutover'
+        run: node scripts/verify-production-canary-cutover-gate.mjs --release-sha "$GITHUB_SHA"
       - name: Synchronize Edge Function secrets
         id: function-secrets
         shell: bash
@@ -339,7 +469,11 @@ jobs:
       - name: Verify migrations and deployed functions
         shell: bash
         run: |
-          supabase migration list --linked --password "$SUPABASE_DB_PASSWORD"
+          post_migration_history="$(supabase migration list --linked --output-format text)"
+          printf '%s\n' "$post_migration_history"
+          post_migration_history_file="${RUNNER_TEMP}/post-production-migration-list.txt"
+          printf '%s\n' "$post_migration_history" > "$post_migration_history_file"
+          node scripts/verify-production-raw-migration-history.mjs --cli-history "$post_migration_history_file"
           supabase functions list --project-ref "$SUPABASE_PROJECT_REF"
 
           for billing_function in \
@@ -484,12 +618,20 @@ jobs:
       - validation
       - canary-policy
       - backend
+      - compatibility-guards
     if: >-
       always() &&
       needs.validation.result == 'success' &&
       needs.canary-policy.result == 'success' &&
-      (needs.backend.result == 'success' ||
-        (inputs.release_scope == 'frontend-only' && needs.backend.result == 'skipped'))
+      ((inputs.release_scope == 'full' &&
+          needs.backend.result == 'success' &&
+          needs.compatibility-guards.result == 'skipped') ||
+        (inputs.release_scope == 'compatibility-cutover' &&
+          needs.backend.result == 'skipped' &&
+          needs.compatibility-guards.result == 'success') ||
+        (inputs.release_scope == 'frontend-only' &&
+          needs.backend.result == 'skipped' &&
+          needs.compatibility-guards.result == 'skipped'))
     runs-on: ubuntu-latest
     timeout-minutes: 15
     environment: production
@@ -600,3 +742,11 @@ jobs:
           fi
           echo "Cloudflare deployment: ${DEPLOYMENT_URL}" >> "$GITHUB_STEP_SUMMARY"
           echo "Release commit: ${{ github.sha }}" >> "$GITHUB_STEP_SUMMARY"
+      - name: Attest the one-time compatibility cutover
+        if: inputs.release_scope == 'compatibility-cutover'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: production-compatibility-cutover-${{ github.sha }}
+          path: ./dist/index.html
+          if-no-files-found: error
+          retention-days: 7

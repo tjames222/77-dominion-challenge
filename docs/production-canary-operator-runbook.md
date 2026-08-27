@@ -11,7 +11,7 @@ change is required to alter them:
 
 The workflow also reads the hosted Auth configuration through Supabase's
 official [`GET /v1/projects/{ref}/config/auth`](https://supabase.com/docs/reference/api/v1-get-auth-service-config)
-endpoint before either release scope can proceed. It fails unless
+endpoint before any release scope can proceed. It fails unless
 `disable_signup` is exactly `true` and
 `external_anonymous_users_enabled` is exactly `false`. The check is read-only,
 keeps the management token in memory, and never prints the response body.
@@ -19,7 +19,9 @@ The production Management API token must include the documented
 `auth_config_read` permission (or `auth:read` OAuth scope).
 
 With billing disabled, Stripe credentials are not release prerequisites. The
-four guarded billing Functions are still deployed. The automated workflow keeps
+one-time `compatibility-cutover` deploys and verifies all four guards before it
+publishes the compatibility frontend, and the later full release redeploys them
+after migrations. The automated workflow keeps
 gateway JWT verification on for `cancel-membership`,
 `create-checkout-session`, and `create-customer-portal-session`, so their
 unauthenticated deployment smoke returns `401`; the no-JWT `stripe-webhook`
@@ -28,25 +30,40 @@ the invited owner's real session to require exact `503` responses from the
 other three. No service-role key, stored user token, or weakened gateway is used
 to manufacture that result.
 
+FOU-759 has one deliberately narrow timing rule: after production history is
+reconciled exactly through migration 13 and the zero-data/zero-billing checks
+pass, one exact Auth UUID may receive one exact release-SHA-bound
+`production_canary` entitlement for no more than two hours **before** the
+`compatibility-cutover` dispatch. That same row must be used through the
+same-commit full release and revoked afterward. This is not a direct-full
+exception. Never skip compatibility, extend or replace the grant between
+stages, or use more than one entitled account.
+
 ## Before granting canary access
 
-1. Finish the migration-history reconciliation, backup/restore rehearsal, and
-   release gates in [`backend-release-runbook.md`](backend-release-runbook.md).
-   Never use the canary entitlement to bypass an incomplete database cutover.
+1. Finish the migration-history reconciliation exactly through migration 13 and
+   the corresponding backup/restore rehearsal and release gates in
+   [`backend-release-runbook.md`](backend-release-runbook.md). Confirm migrations
+   14–53 remain pending. Never grant before the migration-13 checkpoint or use
+   the entitlement to bypass the required two-stage cutover.
 2. Record the exact 40-character release commit, production project reference,
    operator, approver, target Auth user UUID, a newly generated grant UUID, and
    UTC start and expiry times in the encrypted release record. Do not use an
    email address as the database identity.
-3. Use only an existing, non-anonymous owner verification account. Keep a second
-   existing non-privileged account without an entitlement for denial checks.
-   Public signup and anonymous sign-in remain closed throughout the canary.
+3. Use only an existing, non-anonymous owner verification account. Public signup
+   and anonymous sign-in remain closed throughout the canary. A second invited,
+   non-privileged account without an entitlement is mandatory for the post-full
+   denial check. It need not exist before the grant, but final acceptance is
+   blocked until it exists and that check passes.
 4. Confirm the target UUID has no `membership_active` entitlement and that
    `billing_customers`, `subscriptions`, and the legacy `purchases` table (if it
    still exists) are globally empty. Any pre-existing row is a stop condition;
    do not overwrite, merge, or delete it.
-5. Confirm the workflow deployed with all three flags above set to `false`, the
-   three unauthenticated billing gateway smokes returned `401`, the webhook
-   smoke returned `503`, and no Stripe request was attempted.
+5. Confirm the reviewed release tree hard-codes all three flags above to
+   `false`, hosted Auth is closed, and no Stripe request was attempted. The
+   compatibility workflow has not run yet; its three unauthenticated billing
+   gateway `401` smokes and webhook `503` smoke are required immediately after
+   the grant and before any full release.
 
 ## Grant one short-lived entitlement
 
@@ -145,8 +162,17 @@ commit;
 ```
 
 Do not extend `ends_at`, change `source_type`, use an open-ended entitlement,
-or reuse a grant UUID. If the transaction fails, stop and investigate; do not
-weaken a guard or manually execute only part of it.
+or reuse the grant UUID for a future grant. If the transaction fails, stop and
+investigate; do not weaken a guard or manually execute only part of it. Once it
+succeeds, the exact same row—not a replacement—must span compatibility and full.
+
+The compatibility workflow independently checks this boundary before its first
+Function-secret or deployment mutation. Its dedicated read-only Management API
+queries require exact raw migration history through migration 13, exactly one
+total `membership_active` row, exactly one total `production_canary` membership
+row, one currently active matching bounded row for `GITHUB_SHA`, a matching
+non-anonymous Auth user, zero billing rows, and no legacy `purchases` table. The
+query returns aggregate counts only; neither UUID nor entitlement row is logged.
 
 ## Verify the canary
 
@@ -175,10 +201,20 @@ where user_id = :'canary_user_id'::uuid
   and source_id = :'canary_grant_id'::uuid::text;
 ```
 
-Then verify all of the following and record the results:
+Immediately dispatch `release_scope=compatibility-cutover` from the exact
+recorded release SHA. Do not dispatch full unless compatibility succeeds, its
+same-commit attestation exists, the exact grant remains active and unmodified,
+and the zero-data/zero-billing inventories still pass. Then dispatch
+`release_scope=full` from that exact same SHA and reuse the same grant. If the
+grant expires or cannot cover both stages, revoke it and restart the reviewed
+sequence; never extend it or issue a replacement as a shortcut.
+
+After compatibility and again after full, verify all of the following and
+record the results:
 
 - the target account can sign in and complete the approved core canary flow;
-- the second account remains denied membership-only data and actions;
+- after full, the invited second account remains denied membership-only data and
+  actions; final acceptance is blocked until this check passes;
 - signup and anonymous sign-in remain unavailable;
 - billing controls remain absent or disabled; using only the invited owner's
   real browser session, `cancel-membership`, `create-checkout-session`, and
