@@ -17,6 +17,10 @@ import { DEVELOP_LIVE_CONNECTION_VARIABLES } from './validate-frontend-env.mjs';
 
 const accountId = 'a'.repeat(32);
 const apiToken = 'cloudflare-token-that-must-never-be-logged';
+const activeToken = Object.freeze({
+  id: 'b'.repeat(32),
+  status: 'active',
+});
 const repositoryRoot = fileURLToPath(new URL('../', import.meta.url));
 const productionEnvironment = Object.freeze({
   projectRef: PRODUCTION_SUPABASE_PROJECT_REF,
@@ -133,6 +137,9 @@ test('configuration PATCHes the fixed project and then GET-verifies it', async (
     if (url === `${productionEnvironment.supabaseUrl}/auth/v1/settings`) {
       return response({});
     }
+    if (url.endsWith('/user/tokens/verify')) {
+      return response(activeToken);
+    }
     return response(options.method === 'PATCH' ? {} : validProject());
   };
 
@@ -145,7 +152,7 @@ test('configuration PATCHes the fixed project and then GET-verifies it', async (
 
   const expectedUrl = `${CLOUDFLARE_PAGES_API_ORIGIN}/client/v4/accounts/${accountId}`
     + `/pages/projects/${CLOUDFLARE_PAGES_PROJECT}`;
-  assert.equal(calls.length, 3);
+  assert.equal(calls.length, 5);
   assert.equal(
     calls[0].url,
     `${productionEnvironment.supabaseUrl}/auth/v1/settings`,
@@ -154,18 +161,31 @@ test('configuration PATCHes the fixed project and then GET-verifies it', async (
   assert.equal(calls[0].options.redirect, 'error');
   assert.equal(calls[0].options.headers.apikey, productionEnvironment.publishableKey);
   assert.equal(Object.hasOwn(calls[0].options.headers, 'Authorization'), false);
-  assert.equal(calls[1].url, expectedUrl);
-  assert.equal(calls[1].options.method, 'PATCH');
+  assert.equal(
+    calls[1].url,
+    `${CLOUDFLARE_PAGES_API_ORIGIN}/client/v4/user/tokens/verify`,
+  );
+  assert.equal(calls[1].options.method, 'GET');
   assert.equal(calls[1].options.redirect, 'error');
   assert.equal(calls[1].options.headers.Authorization, `Bearer ${apiToken}`);
-  assert.deepEqual(
-    JSON.parse(calls[1].options.body),
-    cloudflarePagesPolicyPatch(productionEnvironment),
-  );
+  assert.equal(Object.hasOwn(calls[1].options, 'body'), false);
   assert.equal(calls[2].url, expectedUrl);
   assert.equal(calls[2].options.method, 'GET');
   assert.equal(calls[2].options.redirect, 'error');
+  assert.equal(calls[2].options.headers.Authorization, `Bearer ${apiToken}`);
   assert.equal(Object.hasOwn(calls[2].options, 'body'), false);
+  assert.equal(calls[3].url, expectedUrl);
+  assert.equal(calls[3].options.method, 'PATCH');
+  assert.equal(calls[3].options.redirect, 'error');
+  assert.equal(calls[3].options.headers.Authorization, `Bearer ${apiToken}`);
+  assert.deepEqual(
+    JSON.parse(calls[3].options.body),
+    cloudflarePagesPolicyPatch(productionEnvironment),
+  );
+  assert.equal(calls[4].url, expectedUrl);
+  assert.equal(calls[4].options.method, 'GET');
+  assert.equal(calls[4].options.redirect, 'error');
+  assert.equal(Object.hasOwn(calls[4].options, 'body'), false);
 });
 
 test('verification rejects production auto deploys, widened previews, and live preview values', () => {
@@ -202,19 +222,24 @@ test('HTTP failures discard the response body and never expose it or the token',
   const secretResponse = 'secret response body that must never be logged';
   let bodyCancelled = false;
   let bodyRead = false;
-  const fetchImpl = async (url) => url.endsWith('/auth/v1/settings') ? response({}) : response({}, {
-    ok: false,
-    status: 403,
-    body: {
-      async cancel() {
-        bodyCancelled = true;
+  const fetchImpl = async (url, options) => {
+    if (url.endsWith('/auth/v1/settings')) return response({});
+    if (url.endsWith('/user/tokens/verify')) return response(activeToken);
+    if (options.method === 'GET') return response(validProject());
+    return response({}, {
+      ok: false,
+      status: 403,
+      body: {
+        async cancel() {
+          bodyCancelled = true;
+        },
       },
-    },
-    async json() {
-      bodyRead = true;
-      throw new Error(secretResponse);
-    },
-  });
+      async json() {
+        bodyRead = true;
+        throw new Error(secretResponse);
+      },
+    });
+  };
 
   await assert.rejects(
     configureCloudflarePagesPolicy({
@@ -224,7 +249,11 @@ test('HTTP failures discard the response body and never expose it or the token',
       fetchImpl,
     }),
     (error) => {
-      assert.equal(error.message, 'Cloudflare Pages project update failed (HTTP 403).');
+      assert.equal(
+        error.message,
+        'Cloudflare API token can read the reviewed Pages project but cannot update it. '
+          + 'Add Account > Cloudflare Pages > Edit (Pages Write) for the exact account to the token.',
+      );
       assert.equal(error.message.includes(apiToken), false);
       assert.equal(error.message.includes(secretResponse), false);
       return true;
@@ -234,15 +263,76 @@ test('HTTP failures discard the response body and never expose it or the token',
   assert.equal(bodyRead, false);
 });
 
+test('an active token reports account scoping or Pages-read failures before mutation', async () => {
+  const calls = [];
+  let bodyCancelled = false;
+  await assert.rejects(
+    configureCloudflarePagesPolicy({
+      accountId,
+      apiToken,
+      ...productionEnvironment,
+      fetchImpl: async (url, options) => {
+        calls.push({ url, options });
+        if (url.endsWith('/auth/v1/settings')) return response({});
+        if (url.endsWith('/user/tokens/verify')) return response(activeToken);
+        return response({}, {
+          ok: false,
+          status: 403,
+          body: {
+            async cancel() {
+              bodyCancelled = true;
+            },
+          },
+        });
+      },
+    }),
+    (error) => {
+      assert.equal(
+        error.message,
+        'Cloudflare API token is active but cannot read the reviewed Pages project from the configured account. '
+          + 'Confirm the token is scoped to the same account and has Account > Cloudflare Pages > Read or Edit.',
+      );
+      assert.equal(error.message.includes(apiToken), false);
+      return true;
+    },
+  );
+  assert.equal(bodyCancelled, true);
+  assert.equal(calls.length, 3);
+  assert.equal(calls.some(({ options }) => options.method === 'PATCH'), false);
+});
+
+test('a disabled token fails before Pages project access', async () => {
+  const calls = [];
+  await assert.rejects(
+    configureCloudflarePagesPolicy({
+      accountId,
+      apiToken,
+      ...productionEnvironment,
+      fetchImpl: async (url, options) => {
+        calls.push({ url, options });
+        if (url.endsWith('/auth/v1/settings')) return response({});
+        return response({ ...activeToken, status: 'disabled' });
+      },
+    }),
+    /Cloudflare API token is not active/u,
+  );
+  assert.equal(calls.length, 2);
+});
+
 test('redirects fail closed before their response body is read', async () => {
   let bodyRead = false;
-  const fetchImpl = async (url) => url.endsWith('/auth/v1/settings') ? response({}) : response({}, {
-    redirected: true,
-    async json() {
-      bodyRead = true;
-      return { success: true, result: {} };
-    },
-  });
+  const fetchImpl = async (url, options) => {
+    if (url.endsWith('/auth/v1/settings')) return response({});
+    if (url.endsWith('/user/tokens/verify')) return response(activeToken);
+    if (options.method === 'GET') return response(validProject());
+    return response({}, {
+      redirected: true,
+      async json() {
+        bodyRead = true;
+        return { success: true, result: {} };
+      },
+    });
+  };
 
   await assert.rejects(
     configureCloudflarePagesPolicy({
@@ -258,15 +348,20 @@ test('redirects fail closed before their response body is read', async () => {
 
 test('Cloudflare application errors do not echo API error details', async () => {
   const secretResponse = 'sensitive Cloudflare API diagnostic';
-  const fetchImpl = async (url) => url.endsWith('/auth/v1/settings') ? response({}) : response({}, {
-    async json() {
-      return {
-        success: false,
-        errors: [{ message: secretResponse }],
-        result: null,
-      };
-    },
-  });
+  const fetchImpl = async (url, options) => {
+    if (url.endsWith('/auth/v1/settings')) return response({});
+    if (url.endsWith('/user/tokens/verify')) return response(activeToken);
+    if (options.method === 'GET') return response(validProject());
+    return response({}, {
+      async json() {
+        return {
+          success: false,
+          errors: [{ message: secretResponse }],
+          result: null,
+        };
+      },
+    });
+  };
 
   await assert.rejects(
     configureCloudflarePagesPolicy({
@@ -276,7 +371,7 @@ test('Cloudflare application errors do not echo API error details', async () => 
       fetchImpl,
     }),
     (error) => {
-      assert.equal(error.message, 'Cloudflare returned an unsuccessful update response.');
+      assert.equal(error.message, 'Cloudflare returned an unsuccessful Pages project update response.');
       assert.equal(error.message.includes(secretResponse), false);
       return true;
     },
