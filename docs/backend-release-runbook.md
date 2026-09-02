@@ -240,8 +240,12 @@ Before approving the GitHub `production` environment deployment, confirm:
    remains a post-cutover, backend-preserving rollback path and cannot run while
    migrations 14–53 are pending. This keeps the first two-stage
    cutover and every later production mutation explicit. The initial `full`
-   scope fails before migrations unless the same commit has a non-expired
-   post-deployment compatibility-cutover attestation from this workflow.
+   scope fails before migrations unless the same commit has exactly one
+   non-expired post-deployment compatibility-cutover attestation from a
+   successful protected run of this workflow. The seven-day artifact contains
+   only a versioned envelope with the release SHA and a keyed HMAC-SHA-256 proof;
+   it contains no Auth UUID, entitlement row, raw row fingerprint, credential,
+   or reversible canary data.
 9. Supabase Auth is already closed: the official Management API Auth config must
    report `disable_signup=true` and
    `external_anonymous_users_enabled=false`. The workflow checks these exact
@@ -872,23 +876,33 @@ next stage when one fails:
    reserved for a backend-compatible rollback after the full cutover. Its
    dedicated gate uses the strict CLI and raw SQL inventories and requires
    post-cutover history with no pending migration; it cannot substitute for the
-   initial compatibility scope. Only after
-   Cloudflare accepts that frontend does the workflow publish a seven-day,
-   exact-commit compatibility attestation.
+   initial compatibility scope. Only after Cloudflare accepts that frontend does
+   the workflow re-query the exact canary and publish a seven-day, exact-commit
+   compatibility attestation. Its JSON envelope contains only the release SHA,
+   format version, and keyed HMAC-SHA-256 continuity proof. The protected
+   Supabase access token is used as the HMAC key but is never written to the
+   artifact or logs; the raw row fingerprint, UUID, and entitlement row also
+   never leave the verifier process.
 5. **Migrate:** for `release_scope=full`, link the intended project without a
    stored database password, require the strict pinned-CLI history, and compare
    it with an authoritative read-only SQL inventory of
    `supabase_migrations.schema_migrations`. The raw inventory rejects any
    nonnumeric or extra record the CLI table could omit. Then require the exact
-   first-cutover pending suffix and non-expired same-commit compatibility
-   attestation, preview with
+   first-cutover pending suffix and exactly one non-expired same-commit
+   compatibility attestation. The workflow rejects an ambiguous, stale,
+   oversized, or expired artifact and any source run that is not a completed,
+   successful `workflow_dispatch` of this exact workflow on `main` at the exact
+   release SHA. It downloads the selected immutable artifact ID, accepts only
+   one ordinary JSON file, and recomputes the HMAC against the current exact
+   canary row before it may preview with
    `supabase db push --linked --dry-run`, and apply only migrations that follow the
    reconciled remote history with pinned `supabase migration up --linked`. The
    dry-run is a plan only; `db push` must never perform the actual mutation.
    Never use `--include-all` or run `supabase/schema.sql` manually in production.
    After `migration up`, the strict CLI/raw comparison runs again and requires
-   zero pending local migrations before any Function secret is synchronized or
-   any Function is deployed. Supabase CLI 2.109.0 obtains its short-lived login role from the Management
+   zero pending local migrations. It then recomputes the same HMAC from the same
+   downloaded envelope and the post-migration row before any Function secret is
+   synchronized or any Function is deployed. Supabase CLI 2.109.0 obtains its short-lived login role from the Management
    API using `SUPABASE_ACCESS_TOKEN`; no database password is placed in workflow
    arguments, environment variables, or logs. The same raw inventory is checked
    again after migration.

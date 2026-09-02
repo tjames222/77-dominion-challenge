@@ -163,6 +163,15 @@ export function createCanaryCutoverAttestation({
   grantFingerprint,
   attestationKey,
 }) {
+  if (typeof releaseSha !== "string" || !/^[0-9a-f]{40}$/u.test(releaseSha)) {
+    fail("the attestation release SHA must be exactly 40 lowercase hexadecimal characters");
+  }
+  if (
+    typeof grantFingerprint !== "string"
+    || !/^[0-9a-f]{64}$/u.test(grantFingerprint)
+  ) {
+    fail("the attestation canary fingerprint must be one SHA-256 digest");
+  }
   if (typeof attestationKey !== "string" || attestationKey.length < 20) {
     fail("the attestation key must be a nonempty protected credential");
   }

@@ -106,6 +106,8 @@ test("binds the compatibility attestation to the exact release and canary row", 
     "version",
   ]);
   assert.match(attestation.grantHmacSha256, /^[0-9a-f]{64}$/u);
+  assert.doesNotMatch(JSON.stringify(attestation), new RegExp(grantFingerprint, "u"));
+  assert.doesNotMatch(JSON.stringify(attestation), new RegExp(attestationKey, "u"));
   assert.deepEqual(verifyCanaryCutoverAttestation({
     value: attestation,
     releaseSha,
@@ -135,6 +137,35 @@ test("binds the compatibility attestation to the exact release and canary row", 
     }),
     /invalid envelope/u,
   );
+  assert.throws(
+    () => verifyCanaryCutoverAttestation({
+      value: attestation,
+      releaseSha,
+      grantFingerprint,
+      attestationKey: "different-protected-test-key-never-production",
+    }),
+    /does not match/u,
+  );
+});
+
+test("rejects noncanonical or weak compatibility attestation inputs", () => {
+  const valid = {
+    releaseSha: "a".repeat(40),
+    grantFingerprint: "b".repeat(64),
+    attestationKey: "protected-test-key-that-is-not-production",
+  };
+  for (const changed of [
+    { releaseSha: "main" },
+    { releaseSha: "A".repeat(40) },
+    { grantFingerprint: "not-a-digest" },
+    { grantFingerprint: "B".repeat(64) },
+    { attestationKey: "too-short" },
+  ]) {
+    assert.throws(
+      () => createCanaryCutoverAttestation({ ...valid, ...changed }),
+      /attestation release SHA|attestation canary fingerprint|attestation key/u,
+    );
+  }
 });
 
 test("rejects an unbound or noncanonical release identifier before any request", async () => {

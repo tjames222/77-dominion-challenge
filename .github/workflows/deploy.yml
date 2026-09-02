@@ -439,22 +439,80 @@ jobs:
           printf '%s\n' "$history" > "$history_file"
           plan_mode="$(node scripts/verify-production-raw-migration-history.mjs --cli-history "$history_file" --mode-only)"
           if [[ "$plan_mode" == "initial-cutover" ]]; then
-            node scripts/verify-production-canary-cutover-gate.mjs --release-sha "$GITHUB_SHA"
             attestation_name="production-compatibility-cutover-${GITHUB_SHA}"
             artifacts="$(gh api "/repos/${GITHUB_REPOSITORY}/actions/artifacts?name=${attestation_name}&per_page=100")"
             if ! jq -e \
               --arg expected_name "$attestation_name" \
               --arg expected_sha "$GITHUB_SHA" \
-              '[.artifacts[] | select(
+              '.total_count == 1 and ([.artifacts[] | select(
+                .name == $expected_name and
+                .expired == false and
+                .workflow_run.head_sha == $expected_sha and
+                (.id > 0 and .workflow_run.id > 0) and
+                (.size_in_bytes > 0 and .size_in_bytes <= 65536)
+              )] | length == 1)' \
+              <<< "$artifacts" >/dev/null; then
+              echo "::error::The initial full release requires exactly one non-expired, bounded compatibility attestation from this exact commit."
+              exit 1
+            fi
+            artifact="$(jq -c \
+              --arg expected_name "$attestation_name" \
+              --arg expected_sha "$GITHUB_SHA" \
+              '.artifacts[] | select(
                 .name == $expected_name and
                 .expired == false and
                 .workflow_run.head_sha == $expected_sha
-              )] | length > 0' \
-              <<< "$artifacts" >/dev/null; then
-              echo "::error::The initial full release requires a successful compatibility-cutover deployment from this exact commit."
+              )' \
+              <<< "$artifacts")"
+            attestation_artifact_id="$(jq -r '.id' <<< "$artifact")"
+            attestation_run_id="$(jq -r '.workflow_run.id' <<< "$artifact")"
+            if [[ ! "$attestation_artifact_id" =~ ^[1-9][0-9]*$ || ! "$attestation_run_id" =~ ^[1-9][0-9]*$ ]]; then
+              echo "::error::The compatibility attestation artifact and run IDs must be positive integers."
               exit 1
             fi
-            echo "Initial migration plan and same-commit compatibility-cutover attestation verified."
+            attestation_created_at="$(jq -r '.created_at' <<< "$artifact")"
+            attestation_expires_at="$(jq -r '.expires_at' <<< "$artifact")"
+            attestation_created_epoch="$(date --utc --date "$attestation_created_at" +%s)" || {
+              echo "::error::The compatibility attestation creation time is invalid."
+              exit 1
+            }
+            attestation_expires_epoch="$(date --utc --date "$attestation_expires_at" +%s)" || {
+              echo "::error::The compatibility attestation expiry time is invalid."
+              exit 1
+            }
+            now_epoch="$(date --utc +%s)"
+            attestation_age=$((now_epoch - attestation_created_epoch))
+            attestation_retention=$((attestation_expires_epoch - attestation_created_epoch))
+            if (( attestation_age < -300 || attestation_age > 604800 )); then
+              echo "::error::The compatibility attestation is future-dated or older than seven days."
+              exit 1
+            fi
+            if (( attestation_expires_epoch <= now_epoch || attestation_retention < 604500 || attestation_retention > 605100 )); then
+              echo "::error::The compatibility attestation is expired or does not have the required seven-day retention."
+              exit 1
+            fi
+            attestation_run="$(gh api "/repos/${GITHUB_REPOSITORY}/actions/runs/${attestation_run_id}")"
+            if ! jq -e \
+              --arg expected_repository "$GITHUB_REPOSITORY" \
+              --arg expected_sha "$GITHUB_SHA" \
+              --argjson current_run_id "$GITHUB_RUN_ID" \
+              '.id != $current_run_id and
+               .name == "Release production" and
+               .path == ".github/workflows/deploy.yml" and
+               .event == "workflow_dispatch" and
+               .head_branch == "main" and
+               .head_sha == $expected_sha and
+               .status == "completed" and
+               .conclusion == "success" and
+               .repository.full_name == $expected_repository and
+               .head_repository.full_name == $expected_repository' \
+              <<< "$attestation_run" >/dev/null; then
+              echo "::error::The compatibility attestation did not originate from a trusted successful main-branch release run."
+              exit 1
+            fi
+            echo "attestation_artifact_id=${attestation_artifact_id}" >> "$GITHUB_OUTPUT"
+            echo "attestation_run_id=${attestation_run_id}" >> "$GITHUB_OUTPUT"
+            echo "Initial migration plan and unique same-commit compatibility attestation metadata verified."
           elif [[ "$plan_mode" == "post-cutover" ]]; then
             echo "Completed cutover history remains an exact local prefix."
           else
@@ -462,6 +520,39 @@ jobs:
             exit 1
           fi
           echo "mode=$plan_mode" >> "$GITHUB_OUTPUT"
+      - name: Download the exact keyed compatibility attestation
+        if: steps.cutover-plan.outputs.mode == 'initial-cutover'
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          artifact-ids: ${{ steps.cutover-plan.outputs.attestation_artifact_id }}
+          path: ${{ runner.temp }}/production-canary-attestation
+          merge-multiple: true
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ steps.cutover-plan.outputs.attestation_run_id }}
+      - name: Verify exact canary continuity before migration
+        if: steps.cutover-plan.outputs.mode == 'initial-cutover'
+        shell: bash
+        run: |
+          attestation_directory="${RUNNER_TEMP}/production-canary-attestation"
+          attestation_file="${attestation_directory}/production-canary-attestation.json"
+          if [[ ! -d "$attestation_directory" || -L "$attestation_directory" || ! -f "$attestation_file" || -L "$attestation_file" ]]; then
+            echo "::error::The downloaded compatibility attestation must be one ordinary JSON file."
+            exit 1
+          fi
+          mapfile -d '' attestation_entries < <(find "$attestation_directory" -mindepth 1 -maxdepth 1 -print0)
+          if (( ${#attestation_entries[@]} != 1 )) || [[ "${attestation_entries[0]}" != "$attestation_file" ]]; then
+            echo "::error::The compatibility attestation artifact contains an unexpected entry."
+            exit 1
+          fi
+          attestation_size="$(stat --format=%s "$attestation_file")"
+          if (( attestation_size < 1 || attestation_size > 1024 )); then
+            echo "::error::The compatibility attestation envelope has an invalid size."
+            exit 1
+          fi
+          node scripts/verify-production-canary-cutover-gate.mjs \
+            --release-sha "$GITHUB_SHA" \
+            --attestation-input "$attestation_file"
       - name: Verify migration history and preview the migration plan
         run: supabase db push --linked --dry-run
       - name: Apply database migrations
@@ -476,9 +567,12 @@ jobs:
           node scripts/verify-production-raw-migration-history.mjs \
             --cli-history "$post_migration_history_file" \
             --require-no-pending
-      - name: Reverify the bounded canary and zero billing state
+      - name: Reverify exact canary continuity after migration
         if: steps.cutover-plan.outputs.mode == 'initial-cutover'
-        run: node scripts/verify-production-canary-cutover-gate.mjs --release-sha "$GITHUB_SHA"
+        run: |
+          node scripts/verify-production-canary-cutover-gate.mjs \
+            --release-sha "$GITHUB_SHA" \
+            --attestation-input "${RUNNER_TEMP}/production-canary-attestation/production-canary-attestation.json"
       - name: Synchronize Edge Function secrets
         shell: bash
         run: |
@@ -838,11 +932,31 @@ jobs:
           fi
           echo "Cloudflare deployment: ${DEPLOYMENT_URL}" >> "$GITHUB_STEP_SUMMARY"
           echo "Release commit: ${{ github.sha }}" >> "$GITHUB_STEP_SUMMARY"
-      - name: Attest the one-time compatibility cutover
+      - name: Checkout compatibility attestation verifier
+        if: inputs.release_scope == 'compatibility-cutover'
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Setup Node for compatibility attestation
+        if: inputs.release_scope == 'compatibility-cutover'
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+      - name: Create keyed one-time compatibility attestation
+        if: inputs.release_scope == 'compatibility-cutover'
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_PROJECT_REF: ${{ vars.SUPABASE_PROJECT_REF }}
+        shell: bash
+        run: |
+          attestation_directory="${RUNNER_TEMP}/production-canary-attestation"
+          mkdir --mode=700 "$attestation_directory"
+          node scripts/verify-production-canary-cutover-gate.mjs \
+            --release-sha "$GITHUB_SHA" \
+            --attestation-output "${attestation_directory}/production-canary-attestation.json"
+      - name: Publish keyed one-time compatibility attestation
         if: inputs.release_scope == 'compatibility-cutover'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: production-compatibility-cutover-${{ github.sha }}
-          path: ./dist/index.html
+          path: ${{ runner.temp }}/production-canary-attestation/production-canary-attestation.json
           if-no-files-found: error
           retention-days: 7

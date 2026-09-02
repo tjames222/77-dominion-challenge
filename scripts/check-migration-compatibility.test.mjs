@@ -467,6 +467,15 @@ test("package, CI, and production deploy run the gate before migrations", async 
   const deployCutoverAttestation = deployWorkflow.indexOf(
     'attestation_name="production-compatibility-cutover-${GITHUB_SHA}"',
   );
+  const deployAttestationDownload = deployWorkflow.indexOf(
+    "name: Download the exact keyed compatibility attestation",
+  );
+  const deployAttestationPreverify = deployWorkflow.indexOf(
+    "name: Verify exact canary continuity before migration",
+  );
+  const deployAttestationPostverify = deployWorkflow.indexOf(
+    "name: Reverify exact canary continuity after migration",
+  );
   assert.match(deployWorkflow, /migration list --linked --output-format text/u);
   assert.doesNotMatch(deployWorkflow, /SUPABASE_DB_PASSWORD|--password/u);
   assert.match(
@@ -484,15 +493,45 @@ test("package, CI, and production deploy run the gate before migrations", async 
       && deployCutoverPlan !== -1
       && deployCutoverPlan < deployDryRun
       && deployCutoverAttestation > deployCutoverPlan
-      && deployCutoverAttestation < deployDryRun
+      && deployCutoverAttestation < deployAttestationDownload
+      && deployAttestationDownload < deployAttestationPreverify
+      && deployAttestationPreverify < deployDryRun
       && deployDryRun < deployApply
       && deployApply < deployCompletedHistory
-      && deployCompletedHistory < deploySecretSync,
+      && deployCompletedHistory < deployAttestationPostverify
+      && deployAttestationPostverify < deploySecretSync,
   );
   assert.match(deployWorkflow, /run: supabase db push --linked --dry-run/u);
   assert.match(
     deployWorkflow,
     /post_migration_history[\s\S]*verify-production-raw-migration-history\.mjs[\s\S]*--require-no-pending/u,
+  );
+  assert.match(
+    deployWorkflow,
+    /\.total_count == 1 and \(\[\.artifacts\[\][\s\S]*\.id > 0 and \.workflow_run\.id > 0[\s\S]*length == 1/u,
+  );
+  assert.match(
+    deployWorkflow,
+    /\.path == "\.github\/workflows\/deploy\.yml"[\s\S]*\.event == "workflow_dispatch"[\s\S]*\.head_branch == "main"[\s\S]*\.head_sha == \$expected_sha[\s\S]*\.status == "completed"[\s\S]*\.conclusion == "success"/u,
+  );
+  assert.match(deployWorkflow, /attestation_age > 604800/u);
+  assert.match(deployWorkflow, /attestation_retention < 604500/u);
+  assert.match(deployWorkflow, /attestation_retention > 605100/u);
+  assert.match(
+    deployWorkflow,
+    /attestation_artifact_id" =~ \^\[1-9\]\[0-9\]\*\$[\s\S]*attestation_run_id" =~ \^\[1-9\]\[0-9\]\*\$/u,
+  );
+  assert.match(
+    deployWorkflow,
+    /artifact-ids: \$\{\{ steps\.cutover-plan\.outputs\.attestation_artifact_id \}\}[\s\S]*merge-multiple: true[\s\S]*github-token: \$\{\{ github\.token \}\}[\s\S]*repository: \$\{\{ github\.repository \}\}[\s\S]*run-id: \$\{\{ steps\.cutover-plan\.outputs\.attestation_run_id \}\}/u,
+  );
+  assert.match(
+    deployWorkflow,
+    /! -f "\$attestation_file" \|\| -L "\$attestation_file"[\s\S]*attestation_entries[\s\S]*attestation_size > 1024/u,
+  );
+  assert.equal(
+    deployWorkflow.match(/--attestation-input/g)?.length,
+    2,
   );
 
   const compatibilityJobStart = deployWorkflow.indexOf("  compatibility-guards:");
@@ -593,16 +632,27 @@ test("package, CI, and production deploy run the gate before migrations", async 
     /PROFILE_PHOTO_WORKER_SECRET must contain|requires INTEGRATION_CREDENTIAL_KEYS|must be configured together|must be configured as a complete set/u,
   );
   const cloudflareDeploy = deployWorkflow.indexOf("pages deploy dist");
+  const compatibilityAttestationCreate = deployWorkflow.indexOf(
+    "name: Create keyed one-time compatibility attestation",
+  );
   const compatibilityAttestationUpload = deployWorkflow.indexOf(
-    "name: production-compatibility-cutover-${{ github.sha }}",
+    "name: Publish keyed one-time compatibility attestation",
   );
   assert.ok(
     cloudflareDeploy !== -1
-      && compatibilityAttestationUpload > cloudflareDeploy,
+      && compatibilityAttestationCreate > cloudflareDeploy
+      && compatibilityAttestationUpload > compatibilityAttestationCreate,
   );
   assert.match(
     deployWorkflow,
-    /if: inputs\.release_scope == 'compatibility-cutover'[\s\S]*name: production-compatibility-cutover-\$\{\{ github\.sha \}\}/u,
+    /name: Create keyed one-time compatibility attestation[\s\S]*--attestation-output "\$\{attestation_directory\}\/production-canary-attestation\.json"[\s\S]*name: Publish keyed one-time compatibility attestation[\s\S]*name: production-compatibility-cutover-\$\{\{ github\.sha \}\}[\s\S]*path: \$\{\{ runner\.temp \}\}\/production-canary-attestation\/production-canary-attestation\.json[\s\S]*if-no-files-found: error[\s\S]*retention-days: 7/u,
+  );
+  const compatibilityAttestationSection = deployWorkflow.slice(
+    compatibilityAttestationCreate,
+  );
+  assert.doesNotMatch(
+    compatibilityAttestationSection,
+    /dist\/index\.html|canary_grant_fingerprint|\buser_id\b|\bsource_id\b|\bcat\b/u,
   );
 });
 

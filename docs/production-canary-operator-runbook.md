@@ -239,11 +239,22 @@ where user_id = :'canary_user_id'::uuid
 
 Immediately dispatch `release_scope=compatibility-cutover` from the exact
 recorded release SHA. Do not dispatch full unless compatibility succeeds, its
-same-commit attestation exists, the exact grant remains active and unmodified,
-and the zero-data/zero-billing inventories still pass. Then dispatch
+same-commit keyed attestation exists, the exact grant remains active and
+unmodified, and the zero-data/zero-billing inventories still pass. The workflow
+publishes that seven-day artifact only after Cloudflare accepts compatibility;
+it contains only a format version, the release SHA, and a keyed HMAC-SHA-256
+proof—never the UUID, raw entitlement row, raw row fingerprint, or HMAC key. The
+full run selects exactly one immutable artifact from a successful exact-SHA
+`main` compatibility run and verifies the proof both before migrations and
+after the zero-pending migration gate. Then dispatch
 `release_scope=full` from that exact same SHA and reuse the same grant. If the
 grant expires or cannot cover both stages, revoke it and restart the reviewed
 sequence; never extend it or issue a replacement as a shortcut.
+
+Do not rerun a successful compatibility dispatch at the same SHA: two artifacts
+with the exact name are intentionally treated as ambiguous and fail closed.
+Restart from a newly reviewed release SHA if the successful stage must be
+repeated.
 
 After compatibility and again after full, verify all of the following and
 record the results:
