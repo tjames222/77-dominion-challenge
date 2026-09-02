@@ -4,15 +4,17 @@ on:
   workflow_dispatch:
     inputs:
       release_scope:
-        description: Choose a full release or rebuild only the frontend from a backend-compatible commit.
+        description: Choose the one-time compatibility cutover, a full release, or a post-cutover frontend-only rebuild.
         required: true
         default: full
         type: choice
         options:
           - full
+          - compatibility-cutover
           - frontend-only
 
 permissions:
+  actions: read
   contents: read
   deployments: write
 
@@ -39,6 +41,28 @@ jobs:
     needs: authorize
     uses: ./.github/workflows/ci.yml
 
+  cloudflare-policy:
+    name: Enforce production and develop-preview Pages policy
+    needs: validation
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    environment: production
+    env:
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      SUPABASE_PROJECT_REF: ${{ vars.SUPABASE_PROJECT_REF }}
+      VITE_SUPABASE_URL: ${{ vars.VITE_SUPABASE_URL }}
+      VITE_SUPABASE_PUBLISHABLE_KEY: ${{ vars.VITE_SUPABASE_PUBLISHABLE_KEY }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Setup Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+      - name: Configure and verify the fixed Pages release policy
+        run: node scripts/configure-cloudflare-pages-policy.mjs
+
   canary-policy:
     name: Verify closed production canary policy
     needs: validation
@@ -58,18 +82,181 @@ jobs:
       - name: Require closed Supabase Auth signup paths
         run: node scripts/verify-production-auth-canary.mjs
 
+  compatibility-guards:
+    name: Deploy disabled billing guards for compatibility cutover
+    needs:
+      - validation
+      - canary-policy
+      - cloudflare-policy
+    if: inputs.release_scope == 'compatibility-cutover'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: production
+    env:
+      SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+      SUPABASE_PROJECT_REF: ${{ vars.SUPABASE_PROJECT_REF }}
+      BILLING_ENABLED: "false"
+      PUBLIC_SITE_URL: ${{ vars.PUBLIC_SITE_URL }}
+      PUBLIC_ALLOWED_SITE_URLS: ${{ vars.PUBLIC_ALLOWED_SITE_URLS }}
+      VITE_SUPABASE_URL: ${{ vars.VITE_SUPABASE_URL }}
+      VITE_SUPABASE_PUBLISHABLE_KEY: ${{ vars.VITE_SUPABASE_PUBLISHABLE_KEY }}
+      SUPABASE_TELEMETRY_DISABLED: "1"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Setup Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+      - name: Setup Supabase CLI
+        uses: supabase/setup-cli@3c2f5e2ae34c34e428e8e206e2c4d21fa2d20fbf # v2
+        with:
+          version: 2.109.0
+      - name: Validate the compatibility-cutover guard gate
+        shell: bash
+        run: |
+          required=(
+            SUPABASE_ACCESS_TOKEN
+            SUPABASE_PROJECT_REF
+            PUBLIC_SITE_URL
+            VITE_SUPABASE_URL
+            VITE_SUPABASE_PUBLISHABLE_KEY
+          )
+          for name in "${required[@]}"; do
+            if [[ -z "${!name:-}" ]]; then
+              echo "::error::Missing production compatibility-cutover value: ${name}"
+              exit 1
+            fi
+          done
+          if [[ "${BILLING_ENABLED}" != "false" ]]; then
+            echo "::error::The compatibility cutover may deploy billing only in its disabled state."
+            exit 1
+          fi
+          expected_supabase_url="https://${SUPABASE_PROJECT_REF}.supabase.co"
+          if [[ "${VITE_SUPABASE_URL%/}" != "${expected_supabase_url}" ]]; then
+            echo "::error::The compatibility-cutover Supabase URL must target the selected production project."
+            exit 1
+          fi
+          if [[ "${PUBLIC_SITE_URL}" != https://* ]]; then
+            echo "::error::PUBLIC_SITE_URL must be an HTTPS production origin."
+            exit 1
+          fi
+      - name: Require exact reconciled history and the bounded canary grant
+        shell: bash
+        run: |
+          supabase link --project-ref "$SUPABASE_PROJECT_REF"
+          history="$(supabase migration list --linked --output-format text)"
+          history_file="${RUNNER_TEMP}/compatibility-migration-list.txt"
+          printf '%s\n' "$history" > "$history_file"
+          plan_mode="$(node scripts/verify-production-raw-migration-history.mjs --cli-history "$history_file" --mode-only)"
+          if [[ "$plan_mode" != "initial-cutover" ]]; then
+            echo "::error::The one-time compatibility cutover requires exact production history through migration 13 with migrations 14-53 pending."
+            exit 1
+          fi
+          node scripts/verify-production-canary-cutover-gate.mjs --release-sha "$GITHUB_SHA"
+      - name: Synchronize disabled billing guard secrets
+        shell: bash
+        run: |
+          guard_secrets=(
+            "BILLING_ENABLED=${BILLING_ENABLED}"
+            "PUBLIC_SITE_URL=${PUBLIC_SITE_URL}"
+          )
+          if [[ -n "${PUBLIC_ALLOWED_SITE_URLS:-}" ]]; then
+            guard_secrets+=("PUBLIC_ALLOWED_SITE_URLS=${PUBLIC_ALLOWED_SITE_URLS}")
+          fi
+          supabase secrets set --project-ref "$SUPABASE_PROJECT_REF" "${guard_secrets[@]}"
+      - name: Deploy and verify the disabled public Stripe webhook guard
+        shell: bash
+        run: |
+          supabase functions deploy stripe-webhook --project-ref "$SUPABASE_PROJECT_REF" --no-verify-jwt
+          webhook_status="$(curl --silent --show-error --output "${RUNNER_TEMP}/compatibility-stripe-webhook-response.json" --write-out '%{http_code}' \
+            --request POST \
+            --header "Content-Type: application/json" \
+            --data '{}' \
+            "${VITE_SUPABASE_URL}/functions/v1/stripe-webhook")"
+          if [[ "$webhook_status" != "503" ]]; then
+            echo "::error::Expected the disabled stripe-webhook guard to return 503; received ${webhook_status}."
+            exit 1
+          fi
+      - name: Deploy disabled authenticated billing guards
+        run: |
+          supabase functions deploy cancel-membership --project-ref "$SUPABASE_PROJECT_REF"
+          supabase functions deploy create-checkout-session --project-ref "$SUPABASE_PROJECT_REF"
+          supabase functions deploy create-customer-portal-session --project-ref "$SUPABASE_PROJECT_REF"
+      - name: Verify authenticated billing gateway guards
+        shell: bash
+        run: |
+          supabase functions list --project-ref "$SUPABASE_PROJECT_REF"
+          for billing_function in \
+            cancel-membership \
+            create-checkout-session \
+            create-customer-portal-session; do
+            billing_status="$(curl --silent --show-error --output "${RUNNER_TEMP}/compatibility-${billing_function}-response.json" --write-out '%{http_code}' \
+              --request POST \
+              --header "apikey: ${VITE_SUPABASE_PUBLISHABLE_KEY}" \
+              --header "Content-Type: application/json" \
+              --header "Origin: ${PUBLIC_SITE_URL}" \
+              --data '{}' \
+              "${VITE_SUPABASE_URL}/functions/v1/${billing_function}")"
+            if [[ "$billing_status" != "401" ]]; then
+              echo "::error::Expected the unauthenticated ${billing_function} gateway guard to return 401; received ${billing_status}."
+              exit 1
+            fi
+          done
+
+  frontend-rollback-history:
+    name: Prove frontend-only is post-cutover and fully applied
+    needs:
+      - validation
+      - canary-policy
+      - cloudflare-policy
+    if: inputs.release_scope == 'frontend-only'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: production
+    env:
+      SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+      SUPABASE_PROJECT_REF: ${{ vars.SUPABASE_PROJECT_REF }}
+      SUPABASE_TELEMETRY_DISABLED: "1"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Setup Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+      - name: Setup Supabase CLI
+        uses: supabase/setup-cli@3c2f5e2ae34c34e428e8e206e2c4d21fa2d20fbf # v2
+        with:
+          version: 2.109.0
+      - name: Require exact fully applied post-cutover history
+        shell: bash
+        run: |
+          supabase link --project-ref "$SUPABASE_PROJECT_REF"
+          history="$(supabase migration list --linked --output-format text)"
+          history_file="${RUNNER_TEMP}/frontend-only-migration-list.txt"
+          printf '%s\n' "$history" > "$history_file"
+          plan_mode="$(node scripts/verify-production-raw-migration-history.mjs \
+            --cli-history "$history_file" \
+            --require-no-pending \
+            --mode-only)"
+          if [[ "$plan_mode" != "post-cutover" ]]; then
+            echo "::error::frontend-only is available only after the full cutover is exactly applied. Use compatibility-cutover for the initial 1-13 state."
+            exit 1
+          fi
+
   backend:
     name: Migrate, deploy, and verify backend
     needs:
       - validation
       - canary-policy
+      - cloudflare-policy
     if: inputs.release_scope == 'full'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     environment: production
     env:
       SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
-      SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
       SUPABASE_PROJECT_REF: ${{ vars.SUPABASE_PROJECT_REF }}
       BILLING_ENABLED: "false"
       INTEGRATION_WORKER_SECRET: ${{ secrets.INTEGRATION_WORKER_SECRET }}
@@ -109,7 +296,6 @@ jobs:
         run: |
           required=(
             SUPABASE_ACCESS_TOKEN
-            SUPABASE_DB_PASSWORD
             SUPABASE_PROJECT_REF
             PROFILE_PHOTO_WORKER_SECRET
             PUBLIC_SITE_URL
@@ -152,49 +338,10 @@ jobs:
               exit 1
             fi
           done
-      - name: Link production Supabase project
-        run: supabase link --project-ref "$SUPABASE_PROJECT_REF" --password "$SUPABASE_DB_PASSWORD"
-      - name: Require reconciled historical migration records
-        shell: bash
-        run: |
-          history="$(supabase migration list --linked --password "$SUPABASE_DB_PASSWORD")"
-          printf '%s\n' "$history"
-
-          required_history=(
-            20260707170000
-            20260708154000
-            20260708155500
-            20260708160000
-            20260709163000
-            20260710120000
-            20260710123000
-            20260713120000
-            20260714120000
-            20260715190000
-            20260716061500
-            20260716153000
-            20260716163000
-          )
-          for version in "${required_history[@]}"; do
-            if ! awk -F'|' -v expected="$version" \
-              '$1 ~ expected && $2 ~ expected { found=1 } END { exit found ? 0 : 1 }' \
-              <<< "$history"; then
-              echo "::error::Historical migration ${version} is not reconciled on production. Follow docs/backend-release-runbook.md; the workflow will not replay historical SQL."
-              exit 1
-            fi
-          done
-      - name: Verify migration history and preview the migration plan
-        run: supabase db push --linked --dry-run --password "$SUPABASE_DB_PASSWORD"
-      - name: Apply database migrations
-        run: supabase migration up --linked
-      - name: Synchronize Edge Function secrets
+      - name: Validate Edge Function secret topology
         id: function-secrets
         shell: bash
         run: |
-          function_secrets=(
-            "BILLING_ENABLED=${BILLING_ENABLED}"
-            "PUBLIC_SITE_URL=${PUBLIC_SITE_URL}"
-          )
           if (( ${#PROFILE_PHOTO_WORKER_SECRET} < 32 )); then
             echo "::error::PROFILE_PHOTO_WORKER_SECRET must contain at least 32 characters."
             exit 1
@@ -208,34 +355,24 @@ jobs:
               exit 1
             fi
           done
-          function_secrets+=("PROFILE_PHOTO_WORKER_SECRET=${PROFILE_PHOTO_WORKER_SECRET}")
-          if [[ -n "${PUBLIC_SHARE_URL:-}" ]]; then
-            function_secrets+=("PUBLIC_SHARE_URL=${PUBLIC_SHARE_URL}")
-          fi
-          if [[ -n "${PUBLIC_ALLOWED_SITE_URLS:-}" ]]; then
-            function_secrets+=("PUBLIC_ALLOWED_SITE_URLS=${PUBLIC_ALLOWED_SITE_URLS}")
-          fi
+
           integration_runtime_enabled=false
           if [[ -n "${INTEGRATION_WORKER_SECRET:-}" ]]; then
             if [[ -z "${INTEGRATION_CREDENTIAL_KEYS:-}" ]]; then
               echo "::error::INTEGRATION_WORKER_SECRET requires INTEGRATION_CREDENTIAL_KEYS."
               exit 1
             fi
-            function_secrets+=(
-              "INTEGRATION_WORKER_SECRET=${INTEGRATION_WORKER_SECRET}"
-              "INTEGRATION_CREDENTIAL_KEYS=${INTEGRATION_CREDENTIAL_KEYS}"
-            )
             integration_runtime_enabled=true
-            echo "integration_runtime_enabled=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "integration_runtime_enabled=false" >> "$GITHUB_OUTPUT"
           fi
+          echo "integration_runtime_enabled=${integration_runtime_enabled}" >> "$GITHUB_OUTPUT"
+
           retention_values_present=0
           for name in RETIRED_COMMUNITY_WORKER_SECRET RETIRED_COMMUNITY_DR_HMAC_SECRET; do
             if [[ -n "${!name:-}" ]]; then
               retention_values_present=$((retention_values_present + 1))
             fi
           done
+          retention_runtime_enabled=false
           if (( retention_values_present == 1 )); then
             echo "::error::RETIRED_COMMUNITY_WORKER_SECRET and RETIRED_COMMUNITY_DR_HMAC_SECRET must be configured together."
             exit 1
@@ -255,17 +392,10 @@ jobs:
               echo "::error::The retired Community worker requires INTEGRATION_CREDENTIAL_KEYS for provider revocation."
               exit 1
             fi
-            function_secrets+=(
-              "RETIRED_COMMUNITY_WORKER_SECRET=${RETIRED_COMMUNITY_WORKER_SECRET}"
-              "RETIRED_COMMUNITY_DR_HMAC_SECRET=${RETIRED_COMMUNITY_DR_HMAC_SECRET}"
-            )
-            if [[ "${integration_runtime_enabled}" == "false" ]]; then
-              function_secrets+=("INTEGRATION_CREDENTIAL_KEYS=${INTEGRATION_CREDENTIAL_KEYS}")
-            fi
-            echo "retention_runtime_enabled=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "retention_runtime_enabled=false" >> "$GITHUB_OUTPUT"
+            retention_runtime_enabled=true
           fi
+          echo "retention_runtime_enabled=${retention_runtime_enabled}" >> "$GITHUB_OUTPUT"
+
           provider_connection_values=(
             INTEGRATION_OAUTH_STATE_SECRET
             SLACK_CLIENT_ID
@@ -282,21 +412,210 @@ jobs:
               provider_values_present=$((provider_values_present + 1))
             fi
           done
+          provider_connections_enabled=false
           if (( provider_values_present > 0 && provider_values_present < ${#provider_connection_values[@]} )); then
             echo "::error::Slack/Discord connection secrets must be configured as a complete set."
             exit 1
           fi
           if (( provider_values_present == ${#provider_connection_values[@]} )); then
-            if [[ "${integration_runtime_enabled:-false}" == "false" ]]; then
+            if [[ "${integration_runtime_enabled}" == "false" ]]; then
               echo "::error::Provider connections require the integration runtime secrets."
               exit 1
             fi
+            provider_connections_enabled=true
+          fi
+          echo "provider_connections_enabled=${provider_connections_enabled}" >> "$GITHUB_OUTPUT"
+      - name: Link production Supabase project
+        run: supabase link --project-ref "$SUPABASE_PROJECT_REF"
+      - name: Require exact authoritative migration history
+        id: cutover-plan
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          history="$(supabase migration list --linked --output-format text)"
+          printf '%s\n' "$history"
+          history_file="${RUNNER_TEMP}/production-migration-list.txt"
+          printf '%s\n' "$history" > "$history_file"
+          plan_mode="$(node scripts/verify-production-raw-migration-history.mjs --cli-history "$history_file" --mode-only)"
+          if [[ "$plan_mode" == "initial-cutover" ]]; then
+            attestation_name="production-compatibility-cutover-${GITHUB_SHA}"
+            artifacts="$(gh api "/repos/${GITHUB_REPOSITORY}/actions/artifacts?name=${attestation_name}&per_page=100")"
+            if ! jq -e \
+              --arg expected_name "$attestation_name" \
+              --arg expected_sha "$GITHUB_SHA" \
+              '.total_count == 1 and ([.artifacts[] | select(
+                .name == $expected_name and
+                .expired == false and
+                .workflow_run.head_sha == $expected_sha and
+                (.id > 0 and .workflow_run.id > 0) and
+                (.size_in_bytes > 0 and .size_in_bytes <= 65536)
+              )] | length == 1)' \
+              <<< "$artifacts" >/dev/null; then
+              echo "::error::The initial full release requires exactly one non-expired, bounded compatibility attestation from this exact commit."
+              exit 1
+            fi
+            artifact="$(jq -c \
+              --arg expected_name "$attestation_name" \
+              --arg expected_sha "$GITHUB_SHA" \
+              '.artifacts[] | select(
+                .name == $expected_name and
+                .expired == false and
+                .workflow_run.head_sha == $expected_sha
+              )' \
+              <<< "$artifacts")"
+            attestation_artifact_id="$(jq -r '.id' <<< "$artifact")"
+            attestation_run_id="$(jq -r '.workflow_run.id' <<< "$artifact")"
+            if [[ ! "$attestation_artifact_id" =~ ^[1-9][0-9]*$ || ! "$attestation_run_id" =~ ^[1-9][0-9]*$ ]]; then
+              echo "::error::The compatibility attestation artifact and run IDs must be positive integers."
+              exit 1
+            fi
+            attestation_created_at="$(jq -r '.created_at' <<< "$artifact")"
+            attestation_expires_at="$(jq -r '.expires_at' <<< "$artifact")"
+            attestation_created_epoch="$(date --utc --date "$attestation_created_at" +%s)" || {
+              echo "::error::The compatibility attestation creation time is invalid."
+              exit 1
+            }
+            attestation_expires_epoch="$(date --utc --date "$attestation_expires_at" +%s)" || {
+              echo "::error::The compatibility attestation expiry time is invalid."
+              exit 1
+            }
+            now_epoch="$(date --utc +%s)"
+            attestation_age=$((now_epoch - attestation_created_epoch))
+            attestation_retention=$((attestation_expires_epoch - attestation_created_epoch))
+            if (( attestation_age < -300 || attestation_age > 604800 )); then
+              echo "::error::The compatibility attestation is future-dated or older than seven days."
+              exit 1
+            fi
+            if (( attestation_expires_epoch <= now_epoch || attestation_retention < 604500 || attestation_retention > 605100 )); then
+              echo "::error::The compatibility attestation is expired or does not have the required seven-day retention."
+              exit 1
+            fi
+            attestation_run="$(gh api "/repos/${GITHUB_REPOSITORY}/actions/runs/${attestation_run_id}")"
+            if ! jq -e \
+              --arg expected_repository "$GITHUB_REPOSITORY" \
+              --arg expected_sha "$GITHUB_SHA" \
+              --argjson current_run_id "$GITHUB_RUN_ID" \
+              '.id != $current_run_id and
+               .name == "Release production" and
+               .path == ".github/workflows/deploy.yml" and
+               .event == "workflow_dispatch" and
+               .head_branch == "main" and
+               .head_sha == $expected_sha and
+               .status == "completed" and
+               .conclusion == "success" and
+               .repository.full_name == $expected_repository and
+               .head_repository.full_name == $expected_repository' \
+              <<< "$attestation_run" >/dev/null; then
+              echo "::error::The compatibility attestation did not originate from a trusted successful main-branch release run."
+              exit 1
+            fi
+            echo "attestation_artifact_id=${attestation_artifact_id}" >> "$GITHUB_OUTPUT"
+            echo "attestation_run_id=${attestation_run_id}" >> "$GITHUB_OUTPUT"
+            echo "Initial migration plan and unique same-commit compatibility attestation metadata verified."
+          elif [[ "$plan_mode" == "post-cutover" ]]; then
+            echo "Completed cutover history remains an exact local prefix."
+          else
+            echo "::error::Unexpected migration cutover plan mode."
+            exit 1
+          fi
+          echo "mode=$plan_mode" >> "$GITHUB_OUTPUT"
+      - name: Download the exact keyed compatibility attestation
+        if: steps.cutover-plan.outputs.mode == 'initial-cutover'
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          artifact-ids: ${{ steps.cutover-plan.outputs.attestation_artifact_id }}
+          path: ${{ runner.temp }}/production-canary-attestation
+          merge-multiple: true
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ steps.cutover-plan.outputs.attestation_run_id }}
+      - name: Verify exact canary continuity before migration
+        if: steps.cutover-plan.outputs.mode == 'initial-cutover'
+        shell: bash
+        run: |
+          attestation_directory="${RUNNER_TEMP}/production-canary-attestation"
+          attestation_file="${attestation_directory}/production-canary-attestation.json"
+          if [[ ! -d "$attestation_directory" || -L "$attestation_directory" || ! -f "$attestation_file" || -L "$attestation_file" ]]; then
+            echo "::error::The downloaded compatibility attestation must be one ordinary JSON file."
+            exit 1
+          fi
+          mapfile -d '' attestation_entries < <(find "$attestation_directory" -mindepth 1 -maxdepth 1 -print0)
+          if (( ${#attestation_entries[@]} != 1 )) || [[ "${attestation_entries[0]}" != "$attestation_file" ]]; then
+            echo "::error::The compatibility attestation artifact contains an unexpected entry."
+            exit 1
+          fi
+          attestation_size="$(stat --format=%s "$attestation_file")"
+          if (( attestation_size < 1 || attestation_size > 1024 )); then
+            echo "::error::The compatibility attestation envelope has an invalid size."
+            exit 1
+          fi
+          node scripts/verify-production-canary-cutover-gate.mjs \
+            --release-sha "$GITHUB_SHA" \
+            --attestation-input "$attestation_file"
+      - name: Verify migration history and preview the migration plan
+        run: supabase db push --linked --dry-run
+      - name: Apply database migrations
+        run: supabase migration up --linked
+      - name: Require exact completed migration history
+        shell: bash
+        run: |
+          post_migration_history="$(supabase migration list --linked --output-format text)"
+          printf '%s\n' "$post_migration_history"
+          post_migration_history_file="${RUNNER_TEMP}/post-production-migration-list.txt"
+          printf '%s\n' "$post_migration_history" > "$post_migration_history_file"
+          node scripts/verify-production-raw-migration-history.mjs \
+            --cli-history "$post_migration_history_file" \
+            --require-no-pending
+      - name: Reverify exact canary continuity after migration
+        if: steps.cutover-plan.outputs.mode == 'initial-cutover'
+        run: |
+          node scripts/verify-production-canary-cutover-gate.mjs \
+            --release-sha "$GITHUB_SHA" \
+            --attestation-input "${RUNNER_TEMP}/production-canary-attestation/production-canary-attestation.json"
+      - name: Synchronize Edge Function secrets
+        shell: bash
+        run: |
+          function_secrets=(
+            "BILLING_ENABLED=${BILLING_ENABLED}"
+            "PUBLIC_SITE_URL=${PUBLIC_SITE_URL}"
+            "PROFILE_PHOTO_WORKER_SECRET=${PROFILE_PHOTO_WORKER_SECRET}"
+          )
+          if [[ -n "${PUBLIC_SHARE_URL:-}" ]]; then
+            function_secrets+=("PUBLIC_SHARE_URL=${PUBLIC_SHARE_URL}")
+          fi
+          if [[ -n "${PUBLIC_ALLOWED_SITE_URLS:-}" ]]; then
+            function_secrets+=("PUBLIC_ALLOWED_SITE_URLS=${PUBLIC_ALLOWED_SITE_URLS}")
+          fi
+          if [[ "${{ steps.function-secrets.outputs.integration_runtime_enabled }}" == "true" ]]; then
+            function_secrets+=(
+              "INTEGRATION_WORKER_SECRET=${INTEGRATION_WORKER_SECRET}"
+              "INTEGRATION_CREDENTIAL_KEYS=${INTEGRATION_CREDENTIAL_KEYS}"
+            )
+          fi
+          if [[ "${{ steps.function-secrets.outputs.retention_runtime_enabled }}" == "true" ]]; then
+            function_secrets+=(
+              "RETIRED_COMMUNITY_WORKER_SECRET=${RETIRED_COMMUNITY_WORKER_SECRET}"
+              "RETIRED_COMMUNITY_DR_HMAC_SECRET=${RETIRED_COMMUNITY_DR_HMAC_SECRET}"
+            )
+            if [[ "${{ steps.function-secrets.outputs.integration_runtime_enabled }}" == "false" ]]; then
+              function_secrets+=("INTEGRATION_CREDENTIAL_KEYS=${INTEGRATION_CREDENTIAL_KEYS}")
+            fi
+          fi
+          if [[ "${{ steps.function-secrets.outputs.provider_connections_enabled }}" == "true" ]]; then
+            provider_connection_values=(
+              INTEGRATION_OAUTH_STATE_SECRET
+              SLACK_CLIENT_ID
+              SLACK_CLIENT_SECRET
+              SLACK_SIGNING_SECRET
+              DISCORD_CLIENT_ID
+              DISCORD_CLIENT_SECRET
+              DISCORD_PUBLIC_KEY
+              DISCORD_BOT_TOKEN
+            )
             for name in "${provider_connection_values[@]}"; do
               function_secrets+=("${name}=${!name}")
             done
-            echo "provider_connections_enabled=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "provider_connections_enabled=false" >> "$GITHUB_OUTPUT"
           fi
           supabase secrets set --project-ref "$SUPABASE_PROJECT_REF" "${function_secrets[@]}"
       - name: Synchronize enabled Stripe Function secrets
@@ -330,16 +649,17 @@ jobs:
         run: supabase functions deploy process-retired-community-deletions --project-ref "$SUPABASE_PROJECT_REF" --no-verify-jwt
       - name: Deploy profile-photo cleanup worker
         run: supabase functions deploy process-profile-photo-cleanup --project-ref "$SUPABASE_PROJECT_REF" --no-verify-jwt
+      - name: Configure and verify profile-photo cleanup Cron
+        run: node scripts/configure-production-profile-photo-cleanup-cron.mjs
       - name: Deploy provider connection functions
         if: steps.function-secrets.outputs.provider_connections_enabled == 'true'
         run: |
           supabase functions deploy group-integrations --project-ref "$SUPABASE_PROJECT_REF"
           supabase functions deploy slack-oauth-callback --project-ref "$SUPABASE_PROJECT_REF" --no-verify-jwt
           supabase functions deploy discord-oauth-callback --project-ref "$SUPABASE_PROJECT_REF" --no-verify-jwt
-      - name: Verify migrations and deployed functions
+      - name: Verify deployed functions
         shell: bash
         run: |
-          supabase migration list --linked --password "$SUPABASE_DB_PASSWORD"
           supabase functions list --project-ref "$SUPABASE_PROJECT_REF"
 
           for billing_function in \
@@ -483,13 +803,27 @@ jobs:
     needs:
       - validation
       - canary-policy
+      - cloudflare-policy
+      - frontend-rollback-history
       - backend
+      - compatibility-guards
     if: >-
       always() &&
       needs.validation.result == 'success' &&
       needs.canary-policy.result == 'success' &&
-      (needs.backend.result == 'success' ||
-        (inputs.release_scope == 'frontend-only' && needs.backend.result == 'skipped'))
+      needs.cloudflare-policy.result == 'success' &&
+      ((inputs.release_scope == 'full' &&
+          needs.frontend-rollback-history.result == 'skipped' &&
+          needs.backend.result == 'success' &&
+          needs.compatibility-guards.result == 'skipped') ||
+        (inputs.release_scope == 'compatibility-cutover' &&
+          needs.frontend-rollback-history.result == 'skipped' &&
+          needs.backend.result == 'skipped' &&
+          needs.compatibility-guards.result == 'success') ||
+        (inputs.release_scope == 'frontend-only' &&
+          needs.frontend-rollback-history.result == 'success' &&
+          needs.backend.result == 'skipped' &&
+          needs.compatibility-guards.result == 'skipped'))
     runs-on: ubuntu-latest
     timeout-minutes: 15
     environment: production
@@ -600,3 +934,31 @@ jobs:
           fi
           echo "Cloudflare deployment: ${DEPLOYMENT_URL}" >> "$GITHUB_STEP_SUMMARY"
           echo "Release commit: ${{ github.sha }}" >> "$GITHUB_STEP_SUMMARY"
+      - name: Checkout compatibility attestation verifier
+        if: inputs.release_scope == 'compatibility-cutover'
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Setup Node for compatibility attestation
+        if: inputs.release_scope == 'compatibility-cutover'
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+      - name: Create keyed one-time compatibility attestation
+        if: inputs.release_scope == 'compatibility-cutover'
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_PROJECT_REF: ${{ vars.SUPABASE_PROJECT_REF }}
+        shell: bash
+        run: |
+          attestation_directory="${RUNNER_TEMP}/production-canary-attestation"
+          mkdir --mode=700 "$attestation_directory"
+          node scripts/verify-production-canary-cutover-gate.mjs \
+            --release-sha "$GITHUB_SHA" \
+            --attestation-output "${attestation_directory}/production-canary-attestation.json"
+      - name: Publish keyed one-time compatibility attestation
+        if: inputs.release_scope == 'compatibility-cutover'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: production-compatibility-cutover-${{ github.sha }}
+          path: ${{ runner.temp }}/production-canary-attestation/production-canary-attestation.json
+          if-no-files-found: error
+          retention-days: 7

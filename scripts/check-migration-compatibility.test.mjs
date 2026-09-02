@@ -444,19 +444,215 @@ test("package, CI, and production deploy run the gate before migrations", async 
   const deployDryRun = deployWorkflow.indexOf(
     "run: supabase db push --linked --dry-run",
   );
+  const deploySecretTopology = deployWorkflow.indexOf(
+    "name: Validate Edge Function secret topology",
+  );
+  const deployLink = deployWorkflow.indexOf(
+    'run: supabase link --project-ref "$SUPABASE_PROJECT_REF"',
+  );
   const deployApply = deployWorkflow.indexOf(
     "run: supabase migration up --linked",
+  );
+  const deploySecretSync = deployWorkflow.indexOf(
+    "name: Synchronize Edge Function secrets",
+  );
+  const deployCompletedHistory = deployWorkflow.indexOf(
+    "name: Require exact completed migration history",
+    deployApply,
+  );
+  const deployCutoverPlan = deployWorkflow.indexOf(
+    "node scripts/verify-production-raw-migration-history.mjs",
+    deployGate,
+  );
+  const deployCutoverAttestation = deployWorkflow.indexOf(
+    'attestation_name="production-compatibility-cutover-${GITHUB_SHA}"',
+  );
+  const deployAttestationDownload = deployWorkflow.indexOf(
+    "name: Download the exact keyed compatibility attestation",
+  );
+  const deployAttestationPreverify = deployWorkflow.indexOf(
+    "name: Verify exact canary continuity before migration",
+  );
+  const deployAttestationPostverify = deployWorkflow.indexOf(
+    "name: Reverify exact canary continuity after migration",
+  );
+  assert.match(deployWorkflow, /migration list --linked --output-format text/u);
+  assert.doesNotMatch(deployWorkflow, /SUPABASE_DB_PASSWORD|--password/u);
+  assert.match(
+    deployWorkflow,
+    /verify-production-raw-migration-history\.mjs --cli-history "\$history_file" --mode-only/u,
   );
   assert.ok(
     deployNode !== -1
       && deployGate !== -1
       && deployNode < deployGate
       && deployGate < deployDryRun
-      && deployDryRun < deployApply,
+      && deploySecretTopology > deployGate
+      && deploySecretTopology < deployLink
+      && deployLink < deployDryRun
+      && deployCutoverPlan !== -1
+      && deployCutoverPlan < deployDryRun
+      && deployCutoverAttestation > deployCutoverPlan
+      && deployCutoverAttestation < deployAttestationDownload
+      && deployAttestationDownload < deployAttestationPreverify
+      && deployAttestationPreverify < deployDryRun
+      && deployDryRun < deployApply
+      && deployApply < deployCompletedHistory
+      && deployCompletedHistory < deployAttestationPostverify
+      && deployAttestationPostverify < deploySecretSync,
+  );
+  assert.match(deployWorkflow, /run: supabase db push --linked --dry-run/u);
+  assert.match(
+    deployWorkflow,
+    /post_migration_history[\s\S]*verify-production-raw-migration-history\.mjs[\s\S]*--require-no-pending/u,
+  );
+  assert.match(
+    deployWorkflow,
+    /\.total_count == 1 and \(\[\.artifacts\[\][\s\S]*\.id > 0 and \.workflow_run\.id > 0[\s\S]*length == 1/u,
+  );
+  assert.match(
+    deployWorkflow,
+    /\.path == "\.github\/workflows\/deploy\.yml"[\s\S]*\.event == "workflow_dispatch"[\s\S]*\.head_branch == "main"[\s\S]*\.head_sha == \$expected_sha[\s\S]*\.status == "completed"[\s\S]*\.conclusion == "success"/u,
+  );
+  assert.match(deployWorkflow, /attestation_age > 604800/u);
+  assert.match(deployWorkflow, /attestation_retention < 604500/u);
+  assert.match(deployWorkflow, /attestation_retention > 605100/u);
+  assert.match(
+    deployWorkflow,
+    /attestation_artifact_id" =~ \^\[1-9\]\[0-9\]\*\$[\s\S]*attestation_run_id" =~ \^\[1-9\]\[0-9\]\*\$/u,
+  );
+  assert.match(
+    deployWorkflow,
+    /artifact-ids: \$\{\{ steps\.cutover-plan\.outputs\.attestation_artifact_id \}\}[\s\S]*merge-multiple: true[\s\S]*github-token: \$\{\{ github\.token \}\}[\s\S]*repository: \$\{\{ github\.repository \}\}[\s\S]*run-id: \$\{\{ steps\.cutover-plan\.outputs\.attestation_run_id \}\}/u,
+  );
+  assert.match(
+    deployWorkflow,
+    /! -f "\$attestation_file" \|\| -L "\$attestation_file"[\s\S]*attestation_entries[\s\S]*attestation_size > 1024/u,
+  );
+  assert.equal(
+    deployWorkflow.match(/--attestation-input/g)?.length,
+    2,
+  );
+
+  const compatibilityJobStart = deployWorkflow.indexOf("  compatibility-guards:");
+  const frontendRollbackHistoryStart = deployWorkflow.indexOf(
+    "  frontend-rollback-history:",
+  );
+  const backendJobStart = deployWorkflow.indexOf("  backend:");
+  assert.ok(
+    compatibilityJobStart !== -1
+      && frontendRollbackHistoryStart !== -1
+      && backendJobStart !== -1
+      && compatibilityJobStart < frontendRollbackHistoryStart
+      && frontendRollbackHistoryStart < backendJobStart,
+  );
+  const compatibilityJob = deployWorkflow.slice(
+    compatibilityJobStart,
+    backendJobStart,
+  );
+  assert.match(
+    compatibilityJob,
+    /if: inputs\.release_scope == 'compatibility-cutover'/u,
+  );
+  assert.match(compatibilityJob, /BILLING_ENABLED: "false"/u);
+  const disabledSecret = compatibilityJob.indexOf(
+    '"BILLING_ENABLED=${BILLING_ENABLED}"',
+  );
+  const compatibilityLink = compatibilityJob.indexOf(
+    'supabase link --project-ref "$SUPABASE_PROJECT_REF"',
+  );
+  const compatibilityRawHistory = compatibilityJob.indexOf(
+    "verify-production-raw-migration-history.mjs",
+  );
+  const compatibilityCanaryGate = compatibilityJob.indexOf(
+    "verify-production-canary-cutover-gate.mjs",
+  );
+  const webhookDeploy = compatibilityJob.indexOf(
+    'supabase functions deploy stripe-webhook --project-ref "$SUPABASE_PROJECT_REF" --no-verify-jwt',
+  );
+  const webhook503 = compatibilityJob.indexOf(
+    'if [[ "$webhook_status" != "503" ]]',
+  );
+  const authenticatedDeploy = compatibilityJob.indexOf(
+    'supabase functions deploy cancel-membership --project-ref "$SUPABASE_PROJECT_REF"',
+  );
+  const authenticated401 = compatibilityJob.indexOf(
+    'if [[ "$billing_status" != "401" ]]',
+  );
+  assert.ok(
+    compatibilityLink !== -1
+      && compatibilityRawHistory !== -1
+      && compatibilityCanaryGate !== -1
+      && disabledSecret !== -1
+      && webhookDeploy !== -1
+      && webhook503 !== -1
+      && authenticatedDeploy !== -1
+      && authenticated401 !== -1
+      && compatibilityLink < compatibilityRawHistory
+      && compatibilityRawHistory < compatibilityCanaryGate
+      && compatibilityCanaryGate < disabledSecret
+      && disabledSecret < webhookDeploy
+      && webhookDeploy < webhook503
+      && webhook503 < authenticatedDeploy
+      && authenticatedDeploy < authenticated401,
+  );
+  assert.doesNotMatch(compatibilityJob, /supabase (?:migration up|db push)/u);
+  assert.match(
+    deployWorkflow,
+    /inputs\.release_scope == 'frontend-only'[\s\S]*needs\.backend\.result == 'skipped'[\s\S]*needs\.compatibility-guards\.result == 'skipped'/u,
+  );
+  const frontendRollbackHistoryJob = deployWorkflow.slice(
+    frontendRollbackHistoryStart,
+    backendJobStart,
+  );
+  assert.match(
+    frontendRollbackHistoryJob,
+    /if: inputs\.release_scope == 'frontend-only'/u,
+  );
+  assert.match(frontendRollbackHistoryJob, /verify-production-raw-migration-history\.mjs/u);
+  assert.match(frontendRollbackHistoryJob, /--require-no-pending/u);
+  assert.match(frontendRollbackHistoryJob, /"post-cutover"/u);
+  assert.doesNotMatch(
+    frontendRollbackHistoryJob,
+    /supabase (?:migration up|db push|secrets set|functions deploy)/u,
+  );
+  assert.match(
+    deployWorkflow,
+    /inputs\.release_scope == 'frontend-only'[\s\S]*needs\.frontend-rollback-history\.result == 'success'/u,
+  );
+
+  const topologyStep = deployWorkflow.slice(deploySecretTopology, deployLink);
+  assert.match(topologyStep, /PROFILE_PHOTO_WORKER_SECRET must contain at least 32/u);
+  assert.match(topologyStep, /INTEGRATION_WORKER_SECRET requires INTEGRATION_CREDENTIAL_KEYS/u);
+  assert.match(topologyStep, /must be configured together/u);
+  assert.match(topologyStep, /must be configured as a complete set/u);
+  const synchronizationStep = deployWorkflow.slice(deploySecretSync);
+  assert.doesNotMatch(
+    synchronizationStep,
+    /PROFILE_PHOTO_WORKER_SECRET must contain|requires INTEGRATION_CREDENTIAL_KEYS|must be configured together|must be configured as a complete set/u,
+  );
+  const cloudflareDeploy = deployWorkflow.indexOf("pages deploy dist");
+  const compatibilityAttestationCreate = deployWorkflow.indexOf(
+    "name: Create keyed one-time compatibility attestation",
+  );
+  const compatibilityAttestationUpload = deployWorkflow.indexOf(
+    "name: Publish keyed one-time compatibility attestation",
+  );
+  assert.ok(
+    cloudflareDeploy !== -1
+      && compatibilityAttestationCreate > cloudflareDeploy
+      && compatibilityAttestationUpload > compatibilityAttestationCreate,
+  );
+  assert.match(
+    deployWorkflow,
+    /name: Create keyed one-time compatibility attestation[\s\S]*--attestation-output "\$\{attestation_directory\}\/production-canary-attestation\.json"[\s\S]*name: Publish keyed one-time compatibility attestation[\s\S]*name: production-compatibility-cutover-\$\{\{ github\.sha \}\}[\s\S]*path: \$\{\{ runner\.temp \}\}\/production-canary-attestation\/production-canary-attestation\.json[\s\S]*if-no-files-found: error[\s\S]*retention-days: 7/u,
+  );
+  const compatibilityAttestationSection = deployWorkflow.slice(
+    compatibilityAttestationCreate,
   );
   assert.doesNotMatch(
-    deployWorkflow,
-    /run: supabase db push --linked --password/,
+    compatibilityAttestationSection,
+    /dist\/index\.html|canary_grant_fingerprint|\buser_id\b|\bsource_id\b|\bcat\b/u,
   );
 });
 

@@ -66,6 +66,8 @@ jobs:
         run: pnpm install --frozen-lockfile
       - name: Test profile-photo cleanup Cron rehearsal harness
         run: pnpm run test:profile-photo-cleanup-cron
+      - name: Test production profile-photo cleanup Cron policy
+        run: pnpm run test:production-profile-photo-cleanup-cron
       - name: Validate migration execution compatibility
         run: pnpm run check:migrations
       - name: Test the migration compatibility gate
@@ -76,6 +78,8 @@ jobs:
         run: pnpm run test:production-backup-restore
       - name: Test production one-version reconciliation boundaries
         run: pnpm run test:production-reconciliation
+      - name: Test production Auth canary policy guard
+        run: pnpm run test:production-auth-canary-policy
       - name: Test canonical database manifest gates
         run: pnpm run test:database-manifest
       - name: Start local Supabase

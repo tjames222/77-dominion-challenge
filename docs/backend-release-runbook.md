@@ -101,8 +101,7 @@ The prelaunch environment model deliberately uses no paid staging project:
 
 | Name | Purpose | Rotation owner |
 | --- | --- | --- |
-| `SUPABASE_ACCESS_TOKEN` | Authorizes the Supabase CLI release and the read-only Auth gate; a fine-grained token needs `auth_config_read` | Supabase organization administrator |
-| `SUPABASE_DB_PASSWORD` | Links and migrates the production database | Supabase project administrator |
+| `SUPABASE_ACCESS_TOKEN` | Authorizes the pinned CLI's temporary login role, read-only Auth/history gates, and separately approved closed-canary Auth policy workflow; a fine-grained token needs `auth_config_read`, `auth_config_write`, `project_admin_write`, `database_read`, and `database_write` | Supabase organization administrator |
 | `STRIPE_SECRET_KEY` | Calls Stripe from Edge Functions; required only when reviewed code sets `BILLING_ENABLED=true` | Stripe administrator |
 | `STRIPE_WEBHOOK_SECRET` | Verifies Stripe webhook signatures; required only when reviewed code sets `BILLING_ENABLED=true` | Stripe administrator |
 | `STRIPE_MEMBERSHIP_PRICE_ID` | Selects the approved recurring membership price; required only when reviewed code sets `BILLING_ENABLED=true` | Billing owner |
@@ -183,6 +182,40 @@ For local function serving only, copy `supabase/.env.example` to
 pnpm exec supabase functions serve --env-file supabase/.env.local
 ```
 
+### Cloudflare Pages project policy
+
+Before the first protected release, dispatch **Configure Cloudflare Pages
+policy** from `main` and approve its `production` environment. The environment's
+`CLOUDFLARE_API_TOKEN` needs Cloudflare Pages Write permission only. The job
+uses `CLOUDFLARE_ACCOUNT_ID` to update only the
+`77-dominion-challenge` Pages project, then performs a separate GET and fails
+unless Cloudflare reports all of the following:
+
+- `main` is the production branch and automatic production deployments are
+  disabled;
+- both production and preview builds pin Node 22 and pnpm 10.17.1;
+- the production environment contains the exact protected
+  `SUPABASE_PROJECT_REF`, matching `VITE_SUPABASE_URL`, and public
+  `VITE_SUPABASE_PUBLISHABLE_KEY`; mocks and hybrid Auth are disabled,
+  production connections are enabled, and provider integrations, billing, and
+  public signup are disabled;
+- the production environment contains no E2E fixture flag, Stripe value,
+  server-side Supabase credential, worker secret, or other unapproved variable;
+- automatic previews use the custom branch policy with exactly `develop`
+  included and no excluded preview branches;
+- the preview environment explicitly enables browser-local mocks, explicitly
+  disables hybrid Auth, production connections, billing, public signup, and
+  provider integrations, and contains none of the live-connection variables
+  rejected by `scripts/validate-frontend-env.mjs`.
+
+The same helper is available to protected release jobs as
+`pnpm run configure:cloudflare-pages-policy`. It sends credentials only in the
+Authorization header, rejects redirects, never prints API response bodies, and
+does not parse an HTTP error body. Every protected release now invokes it after
+local validation and requires its separate PATCH/GET verification before a
+Supabase release mutation or frontend deployment. Rerun the standalone policy
+workflow after any manual Cloudflare project configuration change.
+
 ## Release gates
 
 Before approving the GitHub `production` environment deployment, confirm:
@@ -202,16 +235,29 @@ Before approving the GitHub `production` environment deployment, confirm:
    workflow is the only process allowed to publish `main` after backend checks.
 8. Merging `main` does not deploy production. An authorized operator manually
    dispatches **Release production** from the protected `main` branch and selects
-   the reviewed release scope. This keeps the first two-stage cutover and every
-   later production mutation explicit.
+   the reviewed release scope. The one-time `compatibility-cutover` scope deploys
+   only the four disabled billing guards before its frontend; `frontend-only`
+   remains a post-cutover, backend-preserving rollback path and cannot run while
+   migrations 14–53 are pending. This keeps the first two-stage
+   cutover and every later production mutation explicit. The initial `full`
+   scope fails before migrations unless the same commit has exactly one
+   non-expired post-deployment compatibility-cutover attestation from a
+   successful protected run of this workflow. The seven-day artifact contains
+   only a versioned envelope with the release SHA and a keyed HMAC-SHA-256 proof;
+   it contains no Auth UUID, entitlement row, raw row fingerprint, credential,
+   or reversible canary data.
 9. Supabase Auth is already closed: the official Management API Auth config must
    report `disable_signup=true` and
    `external_anonymous_users_enabled=false`. The workflow checks these exact
-   values before either a full or frontend-only release and before `supabase
-   link`, migrations, Function secrets, or Function deployment. It never prints
+   values before any release scope and before `supabase link`, migrations,
+   Function secrets, or Function deployment. It never prints
    the Auth response. See
    [`production-canary-operator-runbook.md`](production-canary-operator-runbook.md)
    for the UUID-bound owner canary procedure.
+   If either setting is still open, dispatch **Close production Supabase Auth
+   canary** from `main` and approve its protected `production` environment job
+   before dispatching the release. That separate workflow changes only those
+   two reviewed fields, rejects redirects, and GET-verifies the resulting state.
 
 ### One-time migration-history reconciliation
 
@@ -608,8 +654,8 @@ separately reviewed change and the exact restored-snapshot rehearsal passes:
    approve new plans that continue from the last completion digest. Do not
    extend or override the freshness limit.
 8. Return to the full release tree. The reviewed raw and CLI evidence must show
-   matching local and remote versions 1–13, and the full linked dry run must list
-   exactly 40 pending
+   matching local and remote versions 1–13. The workflow's pinned migration-list
+   parser fails closed unless the first full release has exactly 40 pending
    migrations, versions 14–53. No production release may run until every pending
    file passes the transaction-control gate and the exact release tree passes the
    pinned-runner failure proof. Require the complete normalized migration-13
@@ -618,6 +664,10 @@ separately reviewed change and the exact restored-snapshot rehearsal passes:
    checkpoint and production; both must now return all three buckets and all
    eleven policies with identical definitions. This satisfies the workflow's
    historical gate; it does not authorize the production release by itself.
+   If an initial attempt records only part of versions 14–53, the workflow blocks
+   a blind resume and requires incident review plus a reviewed forward path. Once
+   version 53 and its complete prefix are present, later releases are allowed only
+   when remote history remains an exact prefix of the release tree.
 
 Record the exact applied versions, file hashes, backup and restore
 evidence, comparison output, Storage manifest, project reference, operator,
@@ -631,13 +681,61 @@ a reviewed forward fix; do not rewrite it or mark it reverted.
 
 FOU-752/753 must not use the normal backend-first order for their first production release. The hardening migration rejects the previous raw/upsert avatar client, and the final cleanup removes journal-photo infrastructure used by the previous client. Use the same reviewed commit for both stages:
 
-1. Confirm the migration-history reconciliation above is genuinely complete. The 2026-07-22 inventory in [`release-evidence/fou-759-production-inventory-2026-07-22.md`](./release-evidence/fou-759-production-inventory-2026-07-22.md) found missing historical profile infrastructure, so those versions must not be marked applied until a structural diff proves their effects exist or an approved bootstrap applies them.
-2. Rerun the aggregate journal inventory from that evidence record. Journal rows, objects, multipart-upload parents and parts, and nonterminal `journal-progress` retention work must all be zero.
-3. Manually dispatch **Release production** from the exact reviewed release-candidate ref with `release_scope=frontend-only`. This deploys the schema-negotiating, prepared-thumbnail and text-only-journal client while intentionally skipping migrations. The client must treat the missing `profiles.avatar_url` column as the planned compatibility state and must make no profile-photo RPC or Storage request.
-4. Verify normal sign-in, profile text editing, dashboard challenge-date synchronization, and journal create/edit/reload behavior in production. The profile-photo control must remain disabled, and all six journal text fields must work without a journal-photo request. Leave the previous database and empty bucket in place during this verification window.
-5. Rerun the zero-data inventory. Stop on any nonzero result; export or explicitly disposition user data and use the Storage API for object deletion.
-6. Dispatch the exact same reviewed ref with `release_scope=full`. The backend stage now applies the avatar lifecycle registry and policies first and the fail-closed journal cleanup second, then rebuilds the frontend.
-7. Reload the profile after the full release. Verify the photo control is
+1. Confirm the migration-history reconciliation above is genuinely complete
+   through migration 13 and no later migration is recorded. The 2026-07-22
+   inventory in [`release-evidence/fou-759-production-inventory-2026-07-22.md`](./release-evidence/fou-759-production-inventory-2026-07-22.md)
+   found missing historical profile infrastructure, so those versions must not
+   be marked applied until a structural diff proves their effects exist or an
+   approved bootstrap applies them.
+2. Rerun the aggregate journal inventory from that evidence record. Journal
+   rows, objects, multipart-upload parents and parts, and nonterminal
+   `journal-progress` retention work must all be zero. Also require globally
+   empty `billing_customers`, `subscriptions`, and legacy `purchases` (when the
+   table exists), and prove the target Auth UUID has no existing
+   `membership_active` entitlement.
+3. Following [`production-canary-operator-runbook.md`](production-canary-operator-runbook.md),
+   authorize exactly one existing non-anonymous Auth UUID with exactly one new,
+   release-SHA-bound `production_canary` entitlement for no more than two hours.
+   The reconciled baseline schema present by migration 13 supports
+   `source_type`, `source_id`, bounded `ends_at`, and release metadata. This
+   narrowly timed grant is required to exercise the compatibility client; it is
+   not permission to skip the compatibility deployment or go directly to full.
+4. Manually dispatch **Release production** from the exact reviewed
+   release-candidate ref with `release_scope=compatibility-cutover`. Before
+   synchronizing a Function secret or deploying anything, this scope uses the
+   strict pinned CLI parser plus a dedicated read-only Management API query to
+   prove remote history is exactly migrations 1–13. A separate aggregate-only
+   read-only query proves there is exactly one membership row, it is the active,
+   non-anonymous, UUID-backed, release-SHA-bound `production_canary` grant with
+   a window no longer than two hours, all billing tables are empty, and the
+   reconciled baseline removed `public.purchases`. No UUID or row is printed.
+   Only then this scope synchronizes `BILLING_ENABLED=false`, deploys
+   the no-JWT Stripe webhook guard and requires its exact `503`, deploys the three
+   JWT-protected billing guards and requires their unauthenticated gateway `401`s,
+   and only then deploys the schema-negotiating, prepared-thumbnail and
+   text-only-journal client while intentionally skipping migrations. The client
+   must treat the missing `profiles.avatar_url` column as the planned
+   compatibility state and must make no profile-photo RPC or Storage request.
+5. Using that same exact grant, verify normal sign-in, profile text editing,
+   dashboard challenge-date synchronization, and journal create/edit/reload
+   behavior in production. The profile-photo control must remain disabled, and
+   all six journal text fields must work without a journal-photo request. Leave
+   the previous database and empty bucket in place during this verification
+   window. Require exact authenticated `503` responses from all three disabled
+   billing functions and the workflow's exact webhook `503` evidence.
+6. Rerun the zero-data and zero-billing inventories and verify that the exact
+   UUID/grant/SHA-bound entitlement is still active and unmodified. Stop on any
+   nonzero result; export or explicitly disposition user data and use the
+   Storage API for object deletion. If the grant has expired or cannot remain
+   valid through the full verification, revoke it and restart the reviewed
+   sequence; never extend it or issue a replacement as a shortcut.
+7. Dispatch the exact same reviewed ref with `release_scope=full`. There is no
+   direct-full exception: the workflow verifies the same-commit compatibility
+   deployment attestation before migration 14 can run. The backend stage now
+   applies the avatar lifecycle registry and policies first and the fail-closed
+   journal cleanup second, then rebuilds the frontend. Reuse the existing exact
+   canary grant; do not extend, replace, or broaden it between release scopes.
+8. Reload the profile after the full release. Verify the photo control is
    enabled and the authenticated upload Function independently turns a selected
    JPEG/WebP into a stripped square WebP thumbnail no larger than 256×256 and
    150 KiB. Confirm replacement removes the predecessor and profile text edits
@@ -645,6 +743,14 @@ FOU-752/753 must not use the normal backend-first order for their first producti
    below. A cached or custom browser client can no longer write Storage,
    reactivate a predecessor, or delete the canonical object; rejection is the
    intended fail-safe.
+9. Before final acceptance, use an invited second non-privileged account with no
+   entitlement to prove membership-only data and actions remain denied. Public
+   signup stays closed; if that second account does not yet exist, the release
+   remains closed and final acceptance is blocked until it is invited and the
+   denial check passes.
+10. Re-run the exact grant verification, then revoke that same UUID/grant-bound
+    row and prove a fresh target-account session is denied as specified in the
+    canary runbook. Preserve the revoked audit row and the UTC evidence.
 
 ```sql
 select id, public, file_size_limit, allowed_mime_types
@@ -742,17 +848,69 @@ next stage when one fails:
 
 1. **Validate:** run the full reusable local CI workflow. No production access is
    available in this stage.
-2. **Verify the closed Auth policy:** read the hosted Auth configuration through
+2. **Enforce the Cloudflare project policy:** patch only the fixed Pages project,
+   first require the exact reviewed Supabase project reference
+   `mimolwojppbtsbvtqwpo`, exact matching project URL, and a publishable key that
+   the fixed project's `/rest/v1/` gateway accepts. The proof uses only the
+   public `apikey` header, rejects redirects and non-200 responses, and never
+   reads or logs the response body or key. Then separately GET-verify exact
+   Node/pnpm pins, live production Supabase
+   wiring with every launch gate safe-off, automatic production deployment off,
+   and mock-only `develop` previews with no live connection variables. Every
+   release scope waits for this protected job before a Supabase mutation or
+   frontend deployment.
+3. **Verify the closed Auth policy:** read the hosted Auth configuration through
    Supabase's official Management API and require `disable_signup=true` plus
-   `external_anonymous_users_enabled=false`. This read-only step gates both
+   `external_anonymous_users_enabled=false`. This read-only step gates all
    release scopes and completes before the workflow can link or mutate the
    backend.
-3. **Migrate:** link the intended project, preview with
+4. **Guard the compatibility cutover:** only for
+   `release_scope=compatibility-cutover`, first prove the strict CLI and raw SQL
+   histories are exactly reconciled through migration 13 and an aggregate-only
+   read-only query proves the one bounded same-release canary grant plus zero
+   billing state. Then synchronize the disabled billing
+   configuration, deploy and verify all four fail-closed billing endpoints, and
+   then allow the compatibility frontend to build. This scope links only to read
+   and cross-check history; it does not run a migration or write application
+   schema/data. Generic `frontend-only` does not redeploy a Function and remains
+   reserved for a backend-compatible rollback after the full cutover. Its
+   dedicated gate uses the strict CLI and raw SQL inventories and requires
+   post-cutover history with no pending migration; it cannot substitute for the
+   initial compatibility scope. Only after Cloudflare accepts that frontend does
+   the workflow re-query the exact canary and publish a seven-day, exact-commit
+   compatibility attestation. Its JSON envelope contains only the release SHA,
+   format version, and keyed HMAC-SHA-256 continuity proof. The protected
+   Supabase access token is used as the HMAC key but is never written to the
+   artifact or logs; the raw row fingerprint, UUID, and entitlement row also
+   never leave the verifier process.
+5. **Migrate:** for `release_scope=full`, link the intended project without a
+   stored database password, require the strict pinned-CLI history, and compare
+   it with an authoritative read-only SQL inventory of
+   `supabase_migrations.schema_migrations`. The raw inventory rejects any
+   nonnumeric or extra record the CLI table could omit. Then require the exact
+   first-cutover pending suffix and exactly one non-expired same-commit
+   compatibility attestation. The workflow rejects an ambiguous, stale,
+   oversized, or expired artifact and any source run that is not a completed,
+   successful `workflow_dispatch` of this exact workflow on `main` at the exact
+   release SHA. It downloads the selected immutable artifact ID, accepts only
+   one ordinary JSON file, and recomputes the HMAC against the current exact
+   canary row before it may preview with
    `supabase db push --linked --dry-run`, and apply only migrations that follow the
    reconciled remote history with pinned `supabase migration up --linked`. The
    dry-run is a plan only; `db push` must never perform the actual mutation.
    Never use `--include-all` or run `supabase/schema.sql` manually in production.
-4. **Synchronize secrets and deploy functions:** update Function Secrets, deploy
+   After `migration up`, the strict CLI/raw comparison runs again and requires
+   zero pending local migrations. It then recomputes the same HMAC from the same
+   downloaded envelope and the post-migration row before any Function secret is
+   synchronized or any Function is deployed. Supabase CLI 2.109.0 obtains its short-lived login role from the Management
+   API using `SUPABASE_ACCESS_TOKEN`; no database password is placed in workflow
+   arguments, environment variables, or logs. The same raw inventory is checked
+   again after migration.
+6. **Synchronize secrets and deploy functions:** before linking or applying a
+   migration, validate every deterministic worker/provider/retention secret
+   pairing, minimum length, and distinctness rule without printing a secret.
+   Only after the exact post-migration zero-pending gate succeeds, update
+   Function Secrets and deploy
    the three JWT-protected billing functions and the JWT-protected
    `retired-community-export`, then deploy `stripe-webhook` with JWT verification
    disabled because Stripe authenticates it by signature and the public
@@ -768,7 +926,7 @@ next stage when one fails:
    `process-retired-community-deletions` worker.
    The current closed canary synchronizes `BILLING_ENABLED=false` without Stripe
    values but still deploys all four guarded billing endpoints.
-5. **Verify backend and release feature gates:** list remote migrations and
+7. **Verify backend and release feature gates:** list remote migrations and
    functions, then require exact unauthenticated gateway `401` responses from
    `cancel-membership`, `create-checkout-session`,
    `create-customer-portal-session`, while the no-JWT `stripe-webhook` must
@@ -778,7 +936,7 @@ next stage when one fails:
    printed. The owner canary uses its real session to require `503` from the
    other three before sign-out. Keep mock mode off and leave billing and public
    signup disabled.
-6. **Build and deploy frontend:** build with production public configuration,
+8. **Build and deploy frontend:** build with production public configuration,
    upload an immutable workflow artifact, and deploy it to Cloudflare Pages with
    the least-privilege token only after every backend stage succeeds. GitHub
    Pages is not a production target.
@@ -851,11 +1009,14 @@ frontend release; do not redeploy or rerun migrations just to change the flag.
   redeploy the last known-good function source from an immutable release commit.
   Rotate or restore a secret only when its value is known to be the cause; never
   blank secrets as a rollback technique.
-- **Frontend regression:** disable the affected feature flag when available, then
-  dispatch the release workflow from the last known-good frontend commit with
-  `release_scope` set to `frontend-only`. That path validates and rebuilds the
-  frontend without rerunning migrations or redeploying functions. Its backend
-  contract must remain compatible with the already-applied schema.
+- **Frontend regression:** disable the affected feature flag when available,
+  restore the known-good frontend in a reviewed rollback commit on protected
+  `main` while preserving the complete applied migration tree, then dispatch
+  with `release_scope=frontend-only`. That path fails unless strict CLI and raw
+  histories prove the full cutover is applied with no pending migration, then
+  validates and rebuilds the frontend without rerunning migrations or
+  redeploying functions. Its backend contract must remain compatible with the
+  already-applied schema.
 - **Data integrity or credential incident:** disable the affected feature/provider,
   preserve logs, rotate exposed credentials, and follow the Supabase backup or
   point-in-time recovery procedure. Do not improvise SQL deletes in production.
