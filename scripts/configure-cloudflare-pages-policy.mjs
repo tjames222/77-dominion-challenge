@@ -321,7 +321,7 @@ async function readCloudflareResult(response, operation) {
   if (!response?.ok) {
     await cancelResponseBody(response);
     const status = Number.isInteger(response?.status) ? ` (HTTP ${response.status})` : '';
-    throw new Error(`Cloudflare Pages project ${operation} failed${status}.`);
+    throw new Error(`Cloudflare ${operation} failed${status}.`);
   }
 
   const contentType = response.headers?.get?.('content-type');
@@ -350,7 +350,14 @@ async function readCloudflareResult(response, operation) {
   return envelope.result;
 }
 
-async function cloudflareRequest({ fetchImpl, url, token, method, body }) {
+async function cloudflareRequest({
+  fetchImpl,
+  url,
+  token,
+  method,
+  operation,
+  body,
+}) {
   let response;
   try {
     response = await fetchImpl(url, {
@@ -366,9 +373,16 @@ async function cloudflareRequest({ fetchImpl, url, token, method, body }) {
       signal: AbortSignal.timeout(15_000),
     });
   } catch {
-    throw new Error(`Unable to reach Cloudflare for the Pages project ${method === 'GET' ? 'verification' : 'update'}.`);
+    throw new Error(`Unable to reach Cloudflare for the ${operation}.`);
   }
-  return readCloudflareResult(response, method === 'GET' ? 'verification' : 'update');
+  return readCloudflareResult(response, operation);
+}
+
+function cloudflareTokenVerificationUrl({ accountId, apiToken }) {
+  if (apiToken.startsWith('cfat_')) {
+    return `${CLOUDFLARE_PAGES_API_ORIGIN}/client/v4/accounts/${accountId}/tokens/verify`;
+  }
+  return `${CLOUDFLARE_PAGES_API_ORIGIN}/client/v4/user/tokens/verify`;
 }
 
 export async function configureCloudflarePagesPolicy({
@@ -403,23 +417,79 @@ export async function configureCloudflarePagesPolicy({
 
   const url = `${CLOUDFLARE_PAGES_API_ORIGIN}/client/v4/accounts/${normalizedAccountId}`
     + `/pages/projects/${CLOUDFLARE_PAGES_PROJECT}`;
+  const tokenVerificationUrl = cloudflareTokenVerificationUrl({
+    accountId: normalizedAccountId,
+    apiToken: normalizedToken,
+  });
 
   await verifySupabasePublishableKey({
     fetchImpl,
     productionEnvironment,
   });
-  await cloudflareRequest({
+
+  const token = await cloudflareRequest({
     fetchImpl,
-    url,
+    url: tokenVerificationUrl,
     token: normalizedToken,
-    method: 'PATCH',
-    body: cloudflarePagesPolicyPatch(productionEnvironment),
+    method: 'GET',
+    operation: 'API token verification',
   });
+  if (token.status !== 'active') {
+    throw new Error('Cloudflare API token is not active.');
+  }
+
+  let existingProject;
+  try {
+    existingProject = await cloudflareRequest({
+      fetchImpl,
+      url,
+      token: normalizedToken,
+      method: 'GET',
+      operation: 'Pages project access preflight',
+    });
+  } catch (error) {
+    if (
+      error instanceof Error
+      && error.message === 'Cloudflare Pages project access preflight failed (HTTP 403).'
+    ) {
+      throw new Error(
+        'Cloudflare API token is active but cannot read the reviewed Pages project from the configured account. '
+        + 'Confirm the token is scoped to the same account and has Account > Cloudflare Pages > Read or Edit.',
+      );
+    }
+    throw error;
+  }
+  if (existingProject.name !== CLOUDFLARE_PAGES_PROJECT) {
+    throw new Error('Cloudflare returned the wrong Pages project during the access preflight.');
+  }
+
+  try {
+    await cloudflareRequest({
+      fetchImpl,
+      url,
+      token: normalizedToken,
+      method: 'PATCH',
+      operation: 'Pages project update',
+      body: cloudflarePagesPolicyPatch(productionEnvironment),
+    });
+  } catch (error) {
+    if (
+      error instanceof Error
+      && error.message === 'Cloudflare Pages project update failed (HTTP 403).'
+    ) {
+      throw new Error(
+        'Cloudflare API token can read the reviewed Pages project but cannot update it. '
+        + 'Add Account > Cloudflare Pages > Edit (Pages Write) for the exact account to the token.',
+      );
+    }
+    throw error;
+  }
   const project = await cloudflareRequest({
     fetchImpl,
     url,
     token: normalizedToken,
     method: 'GET',
+    operation: 'Pages project verification',
   });
 
   const errors = cloudflarePagesPolicyErrors(project, productionEnvironment);
