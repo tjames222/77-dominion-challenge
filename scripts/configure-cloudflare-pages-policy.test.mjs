@@ -37,6 +37,29 @@ test('the reviewed production target is the new isolated Pages project', () => {
   assert.equal(CLOUDFLARE_PAGES_PROJECT, '77-dominion-live');
 });
 
+test('historical and typo project names fail before any network access', async () => {
+  for (const projectName of [
+    '77-dominion-challenge',
+    '77-dominion-lvie',
+  ]) {
+    let called = false;
+    await assert.rejects(
+      configureCloudflarePagesPolicy({
+        accountId,
+        apiToken,
+        projectName,
+        allowProjectCreate: 'true',
+        ...productionEnvironment,
+        fetchImpl: async () => {
+          called = true;
+        },
+      }),
+      /CLOUDFLARE_PAGES_PROJECT must be exactly 77-dominion-live/u,
+    );
+    assert.equal(called, false);
+  }
+});
+
 function appliedEnvironment(environmentPatch) {
   return Object.fromEntries(
     Object.entries(environmentPatch).filter(([, value]) => value !== null),
@@ -850,6 +873,7 @@ test('every protected release gates hosted work on the exact Cloudflare policy',
   );
 
   const policyJob = deploy.slice(policyStart, canaryStart);
+  const exactProjectGate = 'if [[ "${CLOUDFLARE_PAGES_PROJECT:-}" != "77-dominion-live" ]]';
   assert.match(policyJob, /needs: validation/u);
   assert.match(policyJob, /environment: production/u);
   assert.match(policyJob, /CLOUDFLARE_ACCOUNT_ID: \$\{\{ secrets\.CLOUDFLARE_ACCOUNT_ID \}\}/u);
@@ -858,6 +882,10 @@ test('every protected release gates hosted work on the exact Cloudflare policy',
   assert.match(policyJob, /CLOUDFLARE_ALLOW_PROJECT_CREATE: "false"/u);
   assert.match(standalone, /create_missing_project:[\s\S]*?type: boolean/u);
   assert.match(standalone, /CLOUDFLARE_PAGES_PROJECT: \$\{\{ vars\.CLOUDFLARE_PAGES_PROJECT \}\}/u);
+  assert.notEqual(policyJob.indexOf(exactProjectGate), -1);
+  assert.notEqual(standalone.indexOf(exactProjectGate), -1);
+  assert.ok(policyJob.indexOf(exactProjectGate) < policyJob.indexOf('- name: Checkout'));
+  assert.ok(standalone.indexOf(exactProjectGate) < standalone.indexOf('- name: Setup Node'));
   assert.match(
     standalone,
     /CLOUDFLARE_ALLOW_PROJECT_CREATE: \$\{\{ inputs\.create_missing_project \}\}/u,

@@ -458,6 +458,11 @@ export async function configureCloudflarePagesPolicy({
   const normalizedAccountId = String(accountId || '').trim();
   const normalizedToken = String(apiToken || '').trim();
   const normalizedPagesProject = normalizedProjectName(projectName);
+  if (normalizedPagesProject !== CLOUDFLARE_PAGES_PROJECT) {
+    throw new Error(
+      `CLOUDFLARE_PAGES_PROJECT must be exactly ${CLOUDFLARE_PAGES_PROJECT}.`,
+    );
+  }
   const mayCreateProject = normalizedCreatePermission(allowProjectCreate);
   const productionEnvironment = normalizedProductionEnvironment({
     projectRef,
