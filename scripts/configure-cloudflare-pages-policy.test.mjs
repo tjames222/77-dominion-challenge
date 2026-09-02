@@ -4,6 +4,7 @@ import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 import {
   CLOUDFLARE_BUILD_PINS,
+  CLOUDFLARE_GITHUB_SOURCE_IDENTITY,
   CLOUDFLARE_PAGES_API_ORIGIN,
   CLOUDFLARE_PAGES_PROJECT,
   CLOUDFLARE_PREVIEW_MOCK_FLAGS,
@@ -67,6 +68,7 @@ function validProject({
       ? {
         type: 'github',
         config: {
+          ...CLOUDFLARE_GITHUB_SOURCE_IDENTITY,
           deployments_enabled: true,
           production_branch: 'main',
           production_deployments_enabled: false,
@@ -93,6 +95,7 @@ test('policy patch disables only automatic production and restricts previews to 
   assert.deepEqual(patch.source, {
     type: 'github',
     config: {
+      ...CLOUDFLARE_GITHUB_SOURCE_IDENTITY,
       deployments_enabled: true,
       production_branch: 'main',
       production_deployments_enabled: false,
@@ -407,6 +410,60 @@ test('final verification requires the exact preflight source contract', async ()
             return response(validProject({ sourceType: preflightSource }));
           }
           return response(validProject({ sourceType: finalSource }));
+        },
+      }),
+      expectedMessage,
+    );
+    assert.equal(calls.length, 5);
+  }
+});
+
+test('a Git-linked project must use the reviewed repository before mutation', async () => {
+  for (const [field, value] of [
+    ['owner', 'another-owner'],
+    ['repo_name', 'another-repository'],
+  ]) {
+    const calls = [];
+    const project = validProject();
+    project.source.config[field] = value;
+    await assert.rejects(
+      configureCloudflarePagesPolicy({
+        accountId,
+        apiToken,
+        ...productionEnvironment,
+        fetchImpl: async (url, options) => {
+          calls.push({ url, options });
+          if (url.endsWith('/auth/v1/settings')) return response({});
+          if (url.endsWith('/user/tokens/verify')) return response(activeToken);
+          return response(project);
+        },
+      }),
+      /linked to a GitHub repository other than the reviewed source/u,
+    );
+    assert.equal(calls.length, 3);
+    assert.equal(calls.some(({ options }) => options.method === 'PATCH'), false);
+  }
+});
+
+test('final verification rejects a GitHub source identity swap', async () => {
+  for (const [field, value, expectedMessage] of [
+    ['owner', 'another-owner', /source owner must match/u],
+    ['repo_name', 'another-repository', /source repository must match/u],
+  ]) {
+    const calls = [];
+    await assert.rejects(
+      configureCloudflarePagesPolicy({
+        accountId,
+        apiToken,
+        ...productionEnvironment,
+        fetchImpl: async (url, options) => {
+          calls.push({ url, options });
+          if (url.endsWith('/auth/v1/settings')) return response({});
+          if (url.endsWith('/user/tokens/verify')) return response(activeToken);
+          if (options.method === 'PATCH') return response({});
+          const project = validProject();
+          if (calls.length === 5) project.source.config[field] = value;
+          return response(project);
         },
       }),
       expectedMessage,
