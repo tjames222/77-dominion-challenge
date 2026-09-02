@@ -66,6 +66,8 @@ jobs:
         run: pnpm install --frozen-lockfile
       - name: Test profile-photo cleanup Cron rehearsal harness
         run: pnpm run test:profile-photo-cleanup-cron
+      - name: Test production profile-photo cleanup Cron policy
+        run: pnpm run test:production-profile-photo-cleanup-cron
       - name: Validate migration execution compatibility
         run: pnpm run check:migrations
       - name: Test the migration compatibility gate

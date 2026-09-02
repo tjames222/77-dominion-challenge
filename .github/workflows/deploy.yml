@@ -649,6 +649,8 @@ jobs:
         run: supabase functions deploy process-retired-community-deletions --project-ref "$SUPABASE_PROJECT_REF" --no-verify-jwt
       - name: Deploy profile-photo cleanup worker
         run: supabase functions deploy process-profile-photo-cleanup --project-ref "$SUPABASE_PROJECT_REF" --no-verify-jwt
+      - name: Configure and verify profile-photo cleanup Cron
+        run: node scripts/configure-production-profile-photo-cleanup-cron.mjs
       - name: Deploy provider connection functions
         if: steps.function-secrets.outputs.provider_connections_enabled == 'true'
         run: |

@@ -26,6 +26,7 @@
     "test:reconciliation-stage": "node --test scripts/prepare-reconciliation-stage.test.mjs scripts/verify-reconciliation-history.test.mjs scripts/rehearse-history-reconciliation.test.mjs",
     "test:migration-atomicity": "bash scripts/test-migration-atomicity.sh",
     "test:profile-photo-cleanup-cron": "node --test scripts/profile-photo-cleanup-cron-rehearsal.test.mjs",
+    "test:production-profile-photo-cleanup-cron": "node --test scripts/configure-production-profile-photo-cleanup-cron.test.mjs",
     "rehearse:profile-photo-cleanup-cron": "bash scripts/rehearse-profile-photo-cleanup-cron.sh",
     "test:production-backup-restore": "node --test scripts/production-backup-restore.test.mjs",
     "test:production-reconciliation": "node --test scripts/verify-production-reconciliation-preflight.test.mjs scripts/run-production-reconciliation-step.test.mjs",
@@ -51,7 +52,7 @@
     "check:functions": "cd supabase && deno task fmt:check && deno task check",
     "test:functions": "cd supabase && deno task test",
     "check:database": "pnpm run check:migrations && pnpm run test:migration-compatibility && pnpm run test:reconciliation-stage && pnpm run test:production-backup-restore && pnpm run test:production-reconciliation && pnpm run test:database-manifest && pnpm run supabase:reset && pnpm run test:migration-atomicity && pnpm run test:database && pnpm run test:rpc && pnpm run check:schema",
-    "check:backend": "pnpm run test:profile-photo-cleanup-cron && pnpm run check:database && pnpm run check:functions && pnpm run test:functions"
+    "check:backend": "pnpm run test:profile-photo-cleanup-cron && pnpm run test:production-profile-photo-cleanup-cron && pnpm run check:database && pnpm run check:functions && pnpm run test:functions"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.110.0",
