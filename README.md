@@ -70,6 +70,10 @@ Slack and Discord connection controls fail closed unless `VITE_ENABLE_GROUP_INTE
    redirect allowlist:
    - `https://77-dominion-challenge.pages.dev/reset-password.html`
 
+If account recovery changes `CLOUDFLARE_PAGES_PROJECT`, use the exact new Pages
+subdomain in steps 6-7 and update the protected production origin variables in
+the same reviewed cutover. Do not retain the old origin as an allowed callback.
+
 The local Supabase stack may keep localhost callbacks in its local configuration.
 Do not add `develop`, feature-preview, or localhost callbacks to the hosted
 production Auth tenant.
@@ -107,9 +111,18 @@ Workout difficulty describes the work performed and never changes points. Histor
 
 ## Deployment workflow
 
-- `main` is production and must use real Supabase Auth, Postgres, and Stripe billing.
-- `https://develop.77-dominion-challenge.pages.dev` is the canonical prelaunch dev URL. The bare `https://77-dominion-challenge.pages.dev` host follows `main` and must not be treated as the current dev deployment.
+- `main` is production and must use real Supabase Auth and Postgres. Stripe code
+  remains server- and client-disabled until the separate live billing setup is
+  reviewed; Stripe credentials are not required for the closed production canary.
+- The canonical URLs are `https://develop.<CLOUDFLARE_PAGES_PROJECT>.pages.dev`
+  for prelaunch development and `https://<CLOUDFLARE_PAGES_PROJECT>.pages.dev`
+  for production. For the original project those resolve to
+  `https://develop.77-dominion-challenge.pages.dev` and
+  `https://77-dominion-challenge.pages.dev`.
 - `develop` must set only `VITE_ENABLE_MOCKS=true` for backend selection. Login, registration, membership, billing, dashboard, community, journal, and provider connections remain browser-local and never call Supabase or Stripe.
+- A Direct Upload project builds `develop` in GitHub without live credentials,
+  then uploads the immutable mock artifact through the restricted
+  `cloudflare-preview` environment.
 - Production must resolve `VITE_ENABLE_MOCKS` to `false` and `VITE_ENABLE_PRODUCTION_CONNECTIONS` to `true`; `main` builds fail closed unless both conditions hold.
 - Local Vite dev always refuses to initialize Supabase unless mock mode, the local hybrid-Auth override, and valid public configuration are all supplied explicitly. Without that narrow Auth-only opt-in, identity and application data stay browser-local even if stale hosted public values exist in an ignored file.
 - Canonical `develop` builds fail unless mock mode is enabled and both hybrid Auth and production connections are disabled. Canonical `main` builds fail unless mock mode is disabled, production connections are explicitly enabled, and the production Supabase URL/publishable key are present.

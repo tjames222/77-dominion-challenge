@@ -188,7 +188,8 @@ Before the first protected release, dispatch **Configure Cloudflare Pages
 policy** from `main` and approve its `production` environment. The environment's
 `CLOUDFLARE_API_TOKEN` needs Cloudflare Pages Write permission only. The job
 uses `CLOUDFLARE_ACCOUNT_ID` to update only the
-`77-dominion-challenge` Pages project, then performs a separate GET and fails
+project named by the exact `CLOUDFLARE_PAGES_PROJECT` production variable, then
+performs a separate GET and fails
 unless Cloudflare reports all of the following:
 
 - `main` is the production branch and automatic production deployments are
@@ -215,6 +216,15 @@ does not parse an HTTP error body. Every protected release now invokes it after
 local validation and requires its separate PATCH/GET verification before a
 Supabase release mutation or frontend deployment. Rerun the standalone policy
 workflow after any manual Cloudflare project configuration change.
+
+The standalone workflow defaults `create_missing_project` to `false`. A
+reviewed account-recovery operation may set it to `true` once: only an HTTP 404
+for the exact configured name can then create a Direct Upload project with
+production branch `main`. A 403, wrong returned name, redirect, or any other
+response still fails without creation. Every protected production release keeps
+creation hard-disabled. Direct Upload previews are built from protected
+`develop` with browser-local mocks and uploaded through the separately scoped
+`cloudflare-preview` GitHub environment.
 
 ## Release gates
 

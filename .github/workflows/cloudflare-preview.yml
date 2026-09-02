@@ -1,0 +1,107 @@
+name: Deploy develop mock preview
+
+on:
+  push:
+    branches:
+      - develop
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: cloudflare-develop-preview
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build browser-local mock preview
+    if: github.ref == 'refs/heads/develop'
+    permissions:
+      contents: read
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      CF_PAGES: "1"
+      CF_PAGES_BRANCH: develop
+      VITE_ENABLE_MOCKS: "true"
+      VITE_ENABLE_SUPABASE_AUTH_IN_MOCKS: "false"
+      VITE_ENABLE_PRODUCTION_CONNECTIONS: "false"
+      VITE_ENABLE_GROUP_INTEGRATIONS: "false"
+      VITE_ENABLE_BILLING: "false"
+      VITE_ENABLE_PUBLIC_SIGNUP: "false"
+    steps:
+      - name: Checkout exact develop commit
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Setup pnpm
+        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+        with:
+          version: 10.17.1
+          run_install: false
+      - name: Setup Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Build mock-only preview
+        run: pnpm run build
+      - name: Upload immutable preview artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: develop-mock-preview-${{ github.sha }}
+          path: ./dist
+          if-no-files-found: error
+          retention-days: 1
+
+  deploy:
+    name: Deploy develop alias to Cloudflare Pages
+    needs: build
+    if: github.ref == 'refs/heads/develop' && needs.build.result == 'success'
+    permissions:
+      actions: read
+      contents: read
+      deployments: write
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: cloudflare-preview
+    env:
+      CLOUDFLARE_PAGES_PROJECT: ${{ vars.CLOUDFLARE_PAGES_PROJECT }}
+    steps:
+      - name: Require the reviewed project name
+        shell: bash
+        run: |
+          if [[ ! "${CLOUDFLARE_PAGES_PROJECT:-}" =~ ^[a-z0-9]([a-z0-9-]{0,56}[a-z0-9])?$ ]]; then
+            echo "::error::CLOUDFLARE_PAGES_PROJECT is missing or invalid."
+            exit 1
+          fi
+      - name: Download immutable preview artifact
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: develop-mock-preview-${{ github.sha }}
+          path: ./dist
+      - name: Deploy mock preview to the develop alias
+        id: deployment
+        uses: cloudflare/wrangler-action@9acf94ace14e7dc412b076f2c5c20b8ce93c79cd # v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: >-
+            pages deploy dist
+            --project-name=${{ env.CLOUDFLARE_PAGES_PROJECT }}
+            --branch=develop
+            --commit-hash=${{ github.sha }}
+          gitHubToken: ${{ secrets.GITHUB_TOKEN }}
+      - name: Record preview deployment
+        env:
+          DEPLOYMENT_URL: ${{ steps.deployment.outputs.deployment-url }}
+        shell: bash
+        run: |
+          if [[ -z "${DEPLOYMENT_URL:-}" ]]; then
+            echo "::error::Cloudflare did not return a preview deployment URL."
+            exit 1
+          fi
+          echo "Cloudflare preview deployment: ${DEPLOYMENT_URL}" >> "$GITHUB_STEP_SUMMARY"
+          echo "Develop commit: ${{ github.sha }}" >> "$GITHUB_STEP_SUMMARY"
