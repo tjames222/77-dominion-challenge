@@ -130,7 +130,7 @@ test('configuration PATCHes the fixed project and then GET-verifies it', async (
   const calls = [];
   const fetchImpl = async (url, options) => {
     calls.push({ url, options });
-    if (url === `${productionEnvironment.supabaseUrl}/rest/v1/`) {
+    if (url === `${productionEnvironment.supabaseUrl}/auth/v1/settings`) {
       return response({});
     }
     return response(options.method === 'PATCH' ? {} : validProject());
@@ -146,7 +146,10 @@ test('configuration PATCHes the fixed project and then GET-verifies it', async (
   const expectedUrl = `${CLOUDFLARE_PAGES_API_ORIGIN}/client/v4/accounts/${accountId}`
     + `/pages/projects/${CLOUDFLARE_PAGES_PROJECT}`;
   assert.equal(calls.length, 3);
-  assert.equal(calls[0].url, `${productionEnvironment.supabaseUrl}/rest/v1/`);
+  assert.equal(
+    calls[0].url,
+    `${productionEnvironment.supabaseUrl}/auth/v1/settings`,
+  );
   assert.equal(calls[0].options.method, 'GET');
   assert.equal(calls[0].options.redirect, 'error');
   assert.equal(calls[0].options.headers.apikey, productionEnvironment.publishableKey);
@@ -199,7 +202,7 @@ test('HTTP failures discard the response body and never expose it or the token',
   const secretResponse = 'secret response body that must never be logged';
   let bodyCancelled = false;
   let bodyRead = false;
-  const fetchImpl = async (url) => url.endsWith('/rest/v1/') ? response({}) : response({}, {
+  const fetchImpl = async (url) => url.endsWith('/auth/v1/settings') ? response({}) : response({}, {
     ok: false,
     status: 403,
     body: {
@@ -233,7 +236,7 @@ test('HTTP failures discard the response body and never expose it or the token',
 
 test('redirects fail closed before their response body is read', async () => {
   let bodyRead = false;
-  const fetchImpl = async (url) => url.endsWith('/rest/v1/') ? response({}) : response({}, {
+  const fetchImpl = async (url) => url.endsWith('/auth/v1/settings') ? response({}) : response({}, {
     redirected: true,
     async json() {
       bodyRead = true;
@@ -255,7 +258,7 @@ test('redirects fail closed before their response body is read', async () => {
 
 test('Cloudflare application errors do not echo API error details', async () => {
   const secretResponse = 'sensitive Cloudflare API diagnostic';
-  const fetchImpl = async (url) => url.endsWith('/rest/v1/') ? response({}) : response({}, {
+  const fetchImpl = async (url) => url.endsWith('/auth/v1/settings') ? response({}) : response({}, {
     async json() {
       return {
         success: false,
@@ -377,7 +380,9 @@ test('wrong-project keys, redirects, and network timeouts fail before Cloudflare
       }),
       message,
     );
-    assert.deepEqual(calls, [`${productionEnvironment.supabaseUrl}/rest/v1/`]);
+    assert.deepEqual(calls, [
+      `${productionEnvironment.supabaseUrl}/auth/v1/settings`,
+    ]);
   }
 
   const calls = [];
@@ -393,7 +398,9 @@ test('wrong-project keys, redirects, and network timeouts fail before Cloudflare
     }),
     /Unable to verify the production Supabase publishable key/u,
   );
-  assert.deepEqual(calls, [`${productionEnvironment.supabaseUrl}/rest/v1/`]);
+  assert.deepEqual(calls, [
+    `${productionEnvironment.supabaseUrl}/auth/v1/settings`,
+  ]);
 });
 
 test('every protected release gates hosted work on the exact Cloudflare policy', () => {

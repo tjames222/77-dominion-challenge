@@ -140,16 +140,19 @@ async function verifySupabasePublishableKey({
 }) {
   let response;
   try {
-    response = await fetchImpl(`${productionEnvironment.supabaseUrl}/rest/v1/`, {
-      method: 'GET',
-      headers: {
-        Accept: 'application/json',
-        apikey: productionEnvironment.publishableKey,
+    response = await fetchImpl(
+      `${productionEnvironment.supabaseUrl}/auth/v1/settings`,
+      {
+        method: 'GET',
+        headers: {
+          Accept: 'application/json',
+          apikey: productionEnvironment.publishableKey,
+        },
+        cache: 'no-store',
+        redirect: 'error',
+        signal: AbortSignal.timeout(15_000),
       },
-      cache: 'no-store',
-      redirect: 'error',
-      signal: AbortSignal.timeout(15_000),
-    });
+    );
   } catch {
     throw new Error('Unable to verify the production Supabase publishable key.');
   }
