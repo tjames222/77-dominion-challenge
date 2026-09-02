@@ -33,6 +33,10 @@ const productionEnvironment = Object.freeze({
   publishableKey: 'sb_publishable_abcdefghijklmnopqrstuvwxyz012345',
 });
 
+test('the reviewed production target is the new isolated Pages project', () => {
+  assert.equal(CLOUDFLARE_PAGES_PROJECT, '77-dominion-live');
+});
+
 function appliedEnvironment(environmentPatch) {
   return Object.fromEntries(
     Object.entries(environmentPatch).filter(([, value]) => value !== null),

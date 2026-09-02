@@ -258,16 +258,18 @@ Before approving the GitHub `production` environment deployment, confirm:
    or reversible canary data.
 9. Supabase Auth is already closed: the official Management API Auth config must
    report `disable_signup=true` and
-   `external_anonymous_users_enabled=false`. The workflow checks these exact
-   values before any release scope and before `supabase link`, migrations,
+   `external_anonymous_users_enabled=false`, with `site_url` exactly
+   `https://77-dominion-live.pages.dev` and `uri_allow_list` exactly
+   `https://77-dominion-live.pages.dev/reset-password.html`. The workflow checks
+   these exact values before any release scope and before `supabase link`, migrations,
    Function secrets, or Function deployment. It never prints
    the Auth response. See
    [`production-canary-operator-runbook.md`](production-canary-operator-runbook.md)
    for the UUID-bound owner canary procedure.
-   If either setting is still open, dispatch **Close production Supabase Auth
+   If any value differs, dispatch **Configure production Supabase Auth
    canary** from `main` and approve its protected `production` environment job
    before dispatching the release. That separate workflow changes only those
-   two reviewed fields, rejects redirects, and GET-verifies the resulting state.
+   four reviewed fields, rejects redirects, and GET-verifies the resulting state.
 
 ### One-time migration-history reconciliation
 
@@ -902,7 +904,8 @@ next stage when one fails:
    frontend deployment.
 3. **Verify the closed Auth policy:** read the hosted Auth configuration through
    Supabase's official Management API and require `disable_signup=true` plus
-   `external_anonymous_users_enabled=false`. This read-only step gates all
+   `external_anonymous_users_enabled=false`, the exact production Site URL, and
+   the sole exact password-recovery redirect. This read-only step gates all
    release scopes and completes before the workflow can link or mutate the
    backend.
 4. **Guard the compatibility cutover:** only for

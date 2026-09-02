@@ -2,10 +2,15 @@ const AUTH_CONFIG_BASE_URL = "https://api.supabase.com/v1/projects";
 const REQUEST_TIMEOUT_MS = 20_000;
 
 export const PRODUCTION_SUPABASE_PROJECT_REF = "mimolwojppbtsbvtqwpo";
+export const PRODUCTION_SITE_URL = "https://77-dominion-live.pages.dev";
+export const PRODUCTION_RECOVERY_REDIRECT_URL =
+  `${PRODUCTION_SITE_URL}/reset-password.html`;
 
 export const CLOSED_AUTH_CONFIG_PATCH = Object.freeze({
   disable_signup: true,
   external_anonymous_users_enabled: false,
+  site_url: PRODUCTION_SITE_URL,
+  uri_allow_list: PRODUCTION_RECOVERY_REDIRECT_URL,
 });
 
 function requireAccessToken(accessToken) {
@@ -112,6 +117,14 @@ export function productionAuthCanaryErrors(config) {
   if (config.external_anonymous_users_enabled !== false) {
     errors.push(
       "Supabase Auth external_anonymous_users_enabled must be false",
+    );
+  }
+  if (config.site_url !== PRODUCTION_SITE_URL) {
+    errors.push("Supabase Auth site_url must be the reviewed production origin");
+  }
+  if (config.uri_allow_list !== PRODUCTION_RECOVERY_REDIRECT_URL) {
+    errors.push(
+      "Supabase Auth uri_allow_list must contain only the reviewed recovery redirect",
     );
   }
   return errors;

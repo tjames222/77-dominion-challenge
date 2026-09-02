@@ -3,7 +3,7 @@ import { CLOUDFLARE_PREVIEW_MOCK_FLAGS } from './normalize-cloudflare-frontend-e
 import { PRODUCTION_SUPABASE_PROJECT_REF } from './production-auth-canary-policy.mjs';
 import { DEVELOP_LIVE_CONNECTION_VARIABLES } from './validate-frontend-env.mjs';
 
-export const CLOUDFLARE_PAGES_PROJECT = '77-dominion-challenge';
+export const CLOUDFLARE_PAGES_PROJECT = '77-dominion-live';
 export const CLOUDFLARE_PAGES_API_ORIGIN = 'https://api.cloudflare.com';
 export const CLOUDFLARE_GITHUB_SOURCE_IDENTITY = Object.freeze({
   owner: 'tjames222',

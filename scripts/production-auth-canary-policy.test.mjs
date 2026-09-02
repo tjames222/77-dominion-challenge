@@ -6,6 +6,8 @@ import { fileURLToPath } from "node:url";
 import {
   CLOSED_AUTH_CONFIG_PATCH,
   configureProductionAuthCanary,
+  PRODUCTION_RECOVERY_REDIRECT_URL,
+  PRODUCTION_SITE_URL,
   PRODUCTION_SUPABASE_PROJECT_REF,
   productionAuthCanaryErrors,
   verifyProductionAuthCanary,
@@ -27,6 +29,8 @@ function exactResponse({
   json = async () => ({
     disable_signup: true,
     external_anonymous_users_enabled: false,
+    site_url: PRODUCTION_SITE_URL,
+    uri_allow_list: PRODUCTION_RECOVERY_REDIRECT_URL,
   }),
 } = {}) {
   return { status, redirected, json };
@@ -51,7 +55,7 @@ async function captureRejection(promise) {
   assert.fail("Expected the promise to reject.");
 }
 
-test("the closed policy requires exact booleans", () => {
+test("the closed policy requires exact booleans and production URLs", () => {
   assert.deepEqual(productionAuthCanaryErrors(null), [
     "Supabase returned an invalid Auth configuration response",
   ]);
@@ -61,6 +65,8 @@ test("the closed policy requires exact booleans", () => {
   assert.deepEqual(productionAuthCanaryErrors({}), [
     "Supabase Auth disable_signup must be true",
     "Supabase Auth external_anonymous_users_enabled must be false",
+    "Supabase Auth site_url must be the reviewed production origin",
+    "Supabase Auth uri_allow_list must contain only the reviewed recovery redirect",
   ]);
   assert.deepEqual(
     productionAuthCanaryErrors({
@@ -70,12 +76,16 @@ test("the closed policy requires exact booleans", () => {
     [
       "Supabase Auth disable_signup must be true",
       "Supabase Auth external_anonymous_users_enabled must be false",
+      "Supabase Auth site_url must be the reviewed production origin",
+      "Supabase Auth uri_allow_list must contain only the reviewed recovery redirect",
     ],
   );
   assert.deepEqual(
     productionAuthCanaryErrors({
       disable_signup: true,
       external_anonymous_users_enabled: false,
+      site_url: PRODUCTION_SITE_URL,
+      uri_allow_list: PRODUCTION_RECOVERY_REDIRECT_URL,
       unrelated: "ignored",
     }),
     [],
@@ -111,6 +121,8 @@ test("configuration PATCHes only the fixed fields and then GET-verifies", async 
   assert.deepEqual(JSON.parse(patchCall.request.body), {
     disable_signup: true,
     external_anonymous_users_enabled: false,
+    site_url: PRODUCTION_SITE_URL,
+    uri_allow_list: PRODUCTION_RECOVERY_REDIRECT_URL,
   });
 
   assert.equal(getCall.url, authConfigUrl);

@@ -8,7 +8,7 @@ if (import.meta.url === invokedPath) {
   try {
     await configureProductionAuthCanary();
     console.log(
-      "Supabase Auth public signup and anonymous sign-in are closed and verified.",
+      "Supabase Auth signup paths and reviewed production URLs are configured and verified.",
     );
   } catch (error) {
     console.error(

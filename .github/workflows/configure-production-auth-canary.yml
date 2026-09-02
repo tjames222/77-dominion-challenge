@@ -1,10 +1,10 @@
-name: Close production Supabase Auth canary
+name: Configure production Supabase Auth canary
 
 on:
   workflow_dispatch:
     inputs:
       confirm_closed_canary:
-        description: Disable public signup and anonymous sign-in in production.
+        description: Close signup and pin the exact production Auth URLs.
         required: true
         default: false
         type: boolean
@@ -37,7 +37,7 @@ jobs:
           fi
 
   configure:
-    name: Close and verify production signup paths
+    name: Configure and verify production Auth policy
     needs: authorize
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -52,5 +52,5 @@ jobs:
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 22
-      - name: Disable and verify public Supabase Auth signup paths
+      - name: Configure and verify closed Supabase Auth and production URLs
         run: node scripts/configure-production-auth-canary.mjs
