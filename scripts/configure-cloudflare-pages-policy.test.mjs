@@ -188,6 +188,32 @@ test('configuration PATCHes the fixed project and then GET-verifies it', async (
   assert.equal(Object.hasOwn(calls[4].options, 'body'), false);
 });
 
+test('account-owned tokens use the account verification endpoint', async () => {
+  const accountToken = `cfat_${'c'.repeat(48)}`;
+  const calls = [];
+  await assert.doesNotReject(configureCloudflarePagesPolicy({
+    accountId,
+    apiToken: accountToken,
+    ...productionEnvironment,
+    fetchImpl: async (url, options) => {
+      calls.push({ url, options });
+      if (url.endsWith('/auth/v1/settings')) return response({});
+      if (url.endsWith('/tokens/verify')) return response(activeToken);
+      return response(options.method === 'PATCH' ? {} : validProject());
+    },
+  }));
+
+  assert.equal(
+    calls[1].url,
+    `${CLOUDFLARE_PAGES_API_ORIGIN}/client/v4/accounts/${accountId}/tokens/verify`,
+  );
+  assert.equal(calls[1].options.headers.Authorization, `Bearer ${accountToken}`);
+  assert.equal(
+    calls.some(({ url }) => url.endsWith('/user/tokens/verify')),
+    false,
+  );
+});
+
 test('verification rejects production auto deploys, widened previews, and live preview values', () => {
   const project = validProject();
   project.source.config.production_deployments_enabled = true;

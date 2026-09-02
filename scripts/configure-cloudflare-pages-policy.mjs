@@ -378,6 +378,13 @@ async function cloudflareRequest({
   return readCloudflareResult(response, operation);
 }
 
+function cloudflareTokenVerificationUrl({ accountId, apiToken }) {
+  if (apiToken.startsWith('cfat_')) {
+    return `${CLOUDFLARE_PAGES_API_ORIGIN}/client/v4/accounts/${accountId}/tokens/verify`;
+  }
+  return `${CLOUDFLARE_PAGES_API_ORIGIN}/client/v4/user/tokens/verify`;
+}
+
 export async function configureCloudflarePagesPolicy({
   accountId = process.env.CLOUDFLARE_ACCOUNT_ID,
   apiToken = process.env.CLOUDFLARE_API_TOKEN,
@@ -410,8 +417,10 @@ export async function configureCloudflarePagesPolicy({
 
   const url = `${CLOUDFLARE_PAGES_API_ORIGIN}/client/v4/accounts/${normalizedAccountId}`
     + `/pages/projects/${CLOUDFLARE_PAGES_PROJECT}`;
-  const tokenVerificationUrl = `${CLOUDFLARE_PAGES_API_ORIGIN}`
-    + '/client/v4/user/tokens/verify';
+  const tokenVerificationUrl = cloudflareTokenVerificationUrl({
+    accountId: normalizedAccountId,
+    apiToken: normalizedToken,
+  });
 
   await verifySupabasePublishableKey({
     fetchImpl,
