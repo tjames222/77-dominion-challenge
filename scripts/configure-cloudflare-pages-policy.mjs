@@ -5,6 +5,10 @@ import { DEVELOP_LIVE_CONNECTION_VARIABLES } from './validate-frontend-env.mjs';
 
 export const CLOUDFLARE_PAGES_PROJECT = '77-dominion-challenge';
 export const CLOUDFLARE_PAGES_API_ORIGIN = 'https://api.cloudflare.com';
+export const CLOUDFLARE_GITHUB_SOURCE_IDENTITY = Object.freeze({
+  owner: 'tjames222',
+  repo_name: '77-dominion-challenge',
+});
 export { CLOUDFLARE_PREVIEW_MOCK_FLAGS };
 
 export const CLOUDFLARE_BUILD_PINS = Object.freeze({
@@ -208,6 +212,7 @@ export function cloudflarePagesPolicyPatch(
         source: {
           type: 'github',
           config: {
+            ...CLOUDFLARE_GITHUB_SOURCE_IDENTITY,
             deployments_enabled: true,
             production_branch: 'main',
             production_deployments_enabled: false,
@@ -271,6 +276,12 @@ export function cloudflarePagesPolicyErrors(
   )) {
     errors.push('Pages source configuration is missing');
   } else if (source?.type === 'github') {
+    if (sourceConfig.owner !== CLOUDFLARE_GITHUB_SOURCE_IDENTITY.owner) {
+      errors.push('Pages GitHub source owner must match the reviewed repository');
+    }
+    if (sourceConfig.repo_name !== CLOUDFLARE_GITHUB_SOURCE_IDENTITY.repo_name) {
+      errors.push('Pages GitHub source repository must match the reviewed repository');
+    }
     if (sourceConfig.deployments_enabled !== true) {
       errors.push('Git deployments must remain enabled for the develop preview');
     }
@@ -546,6 +557,20 @@ export async function configureCloudflarePagesPolicy({
   const sourceType = existingProject.source == null ? null : existingProject.source?.type;
   if (sourceType !== null && sourceType !== 'github') {
     throw new Error('Cloudflare Pages project source must be GitHub or Direct Upload.');
+  }
+  if (sourceType === 'github') {
+    const sourceConfig = existingProject.source?.config;
+    if (
+      !sourceConfig
+      || typeof sourceConfig !== 'object'
+      || Array.isArray(sourceConfig)
+      || sourceConfig.owner !== CLOUDFLARE_GITHUB_SOURCE_IDENTITY.owner
+      || sourceConfig.repo_name !== CLOUDFLARE_GITHUB_SOURCE_IDENTITY.repo_name
+    ) {
+      throw new Error(
+        'Cloudflare Pages project is linked to a GitHub repository other than the reviewed source.',
+      );
+    }
   }
 
   try {
