@@ -1,8 +1,11 @@
 import { createHash, randomUUID } from "node:crypto";
 import { spawnSync } from "node:child_process";
+import { constants as fsConstants } from "node:fs";
 import {
+  chmod,
   lstat,
   mkdir,
+  open,
   readFile,
   readdir,
   realpath,
@@ -20,6 +23,8 @@ export const RECONCILIATION_STAGE_SCHEMA =
   "77-dominion-reconciliation-stage/v1";
 export const EXPECTED_SUPABASE_CLI_VERSION = "2.109.0";
 export const EXPECTED_POSTGRES_IMAGE_VERSION = "17.6.1.141";
+export const EXPECTED_RELEASE_ORIGIN =
+  "https://github.com/tjames222/77-dominion-challenge.git";
 export const EXPECTED_RELEASE_MIGRATION_COUNT = 53;
 export const HISTORICAL_RECONCILIATION_VERSIONS = Object.freeze([
   "20260707170000",
@@ -52,9 +57,32 @@ function compareAscii(left, right) {
 }
 
 function runGit(argumentsList, root = repositoryRoot, encoding = "utf8") {
-  const result = spawnSync("git", ["--no-replace-objects", ...argumentsList], {
+  const result = spawnSync("/usr/bin/git", [
+    "--no-replace-objects",
+    "-c",
+    "core.fsmonitor=false",
+    "-c",
+    "core.untrackedCache=false",
+    "-c",
+    "credential.helper=",
+    "-c",
+    "core.hooksPath=/dev/null",
+    "-c",
+    "diff.external=",
+    ...argumentsList,
+  ], {
     cwd: root,
     encoding,
+    env: {
+      GIT_CONFIG_GLOBAL: "/dev/null",
+      GIT_CONFIG_NOSYSTEM: "1",
+      GIT_OPTIONAL_LOCKS: "0",
+      GIT_TERMINAL_PROMPT: "0",
+      HOME: "/var/empty",
+      LANG: "C",
+      LC_ALL: "C",
+      PATH: "/usr/bin:/bin",
+    },
     maxBuffer: 256 * 1024 * 1024,
   });
   if (result.status !== 0) {
@@ -254,6 +282,62 @@ function isWithin(parent, candidate) {
   return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
 }
 
+function requireNoExtendedAcl(filename, label) {
+  if (process.platform !== "darwin") return;
+  const result = spawnSync("/bin/ls", ["-lde", filename], {
+    encoding: "utf8",
+    env: { LANG: "C", LC_ALL: "C", PATH: "/usr/bin:/bin" },
+  });
+  if (result.status !== 0 || result.stdout.trimEnd().includes("\n")) {
+    fail(`${label} must not have an extended ACL.`);
+  }
+}
+
+export async function requireCanonicalReleaseRepository(root, releaseCommit) {
+  if (!path.isAbsolute(root || "")) {
+    fail("--repository-root must be an absolute release worktree path.");
+  }
+  const metadata = await lstat(root);
+  if (metadata.isSymbolicLink() || !metadata.isDirectory()) {
+    fail("--repository-root must be a real directory, not a symbolic link.");
+  }
+  if (
+    (typeof process.getuid === "function" && metadata.uid !== process.getuid())
+    || (metadata.mode & 0o022) !== 0
+  ) {
+    fail("--repository-root must be current-user-owned and not group/world writable.");
+  }
+  requireNoExtendedAcl(root, "--repository-root");
+  const resolved = await realpath(root);
+  if (resolved !== root) {
+    fail("--repository-root must already be canonical.");
+  }
+  const topLevel = runGit(["rev-parse", "--show-toplevel"], resolved).trim();
+  if (topLevel !== resolved) {
+    fail("--repository-root is not the exact Git worktree root.");
+  }
+  const branch = runGit(["rev-parse", "--abbrev-ref", "HEAD"], resolved).trim();
+  if (branch !== "main") {
+    fail("release repository must be on the exact main branch.");
+  }
+  const head = runGit(["rev-parse", "HEAD"], resolved).trim();
+  if (head !== releaseCommit) {
+    fail("release repository HEAD does not match --release-commit.");
+  }
+  const origin = runGit(["remote", "get-url", "origin"], resolved).trim();
+  if (origin !== EXPECTED_RELEASE_ORIGIN) {
+    fail("release repository origin does not match the reviewed GitHub repository.");
+  }
+  const worktreeState = runGit(
+    ["status", "--porcelain", "--untracked-files=all"],
+    resolved,
+  );
+  if (worktreeState !== "") {
+    fail("release repository must be clean, including untracked files.");
+  }
+  return resolved;
+}
+
 async function requireSafeExternalOutput(outputPath, root) {
   if (!path.isAbsolute(outputPath || "")) {
     fail("--output must be an absolute path outside the repository.");
@@ -261,6 +345,7 @@ async function requireSafeExternalOutput(outputPath, root) {
   const parent = await realpath(path.dirname(outputPath));
   const resolvedRoot = await realpath(root);
   const resolvedOutput = path.join(parent, path.basename(outputPath));
+  requireNoExtendedAcl(parent, "stage output parent");
   if (isWithin(resolvedRoot, resolvedOutput)) {
     fail("the reconciliation stage must be outside the repository.");
   }
@@ -278,6 +363,25 @@ async function writeStageFile(stageRoot, sourcePath, contents) {
   if (!isWithin(stageRoot, destination)) fail(`unsafe stage path: ${sourcePath}.`);
   await mkdir(path.dirname(destination), { mode: 0o700, recursive: true });
   await writeFile(destination, contents, { flag: "wx", mode: 0o600 });
+}
+
+async function sealStageTree(current) {
+  const entries = await readdir(current, { withFileTypes: true });
+  for (const entry of entries) {
+    const entryPath = path.join(current, entry.name);
+    const metadata = await lstat(entryPath);
+    if (metadata.isSymbolicLink()) fail("stage must not contain symbolic links.");
+    if (metadata.isDirectory()) {
+      await sealStageTree(entryPath);
+      await chmod(entryPath, 0o500);
+      requireNoExtendedAcl(entryPath, "stage directory");
+    } else if (metadata.isFile()) {
+      await chmod(entryPath, 0o400);
+      requireNoExtendedAcl(entryPath, "stage file");
+    } else {
+      fail("stage may contain only directories and files.");
+    }
+  }
 }
 
 export async function prepareReconciliationStage({
@@ -306,6 +410,9 @@ export async function prepareReconciliationStage({
       "reconciliation-stage.json",
       Buffer.from(`${JSON.stringify(manifest, null, 2)}\n`, "utf8"),
     );
+    await sealStageTree(temporaryRoot);
+    await chmod(temporaryRoot, 0o500);
+    requireNoExtendedAcl(temporaryRoot, "stage root");
     await verifyReconciliationStage({
       stage: temporaryRoot,
       releaseCommit,
@@ -328,6 +435,11 @@ async function listStageFiles(stageRoot, current = stageRoot) {
     const metadata = await lstat(entryPath);
     if (metadata.isSymbolicLink()) fail("stage must not contain symbolic links.");
     if (metadata.isDirectory()) {
+      if (
+        (typeof process.getuid === "function" && metadata.uid !== process.getuid())
+        || (metadata.mode & 0o777) !== 0o500
+      ) fail("every stage directory must be current-user-owned mode 0500.");
+      requireNoExtendedAcl(entryPath, "stage directory");
       files.push(...await listStageFiles(stageRoot, entryPath));
       continue;
     }
@@ -335,6 +447,46 @@ async function listStageFiles(stageRoot, current = stageRoot) {
     files.push(path.relative(stageRoot, entryPath).split(path.sep).join("/"));
   }
   return files.sort(compareAscii);
+}
+
+function sameStageFileState(before, after) {
+  return before.dev === after.dev
+    && before.ino === after.ino
+    && before.mode === after.mode
+    && before.uid === after.uid
+    && before.nlink === after.nlink
+    && before.size === after.size
+    && before.mtimeNs === after.mtimeNs
+    && before.ctimeNs === after.ctimeNs;
+}
+
+async function readSealedStageFile(filename, label) {
+  const handle = await open(
+    filename,
+    fsConstants.O_RDONLY | (fsConstants.O_NOFOLLOW ?? 0),
+  );
+  try {
+    const before = await handle.stat({ bigint: true });
+    const currentUid = typeof process.getuid === "function"
+      ? BigInt(process.getuid())
+      : before.uid;
+    if (
+      !before.isFile()
+      || before.uid !== currentUid
+      || (Number(before.mode) & 0o777) !== 0o400
+      || before.nlink !== 1n
+    ) fail(`${label} must be a current-user-owned, single-link mode 0400 file.`);
+    requireNoExtendedAcl(filename, label);
+    const contents = await handle.readFile();
+    const after = await handle.stat({ bigint: true });
+    if (!sameStageFileState(before, after) || BigInt(contents.length) !== before.size) {
+      fail(`${label} changed while it was being verified.`);
+    }
+    requireNoExtendedAcl(filename, label);
+    return contents;
+  } finally {
+    await handle.close();
+  }
 }
 
 export async function verifyReconciliationStage({
@@ -349,6 +501,12 @@ export async function verifyReconciliationStage({
     fail("stage must be a real directory, not a symbolic link.");
   }
   const stageRoot = await realpath(stage);
+  if (stageRoot !== stage) fail("--verify-stage must already be canonical.");
+  if (
+    (typeof process.getuid === "function" && stageMetadata.uid !== process.getuid())
+    || (stageMetadata.mode & 0o777) !== 0o500
+  ) fail("stage root must be current-user-owned mode 0500.");
+  requireNoExtendedAcl(stageRoot, "stage root");
   const resolvedRoot = await realpath(root);
   if (isWithin(resolvedRoot, stageRoot)) {
     fail("the reconciliation stage must be outside the repository.");
@@ -360,17 +518,17 @@ export async function verifyReconciliationStage({
     root,
   });
   const manifestPath = path.join(stageRoot, "reconciliation-stage.json");
-  const manifestMetadata = await lstat(manifestPath);
-  if (manifestMetadata.isSymbolicLink() || !manifestMetadata.isFile()) {
-    fail("stage manifest must be a regular file.");
-  }
+  const manifestBytes = await readSealedStageFile(manifestPath, "stage manifest");
   let actualManifest;
   try {
-    actualManifest = JSON.parse(await readFile(manifestPath, "utf8"));
+    actualManifest = JSON.parse(manifestBytes.toString("utf8"));
   } catch {
     fail("stage manifest is not valid JSON.");
   }
-  if (JSON.stringify(actualManifest) !== JSON.stringify(expected.manifest)) {
+  if (
+    manifestBytes.toString("utf8") !== `${JSON.stringify(expected.manifest, null, 2)}\n`
+    || JSON.stringify(actualManifest) !== JSON.stringify(expected.manifest)
+  ) {
     fail("stage manifest does not match the immutable release commit.");
   }
 
@@ -384,11 +542,7 @@ export async function verifyReconciliationStage({
   }
   for (const expectedFile of expected.manifest.files) {
     const filePath = path.join(stageRoot, ...expectedFile.path.split("/"));
-    const metadata = await lstat(filePath);
-    if (metadata.isSymbolicLink() || !metadata.isFile()) {
-      fail(`${expectedFile.path} must be a regular file.`);
-    }
-    const contents = await readFile(filePath);
+    const contents = await readSealedStageFile(filePath, expectedFile.path);
     if (
       contents.length !== expectedFile.bytes
       || sha256(contents) !== expectedFile.sha256
@@ -408,6 +562,7 @@ function parseArguments(argumentsList) {
       || argument === "--release-commit"
       || argument === "--through-version"
       || argument === "--verify-stage"
+      || argument === "--repository-root"
     ) {
       const value = argumentsList[index + 1];
       if (!value || value.startsWith("--")) fail(`${argument} requires a value.`);
@@ -423,6 +578,12 @@ function parseArguments(argumentsList) {
   if (!options.through_version) fail("--through-version is required.");
   if (Boolean(options.output) === Boolean(options.verify_stage)) {
     fail("provide exactly one of --output or --verify-stage.");
+  }
+  if (options.output && options.repository_root) {
+    fail("--repository-root is valid only with --verify-stage.");
+  }
+  if (options.verify_stage && !options.repository_root) {
+    fail("--repository-root is required with --verify-stage.");
   }
   return options;
 }
@@ -440,10 +601,15 @@ async function main() {
     );
     return;
   }
+  const releaseRoot = await requireCanonicalReleaseRepository(
+    options.repository_root,
+    options.release_commit,
+  );
   const manifest = await verifyReconciliationStage({
     stage: options.verify_stage,
     releaseCommit: options.release_commit,
     throughVersion: options.through_version,
+    root: releaseRoot,
   });
   console.log(
     `Verified immutable reconciliation stage ${manifest.historicalStageNumber}/13 for ${manifest.releaseCommit}.`,

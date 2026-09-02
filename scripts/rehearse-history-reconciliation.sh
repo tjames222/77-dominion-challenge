@@ -259,6 +259,49 @@ ownership_token="fou762_${RANDOM}_${RANDOM}_$$"
 created_databases=()
 database_tokens=()
 
+owned_database_recovery_file() {
+  local candidate_name="$1"
+  printf '%s/%s.json\n' \
+    "$rehearsal_root" "owned-database-${candidate_name}"
+}
+
+write_owned_database_recovery() {
+  local candidate_name="$1"
+  local candidate_token="$2"
+  local recovery_status="$3"
+  local recovery_file recovery_partial
+  [[ "$candidate_name" =~ ^fou762_history_[0-9]+_[0-9]+_[0-9]+$ ]] || return 1
+  [[ "$candidate_token" =~ ^fou762_[0-9]+_[0-9]+_[0-9]+$ ]] || return 1
+  case "$recovery_status" in
+    create-pending|marker-pending|owned|cleanup-unresolved) ;;
+    *) return 1 ;;
+  esac
+  recovery_file="$(owned_database_recovery_file "$candidate_name")"
+  recovery_partial="${recovery_file}.partial"
+  if ! printf '{\n  "schemaVersion": 1,\n  "artifactContract": "dominion-local-history-rehearsal-recovery/v1",\n  "status": "%s",\n  "databaseName": "%s",\n  "ownershipToken": "%s",\n  "databaseContainer": "%s",\n  "projectId": "%s"\n}\n' \
+      "$recovery_status" "$candidate_name" "$candidate_token" \
+      "$expected_database_container" "$expected_project_id" \
+      >"$recovery_partial"; then
+    return 1
+  fi
+  /bin/chmod 600 "$recovery_partial" || return 1
+  /bin/mv -f -- "$recovery_partial" "$recovery_file" || return 1
+  /bin/chmod 600 "$recovery_file" || return 1
+}
+
+database_exists_count() {
+  local candidate_name="$1"
+  local database_count
+  [[ "$candidate_name" =~ ^fou762_history_[0-9]+_[0-9]+_[0-9]+$ ]] || return 1
+  database_count="$($docker_cli exec "$expected_database_container" \
+    psql --username postgres --dbname postgres --tuples-only --no-align \
+      --no-psqlrc --set ON_ERROR_STOP=1 \
+      --command "select count(*) from pg_database where datname = '${candidate_name}'")" \
+    || return 1
+  [[ "$database_count" =~ ^[0-9]+$ ]] || return 1
+  printf '%s\n' "$database_count"
+}
+
 verify_owned_database() {
   local candidate_name="$1"
   local candidate_token="$2"
@@ -276,6 +319,7 @@ verify_owned_database() {
 drop_owned_database() {
   local candidate_name="$1"
   local candidate_token="$2"
+  local remaining_database_count
   verify_owned_database "$candidate_name" "$candidate_token" \
     || return 1
   "$docker_cli" exec "$expected_database_container" \
@@ -284,12 +328,20 @@ drop_owned_database() {
       --command "select pg_terminate_backend(pid) from pg_stat_activity where datname = '${candidate_name}' and pid <> pg_backend_pid();" \
       >/dev/null
   "$docker_cli" exec "$expected_database_container" \
-    dropdb --username postgres "$candidate_name" >/dev/null
+    dropdb --username postgres "$candidate_name" >/dev/null \
+    || return 1
+  remaining_database_count="$(database_exists_count "$candidate_name")" \
+    || return 1
+  [[ "$remaining_database_count" == "0" ]]
 }
 
 cleanup() {
   exit_status=$?
   trap - EXIT
+  # This is the only in-process holder of each disposable database ownership
+  # token. Keep cleanup non-interruptible for trappable signals so a second
+  # process-group signal cannot strand an owned rehearsal database.
+  trap '' HUP INT QUIT TERM
   cleanup_status=0
   database_index=0
   for candidate_name in "${created_databases[@]-}"; do
@@ -297,13 +349,28 @@ cleanup() {
     candidate_token="${database_tokens[database_index]}"
     if ! drop_owned_database "$candidate_name" "$candidate_token"; then
       echo "History reconciliation rehearsal: refused or failed to remove owned disposable database $candidate_name." >&2
+      write_owned_database_recovery \
+        "$candidate_name" "$candidate_token" cleanup-unresolved \
+        || echo "History reconciliation rehearsal: could not update the existing private recovery record." >&2
       cleanup_status=1
+    else
+      recovery_file="$(owned_database_recovery_file "$candidate_name")"
+      if ! /bin/rm -f -- "$recovery_file"; then
+        cleanup_status=1
+      fi
     fi
     database_index=$((database_index + 1))
   done
-  if [[ -n "$rehearsal_root" \
+  if (( cleanup_status != 0 )); then
+    echo "History reconciliation rehearsal: preserved private disposable-database recovery state at $rehearsal_root." >&2
+  elif [[ -n "$rehearsal_root" \
     && "$rehearsal_root" == "${rehearsal_parent}/fou762-history-reconciliation."* ]]; then
-    rm -rf -- "$rehearsal_root"
+    if ! /bin/rm -rf -- "$rehearsal_root"; then
+      cleanup_status=1
+    fi
+    if [[ -e "$rehearsal_root" || -L "$rehearsal_root" ]]; then
+      cleanup_status=1
+    fi
   else
     echo "History reconciliation rehearsal: refused to remove an unexpected temporary path." >&2
     cleanup_status=1
@@ -314,15 +381,23 @@ cleanup() {
   exit "$exit_status"
 }
 trap cleanup EXIT
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 131' QUIT
+trap 'exit 143' TERM
 
-database_exists="$($docker_cli exec "$expected_database_container" \
-  psql --username postgres --dbname postgres --tuples-only --no-align --no-psqlrc \
-    --set ON_ERROR_STOP=1 \
-    --command "select count(*) from pg_database where datname = '${database_name}'")"
+database_exists="$(database_exists_count "$database_name")" \
+  || fail "could not confirm the randomized disposable database name was unused."
 [[ "$database_exists" == "0" ]] || fail "randomized database name unexpectedly already exists."
 
+write_owned_database_recovery "$database_name" "$ownership_token" create-pending \
+  || fail "could not seal private disposable-database recovery authority."
+created_databases+=("$database_name")
+database_tokens+=("$ownership_token")
 "$docker_cli" exec "$expected_database_container" \
   createdb --username postgres --template template0 "$database_name"
+write_owned_database_recovery "$database_name" "$ownership_token" marker-pending \
+  || fail "could not record the unmarked disposable database."
 if ! "$docker_cli" exec "$expected_database_container" \
     psql --username postgres --dbname "$database_name" --no-psqlrc --quiet \
       --set ON_ERROR_STOP=1 --command "
@@ -335,8 +410,8 @@ if ! "$docker_cli" exec "$expected_database_container" \
         values ('${ownership_token}');"; then
   fail "created $database_name but could not install its ownership marker; it was left in place for manual inspection."
 fi
-created_databases+=("$database_name")
-database_tokens+=("$ownership_token")
+write_owned_database_recovery "$database_name" "$ownership_token" owned \
+  || fail "could not update private disposable-database recovery authority."
 
 # Recreate only the pinned Supabase-managed platform surface in the disposable
 # database. Application schemas and migration history are deliberately absent.
@@ -606,6 +681,7 @@ for migration_version in "${migration_versions[@]}"; do
   "$node_cli" "$stage_preparer" \
     --release-commit "$release_commit" \
     --through-version "$migration_version" \
+    --repository-root "$repository_root" \
     --verify-stage "$stage_root" >/dev/null
   "$node_cli" "$compatibility_gate" "$stage_root/supabase/migrations" >/dev/null
   staged_migration_count="$(find "$stage_root/supabase/migrations" \

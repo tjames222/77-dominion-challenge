@@ -569,15 +569,15 @@ separately reviewed change and the exact restored-snapshot rehearsal passes:
 
    Review every changed whole-object record. The isolated target-vs-target
    platform allowlist must remain empty. To generate a candidate for a reviewed
-   production-vs-target comparison, first export the normalized production
-   manifest read-only and off-repository, then run:
+   production-vs-target comparison, use the normalized production manifest
+   sealed by the reviewed full capture, then run:
 
    ```bash
    node scripts/build-platform-diff-allowlist.mjs \
      supabase/tests/reconciliation/migration-3.target.manifest.jsonl \
-     /approved/off-repository/production.manifest.jsonl \
+     "$DESTINATION/<capture-id>/source-manifest.jsonl" \
      --postgres-image 17.6.1.141 \
-     --output /approved/off-repository/platform-candidate.json
+     --output "$DESTINATION/private/platform-candidate.json"
    ```
 
    The builder rejects every application-owned key. It emits exact keys and
@@ -594,32 +594,63 @@ separately reviewed change and the exact restored-snapshot rehearsal passes:
    ```bash
    node scripts/compare-database-manifests.mjs \
      supabase/tests/reconciliation/migration-3.target.manifest.jsonl \
-     /approved/off-repository/production.manifest.jsonl \
+     "$DESTINATION/<capture-id>/source-manifest.jsonl" \
      --postgres-image 17.6.1.141 \
-     --allowlist /approved/off-repository/platform-candidate.json
+     --allowlist "$DESTINATION/private/platform-candidate.json"
    ```
 
-   Capture against the exact hosted Supabase database only through an owner-only passwordless
-   URL file and one exact matching pgpass row. Never put a password-bearing URL
-   on argv:
+   Capture against the exact hosted Supabase database only through the full
+   reviewed production-backup entrypoint. Do **not** invoke
+   `capture-database-manifest.sh` directly: it is a lower-level child and is not
+   an operator trust boundary. After the separately approval-gated pack
+   launcher, TCB, and fixed `repository-operator-clean` mapping are frozen, use
+   the outer prefix documented in `docs/production-backup-restore.md` and append
+   `--operation capture --` followed by the complete
+   `capture-production-backup.sh` usage block. The identity-bearing part of
+   that child argument tail includes the following; this excerpt is not a
+   standalone command:
 
    ```bash
-   bash scripts/capture-database-manifest.sh \
-     --database-client-contract exact-docker-pgpass/v1 \
-     --db-url-file /approved/off-repository/restored-read-only.url \
-     --database-passfile /approved/off-repository/restored-read-only.pgpass \
-     --project-ref <exact-project-ref> \
+   --operation capture -- \
+     --capture-id <new-capture-id> \
+     --project-ref <exact-20-character-project-ref> \
+     --database-host <dashboard-session-pooler-host> \
+     --database-url-file "$DESTINATION/private/database-url" \
+     --database-url-sha256 <64-lowercase-hex> \
+     --database-passfile "$DESTINATION/private/database-passfile" \
+     --database-passfile-sha256 <64-lowercase-hex> \
+     --ssl-root-cert-file "$DESTINATION/private/supabase-ca/prod-ca-2021.crt" \
+     --ssl-root-cert-file-sha256 <64-lowercase-hex> \
      --docker-bin <reviewed-absolute-docker-binary> \
+     --docker-bin-sha256 <64-lowercase-hex> \
+     --docker-socket <canonical-absolute-local-docker-socket> \
+     --docker-socket-device <exact-base-10-device> \
+     --docker-socket-inode <exact-base-10-inode> \
+     --docker-socket-owner-uid <current-owner-uid> \
+     --docker-socket-owner-mode 384 \
+     --docker-shared-home-root <canonical-current-user-home> \
      --postgres-image public.ecr.aws/supabase/postgres:17.6.1.141 \
      --postgres-image-id sha256:<64-lowercase-hex> \
-     --output /approved/off-repository/production.manifest.jsonl
+     --destination "$DESTINATION"
    ```
 
-   These exact Docker arguments force `psql` from the pinned image. The helper
-   verifies the tag resolves to that already-present ID, uses
-   `--pull never`, and launches by ID. The database hostname in the passwordless
-   URL must be reachable from the container; do not rewrite or expose the
-   read-only credential merely to make a localhost-only address work.
+   Supply every other required capture argument and confirmation exactly once;
+   never run this excerpt by itself. The entrypoint internally enforces
+   `exact-supavisor-session-jit-pgpass-verify-full/v2`. The passwordless URL,
+   pgpass row, `--database-host`, and project ref must all
+   bind the exact dashboard-provided Supavisor session-pooler host, explicit
+   port `5432`, database `postgres`, and user `postgres.<project-ref>`. The URL
+   contains only `sslmode=verify-full`, the percent-encoded canonical CA path,
+   and `options=-c%20jit%3Don`, in that order. These exact Docker arguments
+   force `psql` from the pinned image and bind the reviewed Docker executable
+   and owner-only local socket identities. The helper verifies the tag resolves
+   to that already-present ID, uses `--pull never`, and launches by ID. The
+   database hostname in the passwordless URL must be reachable from the
+   container; do not rewrite or expose the read-only credential merely to make
+   a localhost-only address work. The authenticated comparison input is the
+   sealed `$DESTINATION/<capture-id>/source-manifest.jsonl`; there is no generic
+   `/approved/off-repository` credential or output path in this production
+   flow.
 
    Never commit a production manifest or data fingerprint; catalog definitions,
    role names, and aggregate hashes are release evidence and belong in the

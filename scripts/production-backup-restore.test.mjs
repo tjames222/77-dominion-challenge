@@ -1,13 +1,17 @@
 import assert from "node:assert/strict";
-import { createHash } from "node:crypto";
-import { spawnSync } from "node:child_process";
+import { createHash, X509Certificate } from "node:crypto";
+import { spawn, spawnSync } from "node:child_process";
 import {
   chmod,
+  link,
+  lstat,
   mkdtemp,
   mkdir,
   readFile,
   readdir,
-  rm,
+  realpath,
+  rename,
+  rm as removePath,
   stat,
   symlink,
   unlink,
@@ -15,6 +19,7 @@ import {
 } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { createServer } from "node:net";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
@@ -33,11 +38,21 @@ const credentialValidator = path.join(
   scriptDirectory,
   "validate-postgres-credentials.mjs",
 );
+const cleanLauncher = path.join(scriptDirectory, "run-production-operator-clean.sh");
+const inputPinningHelper = path.join(scriptDirectory, "pin-production-input.mjs");
+const offlinePgsodiumGetkey = path.join(
+  scriptDirectory,
+  "offline-pgsodium-getkey.sh",
+);
+const nodeBin = await realpath(process.execPath);
+const nodeBinSha256 = await sha256(nodeBin);
+const cleanLauncherSha256 = await sha256(cleanLauncher);
 const dumpScriptTransformer = path.join(
   scriptDirectory,
   "prepare-supabase-dump-script.mjs",
 );
 const projectRef = "abcdefghijklmnopqrst";
+const databaseHost = "aws-0-us-east-1.pooler.supabase.com";
 const commit = "1".repeat(40);
 const image = "public.ecr.aws/supabase/postgres:17.6.1.141";
 const imageId = `sha256:${"2".repeat(64)}`;
@@ -45,9 +60,68 @@ const captureId = "capture-20260825";
 const restoreId = "restore-20260825";
 const containerId = "a".repeat(64);
 const rowHash = "0".repeat(64);
+const macosTcbAttestationContents = `${JSON.stringify({
+  schemaVersion: 1,
+  artifactContract: "offline-test-macos-tcb-attestation/v1",
+}, null, 2)}\n`;
+const macosTcbAttestationSha256 = createHash("sha256")
+  .update(macosTcbAttestationContents)
+  .digest("hex");
+
+async function makeTreeRemovable(filename) {
+  const entry = await lstat(filename).catch(() => null);
+  if (!entry || entry.isSymbolicLink()) return;
+  if (entry.isDirectory()) {
+    await chmod(filename, 0o700).catch(() => {});
+    for (const name of await readdir(filename).catch(() => [])) {
+      await makeTreeRemovable(path.join(filename, name));
+    }
+  } else {
+    await chmod(filename, 0o600).catch(() => {});
+  }
+}
+
+async function rm(filename, options) {
+  if (options?.recursive) await makeTreeRemovable(filename);
+  return removePath(filename, options);
+}
+
+async function unsealEvidenceForTest(directory) {
+  await chmod(directory, 0o700);
+  for (const name of await readdir(directory)) {
+    await chmod(path.join(directory, name), 0o600);
+  }
+}
+
+async function sealEvidenceForTest(directory) {
+  for (const name of await readdir(directory)) {
+    await chmod(path.join(directory, name), 0o400);
+  }
+  await chmod(directory, 0o500);
+}
+
+async function runtimeDirectories(fixture, prefix) {
+  return (await readdir(path.join(fixture.destination, "private")))
+    .filter((name) => name.startsWith(prefix));
+}
 
 async function sha256(filename) {
   return createHash("sha256").update(await readFile(filename)).digest("hex");
+}
+
+function sha256Object(value) {
+  const canonicalize = (entry) => {
+    if (Array.isArray(entry)) return entry.map(canonicalize);
+    if (entry && typeof entry === "object") {
+      return Object.fromEntries(
+        Object.keys(entry).sort().map((key) => [key, canonicalize(entry[key])]),
+      );
+    }
+    return entry;
+  };
+  return createHash("sha256")
+    .update(JSON.stringify(canonicalize(value)))
+    .digest("hex");
 }
 
 async function makeExecutable(filename, contents) {
@@ -56,7 +130,21 @@ async function makeExecutable(filename, contents) {
   return filename;
 }
 
-function run(script, args, fixture, extraEnv = {}) {
+async function testCaPem() {
+  for (const candidate of ["/etc/ssl/cert.pem", "/etc/ssl/certs/ca-certificates.crt"]) {
+    try {
+      const bundle = await readFile(candidate, "utf8");
+      for (const match of bundle.matchAll(/-----BEGIN CERTIFICATE-----[\s\S]*?-----END CERTIFICATE-----\n?/gu)) {
+        try {
+          if (new X509Certificate(match[0]).ca) return match[0].endsWith("\n") ? match[0] : `${match[0]}\n`;
+        } catch { /* try the next certificate */ }
+      }
+    } catch { /* try the next platform bundle */ }
+  }
+  throw new Error("no system CA certificate is available for the offline fixture");
+}
+
+function runEnvironment(fixture, extraEnv = {}) {
   const environment = {
     ...process.env,
     FAKE_BOUNDARY_LOG: fixture.log,
@@ -66,6 +154,12 @@ function run(script, args, fixture, extraEnv = {}) {
     FAKE_IMAGE_ID: imageId,
     FAKE_PROJECT_REF: projectRef,
     FAKE_CONTAINER_ID: containerId,
+    DOMINION_CLEAN_ENV_LAUNCHER: "dominion-production-operator/v1",
+    DOMINION_CLEAN_ENV_LAUNCHER_PATH: cleanLauncher,
+    DOMINION_CLEAN_ENV_LAUNCHER_SHA256: cleanLauncherSha256,
+    DOMINION_MACOS_TCB_ATTESTATION_SHA256: macosTcbAttestationSha256,
+    NODE_BIN: nodeBin,
+    NODE_BIN_SHA256: nodeBinSha256,
     PATH: `${path.dirname(fixture.git)}:${process.env.PATH}`,
     ...extraEnv,
   };
@@ -82,57 +176,232 @@ function run(script, args, fixture, extraEnv = {}) {
     "GIT_CEILING_DIRECTORIES", "GIT_CONFIG_COUNT", "GIT_CONFIG_GLOBAL",
     "GIT_CONFIG_NOSYSTEM", "GIT_CONFIG_SYSTEM", "GIT_DIR", "GIT_INDEX_FILE",
     "GIT_OBJECT_DIRECTORY", "GIT_WORK_TREE", "LD_LIBRARY_PATH", "LD_PRELOAD",
-    "NODE_OPTIONS", "NODE_PATH",
+    "NODE_EXTRA_CA_CERTS", "NODE_OPTIONS", "NODE_PATH", "ALL_PROXY", "all_proxy",
+    "AWS_CA_BUNDLE", "CURL_CA_BUNDLE", "HTTPS_PROXY", "https_proxy",
+    "HTTP_PROXY", "http_proxy", "NO_PROXY", "no_proxy", "REQUESTS_CA_BUNDLE",
+    "SSL_CERT_DIR", "SSL_CERT_FILE", "SSLKEYLOGFILE",
   ]) {
     if (!Object.hasOwn(extraEnv, name)) delete environment[name];
   }
+  for (const name of Object.keys(environment)) {
+    if (
+      name.startsWith("NODE_")
+      && !["NODE_BIN", "NODE_BIN_SHA256"].includes(name)
+      && !Object.hasOwn(extraEnv, name)
+    ) delete environment[name];
+  }
+  return environment;
+}
+
+function run(script, args, fixture, extraEnv = {}) {
   return spawnSync("bash", [script, ...args], {
     cwd: repositoryRoot,
     encoding: "utf8",
-    env: environment,
+    env: runEnvironment(fixture, extraEnv),
   });
 }
 
-async function buildFixture() {
-  const root = await mkdtemp(path.join(os.tmpdir(), "dominion-backup-test-"));
+function startRun(script, args, fixture, extraEnv = {}, spawnOptions = {}) {
+  const child = spawn("bash", [script, ...args], {
+    cwd: repositoryRoot,
+    detached: spawnOptions.detached === true,
+    env: runEnvironment(fixture, extraEnv),
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  let stdout = "";
+  let stderr = "";
+  child.stdout.setEncoding("utf8");
+  child.stderr.setEncoding("utf8");
+  child.stdout.on("data", (chunk) => { stdout += chunk; });
+  child.stderr.on("data", (chunk) => { stderr += chunk; });
+  const completion = new Promise((resolve, reject) => {
+    child.once("error", reject);
+    child.once("close", (status, signal) => resolve({
+      signal,
+      status,
+      get stderr() { return stderr; },
+      get stdout() { return stdout; },
+    }));
+  });
+  return { child, completion };
+}
+
+async function waitForLog(filename, pattern, timeoutMs = 15_000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const contents = await readFile(filename, "utf8").catch(() => "");
+    if (pattern.test(contents)) return contents;
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+  throw new Error(`timed out waiting for ${pattern}`);
+}
+
+async function buildFixture(options = {}) {
+  const root = await realpath(await mkdtemp(path.join(os.tmpdir(), "dominion-backup-test-")));
   const destination = path.join(root, "encrypted-volume");
   const tools = path.join(root, "tools");
   const dockerState = path.join(root, "docker-state");
   const log = path.join(root, "boundary.log");
-  await mkdir(destination);
+  await mkdir(destination, { mode: 0o700 });
   await mkdir(tools);
   await mkdir(dockerState);
+  await chmod(destination, 0o700);
 
-  const passphrase = path.join(root, "passphrase");
-  const databaseUrl = path.join(root, "database-url");
-  const databasePassfile = path.join(root, "database-passfile");
-  const accessToken = path.join(root, "access-token");
-  await writeFile(passphrase, "correct horse battery staple\n", { mode: 0o600 });
+  const dockerSocket = path.join(root, "docker.sock");
+  const dockerSocketServer = createServer();
+  await new Promise((resolve, reject) => {
+    dockerSocketServer.once("error", reject);
+    dockerSocketServer.listen(dockerSocket, () => {
+      dockerSocketServer.off("error", reject);
+      resolve();
+    });
+  });
+  dockerSocketServer.unref();
+  await chmod(dockerSocket, 0o600);
+  const dockerSocketIdentity = await stat(dockerSocket);
+  const dockerContext = {
+    endpoint: `unix://${dockerSocket}`,
+    socketPath: dockerSocket,
+    device: String(dockerSocketIdentity.dev),
+    inode: String(dockerSocketIdentity.ino),
+    ownerUid: dockerSocketIdentity.uid,
+    ownerMode: 0o600,
+  };
+
+  const encryptedPrivateDirectory = path.join(destination, "private");
+  const databaseUrl = path.join(encryptedPrivateDirectory, "database-url");
+  const databasePassfile = path.join(encryptedPrivateDirectory, "database-passfile");
+  const accessToken = path.join(encryptedPrivateDirectory, "access-token");
+  const sslRootCertDirectory = path.join(encryptedPrivateDirectory, "supabase-ca");
+  const sslRootCert = path.join(sslRootCertDirectory, "prod-ca-2021.crt");
+  const macosTcbAttestation = path.join(
+    encryptedPrivateDirectory,
+    "macos-tcb-attestation.json",
+  );
+  await mkdir(sslRootCertDirectory, { recursive: true, mode: 0o700 });
+  await chmod(encryptedPrivateDirectory, 0o700);
   await writeFile(
     databaseUrl,
-    `postgresql://postgres.${projectRef}@aws-0-us-east-1.pooler.supabase.com:5432/postgres?sslmode=require\n`,
+    `postgresql://postgres.${projectRef}@${databaseHost}:5432/postgres?sslmode=verify-full&sslrootcert=${encodeURIComponent(sslRootCert)}&options=-c%20jit%3Don\n`,
     { mode: 0o600 },
   );
   await writeFile(
     databasePassfile,
-    `aws-0-us-east-1.pooler.supabase.com:5432:postgres:postgres.${projectRef}:database-password\n`,
+    `${databaseHost}:5432:postgres:postgres.${projectRef}:database-password\n`,
     { mode: 0o600 },
   );
   await writeFile(accessToken, "supabase-access-token\n", { mode: 0o600 });
-  await chmod(passphrase, 0o600);
+  await writeFile(macosTcbAttestation, macosTcbAttestationContents, { mode: 0o600 });
+  await writeFile(sslRootCert, await testCaPem(), { mode: 0o600 });
   await chmod(databaseUrl, 0o600);
   await chmod(databasePassfile, 0o600);
   await chmod(accessToken, 0o600);
+  await chmod(macosTcbAttestation, 0o600);
+  await chmod(sslRootCert, 0o600);
 
+  const imagePath = path.join(root, "77dc-production-release.sparsebundle");
+  const imageUuid = "12345678-1234-1234-1234-123456789ABC";
+  const creationRecord = {
+    schemaVersion: 2,
+    artifactContract: "dominion-encrypted-volume-aes256-creation-record/v2",
+    createdAbsentBefore: true,
+    createdAt: "2000-01-01T00:00:00Z",
+    hdiutilPath: "/usr/bin/hdiutil",
+    argv: [
+      "create", "-size", "16g", "-type", "SPARSEBUNDLE", "-fs", "APFS",
+      "-volname", "77DCProductionRelease", "-encryption", "AES-256",
+      "-stdinpass", imagePath,
+    ],
+    imagePath,
+    imageUuid,
+  };
+  const creationRecordFile = path.join(
+    destination,
+    "encrypted-volume-creation-record.json",
+  );
+  await writeFile(creationRecordFile, `${JSON.stringify(creationRecord, null, 2)}\n`, {
+    mode: 0o600,
+  });
+  const imageIdentity = {
+    path: imagePath,
+    device: "1",
+    inode: "2",
+    className: "CSparseBundleDiskImage",
+    backingStoreClassName: "CBundleBackingStore",
+    format: "UDSB",
+    formatDescription: "sparse",
+    encrypted: true,
+    infoBackupSha256: "a".repeat(64),
+    infoPlistDevice: "1",
+    infoPlistInode: "3",
+    infoPlistSha256: "b".repeat(64),
+    infoPlistSize: "4096",
+    lockSha256: "c".repeat(64),
+    tokenDevice: "1",
+    tokenInode: "4",
+    tokenSha256: "d".repeat(64),
+    tokenSize: "64",
+  };
+  const mountedSessionIdentity = {
+    destination,
+    imagePath,
+    imageType: "sparse bundle disk image",
+    imageEncrypted: true,
+    blocksize: 512,
+    writeable: true,
+    ownerUid: process.getuid(),
+    ownerMode: 0o700,
+    hdidPid: 1234,
+    wholeDiskDevice: "/dev/disk99",
+    volumeDevice: "/dev/disk99s1",
+    volumeDeviceId: "1",
+    volumeInode: "5",
+  };
+  const encryptedVolumeAttestation = path.join(
+    destination,
+    "encrypted-volume-attestation.json",
+  );
+  await writeFile(
+    encryptedVolumeAttestation,
+    `${JSON.stringify({
+      schemaVersion: 2,
+      artifactContract: "dominion-encrypted-volume-attestation/v2",
+      encryption: {
+        algorithm: "AES-256",
+        creationRecordSha256: await sha256(creationRecordFile),
+        isEncryptedPlistSha256: "3".repeat(64),
+        imageInfoPlistSha256: "4".repeat(64),
+        imageUuid,
+      },
+      image: { ...imageIdentity, identitySha256: sha256Object(imageIdentity) },
+      mountedSession: {
+        ...mountedSessionIdentity,
+        identitySha256: sha256Object(mountedSessionIdentity),
+      },
+    }, null, 2)}\n`,
+    { mode: 0o600 },
+  );
+  await chmod(creationRecordFile, 0o600);
+  await chmod(encryptedVolumeAttestation, 0o600);
+
+  const fixtureGitBranch = options.gitBranch ?? "main";
+  const fixtureGitDirty = options.gitDirty === true;
   const git = await makeExecutable(
     path.join(tools, "git"),
     `#!/usr/bin/env bash
 set -eu
-if [[ "\${1:-}" == "-C" ]]; then shift 2; fi
+while (( $# > 0 )); do
+  case "\${1:-}" in
+    --no-replace-objects) shift ;;
+    -c) (( $# >= 2 )); shift 2 ;;
+    -C) (( $# >= 2 )); shift 2 ;;
+    *) break ;;
+  esac
+done
 case "\${1:-}:\${2:-}" in
-  rev-parse:--abbrev-ref) printf '%s\\n' "\${FAKE_GIT_BRANCH}" ;;
-  rev-parse:HEAD) printf '%s\\n' "\${FAKE_GIT_COMMIT}" ;;
-  status:--porcelain) [[ "\${FAKE_GIT_DIRTY:-false}" == "true" ]] && printf '%s\\n' ' M tracked' || true ;;
+  rev-parse:--abbrev-ref) printf '%s\\n' '${fixtureGitBranch}' ;;
+  rev-parse:HEAD) printf '%s\\n' '${commit}' ;;
+  status:--porcelain*) [[ '${fixtureGitDirty}' == 'true' ]] && printf '%s\\n' ' M tracked' || true ;;
   *) printf 'unexpected fake git call: %s\\n' "$*" >&2; exit 64 ;;
 esac
 `,
@@ -203,18 +472,21 @@ fi
     path.join(tools, "volume-hook"),
     `#!/usr/bin/env bash
 set -eu
-destination=''; passphrase=''
+operation=''; destination=''; attestation=''; attestation_sha256=''
 while (( $# > 0 )); do
   case "$1" in
+    --operation) operation="$2"; shift 2 ;;
     --destination) destination="$2"; shift 2 ;;
-    --passphrase-file) passphrase="$2"; shift 2 ;;
+    --attestation) attestation="$2"; shift 2 ;;
+    --attestation-sha256) attestation_sha256="$2"; shift 2 ;;
     *) exit 64 ;;
   esac
 done
-[[ "$(tr -d '\\r\\n' <"$passphrase")" == 'correct horse battery staple' ]]
+[[ "$operation" == 'verify' && -s "$attestation" && "$attestation_sha256" =~ ^[a-f0-9]{64}$ ]]
 destination="$(cd "$destination" && pwd -P)"
-printf '%s\\n' 'local:encrypted-volume-verified' >>"$FAKE_BOUNDARY_LOG"
-printf 'DOMINION_ENCRYPTED_VOLUME_OK=%s\\n' "$destination"
+printf '%s\\n' 'local:encrypted-volume-verified' >>${JSON.stringify(log)}
+printf 'DOMINION_ENCRYPTED_VOLUME_ATTESTATION_SHA256=%s\\n' "$attestation_sha256"
+printf 'DOMINION_ENCRYPTED_VOLUME_DESTINATION=%s\\n' "$destination"
 `,
   );
 
@@ -223,11 +495,12 @@ printf 'DOMINION_ENCRYPTED_VOLUME_OK=%s\\n' "$destination"
     `#!/usr/bin/env bash
 set -eu
 output=''; project=''; access_token_file=''
-printf 'remote:edge-argv:%s\\n' "$*" >>"$FAKE_BOUNDARY_LOG"
+printf 'remote:edge-argv:%s\\n' "$*" >>"\${FAKE_BOUNDARY_LOG:-${log}}"
 while (( $# > 0 )); do
   case "$1" in
-    --supabase-cli) shift 2 ;;
+    --supabase-cli|--supabase-cli-sha256) shift 2 ;;
     --access-token-file) access_token_file="$2"; shift 2 ;;
+    --access-token-file-sha256) shift 2 ;;
     --project-ref) project="$2"; shift 2 ;;
     --output) output="$2"; shift 2 ;;
     *) exit 64 ;;
@@ -235,7 +508,7 @@ while (( $# > 0 )); do
 done
 [[ -z "\${SUPABASE_ACCESS_TOKEN:-}" ]]
 [[ "$(tr -d '\\r\\n' <"$access_token_file")" == 'supabase-access-token' ]]
-printf 'remote:edge-inventory:%s\\n' "$output" >>"$FAKE_BOUNDARY_LOG"
+printf 'remote:edge-inventory:%s\\n' "$output" >>"\${FAKE_BOUNDARY_LOG:-${log}}"
 printf '{"schemaVersion":1,"projectRef":"%s","functions":[{"name":"checkout","slug":"checkout","status":"ACTIVE","version":1,"verifyJwt":true}]}\\n' "$project" >"$output"
 `,
   );
@@ -247,23 +520,25 @@ set -eu
 output=''; project=''; passfile=''
 while (( $# > 0 )); do
   case "$1" in
-    --database-client-contract) [[ "$2" == 'exact-docker-pgpass/v1' ]]; shift 2 ;;
+    --database-client-contract) [[ "$2" == 'exact-supavisor-session-jit-pgpass-verify-full/v2' ]]; shift 2 ;;
     --database-url-file) [[ -s "$2" ]]; shift 2 ;;
+    --database-url-file-sha256) shift 2 ;;
     --database-passfile) [[ -s "$2" ]]; passfile="$2"; shift 2 ;;
+    --database-passfile-sha256) shift 2 ;;
     --project-ref) project="$2"; shift 2 ;;
-    --docker-bin|--postgres-image|--postgres-image-id) shift 2 ;;
+    --database-host|--ssl-root-cert-file|--ssl-root-cert-file-sha256|--url-ssl-root-cert-file|--docker-bin|--docker-bin-sha256|--docker-socket|--docker-socket-device|--docker-socket-inode|--docker-socket-owner-uid|--docker-socket-owner-mode|--postgres-image|--postgres-image-id) shift 2 ;;
     --output) output="$2"; shift 2 ;;
     *) exit 64 ;;
   esac
 done
-objects="\${FAKE_STORAGE_OBJECT_COUNT:-0}"
-vectors="\${FAKE_STORAGE_VECTOR_COUNT:-0}"
-vectors_present="\${FAKE_STORAGE_VECTOR_PRESENT:-true}"
+objects='${String(options.storageObjectCount ?? 0)}'
+vectors='${String(options.storageVectorCount ?? 0)}'
+vectors_present='${options.storageVectorPresent === false ? "false" : "true"}'
 vectors_row_count="$vectors"
 if [[ "$vectors_present" == 'false' ]]; then vectors_row_count='null'; fi
-printf 'remote:storage-inventory:%s\\n' "$output" >>"$FAKE_BOUNDARY_LOG"
+printf 'remote:storage-inventory:%s\\n' "$output" >>"\${FAKE_BOUNDARY_LOG:-${log}}"
 printf '{"schemaVersion":1,"projectRef":"%s","relations":{"storage.buckets":{"present":true,"rowCount":1},"storage.buckets_analytics":{"present":true,"rowCount":0},"storage.buckets_vectors":{"present":%s,"rowCount":%s},"storage.iceberg_namespaces":{"present":false,"rowCount":null},"storage.iceberg_tables":{"present":false,"rowCount":null},"storage.objects":{"present":true,"rowCount":%s},"storage.s3_multipart_uploads":{"present":true,"rowCount":0},"storage.s3_multipart_uploads_parts":{"present":true,"rowCount":0},"storage.vector_indexes":{"present":true,"rowCount":%s}},"buckets":[{"id":"journal-progress","name":"journal-progress","ownerId":null,"public":false,"fileSizeLimit":null,"allowedMimeTypes":null,"type":"STANDARD"}],"applicationPolicyCount":0,"applicationPolicies":[]}\\n' "$project" "$vectors_present" "$vectors_row_count" "$objects" "$vectors" >"$output"
-if [[ "\${FAKE_SWAP_DATABASE_PASSFILE:-false}" == 'true' ]]; then
+if [[ '${options.swapDatabasePassfile ? "true" : "false"}' == 'true' ]]; then
   printf '%s\\n' 'swapped:5432:postgres:postgres:changed' >"$passfile"
   chmod 600 "$passfile"
 fi
@@ -277,14 +552,14 @@ set -eu
 output=''
 while (( $# > 0 )); do
   case "$1" in
-    --database-client-contract) [[ "$2" == 'exact-docker-pgpass/v1' ]]; shift 2 ;;
-    --database-url-file|--database-passfile|--project-ref) shift 2 ;;
-    --docker-bin|--postgres-image|--postgres-image-id) shift 2 ;;
+    --database-client-contract) [[ "$2" == 'exact-supavisor-session-jit-pgpass-verify-full/v2' ]]; shift 2 ;;
+    --database-url-file|--database-url-file-sha256|--database-passfile|--database-passfile-sha256|--project-ref) shift 2 ;;
+    --database-host|--ssl-root-cert-file|--ssl-root-cert-file-sha256|--url-ssl-root-cert-file|--docker-bin|--docker-bin-sha256|--docker-socket|--docker-socket-device|--docker-socket-inode|--docker-socket-owner-uid|--docker-socket-owner-mode|--postgres-image|--postgres-image-id) shift 2 ;;
     --output) output="$2"; shift 2 ;;
     *) exit 64 ;;
   esac
 done
-printf 'remote:source-manifest:%s\\n' "$output" >>"$FAKE_BOUNDARY_LOG"
+printf 'remote:source-manifest:%s\\n' "$output" >>"\${FAKE_BOUNDARY_LOG:-${log}}"
 printf '%s\\n' '{"key":"column/public.profiles/id","kind":"column","identity":"public.profiles.id","definition":{"type":"uuid"}}' >"$output"
 `,
   );
@@ -296,14 +571,14 @@ set -eu
 output=''
 while (( $# > 0 )); do
   case "$1" in
-    --database-client-contract) [[ "$2" == 'exact-docker-pgpass/v1' ]]; shift 2 ;;
-    --database-url-file|--database-passfile|--project-ref) shift 2 ;;
-    --docker-bin|--postgres-image|--postgres-image-id) shift 2 ;;
+    --database-client-contract) [[ "$2" == 'exact-supavisor-session-jit-pgpass-verify-full/v2' ]]; shift 2 ;;
+    --database-url-file|--database-url-file-sha256|--database-passfile|--database-passfile-sha256|--project-ref) shift 2 ;;
+    --database-host|--ssl-root-cert-file|--ssl-root-cert-file-sha256|--url-ssl-root-cert-file|--docker-bin|--docker-bin-sha256|--docker-socket|--docker-socket-device|--docker-socket-inode|--docker-socket-owner-uid|--docker-socket-owner-mode|--postgres-image|--postgres-image-id) shift 2 ;;
     --output) output="$2"; shift 2 ;;
     *) exit 64 ;;
   esac
 done
-printf 'remote:source-fingerprint:%s\\n' "$output" >>"$FAKE_BOUNDARY_LOG"
+printf 'remote:source-fingerprint:%s\\n' "$output" >>"\${FAKE_BOUNDARY_LOG:-${log}}"
 printf '%s\\n' '{"key":"data/auth.users","kind":"data-fingerprint","identity":"auth.users","definition":{"rowCount":1,"rowsSha256":"${rowHash}"}}' >"$output"
 `,
   );
@@ -315,16 +590,16 @@ set -eu
 output=''; project=''
 while (( $# > 0 )); do
   case "$1" in
-    --database-client-contract) [[ "$2" == 'exact-docker-pgpass/v1' ]]; shift 2 ;;
-    --database-url-file|--database-passfile) shift 2 ;;
-    --docker-bin|--postgres-image|--postgres-image-id) shift 2 ;;
+    --database-client-contract) [[ "$2" == 'exact-supavisor-session-jit-pgpass-verify-full/v2' ]]; shift 2 ;;
+    --database-url-file|--database-url-file-sha256|--database-passfile|--database-passfile-sha256) shift 2 ;;
+    --database-host|--ssl-root-cert-file|--ssl-root-cert-file-sha256|--url-ssl-root-cert-file|--docker-bin|--docker-bin-sha256|--docker-socket|--docker-socket-device|--docker-socket-inode|--docker-socket-owner-uid|--docker-socket-owner-mode|--postgres-image|--postgres-image-id) shift 2 ;;
     --project-ref) project="$2"; shift 2 ;;
     --output) output="$2"; shift 2 ;;
     *) exit 64 ;;
   esac
 done
-printf 'remote:relation-counts:%s\\n' "$output" >>"$FAKE_BOUNDARY_LOG"
-printf '{"schemaVersion":1,"projectRef":"%s","schemas":["auth","private","public","storage","supabase_migrations"],"relations":[{"schema":"auth","name":"users","present":true,"rowCount":1,"rowsSha256":"${rowHash}"}],"sequences":[{"schema":"public","name":"example_seq","present":true,"lastValue":"1","isCalled":false}]}\\n' "$project" >"$output"
+printf 'remote:relation-counts:%s\\n' "$output" >>"\${FAKE_BOUNDARY_LOG:-${log}}"
+printf '{"schemaVersion":2,"projectRef":"%s","vaultSecretsCount":0,"schemas":["auth","private","public","storage","supabase_migrations"],"relations":[{"schema":"auth","name":"users","present":true,"rowCount":1,"rowsSha256":"${rowHash}"}],"sequences":[{"schema":"public","name":"example_seq","present":true,"lastValue":"1","isCalled":false}]}\\n' "$project" >"$output"
 `,
   );
 
@@ -335,16 +610,16 @@ set -eu
 output=''; project=''
 while (( $# > 0 )); do
   case "$1" in
-    --database-client-contract) [[ "$2" == 'exact-docker-pgpass/v1' ]]; shift 2 ;;
-    --database-url-file|--database-passfile) shift 2 ;;
-    --docker-bin|--postgres-image|--postgres-image-id) shift 2 ;;
+    --database-client-contract) [[ "$2" == 'exact-supavisor-session-jit-pgpass-verify-full/v2' ]]; shift 2 ;;
+    --database-url-file|--database-url-file-sha256|--database-passfile|--database-passfile-sha256) shift 2 ;;
+    --database-host|--ssl-root-cert-file|--ssl-root-cert-file-sha256|--url-ssl-root-cert-file|--docker-bin|--docker-bin-sha256|--docker-socket|--docker-socket-device|--docker-socket-inode|--docker-socket-owner-uid|--docker-socket-owner-mode|--postgres-image|--postgres-image-id) shift 2 ;;
     --project-ref) project="$2"; shift 2 ;;
     --output) output="$2"; shift 2 ;;
     *) exit 64 ;;
   esac
 done
-printf 'remote:migration-history:%s\\n' "$output" >>"$FAKE_BOUNDARY_LOG"
-if [[ "\${FAKE_HISTORY_PRESENT:-false}" == 'true' ]]; then
+printf 'remote:migration-history:%s\\n' "$output" >>"\${FAKE_BOUNDARY_LOG:-${log}}"
+if [[ '${options.historyPresent ? "true" : "false"}' == 'true' ]]; then
   printf '{"schemaVersion":1,"projectRef":"%s","schemaPresent":true,"tablePresent":true,"rowCount":0,"versions":[]}\\n' "$project" >"$output"
 else
   printf '{"schemaVersion":1,"projectRef":"%s","schemaPresent":false,"tablePresent":false,"rowCount":null,"versions":[]}\\n' "$project" >"$output"
@@ -359,15 +634,16 @@ set -eu
 output=''
 while (( $# > 0 )); do
   case "$1" in
-    --database-client-contract) [[ "$2" == 'exact-docker-pgpass/v1' ]]; shift 2 ;;
+    --database-client-contract) [[ "$2" == 'exact-supavisor-session-jit-pgpass-verify-full/v2' ]]; shift 2 ;;
     --database-url-file|--database-passfile) [[ -s "$2" ]]; shift 2 ;;
-    --docker-bin|--postgres-image|--postgres-image-id) shift 2 ;;
-    --project-ref) [[ "$2" == "$FAKE_PROJECT_REF" ]]; shift 2 ;;
+    --database-url-file-sha256|--database-passfile-sha256) shift 2 ;;
+    --database-host|--ssl-root-cert-file|--ssl-root-cert-file-sha256|--url-ssl-root-cert-file|--docker-bin|--docker-bin-sha256|--docker-socket|--docker-socket-device|--docker-socket-inode|--docker-socket-owner-uid|--docker-socket-owner-mode|--postgres-image|--postgres-image-id) shift 2 ;;
+    --project-ref) [[ "$2" == '${projectRef}' ]]; shift 2 ;;
     --output) output="$2"; shift 2 ;;
     *) exit 64 ;;
   esac
 done
-printf 'remote:managed-application-ddl:%s\\n' "$output" >>"$FAKE_BOUNDARY_LOG"
+printf 'remote:managed-application-ddl:%s\\n' "$output" >>"\${FAKE_BOUNDARY_LOG:-${log}}"
 printf '%s\\n' \\
   '-- dominion managed application DDL v1' \\
   '-- no application-owned Auth or Storage DDL in the fixture' >"$output"
@@ -379,7 +655,11 @@ printf '%s\\n' \\
     `#!/usr/bin/env bash
 set -eu
 command="\${1:-}"; shift || true
-state="$FAKE_DOCKER_STATE"
+state="\${FAKE_DOCKER_STATE:-${dockerState}}"
+fake_image_id="\${FAKE_IMAGE_ID:-${imageId}}"
+fake_container_id="\${FAKE_CONTAINER_ID:-${containerId}}"
+boundary_log="\${FAKE_BOUNDARY_LOG:-${log}}"
+[[ "\${DOCKER_HOST:-}" == 'unix://${dockerSocket}' ]]
 case "$command" in
   context)
     [[ "\${1:-}" == 'inspect' ]]
@@ -387,20 +667,30 @@ case "$command" in
     ;;
   image)
     [[ "\${1:-}" == 'inspect' ]]
-    printf '%s\\n' "$FAKE_IMAGE_ID"
+    printf '%s\\n' "$fake_image_id"
     ;;
   container)
     [[ "\${1:-}" == 'inspect' ]] || exit 64
     shift
     target="\${1:-}"; shift || true
     [[ -f "$state/present" ]] || exit 1
-    [[ "$target" == "$FAKE_CONTAINER_ID" || "$target" == dominion-restore-* ]] || exit 66
+    [[ "$target" == "$fake_container_id" || "$target" == dominion-restore-* || "$target" == dominion-dump-* || "$target" == dominion-client-* ]] || exit 66
     if [[ "$*" == *'--format'* ]]; then
       token="$(cat "$state/token")"
       if [[ "\${FAKE_DOCKER_OWNERSHIP_MODE:-matched}" == 'mismatch' ]]; then token='changed'; fi
-      printf '%s|%s|%s|true|%s|%s|%s\\n' \
-        "$FAKE_CONTAINER_ID" "$FAKE_IMAGE_ID" "$FAKE_IMAGE_ID" \
-        "$(cat "$state/capture")" "$(cat "$state/restore")" "$token"
+      if [[ "$*" == *'production-backup-capture'* ]]; then
+        printf '%s|%s|%s|true|%s|%s|%s\\n' \
+          "$fake_container_id" "$fake_image_id" "$fake_image_id" \
+          "$(cat "$state/capture")" "$token" "$(cat "$state/operation")"
+      elif [[ "$*" == *'production-client'* ]]; then
+        printf '%s|%s|%s|true|%s|%s|database-manifest\\n' \
+          "$fake_container_id" "$fake_image_id" "$fake_image_id" \
+          "$(cat "$state/project")" "$token"
+      else
+        printf '%s|%s|%s|true|%s|%s|%s\\n' \
+          "$fake_container_id" "$fake_image_id" "$fake_image_id" \
+          "$(cat "$state/capture")" "$(cat "$state/restore")" "$token"
+      fi
     else
       printf '%s\\n' '[]'
     fi
@@ -408,15 +698,66 @@ case "$command" in
   run)
     original_args="$*"
     [[ "$original_args" != *'database-password'* ]]
-    if [[ "$original_args" == *'/dominion-dump/run.sh'* ]]; then
-      printf 'remote:docker-dump:%s\\n' "$original_args" >>"$FAKE_BOUNDARY_LOG"
-      [[ "$original_args" == *"$FAKE_IMAGE_ID /dominion-dump/run.sh"* ]]
-      [[ "$original_args" == *'target=/dominion-private/pgpass,readonly'* ]]
-      [[ "$original_args" == *'PGPASSFILE=/dominion-private/pgpass'* ]]
+    capture=''; restore=''; project=''; token=''; operation=''; cidfile=''; name=''
+    parse_run_args() {
+      while (( $# > 0 )); do
+        case "$1" in
+          --label)
+            case "$2" in
+              com.dominion.capture-id=*) capture="\${2#*=}" ;;
+              com.dominion.restore-id=*) restore="\${2#*=}" ;;
+              com.dominion.project-ref=*) project="\${2#*=}" ;;
+              com.dominion.ownership-token=*) token="\${2#*=}" ;;
+              com.dominion.operation=*) operation="\${2#*=}" ;;
+            esac
+            shift 2 ;;
+          --cidfile) cidfile="$2"; shift 2 ;;
+          --name) name="$2"; shift 2 ;;
+          *) shift ;;
+        esac
+      done
+    }
+    parse_run_args "$@"
+    materialize_fake_container() {
+      printf '%s\\n' "$capture" >"$state/capture"
+      printf '%s\\n' "$restore" >"$state/restore"
+      printf '%s\\n' "$project" >"$state/project"
+      printf '%s\\n' "$token" >"$state/token"
+      printf '%s\\n' "$operation" >"$state/operation"
+      : >"$state/present"
+      if [[ "\${FAKE_DOCKER_SKIP_CIDFILE:-false}" != 'true' ]]; then
+        printf '%s\\n' "$fake_container_id" >"$cidfile"
+      fi
+    }
+    if [[ -n "$cidfile" ]]; then
+      case "\${FAKE_DOCKER_CREATE_MODE:-normal}" in
+        unresolved)
+          printf 'local:docker-create-unresolved:%s\\n' "$name" >>"$boundary_log"
+          exit 75
+          ;;
+        delayed)
+          (
+            sleep 0.2
+            printf 'local:docker-create-delay-window:%s\\n' "$name" >>"$boundary_log"
+            sleep 0.4
+            materialize_fake_container
+          ) >/dev/null 2>&1 &
+          printf 'local:docker-create-delayed:%s\\n' "$name" >>"$boundary_log"
+          exit 75
+          ;;
+        normal) materialize_fake_container ;;
+        *) exit 69 ;;
+      esac
+    fi
+    if [[ "$original_args" == *'/tmp/dominion/run.sh'* ]]; then
+      printf 'remote:docker-dump:%s\\n' "$original_args" >>"$boundary_log"
+      [[ "$original_args" == *"$fake_image_id /tmp/dominion/run.sh"* ]]
+      [[ "$original_args" == *'target=/tmp/dominion/pgpass,readonly'* ]]
+      [[ "$original_args" == *'PGPASSFILE=/tmp/dominion/pgpass'* ]]
       dump_script=''
       for argument in "$@"; do
         case "$argument" in
-          type=bind,source=*,target=/dominion-dump/run.sh,readonly)
+          type=bind,source=*,target=/tmp/dominion/run.sh,readonly)
             dump_script="\${argument#*source=}"
             dump_script="\${dump_script%%,target=*}"
             ;;
@@ -424,7 +765,7 @@ case "$command" in
       done
       [[ -s "$dump_script" ]]
       grep -F 'unset PGPASSWORD' "$dump_script" >/dev/null
-      grep -F 'export PGPASSFILE="/dominion-private/pgpass"' "$dump_script" >/dev/null
+      grep -F 'export PGPASSFILE="/tmp/dominion/pgpass"' "$dump_script" >/dev/null
       ! grep -F 'database-password' "$dump_script" >/dev/null
       if [[ "$original_args" == *'.history-'* && "\${FAKE_HISTORY_DUMP_FAIL:-false}" == 'true' ]]; then
         exit 75
@@ -442,10 +783,9 @@ case "$command" in
       fi
       exit 0
     fi
-    printf 'local:docker-run' >>"$FAKE_BOUNDARY_LOG"
-    capture=''; restore=''; token=''; cidfile=''
+    printf 'local:docker-run' >>"$boundary_log"
     while (( $# > 0 )); do
-      printf ':%s' "$1" >>"$FAKE_BOUNDARY_LOG"
+      printf ':%s' "$1" >>"$boundary_log"
       case "$1" in
         --label)
           case "$2" in
@@ -453,47 +793,68 @@ case "$command" in
             com.dominion.restore-id=*) restore="\${2#*=}" ;;
             com.dominion.ownership-token=*) token="\${2#*=}" ;;
           esac
-          printf ':%s' "$2" >>"$FAKE_BOUNDARY_LOG"
+          printf ':%s' "$2" >>"$boundary_log"
           shift 2
           ;;
         --cidfile)
           cidfile="$2"
-          printf ':%s' "$2" >>"$FAKE_BOUNDARY_LOG"
+          printf ':%s' "$2" >>"$boundary_log"
           shift 2
           ;;
-        --name|--mount|--tmpfs|--env|--network|--pull|--log-driver)
-          printf ':%s' "$2" >>"$FAKE_BOUNDARY_LOG"
+        --name|--mount|--tmpfs|--env|--network|--pull|--log-driver|--security-opt|--cap-drop|--cap-add|--stop-timeout|--user)
+          printf ':%s' "$2" >>"$boundary_log"
           shift 2
           ;;
         --detach) shift ;;
         *) shift ;;
       esac
     done
-    printf '\\n' >>"$FAKE_BOUNDARY_LOG"
-    printf '%s\\n' "$capture" >"$state/capture"
-    printf '%s\\n' "$restore" >"$state/restore"
-    printf '%s\\n' "$token" >"$state/token"
-    : >"$state/present"
+    printf '\\n' >>"$boundary_log"
     [[ -n "$cidfile" ]]
-    if [[ "\${FAKE_DOCKER_SKIP_CIDFILE:-false}" != 'true' ]]; then
-      printf '%s\\n' "$FAKE_CONTAINER_ID" >"$cidfile"
-    fi
     if [[ "\${FAKE_DOCKER_RUN_FAIL_AFTER_CREATE:-false}" == 'true' ]]; then
       exit 75
     fi
-    printf '%s\\n' "$FAKE_CONTAINER_ID"
+    printf '%s\\n' "$fake_container_id"
     ;;
   exec)
-    printf 'local:docker-exec:%s\\n' "$*" >>"$FAKE_BOUNDARY_LOG"
+    printf 'local:docker-exec:%s\\n' "$*" >>"$boundary_log"
+    if [[ -n "\${FAKE_MUTATE_CAPTURE_ON_EXEC:-}" \
+      && ! -e "$state/capture-mutated" ]]; then
+      case "$FAKE_MUTATE_CAPTURE_ON_EXEC" in
+        path-swap)
+          mv "$FAKE_CAPTURE_DIRECTORY" "$FAKE_CAPTURE_DIRECTORY.swapped"
+          mkdir "$FAKE_CAPTURE_DIRECTORY"
+          chmod 500 "$FAKE_CAPTURE_DIRECTORY"
+          ;;
+        hardlink)
+          ln "$FAKE_CAPTURE_DIRECTORY/schema.sql" \
+            "$FAKE_CAPTURE_HARDLINK_DESTINATION"
+          ;;
+        *) exit 69 ;;
+      esac
+      : >"$state/capture-mutated"
+    fi
     if [[ "$*" == *'show server_version_num'* ]]; then printf '%s\\n' '170006'; fi
     ;;
   rm)
-    [[ "$*" == "--force $FAKE_CONTAINER_ID" ]] || exit 67
-    printf 'local:docker-rm:%s\\n' "$*" >>"$FAKE_BOUNDARY_LOG"
-    rm -f "$state/present" "$state/capture" "$state/restore" "$state/token"
+    [[ "$*" == "--force $fake_container_id" ]] || exit 67
+    printf 'local:docker-rm:%s\\n' "$*" >>"$boundary_log"
+    if [[ "\${FAKE_DOCKER_RM_DELAY:-false}" == 'true' ]]; then
+      printf 'local:docker-rm-cleanup-window:%s\\n' "$fake_container_id" >>"$boundary_log"
+      sleep 0.5
+    fi
+    rm -f "$state/present" "$state/capture" "$state/restore" "$state/project" "$state/token" "$state/operation"
+    ;;
+  diff)
+    [[ "$*" == "$fake_container_id" ]] || exit 68
+    [[ "\${FAKE_DOCKER_DIFF:-empty}" == 'empty' ]] || printf '%s\\n' 'C /tmp/unexpected'
     ;;
   ps)
-    [[ ! -f "$state/present" ]] || printf '%s\\n' "$FAKE_CONTAINER_ID"
+    if [[ "\${FAKE_DOCKER_ABSENCE_QUERY_FAIL:-false}" == 'true' \
+      && "$*" == *'--filter id='* ]]; then
+      exit 75
+    fi
+    [[ ! -f "$state/present" ]] || printf '%s\\n' "$fake_container_id"
     ;;
   *) printf 'unexpected fake docker command: %s\\n' "$command" >&2; exit 64 ;;
 esac
@@ -511,23 +872,69 @@ while (( $# > 0 )); do
     --capture-id) capture="$2"; shift 2 ;;
     --restore-id) restore="$2"; shift 2 ;;
     --database) database="$2"; shift 2 ;;
-    --docker-bin|--container|--capture-directory) shift 2 ;;
+    --docker-bin|--docker-bin-sha256|--docker-socket|--docker-socket-device|--docker-socket-inode|--docker-socket-owner-uid|--docker-socket-owner-mode|--container|--capture-directory) shift 2 ;;
     *) exit 64 ;;
   esac
 done
-printf 'local:restore-verification:%s\\n' "$output" >>"$FAKE_BOUNDARY_LOG"
+printf 'local:restore-verification:%s\\n' "$output" >>"\${FAKE_BOUNDARY_LOG:-${log}}"
 printf '{"schemaVersion":1,"captureId":"%s","restoreId":"%s","databaseName":"%s","checks":[{"name":"managed-application-ddl","status":"pass"},{"name":"migration-history","status":"pass"},{"name":"relation-sequence-counts","status":"pass"},{"name":"roles-schema-data","status":"pass"},{"name":"source-fingerprint","status":"pass"},{"name":"source-manifest","status":"pass"}]}\\n' "$capture" "$restore" "$database" >"$output"
 `,
   );
 
+  const operatorPackLauncher = await makeExecutable(
+    path.join(tools, "operator-pack-clean-launcher"),
+    `#!/usr/bin/env bash
+set -euo pipefail
+[[ "\${1:-}" == '--entrypoint' ]]; entrypoint="$2"; shift 2
+[[ "\${1:-}" == '--entrypoint-file-sha256' ]]; shift 2
+[[ "\${1:-}" == '--clean-environment-launcher-sha256' ]]; shift 2
+[[ "\${1:-}" == '--node-bin' ]]; shift 2
+[[ "\${1:-}" == '--node-bin-sha256' ]]; shift 2
+[[ "\${1:-}" == '--runtime-directory' && -d "$2" ]]; runtime="$2"; shift 2
+[[ "\${1:-}" == '--macos-tcb-attestation' ]]; shift 2
+[[ "\${1:-}" == '--macos-tcb-attestation-sha256' ]]; shift 2
+[[ "\${1:-}" == '--' ]]; shift
+if [[ "\${FAKE_OPERATOR_PACK_ABRUPT_EMPTY_ENTRYPOINT:-}" == "$entrypoint" ]]; then
+  kill -TERM "$PPID"
+  exit 75
+fi
+if [[ "\${FAKE_OPERATOR_PACK_EMPTY_FAILURE_ENTRYPOINT:-}" == "$entrypoint" ]]; then
+  exit 75
+fi
+if [[ "\${FAKE_OPERATOR_PACK_RECOVERY_ENTRYPOINT:-}" == "$entrypoint" ]]; then
+  printf '%s\n' '{"artifactContract":"offline-test-container-recovery/v1"}' \
+    >"$runtime/container-recovery.json"
+  chmod 600 "$runtime/container-recovery.json"
+  exit 75
+fi
+case "$entrypoint" in
+  encrypted-volume-check) exec '${volumeHook}' "$@" ;;
+  edge-functions-inventory) exec '${edgeHook}' "$@" ;;
+  storage-inventory) exec '${storageHook}' "$@" ;;
+  source-manifest) exec '${sourceManifestHook}' "$@" ;;
+  source-fingerprint) exec '${sourceFingerprintHook}' "$@" ;;
+  relation-counts) exec '${relationCountsHook}' "$@" ;;
+  migration-history) exec '${migrationHistoryHook}' "$@" ;;
+  managed-application-ddl) exec '${managedApplicationDdlHook}' "$@" ;;
+  restore-verification) exec '${restoreVerificationHook}' "$@" ;;
+  *) exit 64 ;;
+esac
+`,
+  );
+
   const captureTools = {
+    cleanEnvironmentLauncherSha256: cleanLauncherSha256,
     credentialValidatorSha256: await sha256(credentialValidator),
     dockerBinSha256: await sha256(docker),
     dumpScriptTransformerSha256: await sha256(dumpScriptTransformer),
     edgeFunctionsInventoryHookSha256: await sha256(edgeHook),
     encryptedVolumeCheckHookSha256: await sha256(volumeHook),
+    inputPinningHelperSha256: await sha256(inputPinningHelper),
+    macosTcbAttestationSha256,
     managedApplicationDdlHookSha256: await sha256(managedApplicationDdlHook),
     migrationHistoryHookSha256: await sha256(migrationHistoryHook),
+    nodeBinSha256,
+    operatorPackCleanEnvironmentLauncherSha256: await sha256(operatorPackLauncher),
     relationCountsHookSha256: await sha256(relationCountsHook),
     sourceFingerprintHookSha256: await sha256(sourceFingerprintHook),
     sourceManifestHookSha256: await sha256(sourceManifestHook),
@@ -535,8 +942,14 @@ printf '{"schemaVersion":1,"captureId":"%s","restoreId":"%s","databaseName":"%s"
     supabaseCliSha256: await sha256(supabase),
   };
   const restoreTools = {
+    cleanEnvironmentLauncherSha256: cleanLauncherSha256,
     dockerBinSha256: await sha256(docker),
     encryptedVolumeCheckHookSha256: await sha256(volumeHook),
+    inputPinningHelperSha256: await sha256(inputPinningHelper),
+    macosTcbAttestationSha256,
+    nodeBinSha256,
+    offlinePgsodiumGetkeySha256: await sha256(offlinePgsodiumGetkey),
+    operatorPackCleanEnvironmentLauncherSha256: await sha256(operatorPackLauncher),
     restoreVerificationHookSha256: await sha256(restoreVerificationHook),
   };
   const hashObject = (value) =>
@@ -545,9 +958,11 @@ printf '{"schemaVersion":1,"captureId":"%s","restoreId":"%s","databaseName":"%s"
   await writeFile(
     approvedToolManifest,
     `${JSON.stringify({
-      schemaVersion: 1,
-      artifactContract: "dominion-production-backup-approved-tools/v1",
+      schemaVersion: 2,
+      artifactContract: "dominion-production-backup-approved-tools/v2",
       releaseCommit: commit,
+      dockerSharedHomeRoot: root,
+      dockerContext,
       captureTools,
       captureToolsetSha256: hashObject(captureTools),
       restoreTools,
@@ -564,19 +979,27 @@ printf '{"schemaVersion":1,"captureId":"%s","restoreId":"%s","databaseName":"%s"
     databaseUrl,
     destination,
     docker,
+    dockerContext,
+    dockerSocket,
+    dockerSocketServer,
     dockerState,
     edgeHook,
     git,
     log,
+    macosTcbAttestation,
     managedApplicationDdlHook,
     migrationHistoryHook,
-    passphrase,
+    encryptedVolumeAttestation,
+    creationRecordFile,
+    offlinePgsodiumGetkey,
+    operatorPackLauncher,
     relationCountsHook,
     restoreVerificationHook,
     root,
     sourceFingerprintHook,
     sourceManifestHook,
     storageHook,
+    sslRootCert,
     supabase,
     volumeHook,
   };
@@ -586,6 +1009,7 @@ async function captureArguments(fixture, id = captureId) {
   return [
     "--capture-id", id,
     "--project-ref", projectRef,
+    "--database-host", databaseHost,
     "--expected-branch", "main",
     "--expected-commit", commit,
     "--supabase-cli", fixture.supabase,
@@ -594,17 +1018,27 @@ async function captureArguments(fixture, id = captureId) {
     "--database-url-sha256", await sha256(fixture.databaseUrl),
     "--database-passfile", fixture.databasePassfile,
     "--database-passfile-sha256", await sha256(fixture.databasePassfile),
+    "--ssl-root-cert-file", fixture.sslRootCert,
+    "--ssl-root-cert-file-sha256", await sha256(fixture.sslRootCert),
     "--credential-validator-sha256", await sha256(credentialValidator),
     "--docker-bin", fixture.docker,
     "--docker-bin-sha256", await sha256(fixture.docker),
+    "--docker-socket", fixture.dockerContext.socketPath,
+    "--docker-socket-device", fixture.dockerContext.device,
+    "--docker-socket-inode", fixture.dockerContext.inode,
+    "--docker-socket-owner-uid", String(fixture.dockerContext.ownerUid),
+    "--docker-socket-owner-mode", String(fixture.dockerContext.ownerMode),
+    "--docker-shared-home-root", fixture.root,
     "--dump-script-transformer-sha256", await sha256(dumpScriptTransformer),
     "--approved-tool-manifest", fixture.approvedToolManifest,
     "--approved-tool-manifest-sha256", await sha256(fixture.approvedToolManifest),
+    "--operator-pack-clean-environment-launcher", fixture.operatorPackLauncher,
+    "--macos-tcb-attestation", fixture.macosTcbAttestation,
     "--access-token-file", fixture.accessToken,
     "--access-token-sha256", await sha256(fixture.accessToken),
     "--destination", fixture.destination,
-    "--passphrase-file", fixture.passphrase,
-    "--passphrase-sha256", await sha256(fixture.passphrase),
+    "--encrypted-volume-attestation", fixture.encryptedVolumeAttestation,
+    "--encrypted-volume-attestation-sha256", await sha256(fixture.encryptedVolumeAttestation),
     "--encrypted-volume-check-hook", fixture.volumeHook,
     "--encrypted-volume-check-hook-sha256", await sha256(fixture.volumeHook),
     "--edge-functions-inventory-hook", fixture.edgeHook,
@@ -642,13 +1076,23 @@ async function restoreArguments(fixture, capture = captureId, restore = restoreI
     "--capture-toolset-sha256", captureMetadata.captureToolsetSha256,
     "--approved-tool-manifest", fixture.approvedToolManifest,
     "--approved-tool-manifest-sha256", await sha256(fixture.approvedToolManifest),
+    "--operator-pack-clean-environment-launcher", fixture.operatorPackLauncher,
+    "--macos-tcb-attestation", fixture.macosTcbAttestation,
     "--destination", fixture.destination,
-    "--passphrase-file", fixture.passphrase,
-    "--passphrase-sha256", await sha256(fixture.passphrase),
+    "--encrypted-volume-attestation", fixture.encryptedVolumeAttestation,
+    "--encrypted-volume-attestation-sha256", await sha256(fixture.encryptedVolumeAttestation),
     "--encrypted-volume-check-hook", fixture.volumeHook,
     "--encrypted-volume-check-hook-sha256", await sha256(fixture.volumeHook),
     "--docker-bin", fixture.docker,
     "--docker-bin-sha256", await sha256(fixture.docker),
+    "--docker-socket", fixture.dockerContext.socketPath,
+    "--docker-socket-device", fixture.dockerContext.device,
+    "--docker-socket-inode", fixture.dockerContext.inode,
+    "--docker-socket-owner-uid", String(fixture.dockerContext.ownerUid),
+    "--docker-socket-owner-mode", String(fixture.dockerContext.ownerMode),
+    "--docker-shared-home-root", fixture.root,
+    "--offline-pgsodium-getkey", fixture.offlinePgsodiumGetkey,
+    "--offline-pgsodium-getkey-sha256", await sha256(fixture.offlinePgsodiumGetkey),
     "--restore-verification-hook", fixture.restoreVerificationHook,
     "--restore-verification-hook-sha256", await sha256(fixture.restoreVerificationHook),
     "--postgres-image", image,
@@ -671,6 +1115,8 @@ async function verifyArguments(fixture, capture = captureId, restore = restoreId
     "--dump-script-transformer-sha256", await sha256(dumpScriptTransformer),
     "--approved-tool-manifest", fixture.approvedToolManifest,
     "--approved-tool-manifest-sha256", await sha256(fixture.approvedToolManifest),
+    "--operator-pack-clean-environment-launcher", fixture.operatorPackLauncher,
+    "--macos-tcb-attestation", fixture.macosTcbAttestation,
     "--edge-functions-inventory-hook", fixture.edgeHook,
     "--edge-functions-inventory-hook-sha256", await sha256(fixture.edgeHook),
     "--storage-inventory-hook", fixture.storageHook,
@@ -687,12 +1133,20 @@ async function verifyArguments(fixture, capture = captureId, restore = restoreId
     "--managed-application-ddl-hook-sha256", await sha256(fixture.managedApplicationDdlHook),
     "--postgres-image", image,
     "--postgres-image-id", imageId,
-    "--passphrase-file", fixture.passphrase,
-    "--passphrase-sha256", await sha256(fixture.passphrase),
+    "--encrypted-volume-attestation", fixture.encryptedVolumeAttestation,
+    "--encrypted-volume-attestation-sha256", await sha256(fixture.encryptedVolumeAttestation),
     "--encrypted-volume-check-hook", fixture.volumeHook,
     "--encrypted-volume-check-hook-sha256", await sha256(fixture.volumeHook),
     "--docker-bin", fixture.docker,
     "--docker-bin-sha256", await sha256(fixture.docker),
+    "--docker-socket", fixture.dockerContext.socketPath,
+    "--docker-socket-device", fixture.dockerContext.device,
+    "--docker-socket-inode", fixture.dockerContext.inode,
+    "--docker-socket-owner-uid", String(fixture.dockerContext.ownerUid),
+    "--docker-socket-owner-mode", String(fixture.dockerContext.ownerMode),
+    "--docker-shared-home-root", fixture.root,
+    "--offline-pgsodium-getkey", fixture.offlinePgsodiumGetkey,
+    "--offline-pgsodium-getkey-sha256", await sha256(fixture.offlinePgsodiumGetkey),
     "--restore-verification-hook", fixture.restoreVerificationHook,
     "--restore-verification-hook-sha256", await sha256(fixture.restoreVerificationHook),
   ];
@@ -749,14 +1203,9 @@ test("package argument separators reach all three operator parsers", async (t) =
 });
 
 test("branch mismatch fails before destination verification or remote access", async (t) => {
-  const fixture = await buildFixture();
+  const fixture = await buildFixture({ gitBranch: "develop" });
   t.after(() => rm(fixture.root, { force: true, recursive: true }));
-  const result = run(
-    captureScript,
-    await captureArguments(fixture),
-    fixture,
-    { FAKE_GIT_BRANCH: "develop" },
-  );
+  const result = run(captureScript, await captureArguments(fixture), fixture);
   assert.notEqual(result.status, 0);
   assert.match(result.stderr, /expected branch main, found develop/);
   const log = await readFile(fixture.log, "utf8").catch(() => "");
@@ -791,26 +1240,29 @@ test("capture rejects ambient runtime injection before Node or Git", async (t) =
   assert.equal(await readFile(fixture.log, "utf8").catch(() => ""), "");
 });
 
-test("capture rejects a remote Docker context before image or hosted access", async (t) => {
+test("capture rejects a mismatched Docker socket identity before image or hosted access", async (t) => {
   const fixture = await buildFixture();
   t.after(() => rm(fixture.root, { force: true, recursive: true }));
-  const result = run(
-    captureScript,
+  const args = replaceArgument(
     await captureArguments(fixture),
-    fixture,
-    { FAKE_DOCKER_ENDPOINT: "ssh://remote-builder" },
+    "--docker-socket-inode",
+    String(BigInt(fixture.dockerContext.inode) + 1n),
   );
+  const result = run(captureScript, args, fixture);
   assert.notEqual(result.status, 0);
-  assert.match(result.stderr, /local unix-socket context/);
-  assert.doesNotMatch(await readFile(fixture.log, "utf8"), /remote:/);
+  assert.match(result.stderr, /exact owner-only reviewed socket/);
+  assert.doesNotMatch(
+    await readFile(fixture.log, "utf8").catch(() => ""),
+    /remote:/,
+  );
 });
 
-test("exact tool, image, credential, and passphrase mismatches all fail before remote access", async (t) => {
+test("exact tool, image, credential, and attestation mismatches all fail before remote access", async (t) => {
   const cases = [
     ["CLI hash", "--supabase-cli-sha256", "f".repeat(64)],
     ["image ref", "--postgres-image", "public.ecr.aws/supabase/postgres:17.6.1.140"],
     ["database credential hash", "--database-url-sha256", "e".repeat(64)],
-    ["passphrase hash", "--passphrase-sha256", "d".repeat(64)],
+    ["attestation hash", "--encrypted-volume-attestation-sha256", "d".repeat(64)],
     ["volume hook hash", "--encrypted-volume-check-hook-sha256", "c".repeat(64)],
     ["managed DDL hook hash", "--managed-application-ddl-hook-sha256", "b".repeat(64)],
   ];
@@ -894,7 +1346,9 @@ test("credential files fail closed on wrong scope, wildcard, duplicate, permissi
       await mutate(fixture);
       const result = run(captureScript, await captureArguments(fixture), fixture);
       assert.notEqual(result.status, 0);
-      assert.equal(await readFile(fixture.log, "utf8").catch(() => ""), "");
+      const boundaryLog = await readFile(fixture.log, "utf8").catch(() => "");
+      assert.equal(boundaryLog, "local:encrypted-volume-verified\n");
+      assert.doesNotMatch(boundaryLog, /remote:/u);
       await assert.rejects(stat(path.join(fixture.destination, captureId)));
     });
   }
@@ -916,6 +1370,30 @@ test("approved tool manifest is release-bound and checked before remote access",
   assert.equal(await readFile(fixture.log, "utf8").catch(() => ""), "");
 });
 
+test("trust roots reject deterministic path swaps and hard links before access", async (t) => {
+  for (const mutation of ["path-swap", "hardlink"]) {
+    await t.test(mutation, async (nested) => {
+      const fixture = await buildFixture();
+      nested.after(() => rm(fixture.root, { force: true, recursive: true }));
+      const args = await captureArguments(fixture);
+      if (mutation === "path-swap") {
+        const original = `${fixture.approvedToolManifest}.original`;
+        await rename(fixture.approvedToolManifest, original);
+        await symlink(original, fixture.approvedToolManifest);
+      } else {
+        await link(
+          fixture.approvedToolManifest,
+          `${fixture.approvedToolManifest}.hardlink`,
+        );
+      }
+      const result = run(captureScript, args, fixture);
+      assert.notEqual(result.status, 0);
+      assert.match(result.stderr, /symbolic link|non-symlink|too many levels|exactly one hard link|exact opened regular file/iu);
+      assert.doesNotMatch(await readFile(fixture.log, "utf8").catch(() => ""), /remote:/u);
+    });
+  }
+});
+
 test("capture start cannot precede the explicit writer-quiescence boundary", async (t) => {
   const fixture = await buildFixture();
   t.after(() => rm(fixture.root, { force: true, recursive: true }));
@@ -935,6 +1413,12 @@ test("capture writes every artifact directly under the encrypted destination and
   t.after(() => rm(fixture.root, { force: true, recursive: true }));
   const result = await successfulCapture(fixture);
   const captureDirectory = path.join(fixture.destination, captureId);
+  assert.equal((await stat(captureDirectory)).mode & 0o777, 0o500);
+  assert.deepEqual(
+    await runtimeDirectories(fixture, "dominion-production-capture."),
+    [],
+    "successful capture must leave no private operator runtime",
+  );
   assert.deepEqual((await readdir(captureDirectory)).sort(), [
     "CAPTURE_COMPLETE.json",
     "SHA256SUMS",
@@ -954,6 +1438,11 @@ test("capture writes every artifact directly under the encrypted destination and
     "source-manifest.jsonl",
     "storage-metadata.json",
   ]);
+  for (const name of await readdir(captureDirectory)) {
+    const artifact = await stat(path.join(captureDirectory, name));
+    assert.equal(artifact.mode & 0o777, 0o400, `${name} must be sealed read-only`);
+    assert.equal(artifact.nlink, 1, `${name} must have one hard link`);
+  }
   const marker = JSON.parse(
     await readFile(path.join(captureDirectory, "CAPTURE_COMPLETE.json"), "utf8"),
   );
@@ -973,11 +1462,16 @@ test("capture writes every artifact directly under the encrypted destination and
   assert.match(log, /local:supabase-argv:[^\n]*--dry-run/);
   for (const line of log.split("\n").filter((entry) => entry.startsWith("remote:docker-dump:"))) {
     assert.ok(line.includes(`${captureDirectory}/.`), line);
+    assert.ok(
+      line.includes(`${fixture.destination}/private/dominion-production-capture.`),
+      `credential-bearing Docker mounts escaped the encrypted runtime: ${line}`,
+    );
   }
+  assert.doesNotMatch(log, /\/tmp\/dominion-production-capture\./u);
   const combined = `${result.stdout}\n${result.stderr}\n${log}\n${await Promise.all(
     (await readdir(captureDirectory)).map((name) => readFile(path.join(captureDirectory, name), "utf8")),
   )}`;
-  assert.doesNotMatch(combined, /database-password|supabase-access-token|correct horse/);
+  assert.doesNotMatch(combined, /database-password|supabase-access-token/);
   assert.match(result.stdout, /BACKUP_MANIFEST_SHA256=[a-f0-9]{64}/);
 });
 
@@ -1003,13 +1497,12 @@ test("absent migration history uses deterministic no-op restore artifacts", asyn
 });
 
 test("present empty migration history is dumped and remains distinct from absence", async (t) => {
-  const fixture = await buildFixture();
+  const fixture = await buildFixture({ historyPresent: true });
   t.after(() => rm(fixture.root, { force: true, recursive: true }));
   const result = run(
     captureScript,
     await captureArguments(fixture),
     fixture,
-    { FAKE_HISTORY_PRESENT: "true" },
   );
   assert.equal(result.status, 0, result.stderr);
   const captureDirectory = path.join(fixture.destination, captureId);
@@ -1029,13 +1522,13 @@ test("present empty migration history is dumped and remains distinct from absenc
 });
 
 test("a present migration-history dump failure is never reinterpreted as absence", async (t) => {
-  const fixture = await buildFixture();
+  const fixture = await buildFixture({ historyPresent: true });
   t.after(() => rm(fixture.root, { force: true, recursive: true }));
   const result = run(
     captureScript,
     await captureArguments(fixture),
     fixture,
-    { FAKE_HISTORY_DUMP_FAIL: "true", FAKE_HISTORY_PRESENT: "true" },
+    { FAKE_HISTORY_DUMP_FAIL: "true" },
   );
   assert.notEqual(result.status, 0);
   assert.match(result.stderr, /history-schema\.sql failed/);
@@ -1050,13 +1543,12 @@ test("a present migration-history dump failure is never reinterpreted as absence
 });
 
 test("nonzero Storage objects stop before database dumps", async (t) => {
-  const fixture = await buildFixture();
+  const fixture = await buildFixture({ storageObjectCount: 1 });
   t.after(() => rm(fixture.root, { force: true, recursive: true }));
   const result = run(
     captureScript,
     await captureArguments(fixture),
     fixture,
-    { FAKE_STORAGE_OBJECT_COUNT: "1" },
   );
   assert.notEqual(result.status, 0);
   assert.match(result.stderr, /export Storage blobs through the Storage API/);
@@ -1069,18 +1561,17 @@ test("nonzero Storage objects stop before database dumps", async (t) => {
 });
 
 test("nonzero excluded vector data and missing mandatory vector relations stop before dumps", async (t) => {
-  for (const extraEnv of [
-    { FAKE_STORAGE_VECTOR_COUNT: "1" },
-    { FAKE_STORAGE_VECTOR_PRESENT: "false" },
+  for (const fixtureOptions of [
+    { storageVectorCount: 1 },
+    { storageVectorPresent: false },
   ]) {
-    await t.test(JSON.stringify(extraEnv), async (nested) => {
-      const fixture = await buildFixture();
+    await t.test(JSON.stringify(fixtureOptions), async (nested) => {
+      const fixture = await buildFixture(fixtureOptions);
       nested.after(() => rm(fixture.root, { force: true, recursive: true }));
       const result = run(
         captureScript,
         await captureArguments(fixture),
         fixture,
-        extraEnv,
       );
       assert.notEqual(result.status, 0);
       assert.match(
@@ -1093,13 +1584,12 @@ test("nonzero excluded vector data and missing mandatory vector relations stop b
 });
 
 test("credential file swap after inventory is detected before any dump", async (t) => {
-  const fixture = await buildFixture();
+  const fixture = await buildFixture({ swapDatabasePassfile: true });
   t.after(() => rm(fixture.root, { force: true, recursive: true }));
   const result = run(
     captureScript,
     await captureArguments(fixture),
     fixture,
-    { FAKE_SWAP_DATABASE_PASSFILE: "true" },
   );
   assert.notEqual(result.status, 0);
   assert.match(result.stderr, /database passfile changed during inventory/);
@@ -1113,12 +1603,80 @@ test("restore verifies the manifest before touching Docker", async (t) => {
   const fixture = await buildFixture();
   t.after(() => rm(fixture.root, { force: true, recursive: true }));
   await successfulCapture(fixture);
+  await unsealEvidenceForTest(path.join(fixture.destination, captureId));
   await writeFile(path.join(fixture.destination, captureId, "schema.sql"), "tampered\n");
+  await sealEvidenceForTest(path.join(fixture.destination, captureId));
   await writeFile(fixture.log, "");
   const result = run(restoreScript, await restoreArguments(fixture), fixture);
   assert.notEqual(result.status, 0);
   assert.match(result.stderr, /SHA-256 mismatch for schema\.sql/);
-  assert.equal(await readFile(fixture.log, "utf8"), "local:encrypted-volume-verified\n");
+  const boundaryLog = await readFile(fixture.log, "utf8");
+  assert.equal(
+    boundaryLog,
+    "local:encrypted-volume-verified\nlocal:encrypted-volume-verified\n",
+  );
+  assert.doesNotMatch(boundaryLog, /docker/u);
+});
+
+test("restore rejects hard-linked capture evidence before touching Docker", async (t) => {
+  const fixture = await buildFixture();
+  t.after(() => rm(fixture.root, { force: true, recursive: true }));
+  await successfulCapture(fixture);
+  await link(
+    path.join(fixture.destination, captureId, "schema.sql"),
+    path.join(fixture.destination, "private", "schema-hardlink"),
+  );
+  await writeFile(fixture.log, "");
+  const result = run(restoreScript, await restoreArguments(fixture), fixture);
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /exactly one hard link/);
+  assert.doesNotMatch(await readFile(fixture.log, "utf8"), /docker/u);
+});
+
+test("restore detects capture path swaps and hardlink mutation around pinned consumption", async (t) => {
+  for (const mutation of ["path-swap", "hardlink"]) {
+    await t.test(mutation, async (nested) => {
+      const fixture = await buildFixture();
+      nested.after(() => rm(fixture.root, { force: true, recursive: true }));
+      await successfulCapture(fixture);
+      const captureDirectory = path.join(fixture.destination, captureId);
+      const result = run(
+        restoreScript,
+        await restoreArguments(fixture),
+        fixture,
+        {
+          FAKE_CAPTURE_DIRECTORY: captureDirectory,
+          FAKE_CAPTURE_HARDLINK_DESTINATION: path.join(
+            fixture.destination,
+            "private",
+            "consumption-hardlink",
+          ),
+          FAKE_MUTATE_CAPTURE_ON_EXEC: mutation,
+        },
+      );
+      assert.notEqual(result.status, 0);
+      assert.match(
+        result.stderr,
+        /changed during isolated restore consumption|exactly one hard link|artifact inventory/u,
+      );
+      const log = await readFile(fixture.log, "utf8");
+      assert.match(log, /authenticated-backup,target=\/tmp\/dominion-runtime\/backup,readonly/u);
+      assert.doesNotMatch(
+        log,
+        new RegExp(`source=${captureDirectory.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")},target=/tmp/dominion-runtime/backup`),
+      );
+      assert.match(log, new RegExp(`local:docker-rm:--force ${containerId}`));
+      const runtimes = await runtimeDirectories(
+        fixture,
+        "dominion-production-restore.",
+      );
+      assert.deepEqual(
+        runtimes,
+        [],
+        "proven container cleanup must remove credential-bearing runtime",
+      );
+    });
+  }
 });
 
 test("dump contract, toolset, and quiescence tampering all fail before Docker", async (t) => {
@@ -1141,7 +1699,9 @@ test("dump contract, toolset, and quiescence tampering all fail before Docker", 
       nested.after(() => rm(fixture.root, { force: true, recursive: true }));
       await successfulCapture(fixture);
       const restoreArgs = await restoreArguments(fixture);
+      await unsealEvidenceForTest(path.join(fixture.destination, captureId));
       await tamper(path.join(fixture.destination, captureId, artifact));
+      await sealEvidenceForTest(path.join(fixture.destination, captureId));
       await writeFile(fixture.log, "");
       const result = run(restoreScript, restoreArgs, fixture);
       assert.notEqual(result.status, 0);
@@ -1164,25 +1724,53 @@ test("restore uses a unique no-network exact-image tmpfs container and records v
   assert.match(log, /local:docker-run:[^\n]*:--pull:never/);
   assert.match(log, /local:docker-run:[^\n]*:--network:none/);
   assert.match(log, /local:docker-run:[^\n]*:--log-driver:none/);
+  assert.match(log, /local:docker-run:[^\n]*:--read-only/);
+  assert.match(log, /local:docker-run:[^\n]*:--cap-drop:ALL/);
+  assert.match(log, /local:docker-run:[^\n]*:--security-opt:no-new-privileges/);
+  assert.match(log, /local:docker-run:[^\n]*:--user:100:101/);
   assert.match(log, /local:docker-run:[^\n]*:--cidfile:/);
+  assert.match(
+    log,
+    new RegExp(`${fixture.destination.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}/private/dominion-production-restore\\.`),
+  );
+  assert.doesNotMatch(log, /\/tmp\/dominion-production-restore\./u);
   assert.match(log, new RegExp(`local:docker-run:[^\\n]*:${imageId.replace(/[.*+?^${}()|[\\]\\]/g, "\\$&")}`));
-  assert.match(log, /target=\/dominion-backup,readonly/);
+  assert.match(log, /target=\/tmp\/dominion-runtime\/backup,readonly/);
+  assert.match(
+    log,
+    /source=.*\/private\/dominion-production-restore\.[^,]*\/authenticated-backup,target=\/tmp\/dominion-runtime\/backup,readonly/u,
+  );
+  assert.doesNotMatch(
+    log,
+    new RegExp(`source=${path.join(fixture.destination, captureId).replace(/[.*+?^${}()|[\]\\]/g, "\\$&")},target=/tmp/dominion-runtime/backup`),
+  );
   assert.match(log, /\/var\/lib\/postgresql\/data:rw,nosuid,nodev/);
   assert.match(log, new RegExp(`local:docker-rm:--force ${containerId}`));
   assert.doesNotMatch(log, /local:docker-rm:--force dominion-restore-/);
-  assert.match(log, /--file \/dominion-backup\/managed-application-ddl\.sql/);
+  assert.match(log, /--file \/tmp\/dominion-runtime\/backup\/managed-application-ddl\.sql/);
   await assert.rejects(stat(path.join(fixture.dockerState, "present")));
+  assert.deepEqual(
+    await runtimeDirectories(fixture, "dominion-production-restore."),
+    [],
+    "successful restore must leave no private restore runtime",
+  );
 
   const evidence = path.join(
     fixture.destination,
     `restore-${captureId}-${restoreId}`,
   );
+  assert.equal((await stat(evidence)).mode & 0o777, 0o500);
   assert.deepEqual((await readdir(evidence)).sort(), [
     "RESTORE_COMPLETE.json",
     "SHA256SUMS",
     "restore-verification.json",
     "restore.json",
   ]);
+  for (const name of await readdir(evidence)) {
+    const artifact = await stat(path.join(evidence, name));
+    assert.equal(artifact.mode & 0o777, 0o400);
+    assert.equal(artifact.nlink, 1);
+  }
   const metadata = JSON.parse(await readFile(path.join(evidence, "restore.json"), "utf8"));
   assert.equal(metadata.postgres.serverVersionNum, 170006);
   assert.equal(metadata.cleanupOwnershipVerified, true);
@@ -1193,6 +1781,7 @@ test("ownership mismatch refuses destructive container cleanup", async (t) => {
   const fixture = await buildFixture();
   t.after(() => rm(fixture.root, { force: true, recursive: true }));
   await successfulCapture(fixture);
+  await writeFile(fixture.log, "");
   const result = run(
     restoreScript,
     await restoreArguments(fixture),
@@ -1200,7 +1789,8 @@ test("ownership mismatch refuses destructive container cleanup", async (t) => {
     { FAKE_DOCKER_OWNERSHIP_MODE: "mismatch" },
   );
   assert.notEqual(result.status, 0);
-  assert.match(result.stderr, /refusing cleanup because container ownership changed/);
+  assert.match(result.stderr, /failed the ownership and image inspection/);
+  assert.match(result.stderr, /refusing an unverified container left by the create attempt/);
   const log = await readFile(fixture.log, "utf8");
   assert.doesNotMatch(log, /local:docker-rm:/);
   await stat(path.join(fixture.dockerState, "present"));
@@ -1229,7 +1819,7 @@ test("failed container creation adopts only the private full-ID cidfile for clea
   await assert.rejects(stat(path.join(evidence, "RESTORE_COMPLETE.json")));
 });
 
-test("a create attempt without the private cidfile is never adopted by name", async (t) => {
+test("a validated returned container ID remains cleanup authority when its cidfile is missing", async (t) => {
   const fixture = await buildFixture();
   t.after(() => rm(fixture.root, { force: true, recursive: true }));
   await successfulCapture(fixture);
@@ -1240,13 +1830,373 @@ test("a create attempt without the private cidfile is never adopted by name", as
     { FAKE_DOCKER_SKIP_CIDFILE: "true" },
   );
   assert.notEqual(result.status, 0);
-  assert.match(
-    result.stderr,
-    /refusing an unverified container left by the create attempt/,
-  );
+  assert.match(result.stderr, /Docker cidfile did not bind the exact full container ID/);
   const log = await readFile(fixture.log, "utf8");
-  assert.doesNotMatch(log, /local:docker-rm:/);
-  await stat(path.join(fixture.dockerState, "present"));
+  assert.match(log, new RegExp("local:docker-rm:--force " + containerId));
+  assert.doesNotMatch(log, /local:docker-rm:--force dominion-restore-/);
+  await assert.rejects(stat(path.join(fixture.dockerState, "present")));
+});
+
+test("capture SIGQUIT late-adopts an exact delayed container and removes its runtime", async (t) => {
+  const fixture = await buildFixture();
+  t.after(() => rm(fixture.root, { force: true, recursive: true }));
+  const operation = startRun(
+    captureScript,
+    await captureArguments(fixture),
+    fixture,
+    { FAKE_DOCKER_CREATE_MODE: "delayed" },
+  );
+  await waitForLog(fixture.log, /local:docker-create-delay-window:/u);
+  operation.child.kill("SIGQUIT");
+  const result = await operation.completion;
+  assert.notEqual(result.status, 0, result.stderr);
+  const log = await readFile(fixture.log, "utf8");
+  assert.match(log, new RegExp(`local:docker-rm:--force ${containerId}`));
+  await assert.rejects(stat(path.join(fixture.dockerState, "present")));
+  assert.deepEqual(
+    await runtimeDirectories(fixture, "dominion-production-capture."),
+    [],
+  );
+});
+
+test("capture cleanup survives a second process-group signal", async (t) => {
+  const fixture = await buildFixture();
+  t.after(() => rm(fixture.root, { force: true, recursive: true }));
+  const operation = startRun(
+    captureScript,
+    await captureArguments(fixture),
+    fixture,
+    {
+      FAKE_DOCKER_CREATE_MODE: "delayed",
+      FAKE_DOCKER_RM_DELAY: "true",
+    },
+    { detached: true },
+  );
+  t.after(() => {
+    try {
+      process.kill(-operation.child.pid, "SIGKILL");
+    } catch (error) {
+      if (error.code !== "ESRCH") throw error;
+    }
+  });
+  await waitForLog(fixture.log, /local:docker-create-delay-window:/u);
+  operation.child.kill("SIGQUIT");
+  await waitForLog(fixture.log, /local:docker-rm-cleanup-window:/u);
+  process.kill(-operation.child.pid, "SIGTERM");
+  const result = await operation.completion;
+  assert.notEqual(result.status, 0, result.stderr);
+  const log = await readFile(fixture.log, "utf8");
+  assert.match(log, new RegExp(`local:docker-rm:--force ${containerId}`));
+  await assert.rejects(stat(path.join(fixture.dockerState, "present")));
+  assert.deepEqual(
+    await runtimeDirectories(fixture, "dominion-production-capture."),
+    [],
+  );
+});
+
+test("restore SIGTERM late-adopts an exact delayed container and removes its runtime", async (t) => {
+  const fixture = await buildFixture();
+  t.after(() => rm(fixture.root, { force: true, recursive: true }));
+  await successfulCapture(fixture);
+  await writeFile(fixture.log, "");
+  const operation = startRun(
+    restoreScript,
+    await restoreArguments(fixture),
+    fixture,
+    { FAKE_DOCKER_CREATE_MODE: "delayed" },
+  );
+  await waitForLog(fixture.log, /local:docker-create-delay-window:/u);
+  operation.child.kill("SIGTERM");
+  const result = await operation.completion;
+  assert.notEqual(result.status, 0, result.stderr);
+  const log = await readFile(fixture.log, "utf8");
+  assert.match(log, new RegExp(`local:docker-rm:--force ${containerId}`));
+  await assert.rejects(stat(path.join(fixture.dockerState, "present")));
+  assert.deepEqual(
+    await runtimeDirectories(fixture, "dominion-production-restore."),
+    [],
+  );
+});
+
+test("restore cleanup survives a second process-group signal", async (t) => {
+  const fixture = await buildFixture();
+  t.after(() => rm(fixture.root, { force: true, recursive: true }));
+  await successfulCapture(fixture);
+  await writeFile(fixture.log, "");
+  const operation = startRun(
+    restoreScript,
+    await restoreArguments(fixture),
+    fixture,
+    {
+      FAKE_DOCKER_CREATE_MODE: "delayed",
+      FAKE_DOCKER_RM_DELAY: "true",
+    },
+    { detached: true },
+  );
+  t.after(() => {
+    try {
+      process.kill(-operation.child.pid, "SIGKILL");
+    } catch (error) {
+      if (error.code !== "ESRCH") throw error;
+    }
+  });
+  await waitForLog(fixture.log, /local:docker-create-delay-window:/u);
+  operation.child.kill("SIGTERM");
+  await waitForLog(fixture.log, /local:docker-rm-cleanup-window:/u);
+  process.kill(-operation.child.pid, "SIGQUIT");
+  const result = await operation.completion;
+  assert.notEqual(result.status, 0, result.stderr);
+  const log = await readFile(fixture.log, "utf8");
+  assert.match(log, new RegExp(`local:docker-rm:--force ${containerId}`));
+  await assert.rejects(stat(path.join(fixture.dockerState, "present")));
+  assert.deepEqual(
+    await runtimeDirectories(fixture, "dominion-production-restore."),
+    [],
+  );
+});
+
+test("capture preserves nested operator-pack recovery authority", async (t) => {
+  const fixture = await buildFixture();
+  t.after(() => rm(fixture.root, { force: true, recursive: true }));
+  const result = run(
+    captureScript,
+    await captureArguments(fixture),
+    fixture,
+    { FAKE_OPERATOR_PACK_RECOVERY_ENTRYPOINT: "source-manifest" },
+  );
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /preserved encrypted capture recovery state/u);
+  const runtimes = await runtimeDirectories(
+    fixture,
+    "dominion-production-capture.",
+  );
+  assert.equal(runtimes.length, 1);
+  const runtime = path.join(fixture.destination, "private", runtimes[0]);
+  const children = (await readdir(runtime))
+    .filter((name) => name.startsWith("operator-pack-entrypoint."));
+  assert.equal(children.length, 1);
+  await stat(path.join(runtime, children[0], "container-recovery.json"));
+  await stat(path.join(runtime, "database-url"));
+  await stat(path.join(runtime, "pgpass"));
+});
+
+test("capture preserves an abruptly abandoned empty pack runtime", async (t) => {
+  const fixture = await buildFixture();
+  t.after(() => rm(fixture.root, { force: true, recursive: true }));
+  const result = run(
+    captureScript,
+    await captureArguments(fixture),
+    fixture,
+    { FAKE_OPERATOR_PACK_ABRUPT_EMPTY_ENTRYPOINT: "source-manifest" },
+  );
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /preserved encrypted capture recovery state/u);
+  const runtimes = await runtimeDirectories(
+    fixture,
+    "dominion-production-capture.",
+  );
+  assert.equal(runtimes.length, 1);
+  const runtime = path.join(fixture.destination, "private", runtimes[0]);
+  const children = (await readdir(runtime))
+    .filter((name) => name.startsWith("operator-pack-entrypoint."));
+  assert.equal(children.length, 1);
+  assert.deepEqual(await readdir(path.join(runtime, children[0])), []);
+});
+
+test("capture preserves an ordinary failed empty pack runtime", async (t) => {
+  const fixture = await buildFixture();
+  t.after(() => rm(fixture.root, { force: true, recursive: true }));
+  const result = run(
+    captureScript,
+    await captureArguments(fixture),
+    fixture,
+    { FAKE_OPERATOR_PACK_EMPTY_FAILURE_ENTRYPOINT: "source-manifest" },
+  );
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /preserved encrypted capture recovery state/u);
+  const runtimes = await runtimeDirectories(
+    fixture,
+    "dominion-production-capture.",
+  );
+  assert.equal(runtimes.length, 1);
+  const runtime = path.join(fixture.destination, "private", runtimes[0]);
+  const children = (await readdir(runtime))
+    .filter((name) => name.startsWith("operator-pack-entrypoint."));
+  assert.equal(children.length, 1);
+  assert.deepEqual(await readdir(path.join(runtime, children[0])), []);
+});
+
+test("restore preserves nested operator-pack recovery authority", async (t) => {
+  const fixture = await buildFixture();
+  t.after(() => rm(fixture.root, { force: true, recursive: true }));
+  await successfulCapture(fixture);
+  await writeFile(fixture.log, "");
+  const result = run(
+    restoreScript,
+    await restoreArguments(fixture),
+    fixture,
+    { FAKE_OPERATOR_PACK_RECOVERY_ENTRYPOINT: "restore-verification" },
+  );
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /preserved encrypted restore recovery state/u);
+  await assert.rejects(stat(path.join(fixture.dockerState, "present")));
+  const runtimes = await runtimeDirectories(
+    fixture,
+    "dominion-production-restore.",
+  );
+  assert.equal(runtimes.length, 1);
+  const runtime = path.join(fixture.destination, "private", runtimes[0]);
+  const children = (await readdir(runtime))
+    .filter((name) => name.startsWith("operator-pack-entrypoint."));
+  assert.equal(children.length, 1);
+  await stat(path.join(runtime, children[0], "container-recovery.json"));
+  await stat(path.join(runtime, "authenticated-backup"));
+});
+
+test("restore preserves an abruptly abandoned empty pack runtime", async (t) => {
+  const fixture = await buildFixture();
+  t.after(() => rm(fixture.root, { force: true, recursive: true }));
+  await successfulCapture(fixture);
+  await writeFile(fixture.log, "");
+  const result = run(
+    restoreScript,
+    await restoreArguments(fixture),
+    fixture,
+    { FAKE_OPERATOR_PACK_ABRUPT_EMPTY_ENTRYPOINT: "restore-verification" },
+  );
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /preserved encrypted restore recovery state/u);
+  await assert.rejects(stat(path.join(fixture.dockerState, "present")));
+  const runtimes = await runtimeDirectories(
+    fixture,
+    "dominion-production-restore.",
+  );
+  assert.equal(runtimes.length, 1);
+  const runtime = path.join(fixture.destination, "private", runtimes[0]);
+  const children = (await readdir(runtime))
+    .filter((name) => name.startsWith("operator-pack-entrypoint."));
+  assert.equal(children.length, 1);
+  assert.deepEqual(await readdir(path.join(runtime, children[0])), []);
+});
+
+test("restore preserves an ordinary failed empty pack runtime", async (t) => {
+  const fixture = await buildFixture();
+  t.after(() => rm(fixture.root, { force: true, recursive: true }));
+  await successfulCapture(fixture);
+  await writeFile(fixture.log, "");
+  const result = run(
+    restoreScript,
+    await restoreArguments(fixture),
+    fixture,
+    { FAKE_OPERATOR_PACK_EMPTY_FAILURE_ENTRYPOINT: "restore-verification" },
+  );
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /preserved encrypted restore recovery state/u);
+  await assert.rejects(stat(path.join(fixture.dockerState, "present")));
+  const runtimes = await runtimeDirectories(
+    fixture,
+    "dominion-production-restore.",
+  );
+  assert.equal(runtimes.length, 1);
+  const runtime = path.join(fixture.destination, "private", runtimes[0]);
+  const children = (await readdir(runtime))
+    .filter((name) => name.startsWith("operator-pack-entrypoint."));
+  assert.equal(children.length, 1);
+  assert.deepEqual(await readdir(path.join(runtime, children[0])), []);
+});
+
+test("capture preserves recovery authority when the absence query fails", async (t) => {
+  const fixture = await buildFixture();
+  t.after(() => rm(fixture.root, { force: true, recursive: true }));
+  const result = run(
+    captureScript,
+    await captureArguments(fixture),
+    fixture,
+    { FAKE_DOCKER_ABSENCE_QUERY_FAIL: "true" },
+  );
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /preserved encrypted capture recovery state/u);
+  const runtimes = await runtimeDirectories(
+    fixture,
+    "dominion-production-capture.",
+  );
+  assert.equal(runtimes.length, 1);
+  await stat(path.join(
+    fixture.destination,
+    "private",
+    runtimes[0],
+    "container-roles.sql",
+    "container-recovery.json",
+  ));
+});
+
+test("unresolved capture creation preserves exact sealed recovery authority", async (t) => {
+  const fixture = await buildFixture();
+  t.after(() => rm(fixture.root, { force: true, recursive: true }));
+  const result = run(
+    captureScript,
+    await captureArguments(fixture),
+    fixture,
+    { FAKE_DOCKER_CREATE_MODE: "unresolved" },
+  );
+  assert.notEqual(result.status, 0);
+  const runtimes = await runtimeDirectories(
+    fixture,
+    "dominion-production-capture.",
+  );
+  assert.equal(runtimes.length, 1);
+  const runtime = path.join(fixture.destination, "private", runtimes[0]);
+  const recoveryFile = path.join(runtime, "container-roles.sql", "container-recovery.json");
+  const recovery = JSON.parse(await readFile(recoveryFile, "utf8"));
+  assert.equal((await stat(recoveryFile)).mode & 0o777, 0o600);
+  assert.equal(recovery.captureId, captureId);
+  assert.equal(recovery.status, "create-pending");
+  assert.equal(recovery.imageId, imageId);
+  assert.deepEqual(recovery.mounts.dumpScript, {
+    source: path.join(fixture.destination, captureId, ".roles.sql.run.sh"),
+    target: "/tmp/dominion/run.sh",
+    readOnly: true,
+  });
+  assert.equal(recovery.mounts.passfile.target, "/tmp/dominion/pgpass");
+  assert.equal(recovery.mounts.passfile.readOnly, true);
+  assert.equal(recovery.mounts.rootCert.target, "/tmp/dominion/supabase-ca.crt");
+  assert.equal(recovery.mounts.rootCert.readOnly, true);
+});
+
+test("unresolved restore creation preserves exact sealed recovery authority", async (t) => {
+  const fixture = await buildFixture();
+  t.after(() => rm(fixture.root, { force: true, recursive: true }));
+  await successfulCapture(fixture);
+  const result = run(
+    restoreScript,
+    await restoreArguments(fixture),
+    fixture,
+    { FAKE_DOCKER_CREATE_MODE: "unresolved" },
+  );
+  assert.notEqual(result.status, 0);
+  const runtimes = await runtimeDirectories(
+    fixture,
+    "dominion-production-restore.",
+  );
+  assert.equal(runtimes.length, 1);
+  const runtime = path.join(fixture.destination, "private", runtimes[0]);
+  const recoveryFile = path.join(runtime, "restore-container-recovery.json");
+  const recovery = JSON.parse(await readFile(recoveryFile, "utf8"));
+  assert.equal((await stat(recoveryFile)).mode & 0o777, 0o600);
+  assert.equal(recovery.captureId, captureId);
+  assert.equal(recovery.restoreId, restoreId);
+  assert.equal(recovery.status, "create-pending");
+  assert.equal(recovery.imageId, imageId);
+  assert.deepEqual(recovery.mounts.backupDirectory, {
+    source: path.join(runtime, "authenticated-backup"),
+    target: "/tmp/dominion-runtime/backup",
+    readOnly: true,
+  });
+  assert.equal(
+    recovery.mounts.getkeyHelper.target,
+    "/tmp/dominion-runtime/bin/offline-pgsodium-getkey",
+  );
+  assert.equal(recovery.mounts.getkeyHelper.readOnly, true);
 });
 
 test("standalone verifier emits stable evidence identities without Docker access", async (t) => {
@@ -1277,6 +2227,11 @@ test("standalone verifier emits stable evidence identities without Docker access
   assert.match(result.stdout, /^WRITER_QUIESCED_AT=\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/m);
   assert.match(result.stdout, /^CAPTURE_STARTED_AT=\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/m);
   assert.match(result.stdout, /^CAPTURED_AT=\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/m);
+  assert.match(result.stdout, new RegExp(`^DOCKER_SHARED_HOME_ROOT=${fixture.root}$`, "m"));
+  assert.match(
+    result.stdout,
+    new RegExp(`^MACOS_TCB_ATTESTATION_SHA256=${macosTcbAttestationSha256}$`, "m"),
+  );
   assert.doesNotMatch(await readFile(fixture.log, "utf8"), /docker/);
 });
 
@@ -1291,7 +2246,9 @@ test("standalone verifier rejects restore-evidence tampering", async (t) => {
     `restore-${captureId}-${restoreId}`,
     "restore-verification.json",
   );
+  await unsealEvidenceForTest(path.dirname(verification));
   await writeFile(verification, "{}\n");
+  await sealEvidenceForTest(path.dirname(verification));
   await writeFile(fixture.log, "");
   const result = run(verifyScript, await verifyArguments(fixture), fixture);
   assert.notEqual(result.status, 0);
@@ -1312,18 +2269,24 @@ test("standalone verifier rejects incomplete markers beside completion evidence"
     captureId,
     "CAPTURE_INCOMPLETE",
   );
+  await unsealEvidenceForTest(path.dirname(captureIncomplete));
   await writeFile(captureIncomplete, "capture did not complete\n", { mode: 0o600 });
+  await sealEvidenceForTest(path.dirname(captureIncomplete));
   let result = run(verifyScript, args, fixture);
   assert.notEqual(result.status, 0);
   assert.match(result.stderr, /artifact inventory does not match/);
+  await unsealEvidenceForTest(path.dirname(captureIncomplete));
   await unlink(captureIncomplete);
+  await sealEvidenceForTest(path.dirname(captureIncomplete));
 
   const restoreIncomplete = path.join(
     fixture.destination,
     `restore-${captureId}-${restoreId}`,
     "RESTORE_INCOMPLETE",
   );
+  await unsealEvidenceForTest(path.dirname(restoreIncomplete));
   await writeFile(restoreIncomplete, "restore did not complete\n", { mode: 0o600 });
+  await sealEvidenceForTest(path.dirname(restoreIncomplete));
   result = run(verifyScript, args, fixture);
   assert.notEqual(result.status, 0);
   assert.match(result.stderr, /artifact inventory does not match/);

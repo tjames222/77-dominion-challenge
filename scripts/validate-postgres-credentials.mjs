@@ -1,7 +1,9 @@
 #!/usr/bin/env node
 
 import assert from "node:assert/strict";
-import { lstat, readFile } from "node:fs/promises";
+import { createHash, X509Certificate } from "node:crypto";
+import { lstat, readFile, realpath } from "node:fs/promises";
+import path from "node:path";
 
 function fail(message) {
   throw new Error(message);
@@ -21,10 +23,49 @@ function parseArguments(tokens) {
   }
   assert.deepEqual(
     Object.keys(options).sort(),
-    ["database-passfile", "database-url-file", "project-ref"],
-    "expected exactly --database-passfile, --database-url-file, and --project-ref",
+    [
+      "database-passfile",
+      "database-host",
+      "database-url-file",
+      "project-ref",
+      "ssl-root-cert-file",
+      "ssl-root-cert-file-sha256",
+      "url-ssl-root-cert-file",
+    ].sort(),
+    "expected the exact passwordless URL, pgpass, project, and pinned TLS root certificate options",
   );
   return options;
+}
+
+async function validateRootCertificate(filename, expectedSha256) {
+  if (!path.isAbsolute(filename)) fail("TLS root certificate path must be absolute");
+  if (!/^[a-f0-9]{64}$/u.test(expectedSha256)) {
+    fail("TLS root certificate SHA-256 must be 64 lowercase hexadecimal characters");
+  }
+  const metadata = await lstat(filename);
+  if (!metadata.isFile() || metadata.isSymbolicLink()) {
+    fail("TLS root certificate must be a regular, non-symlink file");
+  }
+  if ((metadata.mode & 0o022) !== 0) {
+    fail("TLS root certificate cannot be group- or other-writable");
+  }
+  if (typeof process.getuid === "function" && ![0, process.getuid()].includes(metadata.uid)) {
+    fail("TLS root certificate must be owned by the current user or root");
+  }
+  const canonical = await realpath(filename);
+  if (canonical !== filename) fail("TLS root certificate path must already be canonical");
+  const contents = await readFile(filename);
+  if (contents.length === 0) fail("TLS root certificate must not be empty");
+  let certificate;
+  try {
+    certificate = new X509Certificate(contents);
+  } catch {
+    fail("TLS root certificate is not a strict PEM/X.509 certificate");
+  }
+  if (!certificate.ca) fail("TLS root certificate is not an X.509 CA certificate");
+  const actualSha256 = createHash("sha256").update(contents).digest("hex");
+  if (actualSha256 !== expectedSha256) fail("TLS root certificate SHA-256 does not match");
+  return canonical;
 }
 
 async function readPrivateFile(filename, label) {
@@ -101,6 +142,19 @@ function parsePgpass(line) {
 const options = parseArguments(process.argv.slice(2));
 const projectRef = options["project-ref"];
 if (!/^[a-z0-9]{20}$/u.test(projectRef)) fail("invalid project ref");
+const databaseHost = options["database-host"];
+if (!/^[a-z0-9-]+\.pooler\.supabase\.com$/u.test(databaseHost)) {
+  fail("database host must be the exact dashboard-provided Supavisor hostname");
+}
+const sslRootCertFile = await validateRootCertificate(
+  options["ssl-root-cert-file"],
+  options["ssl-root-cert-file-sha256"],
+);
+const urlSslRootCertFile = options["url-ssl-root-cert-file"];
+if (
+  !path.isAbsolute(urlSslRootCertFile)
+  || path.normalize(urlSslRootCertFile) !== urlSslRootCertFile
+) fail("database URL TLS root certificate path must be canonical and absolute");
 
 const rawUrl = oneTerminatedLine(
   await readPrivateFile(options["database-url-file"], "database URL file"),
@@ -112,20 +166,27 @@ try {
 } catch {
   fail("database URL file is invalid");
 }
-if (!['postgres:', 'postgresql:'].includes(databaseUrl.protocol)) {
-  fail("database URL must use postgres or postgresql");
+if (databaseUrl.protocol !== "postgresql:") {
+  fail("database URL must use the exact postgresql scheme");
 }
 if (databaseUrl.password) {
   fail("database URL must not contain a password; use the separate passfile");
 }
 if (databaseUrl.hash) fail("database URL cannot contain a fragment");
 const queryEntries = [...databaseUrl.searchParams.entries()];
+const expectedSearch = `?sslmode=verify-full&sslrootcert=${encodeURIComponent(urlSslRootCertFile)}`
+  + "&options=-c%20jit%3Don";
 if (
-  queryEntries.length !== 1
+  databaseUrl.search !== expectedSearch
+  || queryEntries.length !== 3
   || queryEntries[0][0] !== "sslmode"
-  || queryEntries[0][1] !== "require"
+  || queryEntries[0][1] !== "verify-full"
+  || queryEntries[1][0] !== "sslrootcert"
+  || queryEntries[1][1] !== urlSslRootCertFile
+  || queryEntries[2][0] !== "options"
+  || queryEntries[2][1] !== "-c jit=on"
 ) {
-  fail("database URL must contain only the exact query parameter sslmode=require");
+  fail("database URL must contain only the exact verify-full, pinned CA, and JIT session options");
 }
 
 const username = decodeUrlField(databaseUrl.username, "database username");
@@ -133,15 +194,11 @@ const databaseName = decodeUrlField(databaseUrl.pathname.slice(1), "database nam
 if (databaseName !== "postgres" || databaseUrl.pathname.slice(1).includes("/")) {
   fail("database URL must select only the postgres database");
 }
-const direct = databaseUrl.hostname === `db.${projectRef}.supabase.co`
-  && username === "postgres";
-const pooled = databaseUrl.hostname.endsWith(".pooler.supabase.com")
-  && username === `postgres.${projectRef}`;
-if (!direct && !pooled) {
-  fail("database URL does not identify the exact project ref");
+if (databaseUrl.hostname !== databaseHost || username !== `postgres.${projectRef}`) {
+  fail("database URL must use the exact approved Supavisor host and project-scoped user");
 }
-const port = databaseUrl.port || "5432";
-if (port !== "5432") fail("database URL must use the TLS session/direct port 5432");
+if (databaseUrl.port !== "5432") fail("database URL must explicitly use Supavisor session port 5432");
+const port = databaseUrl.port;
 
 const passfileLine = oneTerminatedLine(
   await readPrivateFile(options["database-passfile"], "database passfile"),
@@ -159,4 +216,8 @@ if (
 
 // The normalized URL is safe for process argv: validation above proves that it
 // has no password and no alternate credential-loading query parameter.
-process.stdout.write(`${databaseUrl.toString()}\n`);
+process.stdout.write(
+  `postgresql://${encodeURIComponent(username)}@${databaseHost}:5432/postgres`
+    + `?sslmode=verify-full&sslrootcert=${encodeURIComponent(sslRootCertFile)}`
+    + "&options=-c%20jit%3Don\n",
+);

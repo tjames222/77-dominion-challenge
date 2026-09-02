@@ -21,8 +21,8 @@ function parseArguments(tokens) {
   }
   assert.deepEqual(
     Object.keys(options).sort(),
-    ["database-url-file", "input", "output"],
-    "expected exactly --database-url-file, --input, and --output",
+    ["database-url-file", "input", "output", "ssl-root-cert-file"],
+    "expected exactly --database-url-file, --input, --output, and --ssl-root-cert-file",
   );
   return options;
 }
@@ -51,6 +51,10 @@ if (!['postgres:', 'postgresql:'].includes(databaseUrl.protocol) || databaseUrl.
 const username = decodeURIComponent(databaseUrl.username);
 const database = decodeURIComponent(databaseUrl.pathname.slice(1));
 const port = databaseUrl.port || "5432";
+const sslRootCertFile = options["ssl-root-cert-file"];
+if (!sslRootCertFile.startsWith("/") || /['\r\n\u0000]/u.test(sslRootCertFile)) {
+  fail("TLS root certificate path must be absolute and single-quote safe");
+}
 for (const [value, label] of [
   [databaseUrl.hostname, "host"],
   [port, "port"],
@@ -94,7 +98,7 @@ if (!/\npg_dump(?:all)? \\\n/u.test(source)) {
 
 const executable = source.replace(
   'export PGPASSWORD=""',
-  'unset PGPASSWORD\nexport PGPASSFILE="/dominion-private/pgpass"\nexport PGSSLMODE="require"',
+  `unset PGPASSWORD\nexport PGPASSFILE="/tmp/dominion/pgpass"\nexport PGSSLMODE="verify-full"\nexport PGSSLROOTCERT="/tmp/dominion/supabase-ca.crt"\nexport PGOPTIONS="-c jit=on"\nexport PGCONNECT_TIMEOUT="15"`,
 );
 if (executable === source) fail("Supabase dry-run credential boundary was not replaced");
 await writeFile(options.output, executable, { flag: "wx", mode: 0o600 });
