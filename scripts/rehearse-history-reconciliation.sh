@@ -7,7 +7,14 @@ fail() {
 }
 
 usage() {
-  echo "usage: $0 --release-commit <40-character-sha> [--regenerate]" >&2
+  cat >&2 <<USAGE
+usage: $0 --release-commit <40-character-sha> [--regenerate] \\
+  --docker-bin <absolute-canonical-executable> --docker-bin-sha256 <64hex> \\
+  --docker-socket <absolute-canonical-unix-socket> \\
+  --docker-socket-device <decimal> --docker-socket-inode <decimal> \\
+  --docker-socket-owner-uid <decimal> --docker-socket-owner-mode 384 \\
+  --postgres-image-id sha256:<64hex>
+USAGE
   exit 1
 }
 
@@ -52,6 +59,14 @@ migration_versions=(
 
 release_commit=""
 mode="verify"
+docker_cli=""
+docker_cli_sha256=""
+docker_socket=""
+docker_socket_device=""
+docker_socket_inode=""
+docker_socket_owner_uid=""
+docker_socket_owner_mode=""
+postgres_image_id=""
 
 # pnpm forwards the conventional argument separator as a literal first
 # argument for this script. Accept exactly that one leading separator so the
@@ -72,6 +87,54 @@ while (( $# > 0 )); do
       [[ "$mode" == "verify" ]] || fail "--regenerate may be supplied only once."
       mode="regenerate"
       shift
+      ;;
+    --docker-bin)
+      (( $# >= 2 )) || usage
+      [[ -z "$docker_cli" ]] || fail "--docker-bin may be supplied only once."
+      docker_cli="$2"
+      shift 2
+      ;;
+    --docker-bin-sha256)
+      (( $# >= 2 )) || usage
+      [[ -z "$docker_cli_sha256" ]] || fail "--docker-bin-sha256 may be supplied only once."
+      docker_cli_sha256="$2"
+      shift 2
+      ;;
+    --docker-socket)
+      (( $# >= 2 )) || usage
+      [[ -z "$docker_socket" ]] || fail "--docker-socket may be supplied only once."
+      docker_socket="$2"
+      shift 2
+      ;;
+    --docker-socket-device)
+      (( $# >= 2 )) || usage
+      [[ -z "$docker_socket_device" ]] || fail "--docker-socket-device may be supplied only once."
+      docker_socket_device="$2"
+      shift 2
+      ;;
+    --docker-socket-inode)
+      (( $# >= 2 )) || usage
+      [[ -z "$docker_socket_inode" ]] || fail "--docker-socket-inode may be supplied only once."
+      docker_socket_inode="$2"
+      shift 2
+      ;;
+    --docker-socket-owner-uid)
+      (( $# >= 2 )) || usage
+      [[ -z "$docker_socket_owner_uid" ]] || fail "--docker-socket-owner-uid may be supplied only once."
+      docker_socket_owner_uid="$2"
+      shift 2
+      ;;
+    --docker-socket-owner-mode)
+      (( $# >= 2 )) || usage
+      [[ -z "$docker_socket_owner_mode" ]] || fail "--docker-socket-owner-mode may be supplied only once."
+      docker_socket_owner_mode="$2"
+      shift 2
+      ;;
+    --postgres-image-id)
+      (( $# >= 2 )) || usage
+      [[ -z "$postgres_image_id" ]] || fail "--postgres-image-id may be supplied only once."
+      postgres_image_id="$2"
+      shift 2
       ;;
     *)
       usage
@@ -108,6 +171,15 @@ for prohibited_variable in \
   fi
 done
 
+# Never inherit Docker routing, context, client configuration, TLS, or other
+# DOCKER_* behavior. The only Docker endpoint accepted below is the exact Unix
+# socket supplied through the reviewed command-line boundary.
+while IFS='=' read -r ambient_variable _; do
+  case "$ambient_variable" in
+    DOCKER_*) fail "$ambient_variable must be unset; this rehearsal constructs an exact clean local Docker boundary." ;;
+  esac
+done < <(/usr/bin/env)
+
 if [[ -n "${NODE_BIN:-}" ]]; then
   [[ -x "$NODE_BIN" ]] || fail "NODE_BIN is not executable: $NODE_BIN."
   node_cli="$NODE_BIN"
@@ -128,16 +200,147 @@ else
   fail "Supabase CLI is required. Run pnpm install --frozen-lockfile first."
 fi
 
-if [[ -n "${DOCKER_BIN:-}" ]]; then
-  [[ -x "$DOCKER_BIN" ]] || fail "DOCKER_BIN is not executable: $DOCKER_BIN."
-  docker_cli="$DOCKER_BIN"
-elif command -v docker >/dev/null 2>&1; then
-  docker_cli="$(command -v docker)"
-elif [[ -x /opt/homebrew/bin/docker ]]; then
-  docker_cli="/opt/homebrew/bin/docker"
-else
-  fail "Docker is required."
-fi
+sha256_file() {
+  local target_file="$1"
+  if [[ -x /usr/bin/shasum ]]; then
+    /usr/bin/shasum -a 256 "$target_file" | /usr/bin/awk '{print $1}'
+  elif [[ -x /usr/bin/sha256sum ]]; then
+    /usr/bin/sha256sum "$target_file" | /usr/bin/awk '{print $1}'
+  else
+    fail "an operating-system SHA-256 utility is required."
+  fi
+}
+
+require_absolute_canonical_path() {
+  local candidate_path="$1"
+  local candidate_label="$2"
+  local canonical_parent
+  case "$candidate_path" in
+    *[[:cntrl:]]*) fail "$candidate_label cannot contain control characters." ;;
+    /*) ;;
+    *) fail "$candidate_label must be an absolute path." ;;
+  esac
+  canonical_parent="$(cd "$(/usr/bin/dirname "$candidate_path")" && pwd -P)" \
+    || fail "could not resolve the $candidate_label parent directory."
+  [[ "$candidate_path" == "$canonical_parent/$(/usr/bin/basename "$candidate_path")" ]] \
+    || fail "$candidate_label path must already be canonical."
+}
+
+require_no_extended_acl() {
+  local candidate_path="$1"
+  local candidate_label="$2"
+  local kernel_name acl_listing acl_mode
+  kernel_name="$(/usr/bin/uname -s)" \
+    || fail "could not identify the host while inspecting $candidate_label ACLs."
+  case "$kernel_name" in
+    Darwin)
+      acl_listing="$(LC_ALL=C /bin/ls -lde -- "$candidate_path" 2>/dev/null)" \
+        || fail "could not inspect $candidate_label extended ACLs."
+      acl_mode="${acl_listing%% *}"
+      case "$acl_listing" in
+        *$'\n'*) fail "$candidate_label must not have an extended ACL." ;;
+      esac
+      case "$acl_mode" in
+        *+*) fail "$candidate_label must not have an extended ACL." ;;
+      esac
+      ;;
+    Linux)
+      acl_listing="$(LC_ALL=C /bin/ls -ld -- "$candidate_path" 2>/dev/null)" \
+        || fail "could not inspect $candidate_label extended ACLs."
+      acl_mode="${acl_listing%% *}"
+      case "$acl_mode" in
+        *+*) fail "$candidate_label must not have an extended ACL." ;;
+      esac
+      ;;
+    *) fail "unsupported host while inspecting $candidate_label ACLs." ;;
+  esac
+}
+
+require_docker_executable() {
+  local kernel_name executable_stat executable_uid executable_mode executable_links
+  require_absolute_canonical_path "$docker_cli" "Docker executable"
+  [[ -f "$docker_cli" && ! -L "$docker_cli" && -x "$docker_cli" ]] \
+    || fail "Docker executable must be an executable, non-symlink regular file."
+  [[ "$docker_cli_sha256" =~ ^[a-f0-9]{64}$ ]] \
+    || fail "--docker-bin-sha256 must be exactly 64 lowercase hexadecimal characters."
+  kernel_name="$(/usr/bin/uname -s)" \
+    || fail "could not identify the host while inspecting the Docker executable."
+  case "$kernel_name" in
+    Darwin) executable_stat="$(/usr/bin/stat -f '%u|%Lp|%l' "$docker_cli" 2>/dev/null)" \
+      || fail "could not inspect Docker executable ownership." ;;
+    Linux) executable_stat="$(/usr/bin/stat -c '%u|%a|%h' "$docker_cli" 2>/dev/null)" \
+      || fail "could not inspect Docker executable ownership." ;;
+    *) fail "unsupported host while inspecting the Docker executable." ;;
+  esac
+  IFS='|' read -r executable_uid executable_mode executable_links <<EOF
+$executable_stat
+EOF
+  [[ "$executable_uid" == "$(/usr/bin/id -u)" ]] \
+    || fail "Docker executable must be owned by the current user."
+  [[ "$executable_mode" =~ ^[0-7]+$ ]] \
+    || fail "Docker executable permissions are invalid."
+  (( (8#$executable_mode & 8#022) == 0 )) \
+    || fail "Docker executable must not be group- or other-writable."
+  [[ "$executable_links" == "1" ]] \
+    || fail "Docker executable must have exactly one hard link."
+  require_no_extended_acl "$docker_cli" "Docker executable"
+  [[ "$(sha256_file "$docker_cli")" == "$docker_cli_sha256" ]] \
+    || fail "Docker executable SHA-256 does not match."
+}
+
+require_docker_socket() {
+  local kernel_name socket_stat actual_device actual_inode actual_uid actual_mode
+  require_absolute_canonical_path "$docker_socket" "Docker socket"
+  [[ -S "$docker_socket" && ! -L "$docker_socket" ]] \
+    || fail "Docker socket must be a real, non-symlink Unix socket."
+  [[ "$docker_socket_device" =~ ^[0-9]+$ \
+    && "$docker_socket_inode" =~ ^[0-9]+$ \
+    && "$docker_socket_owner_uid" =~ ^[0-9]+$ \
+    && "$docker_socket_owner_mode" =~ ^[0-9]+$ ]] \
+    || fail "Docker socket identity fields must be base-10 integers."
+  kernel_name="$(/usr/bin/uname -s)" \
+    || fail "could not identify the host while inspecting the Docker socket."
+  case "$kernel_name" in
+    Darwin) socket_stat="$(/usr/bin/stat -f '%d|%i|%u|%Lp' "$docker_socket" 2>/dev/null)" \
+      || fail "could not inspect Docker socket identity." ;;
+    Linux) socket_stat="$(/usr/bin/stat -c '%d|%i|%u|%a' "$docker_socket" 2>/dev/null)" \
+      || fail "could not inspect Docker socket identity." ;;
+    *) fail "unsupported host while inspecting the Docker socket." ;;
+  esac
+  IFS='|' read -r actual_device actual_inode actual_uid actual_mode <<EOF
+$socket_stat
+EOF
+  [[ "$actual_mode" =~ ^[0-7]+$ ]] \
+    || fail "Docker socket permissions are invalid."
+  actual_mode="$((8#$actual_mode))"
+  [[ "$actual_device" == "$docker_socket_device" \
+    && "$actual_inode" == "$docker_socket_inode" \
+    && "$actual_uid" == "$docker_socket_owner_uid" \
+    && "$actual_mode" == "$docker_socket_owner_mode" \
+    && "$actual_uid" == "$(/usr/bin/id -u)" \
+    && "$actual_mode" == "384" ]] \
+    || fail "Docker socket identity is not the exact owner-only reviewed socket."
+  require_no_extended_acl "$docker_socket" "Docker socket"
+}
+
+require_docker_boundary() {
+  require_docker_executable
+  require_docker_socket
+}
+
+docker_run() {
+  require_docker_boundary
+  /usr/bin/env -i \
+    LC_ALL=C \
+    DOCKER_HOST="unix://$docker_socket" \
+    "$docker_cli" "$@"
+}
+
+[[ -n "$docker_cli" ]] || fail "--docker-bin is required."
+[[ -n "$docker_socket" ]] || fail "--docker-socket is required."
+[[ "$postgres_image_id" =~ ^sha256:[a-f0-9]{64}$ ]] \
+  || fail "--postgres-image-id must be sha256 plus 64 lowercase hexadecimal characters."
+require_docker_boundary
 
 export SUPABASE_TELEMETRY_DISABLED=1
 
@@ -211,20 +414,29 @@ postgres_version_file="$repository_root/supabase/.temp/postgres-version"
 [[ "$(tr -d '\r\n' <"$postgres_version_file")" == "$expected_postgres_version" ]] \
   || fail "the repository does not pin PostgreSQL $expected_postgres_version."
 
-actual_container_image="$($docker_cli container inspect "$expected_database_container" \
-  --format '{{.Config.Image}}')" \
+actual_tag_image_id="$(docker_run image inspect "$expected_postgres_image" \
+  --format '{{.Id}}')" \
+  || fail "the pinned PostgreSQL image is not already present locally."
+[[ "$actual_tag_image_id" == "$postgres_image_id" ]] \
+  || fail "the pinned PostgreSQL tag does not resolve to the exact approved image ID."
+container_snapshot="$(docker_run container inspect "$expected_database_container" \
+  --format '{{.Id}}|{{.Image}}|{{.Config.Image}}|{{index .Config.Labels "com.supabase.cli.project"}}|{{index .Config.Labels "com.docker.compose.project"}}')" \
   || fail "the pinned local Supabase database container is not running."
+IFS='|' read -r database_container_id actual_container_image_id \
+  actual_container_image actual_supabase_project actual_compose_project <<EOF
+$container_snapshot
+EOF
+[[ "$database_container_id" =~ ^[a-f0-9]{64}$ ]] \
+  || fail "the local Supabase database container did not expose an immutable container ID."
+[[ "$actual_container_image_id" == "$postgres_image_id" ]] \
+  || fail "the local Supabase database container does not use the exact approved image ID."
 [[ "$actual_container_image" == "$expected_postgres_image" ]] \
   || fail "expected local image $expected_postgres_image, found $actual_container_image."
-actual_supabase_project="$($docker_cli container inspect "$expected_database_container" \
-  --format '{{index .Config.Labels "com.supabase.cli.project"}}')"
 [[ "$actual_supabase_project" == "$expected_project_id" ]] \
   || fail "the database container is not owned by local Supabase project $expected_project_id."
-actual_compose_project="$($docker_cli container inspect "$expected_database_container" \
-  --format '{{index .Config.Labels "com.docker.compose.project"}}')"
 [[ "$actual_compose_project" == "$expected_project_id" ]] \
   || fail "the database container is not owned by Docker Compose project $expected_project_id."
-server_version_num="$($docker_cli exec "$expected_database_container" \
+server_version_num="$(docker_run exec "$database_container_id" \
   psql --username postgres --dbname postgres --tuples-only --no-align --no-psqlrc \
     --set ON_ERROR_STOP=1 --command 'show server_version_num')"
 [[ "$server_version_num" == "$expected_server_version_num" ]] \
@@ -280,7 +492,7 @@ write_owned_database_recovery() {
   recovery_partial="${recovery_file}.partial"
   if ! printf '{\n  "schemaVersion": 1,\n  "artifactContract": "dominion-local-history-rehearsal-recovery/v1",\n  "status": "%s",\n  "databaseName": "%s",\n  "ownershipToken": "%s",\n  "databaseContainer": "%s",\n  "projectId": "%s"\n}\n' \
       "$recovery_status" "$candidate_name" "$candidate_token" \
-      "$expected_database_container" "$expected_project_id" \
+      "$database_container_id" "$expected_project_id" \
       >"$recovery_partial"; then
     return 1
   fi
@@ -293,7 +505,7 @@ database_exists_count() {
   local candidate_name="$1"
   local database_count
   [[ "$candidate_name" =~ ^fou762_history_[0-9]+_[0-9]+_[0-9]+$ ]] || return 1
-  database_count="$($docker_cli exec "$expected_database_container" \
+  database_count="$(docker_run exec "$database_container_id" \
     psql --username postgres --dbname postgres --tuples-only --no-align \
       --no-psqlrc --set ON_ERROR_STOP=1 \
       --command "select count(*) from pg_database where datname = '${candidate_name}'")" \
@@ -308,7 +520,7 @@ verify_owned_database() {
   local marker_count
   [[ "$candidate_name" =~ ^fou762_history_[0-9]+_[0-9]+_[0-9]+$ ]] || return 1
   [[ "$candidate_token" =~ ^fou762_[0-9]+_[0-9]+_[0-9]+$ ]] || return 1
-  marker_count="$($docker_cli exec "$expected_database_container" \
+  marker_count="$(docker_run exec "$database_container_id" \
     psql --username postgres --dbname "$candidate_name" --tuples-only --no-align \
       --no-psqlrc --set ON_ERROR_STOP=1 \
       --command "select count(*) from fou762_history_rehearsal.ownership where token = '${candidate_token}'")" \
@@ -322,12 +534,12 @@ drop_owned_database() {
   local remaining_database_count
   verify_owned_database "$candidate_name" "$candidate_token" \
     || return 1
-  "$docker_cli" exec "$expected_database_container" \
+  docker_run exec "$database_container_id" \
     psql --username postgres --dbname postgres --no-psqlrc --quiet \
       --set ON_ERROR_STOP=1 \
       --command "select pg_terminate_backend(pid) from pg_stat_activity where datname = '${candidate_name}' and pid <> pg_backend_pid();" \
       >/dev/null
-  "$docker_cli" exec "$expected_database_container" \
+  docker_run exec "$database_container_id" \
     dropdb --username postgres "$candidate_name" >/dev/null \
     || return 1
   remaining_database_count="$(database_exists_count "$candidate_name")" \
@@ -394,11 +606,11 @@ write_owned_database_recovery "$database_name" "$ownership_token" create-pending
   || fail "could not seal private disposable-database recovery authority."
 created_databases+=("$database_name")
 database_tokens+=("$ownership_token")
-"$docker_cli" exec "$expected_database_container" \
+docker_run exec "$database_container_id" \
   createdb --username postgres --template template0 "$database_name"
 write_owned_database_recovery "$database_name" "$ownership_token" marker-pending \
   || fail "could not record the unmarked disposable database."
-if ! "$docker_cli" exec "$expected_database_container" \
+if ! docker_run exec "$database_container_id" \
     psql --username postgres --dbname "$database_name" --no-psqlrc --quiet \
       --set ON_ERROR_STOP=1 --command "
         create schema fou762_history_rehearsal;
@@ -415,7 +627,7 @@ write_owned_database_recovery "$database_name" "$ownership_token" owned \
 
 # Recreate only the pinned Supabase-managed platform surface in the disposable
 # database. Application schemas and migration history are deliberately absent.
-"$docker_cli" exec "$expected_database_container" \
+docker_run exec "$database_container_id" \
   pg_dump \
     --username postgres \
     --dbname postgres \
@@ -452,7 +664,7 @@ write_owned_database_recovery "$database_name" "$ownership_token" owned \
       }
       { print }
     ' \
-  | "$docker_cli" exec -i "$expected_database_container" \
+  | docker_run exec -i "$database_container_id" \
       psql \
         --username postgres \
         --dbname "$database_name" \
@@ -460,7 +672,7 @@ write_owned_database_recovery "$database_name" "$ownership_token" owned \
         --quiet \
         --set ON_ERROR_STOP=1
 
-"$docker_cli" exec "$expected_database_container" \
+docker_run exec "$database_container_id" \
   psql --username supabase_admin --dbname "$database_name" --no-psqlrc --quiet \
     --set ON_ERROR_STOP=1 --command "
       alter table storage.buckets_vectors owner to supabase_storage_admin;
@@ -470,7 +682,7 @@ write_owned_database_recovery "$database_name" "$ownership_token" owned \
       grant select on table storage.buckets_vectors, storage.vector_indexes
         to anon, authenticated, service_role;"
 
-platform_inventory_count="$($docker_cli exec "$expected_database_container" \
+platform_inventory_count="$(docker_run exec "$database_container_id" \
   psql --username postgres --dbname "$database_name" --tuples-only --no-align \
     --no-psqlrc --set ON_ERROR_STOP=1 --command "
       select count(*)
@@ -486,7 +698,7 @@ platform_inventory_count="$($docker_cli exec "$expected_database_container" \
 [[ "$platform_inventory_count" == "9" ]] \
   || fail "expected all nine pinned Storage inventory relations, found $platform_inventory_count."
 
-"$docker_cli" exec -i "$expected_database_container" \
+docker_run exec -i "$database_container_id" \
   psql --username postgres --dbname "$database_name" --no-psqlrc --quiet \
     --set ON_ERROR_STOP=1 --single-transaction --file - \
   <"$fixture_directory/legacy-migration-2-overlay.sql"
@@ -494,13 +706,13 @@ platform_inventory_count="$($docker_cli exec "$expected_database_container" \
 history_versions() {
   local target_database="$1"
   local history_relation
-  history_relation="$($docker_cli exec "$expected_database_container" \
+  history_relation="$(docker_run exec "$database_container_id" \
     psql --username postgres --dbname "$target_database" --tuples-only --no-align \
       --no-psqlrc --set ON_ERROR_STOP=1 \
       --command "select case when to_regclass('supabase_migrations.schema_migrations') is null then 'absent' else 'present' end")" \
     || return 1
   if [[ "$history_relation" == "present" ]]; then
-    "$docker_cli" exec "$expected_database_container" \
+    docker_run exec "$database_container_id" \
       psql --username postgres --dbname "$target_database" --tuples-only --no-align \
         --no-psqlrc --set ON_ERROR_STOP=1 \
         --command "select 'version:' || coalesce(version, '') from supabase_migrations.schema_migrations order by version" \
@@ -535,16 +747,30 @@ assert_history_prefix() {
 
 capture_manifest() {
   local output_file="$1"
-  DOCKER_BIN="$docker_cli" bash "$capture_helper" \
-    --container "$expected_database_container" \
+  require_docker_boundary
+  /usr/bin/env -i \
+    LC_ALL=C \
+    PATH=/usr/bin:/bin:/usr/sbin:/sbin \
+    DOCKER_HOST="unix://$docker_socket" \
+    DOCKER_BIN="$docker_cli" \
+    NODE_BIN="$node_cli" \
+    /bin/bash "$capture_helper" \
+    --container "$database_container_id" \
     --database "$database_name" \
     --output "$output_file" >/dev/null
 }
 
 capture_fingerprint() {
   local output_file="$1"
-  DOCKER_BIN="$docker_cli" bash "$capture_helper" \
-    --container "$expected_database_container" \
+  require_docker_boundary
+  /usr/bin/env -i \
+    LC_ALL=C \
+    PATH=/usr/bin:/bin:/usr/sbin:/sbin \
+    DOCKER_HOST="unix://$docker_socket" \
+    DOCKER_BIN="$docker_cli" \
+    NODE_BIN="$node_cli" \
+    /bin/bash "$capture_helper" \
+    --container "$database_container_id" \
     --database "$database_name" \
     --fingerprint \
     --output "$output_file" >/dev/null
@@ -569,19 +795,19 @@ normalize_checkpoint_rows() {
   if [[ "$checkpoint_number" == "13" ]]; then
     expected_bucket_ids="community-post-images,journal-progress,profile-photos"
   fi
-  actual_bucket_ids="$($docker_cli exec "$expected_database_container" \
+  actual_bucket_ids="$(docker_run exec "$database_container_id" \
     psql --username postgres --dbname "$database_name" --tuples-only --no-align \
       --no-psqlrc --set ON_ERROR_STOP=1 \
       --command "select coalesce(string_agg(id, ',' order by id), '') from storage.buckets")"
   [[ "$actual_bucket_ids" == "$expected_bucket_ids" ]] \
     || fail "checkpoint $checkpoint_number has unexpected Storage buckets: $actual_bucket_ids."
-  auth_user_ids="$($docker_cli exec "$expected_database_container" \
+  auth_user_ids="$(docker_run exec "$database_container_id" \
     psql --username postgres --dbname "$database_name" --tuples-only --no-align \
       --no-psqlrc --set ON_ERROR_STOP=1 \
       --command "select coalesce(string_agg(id::text, ',' order by id), '') from auth.users")"
   [[ "$auth_user_ids" == "$expected_fixture_user_id" ]] \
     || fail "checkpoint fixture does not contain exactly the immutable synthetic Auth user."
-  storage_object_count="$($docker_cli exec "$expected_database_container" \
+  storage_object_count="$(docker_run exec "$database_container_id" \
     psql --username postgres --dbname "$database_name" --tuples-only --no-align \
       --no-psqlrc --set ON_ERROR_STOP=1 \
       --command 'select count(*) from storage.objects')"
@@ -589,19 +815,19 @@ normalize_checkpoint_rows() {
     || fail "checkpoint fixture unexpectedly contains Storage objects."
 
   if [[ "$checkpoint_number" == "13" ]]; then
-    workout_values="$($docker_cli exec "$expected_database_container" \
+    workout_values="$(docker_run exec "$database_container_id" \
       psql --username postgres --dbname "$database_name" --tuples-only --no-align \
         --no-psqlrc --set ON_ERROR_STOP=1 \
         --command "select string_agg(difficulty || ':' || points::text, ',' order by difficulty) from public.workout_difficulty_point_values")"
     [[ "$workout_values" == "easy:2,extreme:15,hard:10,medium:5" ]] \
       || fail "checkpoint 13 has unexpected workout point configuration."
-    challenge_count="$($docker_cli exec "$expected_database_container" \
+    challenge_count="$(docker_run exec "$database_container_id" \
       psql --username postgres --dbname "$database_name" --tuples-only --no-align \
         --no-psqlrc --set ON_ERROR_STOP=1 \
         --command 'select count(*) from public.challenge_definitions')"
     [[ "$challenge_count" == "5" ]] \
       || fail "checkpoint 13 has unexpected challenge-definition rows."
-    user_state_count="$($docker_cli exec "$expected_database_container" \
+    user_state_count="$(docker_run exec "$database_container_id" \
       psql --username postgres --dbname "$database_name" --tuples-only --no-align \
         --no-psqlrc --set ON_ERROR_STOP=1 \
         --command 'select count(*) from public.user_challenge_states')"
@@ -635,7 +861,7 @@ normalize_checkpoint_rows() {
           updated_at = '${fixed_checkpoint_timestamp}';
       commit;"
   fi
-  "$docker_cli" exec "$expected_database_container" \
+  docker_run exec "$database_container_id" \
     psql --username postgres --dbname "$database_name" --no-psqlrc --quiet \
       --set ON_ERROR_STOP=1 --command "$normalization_sql"
 }
