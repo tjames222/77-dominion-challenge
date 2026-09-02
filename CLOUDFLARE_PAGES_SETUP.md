@@ -1,20 +1,24 @@
 # Cloudflare Pages Setup
 
 Cloudflare Pages is the only frontend host for this app. GitHub Actions owns the
-production release order; the Cloudflare Git integration remains useful for the
-`develop` preview only.
+production release order. A Git-integrated project may build the `develop`
+preview automatically; a Direct Upload project uses the dedicated protected
+`Deploy develop mock preview` workflow instead.
 
 Recommended settings:
 
-- Project name: 77-dominion-challenge
+- Project name: the exact GitHub `CLOUDFLARE_PAGES_PROJECT` production variable
+  (`77-dominion-challenge` for the original project)
 - Production branch: main
 - Framework preset: Vite
 - Build command: npm run build
 - Build output directory: dist
 - Root directory: /
-- Production environment variables: none. The protected GitHub `production`
-  environment supplies public production configuration while building the
-  immutable artifact.
+- Production environment variables: only the exact public Node/pnpm pins,
+  production Supabase URL/publishable key, and reviewed safe-off frontend flags
+  enforced by the policy workflow. The protected GitHub `production`
+  environment still supplies those values while building the immutable artifact;
+  no server credential belongs in Cloudflare.
 
 Preview environment variables:
 
@@ -29,7 +33,7 @@ Branch workflow:
 - main = production with real Supabase Auth and Postgres; billing and public
   signup remain disabled for the closed canary
 - develop = prelaunch dev deployment with mock identities, data, billing, and provider connections
-- feature branches = Cloudflare preview deployments when Pages preview-branch controls allow them
+- feature branches = no hosted deployment; local/CI preview only
 
 ## Required production branch control
 
@@ -40,9 +44,12 @@ from publishing the frontend as soon as `main` moves, before migrations and Edge
 Functions have passed verification. Keep preview deployment controls limited to
 `develop`.
 
-Remove any production `VITE_*` variables from Cloudflare itself. If automatic
-Git deployment is accidentally re-enabled, a `main` build then fails closed
-instead of publishing before backend verification.
+Remove every unapproved production `VITE_*` variable from Cloudflare. The policy
+workflow writes only the exact reviewed production values and safe-off flags. If
+automatic Git deployment is accidentally re-enabled, the project remains
+configured for live Supabase with mocks, billing, integrations, and public signup
+hard-off, but the policy verification still fails because automatic production
+deployment is forbidden.
 
 The protected GitHub `Release production` workflow builds one immutable artifact
 and deploys it to this existing Pages project only after validation, migrations,
@@ -52,10 +59,27 @@ Function deployment, and backend smoke checks succeed. Configure these GitHub
 - `CLOUDFLARE_API_TOKEN` — least-privilege token allowed to deploy this Pages project
 - `CLOUDFLARE_ACCOUNT_ID` — account that owns the Pages project
 
+Configure the non-secret `CLOUDFLARE_PAGES_PROJECT` production variable to the
+exact project name. The production workflow refuses an empty or malformed name
+and never creates a missing project.
+
+For a Direct Upload project, create a separate GitHub `cloudflare-preview`
+environment restricted to the protected `develop` branch. Store only the same
+least-privilege `CLOUDFLARE_ACCOUNT_ID` and `CLOUDFLARE_API_TOKEN` secrets plus
+the non-secret `CLOUDFLARE_PAGES_PROJECT` variable there. Its build job receives
+no Cloudflare, Supabase, or Stripe credential; only the second job can upload
+the already-built mock artifact. Preview artifacts expire after one day.
+
 Do not re-enable automatic production deployments. A frontend-only rollback is a
 manual dispatch of the protected workflow from a known backend-compatible commit.
 
-Cloudflare Preview environment variables are shared by `develop` and feature previews. Configure **Builds → Branch control → Preview branch** to include only `develop`. Canonical `develop` requires mock mode and rejects the hybrid-Auth override, production-connection opt-in, provider enablement, and every known live backend/provider value; it does not require or use a hosted Supabase project.
+For a Git-integrated project, Cloudflare Preview environment variables are shared
+by preview branches. Configure **Builds → Branch control → Preview branch** to
+include only `develop`. A Direct Upload project instead receives the same exact
+mock flags from the protected preview workflow. Canonical `develop` requires mock
+mode and rejects the hybrid-Auth override, production-connection opt-in, provider
+enablement, and every known live backend/provider value; it does not require or
+use a hosted Supabase project.
 
 Set the hosted Supabase Auth Site URL to
 `https://77-dominion-challenge.pages.dev` and allow only this production
@@ -95,3 +119,9 @@ and anonymous sign-in to be closed. A frontend-only release cannot bypass this
 policy gate.
 
 The canonical prelaunch dev URL is `https://develop.77-dominion-challenge.pages.dev`. The bare Pages hostname follows `main`; it is not the current dev target and must not be shared for prelaunch testing.
+
+If the project name changes during account recovery, replace both hostnames
+above with the project subdomain returned by Cloudflare, then update GitHub
+`PUBLIC_SITE_URL`/`PUBLIC_ALLOWED_SITE_URLS`, Supabase Auth Site URL and recovery
+allowlist, and every release record before the first deployment. Never keep two
+different origins marked canonical.

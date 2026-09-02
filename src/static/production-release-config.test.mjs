@@ -4,8 +4,10 @@ import { describe, test } from 'node:test';
 
 const read = (path) => readFileSync(new URL(path, import.meta.url), 'utf8');
 const workflow = read('../../.github/workflows/deploy.yml');
+const previewWorkflow = read('../../.github/workflows/cloudflare-preview.yml');
 const workflows = [
   workflow,
+  previewWorkflow,
   read('../../.github/workflows/ci.yml'),
   read('../../.github/workflows/browser-quality.yml'),
 ];
@@ -40,10 +42,42 @@ describe('production release configuration', () => {
   test('uses one protected Cloudflare deployment after backend verification', () => {
     assert.match(workflow, /needs:\s*frontend[\s\S]*?environment: production/);
     assert.match(workflow, /cloudflare\/wrangler-action@[0-9a-f]{40} # v3/);
-    assert.match(workflow, /pages deploy dist[\s\S]*?--project-name=77-dominion-challenge[\s\S]*?--branch=main/);
+    assert.match(
+      workflow,
+      /CLOUDFLARE_PAGES_PROJECT: \$\{\{ vars\.CLOUDFLARE_PAGES_PROJECT \}\}[\s\S]*?pages deploy dist[\s\S]*?--project-name=\$\{\{ env\.CLOUDFLARE_PAGES_PROJECT \}\}[\s\S]*?--branch=main/,
+    );
     assert.match(workflow, /CLOUDFLARE_API_TOKEN/);
     assert.match(workflow, /CLOUDFLARE_ACCOUNT_ID/);
     assert.doesNotMatch(workflow, /deploy-pages|configure-pages|github-pages/);
+  });
+
+  test('builds develop without live credentials and deploys only through the preview environment', () => {
+    assert.match(previewWorkflow, /push:\s*\n\s*branches:\s*\n\s*- develop/u);
+    assert.match(previewWorkflow, /if: github\.ref == 'refs\/heads\/develop'/u);
+    assert.match(previewWorkflow, /permissions: \{\}/u);
+    assert.match(
+      previewWorkflow,
+      /build:[\s\S]*?permissions:\s*\n\s*contents: read[\s\S]*?persist-credentials: false/u,
+    );
+    assert.match(previewWorkflow, /VITE_ENABLE_MOCKS: "true"/u);
+    assert.match(previewWorkflow, /VITE_ENABLE_SUPABASE_AUTH_IN_MOCKS: "false"/u);
+    assert.match(previewWorkflow, /VITE_ENABLE_PRODUCTION_CONNECTIONS: "false"/u);
+    assert.match(previewWorkflow, /VITE_ENABLE_BILLING: "false"/u);
+    assert.match(previewWorkflow, /VITE_ENABLE_PUBLIC_SIGNUP: "false"/u);
+    assert.doesNotMatch(
+      previewWorkflow.slice(0, previewWorkflow.indexOf('\n  deploy:')),
+      /VITE_SUPABASE_URL|VITE_SUPABASE_PUBLISHABLE_KEY|STRIPE_SECRET|CLOUDFLARE_API_TOKEN/u,
+    );
+    assert.match(previewWorkflow, /environment: cloudflare-preview/u);
+    assert.match(
+      previewWorkflow,
+      /deploy:[\s\S]*?permissions:[\s\S]*?actions: read[\s\S]*?deployments: write/u,
+    );
+    assert.match(
+      previewWorkflow,
+      /pages deploy dist[\s\S]*?--project-name=\$\{\{ env\.CLOUDFLARE_PAGES_PROJECT \}\}[\s\S]*?--branch=develop/,
+    );
+    assert.match(previewWorkflow, /retention-days: 1/u);
   });
 
   test('gates every production release on the closed hosted Auth policy', () => {

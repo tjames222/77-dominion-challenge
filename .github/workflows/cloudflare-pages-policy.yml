@@ -2,6 +2,12 @@ name: Configure Cloudflare Pages policy
 
 on:
   workflow_dispatch:
+    inputs:
+      create_missing_project:
+        description: Create the exact configured project as Direct Upload when it is absent.
+        required: true
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -19,6 +25,8 @@ jobs:
     env:
       CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_PAGES_PROJECT: ${{ vars.CLOUDFLARE_PAGES_PROJECT }}
+      CLOUDFLARE_ALLOW_PROJECT_CREATE: ${{ inputs.create_missing_project }}
       SUPABASE_PROJECT_REF: ${{ vars.SUPABASE_PROJECT_REF }}
       VITE_SUPABASE_URL: ${{ vars.VITE_SUPABASE_URL }}
       VITE_SUPABASE_PUBLISHABLE_KEY: ${{ vars.VITE_SUPABASE_PUBLISHABLE_KEY }}

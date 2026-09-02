@@ -22,6 +22,10 @@ const activeToken = Object.freeze({
   status: 'active',
 });
 const repositoryRoot = fileURLToPath(new URL('../', import.meta.url));
+const policyScriptSource = readFileSync(
+  new URL('./configure-cloudflare-pages-policy.mjs', import.meta.url),
+  'utf8',
+);
 const productionEnvironment = Object.freeze({
   projectRef: PRODUCTION_SUPABASE_PROJECT_REF,
   supabaseUrl: `https://${PRODUCTION_SUPABASE_PROJECT_REF}.supabase.co`,
@@ -51,22 +55,27 @@ function response(result, overrides = {}) {
   };
 }
 
-function validProject() {
-  const patch = cloudflarePagesPolicyPatch(productionEnvironment);
+function validProject({
+  projectName = CLOUDFLARE_PAGES_PROJECT,
+  sourceType = 'github',
+} = {}) {
+  const patch = cloudflarePagesPolicyPatch(productionEnvironment, { sourceType });
   return {
-    name: CLOUDFLARE_PAGES_PROJECT,
+    name: projectName,
     production_branch: 'main',
-    source: {
-      type: 'github',
-      config: {
-        deployments_enabled: true,
-        production_branch: 'main',
-        production_deployments_enabled: false,
-        preview_deployment_setting: 'custom',
-        preview_branch_includes: ['develop'],
-        preview_branch_excludes: [],
-      },
-    },
+    source: sourceType === 'github'
+      ? {
+        type: 'github',
+        config: {
+          deployments_enabled: true,
+          production_branch: 'main',
+          production_deployments_enabled: false,
+          preview_deployment_setting: 'custom',
+          preview_branch_includes: ['develop'],
+          preview_branch_excludes: [],
+        },
+      }
+      : null,
     deployment_configs: {
       production: {
         env_vars: appliedEnvironment(patch.deployment_configs.production.env_vars),
@@ -128,6 +137,29 @@ test('policy patch disables only automatic production and restricts previews to 
   ]) {
     assert.equal(patch.deployment_configs.production.env_vars[name], null);
   }
+});
+
+test('Direct Upload policy keeps branch and environment pins without inventing a Git source', () => {
+  const patch = cloudflarePagesPolicyPatch(productionEnvironment, {
+    sourceType: null,
+  });
+  assert.equal(patch.production_branch, 'main');
+  assert.equal(Object.hasOwn(patch, 'source'), false);
+
+  const project = validProject({ sourceType: null });
+  assert.deepEqual(cloudflarePagesPolicyErrors(project, productionEnvironment, {
+    expectedSourceType: null,
+  }), []);
+  project.source = { type: 'gitlab', config: {} };
+  assert.deepEqual(cloudflarePagesPolicyErrors(project, productionEnvironment, {
+    expectedSourceType: null,
+  }), [
+    'Pages source must remain absent for Direct Upload',
+  ]);
+  assert.throws(
+    () => cloudflarePagesPolicyPatch(productionEnvironment, { sourceType: 'gitlab' }),
+    /source must be GitHub or Direct Upload/u,
+  );
 });
 
 test('configuration PATCHes the fixed project and then GET-verifies it', async () => {
@@ -212,6 +244,175 @@ test('account-owned tokens use the account verification endpoint', async () => {
     calls.some(({ url }) => url.endsWith('/user/tokens/verify')),
     false,
   );
+});
+
+test('an explicitly named Direct Upload project can be created once and then verified', async () => {
+  const projectName = '77-dominion-live';
+  const calls = [];
+  const directProject = () => validProject({ projectName, sourceType: null });
+
+  await assert.doesNotReject(configureCloudflarePagesPolicy({
+    accountId,
+    apiToken,
+    projectName,
+    allowProjectCreate: 'true',
+    ...productionEnvironment,
+    fetchImpl: async (url, options) => {
+      calls.push({ url, options });
+      if (url.endsWith('/auth/v1/settings')) return response({});
+      if (url.endsWith('/user/tokens/verify')) return response(activeToken);
+      if (options.method === 'GET' && calls.length === 3) {
+        return response({}, { ok: false, status: 404 });
+      }
+      if (options.method === 'POST') return response(directProject());
+      if (options.method === 'PATCH') return response({});
+      return response(directProject());
+    },
+  }));
+
+  const projectsUrl = `${CLOUDFLARE_PAGES_API_ORIGIN}/client/v4/accounts/${accountId}`
+    + '/pages/projects';
+  assert.equal(calls.length, 6);
+  assert.equal(calls[2].url, `${projectsUrl}/${projectName}`);
+  assert.equal(calls[2].options.method, 'GET');
+  assert.equal(calls[3].url, projectsUrl);
+  assert.equal(calls[3].options.method, 'POST');
+  assert.deepEqual(JSON.parse(calls[3].options.body), {
+    name: projectName,
+    production_branch: 'main',
+  });
+  assert.equal(calls[4].url, `${projectsUrl}/${projectName}`);
+  assert.equal(calls[4].options.method, 'PATCH');
+  assert.equal(Object.hasOwn(JSON.parse(calls[4].options.body), 'source'), false);
+  assert.equal(calls[5].url, `${projectsUrl}/${projectName}`);
+  assert.equal(calls[5].options.method, 'GET');
+});
+
+test('a missing project is never created without the exact one-time permission', async () => {
+  const calls = [];
+  await assert.rejects(
+    configureCloudflarePagesPolicy({
+      accountId,
+      apiToken,
+      projectName: '77-dominion-live',
+      allowProjectCreate: 'false',
+      ...productionEnvironment,
+      fetchImpl: async (url, options) => {
+        calls.push({ url, options });
+        if (url.endsWith('/auth/v1/settings')) return response({});
+        if (url.endsWith('/user/tokens/verify')) return response(activeToken);
+        return response({}, { ok: false, status: 404 });
+      },
+    }),
+    /does not exist[\s\S]*Creation is disabled/u,
+  );
+  assert.equal(calls.length, 3);
+  assert.equal(calls.some(({ options }) => options.method === 'POST'), false);
+  assert.equal(calls.some(({ options }) => options.method === 'PATCH'), false);
+});
+
+test('project creation permission never converts account denial into creation', async () => {
+  const calls = [];
+  await assert.rejects(
+    configureCloudflarePagesPolicy({
+      accountId,
+      apiToken,
+      projectName: '77-dominion-live',
+      allowProjectCreate: 'true',
+      ...productionEnvironment,
+      fetchImpl: async (url, options) => {
+        calls.push({ url, options });
+        if (url.endsWith('/auth/v1/settings')) return response({});
+        if (url.endsWith('/user/tokens/verify')) return response(activeToken);
+        return response({}, { ok: false, status: 403 });
+      },
+    }),
+    /token is active but cannot read/u,
+  );
+  assert.equal(calls.length, 3);
+  assert.equal(calls.some(({ options }) => options.method === 'POST'), false);
+  assert.equal(calls.some(({ options }) => options.method === 'PATCH'), false);
+});
+
+test('a creation response for any other project fails before update', async () => {
+  const calls = [];
+  await assert.rejects(
+    configureCloudflarePagesPolicy({
+      accountId,
+      apiToken,
+      projectName: '77-dominion-live',
+      allowProjectCreate: 'true',
+      ...productionEnvironment,
+      fetchImpl: async (url, options) => {
+        calls.push({ url, options });
+        if (url.endsWith('/auth/v1/settings')) return response({});
+        if (url.endsWith('/user/tokens/verify')) return response(activeToken);
+        if (options.method === 'GET') {
+          return response({}, { ok: false, status: 404 });
+        }
+        if (options.method === 'POST') {
+          return response(validProject({
+            projectName: 'wrong-project',
+            sourceType: null,
+          }));
+        }
+        return response({});
+      },
+    }),
+    /wrong Pages project during the access preflight/u,
+  );
+  assert.equal(calls.length, 4);
+  assert.equal(calls.some(({ options }) => options.method === 'PATCH'), false);
+});
+
+test('a preflight project without an explicit source contract fails before update', async () => {
+  const calls = [];
+  const malformedProject = validProject();
+  delete malformedProject.source;
+  await assert.rejects(
+    configureCloudflarePagesPolicy({
+      accountId,
+      apiToken,
+      ...productionEnvironment,
+      fetchImpl: async (url, options) => {
+        calls.push({ url, options });
+        if (url.endsWith('/auth/v1/settings')) return response({});
+        if (url.endsWith('/user/tokens/verify')) return response(activeToken);
+        return response(malformedProject);
+      },
+    }),
+    /without an explicit source contract/u,
+  );
+  assert.equal(calls.length, 3);
+  assert.equal(calls.some(({ options }) => options.method === 'PATCH'), false);
+});
+
+test('final verification requires the exact preflight source contract', async () => {
+  for (const [preflightSource, finalSource, expectedMessage] of [
+    ['github', null, /source must remain GitHub/u],
+    [null, 'github', /source must remain absent for Direct Upload/u],
+  ]) {
+    const calls = [];
+    await assert.rejects(
+      configureCloudflarePagesPolicy({
+        accountId,
+        apiToken,
+        ...productionEnvironment,
+        fetchImpl: async (url, options) => {
+          calls.push({ url, options });
+          if (url.endsWith('/auth/v1/settings')) return response({});
+          if (url.endsWith('/user/tokens/verify')) return response(activeToken);
+          if (options.method === 'PATCH') return response({});
+          if (calls.length === 3) {
+            return response(validProject({ sourceType: preflightSource }));
+          }
+          return response(validProject({ sourceType: finalSource }));
+        },
+      }),
+      expectedMessage,
+    );
+    assert.equal(calls.length, 5);
+  }
 });
 
 test('verification rejects production auto deploys, widened previews, and live preview values', () => {
@@ -429,7 +630,46 @@ test('invalid credentials fail before a request is made', async () => {
     }),
     /CLOUDFLARE_API_TOKEN is required/u,
   );
+  for (const projectName of ['', '-bad', 'bad-', 'Bad', ' padded', 'padded ', 'a'.repeat(59)]) {
+    await assert.rejects(
+      configureCloudflarePagesPolicy({
+        accountId,
+        apiToken,
+        projectName,
+        ...productionEnvironment,
+        fetchImpl,
+      }),
+      /CLOUDFLARE_PAGES_PROJECT/u,
+    );
+  }
+  await assert.rejects(
+    configureCloudflarePagesPolicy({
+      accountId,
+      apiToken,
+      allowProjectCreate: 'yes',
+      ...productionEnvironment,
+      fetchImpl,
+    }),
+    /CLOUDFLARE_ALLOW_PROJECT_CREATE/u,
+  );
+  await assert.rejects(
+    configureCloudflarePagesPolicy({
+      accountId,
+      apiToken,
+      allowProjectCreate: ' true',
+      ...productionEnvironment,
+      fetchImpl,
+    }),
+    /CLOUDFLARE_ALLOW_PROJECT_CREATE/u,
+  );
   assert.equal(called, false);
+});
+
+test('the CLI never falls back to the historical project when its environment variable is absent', () => {
+  assert.match(
+    policyScriptSource,
+    /projectName: process\.env\.CLOUDFLARE_PAGES_PROJECT \?\? ''/u,
+  );
 });
 
 test('verification requires exact production wiring and rejects Stripe or E2E values', () => {
@@ -553,6 +793,14 @@ test('every protected release gates hosted work on the exact Cloudflare policy',
   assert.match(policyJob, /environment: production/u);
   assert.match(policyJob, /CLOUDFLARE_ACCOUNT_ID: \$\{\{ secrets\.CLOUDFLARE_ACCOUNT_ID \}\}/u);
   assert.match(policyJob, /CLOUDFLARE_API_TOKEN: \$\{\{ secrets\.CLOUDFLARE_API_TOKEN \}\}/u);
+  assert.match(policyJob, /CLOUDFLARE_PAGES_PROJECT: \$\{\{ vars\.CLOUDFLARE_PAGES_PROJECT \}\}/u);
+  assert.match(policyJob, /CLOUDFLARE_ALLOW_PROJECT_CREATE: "false"/u);
+  assert.match(standalone, /create_missing_project:[\s\S]*?type: boolean/u);
+  assert.match(standalone, /CLOUDFLARE_PAGES_PROJECT: \$\{\{ vars\.CLOUDFLARE_PAGES_PROJECT \}\}/u);
+  assert.match(
+    standalone,
+    /CLOUDFLARE_ALLOW_PROJECT_CREATE: \$\{\{ inputs\.create_missing_project \}\}/u,
+  );
   for (const name of [
     'SUPABASE_PROJECT_REF',
     'VITE_SUPABASE_URL',

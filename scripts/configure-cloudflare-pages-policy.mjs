@@ -168,23 +168,56 @@ async function verifySupabasePublishableKey({
   await cancelResponseBody(response);
 }
 
-export function cloudflarePagesPolicyPatch(productionEnvironmentInput) {
+function normalizedProjectName(value) {
+  const projectName = String(value || '');
+  if (
+    projectName.length < 1
+    || projectName.length > 58
+    || projectName !== projectName.trim()
+    || !/^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/u.test(projectName)
+  ) {
+    throw new Error(
+      'CLOUDFLARE_PAGES_PROJECT must be a lowercase Pages project name of 1-58 letters, numbers, or hyphens.',
+    );
+  }
+  return projectName;
+}
+
+function normalizedCreatePermission(value) {
+  const permission = String(value || '');
+  if (!permission) return false;
+  if (permission === 'true') return true;
+  if (permission === 'false') return false;
+  throw new Error('CLOUDFLARE_ALLOW_PROJECT_CREATE must be exactly true or false.');
+}
+
+export function cloudflarePagesPolicyPatch(
+  productionEnvironmentInput,
+  { sourceType = 'github' } = {},
+) {
+  if (sourceType !== 'github' && sourceType !== null) {
+    throw new Error('Cloudflare Pages project source must be GitHub or Direct Upload.');
+  }
   const productionEnvironment = normalizedProductionEnvironment(
     productionEnvironmentInput,
   );
   return {
     production_branch: 'main',
-    source: {
-      type: 'github',
-      config: {
-        deployments_enabled: true,
-        production_branch: 'main',
-        production_deployments_enabled: false,
-        preview_deployment_setting: 'custom',
-        preview_branch_includes: ['develop'],
-        preview_branch_excludes: [],
-      },
-    },
+    ...(sourceType === 'github'
+      ? {
+        source: {
+          type: 'github',
+          config: {
+            deployments_enabled: true,
+            production_branch: 'main',
+            production_deployments_enabled: false,
+            preview_deployment_setting: 'custom',
+            preview_branch_includes: ['develop'],
+            preview_branch_excludes: [],
+          },
+        },
+      }
+      : {}),
     deployment_configs: {
       production: {
         env_vars: productionEnvironmentPatch(productionEnvironment),
@@ -196,7 +229,14 @@ export function cloudflarePagesPolicyPatch(productionEnvironmentInput) {
   };
 }
 
-export function cloudflarePagesPolicyErrors(project, productionEnvironmentInput) {
+export function cloudflarePagesPolicyErrors(
+  project,
+  productionEnvironmentInput,
+  {
+    projectName = CLOUDFLARE_PAGES_PROJECT,
+    expectedSourceType = 'github',
+  } = {},
+) {
   if (!project || typeof project !== 'object' || Array.isArray(project)) {
     return ['Cloudflare returned an invalid Pages project'];
   }
@@ -204,25 +244,34 @@ export function cloudflarePagesPolicyErrors(project, productionEnvironmentInput)
   const errors = [];
   const source = project.source;
   const sourceConfig = source?.config;
+  const expectedProjectName = normalizedProjectName(projectName);
   const productionEnvironment = normalizedProductionEnvironment(
     productionEnvironmentInput,
   );
   const productionEnv = project.deployment_configs?.production?.env_vars;
   const previewEnv = project.deployment_configs?.preview?.env_vars;
 
-  if (project.name !== CLOUDFLARE_PAGES_PROJECT) {
+  if (project.name !== expectedProjectName) {
     errors.push('Pages project name does not match the approved project');
   }
   if (project.production_branch !== 'main') {
     errors.push('production_branch must be main');
   }
-  if (source?.type !== 'github') {
+  if (!Object.hasOwn(project, 'source')) {
+    errors.push('Pages source field is missing');
+  } else if (expectedSourceType === null && source !== null) {
+    errors.push('Pages source must remain absent for Direct Upload');
+  } else if (expectedSourceType === 'github' && source?.type !== 'github') {
     errors.push('Pages source must remain GitHub');
   }
-  if (!sourceConfig || typeof sourceConfig !== 'object' || Array.isArray(sourceConfig)) {
+  if (source?.type === 'github' && (
+    !sourceConfig
+    || typeof sourceConfig !== 'object'
+    || Array.isArray(sourceConfig)
+  )) {
     errors.push('Pages source configuration is missing');
-  } else {
-    if (sourceConfig.deployments_enabled === false) {
+  } else if (source?.type === 'github') {
+    if (sourceConfig.deployments_enabled !== true) {
       errors.push('Git deployments must remain enabled for the develop preview');
     }
     if (sourceConfig.production_branch !== 'main') {
@@ -388,6 +437,8 @@ function cloudflareTokenVerificationUrl({ accountId, apiToken }) {
 export async function configureCloudflarePagesPolicy({
   accountId = process.env.CLOUDFLARE_ACCOUNT_ID,
   apiToken = process.env.CLOUDFLARE_API_TOKEN,
+  projectName = CLOUDFLARE_PAGES_PROJECT,
+  allowProjectCreate = 'false',
   projectRef = process.env.SUPABASE_PROJECT_REF,
   supabaseUrl = process.env.VITE_SUPABASE_URL,
   publishableKey = process.env.VITE_SUPABASE_PUBLISHABLE_KEY,
@@ -395,6 +446,8 @@ export async function configureCloudflarePagesPolicy({
 } = {}) {
   const normalizedAccountId = String(accountId || '').trim();
   const normalizedToken = String(apiToken || '').trim();
+  const normalizedPagesProject = normalizedProjectName(projectName);
+  const mayCreateProject = normalizedCreatePermission(allowProjectCreate);
   const productionEnvironment = normalizedProductionEnvironment({
     projectRef,
     supabaseUrl,
@@ -415,8 +468,9 @@ export async function configureCloudflarePagesPolicy({
     throw new Error(`Cloudflare production frontend configuration is invalid: ${environmentErrors.join(', ')}.`);
   }
 
-  const url = `${CLOUDFLARE_PAGES_API_ORIGIN}/client/v4/accounts/${normalizedAccountId}`
-    + `/pages/projects/${CLOUDFLARE_PAGES_PROJECT}`;
+  const projectsUrl = `${CLOUDFLARE_PAGES_API_ORIGIN}/client/v4/accounts/${normalizedAccountId}`
+    + '/pages/projects';
+  const url = `${projectsUrl}/${normalizedPagesProject}`;
   const tokenVerificationUrl = cloudflareTokenVerificationUrl({
     accountId: normalizedAccountId,
     apiToken: normalizedToken,
@@ -457,10 +511,41 @@ export async function configureCloudflarePagesPolicy({
         + 'Confirm the token is scoped to the same account and has Account > Cloudflare Pages > Read or Edit.',
       );
     }
-    throw error;
+    if (
+      error instanceof Error
+      && error.message === 'Cloudflare Pages project access preflight failed (HTTP 404).'
+    ) {
+      if (!mayCreateProject) {
+        throw new Error(
+          'The reviewed Cloudflare Pages project does not exist in the configured account. '
+          + 'Creation is disabled unless CLOUDFLARE_ALLOW_PROJECT_CREATE is exactly true.',
+        );
+      }
+      existingProject = await cloudflareRequest({
+        fetchImpl,
+        url: projectsUrl,
+        token: normalizedToken,
+        method: 'POST',
+        operation: 'Pages Direct Upload project creation',
+        body: {
+          name: normalizedPagesProject,
+          production_branch: 'main',
+        },
+      });
+    } else {
+      throw error;
+    }
   }
-  if (existingProject.name !== CLOUDFLARE_PAGES_PROJECT) {
+  if (existingProject.name !== normalizedPagesProject) {
     throw new Error('Cloudflare returned the wrong Pages project during the access preflight.');
+  }
+  if (!Object.hasOwn(existingProject, 'source')) {
+    throw new Error('Cloudflare returned a Pages project without an explicit source contract.');
+  }
+
+  const sourceType = existingProject.source == null ? null : existingProject.source?.type;
+  if (sourceType !== null && sourceType !== 'github') {
+    throw new Error('Cloudflare Pages project source must be GitHub or Direct Upload.');
   }
 
   try {
@@ -470,7 +555,7 @@ export async function configureCloudflarePagesPolicy({
       token: normalizedToken,
       method: 'PATCH',
       operation: 'Pages project update',
-      body: cloudflarePagesPolicyPatch(productionEnvironment),
+      body: cloudflarePagesPolicyPatch(productionEnvironment, { sourceType }),
     });
   } catch (error) {
     if (
@@ -492,7 +577,10 @@ export async function configureCloudflarePagesPolicy({
     operation: 'Pages project verification',
   });
 
-  const errors = cloudflarePagesPolicyErrors(project, productionEnvironment);
+  const errors = cloudflarePagesPolicyErrors(project, productionEnvironment, {
+    projectName: normalizedPagesProject,
+    expectedSourceType: sourceType,
+  });
   if (errors.length) {
     throw new Error(`Cloudflare Pages project policy verification failed: ${errors.join('; ')}.`);
   }
@@ -502,7 +590,15 @@ export async function configureCloudflarePagesPolicy({
 const invokedPath = process.argv[1] ? pathToFileURL(process.argv[1]).href : '';
 if (import.meta.url === invokedPath) {
   try {
-    await configureCloudflarePagesPolicy();
+    await configureCloudflarePagesPolicy({
+      accountId: process.env.CLOUDFLARE_ACCOUNT_ID,
+      apiToken: process.env.CLOUDFLARE_API_TOKEN,
+      projectName: process.env.CLOUDFLARE_PAGES_PROJECT ?? '',
+      allowProjectCreate: process.env.CLOUDFLARE_ALLOW_PROJECT_CREATE,
+      projectRef: process.env.SUPABASE_PROJECT_REF,
+      supabaseUrl: process.env.VITE_SUPABASE_URL,
+      publishableKey: process.env.VITE_SUPABASE_PUBLISHABLE_KEY,
+    });
     console.log('Cloudflare Pages production and develop-preview policy is configured and verified.');
   } catch (error) {
     console.error(error instanceof Error ? error.message : 'Cloudflare Pages policy configuration failed.');
