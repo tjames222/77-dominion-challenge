@@ -22,7 +22,7 @@
     "supabase:stop": "supabase stop --no-backup",
     "supabase:reset": "bash scripts/reset-local-database.sh",
     "check:migrations": "node scripts/check-migration-compatibility.mjs",
-    "test:migration-compatibility": "node --test scripts/check-migration-compatibility.test.mjs scripts/verify-production-migration-cutover-plan.test.mjs scripts/verify-production-raw-migration-history.test.mjs scripts/verify-production-canary-cutover-gate.test.mjs",
+    "test:migration-compatibility": "node --test scripts/check-migration-compatibility.test.mjs scripts/verify-existing-supabase-migration-attempt.test.mjs scripts/verify-existing-supabase-post13-effect.test.mjs scripts/verify-production-migration-cutover-plan.test.mjs scripts/verify-production-raw-migration-history.test.mjs scripts/verify-production-canary-cutover-gate.test.mjs",
     "test:reconciliation-stage": "node --test scripts/prepare-reconciliation-stage.test.mjs scripts/verify-reconciliation-history.test.mjs scripts/rehearse-history-reconciliation.test.mjs",
     "test:migration-atomicity": "bash scripts/test-migration-atomicity.sh",
     "test:profile-photo-cleanup-cron": "node --test scripts/profile-photo-cleanup-cron-rehearsal.test.mjs",
