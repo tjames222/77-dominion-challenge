@@ -3,7 +3,7 @@ import { CLOUDFLARE_PREVIEW_MOCK_FLAGS } from './normalize-cloudflare-frontend-e
 import { PRODUCTION_SUPABASE_PROJECT_REF } from './production-auth-canary-policy.mjs';
 import { DEVELOP_LIVE_CONNECTION_VARIABLES } from './validate-frontend-env.mjs';
 
-export const CLOUDFLARE_PAGES_PROJECT = '77-dominion-challenge';
+export const CLOUDFLARE_PAGES_PROJECT = '77-dominion-live';
 export const CLOUDFLARE_PAGES_API_ORIGIN = 'https://api.cloudflare.com';
 export const CLOUDFLARE_GITHUB_SOURCE_IDENTITY = Object.freeze({
   owner: 'tjames222',
@@ -458,6 +458,11 @@ export async function configureCloudflarePagesPolicy({
   const normalizedAccountId = String(accountId || '').trim();
   const normalizedToken = String(apiToken || '').trim();
   const normalizedPagesProject = normalizedProjectName(projectName);
+  if (normalizedPagesProject !== CLOUDFLARE_PAGES_PROJECT) {
+    throw new Error(
+      `CLOUDFLARE_PAGES_PROJECT must be exactly ${CLOUDFLARE_PAGES_PROJECT}.`,
+    );
+  }
   const mayCreateProject = normalizedCreatePermission(allowProjectCreate);
   const productionEnvironment = normalizedProductionEnvironment({
     projectRef,
@@ -519,7 +524,8 @@ export async function configureCloudflarePagesPolicy({
     ) {
       throw new Error(
         'Cloudflare API token is active but cannot read the reviewed Pages project from the configured account. '
-        + 'Confirm the token is scoped to the same account and has Account > Cloudflare Pages > Read or Edit.',
+        + 'Confirm the token is scoped to the same account and has Account > Pages > Read or Write '
+        + '(also displayed as Account > Cloudflare Pages > Read or Edit).',
       );
     }
     if (
@@ -589,7 +595,8 @@ export async function configureCloudflarePagesPolicy({
     ) {
       throw new Error(
         'Cloudflare API token can read the reviewed Pages project but cannot update it. '
-        + 'Add Account > Cloudflare Pages > Edit (Pages Write) for the exact account to the token.',
+        + 'Add Account > Pages > Write (also displayed as Account > Cloudflare Pages > Edit) '
+        + 'for the exact account to the token.',
       );
     }
     throw error;

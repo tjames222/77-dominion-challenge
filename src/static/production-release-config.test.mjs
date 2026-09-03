@@ -49,6 +49,13 @@ describe('production release configuration', () => {
     assert.match(workflow, /CLOUDFLARE_API_TOKEN/);
     assert.match(workflow, /CLOUDFLARE_ACCOUNT_ID/);
     assert.doesNotMatch(workflow, /deploy-pages|configure-pages|github-pages/);
+    const deployJob = workflow.slice(workflow.indexOf('\n  deploy:'));
+    const exactProjectGate = 'if [[ "${CLOUDFLARE_PAGES_PROJECT:-}" != "77-dominion-live" ]]';
+    assert.ok(deployJob.indexOf(exactProjectGate) !== -1);
+    assert.ok(
+      deployJob.indexOf(exactProjectGate)
+        < deployJob.indexOf('- name: Download immutable frontend artifact'),
+    );
   });
 
   test('builds develop without live credentials and deploys only through the preview environment', () => {
@@ -77,7 +84,28 @@ describe('production release configuration', () => {
       previewWorkflow,
       /pages deploy dist[\s\S]*?--project-name=\$\{\{ env\.CLOUDFLARE_PAGES_PROJECT \}\}[\s\S]*?--branch=develop/,
     );
+    const deployJob = previewWorkflow.slice(previewWorkflow.indexOf('\n  deploy:'));
+    const exactProjectGate = 'if [[ "${CLOUDFLARE_PAGES_PROJECT:-}" != "77-dominion-live" ]]';
+    assert.ok(deployJob.indexOf(exactProjectGate) !== -1);
+    assert.ok(
+      deployJob.indexOf(exactProjectGate)
+        < deployJob.indexOf('- name: Download immutable preview artifact'),
+    );
     assert.match(previewWorkflow, /retention-days: 1/u);
+  });
+
+  test('historical and typo Pages project names cannot reach either deployment', () => {
+    const exactProjectGate = /if \[\[ "\$\{CLOUDFLARE_PAGES_PROJECT:-\}" != "([^"]+)" \]\]; then/u;
+    for (const source of [workflow, previewWorkflow]) {
+      const deployJob = source.slice(source.indexOf('\n  deploy:'));
+      assert.match(deployJob, /CLOUDFLARE_PAGES_PROJECT: \$\{\{ vars\.CLOUDFLARE_PAGES_PROJECT \}\}/u);
+      const match = deployJob.match(exactProjectGate);
+      assert.equal(match?.[1], '77-dominion-live');
+      assert.ok(match.index < deployJob.indexOf('pages deploy dist'));
+      for (const invalidName of ['77-dominion-challenge', '77-dominion-lvie']) {
+        assert.notEqual(invalidName, match[1]);
+      }
+    }
   });
 
   test('gates every production release on the closed hosted Auth policy', () => {

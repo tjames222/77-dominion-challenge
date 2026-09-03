@@ -38,6 +38,13 @@ jobs:
             echo "::error::Cloudflare production policy may be configured only from the protected main branch."
             exit 1
           fi
+      - name: Require the exact isolated Pages project
+        shell: bash
+        run: |
+          if [[ "${CLOUDFLARE_PAGES_PROJECT:-}" != "77-dominion-live" ]]; then
+            echo "::error::CLOUDFLARE_PAGES_PROJECT must be exactly 77-dominion-live."
+            exit 1
+          fi
       - name: Checkout
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: Setup Node

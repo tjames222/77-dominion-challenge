@@ -8,7 +8,7 @@ preview automatically; a Direct Upload project uses the dedicated protected
 Recommended settings:
 
 - Project name: the exact GitHub `CLOUDFLARE_PAGES_PROJECT` production variable
-  (`77-dominion-challenge` for the original project)
+  (`77-dominion-live` for the production project)
 - Production branch: main
 - Framework preset: Vite
 - Build command: npm run build
@@ -37,12 +37,17 @@ Branch workflow:
 
 ## Required production branch control
 
-Before merging the first release to `main`, open **Workers & Pages →
-77-dominion-challenge → Settings → Builds → Branch control** and turn off
-**Enable automatic production branch deployments**. This prevents Cloudflare
-from publishing the frontend as soon as `main` moves, before migrations and Edge
-Functions have passed verification. Keep preview deployment controls limited to
-`develop`.
+For the reviewed Direct Upload target, merge the exact validated release first,
+then dispatch the protected **Configure Cloudflare Pages policy** workflow from
+that `main` commit with its one-time `create_missing_project` input. The workflow
+may create only the exact `77-dominion-live` project after an exact-project 404,
+then verifies that it has no Git source. The production release workflow itself
+never creates a project. If the project is ever converted to Git integration,
+open **Workers & Pages → 77-dominion-live → Settings → Builds → Branch control**
+and turn off **Enable automatic production branch deployments**. This prevents
+Cloudflare from publishing the frontend as soon as `main` moves, before
+migrations and Edge Functions have passed verification. Keep preview deployment
+controls limited to `develop`.
 
 Remove every unapproved production `VITE_*` variable from Cloudflare. The policy
 workflow writes only the exact reviewed production values and safe-off flags. If
@@ -82,19 +87,23 @@ enablement, and every known live backend/provider value; it does not require or
 use a hosted Supabase project.
 
 Set the hosted Supabase Auth Site URL to
-`https://77-dominion-challenge.pages.dev` and allow only this production
+`https://77-dominion-live.pages.dev` and allow only this production
 password-recovery callback:
 
-- `https://77-dominion-challenge.pages.dev/reset-password.html`
+- `https://77-dominion-live.pages.dev/reset-password.html`
 
 Keep localhost callbacks only in the local Supabase stack. Do not allow
 `develop`, feature-preview, or localhost callbacks in the hosted Auth tenant.
+The protected **Configure production Supabase Auth canary** workflow applies
+and GET-verifies exactly those two URL fields together with closed signup and
+anonymous access; it does not copy or rewrite any provider, SMTP, template,
+user, or session configuration.
 
 Supabase Edge Functions allow only exact origins configured below. Set these function secrets:
 
 - `BILLING_ENABLED=false`
-- `PUBLIC_SITE_URL=https://77-dominion-challenge.pages.dev`
-- `PUBLIC_ALLOWED_SITE_URLS=https://77-dominion-challenge.pages.dev`
+- `PUBLIC_SITE_URL=https://77-dominion-live.pages.dev`
+- `PUBLIC_ALLOWED_SITE_URLS=https://77-dominion-live.pages.dev`
 
 Do not configure `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, or
 `STRIPE_MEMBERSHIP_PRICE_ID` for the closed canary. They become required only
@@ -118,7 +127,7 @@ uses Supabase's read-only Auth config endpoint and requires hosted public signup
 and anonymous sign-in to be closed. A frontend-only release cannot bypass this
 policy gate.
 
-The canonical prelaunch dev URL is `https://develop.77-dominion-challenge.pages.dev`. The bare Pages hostname follows `main`; it is not the current dev target and must not be shared for prelaunch testing.
+The canonical prelaunch dev URL is `https://develop.77-dominion-live.pages.dev`. The bare Pages hostname follows `main`; it is not the current dev target and must not be shared for prelaunch testing.
 
 If the project name changes during account recovery, replace both hostnames
 above with the project subdomain returned by Cloudflare, then update GitHub

@@ -5,24 +5,36 @@ import {
   productionAuthCanaryErrors,
   verifyProductionAuthCanary,
 } from '../../scripts/verify-production-auth-canary.mjs';
-import { PRODUCTION_SUPABASE_PROJECT_REF } from '../../scripts/production-auth-canary-policy.mjs';
+import {
+  PRODUCTION_RECOVERY_REDIRECT_URL,
+  PRODUCTION_SITE_URL,
+  PRODUCTION_SUPABASE_PROJECT_REF,
+} from '../../scripts/production-auth-canary-policy.mjs';
 
 describe('production Supabase Auth canary gate', () => {
-  test('requires both public signup paths to be explicitly closed', () => {
+  test('requires public signup paths to be closed at the exact production URLs', () => {
     assert.deepEqual(productionAuthCanaryErrors({
       disable_signup: true,
       external_anonymous_users_enabled: false,
+      site_url: PRODUCTION_SITE_URL,
+      uri_allow_list: PRODUCTION_RECOVERY_REDIRECT_URL,
     }), []);
     assert.deepEqual(productionAuthCanaryErrors({
       disable_signup: false,
       external_anonymous_users_enabled: true,
+      site_url: 'https://wrong.example',
+      uri_allow_list: 'https://wrong.example/reset-password.html',
     }), [
       'Supabase Auth disable_signup must be true',
       'Supabase Auth external_anonymous_users_enabled must be false',
+      'Supabase Auth site_url must be the reviewed production origin',
+      'Supabase Auth uri_allow_list must contain only the reviewed recovery redirect',
     ]);
     assert.deepEqual(productionAuthCanaryErrors({}), [
       'Supabase Auth disable_signup must be true',
       'Supabase Auth external_anonymous_users_enabled must be false',
+      'Supabase Auth site_url must be the reviewed production origin',
+      'Supabase Auth uri_allow_list must contain only the reviewed recovery redirect',
     ]);
   });
 
@@ -39,6 +51,8 @@ describe('production Supabase Auth canary gate', () => {
           json: async () => ({
             disable_signup: true,
             external_anonymous_users_enabled: false,
+            site_url: PRODUCTION_SITE_URL,
+            uri_allow_list: PRODUCTION_RECOVERY_REDIRECT_URL,
           }),
         };
       },

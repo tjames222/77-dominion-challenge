@@ -101,7 +101,7 @@ The prelaunch environment model deliberately uses no paid staging project:
 
 | Name | Purpose | Rotation owner |
 | --- | --- | --- |
-| `SUPABASE_ACCESS_TOKEN` | Authorizes the pinned CLI's temporary login role, read-only Auth/history gates, and separately approved closed-canary Auth policy workflow; a fine-grained token needs `auth_config_read`, `auth_config_write`, `project_admin_write`, `database_read`, and `database_write` | Supabase organization administrator |
+| `SUPABASE_ACCESS_TOKEN` | Authorizes the pinned CLI's temporary login role, Auth/history gates, closed-canary Auth policy, Function-secret synchronization, and Edge Function deployment/list verification; a scoped token restricted to the production project needs **Project Settings**, **Auth Config**, **Database**, **Edge Functions**, and **Edge Function Secrets**, each with **Read-write** access | Supabase organization administrator |
 | `STRIPE_SECRET_KEY` | Calls Stripe from Edge Functions; required only when reviewed code sets `BILLING_ENABLED=true` | Stripe administrator |
 | `STRIPE_WEBHOOK_SECRET` | Verifies Stripe webhook signatures; required only when reviewed code sets `BILLING_ENABLED=true` | Stripe administrator |
 | `STRIPE_MEMBERSHIP_PRICE_ID` | Selects the approved recurring membership price; required only when reviewed code sets `BILLING_ENABLED=true` | Billing owner |
@@ -186,7 +186,9 @@ pnpm exec supabase functions serve --env-file supabase/.env.local
 
 Before the first protected release, dispatch **Configure Cloudflare Pages
 policy** from `main` and approve its `production` environment. The environment's
-`CLOUDFLARE_API_TOKEN` needs Cloudflare Pages Write permission only. The job
+`CLOUDFLARE_API_TOKEN` needs **Account → Pages → Write** permission only
+(also displayed as **Account → Cloudflare Pages → Edit**) and must include the exact account
+selected by `CLOUDFLARE_ACCOUNT_ID`. The job
 uses `CLOUDFLARE_ACCOUNT_ID` to update only the
 project named by the exact `CLOUDFLARE_PAGES_PROJECT` production variable, then
 performs a separate GET and fails
@@ -258,16 +260,18 @@ Before approving the GitHub `production` environment deployment, confirm:
    or reversible canary data.
 9. Supabase Auth is already closed: the official Management API Auth config must
    report `disable_signup=true` and
-   `external_anonymous_users_enabled=false`. The workflow checks these exact
-   values before any release scope and before `supabase link`, migrations,
+   `external_anonymous_users_enabled=false`, with `site_url` exactly
+   `https://77-dominion-live.pages.dev` and `uri_allow_list` exactly
+   `https://77-dominion-live.pages.dev/reset-password.html`. The workflow checks
+   these exact values before any release scope and before `supabase link`, migrations,
    Function secrets, or Function deployment. It never prints
    the Auth response. See
    [`production-canary-operator-runbook.md`](production-canary-operator-runbook.md)
    for the UUID-bound owner canary procedure.
-   If either setting is still open, dispatch **Close production Supabase Auth
+   If any value differs, dispatch **Configure production Supabase Auth
    canary** from `main` and approve its protected `production` environment job
    before dispatching the release. That separate workflow changes only those
-   two reviewed fields, rejects redirects, and GET-verifies the resulting state.
+   four reviewed fields, rejects redirects, and GET-verifies the resulting state.
 
 ### One-time migration-history reconciliation
 
@@ -569,15 +573,15 @@ separately reviewed change and the exact restored-snapshot rehearsal passes:
 
    Review every changed whole-object record. The isolated target-vs-target
    platform allowlist must remain empty. To generate a candidate for a reviewed
-   production-vs-target comparison, first export the normalized production
-   manifest read-only and off-repository, then run:
+   production-vs-target comparison, use the normalized production manifest
+   sealed by the reviewed full capture, then run:
 
    ```bash
    node scripts/build-platform-diff-allowlist.mjs \
      supabase/tests/reconciliation/migration-3.target.manifest.jsonl \
-     /approved/off-repository/production.manifest.jsonl \
+     "$DESTINATION/<capture-id>/source-manifest.jsonl" \
      --postgres-image 17.6.1.141 \
-     --output /approved/off-repository/platform-candidate.json
+     --output "$DESTINATION/private/platform-candidate.json"
    ```
 
    The builder rejects every application-owned key. It emits exact keys and
@@ -594,32 +598,63 @@ separately reviewed change and the exact restored-snapshot rehearsal passes:
    ```bash
    node scripts/compare-database-manifests.mjs \
      supabase/tests/reconciliation/migration-3.target.manifest.jsonl \
-     /approved/off-repository/production.manifest.jsonl \
+     "$DESTINATION/<capture-id>/source-manifest.jsonl" \
      --postgres-image 17.6.1.141 \
-     --allowlist /approved/off-repository/platform-candidate.json
+     --allowlist "$DESTINATION/private/platform-candidate.json"
    ```
 
-   Capture against the exact hosted Supabase database only through an owner-only passwordless
-   URL file and one exact matching pgpass row. Never put a password-bearing URL
-   on argv:
+   Capture against the exact hosted Supabase database only through the full
+   reviewed production-backup entrypoint. Do **not** invoke
+   `capture-database-manifest.sh` directly: it is a lower-level child and is not
+   an operator trust boundary. After the separately approval-gated pack
+   launcher, TCB, and fixed `repository-operator-clean` mapping are frozen, use
+   the outer prefix documented in `docs/production-backup-restore.md` and append
+   `--operation capture --` followed by the complete
+   `capture-production-backup.sh` usage block. The identity-bearing part of
+   that child argument tail includes the following; this excerpt is not a
+   standalone command:
 
    ```bash
-   bash scripts/capture-database-manifest.sh \
-     --database-client-contract exact-docker-pgpass/v1 \
-     --db-url-file /approved/off-repository/restored-read-only.url \
-     --database-passfile /approved/off-repository/restored-read-only.pgpass \
-     --project-ref <exact-project-ref> \
+   --operation capture -- \
+     --capture-id <new-capture-id> \
+     --project-ref <exact-20-character-project-ref> \
+     --database-host <dashboard-session-pooler-host> \
+     --database-url-file "$DESTINATION/private/database-url" \
+     --database-url-sha256 <64-lowercase-hex> \
+     --database-passfile "$DESTINATION/private/database-passfile" \
+     --database-passfile-sha256 <64-lowercase-hex> \
+     --ssl-root-cert-file "$DESTINATION/private/supabase-ca/prod-ca-2021.crt" \
+     --ssl-root-cert-file-sha256 <64-lowercase-hex> \
      --docker-bin <reviewed-absolute-docker-binary> \
+     --docker-bin-sha256 <64-lowercase-hex> \
+     --docker-socket <canonical-absolute-local-docker-socket> \
+     --docker-socket-device <exact-base-10-device> \
+     --docker-socket-inode <exact-base-10-inode> \
+     --docker-socket-owner-uid <current-owner-uid> \
+     --docker-socket-owner-mode 384 \
+     --docker-shared-home-root <canonical-current-user-home> \
      --postgres-image public.ecr.aws/supabase/postgres:17.6.1.141 \
      --postgres-image-id sha256:<64-lowercase-hex> \
-     --output /approved/off-repository/production.manifest.jsonl
+     --destination "$DESTINATION"
    ```
 
-   These exact Docker arguments force `psql` from the pinned image. The helper
-   verifies the tag resolves to that already-present ID, uses
-   `--pull never`, and launches by ID. The database hostname in the passwordless
-   URL must be reachable from the container; do not rewrite or expose the
-   read-only credential merely to make a localhost-only address work.
+   Supply every other required capture argument and confirmation exactly once;
+   never run this excerpt by itself. The entrypoint internally enforces
+   `exact-supavisor-session-jit-pgpass-verify-full/v2`. The passwordless URL,
+   pgpass row, `--database-host`, and project ref must all
+   bind the exact dashboard-provided Supavisor session-pooler host, explicit
+   port `5432`, database `postgres`, and user `postgres.<project-ref>`. The URL
+   contains only `sslmode=verify-full`, the percent-encoded canonical CA path,
+   and `options=-c%20jit%3Don`, in that order. These exact Docker arguments
+   force `psql` from the pinned image and bind the reviewed Docker executable
+   and owner-only local socket identities. The helper verifies the tag resolves
+   to that already-present ID, uses `--pull never`, and launches by ID. The
+   database hostname in the passwordless URL must be reachable from the
+   container; do not rewrite or expose the read-only credential merely to make
+   a localhost-only address work. The authenticated comparison input is the
+   sealed `$DESTINATION/<capture-id>/source-manifest.jsonl`; there is no generic
+   `/approved/off-repository` credential or output path in this production
+   flow.
 
    Never commit a production manifest or data fingerprint; catalog definitions,
    role names, and aggregate hashes are release evidence and belong in the
@@ -871,7 +906,8 @@ next stage when one fails:
    frontend deployment.
 3. **Verify the closed Auth policy:** read the hosted Auth configuration through
    Supabase's official Management API and require `disable_signup=true` plus
-   `external_anonymous_users_enabled=false`. This read-only step gates all
+   `external_anonymous_users_enabled=false`, the exact production Site URL, and
+   the sole exact password-recovery redirect. This read-only step gates all
    release scopes and completes before the workflow can link or mutate the
    backend.
 4. **Guard the compatibility cutover:** only for

@@ -68,7 +68,7 @@ Slack and Discord connection controls fail closed unless `VITE_ENABLE_GROUP_INTE
 6. In the hosted Supabase Auth URL Configuration, set the Site URL to the exact Cloudflare Pages production URL for this app.
 7. Add only the exact password-recovery callback to the hosted project's
    redirect allowlist:
-   - `https://77-dominion-challenge.pages.dev/reset-password.html`
+   - `https://77-dominion-live.pages.dev/reset-password.html`
 
 If account recovery changes `CLOUDFLARE_PAGES_PROJECT`, use the exact new Pages
 subdomain in steps 6-7 and update the protected production origin variables in
@@ -116,9 +116,9 @@ Workout difficulty describes the work performed and never changes points. Histor
   reviewed; Stripe credentials are not required for the closed production canary.
 - The canonical URLs are `https://develop.<CLOUDFLARE_PAGES_PROJECT>.pages.dev`
   for prelaunch development and `https://<CLOUDFLARE_PAGES_PROJECT>.pages.dev`
-  for production. For the original project those resolve to
-  `https://develop.77-dominion-challenge.pages.dev` and
-  `https://77-dominion-challenge.pages.dev`.
+  for production. For the configured project those resolve to
+  `https://develop.77-dominion-live.pages.dev` and
+  `https://77-dominion-live.pages.dev`.
 - `develop` must set only `VITE_ENABLE_MOCKS=true` for backend selection. Login, registration, membership, billing, dashboard, community, journal, and provider connections remain browser-local and never call Supabase or Stripe.
 - A Direct Upload project builds `develop` in GitHub without live credentials,
   then uploads the immutable mock artifact through the restricted

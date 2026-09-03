@@ -89,7 +89,14 @@ jobs:
       - name: Prove migration SQL and history roll back together
         run: pnpm run test:migration-atomicity
       - name: Rehearse the production baseline reconciliation
-        run: pnpm run test:baseline-reconciliation
+        run: |
+          # Hosted toolcache modes vary; keep the production executable pinning policy strict.
+          # This owner-only copy is used solely by the local reconciliation rehearsal.
+          node_runtime="$(mktemp -d "$RUNNER_TEMP/dominion-node.XXXXXX")"
+          chmod 700 "$node_runtime"
+          node_source="$(node -p 'require("node:fs").realpathSync(process.execPath)')"
+          /usr/bin/install -m 0500 "$node_source" "$node_runtime/node"
+          NODE_BIN="$node_runtime/node" pnpm run test:baseline-reconciliation
       - name: Test migrations and RLS
         run: pnpm run test:database
       - name: Test RPC retries and concurrency

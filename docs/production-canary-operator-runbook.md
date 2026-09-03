@@ -13,15 +13,17 @@ The workflow also reads the hosted Auth configuration through Supabase's
 official [`GET /v1/projects/{ref}/config/auth`](https://supabase.com/docs/reference/api/v1-get-auth-service-config)
 endpoint before any release scope can proceed. It fails unless
 `disable_signup` is exactly `true` and
-`external_anonymous_users_enabled` is exactly `false`. The check is read-only,
-keeps the management token in memory, and never prints the response body.
+`external_anonymous_users_enabled` is exactly `false`, `site_url` is exactly
+`https://77-dominion-live.pages.dev`, and `uri_allow_list` contains only
+`https://77-dominion-live.pages.dev/reset-password.html`. The check is
+read-only, keeps the management token in memory, and never prints the response body.
 The production Management API token must include the documented
 `auth_config_read` permission (or `auth:read` OAuth scope).
 
-## Close public signup before release
+## Configure closed Auth and production URLs before release
 
 When the read-only release gate reports that either path is open, use the
-manual **Close production Supabase Auth canary** workflow at
+manual **Configure production Supabase Auth canary** workflow at
 `.github/workflows/configure-production-auth-canary.yml`. Dispatch it only from
 the protected `main` branch, select the explicit confirmation checkbox, and
 approve its protected `production` environment job. The workflow requires the
@@ -36,7 +38,9 @@ endpoint with exactly this body:
 ```json
 {
   "disable_signup": true,
-  "external_anonymous_users_enabled": false
+  "external_anonymous_users_enabled": false,
+  "site_url": "https://77-dominion-live.pages.dev",
+  "uri_allow_list": "https://77-dominion-live.pages.dev/reset-password.html"
 }
 ```
 
@@ -45,7 +49,9 @@ succeeding. Both requests reject redirects and use bounded timeouts. Error
 responses and configuration bodies are never printed, and failure messages
 contain at most the HTTP status. Do not broaden the body to synchronize the
 entire Auth object: the GET response can contain unrelated provider and SMTP
-configuration that this procedure is not approved to change.
+configuration that this procedure is not approved to change. Supplying the
+single exact `uri_allow_list` value also removes stale preview, localhost, and
+historical production callbacks from the hosted tenant.
 
 For a fine-grained Management API token, Supabase currently documents
 `auth_config_write` and `project_admin_write` for PATCH and `auth_config_read`
