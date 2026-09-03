@@ -25,7 +25,7 @@ export const EXISTING_SUPABASE_PROJECT_REF = "mimolwojppbtsbvtqwpo";
 export const TARGET_MANIFEST_SHA256 =
   "82774858454fa27646fd3e1f430e056a9be16f196cdc59c6e48a6e124f6e86a5";
 export const TARGET_MANIFEST_RECORD_COUNT = 1489;
-export const POST13_CONTRACT_RECORD_COUNT = 1525;
+export const POST13_CONTRACT_RECORD_COUNT = 1529;
 
 const ordinaryManifestKinds = new Set([
   "badge",
@@ -98,6 +98,31 @@ const expectedOperationalRowCounts = Object.freeze({
   "storage.s3_multipart_uploads_parts": 0,
   "storage.vector_indexes": 0,
 });
+
+const hostedPlatformSchemaUsageRoles = Object.freeze([
+  "anon",
+  "authenticated",
+  "postgres",
+  "service_role",
+]);
+
+// Hosted Supabase adds these exact schema grants through pg_database_owner.
+// They are not emitted by the disposable local stack used to pin the migration
+// target, so model them explicitly instead of broadly ignoring hosted ACLs.
+const hostedPlatformRecords = Object.freeze(
+  hostedPlatformSchemaUsageRoles.map((role) => Object.freeze({
+    key: `direct-acl/schema-acl/public/pg_database_owner/${role}/USAGE`,
+    kind: "direct-acl",
+    identity: "public",
+    definition: Object.freeze({
+      grantee: role,
+      grantor: "pg_database_owner",
+      grantable: false,
+      privilege: "USAGE",
+      objectKind: "schema-acl",
+    }),
+  })),
+);
 
 const deterministicConfigurationRecords = Object.freeze([
   {
@@ -285,7 +310,11 @@ export function buildPost13Contract(manifestContents) {
   }
   requireExactKindCounts(records);
 
-  const contract = [...records, ...deterministicConfigurationRecords]
+  const contract = [
+    ...records,
+    ...hostedPlatformRecords,
+    ...deterministicConfigurationRecords,
+  ]
     .sort((left, right) => Buffer.compare(Buffer.from(left.key), Buffer.from(right.key)));
   if (contract.length !== POST13_CONTRACT_RECORD_COUNT) {
     fail("the assembled post-migration-13 contract has an unexpected record count");
@@ -328,6 +357,9 @@ export function verifyReadOnlyContractQuery(query) {
   }
   if (query.split("cross join canonical_deparse_context").length - 1 !== 7) {
     fail("every search_path-sensitive catalog deparser must depend on the canonical context");
+  }
+  if (query.split("namespace.nspname::text as identity").length - 1 !== 1) {
+    fail("the catalog identity union must be pinned to unbounded text");
   }
   const deparseCalls = query.match(
     /pg_catalog\.(?:format_type|pg_get_expr|pg_get_constraintdef|pg_get_indexdef|pg_get_function_identity_arguments|pg_get_function_arguments|pg_get_function_result|pg_get_triggerdef)\s*\(/gu,

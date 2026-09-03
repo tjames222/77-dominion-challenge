@@ -49,14 +49,14 @@ test("the contract is derived from the exact pinned migration-13 target", () => 
       "row-count",
       "workout-config",
     ].includes(record.kind)).length,
-    TARGET_MANIFEST_RECORD_COUNT,
+    TARGET_MANIFEST_RECORD_COUNT + 4,
   );
   assert.equal(contract.filter((record) => record.kind === "relation").length, 22);
   assert.equal(contract.filter((record) => record.kind === "column").length, 184);
   assert.equal(contract.filter((record) => record.kind === "constraint").length, 84);
   assert.equal(contract.filter((record) => record.kind === "function").length, 27);
   assert.equal(contract.filter((record) => record.kind === "policy").length, 58);
-  assert.equal(contract.filter((record) => record.kind === "direct-acl").length, 303);
+  assert.equal(contract.filter((record) => record.kind === "direct-acl").length, 307);
   assert.equal(contract.filter((record) => record.kind === "effective-acl").length, 702);
   assert.equal(contract.filter((record) => record.kind === "badge").length, 30);
   assert.equal(contract.filter((record) => record.kind === "storage-bucket").length, 3);
@@ -87,6 +87,25 @@ test("the contract is derived from the exact pinned migration-13 target", () => 
   assert.deepEqual(
     contract.find((record) => record.key === "row-count/storage.objects")?.definition,
     { rowCount: 0 },
+  );
+  const hostedPlatformRoles = ["anon", "authenticated", "postgres", "service_role"];
+  const hostedPlatformKeys = hostedPlatformRoles.map((role) =>
+    `direct-acl/schema-acl/public/pg_database_owner/${role}/USAGE`
+  );
+  assert.deepEqual(
+    contract
+      .filter((record) => hostedPlatformKeys.includes(record.key))
+      .map(({ key, definition }) => ({ key, definition })),
+    hostedPlatformRoles.map((role) => ({
+      key: `direct-acl/schema-acl/public/pg_database_owner/${role}/USAGE`,
+      definition: {
+        grantee: role,
+        grantor: "pg_database_owner",
+        grantable: false,
+        privilege: "USAGE",
+        objectKind: "schema-acl",
+      },
+    })),
   );
   assert.deepEqual(
     contract.map((record) => record.key),
@@ -147,6 +166,10 @@ test("the catalog query is one parameterized read-only SELECT", () => {
   assert.match(queryContents, /from storage\.objects/u);
   assert.match(queryContents, /direct_object_acl_records/u);
   assert.match(queryContents, /effective_column_acl_records/u);
+  assert.equal(
+    queryContents.split("namespace.nspname::text as identity").length - 1,
+    1,
+  );
   assert.match(queryContents, /namespace\.nspname = 'storage' and relation\.relname = 'objects'/u);
   assert.throws(
     () => verifyReadOnlyContractQuery(`${queryContents.slice(0, -2)}; delete from public.profiles;`),
@@ -157,6 +180,15 @@ test("the catalog query is one parameterized read-only SELECT", () => {
       queryContents.replace("'public, extensions'", "'public'"),
     ),
     /canonical deparse search_path/u,
+  );
+  assert.throws(
+    () => verifyReadOnlyContractQuery(
+      queryContents.replace(
+        "namespace.nspname::text as identity",
+        "namespace.nspname as identity",
+      ),
+    ),
+    /unbounded text/u,
   );
 });
 

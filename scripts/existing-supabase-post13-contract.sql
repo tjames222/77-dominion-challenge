@@ -24,7 +24,9 @@ schema_records as (
   select
     pg_catalog.format('schema/%I', namespace.nspname) as key,
     'schema'::text as kind,
-    namespace.nspname as identity,
+    -- Keep the first UNION arm unbounded. Leaving this as pg_catalog.name
+    -- truncates every later composite identity to PostgreSQL's 63-byte limit.
+    namespace.nspname::text as identity,
     pg_catalog.jsonb_build_object(
       'owner', pg_catalog.pg_get_userbyid(namespace.nspowner)
     ) as definition
