@@ -1,0 +1,293 @@
+name: Apply migrations to existing Supabase project
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirmation:
+        description: Type APPLY MIGRATIONS 1-13 TO mimolwojppbtsbvtqwpo
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: production-release
+  cancel-in-progress: false
+
+jobs:
+  apply:
+    name: Dry-run and apply the exact historical prefix
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    environment: production
+    env:
+      EXPECTED_SUPABASE_PROJECT_REF: mimolwojppbtsbvtqwpo
+      SUPABASE_PROJECT_REF: ${{ vars.SUPABASE_PROJECT_REF }}
+      SUPABASE_TELEMETRY_DISABLED: "1"
+      TYPED_CONFIRMATION: ${{ inputs.confirmation }}
+      THROUGH_VERSION: "20260716163000"
+    steps:
+      - name: Authorize the exact one-time attempt
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+        shell: bash
+        run: |
+          if [[ "${GITHUB_EVENT_NAME}" != "workflow_dispatch" ]]; then
+            echo "::error::This workflow accepts only an explicit manual dispatch."
+            exit 1
+          fi
+          if [[ "${GITHUB_REPOSITORY}" != "tjames222/77-dominion-challenge" ]]; then
+            echo "::error::This workflow may run only in the canonical repository."
+            exit 1
+          fi
+          if [[ "${GITHUB_REF}" != "refs/heads/main" ]]; then
+            echo "::error::This workflow may run only from the protected main branch."
+            exit 1
+          fi
+          expected_confirmation="APPLY MIGRATIONS 1-13 TO ${EXPECTED_SUPABASE_PROJECT_REF}"
+          if [[ "${TYPED_CONFIRMATION}" != "${expected_confirmation}" ]]; then
+            echo "::error::The typed production confirmation does not match exactly."
+            exit 1
+          fi
+          if [[ "${SUPABASE_PROJECT_REF:-}" != "${EXPECTED_SUPABASE_PROJECT_REF}" ]]; then
+            echo "::error::The production SUPABASE_PROJECT_REF does not match the approved existing project."
+            exit 1
+          fi
+          if [[ -z "${SUPABASE_ACCESS_TOKEN:-}" ]]; then
+            echo "::error::The production SUPABASE_ACCESS_TOKEN is missing."
+            exit 1
+          fi
+      - name: Checkout the protected release commit
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+          persist-credentials: false
+      - name: Setup Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+      - name: Setup the pinned Supabase CLI
+        uses: supabase/setup-cli@3c2f5e2ae34c34e428e8e206e2c4d21fa2d20fbf # v2
+        with:
+          version: 2.109.0
+      - name: Require the pinned CLI and transaction-compatible release migrations
+        shell: bash
+        run: |
+          cli_version="$(supabase --version)"
+          if [[ "${cli_version}" != "2.109.0" ]]; then
+            echo "::error::Expected Supabase CLI 2.109.0; received ${cli_version}."
+            exit 1
+          fi
+          node scripts/check-migration-compatibility.mjs
+      - name: Prepare the exact immutable migrations 1-13 stage
+        shell: bash
+        run: |
+          umask 077
+          sealed_stage="${RUNNER_TEMP}/existing-production-sealed-stage"
+          execution_stage="${RUNNER_TEMP}/existing-production-execution-stage"
+          node scripts/prepare-reconciliation-stage.mjs \
+            --release-commit "$GITHUB_SHA" \
+            --through-version "$THROUGH_VERSION" \
+            --output "$sealed_stage"
+          mkdir -m 0700 "$execution_stage"
+          cp -R "$sealed_stage/." "$execution_stage/"
+          chmod 0500 \
+            "$execution_stage" \
+            "$execution_stage/supabase"
+          chmod 0700 "$execution_stage/supabase/.temp"
+          node scripts/check-migration-compatibility.mjs \
+            "$execution_stage/supabase/migrations"
+          migration_count="$(find "$execution_stage/supabase/migrations" \
+            -maxdepth 1 -type f -name '*.sql' | wc -l | tr -d '[:space:]')"
+          if [[ "$migration_count" != "13" ]]; then
+            echo "::error::The execution stage must contain exactly migrations 1-13."
+            exit 1
+          fi
+      - name: Link only the approved existing project
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+        shell: bash
+        run: |
+          umask 077
+          link_stdout="${RUNNER_TEMP}/existing-project-link.stdout"
+          link_stderr="${RUNNER_TEMP}/existing-project-link.stderr"
+          if ! supabase link \
+            --project-ref "$EXPECTED_SUPABASE_PROJECT_REF" \
+            --workdir "${RUNNER_TEMP}/existing-production-execution-stage" \
+            >"$link_stdout" 2>"$link_stderr"; then
+            echo "::error::The exact existing Supabase project could not be linked; raw CLI output remained private."
+            exit 1
+          fi
+          linked_ref_file="${RUNNER_TEMP}/existing-production-execution-stage/supabase/.temp/project-ref"
+          if [[ ! -f "$linked_ref_file" || -L "$linked_ref_file" \
+            || "$(<"$linked_ref_file")" != "$EXPECTED_SUPABASE_PROJECT_REF" ]]; then
+            echo "::error::The linked Supabase project ref is not the exact approved project."
+            exit 1
+          fi
+      - name: Capture the exact empty pre-attempt history
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+        shell: bash
+        run: |
+          umask 077
+          supabase migration list --linked --output-format text \
+            --workdir "${RUNNER_TEMP}/existing-production-execution-stage" \
+            > "${RUNNER_TEMP}/existing-project-history-before.txt" \
+            2> "${RUNNER_TEMP}/existing-project-history-before.stderr"
+      - name: Dry-run the historical prefix without roles or seed data
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+        shell: bash
+        run: |
+          umask 077
+          supabase db push --linked --dry-run \
+            --workdir "${RUNNER_TEMP}/existing-production-execution-stage" \
+            > "${RUNNER_TEMP}/existing-project-dry-run.txt" 2>&1
+      - name: Verify empty pre-history and the exact 1-13 dry-run plan
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+        run: >-
+          node scripts/verify-existing-supabase-migration-attempt.mjs
+          --phase before
+          --cli-history "${RUNNER_TEMP}/existing-project-history-before.txt"
+          --dry-run-output "${RUNNER_TEMP}/existing-project-dry-run.txt"
+          --migrations-directory "${RUNNER_TEMP}/existing-production-execution-stage/supabase/migrations"
+      - name: Re-attest the immutable SQL stage immediately before apply
+        shell: bash
+        run: |
+          sealed_stage="${RUNNER_TEMP}/existing-production-sealed-stage"
+          execution_stage="${RUNNER_TEMP}/existing-production-execution-stage"
+          sealed_migrations="${sealed_stage}/supabase/migrations"
+          execution_migrations="${execution_stage}/supabase/migrations"
+
+          unexpected_entry="$(find "$execution_migrations" ! -type d ! -type f -print -quit)"
+          if [[ -n "$unexpected_entry" ]]; then
+            echo "::error::The execution migration stage contains a non-regular entry."
+            exit 1
+          fi
+          writable_directory="$(find "$execution_migrations" -type d ! -perm 0500 -print -quit)"
+          writable_file="$(find "$execution_migrations" -type f ! -perm 0400 -print -quit)"
+          if [[ -n "$writable_directory" || -n "$writable_file" ]]; then
+            echo "::error::The execution migration stage is not sealed read-only."
+            exit 1
+          fi
+          if ! diff --no-dereference --recursive --brief \
+            "$sealed_migrations" "$execution_migrations" >/dev/null; then
+            echo "::error::The execution SQL does not match the immutable release stage."
+            exit 1
+          fi
+          if ! cmp --silent \
+            "${sealed_stage}/supabase/config.toml" \
+            "${execution_stage}/supabase/config.toml"; then
+            echo "::error::The execution config does not match the immutable release stage."
+            exit 1
+          fi
+          if ! cmp --silent \
+            "${sealed_stage}/supabase/.temp/postgres-version" \
+            "${execution_stage}/supabase/.temp/postgres-version"; then
+            echo "::error::The execution PostgreSQL pin does not match the immutable release stage."
+            exit 1
+          fi
+          linked_ref_file="${execution_stage}/supabase/.temp/project-ref"
+          if [[ ! -f "$linked_ref_file" || -L "$linked_ref_file" \
+            || "$(<"$linked_ref_file")" != "$EXPECTED_SUPABASE_PROJECT_REF" ]]; then
+            echo "::error::The linked Supabase project ref changed before migration execution."
+            exit 1
+          fi
+          node scripts/check-migration-compatibility.mjs "$execution_migrations"
+      - name: Apply pending migrations through the transactional executor
+        id: migration-apply
+        continue-on-error: true
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+        shell: bash
+        run: |
+          umask 077
+          apply_stdout="${RUNNER_TEMP}/existing-project-migration-up.stdout"
+          apply_stderr="${RUNNER_TEMP}/existing-project-migration-up.stderr"
+          set +e
+          supabase migration up \
+            --linked \
+            --agent no \
+            --yes \
+            --workdir "${RUNNER_TEMP}/existing-production-execution-stage" \
+            >"$apply_stdout" 2>"$apply_stderr"
+          apply_status=$?
+          set -e
+          if [[ "$apply_status" -ne 0 ]]; then
+            echo "::error::Migration application stopped. Raw CLI output remains only in private runner temporary files and was not uploaded."
+            exit "$apply_status"
+          fi
+          echo "Migration CLI completed; raw CLI output remains private and was not uploaded."
+      - name: Observe the exact CLI and raw history prefix after the attempt
+        id: post-history
+        if: always() && steps.migration-apply.outcome != 'skipped'
+        continue-on-error: true
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+        shell: bash
+        run: |
+          umask 077
+          supabase migration list --linked --output-format text \
+            --workdir "${RUNNER_TEMP}/existing-production-execution-stage" \
+            > "${RUNNER_TEMP}/existing-project-history-after.txt" \
+            2> "${RUNNER_TEMP}/existing-project-history-after.stderr"
+          node scripts/verify-existing-supabase-migration-attempt.mjs \
+            --phase observe \
+            --cli-history "${RUNNER_TEMP}/existing-project-history-after.txt" \
+            --migrations-directory "${RUNNER_TEMP}/existing-production-execution-stage/supabase/migrations" \
+            --observed-count-output "${RUNNER_TEMP}/existing-project-observed-count.txt"
+          observed_count="$(<"${RUNNER_TEMP}/existing-project-observed-count.txt")"
+          if [[ ! "$observed_count" =~ ^([0-9]|1[0-3])$ ]]; then
+            echo "::error::The observed migration count is malformed."
+            exit 1
+          fi
+          echo "observed-count=$observed_count" >> "$GITHUB_OUTPUT"
+      - name: Verify the complete migration-13 schema and effect contract
+        id: post-effect
+        if: >-
+          always()
+          && steps.migration-apply.outcome == 'success'
+          && steps.post-history.outcome == 'success'
+          && steps.post-history.outputs.observed-count == '13'
+        continue-on-error: true
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+        run: node scripts/verify-existing-supabase-post13-effect.mjs
+      - name: Enforce successful application and exact verification
+        if: always()
+        shell: bash
+        env:
+          APPLY_OUTCOME: ${{ steps.migration-apply.outcome }}
+          OBSERVED_COUNT: ${{ steps.post-history.outputs.observed-count }}
+          POST_EFFECT_OUTCOME: ${{ steps.post-effect.outcome }}
+          POST_HISTORY_OUTCOME: ${{ steps.post-history.outcome }}
+        run: |
+          if [[ "${POST_HISTORY_OUTCOME}" == "success" ]]; then
+            echo "Observed a validated migration-history prefix of ${OBSERVED_COUNT}/13 after the attempt."
+            printf 'Validated migration-history prefix after the attempt: `%s/13`.\n' \
+              "${OBSERVED_COUNT}" >> "$GITHUB_STEP_SUMMARY"
+          fi
+          if [[ "${APPLY_OUTCOME}" != "success" ]]; then
+            if [[ "${POST_HISTORY_OUTCOME}" == "success" ]]; then
+              echo "::error::Migration application stopped after a validated ${OBSERVED_COUNT}/13 prefix; that prefix may remain applied. No reset, repair, seed, or retry was attempted."
+            else
+              echo "::error::Migration application stopped and post-attempt history could not be validated; a prefix may remain applied. No reset, repair, seed, or retry was attempted."
+            fi
+            exit 1
+          fi
+          if [[ "${POST_HISTORY_OUTCOME}" != "success" ]]; then
+            echo "::error::Post-attempt migration history could not be validated as an exact staged prefix."
+            exit 1
+          fi
+          if [[ "${OBSERVED_COUNT}" != "13" ]]; then
+            echo "::error::Migration application returned success without the complete 13-migration history."
+            exit 1
+          fi
+          if [[ "${POST_EFFECT_OUTCOME}" != "success" ]]; then
+            echo "::error::Migration history reached 13/13, but the read-only schema and effect contract did not verify."
+            exit 1
+          fi
+          echo "Migrations 1-13 and the exact post-migration schema and effect contract were independently verified."
