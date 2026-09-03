@@ -13,12 +13,16 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import {
+  buildTemporaryDatabaseCredentials,
+  buildTemporaryLoginProbeArguments,
+  buildTemporaryLoginProbeEnvironment,
   EXISTING_SUPABASE_PROJECT_REF,
   EXPECTED_POSTGRES_VERSION,
   normalizePrimaryPoolerConfig,
   prepareExistingSupabaseCliState,
   requireCleanNodeRuntimeEnvironment,
   verifyProjectResponse,
+  waitForTemporaryDatabaseLogin,
 } from "./prepare-existing-supabase-cli-state.mjs";
 
 const ref = EXISTING_SUPABASE_PROJECT_REF;
@@ -83,20 +87,38 @@ async function removeStage(stage) {
   await rm(stage, { recursive: true, force: true });
 }
 
+async function makeCredentialDirectory() {
+  const directory = await mkdtemp(
+    path.join(os.tmpdir(), "existing-cli-credentials-test-"),
+  );
+  await chmod(directory, 0o700);
+  return realpath(directory);
+}
+
 function managementFetch({
-  networkBansStatus = 403,
+  login = {
+    password: "temporary-password",
+    role: "cli_login_role",
+    ttl_seconds: 3600,
+  },
+  loginStatus = 201,
   pooler = [primaryPooler()],
   project = healthyProject(),
 } = {}) {
   const requests = [];
   const fetchImplementation = async (url, options) => {
     requests.push({ url, options });
-    const networkBansRequest = url.endsWith("/network-bans/retrieve");
+    const loginRequest = url.endsWith("/cli/login-role");
     return {
       body: { cancel: async () => {} },
-      status: networkBansRequest ? networkBansStatus : 200,
+      status: loginRequest ? loginStatus : 200,
       redirected: false,
-      json: async () => url.endsWith("/config/database/pooler") ? pooler : project,
+      json: async () =>
+        loginRequest
+          ? login
+          : url.endsWith("/config/database/pooler")
+            ? pooler
+            : project,
     };
   };
   return { fetchImplementation, requests };
@@ -118,17 +140,14 @@ test("prepares and re-verifies exact credential-free CLI state without API-key a
       [
         `https://api.supabase.com/v1/projects/${ref}`,
         `https://api.supabase.com/v1/projects/${ref}/config/database/pooler`,
-        `https://api.supabase.com/v1/projects/${ref}/network-bans/retrieve`,
       ],
     );
     for (const { options, url } of first.requests) {
-      assert.equal(
-        options.method,
-        url.endsWith("/network-bans/retrieve") ? "POST" : "GET",
-      );
+      assert.equal(options.method, "GET");
       assert.equal(options.redirect, "error");
       assert.equal(options.headers.Authorization, `Bearer ${token}`);
       assert.equal(url.includes("api-keys"), false);
+      assert.equal(url.includes("network-bans"), false);
     }
 
     const temp = path.join(stage, "supabase", ".temp");
@@ -150,7 +169,11 @@ test("prepares and re-verifies exact credential-free CLI state without API-key a
       stageDirectory: stage,
       verifyOnly: true,
     });
-    assert.deepEqual(verified, { projectRef: ref, verified: true });
+    assert.deepEqual(verified, {
+      credentialsPrepared: false,
+      projectRef: ref,
+      verified: true,
+    });
   } finally {
     await removeStage(stage);
   }
@@ -298,22 +321,326 @@ test("never includes a Management API database password in validation errors", (
   assert.equal(error.message.includes(realPassword), false);
 });
 
-test("requires the scoped token to lack Network Bans read access", async () => {
+test("mints isolated temporary credentials without persisting or returning the password", async () => {
   const stage = await makeStage();
+  const credentials = await makeCredentialDirectory();
+  const supabaseHome = await makeCredentialDirectory();
+  const password = "temp:password\\with-specials";
+  const readinessCalls = [];
   try {
+    await prepareExistingSupabaseCliState({
+      accessToken: token,
+      fetchImplementation: managementFetch().fetchImplementation,
+      projectRef: ref,
+      stageDirectory: stage,
+    });
+    const management = managementFetch({
+      login: {
+        password,
+        role: "cli_login_role",
+        ttl_seconds: 3600,
+      },
+    });
+    const result = await prepareExistingSupabaseCliState({
+      accessToken: token,
+      credentialDirectory: credentials,
+      fetchImplementation: management.fetchImplementation,
+      projectRef: ref,
+      readinessProbe: async (options) => {
+        readinessCalls.push(options);
+        return true;
+      },
+      stageDirectory: stage,
+      supabaseHome,
+      verifyOnly: true,
+    });
+
+    assert.deepEqual(result, {
+      credentialsPrepared: true,
+      projectRef: ref,
+      verified: true,
+    });
+    assert.equal(JSON.stringify(result).includes(password), false);
+    assert.equal(readinessCalls.length, 1);
+    assert.equal(readinessCalls[0].databaseUrl.includes(password), false);
+    assert.equal(
+      readinessCalls[0].passfilePath,
+      path.join(credentials, "database-passfile"),
+    );
+    assert.equal(readinessCalls[0].stageDirectory, stage);
+    assert.equal(readinessCalls[0].supabaseHome, supabaseHome);
+    assert.deepEqual(
+      management.requests.map(({ url }) => url),
+      [
+        `https://api.supabase.com/v1/projects/${ref}`,
+        `https://api.supabase.com/v1/projects/${ref}/config/database/pooler`,
+        `https://api.supabase.com/v1/projects/${ref}/cli/login-role`,
+      ],
+    );
+    const loginRequest = management.requests[2];
+    assert.equal(loginRequest.options.method, "POST");
+    assert.equal(loginRequest.options.headers["Content-Type"], "application/json");
+    assert.equal(loginRequest.options.body, JSON.stringify({ read_only: false }));
+    assert.equal(loginRequest.url.includes("network-bans"), false);
+
+    const databaseUrl = await readFile(
+      path.join(credentials, "database-url"),
+      "utf8",
+    );
+    const passfile = await readFile(
+      path.join(credentials, "database-passfile"),
+      "utf8",
+    );
+    assert.equal(
+      databaseUrl,
+      `postgresql://cli_login_role.${ref}@aws-1-us-west-2.pooler.supabase.com:5432/postgres?sslmode=require&connect_timeout=10`,
+    );
+    assert.equal(databaseUrl.includes(password), false);
+    assert.equal(
+      passfile,
+      `aws-1-us-west-2.pooler.supabase.com:5432:postgres:cli_login_role.${ref}:temp\\:password\\\\with-specials\n`,
+    );
+    assert.equal(
+      await readFile(path.join(credentials, "credential-ready"), "utf8"),
+      ref,
+    );
+    for (const name of [
+      "database-url",
+      "database-passfile",
+      "credential-ready",
+    ]) {
+      assert.equal((await stat(path.join(credentials, name))).mode & 0o777, 0o600);
+    }
+  } finally {
+    await removeStage(stage);
+    await rm(credentials, { recursive: true, force: true });
+    await rm(supabaseHome, { recursive: true, force: true });
+  }
+});
+
+test("the readiness probe receives a strict allowlist with no API or ambient database credentials", () => {
+  const environment = buildTemporaryLoginProbeEnvironment({
+    passfilePath: "/private/credentials/database-passfile",
+    runtimePath: "/usr/local/bin:/usr/bin:/bin",
+    supabaseHome: "/private/supabase-home",
+  });
+  assert.deepEqual(Object.keys(environment).sort(), [
+    "HOME",
+    "LANG",
+    "PATH",
+    "PGPASSFILE",
+    "SUPABASE_HOME",
+    "SUPABASE_NO_KEYRING",
+    "SUPABASE_PROFILE",
+    "SUPABASE_TELEMETRY_DISABLED",
+    "TMPDIR",
+  ]);
+  for (const forbidden of [
+    "DATABASE_URL",
+    "PGPASSWORD",
+    "SUPABASE_ACCESS_TOKEN",
+    "SUPABASE_DB_PASSWORD",
+    "SUPABASE_DB_URL",
+    "SUPABASE_PROJECT_REF",
+  ]) {
+    assert.equal(Object.hasOwn(environment, forbidden), false);
+  }
+});
+
+test("the readiness probe retries only an explicit read-only SQL query with no linked target", async () => {
+  const databaseUrl =
+    `postgresql://cli_login_role.${ref}@aws-1-us-west-2.pooler.supabase.com:5432/postgres?sslmode=require&connect_timeout=10`;
+  const stageDirectory = "/private/execution-stage";
+  const argumentsList = buildTemporaryLoginProbeArguments({
+    databaseUrl,
+    stageDirectory,
+  });
+  assert.deepEqual(argumentsList, [
+    "--profile=supabase",
+    `--workdir=${stageDirectory}`,
+    "--output-format=text",
+    "--agent=no",
+    "db",
+    "query",
+    `--db-url=${databaseUrl}`,
+    "select 1",
+  ]);
+  assert.equal(argumentsList.includes("--linked"), false);
+
+  const attempts = [];
+  const delays = [];
+  await waitForTemporaryDatabaseLogin({
+    databaseUrl,
+    delayImplementation: async (milliseconds) => delays.push(milliseconds),
+    passfilePath: "/private/credentials/database-passfile",
+    probeAttempt: async (options) => {
+      attempts.push(options);
+      return attempts.length === 3;
+    },
+    stageDirectory,
+    supabaseHome: "/private/supabase-home",
+  });
+  assert.equal(attempts.length, 3);
+  assert.deepEqual(delays, [1_000, 2_000]);
+  for (const options of attempts) {
+    assert.equal(options.databaseUrl, databaseUrl);
+    assert.equal(options.stageDirectory, stageDirectory);
+  }
+});
+
+test("rejects malformed or short-lived temporary login credentials", () => {
+  const poolerUrl =
+    `postgresql://postgres.${ref}@aws-1-us-west-2.pooler.supabase.com:5432/postgres?sslmode=require`;
+  for (const login of [
+    { password: "temporary-password", role: "other_login_role", ttl_seconds: 3600 },
+    { password: "temporary-password", role: "role.with.dot", ttl_seconds: 3600 },
+    { password: "short", role: "cli_login_role", ttl_seconds: 3600 },
+    { password: "temporary-password\n", role: "cli_login_role", ttl_seconds: 3600 },
+    { password: "temporary-password ", role: "cli_login_role", ttl_seconds: 3600 },
+    { password: "temporary-password", role: "cli_login_role", ttl_seconds: 299 },
+    { password: "temporary-password", role: "cli_login_role", ttl_seconds: 7201 },
+  ]) {
+    assert.throws(
+      () => buildTemporaryDatabaseCredentials({ login, poolerUrl, projectRef: ref }),
+      /temporary login-role response/u,
+    );
+  }
+});
+
+test("temporary login API failures never inspect or expose the response body", async () => {
+  const stage = await makeStage();
+  const credentials = await makeCredentialDirectory();
+  const supabaseHome = await makeCredentialDirectory();
+  let bodyRead = false;
+  try {
+    await prepareExistingSupabaseCliState({
+      accessToken: token,
+      fetchImplementation: managementFetch().fetchImplementation,
+      projectRef: ref,
+      stageDirectory: stage,
+    });
+    const management = managementFetch({ loginStatus: 403 });
+    management.fetchImplementation = async (url, options) => {
+      if (!url.endsWith("/cli/login-role")) {
+        return managementFetch().fetchImplementation(url, options);
+      }
+      return {
+        body: { cancel: async () => {} },
+        status: 403,
+        redirected: false,
+        json: async () => {
+          bodyRead = true;
+          return { secret: "must-not-leak" };
+        },
+      };
+    };
     await assert.rejects(
       () => prepareExistingSupabaseCliState({
         accessToken: token,
-        fetchImplementation: managementFetch({
-          networkBansStatus: 201,
-        }).fetchImplementation,
+        credentialDirectory: credentials,
+        fetchImplementation: management.fetchImplementation,
         projectRef: ref,
         stageDirectory: stage,
+        supabaseHome,
+        verifyOnly: true,
       }),
-      /must return HTTP 403 for Network Bans read access/u,
+      /temporary database login request returned HTTP 403/u,
+    );
+    assert.equal(bodyRead, false);
+  } finally {
+    await removeStage(stage);
+    await rm(credentials, { recursive: true, force: true });
+    await rm(supabaseHome, { recursive: true, force: true });
+  }
+});
+
+test("a failed readiness probe leaves no consumable credential marker", async () => {
+  const stage = await makeStage();
+  const credentials = await makeCredentialDirectory();
+  const supabaseHome = await makeCredentialDirectory();
+  const password = "temporary-password";
+  try {
+    await prepareExistingSupabaseCliState({
+      accessToken: token,
+      fetchImplementation: managementFetch().fetchImplementation,
+      projectRef: ref,
+      stageDirectory: stage,
+    });
+    await assert.rejects(
+      () => prepareExistingSupabaseCliState({
+        accessToken: token,
+        credentialDirectory: credentials,
+        fetchImplementation: managementFetch({
+          login: {
+            password,
+            role: "cli_login_role",
+            ttl_seconds: 3600,
+          },
+        }).fetchImplementation,
+        projectRef: ref,
+        readinessProbe: async () => {
+          throw new Error(`never expose ${password}`);
+        },
+        stageDirectory: stage,
+        supabaseHome,
+        verifyOnly: true,
+      }),
+      (error) => {
+        assert.match(error.message, /did not become ready/u);
+        assert.equal(error.message.includes(password), false);
+        return true;
+      },
+    );
+    await assert.rejects(
+      () => readFile(path.join(credentials, "credential-ready"), "utf8"),
+      /ENOENT/u,
     );
   } finally {
     await removeStage(stage);
+    await rm(credentials, { recursive: true, force: true });
+    await rm(supabaseHome, { recursive: true, force: true });
+  }
+});
+
+test("a nonempty credential directory is rejected before a login role is minted", async () => {
+  const stage = await makeStage();
+  const credentials = await makeCredentialDirectory();
+  const supabaseHome = await makeCredentialDirectory();
+  try {
+    await prepareExistingSupabaseCliState({
+      accessToken: token,
+      fetchImplementation: managementFetch().fetchImplementation,
+      projectRef: ref,
+      stageDirectory: stage,
+    });
+    await writeFile(path.join(credentials, "unexpected"), "occupied", {
+      mode: 0o600,
+    });
+    const management = managementFetch();
+    await assert.rejects(
+      () => prepareExistingSupabaseCliState({
+        accessToken: token,
+        credentialDirectory: credentials,
+        fetchImplementation: management.fetchImplementation,
+        projectRef: ref,
+        readinessProbe: async () => {},
+        stageDirectory: stage,
+        supabaseHome,
+        verifyOnly: true,
+      }),
+      /credential directory must be empty/u,
+    );
+    assert.deepEqual(
+      management.requests.map(({ url }) => url),
+      [
+        `https://api.supabase.com/v1/projects/${ref}`,
+        `https://api.supabase.com/v1/projects/${ref}/config/database/pooler`,
+      ],
+    );
+  } finally {
+    await removeStage(stage);
+    await rm(credentials, { recursive: true, force: true });
+    await rm(supabaseHome, { recursive: true, force: true });
   }
 });
 
