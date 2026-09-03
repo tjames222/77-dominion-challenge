@@ -563,7 +563,8 @@ test('HTTP failures discard the response body and never expose it or the token',
       assert.equal(
         error.message,
         'Cloudflare API token can read the reviewed Pages project but cannot update it. '
-          + 'Add Account > Cloudflare Pages > Edit (Pages Write) for the exact account to the token.',
+          + 'Add Account > Pages > Write (also displayed as Account > Cloudflare Pages > Edit) '
+          + 'for the exact account to the token.',
       );
       assert.equal(error.message.includes(apiToken), false);
       assert.equal(error.message.includes(secretResponse), false);
@@ -601,7 +602,8 @@ test('an active token reports account scoping or Pages-read failures before muta
       assert.equal(
         error.message,
         'Cloudflare API token is active but cannot read the reviewed Pages project from the configured account. '
-          + 'Confirm the token is scoped to the same account and has Account > Cloudflare Pages > Read or Edit.',
+          + 'Confirm the token is scoped to the same account and has Account > Pages > Read or Write '
+          + '(also displayed as Account > Cloudflare Pages > Read or Edit).',
       );
       assert.equal(error.message.includes(apiToken), false);
       return true;

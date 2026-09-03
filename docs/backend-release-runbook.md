@@ -101,7 +101,7 @@ The prelaunch environment model deliberately uses no paid staging project:
 
 | Name | Purpose | Rotation owner |
 | --- | --- | --- |
-| `SUPABASE_ACCESS_TOKEN` | Authorizes the pinned CLI's temporary login role, read-only Auth/history gates, and separately approved closed-canary Auth policy workflow; a fine-grained token needs `auth_config_read`, `auth_config_write`, `project_admin_write`, `database_read`, and `database_write` | Supabase organization administrator |
+| `SUPABASE_ACCESS_TOKEN` | Authorizes the pinned CLI's temporary login role, Auth/history gates, closed-canary Auth policy, Function-secret synchronization, and Edge Function deployment/list verification; a scoped token restricted to the production project needs **Project Settings**, **Auth Config**, **Database**, **Edge Functions**, and **Edge Function Secrets**, each with **Read-write** access | Supabase organization administrator |
 | `STRIPE_SECRET_KEY` | Calls Stripe from Edge Functions; required only when reviewed code sets `BILLING_ENABLED=true` | Stripe administrator |
 | `STRIPE_WEBHOOK_SECRET` | Verifies Stripe webhook signatures; required only when reviewed code sets `BILLING_ENABLED=true` | Stripe administrator |
 | `STRIPE_MEMBERSHIP_PRICE_ID` | Selects the approved recurring membership price; required only when reviewed code sets `BILLING_ENABLED=true` | Billing owner |
@@ -186,7 +186,9 @@ pnpm exec supabase functions serve --env-file supabase/.env.local
 
 Before the first protected release, dispatch **Configure Cloudflare Pages
 policy** from `main` and approve its `production` environment. The environment's
-`CLOUDFLARE_API_TOKEN` needs Cloudflare Pages Write permission only. The job
+`CLOUDFLARE_API_TOKEN` needs **Account → Pages → Write** permission only
+(also displayed as **Account → Cloudflare Pages → Edit**) and must include the exact account
+selected by `CLOUDFLARE_ACCOUNT_ID`. The job
 uses `CLOUDFLARE_ACCOUNT_ID` to update only the
 project named by the exact `CLOUDFLARE_PAGES_PROJECT` production variable, then
 performs a separate GET and fails

@@ -507,6 +507,9 @@ async function makeFixture() {
     path.join(tools, "preflight-test-clock"),
     `#!/bin/bash\nprintf '%s\\n' '${currentTime}'\n`,
   );
+  const nodeArchive = path.join(tools, "node-archive.fixture");
+  await writeFile(nodeArchive, "offline fixture node archive\n", { mode: 0o600 });
+  await chmod(nodeArchive, 0o600);
 
   const captureDirectory = path.join(destination, captureId);
   const restoreDirectory = path.join(
@@ -535,9 +538,12 @@ async function makeFixture() {
     macosTcbAttestationSha256,
     nodeBin,
     nodeBinSha256,
+    nodeArchive,
+    nodeArchiveSha256: await sha256File(nodeArchive),
     offlinePgsodiumGetkey,
     offlinePgsodiumGetkeySha256,
     operatorPackLauncher,
+    operatorPackLauncherSha256: await sha256File(operatorPackLauncher),
     preflightScript: path.join(release.scripts, "verify-production-reconciliation-preflight.sh"),
     releaseRepository: release.repository,
     releaseCommit,
@@ -709,9 +715,17 @@ function environmentFor(fixture, extra = {}) {
     DOMINION_CLEAN_ENV_LAUNCHER: "dominion-production-operator/v1",
     DOMINION_CLEAN_ENV_LAUNCHER_PATH: fixture.cleanLauncher,
     DOMINION_CLEAN_ENV_LAUNCHER_SHA256: fixture.cleanLauncherSha256,
+    DOMINION_ENTRYPOINT_SHA256: fixture.cleanLauncherSha256,
     DOMINION_MACOS_TCB_ATTESTATION_SHA256: fixture.macosTcbAttestationSha256,
+    DOMINION_OPERATOR_PACK_LAUNCHER_SHA256: fixture.operatorPackLauncherSha256,
+    DOMINION_RELEASE_COMMIT: fixture.releaseCommit,
+    DOMINION_RELEASE_REPOSITORY: fixture.releaseRepository,
+    DOMINION_REPOSITORY_OPERATION: "preflight",
+    DOMINION_REPOSITORY_OPERATOR_CHILD: "dominion-repository-operator-clean/v1",
     NODE_BIN: fixture.nodeBin,
     NODE_BIN_SHA256: fixture.nodeBinSha256,
+    NODE_ARCHIVE: fixture.nodeArchive,
+    NODE_ARCHIVE_SHA256: fixture.nodeArchiveSha256,
     PRODUCTION_BACKUP_EVIDENCE_VERIFIER_BIN: fixture.fakeVerifier,
     PRODUCTION_BACKUP_EVIDENCE_VERIFIER_SHA256: fixture.fakeVerifierSha256,
     PRODUCTION_RECONCILIATION_PREFLIGHT_TEST_MODE: "offline-fixture-only",

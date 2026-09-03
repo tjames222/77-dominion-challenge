@@ -5,6 +5,7 @@ import {
   chmodSync,
   existsSync,
   mkdtempSync,
+  mkdirSync,
   readdirSync,
   readFileSync,
   realpathSync,
@@ -107,21 +108,94 @@ async function waitForFileMatch(filename, pattern, timeoutMs = 15_000) {
 
 function cleanOperatorEnvironment(overrides = {}) {
   const launcher = new URL('./run-production-operator-clean.sh', import.meta.url).pathname;
+  const repository = new URL('../', import.meta.url).pathname.replace(/\/$/u, '');
+  const nodeArchive = new URL('../package.json', import.meta.url).pathname;
+  const launcherSha256 = sha256File(launcher);
   const environment = databaseSafeEnvironment({
     PATH: '/usr/bin:/bin:/usr/sbin:/sbin',
     DOMINION_CLEAN_ENV_LAUNCHER: 'dominion-production-operator/v1',
     DOMINION_CLEAN_ENV_LAUNCHER_PATH: launcher,
-    DOMINION_CLEAN_ENV_LAUNCHER_SHA256: sha256File(launcher),
+    DOMINION_CLEAN_ENV_LAUNCHER_SHA256: launcherSha256,
+    DOMINION_ENTRYPOINT_SHA256: launcherSha256,
+    DOMINION_MACOS_TCB_ATTESTATION_SHA256: 'b'.repeat(64),
+    DOMINION_OPERATOR_PACK_LAUNCHER_SHA256: 'a'.repeat(64),
+    DOMINION_RELEASE_COMMIT: '1'.repeat(40),
+    DOMINION_RELEASE_REPOSITORY: repository,
+    DOMINION_REPOSITORY_OPERATION: 'capture',
+    DOMINION_REPOSITORY_OPERATOR_CHILD: 'dominion-repository-operator-clean/v1',
     NODE_BIN: process.execPath,
     NODE_BIN_SHA256: sha256File(process.execPath),
+    NODE_ARCHIVE: nodeArchive,
+    NODE_ARCHIVE_SHA256: sha256File(nodeArchive),
     ...overrides,
   });
   for (const name of Object.keys(environment)) {
-    if (name.startsWith('NODE_') && !['NODE_BIN', 'NODE_BIN_SHA256'].includes(name)) {
+    if (name.startsWith('NODE_') && ![
+      'NODE_BIN',
+      'NODE_BIN_SHA256',
+      'NODE_ARCHIVE',
+      'NODE_ARCHIVE_SHA256',
+    ].includes(name)) {
       delete environment[name];
     }
   }
   return environment;
+}
+
+function makeOfflineLowerManifestFixture(fixtureRoot) {
+  const scripts = join(fixtureRoot, 'scripts');
+  mkdirSync(scripts, { mode: 0o700 });
+  const supabaseTemp = join(fixtureRoot, 'supabase', '.temp');
+  mkdirSync(supabaseTemp, { mode: 0o700, recursive: true });
+  writeFileSync(
+    join(supabaseTemp, 'postgres-version'),
+    readFileSync(new URL('../supabase/.temp/postgres-version', import.meta.url)),
+    { mode: 0o600 },
+  );
+  writeFileSync(
+    join(fixtureRoot, 'supabase', 'config.toml'),
+    readFileSync(new URL('../supabase/config.toml', import.meta.url)),
+    { mode: 0o600 },
+  );
+  const names = [
+    'baseline-data-fingerprint.sql',
+    'capture-database-manifest.sh',
+    'compare-database-manifests.mjs',
+    'database-manifest.sql',
+    'pin-production-input.mjs',
+    'production-backup-common.sh',
+    'run-production-operator-clean.sh',
+    'validate-postgres-credentials.mjs',
+  ];
+  for (const name of names) {
+    const source = new URL(`./${name}`, import.meta.url).pathname;
+    let contents = readFileSync(source, 'utf8');
+    if (name === 'production-backup-common.sh') {
+      const productionMapping =
+        'production_backup_expected_repository_entrypoint="capture-production-backup.sh"';
+      assert.ok(contents.includes(productionMapping));
+      contents = contents.replace(
+        productionMapping,
+        'production_backup_expected_repository_entrypoint="capture-database-manifest.sh"',
+      );
+    }
+    writeFileSync(join(scripts, name), contents, {
+      mode: name.endsWith('.sh') ? 0o700 : 0o600,
+    });
+  }
+  const launcher = join(scripts, 'run-production-operator-clean.sh');
+  const nodeArchive = join(scripts, 'database-manifest.sql');
+  return {
+    capture: join(scripts, 'capture-database-manifest.sh'),
+    environment: {
+      DOMINION_CLEAN_ENV_LAUNCHER_PATH: launcher,
+      DOMINION_CLEAN_ENV_LAUNCHER_SHA256: sha256File(launcher),
+      DOMINION_ENTRYPOINT_SHA256: sha256File(launcher),
+      DOMINION_RELEASE_REPOSITORY: fixtureRoot,
+      NODE_ARCHIVE: nodeArchive,
+      NODE_ARCHIVE_SHA256: sha256File(nodeArchive),
+    },
+  };
 }
 
 function manifestRecord(key, value = key) {
@@ -903,6 +977,7 @@ test('db-url capture falls back to the pinned Docker psql client', async () => {
   );
   let dockerSocket;
   try {
+    const lowerManifestFixture = makeOfflineLowerManifestFixture(fixtureRoot);
     const projectRef = 'abcdefghijklmnopqrst';
     const databaseHost = 'aws-0-us-east-1.pooler.supabase.com';
     const fakeDocker = join(fixtureRoot, 'docker');
@@ -1002,7 +1077,7 @@ test('db-url capture falls back to the pinned Docker psql client', async () => {
     chmodSync(fakeDocker, 0o755);
 
     const captureArguments = [
-      new URL('./capture-database-manifest.sh', import.meta.url).pathname,
+      lowerManifestFixture.capture,
       '--db-url-file',
       databaseUrlFile,
       '--database-client-contract',
@@ -1036,6 +1111,7 @@ test('db-url capture falls back to the pinned Docker psql client', async () => {
       output,
     ];
     const captureEnvironment = cleanOperatorEnvironment({
+      ...lowerManifestFixture.environment,
       FAKE_DOCKER_LOG: dockerLog,
       FAKE_DOCKER_STATE: dockerState,
       FAKE_POSTGRES_IMAGE_ID: postgresImageId,
@@ -1223,6 +1299,7 @@ test('host psql manifest capture uses only the explicit pgpass boundary', async 
   );
   let dockerSocket;
   try {
+    const lowerManifestFixture = makeOfflineLowerManifestFixture(fixtureRoot);
     const projectRef = 'abcdefghijklmnopqrst';
     const databaseHost = 'aws-0-us-east-1.pooler.supabase.com';
     const fakePsql = join(fixtureRoot, 'psql');
@@ -1259,8 +1336,7 @@ test('host psql manifest capture uses only the explicit pgpass boundary', async 
     chmodSync(databaseUrlFile, 0o600);
     chmodSync(databasePassfile, 0o600);
 
-    execFileSync('bash', [
-      new URL('./capture-database-manifest.sh', import.meta.url).pathname,
+    const manifestArguments = [
       '--db-url-file', databaseUrlFile,
       '--database-passfile', databasePassfile,
       '--database-host', databaseHost,
@@ -1274,8 +1350,26 @@ test('host psql manifest capture uses only the explicit pgpass boundary', async 
       '--docker-socket-owner-uid', dockerSocket.ownerUid,
       '--docker-socket-owner-mode', dockerSocket.ownerMode,
       '--output', output,
+    ];
+    const productionLowerHelper = spawnSync('bash', [
+      new URL('./capture-database-manifest.sh', import.meta.url).pathname,
+      ...manifestArguments,
     ], {
       env: cleanOperatorEnvironment({ PSQL_BIN: fakePsql }),
+      encoding: 'utf8',
+    });
+    assert.notEqual(productionLowerHelper.status, 0);
+    assert.match(
+      productionLowerHelper.stderr,
+      /operation does not match the executing repository entrypoint/u,
+    );
+    assert.equal(existsSync(psqlLog), false);
+
+    execFileSync('bash', [lowerManifestFixture.capture, ...manifestArguments], {
+      env: cleanOperatorEnvironment({
+        ...lowerManifestFixture.environment,
+        PSQL_BIN: fakePsql,
+      }),
       stdio: ['ignore', 'pipe', 'pipe'],
     });
 
@@ -1297,6 +1391,7 @@ test('remote manifest capture rejects ambient libpq credentials before psql', as
   );
   let dockerSocket;
   try {
+    const lowerManifestFixture = makeOfflineLowerManifestFixture(fixtureRoot);
     const projectRef = 'abcdefghijklmnopqrst';
     const databaseHost = 'aws-0-us-east-1.pooler.supabase.com';
     const fakePsql = join(fixtureRoot, 'psql');
@@ -1324,7 +1419,7 @@ test('remote manifest capture rejects ambient libpq credentials before psql', as
     chmodSync(databasePassfile, 0o600);
 
     assert.throws(() => execFileSync('bash', [
-      new URL('./capture-database-manifest.sh', import.meta.url).pathname,
+      lowerManifestFixture.capture,
       '--db-url-file', databaseUrlFile,
       '--database-passfile', databasePassfile,
       '--database-host', databaseHost,
@@ -1340,6 +1435,7 @@ test('remote manifest capture rejects ambient libpq credentials before psql', as
       '--output', join(fixtureRoot, 'manifest.jsonl'),
     ], {
       env: cleanOperatorEnvironment({
+        ...lowerManifestFixture.environment,
         PSQL_BIN: fakePsql,
         PGPASSWORD: 'ambient-secret',
       }),

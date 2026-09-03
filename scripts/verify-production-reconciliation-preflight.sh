@@ -23,7 +23,7 @@ repository_root="$(cd "$script_directory/.." && pwd -P)"
 common_helper="$script_directory/production-backup-common.sh"
 # shellcheck source=production-backup-common.sh
 source "$common_helper"
-production_backup_require_clean_environment "$script_directory"
+production_backup_require_clean_environment "$script_directory" preflight
 default_evidence_verifier="$script_directory/verify-production-backup-evidence.sh"
 artifact_verifier="$script_directory/production-backup-artifacts.mjs"
 reconciliation_artifact_helper="$script_directory/production-reconciliation-artifacts.mjs"
@@ -738,13 +738,7 @@ require_hash "$rehearsal_post_state_sha256" "rehearsal post-state SHA-256"
   && "$rehearsal_release_repository" == "$release_repository" ]] \
   || fail "sealed rehearsal evidence identity does not match this preflight."
 
-if ! env -i PATH=/usr/bin:/bin:/usr/sbin:/sbin \
-  DOMINION_CLEAN_ENV_LAUNCHER="$DOMINION_CLEAN_ENV_CONTRACT" \
-  DOMINION_CLEAN_ENV_LAUNCHER_PATH="$DOMINION_CLEAN_ENV_LAUNCHER_PATH" \
-  DOMINION_CLEAN_ENV_LAUNCHER_SHA256="$DOMINION_CLEAN_ENV_LAUNCHER_SHA256" \
-  DOMINION_MACOS_TCB_ATTESTATION_SHA256="$macos_tcb_attestation_sha256" \
-  NODE_BIN="$NODE_BIN" NODE_BIN_SHA256="$NODE_BIN_SHA256" \
-  "$evidence_verifier" \
+evidence_verifier_arguments=(
   --destination "$destination" \
   --capture-id "$capture_id" \
   --restore-id "$restore_id" \
@@ -791,9 +785,26 @@ if ! env -i PATH=/usr/bin:/bin:/usr/sbin:/sbin \
   --restore-verification-hook "$restore_verification_hook" \
   --restore-verification-hook-sha256 "$restore_verification_hook_sha256" \
   --approved-tool-manifest "$approved_tool_manifest" \
-  --approved-tool-manifest-sha256 "$approved_tool_manifest_sha256" \
-  >"$verifier_stdout"; then
-  fail "production backup evidence verification failed."
+  --approved-tool-manifest-sha256 "$approved_tool_manifest_sha256"
+)
+if [[ -n "${PRODUCTION_BACKUP_EVIDENCE_VERIFIER_BIN:-}" ]]; then
+  if ! env -i PATH=/usr/bin:/bin:/usr/sbin:/sbin \
+    DOMINION_CLEAN_ENV_LAUNCHER="$DOMINION_CLEAN_ENV_CONTRACT" \
+    DOMINION_CLEAN_ENV_LAUNCHER_PATH="$DOMINION_CLEAN_ENV_LAUNCHER_PATH" \
+    DOMINION_CLEAN_ENV_LAUNCHER_SHA256="$DOMINION_CLEAN_ENV_LAUNCHER_SHA256" \
+    DOMINION_MACOS_TCB_ATTESTATION_SHA256="$macos_tcb_attestation_sha256" \
+    NODE_BIN="$NODE_BIN" NODE_BIN_SHA256="$NODE_BIN_SHA256" \
+    NODE_ARCHIVE="$NODE_ARCHIVE" NODE_ARCHIVE_SHA256="$NODE_ARCHIVE_SHA256" \
+    "$evidence_verifier" "${evidence_verifier_arguments[@]}" \
+    >"$verifier_stdout"; then
+    fail "production backup evidence verification failed."
+  fi
+else
+  if ! production_backup_run_repository_operation \
+    verify-evidence "${evidence_verifier_arguments[@]}" \
+    >"$verifier_stdout"; then
+    fail "production backup evidence verification failed."
+  fi
 fi
 
 line_number=0

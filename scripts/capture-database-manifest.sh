@@ -439,7 +439,9 @@ trap 'exit 131' QUIT
 trap 'exit 143' TERM
 
 if [[ -n "$database_url_file" ]]; then
-  production_backup_require_clean_environment "$script_directory"
+  # Hosted mode is a lower-level capture child. There is deliberately no
+  # dispatcher operation that maps directly to this script.
+  production_backup_require_clean_environment "$script_directory" capture
   production_backup_reject_ambient_database_environment
   production_backup_reject_ambient_runtime_environment
   production_backup_require_local_docker_context \

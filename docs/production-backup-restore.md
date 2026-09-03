@@ -181,6 +181,8 @@ executed approved pack launcher. Its fixed repository child invocation is:
   --clean-environment-launcher-sha256 <manifest-operatorPackCleanEnvironmentLauncherSha256> \
   --node-bin <canonical-node> \
   --node-bin-sha256 <manifest-nodeBinSha256> \
+  --node-archive <canonical-owner-private-node-archive> \
+  --node-archive-sha256 <reviewedNodeArchiveSha256> \
   --runtime-directory <private-runtime-inside-encrypted-destination> \
   --macos-tcb-attestation <private-tcb-json-inside-encrypted-destination> \
   --macos-tcb-attestation-sha256 <manifest-macosTcbAttestationSha256> \
@@ -193,7 +195,27 @@ executed approved pack launcher. Its fixed repository child invocation is:
 Do not run this template until the pack mapping and TCB are frozen and approved.
 The pack must re-prove canonical repository ownership/no-ACL, exact clean
 `main` HEAD and origin, then hash the fixed repository child before executing
-it in a clean environment.
+it in a clean environment. The repository dispatcher accepts no entrypoint
+path or caller-selected child hash. It derives the selected child's SHA-256
+from the raw `<release-commit>:scripts/<fixed-child>` Git blob, requires Git
+mode `100755`, compares the worktree bytes, and repeats those checks at exec.
+
+At dispatcher input, `DOMINION_CLEAN_ENV_LAUNCHER_SHA256` identifies the
+outer pack launcher and `DOMINION_ENTRYPOINT_SHA256` identifies the repository
+dispatcher. At the selected child boundary, the dispatcher deliberately
+re-roots `DOMINION_CLEAN_ENV_LAUNCHER_PATH` and
+`DOMINION_CLEAN_ENV_LAUNCHER_SHA256` to its own repository path and hash while
+retaining the pack hash separately in
+`DOMINION_OPERATOR_PACK_LAUNCHER_SHA256`. Production preflight-to-evidence and
+reconciliation-to-preflight calls reconstruct the dispatcher input and cross
+the same fixed mapping again, including both Node binary and archive
+identities.
+
+The five package aliases are fail-closed guardrails, not runnable production
+shortcuts. They point at the fixed dispatcher so an attempted direct `pnpm`
+invocation is rejected for lacking the authenticated operator-pack
+environment. The authorized route is the outer command shown above; invoking
+an individual production child with `bash` is never an alternative boundary.
 
 The repository operation arguments are defined by the usage blocks in:
 

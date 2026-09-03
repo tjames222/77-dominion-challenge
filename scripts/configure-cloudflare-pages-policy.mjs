@@ -524,7 +524,8 @@ export async function configureCloudflarePagesPolicy({
     ) {
       throw new Error(
         'Cloudflare API token is active but cannot read the reviewed Pages project from the configured account. '
-        + 'Confirm the token is scoped to the same account and has Account > Cloudflare Pages > Read or Edit.',
+        + 'Confirm the token is scoped to the same account and has Account > Pages > Read or Write '
+        + '(also displayed as Account > Cloudflare Pages > Read or Edit).',
       );
     }
     if (
@@ -594,7 +595,8 @@ export async function configureCloudflarePagesPolicy({
     ) {
       throw new Error(
         'Cloudflare API token can read the reviewed Pages project but cannot update it. '
-        + 'Add Account > Cloudflare Pages > Edit (Pages Write) for the exact account to the token.',
+        + 'Add Account > Pages > Write (also displayed as Account > Cloudflare Pages > Edit) '
+        + 'for the exact account to the token.',
       );
     }
     throw error;

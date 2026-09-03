@@ -397,7 +397,7 @@ require_regular_file "$artifact_helper" "production reconciliation artifact help
 
 # shellcheck source=production-backup-common.sh
 source "$common_helper"
-production_backup_require_clean_environment "$script_directory"
+production_backup_require_clean_environment "$script_directory" reconcile
 production_backup_fail() { fail "$1"; }
 production_backup_reject_ambient_database_environment
 production_backup_reject_ambient_runtime_environment
@@ -1390,18 +1390,30 @@ pre_pinned_history_sha256="$(sha256_file "$pre_pinned_history")"
 preflight_record="$evidence_directory/preflight-record.txt"
 preflight_stderr="$evidence_directory/preflight.stderr"
 production_backup_hashed_executable "$preflight_bin" "$preflight_sha256" "production reconciliation preflight"
-if ! env -i PATH="$PATH" HOME="$runtime_directory/home" XDG_CONFIG_HOME="$runtime_directory/config" \
-  DOMINION_CLEAN_ENV_LAUNCHER="$DOMINION_CLEAN_ENV_CONTRACT" \
-  DOMINION_CLEAN_ENV_LAUNCHER_PATH="$clean_environment_launcher" \
-  DOMINION_CLEAN_ENV_LAUNCHER_SHA256="$clean_environment_launcher_sha256" \
-  DOMINION_MACOS_TCB_ATTESTATION_SHA256="$macos_tcb_attestation_sha256" \
-  NODE_BIN="$node_bin" NODE_BIN_SHA256="$node_bin_sha256" \
-  GIT_CONFIG_NOSYSTEM=1 SUPABASE_TELEMETRY_DISABLED=1 \
-  "$preflight_bin" "${preflight_arguments[@]}" \
-    --before-migration-history "$pre_pinned_history" \
-    --expected-before-migration-history-sha256 "$pre_pinned_history_sha256" \
-    >"$preflight_record" 2>"$preflight_stderr"; then
-  fail "backup/restore/tool/stage preflight failed; no mutation was attempted."
+if [[ "$test_mode" == "offline-fixture-only" ]]; then
+  if ! env -i PATH="$PATH" HOME="$runtime_directory/home" \
+    XDG_CONFIG_HOME="$runtime_directory/config" \
+    DOMINION_CLEAN_ENV_LAUNCHER="$DOMINION_CLEAN_ENV_CONTRACT" \
+    DOMINION_CLEAN_ENV_LAUNCHER_PATH="$clean_environment_launcher" \
+    DOMINION_CLEAN_ENV_LAUNCHER_SHA256="$clean_environment_launcher_sha256" \
+    DOMINION_MACOS_TCB_ATTESTATION_SHA256="$macos_tcb_attestation_sha256" \
+    NODE_BIN="$node_bin" NODE_BIN_SHA256="$node_bin_sha256" \
+    NODE_ARCHIVE="$NODE_ARCHIVE" NODE_ARCHIVE_SHA256="$NODE_ARCHIVE_SHA256" \
+    GIT_CONFIG_NOSYSTEM=1 SUPABASE_TELEMETRY_DISABLED=1 \
+    "$preflight_bin" "${preflight_arguments[@]}" \
+      --before-migration-history "$pre_pinned_history" \
+      --expected-before-migration-history-sha256 "$pre_pinned_history_sha256" \
+      >"$preflight_record" 2>"$preflight_stderr"; then
+    fail "backup/restore/tool/stage preflight failed; no mutation was attempted."
+  fi
+else
+  if ! production_backup_run_repository_operation \
+    preflight "${preflight_arguments[@]}" \
+      --before-migration-history "$pre_pinned_history" \
+      --expected-before-migration-history-sha256 "$pre_pinned_history_sha256" \
+      >"$preflight_record" 2>"$preflight_stderr"; then
+    fail "backup/restore/tool/stage preflight failed; no mutation was attempted."
+  fi
 fi
 chmod 600 "$preflight_record" "$preflight_stderr"
 if ! "$node_bin" "$artifact_helper" verify-preflight-record \

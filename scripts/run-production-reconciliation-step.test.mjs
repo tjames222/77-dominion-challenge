@@ -420,26 +420,29 @@ const hash = (filename) => createHash("sha256").update(readFileSync(filename)).d
 const fixed = [
   "--entrypoint", "--entrypoint-file-sha256",
   "--clean-environment-launcher-sha256", "--node-bin",
-  "--node-bin-sha256", "--runtime-directory",
+  "--node-bin-sha256", "--node-archive", "--node-archive-sha256",
+  "--runtime-directory",
   "--macos-tcb-attestation", "--macos-tcb-attestation-sha256",
 ];
-if (args.length < 17 || fixed.some((flag, index) => args[index * 2] !== flag)
-  || args[16] !== "--") process.exit(81);
+if (args.length < 21 || fixed.some((flag, index) => args[index * 2] !== flag)
+  || args[20] !== "--") process.exit(81);
 const entrypoint = mappings[args[1]];
 if (!entrypoint || args[3] !== entrypoint.sha256 || hash(entrypoint.path) !== entrypoint.sha256) process.exit(82);
 if (hash(process.argv[1]) !== args[5] || hash(args[7]) !== args[9]
-  || hash(args[13]) !== args[15]) process.exit(83);
-const runtime = statSync(args[11]);
+  || hash(args[11]) !== args[13] || hash(args[17]) !== args[19]) process.exit(83);
+const runtime = statSync(args[15]);
 if (!runtime.isDirectory() || (runtime.mode & 0o777) !== 0o700) process.exit(84);
-const child = spawnSync(entrypoint.path, args.slice(17), {
+const child = spawnSync(entrypoint.path, args.slice(21), {
   cwd: process.cwd(),
   env: {
     PATH: process.env.PATH,
     NODE_BIN: args[7],
     NODE_BIN_SHA256: args[9],
+    NODE_ARCHIVE: args[11],
+    NODE_ARCHIVE_SHA256: args[13],
     DOMINION_CLEAN_ENV_LAUNCHER: "dominion-production-operator/v1",
     DOMINION_CLEAN_ENV_LAUNCHER_SHA256: args[5],
-    DOMINION_MACOS_TCB_ATTESTATION_SHA256: args[15],
+    DOMINION_MACOS_TCB_ATTESTATION_SHA256: args[19],
   },
   stdio: "inherit",
 });
@@ -762,6 +765,11 @@ async function makeFixture({
     canonicalJson({ fixture: true }),
   );
   const macosTcbAttestationSha256 = await sha256(macosTcbAttestation);
+  const nodeArchive = await privateFile(
+    path.join(privateDirectory, "node-archive.fixture"),
+    "offline fixture node archive\n",
+  );
+  const nodeArchiveSha256 = await sha256(nodeArchive);
   const captureTools = {
     cleanEnvironmentLauncherSha256: await sha256(path.join(release.scripts, "run-production-operator-clean.sh")),
     credentialValidatorSha256: await sha256(path.join(release.scripts, "validate-postgres-credentials.mjs")),
@@ -1071,7 +1079,10 @@ async function makeFixture({
     historyHook,
     macosTcbAttestation,
     macosTcbAttestationSha256,
+    nodeArchive,
+    nodeArchiveSha256,
     operatorPackLauncher,
+    operatorPackLauncherSha256: await sha256(operatorPackLauncher),
     plan,
     planTools,
     planFile,
@@ -1291,9 +1302,17 @@ function runStep(
       "run-production-operator-clean.sh",
     ),
     DOMINION_CLEAN_ENV_LAUNCHER_SHA256: fixture.planTools.cleanEnvironmentLauncherSha256,
+    DOMINION_ENTRYPOINT_SHA256: fixture.planTools.cleanEnvironmentLauncherSha256,
     DOMINION_MACOS_TCB_ATTESTATION_SHA256: fixture.macosTcbAttestationSha256,
+    DOMINION_OPERATOR_PACK_LAUNCHER_SHA256: fixture.operatorPackLauncherSha256,
+    DOMINION_RELEASE_COMMIT: fixture.commit,
+    DOMINION_RELEASE_REPOSITORY: fixture.repository,
+    DOMINION_REPOSITORY_OPERATION: "reconcile",
+    DOMINION_REPOSITORY_OPERATOR_CHILD: "dominion-repository-operator-clean/v1",
     NODE_BIN: nodeBin,
     NODE_BIN_SHA256: fixture.planTools.nodeBinSha256,
+    NODE_ARCHIVE: fixture.nodeArchive,
+    NODE_ARCHIVE_SHA256: fixture.nodeArchiveSha256,
     ...ambientEnvironment,
   };
   return spawnSync(runner, args, {
@@ -1567,6 +1586,9 @@ production_backup_run_operator_pack_entrypoint \\
       PATH: process.env.PATH,
       NODE_BIN: nodeBin,
       NODE_BIN_SHA256: nodeSha256,
+      NODE_ARCHIVE: tcb,
+      NODE_ARCHIVE_SHA256: tcbSha256,
+      DOMINION_OPERATOR_PACK_LAUNCHER_SHA256: launcherSha256,
       ...extraEnvironment,
     },
   });
@@ -1647,6 +1669,9 @@ production_backup_run_operator_pack_entrypoint \\
       PATH: process.env.PATH,
       NODE_BIN: nodeBin,
       NODE_BIN_SHA256: nodeSha256,
+      NODE_ARCHIVE: tcb,
+      NODE_ARCHIVE_SHA256: tcbSha256,
+      DOMINION_OPERATOR_PACK_LAUNCHER_SHA256: launcherSha256,
     },
   });
 

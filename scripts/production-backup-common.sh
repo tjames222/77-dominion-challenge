@@ -188,6 +188,32 @@ production_backup_hashed_tls_root_cert() {
 
 production_backup_require_clean_environment() {
   production_backup_clean_script_directory="$1"
+  production_backup_expected_repository_operation="${2:-}"
+  case "$production_backup_expected_repository_operation" in
+    capture)
+      production_backup_expected_repository_entrypoint="capture-production-backup.sh"
+      ;;
+    restore)
+      production_backup_expected_repository_entrypoint="rehearse-production-backup-restore.sh"
+      ;;
+    verify-evidence)
+      production_backup_expected_repository_entrypoint="verify-production-backup-evidence.sh"
+      ;;
+    preflight)
+      production_backup_expected_repository_entrypoint="verify-production-reconciliation-preflight.sh"
+      ;;
+    reconcile)
+      production_backup_expected_repository_entrypoint="run-production-reconciliation-step.sh"
+      ;;
+    *)
+      production_backup_fail \
+        "clean-environment operation must name one fixed repository entrypoint."
+      ;;
+  esac
+  [[ "${BASH_SOURCE[1]:-}" \
+      == "$production_backup_clean_script_directory/$production_backup_expected_repository_entrypoint" ]] \
+    || production_backup_fail \
+      "clean-environment operation does not match the executing repository entrypoint."
   [[ "${DOMINION_CLEAN_ENV_LAUNCHER:-}" == "$DOMINION_CLEAN_ENV_CONTRACT" ]] \
     || production_backup_fail \
       "invoke this entrypoint through the reviewed clean-environment launcher."
@@ -204,6 +230,65 @@ production_backup_require_clean_environment() {
     "clean-environment launcher"
   production_backup_hashed_executable \
     "${NODE_BIN:-}" "${NODE_BIN_SHA256:-}" "Node binary"
+  production_backup_hashed_regular_file \
+    "${NODE_ARCHIVE:-}" "${NODE_ARCHIVE_SHA256:-}" "Node archive"
+  production_backup_require_hash \
+    "${DOMINION_OPERATOR_PACK_LAUNCHER_SHA256:-}" \
+    "operator-pack launcher SHA-256"
+  production_backup_require_hash \
+    "${DOMINION_MACOS_TCB_ATTESTATION_SHA256:-}" \
+    "macOS TCB attestation SHA-256"
+  [[ "${DOMINION_ENTRYPOINT_SHA256:-}" \
+      == "${DOMINION_CLEAN_ENV_LAUNCHER_SHA256:-}" \
+    && "${DOMINION_REPOSITORY_OPERATOR_CHILD:-}" \
+      == "dominion-repository-operator-clean/v1" \
+    && "${DOMINION_RELEASE_REPOSITORY:-}" \
+      == "$(cd "$production_backup_clean_script_directory/.." && pwd -P)" \
+    && "${DOMINION_RELEASE_COMMIT:-}" =~ ^[a-f0-9]{40}$ \
+    && -n "$production_backup_expected_repository_operation" \
+    && "${DOMINION_REPOSITORY_OPERATION:-}" \
+      == "$production_backup_expected_repository_operation" ]] \
+    || production_backup_fail \
+      "clean-environment release provenance markers do not match."
+}
+
+production_backup_run_repository_operation() {
+  production_backup_repository_operation="$1"
+  shift
+  case "$production_backup_repository_operation" in
+    capture|restore|verify-evidence|preflight|reconcile) ;;
+    *) production_backup_fail "unsupported repository operation." ;;
+  esac
+  production_backup_repository_launcher="${DOMINION_CLEAN_ENV_LAUNCHER_PATH:-}"
+  production_backup_repository_launcher_sha256="${DOMINION_CLEAN_ENV_LAUNCHER_SHA256:-}"
+  production_backup_hashed_executable \
+    "$production_backup_repository_launcher" \
+    "$production_backup_repository_launcher_sha256" \
+    "repository dispatcher"
+  production_backup_require_hash \
+    "${DOMINION_OPERATOR_PACK_LAUNCHER_SHA256:-}" \
+    "operator-pack launcher SHA-256"
+  /usr/bin/env -i \
+    PATH=/usr/bin:/bin \
+    HOME="$HOME" \
+    TMPDIR="$TMPDIR" \
+    LANG=C \
+    LC_ALL=C \
+    TZ=UTC \
+    NODE_BIN="$NODE_BIN" \
+    NODE_BIN_SHA256="$NODE_BIN_SHA256" \
+    NODE_ARCHIVE="$NODE_ARCHIVE" \
+    NODE_ARCHIVE_SHA256="$NODE_ARCHIVE_SHA256" \
+    DOMINION_CLEAN_ENV_LAUNCHER="$DOMINION_CLEAN_ENV_CONTRACT" \
+    DOMINION_CLEAN_ENV_LAUNCHER_SHA256="$DOMINION_OPERATOR_PACK_LAUNCHER_SHA256" \
+    DOMINION_ENTRYPOINT_SHA256="$production_backup_repository_launcher_sha256" \
+    DOMINION_MACOS_TCB_ATTESTATION_SHA256="$DOMINION_MACOS_TCB_ATTESTATION_SHA256" \
+    DOMINION_REPOSITORY_OPERATOR_CHILD="$DOMINION_REPOSITORY_OPERATOR_CHILD" \
+    DOMINION_OPERATOR_PACK_LAUNCHER_SHA256="$DOMINION_OPERATOR_PACK_LAUNCHER_SHA256" \
+    DOMINION_RELEASE_REPOSITORY="$DOMINION_RELEASE_REPOSITORY" \
+    DOMINION_RELEASE_COMMIT="$DOMINION_RELEASE_COMMIT" \
+    "$production_backup_repository_launcher" \
+      --operation "$production_backup_repository_operation" -- "$@"
 }
 
 production_backup_require_local_docker_context() {
@@ -350,6 +435,11 @@ production_backup_run_operator_pack_entrypoint() {
   production_backup_pack_tcb_attestation_sha256="$7"
   shift 7
 
+  [[ "$production_backup_pack_launcher_sha256" \
+      == "${DOMINION_OPERATOR_PACK_LAUNCHER_SHA256:-}" ]] \
+    || production_backup_fail \
+      "operator-pack launcher does not match the authenticated outer boundary."
+
   production_backup_hashed_executable \
     "$production_backup_pack_launcher" \
     "$production_backup_pack_launcher_sha256" \
@@ -386,6 +476,8 @@ production_backup_run_operator_pack_entrypoint() {
       "$production_backup_pack_launcher_sha256" \
     --node-bin "$NODE_BIN" \
     --node-bin-sha256 "$NODE_BIN_SHA256" \
+    --node-archive "$NODE_ARCHIVE" \
+    --node-archive-sha256 "$NODE_ARCHIVE_SHA256" \
     --runtime-directory "$production_backup_pack_runtime" \
     --macos-tcb-attestation "$production_backup_pack_tcb_attestation" \
     --macos-tcb-attestation-sha256 \
@@ -648,11 +740,11 @@ production_backup_reject_ambient_runtime_environment() {
     fi
   done
 
-  # NODE_* startup controls are denied by default. Only the two identities
+  # NODE_* startup controls are denied by default. Only the four identities
   # injected by the reviewed launcher are permitted.
   for production_backup_ambient_name in $(compgen -e); do
     case "$production_backup_ambient_name" in
-      NODE_BIN|NODE_BIN_SHA256) ;;
+      NODE_BIN|NODE_BIN_SHA256|NODE_ARCHIVE|NODE_ARCHIVE_SHA256) ;;
       NODE_*) production_backup_fail \
         "unset ambient $production_backup_ambient_name before running this operator command." ;;
     esac

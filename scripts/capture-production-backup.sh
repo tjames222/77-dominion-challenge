@@ -13,7 +13,7 @@ script_directory="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 repository_root="$(cd "$script_directory/.." && pwd -P)"
 # shellcheck source=production-backup-common.sh
 source "$script_directory/production-backup-common.sh"
-production_backup_require_clean_environment "$script_directory"
+production_backup_require_clean_environment "$script_directory" capture
 
 usage() {
   cat >&2 <<'USAGE'

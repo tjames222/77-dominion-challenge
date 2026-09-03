@@ -47,6 +47,8 @@ const offlinePgsodiumGetkey = path.join(
 const nodeBin = await realpath(process.execPath);
 const nodeBinSha256 = await sha256(nodeBin);
 const cleanLauncherSha256 = await sha256(cleanLauncher);
+const nodeArchive = path.join(repositoryRoot, "pnpm-lock.yaml");
+const nodeArchiveSha256 = await sha256(nodeArchive);
 const dumpScriptTransformer = path.join(
   scriptDirectory,
   "prepare-supabase-dump-script.mjs",
@@ -144,7 +146,14 @@ async function testCaPem() {
   throw new Error("no system CA certificate is available for the offline fixture");
 }
 
-function runEnvironment(fixture, extraEnv = {}) {
+function repositoryOperation(script) {
+  if (script === captureScript) return "capture";
+  if (script === restoreScript) return "restore";
+  if (script === verifyScript) return "verify-evidence";
+  throw new Error(`no fixed repository operation for ${script}`);
+}
+
+function runEnvironment(fixture, operation, extraEnv = {}) {
   const environment = {
     ...process.env,
     FAKE_BOUNDARY_LOG: fixture.log,
@@ -157,9 +166,17 @@ function runEnvironment(fixture, extraEnv = {}) {
     DOMINION_CLEAN_ENV_LAUNCHER: "dominion-production-operator/v1",
     DOMINION_CLEAN_ENV_LAUNCHER_PATH: cleanLauncher,
     DOMINION_CLEAN_ENV_LAUNCHER_SHA256: cleanLauncherSha256,
+    DOMINION_ENTRYPOINT_SHA256: cleanLauncherSha256,
     DOMINION_MACOS_TCB_ATTESTATION_SHA256: macosTcbAttestationSha256,
+    DOMINION_OPERATOR_PACK_LAUNCHER_SHA256: fixture.operatorPackLauncherSha256,
+    DOMINION_RELEASE_COMMIT: commit,
+    DOMINION_RELEASE_REPOSITORY: repositoryRoot,
+    DOMINION_REPOSITORY_OPERATION: operation,
+    DOMINION_REPOSITORY_OPERATOR_CHILD: "dominion-repository-operator-clean/v1",
     NODE_BIN: nodeBin,
     NODE_BIN_SHA256: nodeBinSha256,
+    NODE_ARCHIVE: nodeArchive,
+    NODE_ARCHIVE_SHA256: nodeArchiveSha256,
     PATH: `${path.dirname(fixture.git)}:${process.env.PATH}`,
     ...extraEnv,
   };
@@ -186,7 +203,12 @@ function runEnvironment(fixture, extraEnv = {}) {
   for (const name of Object.keys(environment)) {
     if (
       name.startsWith("NODE_")
-      && !["NODE_BIN", "NODE_BIN_SHA256"].includes(name)
+      && ![
+        "NODE_BIN",
+        "NODE_BIN_SHA256",
+        "NODE_ARCHIVE",
+        "NODE_ARCHIVE_SHA256",
+      ].includes(name)
       && !Object.hasOwn(extraEnv, name)
     ) delete environment[name];
   }
@@ -197,7 +219,7 @@ function run(script, args, fixture, extraEnv = {}) {
   return spawnSync("bash", [script, ...args], {
     cwd: repositoryRoot,
     encoding: "utf8",
-    env: runEnvironment(fixture, extraEnv),
+    env: runEnvironment(fixture, repositoryOperation(script), extraEnv),
   });
 }
 
@@ -205,7 +227,7 @@ function startRun(script, args, fixture, extraEnv = {}, spawnOptions = {}) {
   const child = spawn("bash", [script, ...args], {
     cwd: repositoryRoot,
     detached: spawnOptions.detached === true,
-    env: runEnvironment(fixture, extraEnv),
+    env: runEnvironment(fixture, repositoryOperation(script), extraEnv),
     stdio: ["ignore", "pipe", "pipe"],
   });
   let stdout = "";
@@ -890,6 +912,8 @@ set -euo pipefail
 [[ "\${1:-}" == '--clean-environment-launcher-sha256' ]]; shift 2
 [[ "\${1:-}" == '--node-bin' ]]; shift 2
 [[ "\${1:-}" == '--node-bin-sha256' ]]; shift 2
+[[ "\${1:-}" == '--node-archive' ]]; shift 2
+[[ "\${1:-}" == '--node-archive-sha256' ]]; shift 2
 [[ "\${1:-}" == '--runtime-directory' && -d "$2" ]]; runtime="$2"; shift 2
 [[ "\${1:-}" == '--macos-tcb-attestation' ]]; shift 2
 [[ "\${1:-}" == '--macos-tcb-attestation-sha256' ]]; shift 2
@@ -993,6 +1017,7 @@ esac
     creationRecordFile,
     offlinePgsodiumGetkey,
     operatorPackLauncher,
+    operatorPackLauncherSha256: await sha256(operatorPackLauncher),
     relationCountsHook,
     restoreVerificationHook,
     root,
@@ -2298,19 +2323,23 @@ test("package commands expose capture, restore, verification, and fake-boundary 
   );
   assert.equal(
     packageJson.scripts["capture:production-backup"],
-    "bash scripts/capture-production-backup.sh",
+    "bash scripts/run-production-operator-clean.sh --operation capture --",
   );
   assert.equal(
     packageJson.scripts["rehearse:production-backup-restore"],
-    "bash scripts/rehearse-production-backup-restore.sh",
+    "bash scripts/run-production-operator-clean.sh --operation restore --",
   );
   assert.equal(
     packageJson.scripts["verify:production-backup-evidence"],
-    "bash scripts/verify-production-backup-evidence.sh",
+    "bash scripts/run-production-operator-clean.sh --operation verify-evidence --",
+  );
+  assert.equal(
+    packageJson.scripts["verify:production-reconciliation-preflight"],
+    "bash scripts/run-production-operator-clean.sh --operation preflight --",
   );
   assert.equal(
     packageJson.scripts["test:production-backup-restore"],
-    "node --test scripts/production-backup-restore.test.mjs",
+    "node --test scripts/run-production-operator-clean.test.mjs scripts/production-backup-restore.test.mjs",
   );
   assert.equal(
     packageJson.scripts["test:production-reconciliation"],
@@ -2318,7 +2347,7 @@ test("package commands expose capture, restore, verification, and fake-boundary 
   );
   assert.equal(
     packageJson.scripts["run:production-reconciliation-step"],
-    "bash scripts/run-production-reconciliation-step.sh",
+    "bash scripts/run-production-operator-clean.sh --operation reconcile --",
   );
   assert.equal(
     packageJson.scripts["prepare:production-reconciliation-plan"],
