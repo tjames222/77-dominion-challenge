@@ -236,12 +236,16 @@ test("the protected workflow can only stage and apply the existing-project 1-13 
     /SUPABASE_ACCESS_TOKEN/u,
   );
 
-  const dryRunIndex = workflow.indexOf("db push --linked --dry-run");
+  const dryRunIndex = workflow.indexOf(
+    'db push --db-url="$database_url" --dry-run',
+  );
   const preVerifyIndex = workflow.indexOf("--phase before");
   const attestIndex = workflow.indexOf(
     "Re-attest the immutable SQL stage immediately before apply",
   );
-  const applyIndex = workflow.indexOf("migration up --linked");
+  const applyIndex = workflow.indexOf(
+    'migration up --db-url="$database_url"',
+  );
   const postVerifyIndex = workflow.indexOf("--phase observe");
   const postEffectIndex = workflow.indexOf(
     "node scripts/verify-existing-supabase-post13-effect.mjs",
@@ -275,23 +279,43 @@ test("the protected workflow can only stage and apply the existing-project 1-13 
     /prepare-existing-supabase-cli-state\.mjs[\s\S]*--stage-directory/u,
   );
   assert.match(workflow, /prepare-existing-supabase-cli-state\.mjs[\s\S]*--verify-only/u);
-  assert.doesNotMatch(workflow, /supabase link|\/api-keys/u);
+  assert.doesNotMatch(
+    workflow,
+    /supabase link|\/api-keys|network-bans|--linked/u,
+  );
   assert.match(workflow, /SUPABASE_PROFILE: supabase/u);
   assert.match(workflow, /NODE_EXTRA_CA_CERTS: ""/u);
   assert.match(workflow, /NODE_OPTIONS: ""/u);
   assert.match(workflow, /NODE_TLS_REJECT_UNAUTHORIZED: ""/u);
   assert.match(workflow, /SUPABASE_GO_BINARY: ""/u);
   assert.equal(
-    workflow.split("SUPABASE_PROFILE=supabase SUPABASE_PROJECT_ID=").length - 1,
+    workflow.split("SUPABASE_PROFILE=supabase SUPABASE_NO_KEYRING=1").length - 1,
+    4,
+  );
+  assert.equal(
+    workflow.split("-u SUPABASE_DB_PASSWORD -u SUPABASE_GO_BINARY").length - 1,
+    4,
+  );
+  assert.equal(workflow.split("-u SUPABASE_ACCESS_TOKEN").length - 1, 4);
+  assert.equal(
+    workflow.split('PGPASSFILE="${credential_directory}/database-passfile"').length - 1,
+    4,
+  );
+  assert.equal(
+    workflow.split('--credential-directory "$credential_directory"').length - 1,
     4,
   );
   assert.equal(
     workflow.split(
-      "SUPABASE_DB_PASSWORD= SUPABASE_GO_BINARY= SUPABASE_NO_KEYRING=1",
+      '--supabase-home "${RUNNER_TEMP}/existing-production-supabase-home"',
     ).length - 1,
     4,
   );
-  assert.equal(workflow.split("PGPASSFILE=/dev/null").length - 1, 4);
+  assert.equal(
+    workflow.split('database_url="$(<"${credential_directory}/database-url")"').length - 1,
+    4,
+  );
+  assert.equal(workflow.split('--db-url="$database_url"').length - 1, 4);
   assert.equal(workflow.split("--profile=supabase").length - 1, 4);
   assert.ok(
     workflow.split("-u NODE_TLS_REJECT_UNAUTHORIZED").length - 1 >= 3,
@@ -303,7 +327,7 @@ test("the protected workflow can only stage and apply the existing-project 1-13 
   assert.match(workflow, /SUPABASE_HOME="\$\{RUNNER_TEMP\}\/existing-production-supabase-home"/u);
   assert.match(
     workflow,
-    /supabase --profile=supabase[\s\S]*--workdir="\$\{RUNNER_TEMP\}\/existing-production-execution-stage"[\s\S]*--agent=no --yes migration up --linked[\s\S]*>"\$apply_stdout" 2>"\$apply_stderr"/u,
+    /supabase --profile=supabase[\s\S]*--workdir="\$\{RUNNER_TEMP\}\/existing-production-execution-stage"[\s\S]*--agent=no --yes migration up --db-url="\$database_url"[\s\S]*>"\$apply_stdout" 2>"\$apply_stderr"/u,
   );
   assert.match(workflow, /--observed-count-output/u);
   assert.match(workflow, /OBSERVED_COUNT[^\n]*steps\.post-history\.outputs\.observed-count/u);

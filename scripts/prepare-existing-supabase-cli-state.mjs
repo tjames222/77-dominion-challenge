@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 
+import { spawn } from "node:child_process";
 import { constants as fsConstants } from "node:fs";
-import { lstat, open, realpath } from "node:fs/promises";
+import { lstat, open, readdir, realpath } from "node:fs/promises";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
@@ -13,6 +14,15 @@ const EXPECTED_DATABASE_HOST =
 const EXPECTED_POOLER_HOST = "aws-1-us-west-2.pooler.supabase.com";
 const EXPECTED_PROJECT_REGION = "us-west-2";
 const EXPECTED_RELEASE_CHANNEL = "ga";
+const LOGIN_READINESS_DELAYS_MS = Object.freeze([
+  0,
+  1_000,
+  2_000,
+  4_000,
+  8_000,
+  16_000,
+  30_000,
+]);
 const FORBIDDEN_NODE_ENVIRONMENT = Object.freeze([
   "NODE_EXTRA_CA_CERTS",
   "NODE_OPTIONS",
@@ -59,16 +69,20 @@ async function discardResponseBody(response) {
 
 async function fetchResponse({
   accessToken,
+  body,
   fetchImplementation,
   label,
   method = "GET",
   url,
 }) {
+  const headers = { Authorization: `Bearer ${accessToken}` };
+  if (body !== undefined) headers["Content-Type"] = "application/json";
   let response;
   try {
     response = await fetchImplementation(url, {
+      body: body === undefined ? undefined : JSON.stringify(body),
       method,
-      headers: { Authorization: `Bearer ${accessToken}` },
+      headers,
       redirect: "error",
       signal: AbortSignal.timeout(30_000),
     });
@@ -94,16 +108,6 @@ async function fetchJson(options) {
     return await response.json();
   } catch {
     fail(`${options.label} did not return JSON`);
-  }
-}
-
-async function requireNetworkBanReadDenied(options) {
-  const response = await fetchResponse({ ...options, method: "POST" });
-  await discardResponseBody(response);
-  if (response.status !== 403) {
-    fail(
-      "SUPABASE_ACCESS_TOKEN must return HTTP 403 for Network Bans read access",
-    );
   }
 }
 
@@ -220,6 +224,68 @@ export function normalizePrimaryPoolerConfig(value, projectRef) {
   return normalized;
 }
 
+function requireTemporaryLoginResponse(value) {
+  if (
+    !isPlainObject(value)
+    || typeof value.role !== "string"
+    || !/^cli_login_[a-z0-9_]*$/u.test(value.role)
+    || Buffer.byteLength(value.role, "utf8") > 63
+    || typeof value.password !== "string"
+    || value.password.length < 16
+    || value.password.length > 1024
+    || /[\u0000-\u001f\u007f]/u.test(value.password)
+    || value.password !== value.password.trimEnd()
+    || !Number.isInteger(value.ttl_seconds)
+    || value.ttl_seconds < 300
+    || value.ttl_seconds > 7200
+  ) {
+    fail("the temporary login-role response is malformed or too short-lived");
+  }
+  return value;
+}
+
+function escapePgpassField(value) {
+  return value.replaceAll("\\", "\\\\").replaceAll(":", "\\:");
+}
+
+export function buildTemporaryDatabaseCredentials({
+  login,
+  poolerUrl,
+  projectRef,
+}) {
+  const exactRef = requireProjectRef(projectRef);
+  const temporaryLogin = requireTemporaryLoginResponse(login);
+  const pooler = requireSafePoolerUrl(poolerUrl, exactRef);
+  if (pooler.password !== "" || pooler.port !== "5432") {
+    fail("the temporary login must use the credential-free session pooler");
+  }
+
+  const username = `${temporaryLogin.role}.${exactRef}`;
+  const databaseUrl =
+    `postgresql://${encodeURIComponent(username)}@${pooler.hostname}:5432/postgres?sslmode=require&connect_timeout=10`;
+  const verified = new URL(databaseUrl);
+  if (
+    verified.username !== username
+    || verified.password !== ""
+    || verified.hostname !== EXPECTED_POOLER_HOST
+    || verified.port !== "5432"
+    || verified.pathname !== "/postgres"
+    || verified.search !== "?sslmode=require&connect_timeout=10"
+    || verified.hash !== ""
+  ) {
+    fail("the temporary database URL is outside the exact project boundary");
+  }
+
+  const passfile = [
+    pooler.hostname,
+    "5432",
+    "postgres",
+    username,
+    temporaryLogin.password,
+  ].map(escapePgpassField).join(":") + "\n";
+  return { databaseUrl, passfile };
+}
+
 async function requireDirectory(directoryPath, expectedMode, label) {
   let metadata;
   try {
@@ -323,6 +389,183 @@ async function requireStage(stageDirectory) {
   };
 }
 
+async function requireCredentialDirectory(credentialDirectory) {
+  if (
+    typeof credentialDirectory !== "string"
+    || !path.isAbsolute(credentialDirectory)
+  ) {
+    fail("--credential-directory must be an absolute path");
+  }
+  const normalized = path.normalize(credentialDirectory);
+  let canonical;
+  try {
+    canonical = await realpath(normalized);
+  } catch {
+    fail("--credential-directory does not exist");
+  }
+  if (canonical !== normalized) {
+    fail("--credential-directory must already be canonical");
+  }
+  await requireDirectory(canonical, 0o700, "the credential directory");
+  let entries;
+  try {
+    entries = await readdir(canonical);
+  } catch {
+    fail("the credential directory cannot be inventoried");
+  }
+  if (entries.length !== 0) {
+    fail("the credential directory must be empty");
+  }
+  return {
+    databaseUrlPath: path.join(canonical, "database-url"),
+    passfilePath: path.join(canonical, "database-passfile"),
+    readyPath: path.join(canonical, "credential-ready"),
+  };
+}
+
+async function requireSupabaseHome(supabaseHome) {
+  if (typeof supabaseHome !== "string" || !path.isAbsolute(supabaseHome)) {
+    fail("--supabase-home must be an absolute path");
+  }
+  const normalized = path.normalize(supabaseHome);
+  let canonical;
+  try {
+    canonical = await realpath(normalized);
+  } catch {
+    fail("--supabase-home does not exist");
+  }
+  if (canonical !== normalized) {
+    fail("--supabase-home must already be canonical");
+  }
+  await requireDirectory(canonical, 0o700, "the isolated Supabase home");
+  return canonical;
+}
+
+function delay(milliseconds) {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds));
+}
+
+export function buildTemporaryLoginProbeEnvironment({
+  passfilePath,
+  runtimePath,
+  supabaseHome,
+}) {
+  if (
+    typeof runtimePath !== "string"
+    || runtimePath.length === 0
+    || /[\u0000\r\n]/u.test(runtimePath)
+  ) {
+    fail("PATH is missing or malformed for the temporary-login probe");
+  }
+  return {
+    HOME: supabaseHome,
+    LANG: "C.UTF-8",
+    PATH: runtimePath,
+    PGPASSFILE: passfilePath,
+    SUPABASE_HOME: supabaseHome,
+    SUPABASE_NO_KEYRING: "1",
+    SUPABASE_PROFILE: "supabase",
+    SUPABASE_TELEMETRY_DISABLED: "1",
+    TMPDIR: supabaseHome,
+  };
+}
+
+export function buildTemporaryLoginProbeArguments({
+  databaseUrl,
+  stageDirectory,
+}) {
+  return [
+    "--profile=supabase",
+    `--workdir=${stageDirectory}`,
+    "--output-format=text",
+    "--agent=no",
+    "db",
+    "query",
+    `--db-url=${databaseUrl}`,
+    "select 1",
+  ];
+}
+
+function runTemporaryLoginProbe({
+  databaseUrl,
+  passfilePath,
+  stageDirectory,
+  supabaseHome,
+}) {
+  return new Promise((resolve) => {
+    let probeEnvironment;
+    try {
+      probeEnvironment = buildTemporaryLoginProbeEnvironment({
+        passfilePath,
+        runtimePath: process.env.PATH,
+        supabaseHome,
+      });
+    } catch {
+      resolve(false);
+      return;
+    }
+    let settled = false;
+    const finish = (result) => {
+      if (settled) return;
+      settled = true;
+      resolve(result);
+    };
+    let child;
+    try {
+      child = spawn(
+        "supabase",
+        buildTemporaryLoginProbeArguments({ databaseUrl, stageDirectory }),
+        {
+          cwd: stageDirectory,
+          env: probeEnvironment,
+          killSignal: "SIGKILL",
+          stdio: "ignore",
+          timeout: 15_000,
+        },
+      );
+    } catch {
+      finish(false);
+      return;
+    }
+    child.once("error", () => finish(false));
+    child.once("exit", (code, signal) => finish(code === 0 && signal === null));
+  });
+}
+
+export async function waitForTemporaryDatabaseLogin({
+  databaseUrl,
+  delayImplementation = delay,
+  passfilePath,
+  probeAttempt = runTemporaryLoginProbe,
+  stageDirectory,
+  supabaseHome,
+}) {
+  if (typeof probeAttempt !== "function") {
+    fail("a temporary-login readiness probe is required");
+  }
+  if (typeof delayImplementation !== "function") {
+    fail("a temporary-login retry delay is required");
+  }
+  for (const delayMilliseconds of LOGIN_READINESS_DELAYS_MS) {
+    if (delayMilliseconds > 0) {
+      await delayImplementation(delayMilliseconds);
+    }
+    let ready = false;
+    try {
+      ready = await probeAttempt({
+        databaseUrl,
+        passfilePath,
+        stageDirectory,
+        supabaseHome,
+      });
+    } catch {
+      ready = false;
+    }
+    if (ready === true) return true;
+  }
+  fail("the temporary database login did not become ready");
+}
+
 async function fetchExpectedState({ accessToken, fetchImplementation, projectRef }) {
   const baseUrl = `https://api.supabase.com/v1/projects/${projectRef}`;
   const project = await fetchJson({
@@ -338,23 +581,46 @@ async function fetchExpectedState({ accessToken, fetchImplementation, projectRef
     label: "the exact project pooler lookup",
     url: `${baseUrl}/config/database/pooler`,
   });
-  await requireNetworkBanReadDenied({
-    accessToken,
-    fetchImplementation,
-    label: "the Network Bans permission denial probe",
-    url: `${baseUrl}/network-bans/retrieve`,
-  });
   return {
     poolerUrl: normalizePrimaryPoolerConfig(pooler, projectRef),
     projectRef,
   };
 }
 
+async function createTemporaryLogin({
+  accessToken,
+  fetchImplementation,
+  projectRef,
+}) {
+  const response = await fetchResponse({
+    accessToken,
+    body: { read_only: false },
+    fetchImplementation,
+    label: "the temporary database login request",
+    method: "POST",
+    url: `https://api.supabase.com/v1/projects/${projectRef}/cli/login-role`,
+  });
+  if (response.status !== 201) {
+    await discardResponseBody(response);
+    fail(`the temporary database login request returned HTTP ${response.status}`);
+  }
+  let value;
+  try {
+    value = await response.json();
+  } catch {
+    fail("the temporary database login request did not return JSON");
+  }
+  return requireTemporaryLoginResponse(value);
+}
+
 export async function prepareExistingSupabaseCliState({
   accessToken,
+  credentialDirectory,
   fetchImplementation = globalThis.fetch,
   projectRef,
+  readinessProbe = waitForTemporaryDatabaseLogin,
   stageDirectory,
+  supabaseHome,
   verifyOnly = false,
 } = {}) {
   requireCleanNodeRuntimeEnvironment(process.env);
@@ -374,18 +640,72 @@ export async function prepareExistingSupabaseCliState({
     if (savedRef !== exactRef || savedPooler !== expected.poolerUrl) {
       fail("the saved CLI target state changed or no longer matches the exact project");
     }
-    return { projectRef: exactRef, verified: true };
+    if (credentialDirectory) {
+      const credentialPaths = await requireCredentialDirectory(
+        credentialDirectory,
+      );
+      const isolatedSupabaseHome = await requireSupabaseHome(supabaseHome);
+      const login = await createTemporaryLogin({
+        accessToken: token,
+        fetchImplementation,
+        projectRef: exactRef,
+      });
+      const credentials = buildTemporaryDatabaseCredentials({
+        login,
+        poolerUrl: expected.poolerUrl,
+        projectRef: exactRef,
+      });
+      // The marker is written last. A partial write can never be consumed as a
+      // complete credential set, and no secret is printed or returned.
+      await writeExclusiveFile(
+        credentialPaths.databaseUrlPath,
+        credentials.databaseUrl,
+      );
+      await writeExclusiveFile(
+        credentialPaths.passfilePath,
+        credentials.passfile,
+      );
+      try {
+        const ready = await readinessProbe({
+          databaseUrl: credentials.databaseUrl,
+          passfilePath: credentialPaths.passfilePath,
+          stageDirectory,
+          supabaseHome: isolatedSupabaseHome,
+        });
+        if (ready !== true) {
+          fail("the temporary database login did not become ready");
+        }
+      } catch {
+        fail("the temporary database login did not become ready");
+      }
+      await writeExclusiveFile(credentialPaths.readyPath, exactRef);
+      return {
+        credentialsPrepared: true,
+        projectRef: exactRef,
+        verified: true,
+      };
+    }
+    return { credentialsPrepared: false, projectRef: exactRef, verified: true };
   }
 
-  // The project ref is the link commit marker. Write it last so an interrupted
-  // preparation cannot leave a targetable linked project behind.
+  if (credentialDirectory) {
+    fail("--credential-directory requires --verify-only");
+  }
+  if (supabaseHome) {
+    fail("--supabase-home requires --credential-directory");
+  }
+
+  // The project ref is the target-state commit marker. Write it last so an
+  // interrupted preparation cannot leave a consumable project target behind.
   await writeExclusiveFile(paths.poolerUrlPath, expected.poolerUrl);
   await writeExclusiveFile(paths.projectRefPath, exactRef);
   return { projectRef: exactRef, verified: true };
 }
 
 function parseArguments(argumentsList) {
+  let credentialDirectory = "";
   let stageDirectory = "";
+  let supabaseHome = "";
   let verifyOnly = false;
   for (let index = 0; index < argumentsList.length; index += 1) {
     const argument = argumentsList[index];
@@ -398,6 +718,24 @@ function parseArguments(argumentsList) {
       index += 1;
       continue;
     }
+    if (argument === "--credential-directory") {
+      const value = argumentsList[index + 1];
+      if (!value || value.startsWith("--") || credentialDirectory) {
+        fail("--credential-directory requires exactly one path");
+      }
+      credentialDirectory = value;
+      index += 1;
+      continue;
+    }
+    if (argument === "--supabase-home") {
+      const value = argumentsList[index + 1];
+      if (!value || value.startsWith("--") || supabaseHome) {
+        fail("--supabase-home requires exactly one path");
+      }
+      supabaseHome = value;
+      index += 1;
+      continue;
+    }
     if (argument === "--verify-only" && !verifyOnly) {
       verifyOnly = true;
       continue;
@@ -405,7 +743,16 @@ function parseArguments(argumentsList) {
     fail(`unsupported or duplicate argument: ${argument}`);
   }
   if (!stageDirectory) fail("--stage-directory is required");
-  return { stageDirectory, verifyOnly };
+  if (credentialDirectory && !verifyOnly) {
+    fail("--credential-directory requires --verify-only");
+  }
+  if (credentialDirectory && !supabaseHome) {
+    fail("--supabase-home is required with --credential-directory");
+  }
+  if (supabaseHome && !credentialDirectory) {
+    fail("--supabase-home requires --credential-directory");
+  }
+  return { credentialDirectory, stageDirectory, supabaseHome, verifyOnly };
 }
 
 const invokedPath = process.argv[1] ? pathToFileURL(process.argv[1]).href : "";
@@ -418,7 +765,9 @@ if (import.meta.url === invokedPath) {
   }).then(
     () => console.log(
       options.verifyOnly
-        ? "Verified exact credential-free Supabase CLI target state."
+        ? options.credentialDirectory
+          ? "Prepared an exact temporary database credential set."
+          : "Verified exact credential-free Supabase CLI target state."
         : "Prepared exact credential-free Supabase CLI target state.",
     ),
     (error) => {
