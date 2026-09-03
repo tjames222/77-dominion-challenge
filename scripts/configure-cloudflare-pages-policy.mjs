@@ -262,9 +262,7 @@ export function cloudflarePagesPolicyErrors(
   if (project.production_branch !== 'main') {
     errors.push('production_branch must be main');
   }
-  if (!Object.hasOwn(project, 'source')) {
-    errors.push('Pages source field is missing');
-  } else if (expectedSourceType === null && source !== null) {
+  if (expectedSourceType === null && source != null) {
     errors.push('Pages source must remain absent for Direct Upload');
   } else if (expectedSourceType === 'github' && source?.type !== 'github') {
     errors.push('Pages source must remain GitHub');
@@ -556,10 +554,6 @@ export async function configureCloudflarePagesPolicy({
   if (existingProject.name !== normalizedPagesProject) {
     throw new Error('Cloudflare returned the wrong Pages project during the access preflight.');
   }
-  if (!Object.hasOwn(existingProject, 'source')) {
-    throw new Error('Cloudflare returned a Pages project without an explicit source contract.');
-  }
-
   const sourceType = existingProject.source == null ? null : existingProject.source?.type;
   if (sourceType !== null && sourceType !== 'github') {
     throw new Error('Cloudflare Pages project source must be GitHub or Direct Upload.');

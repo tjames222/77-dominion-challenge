@@ -180,6 +180,10 @@ test('Direct Upload policy keeps branch and environment pins without inventing a
   assert.deepEqual(cloudflarePagesPolicyErrors(project, productionEnvironment, {
     expectedSourceType: null,
   }), []);
+  delete project.source;
+  assert.deepEqual(cloudflarePagesPolicyErrors(project, productionEnvironment, {
+    expectedSourceType: null,
+  }), []);
   project.source = { type: 'gitlab', config: {} };
   assert.deepEqual(cloudflarePagesPolicyErrors(project, productionEnvironment, {
     expectedSourceType: null,
@@ -279,7 +283,11 @@ test('account-owned tokens use the account verification endpoint', async () => {
 test('an explicitly named Direct Upload project can be created once and then verified', async () => {
   const projectName = '77-dominion-live';
   const calls = [];
-  const directProject = () => validProject({ projectName, sourceType: null });
+  const directProject = () => {
+    const project = validProject({ projectName, sourceType: null });
+    delete project.source;
+    return project;
+  };
 
   await assert.doesNotReject(configureCloudflarePagesPolicy({
     accountId,
@@ -395,11 +403,11 @@ test('a creation response for any other project fails before update', async () =
   assert.equal(calls.some(({ options }) => options.method === 'PATCH'), false);
 });
 
-test('a preflight project without an explicit source contract fails before update', async () => {
+test('a preflight project with an omitted source is treated as Direct Upload', async () => {
   const calls = [];
-  const malformedProject = validProject();
-  delete malformedProject.source;
-  await assert.rejects(
+  const directProject = validProject({ sourceType: null });
+  delete directProject.source;
+  await assert.doesNotReject(
     configureCloudflarePagesPolicy({
       accountId,
       apiToken,
@@ -408,13 +416,39 @@ test('a preflight project without an explicit source contract fails before updat
         calls.push({ url, options });
         if (url.endsWith('/auth/v1/settings')) return response({});
         if (url.endsWith('/user/tokens/verify')) return response(activeToken);
-        return response(malformedProject);
+        if (options.method === 'PATCH') return response({});
+        return response(directProject);
       },
     }),
-    /without an explicit source contract/u,
   );
-  assert.equal(calls.length, 3);
-  assert.equal(calls.some(({ options }) => options.method === 'PATCH'), false);
+  assert.equal(calls.length, 5);
+  const patchCall = calls.find(({ options }) => options.method === 'PATCH');
+  assert.ok(patchCall);
+  assert.equal(Object.hasOwn(JSON.parse(patchCall.options.body), 'source'), false);
+});
+
+test('a malformed or unsupported preflight source fails before update', async () => {
+  for (const source of [{}, { type: 'gitlab', config: {} }]) {
+    const calls = [];
+    const malformedProject = validProject();
+    malformedProject.source = source;
+    await assert.rejects(
+      configureCloudflarePagesPolicy({
+        accountId,
+        apiToken,
+        ...productionEnvironment,
+        fetchImpl: async (url, options) => {
+          calls.push({ url, options });
+          if (url.endsWith('/auth/v1/settings')) return response({});
+          if (url.endsWith('/user/tokens/verify')) return response(activeToken);
+          return response(malformedProject);
+        },
+      }),
+      /source must be GitHub or Direct Upload/u,
+    );
+    assert.equal(calls.length, 3);
+    assert.equal(calls.some(({ options }) => options.method === 'PATCH'), false);
+  }
 });
 
 test('final verification requires the exact preflight source contract', async () => {
