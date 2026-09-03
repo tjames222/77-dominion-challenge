@@ -67,23 +67,35 @@ canonical_directory() {
 }
 
 file_mode() {
-  if /usr/bin/stat -f '%Lp' "$1" 2>/dev/null; then
-    :
-  elif /usr/bin/stat -c '%a' "$1" 2>/dev/null; then
-    :
+  local kernel
+  if [[ -x /usr/bin/uname ]]; then
+    kernel="$(/usr/bin/uname -s)"
+  elif [[ -x /bin/uname ]]; then
+    kernel="$(/bin/uname -s)"
   else
-    fail "could not inspect permissions for $2."
+    fail "could not identify the host while inspecting $2 permissions."
   fi
+  case "$kernel" in
+    Darwin) /usr/bin/stat -f '%Lp' "$1" 2>/dev/null ;;
+    Linux) /usr/bin/stat -c '%a' "$1" 2>/dev/null ;;
+    *) fail "unsupported host while inspecting $2 permissions." ;;
+  esac || fail "could not inspect permissions for $2."
 }
 
 file_links() {
-  if /usr/bin/stat -f '%l' "$1" 2>/dev/null; then
-    :
-  elif /usr/bin/stat -c '%h' "$1" 2>/dev/null; then
-    :
+  local kernel
+  if [[ -x /usr/bin/uname ]]; then
+    kernel="$(/usr/bin/uname -s)"
+  elif [[ -x /bin/uname ]]; then
+    kernel="$(/bin/uname -s)"
   else
-    fail "could not inspect link count for $2."
+    fail "could not identify the host while inspecting $2 link count."
   fi
+  case "$kernel" in
+    Darwin) /usr/bin/stat -f '%l' "$1" 2>/dev/null ;;
+    Linux) /usr/bin/stat -c '%h' "$1" 2>/dev/null ;;
+    *) fail "unsupported host while inspecting $2 link count." ;;
+  esac || fail "could not inspect link count for $2."
 }
 
 no_extended_acl() {
