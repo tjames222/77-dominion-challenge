@@ -69,6 +69,22 @@ test("the contract is derived from the exact pinned migration-13 target", () => 
     { rowCount: 1 },
   );
   assert.deepEqual(
+    contract.find((record) => record.key === "row-count/public.entitlements")
+      ?.definition,
+    { rowCount: 0 },
+  );
+  assert.deepEqual(
+    contract.find((record) =>
+      record.key === "entitlement-summary/membership_active"
+    )?.definition,
+    {
+      rowCount: 0,
+      membershipActiveCount: 0,
+      currentlyEffectiveCount: 0,
+      unexpectedEntitlementKeyCount: 0,
+    },
+  );
+  assert.deepEqual(
     contract.find((record) => record.key === "row-count/storage.objects")?.definition,
     { rowCount: 0 },
   );
