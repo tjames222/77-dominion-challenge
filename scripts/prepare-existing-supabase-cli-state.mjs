@@ -2,7 +2,7 @@
 
 import { spawn } from "node:child_process";
 import { constants as fsConstants } from "node:fs";
-import { lstat, open, readdir, realpath } from "node:fs/promises";
+import { lstat, open, readdir, realpath, unlink } from "node:fs/promises";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
@@ -14,6 +14,7 @@ const EXPECTED_DATABASE_HOST =
 const EXPECTED_POOLER_HOST = "aws-1-us-west-2.pooler.supabase.com";
 const EXPECTED_PROJECT_REGION = "us-west-2";
 const EXPECTED_RELEASE_CHANNEL = "ga";
+const MINIMUM_TEMPORARY_LOGIN_TTL_SECONDS = 3_600;
 const LOGIN_READINESS_DELAYS_MS = Object.freeze([
   0,
   1_000,
@@ -46,6 +47,7 @@ function requireAccessToken(accessToken) {
     typeof accessToken !== "string"
     || accessToken.length === 0
     || /[\u0000-\u001f\u007f]/u.test(accessToken)
+    || accessToken !== accessToken.trim()
   ) {
     fail("SUPABASE_ACCESS_TOKEN is missing or malformed");
   }
@@ -236,7 +238,7 @@ function requireTemporaryLoginResponse(value) {
     || /[\u0000-\u001f\u007f]/u.test(value.password)
     || value.password !== value.password.trimEnd()
     || !Number.isInteger(value.ttl_seconds)
-    || value.ttl_seconds < 300
+    || value.ttl_seconds < MINIMUM_TEMPORARY_LOGIN_TTL_SECONDS
     || value.ttl_seconds > 7200
   ) {
     fail("the temporary login-role response is malformed or too short-lived");
@@ -620,25 +622,126 @@ async function createTemporaryLogin({
   fetchImplementation,
   projectRef,
 }) {
-  const response = await fetchResponse({
-    accessToken,
-    body: { read_only: false },
-    fetchImplementation,
-    label: "the temporary database login request",
-    method: "POST",
-    url: `https://api.supabase.com/v1/projects/${projectRef}/cli/login-role`,
-  });
+  let response;
+  try {
+    response = await fetchResponse({
+      accessToken,
+      body: { read_only: false },
+      fetchImplementation,
+      label: "the temporary database login request",
+      method: "POST",
+      url: `https://api.supabase.com/v1/projects/${projectRef}/cli/login-role`,
+    });
+  } catch (error) {
+    await revokeTemporaryLoginRolesBestEffort({
+      accessToken,
+      fetchImplementation,
+      projectRef,
+    });
+    throw error;
+  }
   if (response.status !== 201) {
     await discardResponseBody(response);
+    await revokeTemporaryLoginRolesBestEffort({
+      accessToken,
+      fetchImplementation,
+      projectRef,
+    });
     fail(`the temporary database login request returned HTTP ${response.status}`);
   }
   let value;
   try {
     value = await response.json();
   } catch {
+    await revokeTemporaryLoginRolesBestEffort({
+      accessToken,
+      fetchImplementation,
+      projectRef,
+    });
     fail("the temporary database login request did not return JSON");
   }
-  return requireTemporaryLoginResponse(value);
+  try {
+    return requireTemporaryLoginResponse(value);
+  } catch (error) {
+    await revokeTemporaryLoginRolesBestEffort({
+      accessToken,
+      fetchImplementation,
+      projectRef,
+    });
+    throw error;
+  }
+}
+
+function requireRevocationResponse(value) {
+  if (
+    !isPlainObject(value)
+    || Object.keys(value).length !== 1
+    || value.message !== "ok"
+  ) {
+    fail("the temporary database credential revocation response was malformed");
+  }
+}
+
+async function revokeTemporaryLoginRoles({
+  accessToken,
+  fetchImplementation,
+  projectRef,
+}) {
+  const response = await fetchResponse({
+    accessToken,
+    fetchImplementation,
+    label: "the temporary database credential revocation request",
+    method: "DELETE",
+    url: `https://api.supabase.com/v1/projects/${projectRef}/cli/login-role`,
+  });
+  if (response.status !== 200) {
+    await discardResponseBody(response);
+    fail(
+      `the temporary database credential revocation request returned HTTP ${response.status}`,
+    );
+  }
+  let value;
+  try {
+    value = await response.json();
+  } catch {
+    fail("the temporary database credential revocation request did not return JSON");
+  }
+  requireRevocationResponse(value);
+}
+
+async function revokeTemporaryLoginRolesBestEffort(options) {
+  try {
+    await revokeTemporaryLoginRoles(options);
+  } catch {
+    // The original preparation error is authoritative and already redacted.
+  }
+}
+
+async function removeCredentialFilesBestEffort(credentialPaths) {
+  await Promise.allSettled([
+    unlink(credentialPaths.readyPath),
+    unlink(credentialPaths.passfilePath),
+    unlink(credentialPaths.databaseUrlPath),
+  ]);
+}
+
+export async function revokeProductionSupabaseDatabaseCredentials({
+  accessToken,
+  fetchImplementation = globalThis.fetch,
+  projectRef,
+} = {}) {
+  requireCleanNodeRuntimeEnvironment(process.env);
+  const exactRef = requireProjectRef(projectRef);
+  const token = requireAccessToken(accessToken);
+  if (typeof fetchImplementation !== "function") {
+    fail("a fetch implementation is required");
+  }
+  await revokeTemporaryLoginRoles({
+    accessToken: token,
+    fetchImplementation,
+    projectRef: exactRef,
+  });
+  return { credentialsRevoked: true, projectRef: exactRef };
 }
 
 async function materializeTemporaryDatabaseCredentials({
@@ -656,40 +759,52 @@ async function materializeTemporaryDatabaseCredentials({
     fetchImplementation,
     projectRef,
   });
-  const credentials = buildTemporaryDatabaseCredentials({
-    login,
-    poolerUrl,
-    projectRef,
-  });
-  // The marker is written last. A partial write can never be consumed as a
-  // complete credential set, and no secret is printed or returned.
-  await writeExclusiveFile(
-    credentialPaths.databaseUrlPath,
-    credentials.databaseUrl,
-  );
-  await writeExclusiveFile(
-    credentialPaths.passfilePath,
-    credentials.passfile,
-  );
   try {
-    const ready = await readinessProbe({
-      databaseUrl: credentials.databaseUrl,
-      passfilePath: credentialPaths.passfilePath,
-      stageDirectory: probeWorkdir,
-      supabaseHome,
+    const credentials = buildTemporaryDatabaseCredentials({
+      login,
+      poolerUrl,
+      projectRef,
     });
-    if (ready !== true) {
+    // The marker is written last. A partial write can never be consumed as a
+    // complete credential set, and no secret is printed or returned.
+    await writeExclusiveFile(
+      credentialPaths.databaseUrlPath,
+      credentials.databaseUrl,
+    );
+    await writeExclusiveFile(
+      credentialPaths.passfilePath,
+      credentials.passfile,
+    );
+    try {
+      const ready = await readinessProbe({
+        databaseUrl: credentials.databaseUrl,
+        passfilePath: credentialPaths.passfilePath,
+        stageDirectory: probeWorkdir,
+        supabaseHome,
+      });
+      if (ready !== true) {
+        fail("the temporary database login did not become ready");
+      }
+    } catch {
       fail("the temporary database login did not become ready");
     }
-  } catch {
-    fail("the temporary database login did not become ready");
+    await writeExclusiveFile(credentialPaths.readyPath, projectRef);
+    return {
+      credentialsPrepared: true,
+      projectRef,
+      verified: true,
+    };
+  } catch (error) {
+    await Promise.all([
+      removeCredentialFilesBestEffort(credentialPaths),
+      revokeTemporaryLoginRolesBestEffort({
+        accessToken,
+        fetchImplementation,
+        projectRef,
+      }),
+    ]);
+    throw error;
   }
-  await writeExclusiveFile(credentialPaths.readyPath, projectRef);
-  return {
-    credentialsPrepared: true,
-    projectRef,
-    verified: true,
-  };
 }
 
 export async function prepareProductionSupabaseDatabaseCredentials({
@@ -705,6 +820,9 @@ export async function prepareProductionSupabaseDatabaseCredentials({
   const exactRef = requireProjectRef(projectRef);
   const token = requireAccessToken(accessToken);
   if (typeof fetchImplementation !== "function") fail("a fetch implementation is required");
+  if (typeof readinessProbe !== "function") {
+    fail("a temporary-login readiness probe is required");
+  }
   const credentialPaths = await requireCredentialDirectory(
     credentialDirectory,
   );
@@ -791,6 +909,7 @@ export function parseArguments(argumentsList) {
   let credentialOnly = false;
   let credentialDirectory = "";
   let probeWorkdir = "";
+  let revokeCredentials = false;
   let stageDirectory = "";
   let supabaseHome = "";
   let verifyOnly = false;
@@ -840,7 +959,32 @@ export function parseArguments(argumentsList) {
       credentialOnly = true;
       continue;
     }
+    if (argument === "--revoke-credentials" && !revokeCredentials) {
+      revokeCredentials = true;
+      continue;
+    }
     fail(`unsupported or duplicate argument: ${argument}`);
+  }
+  if (revokeCredentials) {
+    if (
+      credentialOnly
+      || credentialDirectory
+      || probeWorkdir
+      || stageDirectory
+      || supabaseHome
+      || verifyOnly
+    ) {
+      fail("--revoke-credentials cannot be combined with any other option");
+    }
+    return {
+      credentialDirectory,
+      credentialOnly,
+      probeWorkdir,
+      revokeCredentials,
+      stageDirectory,
+      supabaseHome,
+      verifyOnly,
+    };
   }
   if (credentialOnly) {
     if (stageDirectory || verifyOnly) {
@@ -857,6 +1001,7 @@ export function parseArguments(argumentsList) {
       credentialDirectory,
       credentialOnly,
       probeWorkdir,
+      revokeCredentials,
       stageDirectory,
       supabaseHome,
       verifyOnly,
@@ -877,6 +1022,7 @@ export function parseArguments(argumentsList) {
     credentialDirectory,
     credentialOnly,
     probeWorkdir,
+    revokeCredentials,
     stageDirectory,
     supabaseHome,
     verifyOnly,
@@ -886,7 +1032,12 @@ export function parseArguments(argumentsList) {
 const invokedPath = process.argv[1] ? pathToFileURL(process.argv[1]).href : "";
 if (import.meta.url === invokedPath) {
   const options = parseArguments(process.argv.slice(2));
-  const operation = options.credentialOnly
+  const operation = options.revokeCredentials
+    ? revokeProductionSupabaseDatabaseCredentials({
+      accessToken: process.env.SUPABASE_ACCESS_TOKEN,
+      projectRef: process.env.SUPABASE_PROJECT_REF,
+    })
+    : options.credentialOnly
     ? prepareProductionSupabaseDatabaseCredentials({
       accessToken: process.env.SUPABASE_ACCESS_TOKEN,
       credentialDirectory: options.credentialDirectory,
@@ -904,7 +1055,9 @@ if (import.meta.url === invokedPath) {
     });
   operation.then(
     () => console.log(
-      options.credentialOnly
+      options.revokeCredentials
+        ? "Revoked temporary production database credentials."
+        : options.credentialOnly
         ? "Prepared an exact temporary production database credential set."
         : options.verifyOnly
         ? options.credentialDirectory

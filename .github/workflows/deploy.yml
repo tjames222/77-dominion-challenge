@@ -153,8 +153,89 @@ jobs:
       - name: Require exact reconciled history and the bounded canary grant
         shell: bash
         run: |
-          supabase link --project-ref "$SUPABASE_PROJECT_REF"
-          history="$(supabase migration list --linked --output-format text)"
+          set -euo pipefail
+          umask 077
+          runtime_prefix="${RUNNER_TEMP}/production-supabase-compatibility-history."
+          runtime_directory="$(mktemp -d "${runtime_prefix}XXXXXX")"
+          credential_directory="${runtime_directory}/credentials"
+          supabase_home="${runtime_directory}/home"
+          probe_workdir="${runtime_directory}/probe"
+          credential_preparation_attempted=false
+          cleanup_credentials() {
+            operation_status=$?
+            trap - EXIT
+            set +e
+            cleanup_status=0
+            if [[ "$credential_preparation_attempted" == "true" ]]; then
+              /usr/bin/env -i \
+                HOME="$supabase_home" \
+                LANG=C.UTF-8 \
+                PATH="$PATH" \
+                SUPABASE_ACCESS_TOKEN="$SUPABASE_ACCESS_TOKEN" \
+                SUPABASE_PROJECT_REF="$SUPABASE_PROJECT_REF" \
+                SUPABASE_TELEMETRY_DISABLED=1 \
+                TMPDIR="$supabase_home" \
+                node scripts/prepare-existing-supabase-cli-state.mjs \
+                  --revoke-credentials || cleanup_status=$?
+            fi
+            unset database_url
+            if [[ "$runtime_directory" == "$runtime_prefix"* && -d "$runtime_directory" && ! -L "$runtime_directory" ]]; then
+              rm -rf -- "$runtime_directory" || cleanup_status=$?
+            else
+              echo "::error::Refused to remove an unexpected temporary credential directory."
+              cleanup_status=1
+            fi
+            if (( operation_status != 0 )); then
+              exit "$operation_status"
+            fi
+            if (( cleanup_status != 0 )); then
+              echo "::error::Temporary production database credentials could not be fully revoked and removed."
+              exit "$cleanup_status"
+            fi
+          }
+          trap cleanup_credentials EXIT
+          mkdir -m 0700 -- "$credential_directory" "$supabase_home" "$probe_workdir"
+          credential_preparation_attempted=true
+          /usr/bin/env -i \
+            HOME="$supabase_home" \
+            LANG=C.UTF-8 \
+            PATH="$PATH" \
+            SUPABASE_ACCESS_TOKEN="$SUPABASE_ACCESS_TOKEN" \
+            SUPABASE_PROJECT_REF="$SUPABASE_PROJECT_REF" \
+            SUPABASE_TELEMETRY_DISABLED=1 \
+            TMPDIR="$supabase_home" \
+            node scripts/prepare-existing-supabase-cli-state.mjs \
+              --credential-only \
+              --probe-workdir "$probe_workdir" \
+              --credential-directory "$credential_directory" \
+              --supabase-home "$supabase_home"
+          for credential_file in database-url database-passfile credential-ready; do
+            credential_path="${credential_directory}/${credential_file}"
+            if [[ ! -f "$credential_path" || -L "$credential_path" \
+              || "$(stat --format=%a "$credential_path")" != "600" \
+              || "$(stat --format=%u "$credential_path")" != "$(id -u)" ]]; then
+              echo "::error::The temporary production database credential set is invalid."
+              exit 1
+            fi
+          done
+          if [[ "$(<"${credential_directory}/credential-ready")" != "$SUPABASE_PROJECT_REF" ]]; then
+            echo "::error::The temporary production database credential is not bound to the exact project."
+            exit 1
+          fi
+          database_url="$(<"${credential_directory}/database-url")"
+          history="$(/usr/bin/env -i \
+            CI=1 \
+            HOME="$supabase_home" \
+            LANG=C.UTF-8 \
+            PATH="$PATH" \
+            PGPASSFILE="${credential_directory}/database-passfile" \
+            SUPABASE_HOME="$supabase_home" \
+            SUPABASE_NO_KEYRING=1 \
+            SUPABASE_PROFILE=supabase \
+            SUPABASE_TELEMETRY_DISABLED=1 \
+            TMPDIR="$supabase_home" \
+            supabase --profile=supabase --workdir="$GITHUB_WORKSPACE" \
+              --output-format=text --agent=no migration list --db-url="$database_url")"
           history_file="${RUNNER_TEMP}/compatibility-migration-list.txt"
           printf '%s\n' "$history" > "$history_file"
           plan_mode="$(node scripts/verify-production-raw-migration-history.mjs --cli-history "$history_file" --mode-only)"
@@ -212,6 +293,18 @@ jobs:
               exit 1
             fi
           done
+      - name: Revoke any remaining compatibility database login roles
+        if: always()
+        shell: bash
+        run: |
+          /usr/bin/env -i \
+            LANG=C.UTF-8 \
+            PATH="$PATH" \
+            SUPABASE_ACCESS_TOKEN="$SUPABASE_ACCESS_TOKEN" \
+            SUPABASE_PROJECT_REF="$SUPABASE_PROJECT_REF" \
+            SUPABASE_TELEMETRY_DISABLED=1 \
+            node scripts/prepare-existing-supabase-cli-state.mjs \
+              --revoke-credentials
 
   frontend-rollback-history:
     name: Prove frontend-only is post-cutover and fully applied
@@ -241,8 +334,89 @@ jobs:
       - name: Require exact fully applied post-cutover history
         shell: bash
         run: |
-          supabase link --project-ref "$SUPABASE_PROJECT_REF"
-          history="$(supabase migration list --linked --output-format text)"
+          set -euo pipefail
+          umask 077
+          runtime_prefix="${RUNNER_TEMP}/production-supabase-frontend-history."
+          runtime_directory="$(mktemp -d "${runtime_prefix}XXXXXX")"
+          credential_directory="${runtime_directory}/credentials"
+          supabase_home="${runtime_directory}/home"
+          probe_workdir="${runtime_directory}/probe"
+          credential_preparation_attempted=false
+          cleanup_credentials() {
+            operation_status=$?
+            trap - EXIT
+            set +e
+            cleanup_status=0
+            if [[ "$credential_preparation_attempted" == "true" ]]; then
+              /usr/bin/env -i \
+                HOME="$supabase_home" \
+                LANG=C.UTF-8 \
+                PATH="$PATH" \
+                SUPABASE_ACCESS_TOKEN="$SUPABASE_ACCESS_TOKEN" \
+                SUPABASE_PROJECT_REF="$SUPABASE_PROJECT_REF" \
+                SUPABASE_TELEMETRY_DISABLED=1 \
+                TMPDIR="$supabase_home" \
+                node scripts/prepare-existing-supabase-cli-state.mjs \
+                  --revoke-credentials || cleanup_status=$?
+            fi
+            unset database_url
+            if [[ "$runtime_directory" == "$runtime_prefix"* && -d "$runtime_directory" && ! -L "$runtime_directory" ]]; then
+              rm -rf -- "$runtime_directory" || cleanup_status=$?
+            else
+              echo "::error::Refused to remove an unexpected temporary credential directory."
+              cleanup_status=1
+            fi
+            if (( operation_status != 0 )); then
+              exit "$operation_status"
+            fi
+            if (( cleanup_status != 0 )); then
+              echo "::error::Temporary production database credentials could not be fully revoked and removed."
+              exit "$cleanup_status"
+            fi
+          }
+          trap cleanup_credentials EXIT
+          mkdir -m 0700 -- "$credential_directory" "$supabase_home" "$probe_workdir"
+          credential_preparation_attempted=true
+          /usr/bin/env -i \
+            HOME="$supabase_home" \
+            LANG=C.UTF-8 \
+            PATH="$PATH" \
+            SUPABASE_ACCESS_TOKEN="$SUPABASE_ACCESS_TOKEN" \
+            SUPABASE_PROJECT_REF="$SUPABASE_PROJECT_REF" \
+            SUPABASE_TELEMETRY_DISABLED=1 \
+            TMPDIR="$supabase_home" \
+            node scripts/prepare-existing-supabase-cli-state.mjs \
+              --credential-only \
+              --probe-workdir "$probe_workdir" \
+              --credential-directory "$credential_directory" \
+              --supabase-home "$supabase_home"
+          for credential_file in database-url database-passfile credential-ready; do
+            credential_path="${credential_directory}/${credential_file}"
+            if [[ ! -f "$credential_path" || -L "$credential_path" \
+              || "$(stat --format=%a "$credential_path")" != "600" \
+              || "$(stat --format=%u "$credential_path")" != "$(id -u)" ]]; then
+              echo "::error::The temporary production database credential set is invalid."
+              exit 1
+            fi
+          done
+          if [[ "$(<"${credential_directory}/credential-ready")" != "$SUPABASE_PROJECT_REF" ]]; then
+            echo "::error::The temporary production database credential is not bound to the exact project."
+            exit 1
+          fi
+          database_url="$(<"${credential_directory}/database-url")"
+          history="$(/usr/bin/env -i \
+            CI=1 \
+            HOME="$supabase_home" \
+            LANG=C.UTF-8 \
+            PATH="$PATH" \
+            PGPASSFILE="${credential_directory}/database-passfile" \
+            SUPABASE_HOME="$supabase_home" \
+            SUPABASE_NO_KEYRING=1 \
+            SUPABASE_PROFILE=supabase \
+            SUPABASE_TELEMETRY_DISABLED=1 \
+            TMPDIR="$supabase_home" \
+            supabase --profile=supabase --workdir="$GITHUB_WORKSPACE" \
+              --output-format=text --agent=no migration list --db-url="$database_url")"
           history_file="${RUNNER_TEMP}/frontend-only-migration-list.txt"
           printf '%s\n' "$history" > "$history_file"
           plan_mode="$(node scripts/verify-production-raw-migration-history.mjs \
@@ -253,6 +427,18 @@ jobs:
             echo "::error::frontend-only is available only after the full cutover is exactly applied. Use compatibility-cutover for the initial 1-13 state."
             exit 1
           fi
+      - name: Revoke any remaining frontend-history database login roles
+        if: always()
+        shell: bash
+        run: |
+          /usr/bin/env -i \
+            LANG=C.UTF-8 \
+            PATH="$PATH" \
+            SUPABASE_ACCESS_TOKEN="$SUPABASE_ACCESS_TOKEN" \
+            SUPABASE_PROJECT_REF="$SUPABASE_PROJECT_REF" \
+            SUPABASE_TELEMETRY_DISABLED=1 \
+            node scripts/prepare-existing-supabase-cli-state.mjs \
+              --revoke-credentials
 
   backend:
     name: Migrate, deploy, and verify backend
@@ -434,15 +620,95 @@ jobs:
             provider_connections_enabled=true
           fi
           echo "provider_connections_enabled=${provider_connections_enabled}" >> "$GITHUB_OUTPUT"
-      - name: Link production Supabase project
-        run: supabase link --project-ref "$SUPABASE_PROJECT_REF"
       - name: Require exact authoritative migration history
         id: cutover-plan
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
-          history="$(supabase migration list --linked --output-format text)"
+          set -euo pipefail
+          umask 077
+          runtime_prefix="${RUNNER_TEMP}/production-supabase-history-before."
+          runtime_directory="$(mktemp -d "${runtime_prefix}XXXXXX")"
+          credential_directory="${runtime_directory}/credentials"
+          supabase_home="${runtime_directory}/home"
+          probe_workdir="${runtime_directory}/probe"
+          credential_preparation_attempted=false
+          cleanup_credentials() {
+            operation_status=$?
+            trap - EXIT
+            set +e
+            cleanup_status=0
+            if [[ "$credential_preparation_attempted" == "true" ]]; then
+              /usr/bin/env -i \
+                HOME="$supabase_home" \
+                LANG=C.UTF-8 \
+                PATH="$PATH" \
+                SUPABASE_ACCESS_TOKEN="$SUPABASE_ACCESS_TOKEN" \
+                SUPABASE_PROJECT_REF="$SUPABASE_PROJECT_REF" \
+                SUPABASE_TELEMETRY_DISABLED=1 \
+                TMPDIR="$supabase_home" \
+                node scripts/prepare-existing-supabase-cli-state.mjs \
+                  --revoke-credentials || cleanup_status=$?
+            fi
+            unset database_url
+            if [[ "$runtime_directory" == "$runtime_prefix"* && -d "$runtime_directory" && ! -L "$runtime_directory" ]]; then
+              rm -rf -- "$runtime_directory" || cleanup_status=$?
+            else
+              echo "::error::Refused to remove an unexpected temporary credential directory."
+              cleanup_status=1
+            fi
+            if (( operation_status != 0 )); then
+              exit "$operation_status"
+            fi
+            if (( cleanup_status != 0 )); then
+              echo "::error::Temporary production database credentials could not be fully revoked and removed."
+              exit "$cleanup_status"
+            fi
+          }
+          trap cleanup_credentials EXIT
+          mkdir -m 0700 -- "$credential_directory" "$supabase_home" "$probe_workdir"
+          credential_preparation_attempted=true
+          /usr/bin/env -i \
+            HOME="$supabase_home" \
+            LANG=C.UTF-8 \
+            PATH="$PATH" \
+            SUPABASE_ACCESS_TOKEN="$SUPABASE_ACCESS_TOKEN" \
+            SUPABASE_PROJECT_REF="$SUPABASE_PROJECT_REF" \
+            SUPABASE_TELEMETRY_DISABLED=1 \
+            TMPDIR="$supabase_home" \
+            node scripts/prepare-existing-supabase-cli-state.mjs \
+              --credential-only \
+              --probe-workdir "$probe_workdir" \
+              --credential-directory "$credential_directory" \
+              --supabase-home "$supabase_home"
+          for credential_file in database-url database-passfile credential-ready; do
+            credential_path="${credential_directory}/${credential_file}"
+            if [[ ! -f "$credential_path" || -L "$credential_path" \
+              || "$(stat --format=%a "$credential_path")" != "600" \
+              || "$(stat --format=%u "$credential_path")" != "$(id -u)" ]]; then
+              echo "::error::The temporary production database credential set is invalid."
+              exit 1
+            fi
+          done
+          if [[ "$(<"${credential_directory}/credential-ready")" != "$SUPABASE_PROJECT_REF" ]]; then
+            echo "::error::The temporary production database credential is not bound to the exact project."
+            exit 1
+          fi
+          database_url="$(<"${credential_directory}/database-url")"
+          history="$(/usr/bin/env -i \
+            CI=1 \
+            HOME="$supabase_home" \
+            LANG=C.UTF-8 \
+            PATH="$PATH" \
+            PGPASSFILE="${credential_directory}/database-passfile" \
+            SUPABASE_HOME="$supabase_home" \
+            SUPABASE_NO_KEYRING=1 \
+            SUPABASE_PROFILE=supabase \
+            SUPABASE_TELEMETRY_DISABLED=1 \
+            TMPDIR="$supabase_home" \
+            supabase --profile=supabase --workdir="$GITHUB_WORKSPACE" \
+              --output-format=text --agent=no migration list --db-url="$database_url")"
           printf '%s\n' "$history"
           history_file="${RUNNER_TEMP}/production-migration-list.txt"
           printf '%s\n' "$history" > "$history_file"
@@ -563,13 +829,263 @@ jobs:
             --release-sha "$GITHUB_SHA" \
             --attestation-input "$attestation_file"
       - name: Verify migration history and preview the migration plan
-        run: supabase db push --linked --dry-run
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          runtime_prefix="${RUNNER_TEMP}/production-supabase-dry-run."
+          runtime_directory="$(mktemp -d "${runtime_prefix}XXXXXX")"
+          credential_directory="${runtime_directory}/credentials"
+          supabase_home="${runtime_directory}/home"
+          probe_workdir="${runtime_directory}/probe"
+          credential_preparation_attempted=false
+          cleanup_credentials() {
+            operation_status=$?
+            trap - EXIT
+            set +e
+            cleanup_status=0
+            if [[ "$credential_preparation_attempted" == "true" ]]; then
+              /usr/bin/env -i \
+                HOME="$supabase_home" \
+                LANG=C.UTF-8 \
+                PATH="$PATH" \
+                SUPABASE_ACCESS_TOKEN="$SUPABASE_ACCESS_TOKEN" \
+                SUPABASE_PROJECT_REF="$SUPABASE_PROJECT_REF" \
+                SUPABASE_TELEMETRY_DISABLED=1 \
+                TMPDIR="$supabase_home" \
+                node scripts/prepare-existing-supabase-cli-state.mjs \
+                  --revoke-credentials || cleanup_status=$?
+            fi
+            unset database_url
+            if [[ "$runtime_directory" == "$runtime_prefix"* && -d "$runtime_directory" && ! -L "$runtime_directory" ]]; then
+              rm -rf -- "$runtime_directory" || cleanup_status=$?
+            else
+              echo "::error::Refused to remove an unexpected temporary credential directory."
+              cleanup_status=1
+            fi
+            if (( operation_status != 0 )); then
+              exit "$operation_status"
+            fi
+            if (( cleanup_status != 0 )); then
+              echo "::error::Temporary production database credentials could not be fully revoked and removed."
+              exit "$cleanup_status"
+            fi
+          }
+          trap cleanup_credentials EXIT
+          mkdir -m 0700 -- "$credential_directory" "$supabase_home" "$probe_workdir"
+          credential_preparation_attempted=true
+          /usr/bin/env -i \
+            HOME="$supabase_home" \
+            LANG=C.UTF-8 \
+            PATH="$PATH" \
+            SUPABASE_ACCESS_TOKEN="$SUPABASE_ACCESS_TOKEN" \
+            SUPABASE_PROJECT_REF="$SUPABASE_PROJECT_REF" \
+            SUPABASE_TELEMETRY_DISABLED=1 \
+            TMPDIR="$supabase_home" \
+            node scripts/prepare-existing-supabase-cli-state.mjs \
+              --credential-only \
+              --probe-workdir "$probe_workdir" \
+              --credential-directory "$credential_directory" \
+              --supabase-home "$supabase_home"
+          for credential_file in database-url database-passfile credential-ready; do
+            credential_path="${credential_directory}/${credential_file}"
+            if [[ ! -f "$credential_path" || -L "$credential_path" \
+              || "$(stat --format=%a "$credential_path")" != "600" \
+              || "$(stat --format=%u "$credential_path")" != "$(id -u)" ]]; then
+              echo "::error::The temporary production database credential set is invalid."
+              exit 1
+            fi
+          done
+          if [[ "$(<"${credential_directory}/credential-ready")" != "$SUPABASE_PROJECT_REF" ]]; then
+            echo "::error::The temporary production database credential is not bound to the exact project."
+            exit 1
+          fi
+          database_url="$(<"${credential_directory}/database-url")"
+          /usr/bin/env -i \
+            CI=1 \
+            HOME="$supabase_home" \
+            LANG=C.UTF-8 \
+            PATH="$PATH" \
+            PGPASSFILE="${credential_directory}/database-passfile" \
+            SUPABASE_HOME="$supabase_home" \
+            SUPABASE_NO_KEYRING=1 \
+            SUPABASE_PROFILE=supabase \
+            SUPABASE_TELEMETRY_DISABLED=1 \
+            TMPDIR="$supabase_home" \
+            supabase --profile=supabase --workdir="$GITHUB_WORKSPACE" \
+              --agent=no --yes db push --db-url="$database_url" --dry-run
       - name: Apply database migrations
-        run: supabase migration up --linked
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          runtime_prefix="${RUNNER_TEMP}/production-supabase-migration-up."
+          runtime_directory="$(mktemp -d "${runtime_prefix}XXXXXX")"
+          credential_directory="${runtime_directory}/credentials"
+          supabase_home="${runtime_directory}/home"
+          probe_workdir="${runtime_directory}/probe"
+          credential_preparation_attempted=false
+          cleanup_credentials() {
+            operation_status=$?
+            trap - EXIT
+            set +e
+            cleanup_status=0
+            if [[ "$credential_preparation_attempted" == "true" ]]; then
+              /usr/bin/env -i \
+                HOME="$supabase_home" \
+                LANG=C.UTF-8 \
+                PATH="$PATH" \
+                SUPABASE_ACCESS_TOKEN="$SUPABASE_ACCESS_TOKEN" \
+                SUPABASE_PROJECT_REF="$SUPABASE_PROJECT_REF" \
+                SUPABASE_TELEMETRY_DISABLED=1 \
+                TMPDIR="$supabase_home" \
+                node scripts/prepare-existing-supabase-cli-state.mjs \
+                  --revoke-credentials || cleanup_status=$?
+            fi
+            unset database_url
+            if [[ "$runtime_directory" == "$runtime_prefix"* && -d "$runtime_directory" && ! -L "$runtime_directory" ]]; then
+              rm -rf -- "$runtime_directory" || cleanup_status=$?
+            else
+              echo "::error::Refused to remove an unexpected temporary credential directory."
+              cleanup_status=1
+            fi
+            if (( operation_status != 0 )); then
+              exit "$operation_status"
+            fi
+            if (( cleanup_status != 0 )); then
+              echo "::error::Temporary production database credentials could not be fully revoked and removed."
+              exit "$cleanup_status"
+            fi
+          }
+          trap cleanup_credentials EXIT
+          mkdir -m 0700 -- "$credential_directory" "$supabase_home" "$probe_workdir"
+          credential_preparation_attempted=true
+          /usr/bin/env -i \
+            HOME="$supabase_home" \
+            LANG=C.UTF-8 \
+            PATH="$PATH" \
+            SUPABASE_ACCESS_TOKEN="$SUPABASE_ACCESS_TOKEN" \
+            SUPABASE_PROJECT_REF="$SUPABASE_PROJECT_REF" \
+            SUPABASE_TELEMETRY_DISABLED=1 \
+            TMPDIR="$supabase_home" \
+            node scripts/prepare-existing-supabase-cli-state.mjs \
+              --credential-only \
+              --probe-workdir "$probe_workdir" \
+              --credential-directory "$credential_directory" \
+              --supabase-home "$supabase_home"
+          for credential_file in database-url database-passfile credential-ready; do
+            credential_path="${credential_directory}/${credential_file}"
+            if [[ ! -f "$credential_path" || -L "$credential_path" \
+              || "$(stat --format=%a "$credential_path")" != "600" \
+              || "$(stat --format=%u "$credential_path")" != "$(id -u)" ]]; then
+              echo "::error::The temporary production database credential set is invalid."
+              exit 1
+            fi
+          done
+          if [[ "$(<"${credential_directory}/credential-ready")" != "$SUPABASE_PROJECT_REF" ]]; then
+            echo "::error::The temporary production database credential is not bound to the exact project."
+            exit 1
+          fi
+          database_url="$(<"${credential_directory}/database-url")"
+          /usr/bin/env -i \
+            CI=1 \
+            HOME="$supabase_home" \
+            LANG=C.UTF-8 \
+            PATH="$PATH" \
+            PGPASSFILE="${credential_directory}/database-passfile" \
+            SUPABASE_HOME="$supabase_home" \
+            SUPABASE_NO_KEYRING=1 \
+            SUPABASE_PROFILE=supabase \
+            SUPABASE_TELEMETRY_DISABLED=1 \
+            TMPDIR="$supabase_home" \
+            supabase --profile=supabase --workdir="$GITHUB_WORKSPACE" \
+              --agent=no --yes migration up --db-url="$database_url"
       - name: Require exact completed migration history
         shell: bash
         run: |
-          post_migration_history="$(supabase migration list --linked --output-format text)"
+          set -euo pipefail
+          umask 077
+          runtime_prefix="${RUNNER_TEMP}/production-supabase-history-after."
+          runtime_directory="$(mktemp -d "${runtime_prefix}XXXXXX")"
+          credential_directory="${runtime_directory}/credentials"
+          supabase_home="${runtime_directory}/home"
+          probe_workdir="${runtime_directory}/probe"
+          credential_preparation_attempted=false
+          cleanup_credentials() {
+            operation_status=$?
+            trap - EXIT
+            set +e
+            cleanup_status=0
+            if [[ "$credential_preparation_attempted" == "true" ]]; then
+              /usr/bin/env -i \
+                HOME="$supabase_home" \
+                LANG=C.UTF-8 \
+                PATH="$PATH" \
+                SUPABASE_ACCESS_TOKEN="$SUPABASE_ACCESS_TOKEN" \
+                SUPABASE_PROJECT_REF="$SUPABASE_PROJECT_REF" \
+                SUPABASE_TELEMETRY_DISABLED=1 \
+                TMPDIR="$supabase_home" \
+                node scripts/prepare-existing-supabase-cli-state.mjs \
+                  --revoke-credentials || cleanup_status=$?
+            fi
+            unset database_url
+            if [[ "$runtime_directory" == "$runtime_prefix"* && -d "$runtime_directory" && ! -L "$runtime_directory" ]]; then
+              rm -rf -- "$runtime_directory" || cleanup_status=$?
+            else
+              echo "::error::Refused to remove an unexpected temporary credential directory."
+              cleanup_status=1
+            fi
+            if (( operation_status != 0 )); then
+              exit "$operation_status"
+            fi
+            if (( cleanup_status != 0 )); then
+              echo "::error::Temporary production database credentials could not be fully revoked and removed."
+              exit "$cleanup_status"
+            fi
+          }
+          trap cleanup_credentials EXIT
+          mkdir -m 0700 -- "$credential_directory" "$supabase_home" "$probe_workdir"
+          credential_preparation_attempted=true
+          /usr/bin/env -i \
+            HOME="$supabase_home" \
+            LANG=C.UTF-8 \
+            PATH="$PATH" \
+            SUPABASE_ACCESS_TOKEN="$SUPABASE_ACCESS_TOKEN" \
+            SUPABASE_PROJECT_REF="$SUPABASE_PROJECT_REF" \
+            SUPABASE_TELEMETRY_DISABLED=1 \
+            TMPDIR="$supabase_home" \
+            node scripts/prepare-existing-supabase-cli-state.mjs \
+              --credential-only \
+              --probe-workdir "$probe_workdir" \
+              --credential-directory "$credential_directory" \
+              --supabase-home "$supabase_home"
+          for credential_file in database-url database-passfile credential-ready; do
+            credential_path="${credential_directory}/${credential_file}"
+            if [[ ! -f "$credential_path" || -L "$credential_path" \
+              || "$(stat --format=%a "$credential_path")" != "600" \
+              || "$(stat --format=%u "$credential_path")" != "$(id -u)" ]]; then
+              echo "::error::The temporary production database credential set is invalid."
+              exit 1
+            fi
+          done
+          if [[ "$(<"${credential_directory}/credential-ready")" != "$SUPABASE_PROJECT_REF" ]]; then
+            echo "::error::The temporary production database credential is not bound to the exact project."
+            exit 1
+          fi
+          database_url="$(<"${credential_directory}/database-url")"
+          post_migration_history="$(/usr/bin/env -i \
+            CI=1 \
+            HOME="$supabase_home" \
+            LANG=C.UTF-8 \
+            PATH="$PATH" \
+            PGPASSFILE="${credential_directory}/database-passfile" \
+            SUPABASE_HOME="$supabase_home" \
+            SUPABASE_NO_KEYRING=1 \
+            SUPABASE_PROFILE=supabase \
+            SUPABASE_TELEMETRY_DISABLED=1 \
+            TMPDIR="$supabase_home" \
+            supabase --profile=supabase --workdir="$GITHUB_WORKSPACE" \
+              --output-format=text --agent=no migration list --db-url="$database_url")"
           printf '%s\n' "$post_migration_history"
           post_migration_history_file="${RUNNER_TEMP}/post-production-migration-list.txt"
           printf '%s\n' "$post_migration_history" > "$post_migration_history_file"
@@ -806,6 +1322,18 @@ jobs:
       - name: Release backend feature gates
         run: |
           echo "Backend verification passed. Frontend build-time feature gates may now be released." >> "$GITHUB_STEP_SUMMARY"
+      - name: Revoke any remaining backend database login roles
+        if: always()
+        shell: bash
+        run: |
+          /usr/bin/env -i \
+            LANG=C.UTF-8 \
+            PATH="$PATH" \
+            SUPABASE_ACCESS_TOKEN="$SUPABASE_ACCESS_TOKEN" \
+            SUPABASE_PROJECT_REF="$SUPABASE_PROJECT_REF" \
+            SUPABASE_TELEMETRY_DISABLED=1 \
+            node scripts/prepare-existing-supabase-cli-state.mjs \
+              --revoke-credentials
 
   frontend:
     name: Build production frontend
