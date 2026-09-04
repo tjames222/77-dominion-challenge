@@ -4,6 +4,7 @@ import {
   mkdtemp,
   mkdir,
   readFile,
+  readdir,
   realpath,
   rm,
   stat,
@@ -19,8 +20,11 @@ import {
   EXISTING_SUPABASE_PROJECT_REF,
   EXPECTED_POSTGRES_VERSION,
   normalizePrimaryPoolerConfig,
+  parseArguments,
   prepareExistingSupabaseCliState,
+  prepareProductionSupabaseDatabaseCredentials,
   requireCleanNodeRuntimeEnvironment,
+  revokeProductionSupabaseDatabaseCredentials,
   verifyProjectResponse,
   waitForTemporaryDatabaseLogin,
 } from "./prepare-existing-supabase-cli-state.mjs";
@@ -104,18 +108,28 @@ function managementFetch({
   loginStatus = 201,
   pooler = [primaryPooler()],
   project = healthyProject(),
+  revocation = { message: "ok" },
+  revocationStatus = 200,
 } = {}) {
   const requests = [];
   const fetchImplementation = async (url, options) => {
     requests.push({ url, options });
-    const loginRequest = url.endsWith("/cli/login-role");
+    const loginEndpoint = url.endsWith("/cli/login-role");
+    const loginRequest = loginEndpoint && options.method === "POST";
+    const revocationRequest = loginEndpoint && options.method === "DELETE";
     return {
       body: { cancel: async () => {} },
-      status: loginRequest ? loginStatus : 200,
+      status: loginRequest
+        ? loginStatus
+        : revocationRequest
+          ? revocationStatus
+          : 200,
       redirected: false,
       json: async () =>
         loginRequest
           ? login
+          : revocationRequest
+            ? revocation
           : url.endsWith("/config/database/pooler")
             ? pooler
             : project,
@@ -418,6 +432,259 @@ test("mints isolated temporary credentials without persisting or returning the p
   }
 });
 
+test("mints production credentials against a canonical probe workdir without staged linked state", async () => {
+  const probeWorkdir = await makeCredentialDirectory();
+  const credentials = await makeCredentialDirectory();
+  const supabaseHome = await makeCredentialDirectory();
+  const management = managementFetch();
+  const readinessCalls = [];
+  try {
+    const result = await prepareProductionSupabaseDatabaseCredentials({
+      accessToken: token,
+      credentialDirectory: credentials,
+      fetchImplementation: management.fetchImplementation,
+      probeWorkdir,
+      projectRef: ref,
+      readinessProbe: async (options) => {
+        readinessCalls.push(options);
+        return true;
+      },
+      supabaseHome,
+    });
+
+    assert.deepEqual(result, {
+      credentialsPrepared: true,
+      projectRef: ref,
+      verified: true,
+    });
+    assert.deepEqual(
+      management.requests.map(({ url }) => url),
+      [
+        `https://api.supabase.com/v1/projects/${ref}`,
+        `https://api.supabase.com/v1/projects/${ref}/config/database/pooler`,
+        `https://api.supabase.com/v1/projects/${ref}/cli/login-role`,
+      ],
+    );
+    assert.equal(readinessCalls.length, 1);
+    assert.equal(readinessCalls[0].stageDirectory, probeWorkdir);
+    assert.equal(readinessCalls[0].supabaseHome, supabaseHome);
+    assert.equal(
+      await readFile(path.join(credentials, "database-url"), "utf8"),
+      `postgresql://cli_login_role.${ref}@aws-1-us-west-2.pooler.supabase.com:5432/postgres?sslmode=require&connect_timeout=10`,
+    );
+    assert.equal(
+      await readFile(path.join(credentials, "database-passfile"), "utf8"),
+      `aws-1-us-west-2.pooler.supabase.com:5432:postgres:cli_login_role.${ref}:temporary-password\n`,
+    );
+    assert.equal(
+      await readFile(path.join(credentials, "credential-ready"), "utf8"),
+      ref,
+    );
+    for (const name of [
+      "database-url",
+      "database-passfile",
+      "credential-ready",
+    ]) {
+      assert.equal((await stat(path.join(credentials, name))).mode & 0o777, 0o600);
+    }
+    await assert.rejects(
+      () => readFile(path.join(probeWorkdir, "supabase", ".temp", "project-ref"), "utf8"),
+      /ENOENT/u,
+    );
+  } finally {
+    await rm(probeWorkdir, { recursive: true, force: true });
+    await rm(credentials, { recursive: true, force: true });
+    await rm(supabaseHome, { recursive: true, force: true });
+  }
+});
+
+test("revokes only the exact project's temporary CLI login roles", async () => {
+  const management = managementFetch();
+  const result = await revokeProductionSupabaseDatabaseCredentials({
+    accessToken: token,
+    fetchImplementation: management.fetchImplementation,
+    projectRef: ref,
+  });
+
+  assert.deepEqual(result, {
+    credentialsRevoked: true,
+    projectRef: ref,
+  });
+  assert.equal(management.requests.length, 1);
+  const [{ options, url }] = management.requests;
+  assert.equal(
+    url,
+    `https://api.supabase.com/v1/projects/${ref}/cli/login-role`,
+  );
+  assert.equal(options.method, "DELETE");
+  assert.equal(options.redirect, "error");
+  assert.equal(options.headers.Authorization, `Bearer ${token}`);
+  assert.equal(Object.hasOwn(options.headers, "Content-Type"), false);
+  assert.equal(options.body, undefined);
+});
+
+test("revocation rejects wrong targets and malformed tokens before any request", async () => {
+  for (const values of [
+    { accessToken: token, projectRef: "abcdefghijklmnopqrst" },
+    { accessToken: " token-with-whitespace ", projectRef: ref },
+    { accessToken: "", projectRef: ref },
+  ]) {
+    const management = managementFetch();
+    await assert.rejects(
+      () => revokeProductionSupabaseDatabaseCredentials({
+        ...values,
+        fetchImplementation: management.fetchImplementation,
+      }),
+      /project ref must be exactly|SUPABASE_ACCESS_TOKEN is missing or malformed/u,
+    );
+    assert.deepEqual(management.requests, []);
+  }
+});
+
+test("revocation failures expose only status and never inspect error bodies", async () => {
+  let bodyRead = false;
+  const secret = "revocation-response-secret";
+  const fetchImplementation = async () => ({
+    body: { cancel: async () => {} },
+    status: 403,
+    redirected: false,
+    json: async () => {
+      bodyRead = true;
+      return { message: secret };
+    },
+  });
+  await assert.rejects(
+    () => revokeProductionSupabaseDatabaseCredentials({
+      accessToken: token,
+      fetchImplementation,
+      projectRef: ref,
+    }),
+    (error) => {
+      assert.match(error.message, /revocation request returned HTTP 403/u);
+      assert.equal(error.message.includes(secret), false);
+      return true;
+    },
+  );
+  assert.equal(bodyRead, false);
+});
+
+test("revocation validates a successful response without exposing its body", async () => {
+  const secret = "malformed-revocation-response-secret";
+  const management = managementFetch({
+    revocation: { message: "ok", unexpected: secret },
+  });
+  await assert.rejects(
+    () => revokeProductionSupabaseDatabaseCredentials({
+      accessToken: token,
+      fetchImplementation: management.fetchImplementation,
+      projectRef: ref,
+    }),
+    (error) => {
+      assert.match(error.message, /revocation response was malformed/u);
+      assert.equal(error.message.includes(secret), false);
+      return true;
+    },
+  );
+});
+
+test("credential-only argument mode is disjoint from the immutable staged-state mode", () => {
+  assert.deepEqual(
+    parseArguments([
+      "--credential-only",
+      "--probe-workdir",
+      "/private/release-workdir",
+      "--credential-directory",
+      "/private/credentials",
+      "--supabase-home",
+      "/private/supabase-home",
+    ]),
+    {
+      credentialDirectory: "/private/credentials",
+      credentialOnly: true,
+      probeWorkdir: "/private/release-workdir",
+      revokeCredentials: false,
+      stageDirectory: "",
+      supabaseHome: "/private/supabase-home",
+      verifyOnly: false,
+    },
+  );
+  assert.deepEqual(
+    parseArguments(["--stage-directory", "/private/execution-stage"]),
+    {
+      credentialDirectory: "",
+      credentialOnly: false,
+      probeWorkdir: "",
+      revokeCredentials: false,
+      stageDirectory: "/private/execution-stage",
+      supabaseHome: "",
+      verifyOnly: false,
+    },
+  );
+  for (const argumentsList of [
+    ["--credential-only", "--credential-directory", "/private/credentials", "--supabase-home", "/private/home"],
+    ["--credential-only", "--probe-workdir", "/private/workdir", "--supabase-home", "/private/home"],
+    ["--credential-only", "--probe-workdir", "/private/workdir", "--credential-directory", "/private/credentials"],
+    ["--credential-only", "--probe-workdir", "/private/workdir", "--credential-directory", "/private/credentials", "--supabase-home", "/private/home", "--verify-only"],
+    ["--probe-workdir", "/private/workdir", "--stage-directory", "/private/stage"],
+  ]) {
+    assert.throws(() => parseArguments(argumentsList), /credential-only/u);
+  }
+});
+
+test("credential revocation argument mode is explicit and disjoint", () => {
+  assert.deepEqual(parseArguments(["--revoke-credentials"]), {
+    credentialDirectory: "",
+    credentialOnly: false,
+    probeWorkdir: "",
+    revokeCredentials: true,
+    stageDirectory: "",
+    supabaseHome: "",
+    verifyOnly: false,
+  });
+  for (const argumentsList of [
+    ["--revoke-credentials", "--revoke-credentials"],
+    ["--revoke-credentials", "--stage-directory", "/private/stage"],
+    ["--revoke-credentials", "--credential-only"],
+    ["--revoke-credentials", "--verify-only"],
+    ["--revoke-credentials", "--credential-directory", "/private/credentials"],
+    ["--revoke-credentials", "--probe-workdir", "/private/workdir"],
+    ["--revoke-credentials", "--supabase-home", "/private/home"],
+  ]) {
+    assert.throws(
+      () => parseArguments(argumentsList),
+      /revoke-credentials|unsupported or duplicate/u,
+    );
+  }
+});
+
+test("credential-only mode rejects an unsafe probe workdir before any Management API call", async () => {
+  const probeWorkdir = await makeCredentialDirectory();
+  const credentials = await makeCredentialDirectory();
+  const supabaseHome = await makeCredentialDirectory();
+  const management = managementFetch();
+  try {
+    await chmod(probeWorkdir, 0o770);
+    await assert.rejects(
+      () => prepareProductionSupabaseDatabaseCredentials({
+        accessToken: token,
+        credentialDirectory: credentials,
+        fetchImplementation: management.fetchImplementation,
+        probeWorkdir,
+        projectRef: ref,
+        readinessProbe: async () => true,
+        supabaseHome,
+      }),
+      /not group\/world writable/u,
+    );
+    assert.deepEqual(management.requests, []);
+  } finally {
+    await chmod(probeWorkdir, 0o700);
+    await rm(probeWorkdir, { recursive: true, force: true });
+    await rm(credentials, { recursive: true, force: true });
+    await rm(supabaseHome, { recursive: true, force: true });
+  }
+});
+
 test("the readiness probe receives a strict allowlist with no API or ambient database credentials", () => {
   const environment = buildTemporaryLoginProbeEnvironment({
     passfilePath: "/private/credentials/database-passfile",
@@ -497,13 +764,52 @@ test("rejects malformed or short-lived temporary login credentials", () => {
     { password: "short", role: "cli_login_role", ttl_seconds: 3600 },
     { password: "temporary-password\n", role: "cli_login_role", ttl_seconds: 3600 },
     { password: "temporary-password ", role: "cli_login_role", ttl_seconds: 3600 },
-    { password: "temporary-password", role: "cli_login_role", ttl_seconds: 299 },
+    { password: "temporary-password", role: "cli_login_role", ttl_seconds: 300 },
+    { password: "temporary-password", role: "cli_login_role", ttl_seconds: 3599 },
+    { password: "temporary-password", role: "cli_login_role", ttl_seconds: "3600" },
+    { password: "temporary-password", role: "cli_login_role", ttl_seconds: 3600.5 },
     { password: "temporary-password", role: "cli_login_role", ttl_seconds: 7201 },
   ]) {
     assert.throws(
       () => buildTemporaryDatabaseCredentials({ login, poolerUrl, projectRef: ref }),
       /temporary login-role response/u,
     );
+  }
+});
+
+test("a short-lived login response is revoked before credentials are written", async () => {
+  const probeWorkdir = await makeCredentialDirectory();
+  const credentials = await makeCredentialDirectory();
+  const supabaseHome = await makeCredentialDirectory();
+  const management = managementFetch({
+    login: {
+      password: "temporary-password",
+      role: "cli_login_role",
+      ttl_seconds: 3599,
+    },
+  });
+  try {
+    await assert.rejects(
+      () => prepareProductionSupabaseDatabaseCredentials({
+        accessToken: token,
+        credentialDirectory: credentials,
+        fetchImplementation: management.fetchImplementation,
+        probeWorkdir,
+        projectRef: ref,
+        readinessProbe: async () => true,
+        supabaseHome,
+      }),
+      /temporary login-role response is malformed or too short-lived/u,
+    );
+    assert.deepEqual(await readdir(credentials), []);
+    assert.deepEqual(
+      management.requests.map(({ options }) => options.method),
+      ["GET", "GET", "POST", "DELETE"],
+    );
+  } finally {
+    await rm(probeWorkdir, { recursive: true, force: true });
+    await rm(credentials, { recursive: true, force: true });
+    await rm(supabaseHome, { recursive: true, force: true });
   }
 });
 
@@ -566,17 +872,18 @@ test("a failed readiness probe leaves no consumable credential marker", async ()
       projectRef: ref,
       stageDirectory: stage,
     });
+    const management = managementFetch({
+      login: {
+        password,
+        role: "cli_login_role",
+        ttl_seconds: 3600,
+      },
+    });
     await assert.rejects(
       () => prepareExistingSupabaseCliState({
         accessToken: token,
         credentialDirectory: credentials,
-        fetchImplementation: managementFetch({
-          login: {
-            password,
-            role: "cli_login_role",
-            ttl_seconds: 3600,
-          },
-        }).fetchImplementation,
+        fetchImplementation: management.fetchImplementation,
         projectRef: ref,
         readinessProbe: async () => {
           throw new Error(`never expose ${password}`);
@@ -591,12 +898,80 @@ test("a failed readiness probe leaves no consumable credential marker", async ()
         return true;
       },
     );
-    await assert.rejects(
-      () => readFile(path.join(credentials, "credential-ready"), "utf8"),
-      /ENOENT/u,
+    assert.deepEqual(await readdir(credentials), []);
+    assert.deepEqual(
+      management.requests.slice(-1).map(({ options, url }) => ({
+        method: options.method,
+        url,
+      })),
+      [{
+        method: "DELETE",
+        url: `https://api.supabase.com/v1/projects/${ref}/cli/login-role`,
+      }],
     );
   } finally {
     await removeStage(stage);
+    await rm(credentials, { recursive: true, force: true });
+    await rm(supabaseHome, { recursive: true, force: true });
+  }
+});
+
+test("local credential cleanup still completes when failure revocation fails", async () => {
+  const probeWorkdir = await makeCredentialDirectory();
+  const credentials = await makeCredentialDirectory();
+  const supabaseHome = await makeCredentialDirectory();
+  const management = managementFetch({ revocationStatus: 500 });
+  try {
+    await assert.rejects(
+      () => prepareProductionSupabaseDatabaseCredentials({
+        accessToken: token,
+        credentialDirectory: credentials,
+        fetchImplementation: management.fetchImplementation,
+        probeWorkdir,
+        projectRef: ref,
+        readinessProbe: async () => false,
+        supabaseHome,
+      }),
+      /temporary database login did not become ready/u,
+    );
+    assert.deepEqual(await readdir(credentials), []);
+    assert.equal(management.requests.at(-1).options.method, "DELETE");
+  } finally {
+    await rm(probeWorkdir, { recursive: true, force: true });
+    await rm(credentials, { recursive: true, force: true });
+    await rm(supabaseHome, { recursive: true, force: true });
+  }
+});
+
+test("a final marker write failure removes every credential file and revokes", async () => {
+  const probeWorkdir = await makeCredentialDirectory();
+  const credentials = await makeCredentialDirectory();
+  const supabaseHome = await makeCredentialDirectory();
+  const management = managementFetch();
+  try {
+    await assert.rejects(
+      () => prepareProductionSupabaseDatabaseCredentials({
+        accessToken: token,
+        credentialDirectory: credentials,
+        fetchImplementation: management.fetchImplementation,
+        probeWorkdir,
+        projectRef: ref,
+        readinessProbe: async () => {
+          await writeFile(
+            path.join(credentials, "credential-ready"),
+            "unexpected",
+            { mode: 0o600 },
+          );
+          return true;
+        },
+        supabaseHome,
+      }),
+      /refused to overwrite credential-ready/u,
+    );
+    assert.deepEqual(await readdir(credentials), []);
+    assert.equal(management.requests.at(-1).options.method, "DELETE");
+  } finally {
+    await rm(probeWorkdir, { recursive: true, force: true });
     await rm(credentials, { recursive: true, force: true });
     await rm(supabaseHome, { recursive: true, force: true });
   }

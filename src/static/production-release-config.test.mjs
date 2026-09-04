@@ -127,7 +127,7 @@ describe('production release configuration', () => {
     const backend = workflow.indexOf('\n  backend:');
     const frontend = workflow.indexOf('\n  frontend:', backend);
     const backendJob = workflow.slice(backend, frontend);
-    const firstBackendMutation = backendJob.indexOf('supabase link --project-ref');
+    const firstBackendMutation = backendJob.indexOf('--credential-only');
     assert.ok(authGate !== -1 && authGate < backend && firstBackendMutation !== -1);
     assert.match(
       workflow.slice(workflow.indexOf('\n  compatibility-guards:'), backend),
@@ -192,7 +192,7 @@ describe('production release configuration', () => {
     const backendJob = workflow.slice(backendStart, frontendStart);
     assert.ok(
       backendJob.indexOf('name: Validate enabled billing configuration')
-        < backendJob.indexOf('supabase link --project-ref'),
+        < backendJob.indexOf('--credential-only'),
       'enabled billing secrets must be validated before the first backend mutation',
     );
 
