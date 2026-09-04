@@ -441,6 +441,34 @@ async function requireSupabaseHome(supabaseHome) {
   return canonical;
 }
 
+async function requireProbeWorkdir(probeWorkdir) {
+  if (typeof probeWorkdir !== "string" || !path.isAbsolute(probeWorkdir)) {
+    fail("--probe-workdir must be an absolute path");
+  }
+  const normalized = path.normalize(probeWorkdir);
+  let metadata;
+  let canonical;
+  try {
+    metadata = await lstat(normalized);
+    canonical = await realpath(normalized);
+  } catch {
+    fail("--probe-workdir does not exist");
+  }
+  if (metadata.isSymbolicLink() || !metadata.isDirectory()) {
+    fail("--probe-workdir must be a real directory");
+  }
+  if (canonical !== normalized) {
+    fail("--probe-workdir must already be canonical");
+  }
+  if (
+    (typeof process.getuid === "function" && metadata.uid !== process.getuid())
+    || (metadata.mode & 0o022) !== 0
+  ) {
+    fail("--probe-workdir must be current-user-owned and not group/world writable");
+  }
+  return canonical;
+}
+
 function delay(milliseconds) {
   return new Promise((resolve) => setTimeout(resolve, milliseconds));
 }
@@ -613,6 +641,92 @@ async function createTemporaryLogin({
   return requireTemporaryLoginResponse(value);
 }
 
+async function materializeTemporaryDatabaseCredentials({
+  accessToken,
+  credentialPaths,
+  fetchImplementation,
+  poolerUrl,
+  probeWorkdir,
+  projectRef,
+  readinessProbe,
+  supabaseHome,
+}) {
+  const login = await createTemporaryLogin({
+    accessToken,
+    fetchImplementation,
+    projectRef,
+  });
+  const credentials = buildTemporaryDatabaseCredentials({
+    login,
+    poolerUrl,
+    projectRef,
+  });
+  // The marker is written last. A partial write can never be consumed as a
+  // complete credential set, and no secret is printed or returned.
+  await writeExclusiveFile(
+    credentialPaths.databaseUrlPath,
+    credentials.databaseUrl,
+  );
+  await writeExclusiveFile(
+    credentialPaths.passfilePath,
+    credentials.passfile,
+  );
+  try {
+    const ready = await readinessProbe({
+      databaseUrl: credentials.databaseUrl,
+      passfilePath: credentialPaths.passfilePath,
+      stageDirectory: probeWorkdir,
+      supabaseHome,
+    });
+    if (ready !== true) {
+      fail("the temporary database login did not become ready");
+    }
+  } catch {
+    fail("the temporary database login did not become ready");
+  }
+  await writeExclusiveFile(credentialPaths.readyPath, projectRef);
+  return {
+    credentialsPrepared: true,
+    projectRef,
+    verified: true,
+  };
+}
+
+export async function prepareProductionSupabaseDatabaseCredentials({
+  accessToken,
+  credentialDirectory,
+  fetchImplementation = globalThis.fetch,
+  probeWorkdir,
+  projectRef,
+  readinessProbe = waitForTemporaryDatabaseLogin,
+  supabaseHome,
+} = {}) {
+  requireCleanNodeRuntimeEnvironment(process.env);
+  const exactRef = requireProjectRef(projectRef);
+  const token = requireAccessToken(accessToken);
+  if (typeof fetchImplementation !== "function") fail("a fetch implementation is required");
+  const credentialPaths = await requireCredentialDirectory(
+    credentialDirectory,
+  );
+  const isolatedSupabaseHome = await requireSupabaseHome(supabaseHome);
+  const canonicalProbeWorkdir = await requireProbeWorkdir(probeWorkdir);
+  const expected = await fetchExpectedState({
+    accessToken: token,
+    fetchImplementation,
+    projectRef: exactRef,
+  });
+  return await materializeTemporaryDatabaseCredentials({
+    accessToken: token,
+    credentialPaths,
+    fetchImplementation,
+    poolerUrl: expected.poolerUrl,
+    probeWorkdir: canonicalProbeWorkdir,
+    projectRef: exactRef,
+    readinessProbe,
+    supabaseHome: isolatedSupabaseHome,
+  });
+}
+
 export async function prepareExistingSupabaseCliState({
   accessToken,
   credentialDirectory,
@@ -645,45 +759,16 @@ export async function prepareExistingSupabaseCliState({
         credentialDirectory,
       );
       const isolatedSupabaseHome = await requireSupabaseHome(supabaseHome);
-      const login = await createTemporaryLogin({
+      return await materializeTemporaryDatabaseCredentials({
         accessToken: token,
+        credentialPaths,
         fetchImplementation,
-        projectRef: exactRef,
-      });
-      const credentials = buildTemporaryDatabaseCredentials({
-        login,
         poolerUrl: expected.poolerUrl,
+        probeWorkdir: stageDirectory,
         projectRef: exactRef,
+        readinessProbe,
+        supabaseHome: isolatedSupabaseHome,
       });
-      // The marker is written last. A partial write can never be consumed as a
-      // complete credential set, and no secret is printed or returned.
-      await writeExclusiveFile(
-        credentialPaths.databaseUrlPath,
-        credentials.databaseUrl,
-      );
-      await writeExclusiveFile(
-        credentialPaths.passfilePath,
-        credentials.passfile,
-      );
-      try {
-        const ready = await readinessProbe({
-          databaseUrl: credentials.databaseUrl,
-          passfilePath: credentialPaths.passfilePath,
-          stageDirectory,
-          supabaseHome: isolatedSupabaseHome,
-        });
-        if (ready !== true) {
-          fail("the temporary database login did not become ready");
-        }
-      } catch {
-        fail("the temporary database login did not become ready");
-      }
-      await writeExclusiveFile(credentialPaths.readyPath, exactRef);
-      return {
-        credentialsPrepared: true,
-        projectRef: exactRef,
-        verified: true,
-      };
     }
     return { credentialsPrepared: false, projectRef: exactRef, verified: true };
   }
@@ -702,8 +787,10 @@ export async function prepareExistingSupabaseCliState({
   return { projectRef: exactRef, verified: true };
 }
 
-function parseArguments(argumentsList) {
+export function parseArguments(argumentsList) {
+  let credentialOnly = false;
   let credentialDirectory = "";
+  let probeWorkdir = "";
   let stageDirectory = "";
   let supabaseHome = "";
   let verifyOnly = false;
@@ -715,6 +802,15 @@ function parseArguments(argumentsList) {
         fail("--stage-directory requires exactly one path");
       }
       stageDirectory = value;
+      index += 1;
+      continue;
+    }
+    if (argument === "--probe-workdir") {
+      const value = argumentsList[index + 1];
+      if (!value || value.startsWith("--") || probeWorkdir) {
+        fail("--probe-workdir requires exactly one path");
+      }
+      probeWorkdir = value;
       index += 1;
       continue;
     }
@@ -740,8 +836,33 @@ function parseArguments(argumentsList) {
       verifyOnly = true;
       continue;
     }
+    if (argument === "--credential-only" && !credentialOnly) {
+      credentialOnly = true;
+      continue;
+    }
     fail(`unsupported or duplicate argument: ${argument}`);
   }
+  if (credentialOnly) {
+    if (stageDirectory || verifyOnly) {
+      fail("--credential-only cannot be combined with staged-state options");
+    }
+    if (!probeWorkdir) fail("--probe-workdir is required with --credential-only");
+    if (!credentialDirectory) {
+      fail("--credential-directory is required with --credential-only");
+    }
+    if (!supabaseHome) {
+      fail("--supabase-home is required with --credential-only");
+    }
+    return {
+      credentialDirectory,
+      credentialOnly,
+      probeWorkdir,
+      stageDirectory,
+      supabaseHome,
+      verifyOnly,
+    };
+  }
+  if (probeWorkdir) fail("--probe-workdir requires --credential-only");
   if (!stageDirectory) fail("--stage-directory is required");
   if (credentialDirectory && !verifyOnly) {
     fail("--credential-directory requires --verify-only");
@@ -752,19 +873,40 @@ function parseArguments(argumentsList) {
   if (supabaseHome && !credentialDirectory) {
     fail("--supabase-home requires --credential-directory");
   }
-  return { credentialDirectory, stageDirectory, supabaseHome, verifyOnly };
+  return {
+    credentialDirectory,
+    credentialOnly,
+    probeWorkdir,
+    stageDirectory,
+    supabaseHome,
+    verifyOnly,
+  };
 }
 
 const invokedPath = process.argv[1] ? pathToFileURL(process.argv[1]).href : "";
 if (import.meta.url === invokedPath) {
   const options = parseArguments(process.argv.slice(2));
-  prepareExistingSupabaseCliState({
-    accessToken: process.env.SUPABASE_ACCESS_TOKEN,
-    projectRef: process.env.SUPABASE_PROJECT_REF,
-    ...options,
-  }).then(
+  const operation = options.credentialOnly
+    ? prepareProductionSupabaseDatabaseCredentials({
+      accessToken: process.env.SUPABASE_ACCESS_TOKEN,
+      credentialDirectory: options.credentialDirectory,
+      probeWorkdir: options.probeWorkdir,
+      projectRef: process.env.SUPABASE_PROJECT_REF,
+      supabaseHome: options.supabaseHome,
+    })
+    : prepareExistingSupabaseCliState({
+      accessToken: process.env.SUPABASE_ACCESS_TOKEN,
+      credentialDirectory: options.credentialDirectory,
+      projectRef: process.env.SUPABASE_PROJECT_REF,
+      stageDirectory: options.stageDirectory,
+      supabaseHome: options.supabaseHome,
+      verifyOnly: options.verifyOnly,
+    });
+  operation.then(
     () => console.log(
-      options.verifyOnly
+      options.credentialOnly
+        ? "Prepared an exact temporary production database credential set."
+        : options.verifyOnly
         ? options.credentialDirectory
           ? "Prepared an exact temporary database credential set."
           : "Verified exact credential-free Supabase CLI target state."

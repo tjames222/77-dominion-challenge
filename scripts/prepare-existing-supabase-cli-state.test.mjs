@@ -19,7 +19,9 @@ import {
   EXISTING_SUPABASE_PROJECT_REF,
   EXPECTED_POSTGRES_VERSION,
   normalizePrimaryPoolerConfig,
+  parseArguments,
   prepareExistingSupabaseCliState,
+  prepareProductionSupabaseDatabaseCredentials,
   requireCleanNodeRuntimeEnvironment,
   verifyProjectResponse,
   waitForTemporaryDatabaseLogin,
@@ -413,6 +415,127 @@ test("mints isolated temporary credentials without persisting or returning the p
     }
   } finally {
     await removeStage(stage);
+    await rm(credentials, { recursive: true, force: true });
+    await rm(supabaseHome, { recursive: true, force: true });
+  }
+});
+
+test("mints production credentials against a canonical probe workdir without staged linked state", async () => {
+  const probeWorkdir = await makeCredentialDirectory();
+  const credentials = await makeCredentialDirectory();
+  const supabaseHome = await makeCredentialDirectory();
+  const management = managementFetch();
+  const readinessCalls = [];
+  try {
+    const result = await prepareProductionSupabaseDatabaseCredentials({
+      accessToken: token,
+      credentialDirectory: credentials,
+      fetchImplementation: management.fetchImplementation,
+      probeWorkdir,
+      projectRef: ref,
+      readinessProbe: async (options) => {
+        readinessCalls.push(options);
+        return true;
+      },
+      supabaseHome,
+    });
+
+    assert.deepEqual(result, {
+      credentialsPrepared: true,
+      projectRef: ref,
+      verified: true,
+    });
+    assert.deepEqual(
+      management.requests.map(({ url }) => url),
+      [
+        `https://api.supabase.com/v1/projects/${ref}`,
+        `https://api.supabase.com/v1/projects/${ref}/config/database/pooler`,
+        `https://api.supabase.com/v1/projects/${ref}/cli/login-role`,
+      ],
+    );
+    assert.equal(readinessCalls.length, 1);
+    assert.equal(readinessCalls[0].stageDirectory, probeWorkdir);
+    assert.equal(readinessCalls[0].supabaseHome, supabaseHome);
+    assert.equal(
+      await readFile(path.join(credentials, "credential-ready"), "utf8"),
+      ref,
+    );
+    await assert.rejects(
+      () => readFile(path.join(probeWorkdir, "supabase", ".temp", "project-ref"), "utf8"),
+      /ENOENT/u,
+    );
+  } finally {
+    await rm(probeWorkdir, { recursive: true, force: true });
+    await rm(credentials, { recursive: true, force: true });
+    await rm(supabaseHome, { recursive: true, force: true });
+  }
+});
+
+test("credential-only argument mode is disjoint from the immutable staged-state mode", () => {
+  assert.deepEqual(
+    parseArguments([
+      "--credential-only",
+      "--probe-workdir",
+      "/private/release-workdir",
+      "--credential-directory",
+      "/private/credentials",
+      "--supabase-home",
+      "/private/supabase-home",
+    ]),
+    {
+      credentialDirectory: "/private/credentials",
+      credentialOnly: true,
+      probeWorkdir: "/private/release-workdir",
+      stageDirectory: "",
+      supabaseHome: "/private/supabase-home",
+      verifyOnly: false,
+    },
+  );
+  assert.deepEqual(
+    parseArguments(["--stage-directory", "/private/execution-stage"]),
+    {
+      credentialDirectory: "",
+      credentialOnly: false,
+      probeWorkdir: "",
+      stageDirectory: "/private/execution-stage",
+      supabaseHome: "",
+      verifyOnly: false,
+    },
+  );
+  for (const argumentsList of [
+    ["--credential-only", "--credential-directory", "/private/credentials", "--supabase-home", "/private/home"],
+    ["--credential-only", "--probe-workdir", "/private/workdir", "--supabase-home", "/private/home"],
+    ["--credential-only", "--probe-workdir", "/private/workdir", "--credential-directory", "/private/credentials"],
+    ["--credential-only", "--probe-workdir", "/private/workdir", "--credential-directory", "/private/credentials", "--supabase-home", "/private/home", "--verify-only"],
+    ["--probe-workdir", "/private/workdir", "--stage-directory", "/private/stage"],
+  ]) {
+    assert.throws(() => parseArguments(argumentsList), /credential-only/u);
+  }
+});
+
+test("credential-only mode rejects an unsafe probe workdir before any Management API call", async () => {
+  const probeWorkdir = await makeCredentialDirectory();
+  const credentials = await makeCredentialDirectory();
+  const supabaseHome = await makeCredentialDirectory();
+  const management = managementFetch();
+  try {
+    await chmod(probeWorkdir, 0o770);
+    await assert.rejects(
+      () => prepareProductionSupabaseDatabaseCredentials({
+        accessToken: token,
+        credentialDirectory: credentials,
+        fetchImplementation: management.fetchImplementation,
+        probeWorkdir,
+        projectRef: ref,
+        readinessProbe: async () => true,
+        supabaseHome,
+      }),
+      /not group\/world writable/u,
+    );
+    assert.deepEqual(management.requests, []);
+  } finally {
+    await chmod(probeWorkdir, 0o700);
+    await rm(probeWorkdir, { recursive: true, force: true });
     await rm(credentials, { recursive: true, force: true });
     await rm(supabaseHome, { recursive: true, force: true });
   }
