@@ -5,6 +5,10 @@ import { constants as fsConstants } from "node:fs";
 import { lstat, open, readdir, realpath, unlink } from "node:fs/promises";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
+import {
+  createCredentialLifetime, MINIMUM_PRODUCTION_LOGIN_TTL_SECONDS,
+  MINIMUM_READY_BUDGET_SECONDS, remainingCredentialMilliseconds, runDeadlineProcess,
+} from "./production-database-credential-lifetime.mjs";
 
 export const EXISTING_SUPABASE_PROJECT_REF = "mimolwojppbtsbvtqwpo";
 export const EXPECTED_POSTGRES_VERSION = "17.6.1.141";
@@ -30,8 +34,10 @@ const FORBIDDEN_NODE_ENVIRONMENT = Object.freeze([
   "NODE_TLS_REJECT_UNAUTHORIZED",
 ]);
 
-function fail(message) {
-  throw new Error(`Existing-project CLI state is invalid: ${message}`);
+function fail(message, diagnosticCode) {
+  const error = new Error(`Existing-project CLI state is invalid: ${message}`);
+  if (diagnosticCode) error.diagnosticCode = diagnosticCode;
+  throw error;
 }
 
 export function requireCleanNodeRuntimeEnvironment(environment) {
@@ -147,20 +153,20 @@ function requireSafePoolerUrl(connectionString, projectRef) {
     || connectionString.length === 0
     || /[\u0000-\u001f\u007f]/u.test(connectionString)
   ) {
-    fail("the primary pooler connection string is missing or malformed");
+    fail("the primary pooler connection string is missing or malformed", "pooler-url-format");
   }
 
   let parsed;
   try {
     parsed = new URL(connectionString);
   } catch {
-    fail("the primary pooler connection string is not a URL");
+    fail("the primary pooler connection string is not a URL", "pooler-url-format");
   }
   if (!["postgres:", "postgresql:"].includes(parsed.protocol)) {
-    fail("the primary pooler URL must use PostgreSQL");
+    fail("the primary pooler URL must use PostgreSQL", "pooler-url-protocol");
   }
   if (parsed.username !== `postgres.${projectRef}`) {
-    fail("the primary pooler username is not bound to the exact project");
+    fail("the primary pooler username is not bound to the exact project", "pooler-url-user");
   }
   if (
     parsed.hostname !== EXPECTED_POOLER_HOST
@@ -169,37 +175,47 @@ function requireSafePoolerUrl(connectionString, projectRef) {
     || !["", "?sslmode=require"].includes(parsed.search)
     || parsed.hash !== ""
   ) {
-    fail("the primary pooler URL is outside the expected Supabase boundary");
+    fail("the primary pooler URL is outside the expected Supabase boundary", "pooler-url-endpoint");
   }
   return parsed;
 }
 
 export function normalizePrimaryPoolerConfig(value, projectRef) {
   if (!Array.isArray(value)) {
-    fail("the pooler Management API response must be an array");
+    fail("the pooler Management API response must be an array", "pooler-response-shape");
   }
   const primaryConfigs = value.filter((entry) =>
     isPlainObject(entry) && entry.database_type === "PRIMARY"
   );
   if (primaryConfigs.length !== 1) {
-    fail("the pooler response must contain exactly one PRIMARY database");
+    fail("the pooler response must contain exactly one PRIMARY database",
+      primaryConfigs.length === 0 ? "pooler-primary-none" : "pooler-primary-multiple");
   }
   const primary = primaryConfigs[0];
+  const metadataMessage = "the primary pooler metadata is not canonical";
+  if (primary.identifier !== projectRef) fail(metadataMessage, "pooler-identifier");
+  if (primary.db_user !== `postgres.${projectRef}`) {
+    fail(metadataMessage, primary.db_user === "postgres" ? "pooler-db-user-unqualified" : "pooler-db-user");
+  }
+  if (primary.db_name !== "postgres") fail(metadataMessage, "pooler-db-name");
+  if (primary.is_using_scram_auth !== true) fail(metadataMessage, "pooler-scram");
+  if (primary.connectionString !== primary.connection_string) {
+    const code = primary.connectionString === undefined && typeof primary.connection_string === "string"
+      ? "pooler-alias-snake-only"
+      : primary.connection_string === undefined && typeof primary.connectionString === "string"
+      ? "pooler-alias-camel-only" : "pooler-alias-mismatch";
+    fail(metadataMessage, code);
+  }
+  if (!isNullableNonnegativeInteger(primary.default_pool_size)) fail(metadataMessage, "pooler-default-pool-size");
+  if (!isNullableNonnegativeInteger(primary.max_client_conn)) fail(metadataMessage, "pooler-max-client-count");
   if (
-    primary.identifier !== projectRef
-    || primary.db_user !== `postgres.${projectRef}`
-    || primary.db_name !== "postgres"
-    || primary.is_using_scram_auth !== true
-    || primary.connectionString !== primary.connection_string
-    || !isNullableNonnegativeInteger(primary.default_pool_size)
-    || !isNullableNonnegativeInteger(primary.max_client_conn)
-    || !Number.isInteger(primary.db_port)
+    !Number.isInteger(primary.db_port)
     || ![5432, 6543].includes(primary.db_port)
     || !["session", "transaction"].includes(primary.pool_mode)
     || (primary.pool_mode === "transaction" && primary.db_port !== 6543)
     || (primary.pool_mode === "session" && primary.db_port !== 5432)
   ) {
-    fail("the primary pooler metadata is not canonical");
+    fail(metadataMessage, "pooler-port-mode");
   }
 
   const parsed = requireSafePoolerUrl(primary.connection_string, projectRef);
@@ -207,7 +223,7 @@ export function normalizePrimaryPoolerConfig(value, projectRef) {
     parsed.hostname !== primary.db_host
     || Number(parsed.port) !== primary.db_port
   ) {
-    fail("the primary pooler URL does not match its metadata");
+    fail("the primary pooler URL does not match its metadata", "pooler-metadata-url-mismatch");
   }
 
   // The Management API can return either the documented placeholder or a real
@@ -221,28 +237,33 @@ export function normalizePrimaryPoolerConfig(value, projectRef) {
     || verified.port !== "5432"
     || verified.search !== "?sslmode=require"
   ) {
-    fail("the normalized pooler URL is not credential-free session mode");
+    fail("the normalized pooler URL is not credential-free session mode", "pooler-normalized-boundary");
   }
   return normalized;
 }
 
-function requireTemporaryLoginResponse(value) {
+function requireTemporaryLoginResponse(value, minimumTtlSeconds = MINIMUM_TEMPORARY_LOGIN_TTL_SECONDS) {
+  const message = "the temporary login-role response is malformed or too short-lived";
+  if (!isPlainObject(value)) fail(message, "login-response-shape");
   if (
-    !isPlainObject(value)
-    || typeof value.role !== "string"
+    typeof value.role !== "string"
     || !/^cli_login_[a-z0-9_]*$/u.test(value.role)
     || Buffer.byteLength(value.role, "utf8") > 63
-    || typeof value.password !== "string"
+  ) fail(message, "login-role-format");
+  if (
+    typeof value.password !== "string"
     || value.password.length < 16
     || value.password.length > 1024
     || /[\u0000-\u001f\u007f]/u.test(value.password)
     || value.password !== value.password.trimEnd()
-    || !Number.isInteger(value.ttl_seconds)
-    || value.ttl_seconds < MINIMUM_TEMPORARY_LOGIN_TTL_SECONDS
-    || value.ttl_seconds > 7200
-  ) {
-    fail("the temporary login-role response is malformed or too short-lived");
+  ) fail(message, "login-password-format");
+  if (!Number.isInteger(value.ttl_seconds)) fail(message, "login-ttl-format");
+  if (value.ttl_seconds < minimumTtlSeconds) {
+    const bucket = value.ttl_seconds < 300 ? "login-ttl-below-300"
+      : value.ttl_seconds < 900 ? "login-ttl-below-900" : "login-ttl-below-3600";
+    fail(message, bucket);
   }
+  if (value.ttl_seconds > 7200) fail(message, "login-ttl-above-7200");
   return value;
 }
 
@@ -254,9 +275,10 @@ export function buildTemporaryDatabaseCredentials({
   login,
   poolerUrl,
   projectRef,
+  minimumTtlSeconds = MINIMUM_TEMPORARY_LOGIN_TTL_SECONDS,
 }) {
   const exactRef = requireProjectRef(projectRef);
-  const temporaryLogin = requireTemporaryLoginResponse(login);
+  const temporaryLogin = requireTemporaryLoginResponse(login, minimumTtlSeconds);
   const pooler = requireSafePoolerUrl(poolerUrl, exactRef);
   if (pooler.password !== "" || pooler.port !== "5432") {
     fail("the temporary login must use the credential-free session pooler");
@@ -422,6 +444,7 @@ async function requireCredentialDirectory(credentialDirectory) {
     databaseUrlPath: path.join(canonical, "database-url"),
     passfilePath: path.join(canonical, "database-passfile"),
     readyPath: path.join(canonical, "credential-ready"),
+    deadlinePath: path.join(canonical, "credential-deadline"),
   };
 }
 
@@ -516,12 +539,31 @@ export function buildTemporaryLoginProbeArguments({
   ];
 }
 
-function runTemporaryLoginProbe({
+async function runTemporaryLoginProbe({
   databaseUrl,
   passfilePath,
   stageDirectory,
   supabaseHome,
+  credentialLifetime,
+  monotonicNow = () => process.hrtime.bigint(),
 }) {
+  if (credentialLifetime) {
+    remainingCredentialMilliseconds(credentialLifetime, EXISTING_SUPABASE_PROJECT_REF, monotonicNow());
+    const probeDeadline = monotonicNow() + 15_000_000_000n;
+    const deadlineNs = BigInt(credentialLifetime.deadlineNs) < probeDeadline
+      ? credentialLifetime.deadlineNs : probeDeadline;
+    try {
+      return await runDeadlineProcess("supabase",
+        buildTemporaryLoginProbeArguments({ databaseUrl, stageDirectory }), {
+          cwd: stageDirectory,
+          env: buildTemporaryLoginProbeEnvironment({ passfilePath, runtimePath: process.env.PATH, supabaseHome }),
+          stdio: "ignore", deadlineNs, monotonicNow,
+        }) === 0;
+    } catch (error) {
+      if (error.diagnosticCode === "credential-operation-timeout") return false;
+      throw error;
+    }
+  }
   return new Promise((resolve) => {
     let probeEnvironment;
     try {
@@ -569,6 +611,8 @@ export async function waitForTemporaryDatabaseLogin({
   probeAttempt = runTemporaryLoginProbe,
   stageDirectory,
   supabaseHome,
+  credentialLifetime,
+  monotonicNow = () => process.hrtime.bigint(),
 }) {
   if (typeof probeAttempt !== "function") {
     fail("a temporary-login readiness probe is required");
@@ -577,6 +621,10 @@ export async function waitForTemporaryDatabaseLogin({
     fail("a temporary-login retry delay is required");
   }
   for (const delayMilliseconds of LOGIN_READINESS_DELAYS_MS) {
+    if (credentialLifetime) {
+      remainingCredentialMilliseconds(credentialLifetime, EXISTING_SUPABASE_PROJECT_REF, monotonicNow(),
+        MINIMUM_READY_BUDGET_SECONDS + delayMilliseconds / 1000);
+    }
     if (delayMilliseconds > 0) {
       await delayImplementation(delayMilliseconds);
     }
@@ -587,8 +635,11 @@ export async function waitForTemporaryDatabaseLogin({
         passfilePath,
         stageDirectory,
         supabaseHome,
+        credentialLifetime,
+        monotonicNow,
       });
-    } catch {
+    } catch (error) {
+      if (error.diagnosticCode?.startsWith("credential-") && error.diagnosticCode !== "credential-operation-timeout") throw error;
       ready = false;
     }
     if (ready === true) return true;
@@ -621,6 +672,7 @@ async function createTemporaryLogin({
   accessToken,
   fetchImplementation,
   projectRef,
+  minimumTtlSeconds = MINIMUM_TEMPORARY_LOGIN_TTL_SECONDS,
 }) {
   let response;
   try {
@@ -661,7 +713,7 @@ async function createTemporaryLogin({
     fail("the temporary database login request did not return JSON");
   }
   try {
-    return requireTemporaryLoginResponse(value);
+    return requireTemporaryLoginResponse(value, minimumTtlSeconds);
   } catch (error) {
     await revokeTemporaryLoginRolesBestEffort({
       accessToken,
@@ -722,6 +774,7 @@ async function removeCredentialFilesBestEffort(credentialPaths) {
     unlink(credentialPaths.readyPath),
     unlink(credentialPaths.passfilePath),
     unlink(credentialPaths.databaseUrlPath),
+    unlink(credentialPaths.deadlinePath),
   ]);
 }
 
@@ -753,17 +806,31 @@ async function materializeTemporaryDatabaseCredentials({
   projectRef,
   readinessProbe,
   supabaseHome,
+  boundedLifetime = false,
+  monotonicNow = () => process.hrtime.bigint(),
 }) {
+  const minimumTtlSeconds = boundedLifetime
+    ? MINIMUM_PRODUCTION_LOGIN_TTL_SECONDS : MINIMUM_TEMPORARY_LOGIN_TTL_SECONDS;
+  // Start before the request, not when its response arrives: network latency
+  // must consume the budget, never extend a credential's server-side lifetime.
+  const issuedAtNs = boundedLifetime ? monotonicNow() : undefined;
   const login = await createTemporaryLogin({
     accessToken,
     fetchImplementation,
     projectRef,
+    minimumTtlSeconds,
   });
   try {
+    const credentialLifetime = boundedLifetime
+      ? createCredentialLifetime({ projectRef, issuedAtNs, ttlSeconds: login.ttl_seconds }) : undefined;
+    if (credentialLifetime) {
+      remainingCredentialMilliseconds(credentialLifetime, projectRef, monotonicNow(), MINIMUM_READY_BUDGET_SECONDS);
+    }
     const credentials = buildTemporaryDatabaseCredentials({
       login,
       poolerUrl,
       projectRef,
+      minimumTtlSeconds,
     });
     // The marker is written last. A partial write can never be consumed as a
     // complete credential set, and no secret is printed or returned.
@@ -781,18 +848,26 @@ async function materializeTemporaryDatabaseCredentials({
         passfilePath: credentialPaths.passfilePath,
         stageDirectory: probeWorkdir,
         supabaseHome,
+        ...(credentialLifetime ? { credentialLifetime, monotonicNow } : {}),
       });
       if (ready !== true) {
         fail("the temporary database login did not become ready");
       }
-    } catch {
+    } catch (error) {
+      if (error.diagnosticCode?.startsWith("credential-")) throw error;
       fail("the temporary database login did not become ready");
+    }
+    if (credentialLifetime) {
+      remainingCredentialMilliseconds(credentialLifetime, projectRef, monotonicNow(), MINIMUM_READY_BUDGET_SECONDS);
+      await writeExclusiveFile(credentialPaths.deadlinePath, JSON.stringify(credentialLifetime));
+      remainingCredentialMilliseconds(credentialLifetime, projectRef, monotonicNow(), MINIMUM_READY_BUDGET_SECONDS);
     }
     await writeExclusiveFile(credentialPaths.readyPath, projectRef);
     return {
       credentialsPrepared: true,
       projectRef,
       verified: true,
+      ...(credentialLifetime ? { credentialLifetime } : {}),
     };
   } catch (error) {
     await Promise.all([
@@ -815,6 +890,7 @@ export async function prepareProductionSupabaseDatabaseCredentials({
   projectRef,
   readinessProbe = waitForTemporaryDatabaseLogin,
   supabaseHome,
+  monotonicNow = () => process.hrtime.bigint(),
 } = {}) {
   requireCleanNodeRuntimeEnvironment(process.env);
   const exactRef = requireProjectRef(projectRef);
@@ -842,6 +918,8 @@ export async function prepareProductionSupabaseDatabaseCredentials({
     projectRef: exactRef,
     readinessProbe,
     supabaseHome: isolatedSupabaseHome,
+    boundedLifetime: true,
+    monotonicNow,
   });
 }
 

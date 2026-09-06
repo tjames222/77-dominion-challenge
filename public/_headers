@@ -9,6 +9,13 @@
 /invite.html
   Referrer-Policy: no-referrer
 
+/invite
+  Referrer-Policy: no-referrer
+
 /today-actions.html
+  Cache-Control: no-store
+  X-Robots-Tag: noindex
+
+/today-actions
   Cache-Control: no-store
   X-Robots-Tag: noindex

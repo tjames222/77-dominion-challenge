@@ -17,24 +17,67 @@ Standard Actions usage for this public repository is free. This workflow
 does not upgrade any plan or enable paid backup services.
 
 The capture uses the pinned Supabase PostgreSQL `17.6.1.141` tools and temporary
-login credentials. Remote connections are forced read-only. A full custom-format
+login credentials. Each remote `psql` connection explicitly runs the fixed
+`SET SESSION ROLE postgres` after authentication; both dump tools use the fixed
+`--role=postgres` option. No hosted grants or role attributes are changed. A
+bounded preflight checks only two booleans: the effective role is `postgres` and
+its explicit read-only transaction is active. Inventory runs in an explicit
+read-only transaction; PostgreSQL 17.6 `pg_dump` itself uses a repeatable-read,
+read-only transaction. The fixed `pg_dumpall --roles-only --no-role-passwords`
+invocation reads catalog metadata and emits role SQL only into the local dump;
+it does not execute that SQL remotely. `PGOPTIONS` remains defense in depth,
+not an authoritative control, because a session pooler can discard startup
+options. This post-connect role selection matches the pinned Supabase CLI's
+[connection setup](https://github.com/supabase/cli/blob/v2.109.0/apps/cli-go/internal/utils/connect.go)
+and PostgreSQL's documented [dump role option](https://www.postgresql.org/docs/17/app-pgdump.html).
+A full custom-format
 `pg_dump` includes application/private schemas, Auth, Storage metadata, migration
 history, extensions, owners, ACLs, and large objects. Roles are captured separately
 without passwords. All plaintext dumps, private diagnostics, and credentials live
 in runner tmpfs and are removed afterward. An interrupted runner is ephemeral;
 the final workflow step also attempts credential revocation.
 
+Supabase controls the temporary password lifetime; the production path accepts
+integer lifetimes of 300–7200 seconds instead of assuming a full hour. A
+monotonic deadline begins before the login request, includes setup and readiness
+time, and reserves 30 seconds before expiry. At least 120 usable seconds must
+remain before credentials become ready and before a production CLI operation
+starts. All remote backup commands share that one deadline. A timeout stops the
+owned capture container before cleanup, so terminating the Docker client cannot
+leave its database query running. Local restore and encryption happen after
+credential revocation and do not consume this database-login budget.
+
+The release workflow obtains and revokes a separate login for each fixed
+`history`, `dry-run`, or `migrate` operation. It never refreshes credentials in
+the middle of an operation. A timed-out migration command can have committed an
+earlier migration; inspect exact history and review the recovery path instead of
+assuming the whole chain rolled back or blindly retrying it.
+
 The backup is restored into a new `initdb` cluster in a network-disabled container
 with tmpfs data. It has no hosted credentials and its local admin role must be
 absent from the source. Cron execution is disabled. The restore must reproduce
 every non-system table's row count and SHA-256 content fingerprint, sequence
-state, large-object fingerprint, and migration history. PostgreSQL 17 membership
+state, large-object fingerprint, migration history, and event-trigger ownership,
+enabled state, tags, and function identity/ownership. These event-trigger records
+remain private inside the encrypted inventory. PostgreSQL 17 membership
 grants issued by the source bootstrap superuser are replayed by the disposable
 cluster's bootstrap administrator; other grantors and all grant options are
 preserved. The original role SQL remains unchanged in the backup. Matching source
 inventories before and after capture also reject concurrent changes. Foreign
 tables, Storage objects or multipart uploads, and Vault/pgsodium encrypted data
 fail closed because this backup would not contain their external data or root key.
+
+Stock PostgreSQL 17 requires an event trigger's target owner to be a superuser
+when replaying its ownership, even if the restore executor is a superuser. The
+isolated recovery test therefore temporarily gives only its local `postgres`
+role `SUPERUSER` while replaying the unchanged archive, then always attempts to
+restore `NOSUPERUSER`. Before doing so it requires `postgres` to be non-superuser
+and the disposable bootstrap role to be `backup_restore_admin`. Afterward every
+attribute in the local `pg_roles` view must exactly match its snapshot taken
+after role replay; event-trigger metadata must also match the source after the
+downgrade. Any restore, downgrade, or comparison failure stops verification and
+encryption and removes the owned container. This compatibility step never
+changes hosted roles, the original role SQL/archive, object owners, or ACLs.
 
 Run this workflow from `main`, download its successful encrypted artifact, apply
 the bounded owner canary grant, then dispatch the compatibility cutover with its
