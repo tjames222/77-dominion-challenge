@@ -735,12 +735,14 @@ FOU-752/753 must not use the normal backend-first order for their first producti
 2. Rerun the aggregate journal inventory from that evidence record. Journal
    rows, objects, multipart-upload parents and parts, and nonterminal
    `journal-progress` retention work must all be zero. Also require globally
-   empty `billing_customers`, `subscriptions`, and legacy `purchases` (when the
-   table exists), and prove the target Auth UUID has no existing
-   `membership_active` entitlement.
+   empty `billing_customers`, `subscriptions`, and `membership_active`, require
+   that the baseline removed legacy `purchases`, and prove there is exactly one
+   non-anonymous Auth user with its matching profile.
 3. Following [`production-canary-operator-runbook.md`](production-canary-operator-runbook.md),
-   authorize exactly one existing non-anonymous Auth UUID with exactly one new,
-   release-SHA-bound `production_canary` entitlement for no more than two hours.
+   dispatch the protected canary operator's `grant` operation. It selects only
+   the sole existing non-anonymous Auth user with its matching profile and
+   internally generates exactly one new, release-SHA-bound `production_canary`
+   entitlement for no more than two hours without printing either UUID.
    The reconciled baseline schema present by migration 13 supports
    `source_type`, `source_id`, bounded `ends_at`, and release metadata. This
    narrowly timed grant is required to exercise the compatibility client; it is
@@ -768,8 +770,9 @@ FOU-752/753 must not use the normal backend-first order for their first producti
    the previous database and empty bucket in place during this verification
    window. Require exact authenticated `503` responses from all three disabled
    billing functions and the workflow's exact webhook `503` evidence.
-6. Rerun the zero-data and zero-billing inventories and verify that the exact
-   UUID/grant/SHA-bound entitlement is still active and unmodified. Stop on any
+6. Rerun the zero-data and zero-billing inventories and verify through the
+   aggregate-only gate that the exact grant/SHA-bound entitlement is still
+   active and unmodified. Stop on any
    nonzero result; export or explicitly disposition user data and use the
    Storage API for object deletion. If the grant has expired or cannot remain
    valid through the full verification, revoke it and restart the reviewed
@@ -793,9 +796,12 @@ FOU-752/753 must not use the normal backend-first order for their first producti
    signup stays closed; if that second account does not yet exist, the release
    remains closed and final acceptance is blocked until it is invited and the
    denial check passes.
-10. Re-run the exact grant verification, then revoke that same UUID/grant-bound
-    row and prove a fresh target-account session is denied as specified in the
-    canary runbook. Preserve the revoked audit row and the UTC evidence.
+10. Re-run the release's aggregate-only canary gate, then dispatch the
+    protected canary operator's `revoke` operation from the same frozen release
+    SHA. It revokes only the sole active generated-UUID canary for that SHA and
+    verifies the preserved audit row. Then prove a fresh target-account session
+    is denied as specified in the canary runbook. Preserve the revoked audit row
+    and the UTC evidence.
 
 ```sql
 select id, public, file_size_limit, allowed_mime_types

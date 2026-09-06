@@ -74,12 +74,13 @@ to manufacture that result.
 
 FOU-759 has one deliberately narrow timing rule: after production history is
 reconciled exactly through migration 13 and the zero-data/zero-billing checks
-pass, one exact Auth UUID may receive one exact release-SHA-bound
+pass, the sole existing non-anonymous Auth user with a matching profile may
+receive one internally generated, release-SHA-bound
 `production_canary` entitlement for no more than two hours **before** the
 `compatibility-cutover` dispatch. That same row must be used through the
 same-commit full release and revoked afterward. This is not a direct-full
 exception. Never skip compatibility, extend or replace the grant between
-stages, or use more than one entitled account.
+stages, use more than one entitled account, or advance `main` before revocation.
 
 ## Before granting canary access
 
@@ -88,19 +89,21 @@ stages, or use more than one entitled account.
    [`backend-release-runbook.md`](backend-release-runbook.md). Confirm migrations
    14–53 remain pending. Never grant before the migration-13 checkpoint or use
    the entitlement to bypass the required two-stage cutover.
-2. Record the exact 40-character release commit, production project reference,
-   operator, approver, target Auth user UUID, a newly generated grant UUID, and
-   UTC start and expiry times in the encrypted release record. Do not use an
-   email address as the database identity.
-3. Use only an existing, non-anonymous owner verification account. Public signup
-   and anonymous sign-in remain closed throughout the canary. A second invited,
+2. Record the exact 40-character `main` release commit, production project
+   reference, operator, approver, workflow-run URL, and UTC dispatch time in the
+   encrypted release record. Keep `main` frozen at this commit through grant,
+   compatibility, full, and revoke. The workflow never accepts or prints an Auth
+   UUID, email address, or grant UUID.
+3. Production must contain exactly one non-anonymous Auth user and exactly one
+   profile matching that user. Public signup and anonymous sign-in remain closed
+   throughout the canary. A second invited,
    non-privileged account without an entitlement is mandatory for the post-full
    denial check. It need not exist before the grant, but final acceptance is
    blocked until it exists and that check passes.
-4. Confirm the target UUID has no `membership_active` entitlement and that
-   `billing_customers`, `subscriptions`, and the legacy `purchases` table (if it
-   still exists) are globally empty. Any pre-existing row is a stop condition;
-   do not overwrite, merge, or delete it.
+4. Confirm there are no `membership_active`, `billing_customers`, or
+   `subscriptions` rows and that the reconciled baseline has removed the legacy
+   `purchases` table. Any pre-existing row or remaining table is a stop
+   condition; do not overwrite, merge, or delete it.
 5. Confirm the reviewed release tree hard-codes all three flags above to
    `false`, hosted Auth is closed, and no Stripe request was attempted. The
    compatibility workflow has not run yet; its three unauthenticated billing
@@ -109,104 +112,38 @@ stages, or use more than one entitled account.
 
 ## Grant one short-lived entitlement
 
-Run the following through the approved production SQL operator path during the
-closed maintenance window. Supply `canary_user_id` and `canary_grant_id` as UUIDs
-and `release_sha` as the exact reviewed 40-character commit. The transaction
-locks the relevant rows, refuses an absent or anonymous account, refuses any
-existing membership or billing evidence, and grants access for two hours only.
+From the exact protected `main` release commit, manually dispatch **Manage
+production canary entitlement** with `operation=grant`, select the explicit
+confirmation, and approve its protected `production` environment job. There are
+no account, email, SQL, grant-ID, or release-SHA inputs. The workflow binds the
+operation to its exact `GITHUB_SHA`, and the helper refuses any project except
+`mimolwojppbtsbvtqwpo`.
 
-```sql
-\set ON_ERROR_STOP on
+The helper first re-verifies closed Auth. It then uses Supabase's official
+[`POST /v1/projects/{ref}/database/query/read-only`](https://supabase.com/docs/reference/api/v1-read-only-query)
+endpoint to require the exact migration-13 history, exactly one non-anonymous
+Auth user with a matching profile, zero membership and billing rows, and no
+legacy `purchases` table. The fixed transaction repeats those checks while
+locking migration history, Auth users, and the relevant public tables, selects the sole
+eligible user internally, and generates a fresh UUID with
+`pg_catalog.gen_random_uuid()`. The write is one atomic `DO` statement; its only
+dynamic value is the already validated 40-character `GITHUB_SHA`, placed into
+one fixed literal slot. It inserts one `membership_active` /
+`production_canary` row with
+`grant_start + interval '2 hours'` and
+`pg_catalog.jsonb_build_object('release_sha', target_release)` through the
+official [`POST /v1/projects/{ref}/database/query`](https://supabase.com/docs/reference/api/v1-run-a-query)
+endpoint. The production token therefore needs `database_read` and
+`database_write` (or the `database:read` and `database:write` OAuth scopes).
 
-begin;
-set local lock_timeout = '5s';
-set local statement_timeout = '30s';
-
-create temporary table canary_parameters (
-  user_id uuid primary key,
-  grant_id uuid not null unique,
-  release_sha text not null check (release_sha ~ '^[0-9a-f]{40}$')
-) on commit drop;
-
-insert into canary_parameters (user_id, grant_id, release_sha)
-values (:'canary_user_id'::uuid, :'canary_grant_id'::uuid, :'release_sha');
-
-lock table public.entitlements,
-  public.billing_customers,
-  public.subscriptions
-in share row exclusive mode;
-
-do $canary$
-declare
-  target_user uuid;
-  target_grant uuid;
-  target_release text;
-  grant_start timestamptz := statement_timestamp();
-  legacy_purchase_count bigint := 0;
-begin
-  select user_id, grant_id, release_sha
-  into strict target_user, target_grant, target_release
-  from canary_parameters;
-
-  if not exists (
-    select 1
-    from auth.users
-    where id = target_user
-      and is_anonymous is false
-  ) then
-    raise exception 'Canary target must be one existing non-anonymous Auth UUID.';
-  end if;
-
-  if exists (
-    select 1 from public.entitlements
-    where user_id = target_user and entitlement_key = 'membership_active'
-  ) then
-    raise exception 'Canary target already has a membership entitlement.';
-  end if;
-
-  if exists (select 1 from public.billing_customers)
-    or exists (select 1 from public.subscriptions) then
-    raise exception 'Closed canary requires globally empty billing tables.';
-  end if;
-
-  if to_regclass('public.purchases') is not null then
-    execute 'lock table public.purchases in share row exclusive mode';
-    execute 'select count(*) from public.purchases'
-      into legacy_purchase_count;
-    if legacy_purchase_count <> 0 then
-      raise exception 'Closed canary requires an empty legacy purchases table.';
-    end if;
-  end if;
-
-  insert into public.entitlements (
-    user_id,
-    entitlement_key,
-    status,
-    source_type,
-    source_id,
-    starts_at,
-    ends_at,
-    metadata
-  ) values (
-    target_user,
-    'membership_active',
-    'active',
-    'production_canary',
-    target_grant::text,
-    grant_start,
-    grant_start + interval '2 hours',
-    jsonb_build_object('release_sha', target_release)
-  );
-end
-$canary$;
-
-commit;
-```
-
-Do not extend `ends_at`, change `source_type`, use an open-ended entitlement,
-or reuse the grant UUID for a future grant. If the transaction fails, stop and
-investigate; do not weaken a guard or manually execute only part of it. Once it
-succeeds, the exact same row—not a replacement—must span compatibility and full.
+After the write returns the documented `201`, the helper discards its body and
+uses the read-only endpoint to re-query aggregate counts only. It requires one
+exact active, two-hour, same-SHA row and the unchanged closed-canary inventory.
+Neither UUID, the row, response bodies, nor the access token is printed or
+stored in an artifact. No arbitrary SQL, replacement, extension, delete, or
+retry mode exists. If any step fails, stop and investigate; do not run SQL by
+hand or weaken a guard. Once it succeeds, the exact same row—not a replacement—
+must span compatibility and full.
 
 The compatibility workflow independently checks this boundary before its first
 Function-secret or deployment mutation. Its dedicated read-only Management API
@@ -218,30 +155,11 @@ query returns aggregate counts only; neither UUID nor entitlement row is logged.
 
 ## Verify the canary
 
-Run this UUID- and grant-bound query. It must return exactly one row with
-`active_now=true`, a two-hour-or-shorter window, and the recorded release SHA:
-
-```sql
-select
-  user_id,
-  entitlement_key,
-  status,
-  source_type,
-  source_id,
-  starts_at,
-  ends_at,
-  metadata ->> 'release_sha' as release_sha,
-  ends_at - starts_at <= interval '2 hours' as bounded_window,
-  metadata ->> 'release_sha' = :'release_sha' as exact_release_sha,
-  status = 'active'
-    and starts_at <= clock_timestamp()
-    and ends_at > clock_timestamp() as active_now
-from public.entitlements
-where user_id = :'canary_user_id'::uuid
-  and entitlement_key = 'membership_active'
-  and source_type = 'production_canary'
-  and source_id = :'canary_grant_id'::uuid::text;
-```
+The grant workflow's final aggregate-only read is the authorization proof. A
+successful run means it found exactly one active two-hour canary for its release
+SHA, one eligible non-anonymous profiled user, exact migration-13 history, zero
+billing rows, and no legacy table. Do not run a separate identifier-returning
+query or copy UUIDs into logs or artifacts.
 
 Immediately dispatch `release_scope=compatibility-cutover` from the exact
 recorded release SHA. Do not dispatch full unless compatibility succeeds, its
@@ -302,70 +220,23 @@ launch.
 ## Revoke and prove removal
 
 Revoke at the end of the test even if the two-hour expiry has passed. Preserve
-the audit row; do not delete it. The exact binding prevents revoking a paid or
-unrelated entitlement:
+the audit row; do not delete it. While `main` is still frozen at the exact
+release commit, manually dispatch **Manage production canary entitlement** with
+`operation=revoke`, select the explicit confirmation, and approve its protected
+`production` environment job.
 
-```sql
-\set ON_ERROR_STOP on
-
-begin;
-set local lock_timeout = '5s';
-
-create temporary table canary_revoke_parameters (
-  user_id uuid primary key,
-  grant_id uuid not null unique
-) on commit drop;
-
-insert into canary_revoke_parameters (user_id, grant_id)
-values (:'canary_user_id'::uuid, :'canary_grant_id'::uuid);
-
-do $revoke$
-declare
-  target_user uuid;
-  target_grant uuid;
-  changed_rows integer;
-begin
-  select user_id, grant_id
-  into strict target_user, target_grant
-  from canary_revoke_parameters;
-
-  update public.entitlements
-  set
-    status = 'revoked',
-    ends_at = least(coalesce(ends_at, clock_timestamp()), clock_timestamp()),
-    updated_at = clock_timestamp()
-  where user_id = target_user
-    and entitlement_key = 'membership_active'
-    and source_type = 'production_canary'
-    and source_id = target_grant::text
-    and status = 'active';
-
-  get diagnostics changed_rows = row_count;
-  if changed_rows <> 1 then
-    raise exception 'Expected exactly one active canary entitlement to revoke.';
-  end if;
-
-  if exists (
-    select 1 from public.entitlements
-    where user_id = target_user
-      and entitlement_key = 'membership_active'
-      and source_type = 'production_canary'
-      and source_id = target_grant::text
-      and status = 'active'
-      and (starts_at is null or starts_at <= clock_timestamp())
-      and (ends_at is null or ends_at > clock_timestamp())
-  ) then
-    raise exception 'Canary entitlement is still active.';
-  end if;
-end
-$revoke$;
-
-commit;
-```
+The fixed transaction will update only when exactly one active
+`membership_active` / `production_canary` row exists globally and that row has
+a canonical generated grant UUID plus metadata bound to this workflow's exact
+`GITHUB_SHA`. It sets `status = 'revoked'`, clamps `ends_at` to the current time,
+and preserves the row. Its aggregate-only read-only verification then requires
+one retained canary row, zero active canary rows, and one exact same-SHA revoked
+row. It never needs or reveals the user or grant UUID. A mismatch is a stop
+condition, not permission to broaden the update.
 
 Sign the target account out, start a fresh session, and confirm membership-only
 data and actions are denied. Re-run the no-billing-row checks and attach the
-revoked row plus UTC revocation time to the release record.
+workflow-run URL plus UTC revocation time to the encrypted release record.
 
 ## Rollback and incident rules
 

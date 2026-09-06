@@ -5,9 +5,13 @@ import { describe, test } from 'node:test';
 const read = (path) => readFileSync(new URL(path, import.meta.url), 'utf8');
 const workflow = read('../../.github/workflows/deploy.yml');
 const previewWorkflow = read('../../.github/workflows/cloudflare-preview.yml');
+const canaryEntitlementWorkflow = read(
+  '../../.github/workflows/manage-production-canary-entitlement.yml',
+);
 const workflows = [
   workflow,
   previewWorkflow,
+  canaryEntitlementWorkflow,
   read('../../.github/workflows/ci.yml'),
   read('../../.github/workflows/browser-quality.yml'),
 ];
@@ -238,19 +242,20 @@ describe('production release configuration', () => {
     assert.doesNotMatch(workflow, /cat [^\n]*(?:billing|stripe).*response/i);
   });
 
-  test('documents a UUID-bound, expiring, auditable canary grant and rollback', () => {
-    assert.match(canaryRunbook, /target Auth user UUID/i);
-    assert.match(canaryRunbook, /'membership_active'/);
-    assert.match(canaryRunbook, /'production_canary'/);
+  test('documents an internally UUID-bound, expiring, auditable canary grant and rollback', () => {
+    assert.match(canaryRunbook, /sole existing non-anonymous Auth user/i);
+    assert.match(canaryRunbook, /`membership_active`/);
+    assert.match(canaryRunbook, /`production_canary`/);
     assert.match(canaryRunbook, /interval '2 hours'/);
-    assert.match(canaryRunbook, /grant_start timestamptz := statement_timestamp\(\)/);
+    assert.match(canaryRunbook, /pg_catalog\.gen_random_uuid\(\)/);
     assert.match(canaryRunbook, /real (?:browser )?session/i);
     assert.match(canaryRunbook, /cancel-membership[\s\S]*create-checkout-session[\s\S]*create-customer-portal-session[\s\S]*exact `503`/i);
-    assert.match(canaryRunbook, /canary_grant_id/);
+    assert.match(canaryRunbook, /never accepts or prints an Auth[\s\S]*grant UUID/i);
     assert.match(canaryRunbook, /billing_customers/);
     assert.match(canaryRunbook, /subscriptions/);
     assert.match(canaryRunbook, /legacy `purchases`/);
     assert.match(canaryRunbook, /status = 'revoked'/);
+    assert.doesNotMatch(canaryRunbook, /canary_user_id|canary_grant_id/);
     assert.match(canaryRunbook, /frontend-only/);
     assert.match(canaryRunbook, /roll forward[\s\S]*Never reset hosted/i);
   });
