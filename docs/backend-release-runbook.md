@@ -263,8 +263,8 @@ Before approving the GitHub `production` environment deployment, confirm:
    `external_anonymous_users_enabled=false`, with `site_url` exactly
    `https://77-dominion-live.pages.dev` and `uri_allow_list` exactly
    `https://77-dominion-live.pages.dev/reset-password.html`. The workflow checks
-   these exact values before any release scope and before `supabase link`, migrations,
-   Function secrets, or Function deployment. It never prints
+   these exact values before any release scope and before temporary database
+   credentials, migrations, Function secrets, or Function deployment. It never prints
    the Auth response. See
    [`production-canary-operator-runbook.md`](production-canary-operator-runbook.md)
    for the UUID-bound owner canary procedure.
@@ -908,7 +908,7 @@ next stage when one fails:
    Supabase's official Management API and require `disable_signup=true` plus
    `external_anonymous_users_enabled=false`, the exact production Site URL, and
    the sole exact password-recovery redirect. This read-only step gates all
-   release scopes and completes before the workflow can link or mutate the
+   release scopes and completes before the workflow can access or mutate the
    backend.
 4. **Guard the compatibility cutover:** only for
    `release_scope=compatibility-cutover`, first prove the strict CLI and raw SQL
@@ -916,9 +916,10 @@ next stage when one fails:
    read-only query proves the one bounded same-release canary grant plus zero
    billing state. Then synchronize the disabled billing
    configuration, deploy and verify all four fail-closed billing endpoints, and
-   then allow the compatibility frontend to build. This scope links only to read
-   and cross-check history; it does not run a migration or write application
-   schema/data. Generic `frontend-only` does not redeploy a Function and remains
+   then allow the compatibility frontend to build. This scope uses one explicit,
+   passwordless database URL plus a private mode-0600 pgpass file only to read and
+   cross-check history; it creates no linked-project state, runs no migration, and
+   writes no application schema/data. Generic `frontend-only` does not redeploy a Function and remains
    reserved for a backend-compatible rollback after the full cutover. Its
    dedicated gate uses the strict CLI and raw SQL inventories and requires
    post-cutover history with no pending migration; it cannot substitute for the
@@ -929,8 +930,10 @@ next stage when one fails:
    Supabase access token is used as the HMAC key but is never written to the
    artifact or logs; the raw row fingerprint, UUID, and entitlement row also
    never leave the verifier process.
-5. **Migrate:** for `release_scope=full`, link the intended project without a
-   stored database password, require the strict pinned-CLI history, and compare
+5. **Migrate:** for `release_scope=full`, address the exact intended project with
+   a freshly minted, passwordless `--db-url` and a private mode-0600 pgpass file,
+   without linked-project state or a stored database password. Require the strict
+   pinned-CLI history and compare
    it with an authoritative read-only SQL inventory of
    `supabase_migrations.schema_migrations`. The raw inventory rejects any
    nonnumeric or extra record the CLI table could omit. Then require the exact
@@ -941,18 +944,24 @@ next stage when one fails:
    release SHA. It downloads the selected immutable artifact ID, accepts only
    one ordinary JSON file, and recomputes the HMAC against the current exact
    canary row before it may preview with
-   `supabase db push --linked --dry-run`, and apply only migrations that follow the
-   reconciled remote history with pinned `supabase migration up --linked`. The
+   `supabase db push --db-url=<passwordless-temporary-url> --dry-run`, and apply
+   only migrations that follow the reconciled remote history with pinned
+   `supabase migration up --db-url=<passwordless-temporary-url>`. The
    dry-run is a plan only; `db push` must never perform the actual mutation.
    Never use `--include-all` or run `supabase/schema.sql` manually in production.
    After `migration up`, the strict CLI/raw comparison runs again and requires
    zero pending local migrations. It then recomputes the same HMAC from the same
    downloaded envelope and the post-migration row before any Function secret is
-   synchronized or any Function is deployed. Supabase CLI 2.109.0 obtains its short-lived login role from the Management
-   API using `SUPABASE_ACCESS_TOKEN`; no database password is placed in workflow
-   arguments, environment variables, or logs. The same raw inventory is checked
-   again after migration.
-6. **Synchronize secrets and deploy functions:** before linking or applying a
+   synchronized or any Function is deployed. Immediately before each database
+   operation, Supabase CLI 2.109.0 obtains a fresh login role with at least a
+   one-hour TTL from the Management API using `SUPABASE_ACCESS_TOKEN`. The CLI
+   receives only the passwordless URL in its arguments and reads the password from
+   the private pgpass file; neither value is persisted to GitHub command files or
+   printed. Every step revokes the temporary login role and removes its isolated
+   credential, probe, and CLI-home directory on exit; cleanup failure fails an
+   otherwise successful step. The same raw inventory is checked again after
+   migration.
+6. **Synchronize secrets and deploy functions:** before database access or applying a
    migration, validate every deterministic worker/provider/retention secret
    pairing, minimum length, and distinctness rule without printing a secret.
    Only after the exact post-migration zero-pending gate succeeds, update
