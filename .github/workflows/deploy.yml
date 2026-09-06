@@ -12,6 +12,11 @@ on:
           - full
           - compatibility-cutover
           - frontend-only
+      backup_run_id:
+        description: Successful free production backup run for this exact commit (required for the one-time compatibility cutover).
+        required: false
+        default: ""
+        type: string
 
 permissions:
   actions: read
@@ -40,6 +45,60 @@ jobs:
     name: Validate release candidate
     needs: authorize
     uses: ./.github/workflows/ci.yml
+
+  backup-evidence:
+    name: Verify restored encrypted production backup
+    needs: validation
+    if: inputs.release_scope == 'compatibility-cutover'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    environment: production
+    env:
+      BACKUP_RUN_ID: ${{ inputs.backup_run_id }}
+      PRODUCTION_BACKUP_PUBLIC_KEY: ${{ vars.PRODUCTION_BACKUP_PUBLIC_KEY }}
+    steps:
+      - name: Checkout the exact release commit
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Setup Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+      - name: Select the successful protected-main backup artifact
+        id: backup
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          artifact_id="$(/usr/bin/env -i \
+            BACKUP_RUN_ID="$BACKUP_RUN_ID" \
+            GH_TOKEN="$GH_TOKEN" \
+            GITHUB_SHA="$GITHUB_SHA" \
+            PATH="$PATH" \
+            node scripts/verify-free-production-backup-evidence.mjs --select)"
+          printf 'artifact_id=%s\n' "$artifact_id" >> "$GITHUB_OUTPUT"
+      - name: Download only the selected encrypted backup artifact
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          artifact-ids: ${{ steps.backup.outputs.artifact_id }}
+          path: ${{ runner.temp }}/production-backup-evidence
+          merge-multiple: true
+          github-token: ${{ github.token }}
+          repository: tjames222/77-dominion-challenge
+          run-id: ${{ inputs.backup_run_id }}
+      - name: Verify encrypted bytes, recovery key, and restored checkpoint
+        shell: bash
+        run: |
+          /usr/bin/env -i \
+            BACKUP_RUN_ID="$BACKUP_RUN_ID" \
+            GITHUB_SHA="$GITHUB_SHA" \
+            PATH="$PATH" \
+            PRODUCTION_BACKUP_PUBLIC_KEY="$PRODUCTION_BACKUP_PUBLIC_KEY" \
+            node scripts/verify-free-production-backup-evidence.mjs \
+              --directory "$RUNNER_TEMP/production-backup-evidence"
 
   cloudflare-policy:
     name: Enforce production and develop-preview Pages policy
@@ -97,6 +156,7 @@ jobs:
       - validation
       - canary-policy
       - cloudflare-policy
+      - backup-evidence
     if: inputs.release_scope == 'compatibility-cutover'
     runs-on: ubuntu-latest
     timeout-minutes: 15

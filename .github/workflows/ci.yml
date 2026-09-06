@@ -76,6 +76,8 @@ jobs:
         run: pnpm run test:reconciliation-stage
       - name: Test production backup and restore evidence boundaries
         run: pnpm run test:production-backup-restore
+      - name: Test restored encrypted production backup release gate
+        run: pnpm run test:free-production-backup-evidence
       - name: Test production one-version reconciliation boundaries
         run: pnpm run test:production-reconciliation
       - name: Test production Auth canary policy guard
