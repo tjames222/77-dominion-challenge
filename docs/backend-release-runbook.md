@@ -969,14 +969,23 @@ next stage when one fails:
    zero pending local migrations. It then recomputes the same HMAC from the same
    downloaded envelope and the post-migration row before any Function secret is
    synchronized or any Function is deployed. Immediately before each database
-   operation, Supabase CLI 2.109.0 obtains a fresh login role with at least a
-   one-hour TTL from the Management API using `SUPABASE_ACCESS_TOKEN`. The CLI
+   operation, the exact-project helper obtains a fresh login role from the
+   Management API using `SUPABASE_ACCESS_TOKEN`. Supabase controls its lifetime;
+   the production helper accepts integer TTLs of 300–7200 seconds, subtracts
+   request/readiness time and a 30-second expiry reserve using a monotonic clock,
+   and requires at least 120 usable seconds before publishing its private ready
+   marker. The fixed `history`, `dry-run`, or `migrate` consumer independently
+   validates that budget before starting Supabase CLI 2.109.0 and stops its
+   process group at the same immutable deadline. It cannot refresh a login,
+   select another target, or run arbitrary SQL. The CLI
    receives only the passwordless URL in its arguments and reads the password from
    the private pgpass file; neither value is persisted to GitHub command files or
    printed. Every step revokes the temporary login role and removes its isolated
    credential, probe, and CLI-home directory on exit; cleanup failure fails an
    otherwise successful step. The same raw inventory is checked again after
-   migration.
+   migration. A timed-out multi-file migration may have committed earlier files;
+   inspect exact history and review the next action instead of assuming an
+   all-or-nothing rollback or blindly rerunning the command.
 6. **Synchronize secrets and deploy functions:** before database access or applying a
    migration, validate every deterministic worker/provider/retention secret
    pairing, minimum length, and distinctness rule without printing a secret.

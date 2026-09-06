@@ -13,6 +13,7 @@ import {
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
+import { createCredentialLifetime } from "./production-database-credential-lifetime.mjs";
 import {
   buildTemporaryDatabaseCredentials,
   buildTemporaryLoginProbeArguments,
@@ -436,7 +437,7 @@ test("mints production credentials against a canonical probe workdir without sta
   const probeWorkdir = await makeCredentialDirectory();
   const credentials = await makeCredentialDirectory();
   const supabaseHome = await makeCredentialDirectory();
-  const management = managementFetch();
+  const management = managementFetch({ login: { password: "temporary-password", role: "cli_login_role", ttl_seconds: 600 } });
   const readinessCalls = [];
   try {
     const result = await prepareProductionSupabaseDatabaseCredentials({
@@ -450,12 +451,14 @@ test("mints production credentials against a canonical probe workdir without sta
         return true;
       },
       supabaseHome,
+      monotonicNow: () => 1_000_000_000n,
     });
 
     assert.deepEqual(result, {
       credentialsPrepared: true,
       projectRef: ref,
       verified: true,
+      credentialLifetime: createCredentialLifetime({ projectRef: ref, issuedAtNs: 1_000_000_000n, ttlSeconds: 600 }),
     });
     assert.deepEqual(
       management.requests.map(({ url }) => url),
@@ -468,6 +471,7 @@ test("mints production credentials against a canonical probe workdir without sta
     assert.equal(readinessCalls.length, 1);
     assert.equal(readinessCalls[0].stageDirectory, probeWorkdir);
     assert.equal(readinessCalls[0].supabaseHome, supabaseHome);
+    assert.deepEqual(JSON.parse(await readFile(path.join(credentials, "credential-deadline"), "utf8")), result.credentialLifetime);
     assert.equal(
       await readFile(path.join(credentials, "database-url"), "utf8"),
       `postgresql://cli_login_role.${ref}@aws-1-us-west-2.pooler.supabase.com:5432/postgres?sslmode=require&connect_timeout=10`,
@@ -484,6 +488,7 @@ test("mints production credentials against a canonical probe workdir without sta
       "database-url",
       "database-passfile",
       "credential-ready",
+      "credential-deadline",
     ]) {
       assert.equal((await stat(path.join(credentials, name))).mode & 0o777, 0o600);
     }
@@ -785,7 +790,7 @@ test("a short-lived login response is revoked before credentials are written", a
     login: {
       password: "temporary-password",
       role: "cli_login_role",
-      ttl_seconds: 3599,
+      ttl_seconds: 299,
     },
   });
   try {
@@ -810,6 +815,66 @@ test("a short-lived login response is revoked before credentials are written", a
     await rm(probeWorkdir, { recursive: true, force: true });
     await rm(credentials, { recursive: true, force: true });
     await rm(supabaseHome, { recursive: true, force: true });
+  }
+});
+
+test("production request and readiness latency consume one deadline before ready is published", async () => {
+  for (const [requestSeconds, readinessSeconds, expectedCode] of [[60, 60, null], [120, 30, null], [120, 31, "credential-lifetime-budget"], [180, 0, "credential-lifetime-budget"]]) {
+    const probeWorkdir = await makeCredentialDirectory();
+    const credentials = await makeCredentialDirectory();
+    const supabaseHome = await makeCredentialDirectory();
+    const management = managementFetch({ login: { password: "temporary-password", role: "cli_login_role", ttl_seconds: 300 } });
+    let now = 1_000_000_000n;
+    let probes = 0;
+    try {
+      const operation = () => prepareProductionSupabaseDatabaseCredentials({
+        accessToken: token, credentialDirectory: credentials, probeWorkdir, projectRef: ref, supabaseHome,
+        monotonicNow: () => now,
+        fetchImplementation: async (url, options) => {
+          const response = await management.fetchImplementation(url, options);
+          if (options.method === "POST") now += BigInt(requestSeconds) * 1_000_000_000n;
+          return response;
+        },
+        readinessProbe: async () => {
+          probes++;
+          assert.equal((await readdir(credentials)).includes("credential-ready"), false);
+          now += BigInt(readinessSeconds) * 1_000_000_000n;
+          return true;
+        },
+      });
+      if (expectedCode) {
+        await assert.rejects(operation, { diagnosticCode: expectedCode });
+        assert.deepEqual(await readdir(credentials), []);
+        assert.equal(management.requests.at(-1).options.method, "DELETE");
+      } else {
+        const result = await operation();
+        assert.equal(result.credentialLifetime.issuedAtNs, "1000000000");
+        assert.equal(result.credentialLifetime.deadlineNs, "271000000000");
+        assert.equal(await readFile(path.join(credentials, "credential-ready"), "utf8"), ref);
+      }
+      assert.equal(probes, requestSeconds === 180 ? 0 : 1);
+      assert.equal(management.requests.filter(({ options }) => options.method === "POST").length, 1);
+    } finally {
+      await rm(probeWorkdir, { recursive: true, force: true });
+      await rm(credentials, { recursive: true, force: true });
+      await rm(supabaseHome, { recursive: true, force: true });
+    }
+  }
+});
+
+test("readiness interruption or exhausted lifetime never schedules another probe", async () => {
+  for (const diagnosticCode of ["credential-operation-interrupted", "credential-lifetime-expired", "credential-lifetime-budget", "credential-lifetime-contract"]) {
+    let probes = 0;
+    let delays = 0;
+    await assert.rejects(() => waitForTemporaryDatabaseLogin({
+      databaseUrl: "fixture", passfilePath: "/fixture", stageDirectory: "/fixture", supabaseHome: "/fixture",
+      credentialLifetime: createCredentialLifetime({ projectRef: ref, issuedAtNs: 0n, ttlSeconds: 300 }),
+      monotonicNow: () => 0n,
+      delayImplementation: async () => { delays++; },
+      probeAttempt: async () => { probes++; const error = new Error("private fixture details"); error.diagnosticCode = diagnosticCode; throw error; },
+    }), { diagnosticCode });
+    assert.equal(probes, 1);
+    assert.equal(delays, 0);
   }
 });
 

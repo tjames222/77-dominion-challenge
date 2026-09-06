@@ -24,6 +24,22 @@ without passwords. All plaintext dumps, private diagnostics, and credentials liv
 in runner tmpfs and are removed afterward. An interrupted runner is ephemeral;
 the final workflow step also attempts credential revocation.
 
+Supabase controls the temporary password lifetime; the production path accepts
+integer lifetimes of 300–7200 seconds instead of assuming a full hour. A
+monotonic deadline begins before the login request, includes setup and readiness
+time, and reserves 30 seconds before expiry. At least 120 usable seconds must
+remain before credentials become ready and before a production CLI operation
+starts. All remote backup commands share that one deadline. A timeout stops the
+owned capture container before cleanup, so terminating the Docker client cannot
+leave its database query running. Local restore and encryption happen after
+credential revocation and do not consume this database-login budget.
+
+The release workflow obtains and revokes a separate login for each fixed
+`history`, `dry-run`, or `migrate` operation. It never refreshes credentials in
+the middle of an operation. A timed-out migration command can have committed an
+earlier migration; inspect exact history and review the recovery path instead of
+assuming the whole chain rolled back or blindly retrying it.
+
 The backup is restored into a new `initdb` cluster in a network-disabled container
 with tmpfs data. It has no hosted credentials and its local admin role must be
 absent from the source. Cron execution is disabled. The restore must reproduce

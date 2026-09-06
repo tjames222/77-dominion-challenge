@@ -8,6 +8,7 @@ import path from 'node:path';
 import { pipeline } from 'node:stream/promises';
 import { pathToFileURL } from 'node:url';
 import { prepareProductionSupabaseDatabaseCredentials, revokeProductionSupabaseDatabaseCredentials } from './prepare-existing-supabase-cli-state.mjs';
+import { remainingCredentialMilliseconds, runDeadlineProcess } from './production-database-credential-lifetime.mjs';
 
 export const PROJECT_REF = 'mimolwojppbtsbvtqwpo';
 export const POSTGRES_IMAGE = 'public.ecr.aws/supabase/postgres:17.6.1.141';
@@ -137,6 +138,8 @@ const safeDiagnosticCodes = new Set([
   'docker-daemon-permission', 'docker-daemon-unavailable', 'docker-mount-invalid',
   'docker-runtime-permission', 'docker-container-exists', 'docker-resource-limit',
   'docker-command-failed', 'executable-unavailable',
+  'credential-lifetime-contract', 'credential-lifetime-expired', 'credential-lifetime-budget',
+  'credential-operation-timeout', 'credential-operation-interrupted',
 ]);
 
 export function classifyDockerFailure(stderr, spawnErrorCode) {
@@ -183,28 +186,42 @@ export function classifyBackupFailure(error) {
   return 'unclassified';
 }
 
-async function command(executable, args, { output, log, env = cleanEnvironment(), input } = {}) {
-  const child = spawn(executable, args, { env, stdio: [input ? 'pipe' : 'ignore', 'pipe', 'pipe'] });
+async function command(executable, args, { output, log, env = cleanEnvironment(), input, deadlineNs } = {}) {
   const errors = createWriteStream(log, { flags: 'a', mode: 0o600 });
   let privateStderr = '';
-  child.stderr.on('data', (chunk) => {
-    if (privateStderr.length < 32_768) privateStderr += chunk.toString().slice(0, 32_768 - privateStderr.length);
-  });
-  child.stderr.pipe(errors, { end: false });
   let captured = '';
   let piping;
-  if (output) piping = pipeline(child.stdout, createWriteStream(output, { flags: 'wx', mode: 0o600 }));
-  else child.stdout.on('data', (chunk) => { captured += chunk; if (captured.length > 1024 * 1024) child.kill(); });
-  if (input) {
-    child.stdin.on('error', () => {});
-    createReadStream(input).pipe(child.stdin);
-  }
   let spawnErrorCode;
-  const status = await new Promise((resolve) => {
-    child.once('error', (error) => { spawnErrorCode = error.code; resolve(-1); }); child.once('close', resolve);
-  });
-  await piping;
-  await new Promise((resolve) => errors.end(resolve));
+  let pipingError;
+  const setup = (child) => {
+    child.stderr.on('data', (chunk) => {
+      if (privateStderr.length < 32_768) privateStderr += chunk.toString().slice(0, 32_768 - privateStderr.length);
+    });
+    child.stderr.pipe(errors, { end: false });
+    if (output) piping = pipeline(child.stdout, createWriteStream(output, { flags: 'wx', mode: 0o600 })).catch((error) => { pipingError = error; });
+    else child.stdout.on('data', (chunk) => { captured += chunk; if (captured.length > 1024 * 1024) child.kill(); });
+    if (input) {
+      child.stdin.on('error', () => {});
+      createReadStream(input).pipe(child.stdin);
+    }
+    child.once('error', (error) => { spawnErrorCode = error.code; });
+  };
+  let status;
+  try {
+    const stdio = [input ? 'pipe' : 'ignore', 'pipe', 'pipe'];
+    if (deadlineNs) {
+      status = await runDeadlineProcess(executable, args, { deadlineNs, env, stdio, onSpawn: setup });
+    } else {
+      const child = spawn(executable, args, { env, stdio });
+      setup(child);
+      status = await new Promise((resolve) => { child.once('close', resolve); });
+    }
+    await piping;
+    if (pipingError) throw pipingError;
+  } finally {
+    await piping;
+    await new Promise((resolve) => errors.end(resolve));
+  }
   if (status !== 0) {
     const error = new Error('Backup subprocess failed; private diagnostics are suppressed');
     if (executable === 'docker') error.diagnosticCode = classifyDockerFailure(privateStderr, spawnErrorCode);
@@ -262,7 +279,7 @@ export async function runBackup() {
     assert.match(imageId, /^sha256:[a-f0-9]{64}$/u);
     stage('temporary-credentials');
     minted = true;
-    await prepareProductionSupabaseDatabaseCredentials({
+    const { credentialLifetime } = await prepareProductionSupabaseDatabaseCredentials({
       accessToken: token, credentialDirectory: credentials, projectRef: PROJECT_REF,
       supabaseHome, probeWorkdir,
     });
@@ -275,14 +292,28 @@ export async function runBackup() {
     const captureName = `dominion-backup-capture-${randomBytes(12).toString('hex')}`;
     containers.push(captureName);
     stage('capture-container');
-    await command('docker', ['run', '--detach', '--name', captureName, '--label', `com.dominion.backup-owner=${ownershipToken}`, '--pull', 'never', '--read-only', '--cap-drop', 'ALL', '--security-opt', 'no-new-privileges', '--log-driver', 'none', '--user', owner, '--tmpfs', '/tmp:rw,nosuid,nodev,noexec,size=64m', '--mount', `type=bind,source=${runtime},target=${runtime},readonly`, '--entrypoint', 'sleep', imageId, '1800'], { log });
+    remainingCredentialMilliseconds(credentialLifetime, PROJECT_REF);
+    await command('docker', ['run', '--detach', '--name', captureName, '--label', `com.dominion.backup-owner=${ownershipToken}`, '--pull', 'never', '--read-only', '--cap-drop', 'ALL', '--security-opt', 'no-new-privileges', '--log-driver', 'none', '--user', owner, '--tmpfs', '/tmp:rw,nosuid,nodev,noexec,size=64m', '--mount', `type=bind,source=${runtime},target=${runtime},readonly`, '--entrypoint', 'sleep', imageId, '1800'], { log, deadlineNs: credentialLifetime.deadlineNs });
     const remoteEnv = [
       '-e', `PGHOST=${databaseUrl.hostname}`, '-e', 'PGPORT=5432',
       '-e', `PGUSER=${decodeURIComponent(databaseUrl.username)}`, '-e', 'PGDATABASE=postgres',
       '-e', `PGPASSFILE=${passfile}`, '-e', 'PGSSLMODE=require', '-e', 'PGCONNECT_TIMEOUT=10',
       '-e', 'PGOPTIONS=-c default_transaction_read_only=on -c role=postgres',
     ];
-    const remote = (args, output) => command('docker', ['exec', ...remoteEnv, captureName, ...args], { log, output });
+    const remote = async (args, output) => {
+      try {
+        remainingCredentialMilliseconds(credentialLifetime, PROJECT_REF);
+        const result = await command('docker', ['exec', ...remoteEnv, captureName, ...args], { log, output, deadlineNs: credentialLifetime.deadlineNs });
+        remainingCredentialMilliseconds(credentialLifetime, PROJECT_REF);
+        return result;
+      } catch (error) {
+        // Killing docker exec alone does not stop its in-container query.
+        // Remove and verify the owned capture container before any later work.
+        await removeContainer(captureName);
+        containers.splice(containers.indexOf(captureName), 1);
+        throw error;
+      }
+    };
     const inventorySql = path.join(runtime, 'inventory.sql');
     await writeFile(inventorySql, await readFile(path.join(repository, 'scripts/free-backup-inventory.sql')), { flag: 'wx', mode: 0o600 });
     const before = path.join(capture, 'inventory.jsonl');
@@ -351,12 +382,12 @@ export async function runBackup() {
     fail(`Backup failed at stage ${phase} (${classifyBackupFailure(error)}); no private diagnostic text is emitted`);
   } finally {
     let cleanupFailed = false;
-    if (minted) {
-      try { await revokeProductionSupabaseDatabaseCredentials({ accessToken: token, projectRef: PROJECT_REF }); }
-      catch { cleanupFailed = true; }
-    }
     for (const name of containers) {
       try { await removeContainer(name); }
+      catch { cleanupFailed = true; }
+    }
+    if (minted) {
+      try { await revokeProductionSupabaseDatabaseCredentials({ accessToken: token, projectRef: PROJECT_REF }); }
       catch { cleanupFailed = true; }
     }
     await rm(runtime, { recursive: true, force: true });
