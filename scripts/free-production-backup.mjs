@@ -13,6 +13,8 @@ import { remainingCredentialMilliseconds, runDeadlineProcess } from './productio
 export const PROJECT_REF = 'mimolwojppbtsbvtqwpo';
 export const POSTGRES_IMAGE = 'public.ecr.aws/supabase/postgres:17.6.1.141';
 export const MAX_ENCRYPTED_BYTES = 49 * 1024 * 1024;
+export const REMOTE_BACKUP_ROLE_SQL = 'SET SESSION ROLE postgres';
+export const REMOTE_BACKUP_PREFLIGHT_SQL = `${REMOTE_BACKUP_ROLE_SQL}; BEGIN READ ONLY; SELECT (current_user = 'postgres')::text, (current_setting('transaction_read_only') = 'on')::text; ROLLBACK;`;
 const sha256 = (bytes) => createHash('sha256').update(bytes).digest('hex');
 const fail = (message) => { throw new Error(message); };
 
@@ -298,6 +300,8 @@ export async function runBackup() {
       '-e', `PGHOST=${databaseUrl.hostname}`, '-e', 'PGPORT=5432',
       '-e', `PGUSER=${decodeURIComponent(databaseUrl.username)}`, '-e', 'PGDATABASE=postgres',
       '-e', `PGPASSFILE=${passfile}`, '-e', 'PGSSLMODE=require', '-e', 'PGCONNECT_TIMEOUT=10',
+      // Defense in depth only: poolers may discard startup options. Every
+      // remote command below explicitly switches role after authentication.
       '-e', 'PGOPTIONS=-c default_transaction_read_only=on -c role=postgres',
     ];
     const remote = async (args, output) => {
@@ -314,22 +318,25 @@ export async function runBackup() {
         throw error;
       }
     };
+    stage('remote-session-preflight');
+    assert.equal(await remote(['psql', '-X', '-q', '-At', '-v', 'ON_ERROR_STOP=1', '-c', REMOTE_BACKUP_PREFLIGHT_SQL]), 'true|true',
+      'The explicit backup role or read-only transaction contract failed');
     const inventorySql = path.join(runtime, 'inventory.sql');
     await writeFile(inventorySql, await readFile(path.join(repository, 'scripts/free-backup-inventory.sql')), { flag: 'wx', mode: 0o600 });
     const before = path.join(capture, 'inventory.jsonl');
     stage('inventory-before');
-    await remote(['psql', '-X', '-q', '-v', 'ON_ERROR_STOP=1', '-f', inventorySql], before);
+    await remote(['psql', '-X', '-q', '-v', 'ON_ERROR_STOP=1', '-c', REMOTE_BACKUP_ROLE_SQL, '-f', inventorySql], before);
     const beforeText = await readFile(before, 'utf8');
     const inventory = parseInventory(beforeText, expectedVersions);
     const sourceBootstrapRole = inventory.find((r) => r.kind === 'boundary').bootstrapRole;
     console.log('Production checkpoint verified; capturing a read-only logical backup.');
     stage('roles-capture');
-    await remote(['pg_dumpall', '--roles-only', '--no-role-passwords'], path.join(capture, 'roles.sql'));
+    await remote(['pg_dumpall', '--roles-only', '--no-role-passwords', '--role=postgres'], path.join(capture, 'roles.sql'));
     stage('database-dump');
-    await remote(['pg_dump', '--format=custom', '--compress=0', '--lock-wait-timeout=15000'], path.join(capture, 'database.dump'));
+    await remote(['pg_dump', '--format=custom', '--compress=0', '--lock-wait-timeout=15000', '--role=postgres'], path.join(capture, 'database.dump'));
     const after = path.join(runtime, 'after.jsonl');
     stage('inventory-after');
-    await remote(['psql', '-X', '-q', '-v', 'ON_ERROR_STOP=1', '-f', inventorySql], after);
+    await remote(['psql', '-X', '-q', '-v', 'ON_ERROR_STOP=1', '-c', REMOTE_BACKUP_ROLE_SQL, '-f', inventorySql], after);
     assert.equal(await readFile(after, 'utf8'), beforeText, 'Source database changed during backup');
     await revokeProductionSupabaseDatabaseCredentials({ accessToken: token, projectRef: PROJECT_REF });
     minted = false;
