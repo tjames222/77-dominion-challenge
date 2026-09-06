@@ -184,15 +184,24 @@ export function normalizePrimaryPoolerConfig(value, projectRef) {
     isPlainObject(entry) && entry.database_type === "PRIMARY"
   );
   if (primaryConfigs.length !== 1) {
-    fail("the pooler response must contain exactly one PRIMARY database", "pooler-primary-count");
+    fail("the pooler response must contain exactly one PRIMARY database",
+      primaryConfigs.length === 0 ? "pooler-primary-none" : "pooler-primary-multiple");
   }
   const primary = primaryConfigs[0];
   const metadataMessage = "the primary pooler metadata is not canonical";
   if (primary.identifier !== projectRef) fail(metadataMessage, "pooler-identifier");
-  if (primary.db_user !== `postgres.${projectRef}`) fail(metadataMessage, "pooler-db-user");
+  if (primary.db_user !== `postgres.${projectRef}`) {
+    fail(metadataMessage, primary.db_user === "postgres" ? "pooler-db-user-unqualified" : "pooler-db-user");
+  }
   if (primary.db_name !== "postgres") fail(metadataMessage, "pooler-db-name");
   if (primary.is_using_scram_auth !== true) fail(metadataMessage, "pooler-scram");
-  if (primary.connectionString !== primary.connection_string) fail(metadataMessage, "pooler-alias-mismatch");
+  if (primary.connectionString !== primary.connection_string) {
+    const code = primary.connectionString === undefined && typeof primary.connection_string === "string"
+      ? "pooler-alias-snake-only"
+      : primary.connection_string === undefined && typeof primary.connectionString === "string"
+      ? "pooler-alias-camel-only" : "pooler-alias-mismatch";
+    fail(metadataMessage, code);
+  }
   if (!isNullableNonnegativeInteger(primary.default_pool_size)) fail(metadataMessage, "pooler-default-pool-size");
   if (!isNullableNonnegativeInteger(primary.max_client_conn)) fail(metadataMessage, "pooler-max-client-count");
   if (

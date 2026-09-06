@@ -839,9 +839,12 @@ test("pooler predicate diagnostics retain exact checks without exposing response
   for (const [overrides, expectedCode] of [
     [{ identifier: "unexpected-project" }, "pooler-identifier"],
     [{ db_user: "unexpected-user" }, "pooler-db-user"],
+    [{ db_user: "postgres" }, "pooler-db-user-unqualified"],
     [{ db_name: "unexpected-database" }, "pooler-db-name"],
     [{ is_using_scram_auth: false }, "pooler-scram"],
     [{ connectionString: "private-alias-value" }, "pooler-alias-mismatch"],
+    [{ connectionString: undefined }, "pooler-alias-snake-only"],
+    [{ connection_string: undefined }, "pooler-alias-camel-only"],
     [{ default_pool_size: -1 }, "pooler-default-pool-size"],
     [{ max_client_conn: "200" }, "pooler-max-client-count"],
     [{ db_port: 5432 }, "pooler-port-mode"],
@@ -855,7 +858,8 @@ test("pooler predicate diagnostics retain exact checks without exposing response
       return true;
     });
   }
-  assert.throws(() => normalizePrimaryPoolerConfig([], ref), (error) => error.diagnosticCode === "pooler-primary-count");
+  assert.throws(() => normalizePrimaryPoolerConfig([], ref), (error) => error.diagnosticCode === "pooler-primary-none");
+  assert.throws(() => normalizePrimaryPoolerConfig([primaryPooler(), primaryPooler()], ref), (error) => error.diagnosticCode === "pooler-primary-multiple");
   assert.throws(() => normalizePrimaryPoolerConfig({}, ref), (error) => error.diagnosticCode === "pooler-response-shape");
 });
 
