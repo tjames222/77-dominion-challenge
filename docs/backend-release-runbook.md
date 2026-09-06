@@ -235,6 +235,12 @@ Before approving the GitHub `production` environment deployment, confirm:
 1. The release commit is on `main`, came through a reviewed pull request, and all
    three validation jobs passed for that exact commit.
 2. A recent production backup or point-in-time recovery window is available.
+   For this Free-plan initial cutover, run the protected
+   [Free production backup workflow](free-production-backup.md), preserve the
+   encrypted artifact locally, and verify local decryption with the separately
+   retained private key. The compatibility release requires its successful
+   `backup_run_id` for the same frozen commit; the backup must be less than
+   24 hours old and must have passed its isolated restore comparison.
 3. New migrations are additive or have an approved compatibility plan for the
    currently deployed frontend and functions.
 4. Every new Edge Function secret is present in the inventory and has an owner.
@@ -738,6 +744,9 @@ FOU-752/753 must not use the normal backend-first order for their first producti
    empty `billing_customers`, `subscriptions`, and `membership_active`, require
    that the baseline removed legacy `purchases`, and prove there is exactly one
    non-anonymous Auth user with its matching profile.
+   Before granting access, capture and restore-verify the
+   [free encrypted backup](free-production-backup.md) from this exact `main`
+   commit. Keep the downloaded backup and private key on the operator machine.
 3. Following [`production-canary-operator-runbook.md`](production-canary-operator-runbook.md),
    dispatch the protected canary operator's `grant` operation. It selects only
    the sole existing non-anonymous Auth user with its matching profile and
@@ -748,7 +757,8 @@ FOU-752/753 must not use the normal backend-first order for their first producti
    narrowly timed grant is required to exercise the compatibility client; it is
    not permission to skip the compatibility deployment or go directly to full.
 4. Manually dispatch **Release production** from the exact reviewed
-   release-candidate ref with `release_scope=compatibility-cutover`. Before
+   release-candidate ref with `release_scope=compatibility-cutover` and the
+   successful same-commit `backup_run_id`. Before
    synchronizing a Function secret or deploying anything, this scope uses the
    strict pinned CLI parser plus a dedicated read-only Management API query to
    prove remote history is exactly migrations 1–13. A separate aggregate-only
