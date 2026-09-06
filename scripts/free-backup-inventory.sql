@@ -12,6 +12,17 @@ SELECT json_build_object('kind','boundary','serverVersion',current_setting('serv
   'bootstrapRole',(SELECT rolname FROM pg_roles WHERE oid=10),
   'foreignTables',(SELECT count(*) FROM pg_foreign_table),
   'reservedRoleExists',EXISTS(SELECT 1 FROM pg_roles WHERE rolname='backup_restore_admin'))::text;
+SELECT json_build_object('kind','eventTriggers','entries',coalesce(json_agg(json_build_object(
+  'name',e.evtname,'event',e.evtevent,'enabled',e.evtenabled,'tags',e.evttags,
+  'owner',owner_role.rolname,'ownerSuper',owner_role.rolsuper,
+  'functionSchema',n.nspname,'functionName',p.proname,
+  'functionIdentityArguments',pg_get_function_identity_arguments(p.oid),
+  'functionOwner',function_role.rolname) ORDER BY e.evtname COLLATE "C"),'[]'::json))::text
+FROM pg_event_trigger e
+JOIN pg_roles owner_role ON owner_role.oid=e.evtowner
+JOIN pg_proc p ON p.oid=e.evtfoid
+JOIN pg_namespace n ON n.oid=p.pronamespace
+JOIN pg_roles function_role ON function_role.oid=p.proowner;
 SELECT format(
   'SELECT json_build_object(''kind'',''table'',''schema'',%L,''name'',%L,''count'',count(*),''sha256'',encode(sha256(convert_to(coalesce(string_agg(encode(sha256(convert_to(to_jsonb(t)::text,''UTF8'')),''hex''),'''' ORDER BY to_jsonb(t)::text COLLATE "C"),''''),''UTF8'')),''hex''))::text FROM %I.%I t;',
   n.nspname, c.relname, n.nspname, c.relname)

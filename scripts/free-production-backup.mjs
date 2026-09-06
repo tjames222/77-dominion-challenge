@@ -15,6 +15,7 @@ export const POSTGRES_IMAGE = 'public.ecr.aws/supabase/postgres:17.6.1.141';
 export const MAX_ENCRYPTED_BYTES = 49 * 1024 * 1024;
 export const REMOTE_BACKUP_ROLE_SQL = 'SET SESSION ROLE postgres';
 export const REMOTE_BACKUP_PREFLIGHT_SQL = `${REMOTE_BACKUP_ROLE_SQL}; BEGIN READ ONLY; SELECT (current_user = 'postgres')::text, (current_setting('transaction_read_only') = 'on')::text; ROLLBACK;`;
+export const LOCAL_RESTORE_ROLE_SNAPSHOT_SQL = "SELECT coalesce(jsonb_agg(to_jsonb(r) ORDER BY r.oid), '[]'::jsonb)::text FROM pg_catalog.pg_roles AS r;";
 const sha256 = (bytes) => createHash('sha256').update(bytes).digest('hex');
 const fail = (message) => { throw new Error(message); };
 
@@ -92,6 +93,26 @@ export function parseInventory(text, expectedVersions) {
   const histories = records.filter((r) => r.kind === 'history');
   assert.equal(histories.length, 1);
   assert.deepEqual(histories[0].versions, expectedVersions, 'Backup is only approved for the exact 1–13 checkpoint');
+  const eventTriggerRecords = records.filter((r) => r.kind === 'eventTriggers');
+  assert.equal(eventTriggerRecords.length, 1, 'Missing unique event-trigger inventory');
+  assert(Array.isArray(eventTriggerRecords[0].entries));
+  const triggerFields = ['name', 'event', 'enabled', 'tags', 'owner', 'ownerSuper', 'functionSchema', 'functionName', 'functionIdentityArguments', 'functionOwner'].sort();
+  let previousName;
+  for (const trigger of eventTriggerRecords[0].entries) {
+    assert(trigger && typeof trigger === 'object' && !Array.isArray(trigger));
+    assert.deepEqual(Object.keys(trigger).sort(), triggerFields);
+    for (const field of ['name', 'owner', 'functionSchema', 'functionName', 'functionOwner']) {
+      assert.equal(typeof trigger[field], 'string');
+      assert(trigger[field].length > 0 && !trigger[field].includes('\0'));
+    }
+    assert(['login', 'ddl_command_start', 'ddl_command_end', 'sql_drop', 'table_rewrite'].includes(trigger.event));
+    assert(['O', 'D', 'R', 'A'].includes(trigger.enabled));
+    assert.equal(typeof trigger.ownerSuper, 'boolean');
+    assert.equal(typeof trigger.functionIdentityArguments, 'string');
+    assert(trigger.tags === null || (Array.isArray(trigger.tags) && trigger.tags.every((tag) => typeof tag === 'string' && tag.length > 0)));
+    if (previousName !== undefined) assert(Buffer.compare(Buffer.from(previousName), Buffer.from(trigger.name)) < 0, 'Event triggers must be unique and C-sorted');
+    previousName = trigger.name;
+  }
   for (const record of tables) {
     assert(Number.isSafeInteger(record.count) && record.count >= 0);
     assert.match(record.sha256, /^[a-f0-9]{64}$/u);
@@ -112,6 +133,39 @@ export function localRestoreRoles(original, sourceBootstrapRole) {
     const suffix = suffixes.find((candidate) => line.startsWith('GRANT ') && line.endsWith(candidate));
     return suffix ? line.slice(0, -suffix.length) + ' GRANTED BY backup_restore_admin;' : line;
   }).join('\n');
+}
+
+export async function restoreLocalArchiveWithRoleCompatibility({ localSql, restoreArchive }) {
+  // These callbacks are permanently bound to the owned, network-none restore
+  // container below. No hosted endpoint, role name, or SQL comes from callers.
+  const before = await localSql(LOCAL_RESTORE_ROLE_SNAPSHOT_SQL);
+  const roles = JSON.parse(before);
+  assert(Array.isArray(roles));
+  const postgres = roles.filter((role) => role.rolname === 'postgres');
+  assert.equal(postgres.length, 1, 'Expected one isolated postgres role');
+  assert.equal(postgres[0].rolsuper, false, 'Isolated postgres must initially be non-superuser');
+  const bootstrap = roles.find((role) => role.oid === '10');
+  assert.equal(bootstrap?.rolname, 'backup_restore_admin', 'Unexpected isolated bootstrap administrator');
+  assert.equal(bootstrap?.rolsuper, true, 'Isolated bootstrap administrator must remain superuser');
+  let operationFailure;
+  let downgradeFailure;
+  try {
+    // Stock PostgreSQL requires a superuser target owner when replaying event
+    // triggers. Only this disposable role changes; the captured SQL is intact.
+    await localSql('ALTER ROLE postgres SUPERUSER;');
+    await restoreArchive();
+  } catch (error) {
+    operationFailure = { error };
+  } finally {
+    try { await localSql('ALTER ROLE postgres NOSUPERUSER;'); }
+    catch (error) { downgradeFailure = { error }; }
+  }
+  // Preserve the primary restore diagnostic even if teardown must also handle
+  // a failed downgrade. Either failure exits to owned-container cleanup.
+  if (operationFailure) throw operationFailure.error;
+  if (downgradeFailure) throw downgradeFailure.error;
+  assert.equal(await localSql(LOCAL_RESTORE_ROLE_SNAPSHOT_SQL), before,
+    'Isolated role attributes changed during archive restore');
 }
 
 const comparableInventory = (text) => JSON.stringify(text.trim().split('\n').map((line) => {
@@ -143,6 +197,17 @@ const safeDiagnosticCodes = new Set([
   'credential-lifetime-contract', 'credential-lifetime-expired', 'credential-lifetime-budget',
   'credential-operation-timeout', 'credential-operation-interrupted',
   'pg-restore-error', 'pg-restore-query-error', 'pg-restore-permission',
+  'pg-restore-permission-schema', 'pg-restore-permission-function',
+  'pg-restore-permission-table', 'pg-restore-permission-sequence',
+  'pg-restore-permission-database', 'pg-restore-permission-language',
+  'pg-restore-permission-tablespace', 'pg-restore-permission-create-extension',
+  'pg-restore-permission-create-event-trigger', 'pg-restore-permission-superuser-required',
+  'pg-restore-permission-admin-required', 'pg-restore-permission-set-required',
+  'pg-restore-permission-event-trigger-owner', 'pg-restore-permission-grant-role',
+  'pg-restore-permission-revoke-role', 'pg-restore-permission-grant-as-role',
+  'pg-restore-permission-revoke-by-role', 'pg-restore-permission-set-parameter',
+  'pg-restore-permission-set-session-authorization', 'pg-restore-permission-set-role',
+  'pg-restore-permission-other',
   'pg-restore-ownership', 'pg-restore-existing-object', 'pg-restore-missing-object',
   'pg-restore-extension-unavailable', 'pg-restore-server-setting',
   'pg-restore-syntax', 'pg-restore-data', 'pg-restore-input',
@@ -162,7 +227,34 @@ export function classifyPgRestoreFailure(stderr) {
   if (/^(?:could not open extension control file|extension .+ is not available)/u.test(detail)) return 'pg-restore-extension-unavailable';
   if (/^(?:unrecognized configuration parameter|invalid value for parameter)/u.test(detail)) return 'pg-restore-server-setting';
   if (/^syntax error\b/u.test(detail)) return 'pg-restore-syntax';
-  if (/^(?:permission denied\b|must be superuser\b|must have (?:ADMIN|SET) option\b)/u.test(detail)) return 'pg-restore-permission';
+  // PostgreSQL 17 object, role-grant, and GUC checks use these literal prefixes.
+  // Return only fixed categories, never the following object or role name.
+  // ADMIN/SET reasons in DETAIL or HINT are deliberately not inferred here.
+  for (const [permissionPrefix, code] of [
+    ['permission denied for schema ', 'pg-restore-permission-schema'],
+    ['permission denied for function ', 'pg-restore-permission-function'],
+    ['permission denied for table ', 'pg-restore-permission-table'],
+    ['permission denied for sequence ', 'pg-restore-permission-sequence'],
+    ['permission denied for database ', 'pg-restore-permission-database'],
+    ['permission denied for language ', 'pg-restore-permission-language'],
+    ['permission denied for tablespace ', 'pg-restore-permission-tablespace'],
+    ['permission denied to create extension ', 'pg-restore-permission-create-extension'],
+    ['permission denied to create event trigger ', 'pg-restore-permission-create-event-trigger'],
+    ['permission denied to change owner of event trigger ', 'pg-restore-permission-event-trigger-owner'],
+    ['permission denied to grant role ', 'pg-restore-permission-grant-role'],
+    ['permission denied to revoke role ', 'pg-restore-permission-revoke-role'],
+    ['permission denied to grant privileges as role ', 'pg-restore-permission-grant-as-role'],
+    ['permission denied to revoke privileges granted by role ', 'pg-restore-permission-revoke-by-role'],
+    ['permission denied to set parameter ', 'pg-restore-permission-set-parameter'],
+    ['permission denied to set session authorization ', 'pg-restore-permission-set-session-authorization'],
+    ['permission denied to set role ', 'pg-restore-permission-set-role'],
+  ]) {
+    if (detail.startsWith(permissionPrefix)) return code;
+  }
+  if (/^must be (?:a )?superuser\b/u.test(detail)) return 'pg-restore-permission-superuser-required';
+  if (/^must have ADMIN option\b/u.test(detail)) return 'pg-restore-permission-admin-required';
+  if (/^must have SET option\b/u.test(detail)) return 'pg-restore-permission-set-required';
+  if (/^permission denied\b/u.test(detail)) return 'pg-restore-permission-other';
   if (/^(?:must be owner\b|must be member of role\b|must be able to SET ROLE\b)/u.test(detail)) return 'pg-restore-ownership';
   if (/^(?:schema|relation|type|function|role|extension|publication|policy|trigger|constraint) .+ already exists\b/u.test(detail)) return 'pg-restore-existing-object';
   if (/^(?:schema|relation|type|function|role|extension|publication|policy|trigger|constraint) .+ does not exist\b/u.test(detail)) return 'pg-restore-missing-object';
@@ -390,7 +482,10 @@ export async function runBackup() {
     await writeFile(localRoles, localRestoreRoles(await readFile(path.join(capture, 'roles.sql'), 'utf8'), sourceBootstrapRole), { flag: 'wx', mode: 0o600 });
     await local([...psql, '--single-transaction'], { input: localRoles });
     stage('archive-restore');
-    await local(['pg_restore', '--host=/restore', '--username=backup_restore_admin', '--dbname=postgres', '--single-transaction', '--exit-on-error'], { input: path.join(capture, 'database.dump') });
+    await restoreLocalArchiveWithRoleCompatibility({
+      localSql: (sql) => local([...psql, '-At', '-c', sql]),
+      restoreArchive: () => local(['pg_restore', '--host=/restore', '--username=backup_restore_admin', '--dbname=postgres', '--single-transaction', '--exit-on-error'], { input: path.join(capture, 'database.dump') }),
+    });
     const restored = path.join(runtime, 'restored.jsonl');
     stage('content-verify');
     await local(psql, { input: inventorySql, output: restored });

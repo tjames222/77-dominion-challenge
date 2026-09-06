@@ -57,13 +57,27 @@ The backup is restored into a new `initdb` cluster in a network-disabled contain
 with tmpfs data. It has no hosted credentials and its local admin role must be
 absent from the source. Cron execution is disabled. The restore must reproduce
 every non-system table's row count and SHA-256 content fingerprint, sequence
-state, large-object fingerprint, and migration history. PostgreSQL 17 membership
+state, large-object fingerprint, migration history, and event-trigger ownership,
+enabled state, tags, and function identity/ownership. These event-trigger records
+remain private inside the encrypted inventory. PostgreSQL 17 membership
 grants issued by the source bootstrap superuser are replayed by the disposable
 cluster's bootstrap administrator; other grantors and all grant options are
 preserved. The original role SQL remains unchanged in the backup. Matching source
 inventories before and after capture also reject concurrent changes. Foreign
 tables, Storage objects or multipart uploads, and Vault/pgsodium encrypted data
 fail closed because this backup would not contain their external data or root key.
+
+Stock PostgreSQL 17 requires an event trigger's target owner to be a superuser
+when replaying its ownership, even if the restore executor is a superuser. The
+isolated recovery test therefore temporarily gives only its local `postgres`
+role `SUPERUSER` while replaying the unchanged archive, then always attempts to
+restore `NOSUPERUSER`. Before doing so it requires `postgres` to be non-superuser
+and the disposable bootstrap role to be `backup_restore_admin`. Afterward every
+attribute in the local `pg_roles` view must exactly match its snapshot taken
+after role replay; event-trigger metadata must also match the source after the
+downgrade. Any restore, downgrade, or comparison failure stops verification and
+encryption and removes the owned container. This compatibility step never
+changes hosted roles, the original role SQL/archive, object owners, or ACLs.
 
 Run this workflow from `main`, download its successful encrypted artifact, apply
 the bounded owner canary grant, then dispatch the compatibility cutover with its
