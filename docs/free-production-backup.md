@@ -17,7 +17,20 @@ Standard Actions usage for this public repository is free. This workflow
 does not upgrade any plan or enable paid backup services.
 
 The capture uses the pinned Supabase PostgreSQL `17.6.1.141` tools and temporary
-login credentials. Remote connections are forced read-only. A full custom-format
+login credentials. Each remote `psql` connection explicitly runs the fixed
+`SET SESSION ROLE postgres` after authentication; both dump tools use the fixed
+`--role=postgres` option. No hosted grants or role attributes are changed. A
+bounded preflight checks only two booleans: the effective role is `postgres` and
+its explicit read-only transaction is active. Inventory runs in an explicit
+read-only transaction; PostgreSQL 17.6 `pg_dump` itself uses a repeatable-read,
+read-only transaction. The fixed `pg_dumpall --roles-only --no-role-passwords`
+invocation reads catalog metadata and emits role SQL only into the local dump;
+it does not execute that SQL remotely. `PGOPTIONS` remains defense in depth,
+not an authoritative control, because a session pooler can discard startup
+options. This post-connect role selection matches the pinned Supabase CLI's
+[connection setup](https://github.com/supabase/cli/blob/v2.109.0/apps/cli-go/internal/utils/connect.go)
+and PostgreSQL's documented [dump role option](https://www.postgresql.org/docs/17/app-pgdump.html).
+A full custom-format
 `pg_dump` includes application/private schemas, Auth, Storage metadata, migration
 history, extensions, owners, ACLs, and large objects. Roles are captured separately
 without passwords. All plaintext dumps, private diagnostics, and credentials live

@@ -4,7 +4,7 @@ import { generateKeyPairSync } from 'node:crypto';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { classifyBackupFailure, classifyDockerFailure, decryptBackup, encryptBackup, localRestoreRoles, parseInventory, recipientKey } from './free-production-backup.mjs';
+import { classifyBackupFailure, classifyDockerFailure, decryptBackup, encryptBackup, localRestoreRoles, parseInventory, recipientKey, REMOTE_BACKUP_PREFLIGHT_SQL, REMOTE_BACKUP_ROLE_SQL } from './free-production-backup.mjs';
 
 const { publicKey, privateKey } = generateKeyPairSync('rsa', {
   modulusLength: 4096,
@@ -129,4 +129,20 @@ test('all remote capture commands share the credential deadline and stop the own
   for (const diagnosticCode of ['credential-lifetime-expired', 'credential-operation-timeout', 'credential-operation-interrupted']) {
     assert.equal(classifyBackupFailure({ diagnosticCode, message: 'private fixture data' }), diagnosticCode);
   }
+});
+
+test('remote role selection is explicit after connect and never changes the isolated restore role', async () => {
+  const source = await readFile(new URL('./free-production-backup.mjs', import.meta.url), 'utf8');
+  const inventory = await readFile(new URL('./free-backup-inventory.sql', import.meta.url), 'utf8');
+  assert.equal(REMOTE_BACKUP_ROLE_SQL, 'SET SESSION ROLE postgres');
+  assert.equal(REMOTE_BACKUP_PREFLIGHT_SQL, "SET SESSION ROLE postgres; BEGIN READ ONLY; SELECT (current_user = 'postgres')::text, (current_setting('transaction_read_only') = 'on')::text; ROLLBACK;");
+  assert.match(source, /stage\('remote-session-preflight'\)/u);
+  assert.match(source, /REMOTE_BACKUP_PREFLIGHT_SQL\]\), 'true\|true'/u);
+  assert.equal((source.match(/'-c', REMOTE_BACKUP_ROLE_SQL, '-f', inventorySql/gu) ?? []).length, 2);
+  assert.match(source, /\['pg_dumpall', '--roles-only', '--no-role-passwords', '--role=postgres'\]/u);
+  assert.match(source, /\['pg_dump', '--format=custom', '--compress=0', '--lock-wait-timeout=15000', '--role=postgres'\]/u);
+  assert.match(inventory, /BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY;/u);
+  assert.doesNotMatch(inventory, /SET (?:SESSION )?ROLE/u);
+  const restore = source.slice(source.indexOf("stage('local-init')"));
+  assert.doesNotMatch(restore, /REMOTE_BACKUP_ROLE_SQL|--role=postgres/u);
 });
