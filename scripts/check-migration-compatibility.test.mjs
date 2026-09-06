@@ -442,21 +442,408 @@ test("package, CI, and production deploy run the gate before migrations", async 
   );
   const deployNode = deployWorkflow.indexOf("node-version: 22");
   const deployDryRun = deployWorkflow.indexOf(
-    "run: supabase db push --linked --dry-run",
+    'db push --db-url="$database_url" --dry-run',
+  );
+  const deploySecretTopology = deployWorkflow.indexOf(
+    "name: Validate Edge Function secret topology",
+  );
+  const deployCredentialPreparation = deployWorkflow.indexOf(
+    "--credential-only",
+    deploySecretTopology,
   );
   const deployApply = deployWorkflow.indexOf(
-    "run: supabase migration up --linked",
+    'migration up --db-url="$database_url"',
+  );
+  const deploySecretSync = deployWorkflow.indexOf(
+    "name: Synchronize Edge Function secrets",
+  );
+  const deployCompletedHistory = deployWorkflow.indexOf(
+    "name: Require exact completed migration history",
+    deployApply,
+  );
+  const deployCutoverPlan = deployWorkflow.indexOf(
+    "node scripts/verify-production-raw-migration-history.mjs",
+    deployGate,
+  );
+  const deployCutoverAttestation = deployWorkflow.indexOf(
+    'attestation_name="production-compatibility-cutover-${GITHUB_SHA}"',
+  );
+  const deployAttestationDownload = deployWorkflow.indexOf(
+    "name: Download the exact keyed compatibility attestation",
+  );
+  const deployAttestationPreverify = deployWorkflow.indexOf(
+    "name: Verify exact canary continuity before migration",
+  );
+  const deployAttestationPostverify = deployWorkflow.indexOf(
+    "name: Reverify exact canary continuity after migration",
+  );
+  assert.doesNotMatch(deployWorkflow, /\bsupabase\s+link\b|--linked\b/u);
+  assert.doesNotMatch(deployWorkflow, /\bset\s+-x(?:\s|$)/mu);
+  assert.doesNotMatch(
+    deployWorkflow,
+    /\b(?:db\s+reset|migration\s+repair)\b/u,
+  );
+  assert.doesNotMatch(deployWorkflow, /SUPABASE_DB_PASSWORD|--password/u);
+  assert.equal(
+    deployWorkflow.match(
+      /SUPABASE_ACCESS_TOKEN="\$SUPABASE_ACCESS_TOKEN"/gu,
+    )?.length,
+    15,
+  );
+  assert.equal(deployWorkflow.split("--credential-only").length - 1, 6);
+  assert.equal(deployWorkflow.split("--revoke-credentials").length - 1, 9);
+  assert.equal(
+    deployWorkflow.split(
+      'if [[ "$(<"${credential_directory}/credential-ready")" != "$SUPABASE_PROJECT_REF" ]]; then',
+    ).length - 1,
+    6,
+  );
+  assert.equal(
+    deployWorkflow.split(
+      "for credential_file in database-url database-passfile credential-ready; do",
+    ).length - 1,
+    6,
+  );
+  assert.equal(
+    deployWorkflow.split(
+      'database_url="$(<"${credential_directory}/database-url")"',
+    ).length - 1,
+    6,
+  );
+  assert.equal(
+    deployWorkflow.split(
+      'PGPASSFILE="${credential_directory}/database-passfile"',
+    ).length - 1,
+    6,
+  );
+  assert.equal(
+    deployWorkflow.split('--db-url="$database_url"').length - 1,
+    6,
+  );
+  assert.equal(
+    deployWorkflow.match(/migration list --db-url="\$database_url"/gu)?.length,
+    4,
+  );
+  assert.equal(
+    deployWorkflow.match(/db push --db-url="\$database_url" --dry-run/gu)?.length,
+    1,
+  );
+  assert.equal(
+    deployWorkflow.match(/migration up --db-url="\$database_url"/gu)?.length,
+    1,
+  );
+
+  const cleanCredentialPreparations = deployWorkflow.match(
+    /\/usr\/bin\/env -i \\\n\s+HOME="\$supabase_home" \\\n\s+LANG=C\.UTF-8 \\\n\s+PATH="\$PATH" \\\n\s+SUPABASE_ACCESS_TOKEN="\$SUPABASE_ACCESS_TOKEN" \\\n\s+SUPABASE_PROJECT_REF="\$SUPABASE_PROJECT_REF" \\\n\s+SUPABASE_TELEMETRY_DISABLED=1 \\\n\s+TMPDIR="\$supabase_home" \\\n\s+node scripts\/prepare-existing-supabase-cli-state\.mjs \\\n\s+--credential-only \\\n\s+--probe-workdir "\$probe_workdir" \\\n\s+--credential-directory "\$credential_directory" \\\n\s+--supabase-home "\$supabase_home"/gu,
+  ) ?? [];
+  assert.equal(cleanCredentialPreparations.length, 6);
+
+  const cleanCredentialRevocations = deployWorkflow.match(
+    /\/usr\/bin\/env -i \\\n\s+HOME="\$supabase_home" \\\n\s+LANG=C\.UTF-8 \\\n\s+PATH="\$PATH" \\\n\s+SUPABASE_ACCESS_TOKEN="\$SUPABASE_ACCESS_TOKEN" \\\n\s+SUPABASE_PROJECT_REF="\$SUPABASE_PROJECT_REF" \\\n\s+SUPABASE_TELEMETRY_DISABLED=1 \\\n\s+TMPDIR="\$supabase_home" \\\n\s+node scripts\/prepare-existing-supabase-cli-state\.mjs \\\n\s+--revoke-credentials \|\| cleanup_status=\$\?/gu,
+  ) ?? [];
+  assert.equal(cleanCredentialRevocations.length, 6);
+
+  const finalRemoteRevocations = deployWorkflow.match(
+    /- name: Revoke any remaining (?:compatibility|frontend-history|backend) database login roles\n\s+if: always\(\)\n\s+shell: bash\n\s+run: \|\n\s+\/usr\/bin\/env -i \\\n\s+LANG=C\.UTF-8 \\\n\s+PATH="\$PATH" \\\n\s+SUPABASE_ACCESS_TOKEN="\$SUPABASE_ACCESS_TOKEN" \\\n\s+SUPABASE_PROJECT_REF="\$SUPABASE_PROJECT_REF" \\\n\s+SUPABASE_TELEMETRY_DISABLED=1 \\\n\s+node scripts\/prepare-existing-supabase-cli-state\.mjs \\\n\s+--revoke-credentials/gu,
+  ) ?? [];
+  assert.equal(finalRemoteRevocations.length, 3);
+
+  const privateDatabaseCliLaunches = deployWorkflow.match(
+    /\/usr\/bin\/env -i \\\n\s+CI=1 \\\n\s+HOME="\$supabase_home" \\\n\s+LANG=C\.UTF-8 \\\n\s+PATH="\$PATH" \\\n\s+PGPASSFILE="\$\{credential_directory\}\/database-passfile" \\\n\s+SUPABASE_HOME="\$supabase_home" \\\n\s+SUPABASE_NO_KEYRING=1 \\\n\s+SUPABASE_PROFILE=supabase \\\n\s+SUPABASE_TELEMETRY_DISABLED=1 \\\n\s+TMPDIR="\$supabase_home" \\\n\s+supabase --profile=supabase --workdir="\$GITHUB_WORKSPACE" \\\n\s+[^\n]*--db-url="\$database_url"/gu,
+  ) ?? [];
+  assert.equal(privateDatabaseCliLaunches.length, 6);
+
+  const databaseUrlVariableLines = deployWorkflow.split("\n").filter((line) =>
+    line.includes("database_url")
+  );
+  assert.equal(databaseUrlVariableLines.length, 18);
+  for (const line of databaseUrlVariableLines) {
+    assert.match(
+      line,
+      /^\s+(?:unset database_url|database_url="\$\(<"\$\{credential_directory\}\/database-url"\)"|[^\n]*--db-url="\$database_url"[^\n]*)$/u,
+    );
+  }
+  const databaseUrlFileLines = deployWorkflow.split("\n").filter((line) =>
+    line.includes("database-url")
+  );
+  assert.equal(databaseUrlFileLines.length, 12);
+  for (const line of databaseUrlFileLines) {
+    assert.match(
+      line,
+      /^\s+(?:for credential_file in database-url database-passfile credential-ready; do|database_url="\$\(<"\$\{credential_directory\}\/database-url"\)")$/u,
+    );
+  }
+  assert.doesNotMatch(deployWorkflow, /\bGITHUB_ENV\b/u);
+  for (const line of deployWorkflow.split("\n").filter((entry) =>
+    entry.includes("GITHUB_OUTPUT")
+  )) {
+    assert.doesNotMatch(
+      line,
+      /database_url|database-url|database-passfile|credential_directory|PGPASSFILE/u,
+    );
+  }
+  for (const line of deployWorkflow.split("\n").filter((entry) =>
+    /\b(?:echo|printf|cat|tee)\b/u.test(entry)
+  )) {
+    assert.doesNotMatch(
+      line,
+      /database_url|database-url|database-passfile|credential_directory|PGPASSFILE/u,
+    );
+  }
+  assert.match(
+    deployWorkflow,
+    /verify-production-raw-migration-history\.mjs --cli-history "\$history_file" --mode-only/u,
   );
   assert.ok(
     deployNode !== -1
       && deployGate !== -1
       && deployNode < deployGate
       && deployGate < deployDryRun
-      && deployDryRun < deployApply,
+      && deploySecretTopology > deployGate
+      && deploySecretTopology < deployCredentialPreparation
+      && deployCredentialPreparation < deployDryRun
+      && deployCutoverPlan !== -1
+      && deployCutoverPlan < deployDryRun
+      && deployCutoverAttestation > deployCutoverPlan
+      && deployCutoverAttestation < deployAttestationDownload
+      && deployAttestationDownload < deployAttestationPreverify
+      && deployAttestationPreverify < deployDryRun
+      && deployDryRun < deployApply
+      && deployApply < deployCompletedHistory
+      && deployCompletedHistory < deployAttestationPostverify
+      && deployAttestationPostverify < deploySecretSync,
+  );
+  assert.match(
+    deployWorkflow,
+    /supabase --profile=supabase --workdir="\$GITHUB_WORKSPACE" \\\n\s+--agent=no --yes db push --db-url="\$database_url" --dry-run/u,
+  );
+  assert.match(
+    deployWorkflow,
+    /post_migration_history[\s\S]*verify-production-raw-migration-history\.mjs[\s\S]*--require-no-pending/u,
+  );
+  assert.match(
+    deployWorkflow,
+    /\.total_count == 1 and \(\[\.artifacts\[\][\s\S]*\.id > 0 and \.workflow_run\.id > 0[\s\S]*length == 1/u,
+  );
+  assert.match(
+    deployWorkflow,
+    /\.path == "\.github\/workflows\/deploy\.yml"[\s\S]*\.event == "workflow_dispatch"[\s\S]*\.head_branch == "main"[\s\S]*\.head_sha == \$expected_sha[\s\S]*\.status == "completed"[\s\S]*\.conclusion == "success"/u,
+  );
+  assert.match(deployWorkflow, /attestation_age > 604800/u);
+  assert.match(deployWorkflow, /attestation_retention < 604500/u);
+  assert.match(deployWorkflow, /attestation_retention > 605100/u);
+  assert.match(
+    deployWorkflow,
+    /attestation_artifact_id" =~ \^\[1-9\]\[0-9\]\*\$[\s\S]*attestation_run_id" =~ \^\[1-9\]\[0-9\]\*\$/u,
+  );
+  assert.match(
+    deployWorkflow,
+    /artifact-ids: \$\{\{ steps\.cutover-plan\.outputs\.attestation_artifact_id \}\}[\s\S]*merge-multiple: true[\s\S]*github-token: \$\{\{ github\.token \}\}[\s\S]*repository: \$\{\{ github\.repository \}\}[\s\S]*run-id: \$\{\{ steps\.cutover-plan\.outputs\.attestation_run_id \}\}/u,
+  );
+  assert.match(
+    deployWorkflow,
+    /! -f "\$attestation_file" \|\| -L "\$attestation_file"[\s\S]*attestation_entries[\s\S]*attestation_size > 1024/u,
+  );
+  assert.equal(
+    deployWorkflow.match(/--attestation-input/g)?.length,
+    2,
+  );
+
+  const compatibilityJobStart = deployWorkflow.indexOf("  compatibility-guards:");
+  const frontendRollbackHistoryStart = deployWorkflow.indexOf(
+    "  frontend-rollback-history:",
+  );
+  const backendJobStart = deployWorkflow.indexOf("  backend:");
+  const compatibilityFinalRevocation = deployWorkflow.indexOf(
+    "name: Revoke any remaining compatibility database login roles",
+  );
+  const frontendFinalRevocation = deployWorkflow.indexOf(
+    "name: Revoke any remaining frontend-history database login roles",
+  );
+  const backendFinalRevocation = deployWorkflow.indexOf(
+    "name: Revoke any remaining backend database login roles",
+  );
+  assert.ok(
+    compatibilityJobStart !== -1
+      && frontendRollbackHistoryStart !== -1
+      && backendJobStart !== -1
+      && compatibilityFinalRevocation !== -1
+      && frontendFinalRevocation !== -1
+      && backendFinalRevocation !== -1
+      && compatibilityJobStart < frontendRollbackHistoryStart
+      && compatibilityFinalRevocation < frontendRollbackHistoryStart
+      && frontendRollbackHistoryStart < frontendFinalRevocation
+      && frontendFinalRevocation < backendJobStart
+      && backendJobStart < backendFinalRevocation,
+  );
+  const compatibilityJob = deployWorkflow.slice(
+    compatibilityJobStart,
+    frontendRollbackHistoryStart,
+  );
+  assert.match(
+    compatibilityJob,
+    /if: inputs\.release_scope == 'compatibility-cutover'/u,
+  );
+  assert.match(compatibilityJob, /BILLING_ENABLED: "false"/u);
+  const disabledSecret = compatibilityJob.indexOf(
+    '"BILLING_ENABLED=${BILLING_ENABLED}"',
+  );
+  const compatibilityCredentials = compatibilityJob.indexOf("--credential-only");
+  const compatibilityRawHistory = compatibilityJob.indexOf(
+    "verify-production-raw-migration-history.mjs",
+  );
+  const compatibilityCanaryGate = compatibilityJob.indexOf(
+    "verify-production-canary-cutover-gate.mjs",
+  );
+  const webhookDeploy = compatibilityJob.indexOf(
+    'supabase functions deploy stripe-webhook --project-ref "$SUPABASE_PROJECT_REF" --no-verify-jwt',
+  );
+  const webhook503 = compatibilityJob.indexOf(
+    'if [[ "$webhook_status" != "503" ]]',
+  );
+  const authenticatedDeploy = compatibilityJob.indexOf(
+    'supabase functions deploy cancel-membership --project-ref "$SUPABASE_PROJECT_REF"',
+  );
+  const authenticated401 = compatibilityJob.indexOf(
+    'if [[ "$billing_status" != "401" ]]',
+  );
+  const compatibilityCleanup = compatibilityJob.indexOf(
+    "name: Revoke any remaining compatibility database login roles",
+  );
+  assert.ok(
+    compatibilityCredentials !== -1
+      && compatibilityRawHistory !== -1
+      && compatibilityCanaryGate !== -1
+      && disabledSecret !== -1
+      && webhookDeploy !== -1
+      && webhook503 !== -1
+      && authenticatedDeploy !== -1
+      && authenticated401 !== -1
+      && compatibilityCleanup !== -1
+      && compatibilityCredentials < compatibilityRawHistory
+      && compatibilityRawHistory < compatibilityCanaryGate
+      && compatibilityCanaryGate < disabledSecret
+      && disabledSecret < webhookDeploy
+      && webhookDeploy < webhook503
+      && webhook503 < authenticatedDeploy
+      && authenticatedDeploy < authenticated401
+      && authenticated401 < compatibilityCleanup,
+  );
+  assert.equal(
+    compatibilityJob.match(/migration list --db-url="\$database_url"/gu)?.length,
+    1,
+  );
+  assert.equal(
+    compatibilityJob.match(/--db-url="\$database_url"/gu)?.length,
+    1,
   );
   assert.doesNotMatch(
+    compatibilityJob,
+    /\b(?:migration\s+up|db\s+push|db\s+reset|migration\s+repair)\b/u,
+  );
+  assert.match(
     deployWorkflow,
-    /run: supabase db push --linked --password/,
+    /inputs\.release_scope == 'frontend-only'[\s\S]*needs\.backend\.result == 'skipped'[\s\S]*needs\.compatibility-guards\.result == 'skipped'/u,
+  );
+  const frontendRollbackHistoryJob = deployWorkflow.slice(
+    frontendRollbackHistoryStart,
+    backendJobStart,
+  );
+  assert.match(
+    frontendRollbackHistoryJob,
+    /if: inputs\.release_scope == 'frontend-only'/u,
+  );
+  assert.match(frontendRollbackHistoryJob, /verify-production-raw-migration-history\.mjs/u);
+  assert.match(frontendRollbackHistoryJob, /--require-no-pending/u);
+  assert.match(frontendRollbackHistoryJob, /"post-cutover"/u);
+  assert.ok(
+    frontendRollbackHistoryJob.indexOf("verify-production-raw-migration-history.mjs")
+      < frontendRollbackHistoryJob.indexOf(
+        "name: Revoke any remaining frontend-history database login roles",
+      ),
+  );
+  assert.equal(
+    frontendRollbackHistoryJob.match(
+      /migration list --db-url="\$database_url"/gu,
+    )?.length,
+    1,
+  );
+  assert.equal(
+    frontendRollbackHistoryJob.match(/--db-url="\$database_url"/gu)?.length,
+    1,
+  );
+  assert.doesNotMatch(
+    frontendRollbackHistoryJob,
+    /supabase (?:migration up|db push|secrets set|functions deploy)/u,
+  );
+  assert.doesNotMatch(
+    frontendRollbackHistoryJob,
+    /\b(?:migration\s+up|db\s+push|db\s+reset|migration\s+repair)\b/u,
+  );
+  assert.match(
+    deployWorkflow,
+    /inputs\.release_scope == 'frontend-only'[\s\S]*needs\.frontend-rollback-history\.result == 'success'/u,
+  );
+
+  const frontendJobStart = deployWorkflow.indexOf("  frontend:");
+  const backendJob = deployWorkflow.slice(backendJobStart, frontendJobStart);
+  assert.ok(
+    deploySecretSync < backendFinalRevocation
+      && backendFinalRevocation < frontendJobStart,
+  );
+  assert.equal(
+    backendJob.match(/migration list --db-url="\$database_url"/gu)?.length,
+    2,
+  );
+  assert.equal(
+    backendJob.match(/db push --db-url="\$database_url" --dry-run/gu)?.length,
+    1,
+  );
+  assert.equal(
+    backendJob.match(/migration up --db-url="\$database_url"/gu)?.length,
+    1,
+  );
+  assert.equal(
+    backendJob.match(/--db-url="\$database_url"/gu)?.length,
+    4,
+  );
+  assert.doesNotMatch(backendJob, /\b(?:db\s+reset|migration\s+repair)\b/u);
+
+  const topologyStep = deployWorkflow.slice(
+    deploySecretTopology,
+    deployCredentialPreparation,
+  );
+  assert.match(topologyStep, /PROFILE_PHOTO_WORKER_SECRET must contain at least 32/u);
+  assert.match(topologyStep, /INTEGRATION_WORKER_SECRET requires INTEGRATION_CREDENTIAL_KEYS/u);
+  assert.match(topologyStep, /must be configured together/u);
+  assert.match(topologyStep, /must be configured as a complete set/u);
+  const synchronizationStep = deployWorkflow.slice(deploySecretSync);
+  assert.doesNotMatch(
+    synchronizationStep,
+    /PROFILE_PHOTO_WORKER_SECRET must contain|requires INTEGRATION_CREDENTIAL_KEYS|must be configured together|must be configured as a complete set/u,
+  );
+  const cloudflareDeploy = deployWorkflow.indexOf("pages deploy dist");
+  const compatibilityAttestationCreate = deployWorkflow.indexOf(
+    "name: Create keyed one-time compatibility attestation",
+  );
+  const compatibilityAttestationUpload = deployWorkflow.indexOf(
+    "name: Publish keyed one-time compatibility attestation",
+  );
+  assert.ok(
+    cloudflareDeploy !== -1
+      && compatibilityAttestationCreate > cloudflareDeploy
+      && compatibilityAttestationUpload > compatibilityAttestationCreate,
+  );
+  assert.match(
+    deployWorkflow,
+    /name: Create keyed one-time compatibility attestation[\s\S]*--attestation-output "\$\{attestation_directory\}\/production-canary-attestation\.json"[\s\S]*name: Publish keyed one-time compatibility attestation[\s\S]*name: production-compatibility-cutover-\$\{\{ github\.sha \}\}[\s\S]*path: \$\{\{ runner\.temp \}\}\/production-canary-attestation\/production-canary-attestation\.json[\s\S]*if-no-files-found: error[\s\S]*retention-days: 7/u,
+  );
+  const compatibilityAttestationSection = deployWorkflow.slice(
+    compatibilityAttestationCreate,
+  );
+  assert.doesNotMatch(
+    compatibilityAttestationSection,
+    /dist\/index\.html|canary_grant_fingerprint|\buser_id\b|\bsource_id\b|\bcat\b/u,
   );
 });
 

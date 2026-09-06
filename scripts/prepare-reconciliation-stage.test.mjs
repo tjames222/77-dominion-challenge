@@ -1,10 +1,14 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import {
+  chmod,
   lstat,
+  link,
   mkdir,
   mkdtemp,
   readFile,
+  readdir,
+  realpath,
   rm,
   symlink,
   writeFile,
@@ -23,7 +27,6 @@ import {
 
 const scriptDirectory = path.dirname(fileURLToPath(import.meta.url));
 const scriptPath = path.join(scriptDirectory, "prepare-reconciliation-stage.mjs");
-const repositoryRoot = path.resolve(scriptDirectory, "..");
 
 const historicalNames = [
   "20260707170000_baseline.sql",
@@ -52,7 +55,9 @@ function git(root, argumentsList, environment = {}) {
 }
 
 async function makeReleaseFixture() {
-  const fixtureRoot = await mkdtemp(path.join(os.tmpdir(), "fou762-stage-test-"));
+  const fixtureRoot = await realpath(
+    await mkdtemp(path.join(os.tmpdir(), "fou762-stage-test-")),
+  );
   const repository = path.join(fixtureRoot, "repository");
   await mkdir(path.join(repository, "supabase", "migrations"), {
     recursive: true,
@@ -97,6 +102,11 @@ async function makeReleaseFixture() {
       GIT_COMMITTER_EMAIL: "reconciliation@example.invalid",
     },
   );
+  git(repository, ["branch", "-M", "main"]);
+  git(repository, [
+    "remote", "add", "origin",
+    "https://github.com/tjames222/77-dominion-challenge.git",
+  ]);
   const commit = git(repository, ["rev-parse", "HEAD"]);
   return { commit, fixtureRoot, repository };
 }
@@ -106,8 +116,33 @@ async function withReleaseFixture(callback) {
   try {
     return await callback(fixture);
   } finally {
+    await makeTreeOwnerWritable(fixture.fixtureRoot);
     await rm(fixture.fixtureRoot, { force: true, recursive: true });
   }
+}
+
+async function makeTreeOwnerWritable(root) {
+  let metadata;
+  try {
+    metadata = await lstat(root);
+  } catch (error) {
+    if (error?.code === "ENOENT") return;
+    throw error;
+  }
+  if (metadata.isSymbolicLink()) return;
+  if (!metadata.isDirectory()) {
+    await chmod(root, 0o600);
+    return;
+  }
+  await chmod(root, 0o700);
+  for (const entry of await readdir(root, { withFileTypes: true })) {
+    await makeTreeOwnerWritable(path.join(root, entry.name));
+  }
+}
+
+async function removeSealedTree(root) {
+  await makeTreeOwnerWritable(root);
+  await rm(root, { force: true, recursive: true });
 }
 
 test("builds only the approved cumulative historical prefix from an exact commit", async () => {
@@ -162,7 +197,7 @@ test("materializes committed blobs instead of dirty working-tree contents", asyn
       root: repository,
     });
     assert.equal(manifest.historicalStageNumber, 1);
-    assert.equal((await lstat(output)).mode & 0o777, 0o700);
+    assert.equal((await lstat(output)).mode & 0o777, 0o500);
   });
 });
 
@@ -324,6 +359,7 @@ test("verification rejects tampering, unexpected files, and symbolic links", asy
       "migrations",
       historicalNames[1],
     );
+    await chmod(migrationPath, 0o600);
     await writeFile(migrationPath, "select 'tampered';\n");
     await assert.rejects(
       verifyReconciliationStage({
@@ -332,17 +368,20 @@ test("verification rejects tampering, unexpected files, and symbolic links", asy
         throughVersion: target,
         root: repository,
       }),
-      /does not match the immutable Git blob/u,
+      /single-link mode 0400|does not match the immutable Git blob/u,
     );
 
-    await rm(output, { force: true, recursive: true });
+    await removeSealedTree(output);
     await prepareReconciliationStage({
       output,
       releaseCommit: commit,
       throughVersion: target,
       root: repository,
     });
-    await writeFile(path.join(output, "unexpected.txt"), "no\n");
+    await chmod(output, 0o700);
+    const unexpectedPath = path.join(output, "unexpected.txt");
+    await writeFile(unexpectedPath, "no\n", { mode: 0o400 });
+    await chmod(output, 0o500);
     await assert.rejects(
       verifyReconciliationStage({
         stage: output,
@@ -353,15 +392,23 @@ test("verification rejects tampering, unexpected files, and symbolic links", asy
       /missing or unexpected files/u,
     );
 
-    await rm(output, { force: true, recursive: true });
+    await removeSealedTree(output);
     await prepareReconciliationStage({
       output,
       releaseCommit: commit,
       throughVersion: target,
       root: repository,
     });
+    const migrationDirectory = path.dirname(migrationPath);
+    await chmod(output, 0o700);
+    await chmod(path.join(output, "supabase"), 0o700);
+    await chmod(migrationDirectory, 0o700);
+    await chmod(migrationPath, 0o600);
     await rm(migrationPath);
     await symlink("../config.toml", migrationPath);
+    await chmod(migrationDirectory, 0o500);
+    await chmod(path.join(output, "supabase"), 0o500);
+    await chmod(output, 0o500);
     await assert.rejects(
       verifyReconciliationStage({
         stage: output,
@@ -374,33 +421,98 @@ test("verification rejects tampering, unexpected files, and symbolic links", asy
   });
 });
 
-test("CLI prepares and independently verifies an immutable stage", async () => {
-  const fixtureRoot = await mkdtemp(path.join(os.tmpdir(), "fou762-stage-cli-"));
-  try {
-    const commit = git(repositoryRoot, ["rev-parse", "HEAD"]);
-    const output = path.join(fixtureRoot, "cli-stage");
-    const prepare = spawnSync(
-      process.execPath,
-      [
-        scriptPath,
-        "--release-commit",
-        commit,
-        "--through-version",
-        HISTORICAL_RECONCILIATION_VERSIONS[2],
-        "--output",
-        output,
-      ],
-      {
-        cwd: repositoryRoot,
-        encoding: "utf8",
-      },
+test("verification rejects loose root/file modes and hard-linked files", async () => {
+  await withReleaseFixture(async ({ commit, fixtureRoot, repository }) => {
+    const target = HISTORICAL_RECONCILIATION_VERSIONS[1];
+    const output = path.join(fixtureRoot, "metadata-stage");
+    const prepare = () => prepareReconciliationStage({
+      output,
+      releaseCommit: commit,
+      throughVersion: target,
+      root: repository,
+    });
+    const verify = () => verifyReconciliationStage({
+      stage: output,
+      releaseCommit: commit,
+      throughVersion: target,
+      root: repository,
+    });
+
+    await prepare();
+    await chmod(output, 0o700);
+    await assert.rejects(verify(), /stage root must be current-user-owned mode 0500/u);
+
+    await removeSealedTree(output);
+    await prepare();
+    const migrationPath = path.join(
+      output,
+      "supabase",
+      "migrations",
+      historicalNames[1],
     );
-    assert.equal(prepare.status, 0, prepare.stderr);
-    assert.match(prepare.stdout, /stage 3\/13/u);
+    await chmod(migrationPath, 0o600);
+    await assert.rejects(verify(), /single-link mode 0400/u);
+
+    await removeSealedTree(output);
+    await prepare();
+    const sealedMigrationPath = path.join(
+      output,
+      "supabase",
+      "migrations",
+      historicalNames[1],
+    );
+    await link(sealedMigrationPath, path.join(fixtureRoot, "stage-hardlink.sql"));
+    await assert.rejects(verify(), /single-link mode 0400/u);
+  });
+});
+
+test("verification rejects extended ACLs on sealed stage paths", {
+  skip: process.platform !== "darwin" ? "macOS ACL semantics" : false,
+}, async (t) => {
+  await withReleaseFixture(async ({ commit, fixtureRoot, repository }) => {
+    const output = path.join(fixtureRoot, "acl-stage");
+    await prepareReconciliationStage({
+      output,
+      releaseCommit: commit,
+      throughVersion: HISTORICAL_RECONCILIATION_VERSIONS[0],
+      root: repository,
+    });
+    const aclResult = spawnSync(
+      "/bin/chmod",
+      ["+a", `${process.env.USER} allow read,write,execute`, output],
+      { encoding: "utf8" },
+    );
+    if (aclResult.status !== 0) {
+      t.skip(`host filesystem does not support macOS ACL fixtures: ${aclResult.stderr.trim()}`);
+      return;
+    }
+    await assert.rejects(
+      verifyReconciliationStage({
+        stage: output,
+        releaseCommit: commit,
+        throughVersion: HISTORICAL_RECONCILIATION_VERSIONS[0],
+        root: repository,
+      }),
+      /must not have an extended ACL/u,
+    );
+  });
+});
+
+test("CLI prepares and independently verifies an immutable stage", async () => {
+  await withReleaseFixture(async ({ commit, fixtureRoot, repository }) => {
+    const output = path.join(fixtureRoot, "cli-stage");
+    await prepareReconciliationStage({
+      output,
+      releaseCommit: commit,
+      throughVersion: HISTORICAL_RECONCILIATION_VERSIONS[2],
+      root: repository,
+    });
     const verify = spawnSync(
       process.execPath,
       [
         scriptPath,
+        "--repository-root",
+        repository,
         "--release-commit",
         commit,
         "--through-version",
@@ -409,13 +521,89 @@ test("CLI prepares and independently verifies an immutable stage", async () => {
         output,
       ],
       {
-        cwd: repositoryRoot,
+        cwd: repository,
         encoding: "utf8",
       },
     );
     assert.equal(verify.status, 0, verify.stderr);
     assert.match(verify.stdout, /Verified immutable reconciliation stage 3\/13/u);
-  } finally {
-    await rm(fixtureRoot, { force: true, recursive: true });
-  }
+  });
+});
+
+test("CLI verification requires the exact canonical clean main worktree at release HEAD", async (t) => {
+  await withReleaseFixture(async ({ commit, fixtureRoot, repository }) => {
+    const output = path.join(fixtureRoot, "cli-stage");
+    const throughVersion = HISTORICAL_RECONCILIATION_VERSIONS[2];
+    await prepareReconciliationStage({
+      output,
+      releaseCommit: commit,
+      throughVersion,
+      root: repository,
+    });
+    const baseArguments = [
+      scriptPath,
+      "--release-commit",
+      commit,
+      "--through-version",
+      throughVersion,
+      "--verify-stage",
+      output,
+    ];
+    const invoke = (repositoryRootArguments = []) => spawnSync(
+      process.execPath,
+      [...baseArguments, ...repositoryRootArguments],
+      { cwd: repository, encoding: "utf8" },
+    );
+
+    await t.test("missing repository root", () => {
+      const result = invoke();
+      assert.notEqual(result.status, 0);
+      assert.match(result.stderr, /--repository-root is required/u);
+    });
+
+    await t.test("symbolic-link repository root", async () => {
+      const linkedRoot = path.join(fixtureRoot, "repository-link");
+      await symlink(repository, linkedRoot);
+      const result = invoke(["--repository-root", linkedRoot]);
+      assert.notEqual(result.status, 0);
+      assert.match(result.stderr, /real directory, not a symbolic link/u);
+    });
+
+    await t.test("wrong branch", () => {
+      git(repository, ["switch", "-q", "-c", "not-main"]);
+      const result = invoke(["--repository-root", repository]);
+      assert.notEqual(result.status, 0);
+      assert.match(result.stderr, /exact main branch/u);
+      git(repository, ["switch", "-q", "main"]);
+    });
+
+    await t.test("wrong HEAD", () => {
+      git(repository, ["commit", "--allow-empty", "-q", "-m", "wrong head"], {
+        GIT_AUTHOR_NAME: "Reconciliation Test",
+        GIT_AUTHOR_EMAIL: "reconciliation@example.invalid",
+        GIT_COMMITTER_NAME: "Reconciliation Test",
+        GIT_COMMITTER_EMAIL: "reconciliation@example.invalid",
+      });
+      const result = invoke(["--repository-root", repository]);
+      assert.notEqual(result.status, 0);
+      assert.match(result.stderr, /HEAD does not match/u);
+      git(repository, ["reset", "--soft", commit]);
+    });
+
+    await t.test("dirty or untracked worktree", async () => {
+      const fsmonitorMarker = path.join(fixtureRoot, "fsmonitor-was-invoked");
+      const maliciousFsmonitor = path.join(fixtureRoot, "malicious-fsmonitor.sh");
+      await writeFile(
+        maliciousFsmonitor,
+        `#!/bin/sh\n/usr/bin/touch ${JSON.stringify(fsmonitorMarker)}\nexit 0\n`,
+        { mode: 0o700 },
+      );
+      git(repository, ["config", "core.fsmonitor", maliciousFsmonitor]);
+      await writeFile(path.join(repository, "UNTRACKED_DO_NOT_RELEASE"), "unsafe\n");
+      const result = invoke(["--repository-root", repository]);
+      assert.notEqual(result.status, 0);
+      assert.match(result.stderr, /clean, including untracked files/u);
+      await assert.rejects(lstat(fsmonitorMarker), /ENOENT/u);
+    });
+  });
 });

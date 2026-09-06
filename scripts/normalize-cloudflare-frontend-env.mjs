@@ -4,7 +4,7 @@ const truthy = (value) => ['1', 'true', 'yes'].includes(
   String(value || '').trim().toLowerCase(),
 );
 
-const MOCK_ONLY_FLAGS = Object.freeze({
+export const CLOUDFLARE_PREVIEW_MOCK_FLAGS = Object.freeze({
   VITE_ENABLE_MOCKS: 'true',
   VITE_ENABLE_SUPABASE_AUTH_IN_MOCKS: 'false',
   VITE_ENABLE_PRODUCTION_CONNECTIONS: 'false',
@@ -31,7 +31,7 @@ export function normalizeCloudflareFrontendEnvironment(environment = {}) {
 
   if (!isCloudflarePreviewEnvironment(normalized)) return normalized;
 
-  Object.assign(normalized, MOCK_ONLY_FLAGS);
+  Object.assign(normalized, CLOUDFLARE_PREVIEW_MOCK_FLAGS);
   delete normalized.VITE_ENABLE_E2E_FIXTURES;
 
   for (const name of DEVELOP_LIVE_CONNECTION_VARIABLES) {

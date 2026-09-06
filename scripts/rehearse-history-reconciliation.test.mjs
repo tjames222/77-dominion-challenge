@@ -1,12 +1,19 @@
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import {
+  cp,
   chmod,
   mkdtemp,
+  mkdir,
   readFile,
+  realpath,
   rm,
+  stat,
+  symlink,
   writeFile,
 } from "node:fs/promises";
+import { createServer } from "node:net";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -80,16 +87,87 @@ function git(argumentsList) {
 function cleanEnvironment(overrides = {}) {
   const environment = { ...process.env };
   for (const variableName of rejectedEnvironment) delete environment[variableName];
+  for (const variableName of Object.keys(environment)) {
+    if (variableName.startsWith("DOCKER_")) delete environment[variableName];
+  }
   return { ...environment, ...overrides };
 }
 
-async function makeFakeBoundary({ cliVersion = "2.109.0", projectLabel } = {}) {
+function gitIn(repositoryPath, argumentsList) {
+  const result = spawnSync("git", argumentsList, {
+    cwd: repositoryPath,
+    encoding: "utf8",
+  });
+  assert.equal(result.status, 0, result.stderr);
+  return result.stdout.trim();
+}
+
+async function makeCommittedBoundaryRepository() {
   const fixtureRoot = await mkdtemp(
-    path.join(os.tmpdir(), "fou762-history-boundary-"),
+    path.join(os.tmpdir(), "fou762-history-committed-boundary-"),
   );
+  const repoRoot = path.join(fixtureRoot, "repo");
+  const boundaryFiles = [
+    "scripts/baseline-data-fingerprint.sql",
+    "scripts/capture-database-manifest.sh",
+    "scripts/check-migration-compatibility.mjs",
+    "scripts/compare-database-manifests.mjs",
+    "scripts/database-manifest.sql",
+    "scripts/prepare-reconciliation-stage.mjs",
+    "scripts/rehearse-history-reconciliation.sh",
+    "scripts/verify-reconciliation-history.mjs",
+    "supabase/.temp/postgres-version",
+    "supabase/config.toml",
+    "supabase/tests/reconciliation/legacy-migration-2-overlay.sql",
+    "supabase/tests/reconciliation/legacy-migration-2.source.manifest.jsonl",
+    "supabase/tests/reconciliation/migration-3.target.manifest.jsonl",
+  ];
+  await mkdir(repoRoot, { recursive: true });
+  for (const relativePath of boundaryFiles) {
+    const sourcePath = path.join(repositoryRoot, relativePath);
+    const destinationPath = path.join(repoRoot, relativePath);
+    await mkdir(path.dirname(destinationPath), { recursive: true });
+    await cp(sourcePath, destinationPath, { recursive: true });
+  }
+  gitIn(repoRoot, ["init"]);
+  gitIn(repoRoot, ["config", "user.name", "Codex Fixture"]);
+  gitIn(repoRoot, ["config", "user.email", "codex-fixture@example.invalid"]);
+  gitIn(repoRoot, ["add", "."]);
+  gitIn(repoRoot, ["commit", "-m", "fixture boundary"]);
+  return {
+    fixtureRoot,
+    repoRoot,
+    releaseCommit: gitIn(repoRoot, ["rev-parse", "HEAD"]),
+    rehearsalPath: path.join(
+      repoRoot,
+      "scripts",
+      "rehearse-history-reconciliation.sh",
+    ),
+  };
+}
+
+async function makeFakeBoundary({
+  cliVersion = "2.109.0",
+  projectLabel,
+  composeProject = "77-dominion-challenge",
+  tagImageId = `sha256:${"1".repeat(64)}`,
+  containerImageId = tagImageId,
+  serverVersion = "170006",
+} = {}) {
+  const fixtureRoot = await realpath(await mkdtemp(
+    path.join(os.tmpdir(), "fou762-history-boundary-"),
+  ));
   const logPath = path.join(fixtureRoot, "calls.log");
   const fakeSupabase = path.join(fixtureRoot, "supabase");
   const fakeDocker = path.join(fixtureRoot, "docker");
+  const dockerSocket = path.join(fixtureRoot, "docker.sock");
+  const databaseContainerId = "c".repeat(64);
+  const socketServer = createServer(() => {});
+  await new Promise((resolve, reject) => {
+    socketServer.once("error", reject);
+    socketServer.listen(dockerSocket, resolve);
+  });
+  await chmod(dockerSocket, 0o600);
   await writeFile(
     fakeSupabase,
     `#!/bin/sh
@@ -104,9 +182,23 @@ exit 97
   await writeFile(
     fakeDocker,
     `#!/bin/sh
-printf 'docker:%s\\n' "$*" >>"$FAKE_RECONCILIATION_LOG"
+if [ "${"${DOCKER_HOST:-}"}" != ${JSON.stringify(`unix://${dockerSocket}`)} ]; then
+  exit 94
+fi
+if [ "${"${DOCKER_CONTEXT+x}"}" = x ] || [ "${"${DOCKER_CONFIG+x}"}" = x ] || [ "${"${DOCKER_TLS_VERIFY+x}"}" = x ]; then
+  exit 93
+fi
+printf 'docker:%s\\n' "$*" >>${JSON.stringify(logPath)}
+printf 'docker-environment:host=%s home=%s config=%s\\n' "$DOCKER_HOST" "${"${HOME-unset}"}" "${"${DOCKER_CONFIG-unset}"}" >>${JSON.stringify(logPath)}
+if [ "$1" = "image" ] && [ "$2" = "inspect" ]; then
+  printf '%s\\n' '${tagImageId}'
+  exit 0
+fi
 if [ "$1" = "container" ] && [ "$2" = "inspect" ]; then
   case "$5" in
+    *'{{.Id}}|{{.Image}}|{{.Config.Image}}'*)
+      printf '%s\\n' '${databaseContainerId}|${containerImageId}|public.ecr.aws/supabase/postgres:17.6.1.141|${projectLabel ?? "wrong-project"}|${composeProject}'
+      ;;
     '{{.Config.Image}}')
       printf '%s\\n' 'public.ecr.aws/supabase/postgres:17.6.1.141'
       ;;
@@ -114,7 +206,7 @@ if [ "$1" = "container" ] && [ "$2" = "inspect" ]; then
       printf '%s\\n' '${projectLabel ?? "wrong-project"}'
       ;;
     *com.docker.compose.project*)
-      printf '%s\\n' '77-dominion-challenge'
+      printf '%s\\n' '${composeProject}'
       ;;
     *)
       exit 96
@@ -122,12 +214,52 @@ if [ "$1" = "container" ] && [ "$2" = "inspect" ]; then
   esac
   exit 0
 fi
+if [ "$1" = "exec" ]; then
+  case "$*" in
+    *"show server_version_num"*)
+      printf '%s\\n' '${serverVersion}'
+      exit 0
+      ;;
+  esac
+fi
 exit 95
 `,
   );
   await chmod(fakeSupabase, 0o700);
   await chmod(fakeDocker, 0o700);
-  return { fakeDocker, fakeSupabase, fixtureRoot, logPath };
+  const dockerContents = await readFile(fakeDocker);
+  const dockerSha256 = createHash("sha256").update(dockerContents).digest("hex");
+  const socketIdentity = await stat(dockerSocket);
+  return {
+    arguments: [
+      "--docker-bin",
+      fakeDocker,
+      "--docker-bin-sha256",
+      dockerSha256,
+      "--docker-socket",
+      dockerSocket,
+      "--docker-socket-device",
+      String(socketIdentity.dev),
+      "--docker-socket-inode",
+      String(socketIdentity.ino),
+      "--docker-socket-owner-uid",
+      String(socketIdentity.uid),
+      "--docker-socket-owner-mode",
+      String(0o600),
+      "--postgres-image-id",
+      `sha256:${"1".repeat(64)}`,
+    ],
+    close: () => new Promise((resolve, reject) => {
+      socketServer.close((error) => error ? reject(error) : resolve());
+    }),
+    databaseContainerId,
+    dockerSha256,
+    dockerSocket,
+    fakeDocker,
+    fakeSupabase,
+    fixtureRoot,
+    logPath,
+  };
 }
 
 async function readLog(logPath) {
@@ -137,6 +269,24 @@ async function readLog(logPath) {
     if (error?.code === "ENOENT") return "";
     throw error;
   }
+}
+
+function replaceOption(argumentsList, optionName, replacement) {
+  const updated = [...argumentsList];
+  const optionIndex = updated.indexOf(optionName);
+  assert.notEqual(optionIndex, -1, `missing fixture option ${optionName}`);
+  updated[optionIndex + 1] = replacement;
+  return updated;
+}
+
+async function waitForLog(logPath, pattern, timeoutMs = 10_000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const contents = await readLog(logPath);
+    if (pattern.test(contents)) return contents;
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+  throw new Error(`timed out waiting for ${pattern}`);
 }
 
 test("pins the exact cumulative 1-13 migration inventory", async () => {
@@ -193,6 +343,21 @@ test("static contract is local-only, one-version-at-a-time, and checkpointed", a
   assert.match(source, /public\.ecr\.aws\/supabase\/postgres:\$\{expected_postgres_version\}/u);
   assert.match(source, /com\.supabase\.cli\.project/u);
   assert.match(source, /com\.docker\.compose\.project/u);
+  assert.match(source, /--docker-bin-sha256/u);
+  assert.match(source, /--docker-socket-device/u);
+  assert.match(source, /--docker-socket-inode/u);
+  assert.match(source, /--docker-socket-owner-mode 384/u);
+  assert.match(source, /--postgres-image-id sha256:<64hex>/u);
+  assert.match(source, /DOCKER_\*\)/u);
+  assert.match(source, /\/usr\/bin\/env -i[\s\S]*DOCKER_HOST="unix:\/\/\$docker_socket"/u);
+  assert.match(source, /require_docker_executable/u);
+  assert.match(source, /require_docker_socket/u);
+  assert.match(source, /Docker executable SHA-256 does not match/u);
+  assert.match(source, /Docker socket identity is not the exact owner-only reviewed socket/u);
+  assert.match(source, /actual_tag_image_id/u);
+  assert.match(source, /\{\{\.Id\}\}\|\{\{\.Image\}\}\|\{\{\.Config\.Image\}\}/u);
+  assert.match(source, /docker_run exec "\$database_container_id"/u);
+  assert.doesNotMatch(source, /"\$docker_cli" exec "\$expected_database_container"/u);
   assert.match(source, /expected_server_version_num="170006"/u);
   assert.match(source, /legacy-migration-2-overlay\.sql/u);
   assert.match(source, /90000000-0000-4000-8000-000000000009/u);
@@ -240,6 +405,29 @@ test("static contract is local-only, one-version-at-a-time, and checkpointed", a
   assert.match(source, /verify_owned_database/u);
   assert.match(source, /fou762_history_rehearsal\.ownership/u);
   assert.match(source, /drop_owned_database/u);
+  const createPending = source.indexOf(
+    'write_owned_database_recovery "$database_name" "$ownership_token" create-pending',
+  );
+  const createDatabase = source.indexOf(
+    'createdb --username postgres --template template0 "$database_name"',
+  );
+  const markerPending = source.indexOf(
+    'write_owned_database_recovery "$database_name" "$ownership_token" marker-pending',
+  );
+  const installMarker = source.indexOf(
+    'create table fou762_history_rehearsal.ownership',
+  );
+  const owned = source.indexOf(
+    'write_owned_database_recovery "$database_name" "$ownership_token" owned',
+  );
+  assert.ok(
+    createPending >= 0
+      && createPending < createDatabase
+      && createDatabase < markerPending
+      && markerPending < installMarker
+      && installMarker < owned,
+    "durable recovery state must cover create, unmarked, and owned states",
+  );
   assert.doesNotMatch(source, /--linked/u);
   assert.doesNotMatch(source, /\bdb[ ]+reset\b/u);
   assert.doesNotMatch(source, /\bmigration[ ]+repair\b/u);
@@ -270,7 +458,8 @@ test("an authoritative history query failure cannot pass the zero-row checkpoint
 set -euo pipefail
 fail() { printf '%s\\n' "$1" >&2; exit 97; }
 docker_cli=${JSON.stringify(fakeDocker)}
-expected_database_container=local-only
+database_container_id=local-only
+docker_run() { "$docker_cli" "$@"; }
 database_name=fixture
 migration_versions=(20260707170000)
 history_versions() {${functionBlock.groups.body}
@@ -288,6 +477,246 @@ printf 'migration-up-boundary-reached\\n'
     assert.doesNotMatch(result.stdout, /migration-up-boundary-reached/u);
   } finally {
     await rm(fixtureRoot, { force: true, recursive: true });
+  }
+});
+
+test("cleanup survives first and second process-group signals while dropping an owned database", async (t) => {
+  const source = await readFile(rehearsalPath, "utf8");
+  const firstSignalTraps = [
+    "trap cleanup EXIT",
+    "trap 'exit 129' HUP",
+    "trap 'exit 130' INT",
+    "trap 'exit 131' QUIT",
+    "trap 'exit 143' TERM",
+  ].join("\n");
+  assert.ok(
+    source.includes(firstSignalTraps),
+    "the production rehearsal must route every first signal through cleanup",
+  );
+  const cleanupStart = source.indexOf("owned_database_recovery_file() {");
+  const cleanupEnd = source.indexOf("\ntrap cleanup EXIT", cleanupStart);
+  assert.ok(cleanupStart >= 0 && cleanupEnd > cleanupStart);
+  const cleanupContract = source.slice(cleanupStart, cleanupEnd);
+  const fixtureRoot = await mkdtemp(
+    path.join(os.tmpdir(), "fou762-history-cleanup-signal-"),
+  );
+  t.after(() => rm(fixtureRoot, { force: true, recursive: true }));
+  const fakeDocker = path.join(fixtureRoot, "docker");
+  const harness = path.join(fixtureRoot, "harness.sh");
+  const logPath = path.join(fixtureRoot, "calls.log");
+  const databaseState = path.join(fixtureRoot, "database-present");
+  const rehearsalRoot = path.join(
+    fixtureRoot,
+    "fou762-history-reconciliation.fixture",
+  );
+  await mkdir(rehearsalRoot);
+  await writeFile(databaseState, "present\n");
+  await writeFile(
+    fakeDocker,
+    `#!/bin/sh
+set -eu
+printf '%s\n' "$*" >>"${logPath}"
+case "$*" in
+  *"select count(*) from fou762_history_rehearsal.ownership"*)
+    printf '%s\n' '1'
+    ;;
+  *"select count(*) from pg_database where datname = 'fou762_history_1_2_3'"*)
+    if [ -e "${databaseState}" ]; then
+      printf '%s\n' '1'
+    else
+      printf '%s\n' '0'
+    fi
+    ;;
+  *"dropdb --username postgres"*)
+    printf '%s\n' 'drop-cleanup-window' >>"${logPath}"
+    /bin/sleep 0.5
+    /bin/rm -f -- "${databaseState}"
+    ;;
+esac
+`,
+  );
+  await chmod(fakeDocker, 0o700);
+  await writeFile(
+    harness,
+    `#!/bin/bash
+set -euo pipefail
+docker_cli=${JSON.stringify(fakeDocker)}
+database_container_id=local-only
+docker_run() { "$docker_cli" "$@"; }
+expected_project_id=77-dominion-challenge
+rehearsal_parent=${JSON.stringify(fixtureRoot)}
+rehearsal_root=${JSON.stringify(rehearsalRoot)}
+created_databases=(fou762_history_1_2_3)
+database_tokens=(fou762_1_2_3)
+${cleanupContract}
+write_owned_database_recovery fou762_history_1_2_3 fou762_1_2_3 owned
+${firstSignalTraps}
+printf '%s\\n' 'rehearsal-ready' >>${JSON.stringify(logPath)}
+while :; do
+  /bin/sleep 60
+done
+`,
+  );
+  await chmod(harness, 0o700);
+  const child = spawn("/bin/bash", [harness], {
+    detached: true,
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  let stderr = "";
+  child.stderr.setEncoding("utf8");
+  child.stderr.on("data", (chunk) => {
+    stderr += chunk;
+  });
+  const completion = new Promise((resolve, reject) => {
+    child.once("error", reject);
+    child.once("close", (status, signal) => resolve({ status, signal }));
+  });
+  let finished = false;
+  try {
+    await waitForLog(logPath, /rehearsal-ready/u);
+    process.kill(-child.pid, "SIGQUIT");
+    await waitForLog(logPath, /drop-cleanup-window/u);
+    process.kill(-child.pid, "SIGTERM");
+    const result = await completion;
+    finished = true;
+    assert.equal(result.signal, null, stderr);
+    assert.equal(result.status, 131, stderr);
+    await assert.rejects(stat(databaseState));
+    await assert.rejects(stat(rehearsalRoot));
+  } finally {
+    if (!finished) {
+      try {
+        process.kill(-child.pid, "SIGKILL");
+      } catch (error) {
+        if (error.code !== "ESRCH") throw error;
+      }
+    }
+  }
+});
+
+test("create-window, marker, drop, and absence-proof failures preserve durable database authority", async (t) => {
+  const source = await readFile(rehearsalPath, "utf8");
+  const cleanupStart = source.indexOf("owned_database_recovery_file() {");
+  const cleanupEnd = source.indexOf("\ntrap cleanup EXIT", cleanupStart);
+  assert.ok(cleanupStart >= 0 && cleanupEnd > cleanupStart);
+  const cleanupContract = source.slice(cleanupStart, cleanupEnd);
+  for (const scenario of [
+    {
+      initialStatus: "create-pending",
+      markerCount: "0",
+      label: "create-window",
+      dropStatus: 75,
+      postDropCount: "1",
+    },
+    {
+      initialStatus: "marker-pending",
+      markerCount: "0",
+      label: "marker-failure",
+      dropStatus: 75,
+      postDropCount: "1",
+    },
+    {
+      initialStatus: "owned",
+      markerCount: "1",
+      label: "drop-failure",
+      dropStatus: 75,
+      postDropCount: "1",
+    },
+    {
+      initialStatus: "owned",
+      markerCount: "1",
+      label: "drop-false-success",
+      dropStatus: 0,
+      postDropCount: "1",
+    },
+    {
+      initialStatus: "owned",
+      markerCount: "1",
+      label: "absence-query-failure",
+      dropStatus: 0,
+      postDropQueryFails: true,
+    },
+  ]) {
+    await t.test(scenario.label, async (nested) => {
+      const fixtureRoot = await mkdtemp(
+        path.join(os.tmpdir(), `fou762-history-${scenario.label}-`),
+      );
+      nested.after(() => rm(fixtureRoot, { force: true, recursive: true }));
+      const fakeDocker = path.join(fixtureRoot, "docker");
+      const harness = path.join(fixtureRoot, "harness.sh");
+      const logPath = path.join(fixtureRoot, "calls.log");
+      const rehearsalRoot = path.join(
+        fixtureRoot,
+        "fou762-history-reconciliation.fixture",
+      );
+      await mkdir(rehearsalRoot);
+      await writeFile(
+        fakeDocker,
+        `#!/bin/sh
+set -eu
+printf '%s\n' "$*" >>"${logPath}"
+case "$*" in
+  *"select count(*) from fou762_history_rehearsal.ownership"*)
+    printf '%s\n' '${scenario.markerCount}'
+    ;;
+  *"select count(*) from pg_database where datname = 'fou762_history_1_2_3'"*)
+    if [ "${scenario.postDropQueryFails ? "1" : "0"}" = "1" ]; then
+      exit 74
+    fi
+    printf '%s\n' '${scenario.postDropCount ?? "0"}'
+    ;;
+  *"dropdb --username postgres"*)
+    exit ${scenario.dropStatus}
+    ;;
+esac
+`,
+      );
+      await chmod(fakeDocker, 0o700);
+      await writeFile(
+        harness,
+        `#!/bin/bash
+set -euo pipefail
+docker_cli=${JSON.stringify(fakeDocker)}
+database_container_id=local-only
+docker_run() { "$docker_cli" "$@"; }
+expected_project_id=77-dominion-challenge
+rehearsal_parent=${JSON.stringify(fixtureRoot)}
+rehearsal_root=${JSON.stringify(rehearsalRoot)}
+created_databases=(fou762_history_1_2_3)
+database_tokens=(fou762_1_2_3)
+${cleanupContract}
+write_owned_database_recovery fou762_history_1_2_3 fou762_1_2_3 ${scenario.initialStatus}
+trap cleanup EXIT
+exit 9
+`,
+      );
+      await chmod(harness, 0o700);
+      const result = spawnSync("/bin/bash", [harness], { encoding: "utf8" });
+      assert.equal(result.status, 9, result.stderr);
+      assert.match(result.stderr, /preserved private disposable-database recovery state/u);
+      const recovery = JSON.parse(await readFile(
+        path.join(
+          rehearsalRoot,
+          "owned-database-fou762_history_1_2_3.json",
+        ),
+        "utf8",
+      ));
+      assert.equal(recovery.status, "cleanup-unresolved");
+      assert.equal(recovery.databaseName, "fou762_history_1_2_3");
+      assert.equal(recovery.ownershipToken, "fou762_1_2_3");
+      const log = await readLog(logPath);
+      if (scenario.markerCount === "0") {
+        assert.doesNotMatch(log, /dropdb --username postgres/u);
+      } else {
+        assert.match(log, /dropdb --username postgres/u);
+        if (scenario.dropStatus === 0) {
+          assert.match(
+            log,
+            /select count\(\*\) from pg_database where datname = 'fou762_history_1_2_3'/u,
+          );
+        }
+      }
+    });
   }
 });
 
@@ -311,12 +740,16 @@ test("hosted configuration is rejected before any fake boundary call", async () 
   try {
     const result = spawnSync(
       "bash",
-      [rehearsalPath, "--release-commit", git(["rev-parse", "HEAD"])],
+      [
+        rehearsalPath,
+        "--release-commit",
+        git(["rev-parse", "HEAD"]),
+        ...boundary.arguments,
+      ],
       {
         cwd: repositoryRoot,
         encoding: "utf8",
         env: cleanEnvironment({
-          DOCKER_BIN: boundary.fakeDocker,
           FAKE_RECONCILIATION_LOG: boundary.logPath,
           SUPABASE_CLI_BIN: boundary.fakeSupabase,
           SUPABASE_DB_URL: "postgresql://hosted.invalid/postgres",
@@ -327,21 +760,321 @@ test("hosted configuration is rejected before any fake boundary call", async () 
     assert.match(result.stderr, /SUPABASE_DB_URL must be unset/u);
     assert.equal(await readLog(boundary.logPath), "");
   } finally {
+    await boundary.close();
     await rm(boundary.fixtureRoot, { force: true, recursive: true });
+  }
+});
+
+test("every ambient Docker routing, config, and TLS override is rejected before Docker runs", async (t) => {
+  const boundary = await makeFakeBoundary();
+  t.after(async () => {
+    await boundary.close();
+    await rm(boundary.fixtureRoot, { force: true, recursive: true });
+  });
+  for (const variableName of [
+    "DOCKER_HOST",
+    "DOCKER_CONTEXT",
+    "DOCKER_CONFIG",
+    "DOCKER_CERT_PATH",
+    "DOCKER_TLS",
+    "DOCKER_TLS_VERIFY",
+    "DOCKER_API_VERSION",
+    "DOCKER_CUSTOM_HEADERS",
+    "DOCKER_BIN",
+  ]) {
+    await t.test(variableName, () => {
+      const result = spawnSync(
+        "bash",
+        [
+          rehearsalPath,
+          "--release-commit",
+          git(["rev-parse", "HEAD"]),
+          ...boundary.arguments,
+        ],
+        {
+          cwd: repositoryRoot,
+          encoding: "utf8",
+          env: cleanEnvironment({
+            [variableName]: "hostile-ambient-value",
+            FAKE_RECONCILIATION_LOG: boundary.logPath,
+            SUPABASE_CLI_BIN: boundary.fakeSupabase,
+          }),
+        },
+      );
+      assert.notEqual(result.status, 0);
+      assert.match(result.stderr, new RegExp(`${variableName} must be unset`, "u"));
+    });
+  }
+  assert.equal(await readLog(boundary.logPath), "");
+});
+
+test("Docker executable provenance failures stop before any Docker call", async (t) => {
+  const boundary = await makeFakeBoundary();
+  t.after(async () => {
+    await boundary.close();
+    await rm(boundary.fixtureRoot, { force: true, recursive: true });
+  });
+  await t.test("wrong SHA-256", () => {
+    const result = spawnSync(
+      "bash",
+      [
+        rehearsalPath,
+        "--release-commit",
+        git(["rev-parse", "HEAD"]),
+        ...replaceOption(
+          boundary.arguments,
+          "--docker-bin-sha256",
+          "f".repeat(64),
+        ),
+      ],
+      {
+        cwd: repositoryRoot,
+        encoding: "utf8",
+        env: cleanEnvironment({
+          FAKE_RECONCILIATION_LOG: boundary.logPath,
+          SUPABASE_CLI_BIN: boundary.fakeSupabase,
+        }),
+      },
+    );
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /Docker executable SHA-256 does not match/u);
+  });
+  await t.test("symlink executable", async () => {
+    const dockerSymlink = path.join(boundary.fixtureRoot, "docker-symlink");
+    await symlink(boundary.fakeDocker, dockerSymlink);
+    const result = spawnSync(
+      "bash",
+      [
+        rehearsalPath,
+        "--release-commit",
+        git(["rev-parse", "HEAD"]),
+        ...replaceOption(
+          boundary.arguments,
+          "--docker-bin",
+          dockerSymlink,
+        ),
+      ],
+      {
+        cwd: repositoryRoot,
+        encoding: "utf8",
+        env: cleanEnvironment({
+          FAKE_RECONCILIATION_LOG: boundary.logPath,
+          SUPABASE_CLI_BIN: boundary.fakeSupabase,
+        }),
+      },
+    );
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /executable, non-symlink regular file/u);
+  });
+  assert.equal(await readLog(boundary.logPath), "");
+});
+
+test("Docker socket substitution and permission failures stop before any Docker call", async (t) => {
+  const boundary = await makeFakeBoundary();
+  t.after(async () => {
+    await boundary.close();
+    await rm(boundary.fixtureRoot, { force: true, recursive: true });
+  });
+  await t.test("wrong socket inode", () => {
+    const result = spawnSync(
+      "bash",
+      [
+        rehearsalPath,
+        "--release-commit",
+        git(["rev-parse", "HEAD"]),
+        ...replaceOption(
+          boundary.arguments,
+          "--docker-socket-inode",
+          "1",
+        ),
+      ],
+      {
+        cwd: repositoryRoot,
+        encoding: "utf8",
+        env: cleanEnvironment({
+          FAKE_RECONCILIATION_LOG: boundary.logPath,
+          SUPABASE_CLI_BIN: boundary.fakeSupabase,
+        }),
+      },
+    );
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /not the exact owner-only reviewed socket/u);
+  });
+  await t.test("symlink socket", async () => {
+    const socketSymlink = path.join(boundary.fixtureRoot, "docker-symlink.sock");
+    await symlink(boundary.dockerSocket, socketSymlink);
+    const result = spawnSync(
+      "bash",
+      [
+        rehearsalPath,
+        "--release-commit",
+        git(["rev-parse", "HEAD"]),
+        ...replaceOption(
+          boundary.arguments,
+          "--docker-socket",
+          socketSymlink,
+        ),
+      ],
+      {
+        cwd: repositoryRoot,
+        encoding: "utf8",
+        env: cleanEnvironment({
+          FAKE_RECONCILIATION_LOG: boundary.logPath,
+          SUPABASE_CLI_BIN: boundary.fakeSupabase,
+        }),
+      },
+    );
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /real, non-symlink Unix socket/u);
+  });
+  await t.test("non-owner-only socket mode", async () => {
+    await chmod(boundary.dockerSocket, 0o660);
+    const result = spawnSync(
+      "bash",
+      [
+        rehearsalPath,
+        "--release-commit",
+        git(["rev-parse", "HEAD"]),
+        ...boundary.arguments,
+      ],
+      {
+        cwd: repositoryRoot,
+        encoding: "utf8",
+        env: cleanEnvironment({
+          FAKE_RECONCILIATION_LOG: boundary.logPath,
+          SUPABASE_CLI_BIN: boundary.fakeSupabase,
+        }),
+      },
+    );
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /not the exact owner-only reviewed socket/u);
+  });
+  assert.equal(await readLog(boundary.logPath), "");
+});
+
+test("Docker commands receive only the reviewed socket and use the immutable container ID", async () => {
+  const boundary = await makeFakeBoundary({
+    projectLabel: "77-dominion-challenge",
+    serverVersion: "999999",
+  });
+  const isolatedRepository = await makeCommittedBoundaryRepository();
+  try {
+    const result = spawnSync(
+      "bash",
+      [
+        isolatedRepository.rehearsalPath,
+        "--release-commit",
+        isolatedRepository.releaseCommit,
+        ...boundary.arguments,
+      ],
+      {
+        cwd: isolatedRepository.repoRoot,
+        encoding: "utf8",
+        env: cleanEnvironment({
+          FAKE_RECONCILIATION_LOG: boundary.logPath,
+          HOME: "/hostile/home",
+          SUPABASE_CLI_BIN: boundary.fakeSupabase,
+        }),
+      },
+    );
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /expected PostgreSQL server version 17\.6/u);
+    const calls = await readLog(boundary.logPath);
+    const environmentLines = calls.split("\n").filter((line) =>
+      line.startsWith("docker-environment:")
+    );
+    assert.ok(environmentLines.length >= 3, calls);
+    for (const line of environmentLines) {
+      assert.equal(
+        line,
+        `docker-environment:host=unix://${boundary.dockerSocket} home=unset config=unset`,
+      );
+    }
+    assert.match(calls, new RegExp(`docker:exec ${boundary.databaseContainerId} `, "u"));
+    assert.doesNotMatch(calls, /docker:exec supabase_db_/u);
+    assert.doesNotMatch(calls, /createdb|dropdb/u);
+  } finally {
+    await rm(isolatedRepository.fixtureRoot, { force: true, recursive: true });
+    await boundary.close();
+    await rm(boundary.fixtureRoot, { force: true, recursive: true });
+  }
+});
+
+test("mutable tag and running-container image-ID substitutions stop before database creation", async (t) => {
+  const isolatedRepository = await makeCommittedBoundaryRepository();
+  t.after(() => rm(isolatedRepository.fixtureRoot, {
+    force: true,
+    recursive: true,
+  }));
+  for (const scenario of [
+    {
+      label: "tag substitution",
+      options: {
+        projectLabel: "77-dominion-challenge",
+        tagImageId: `sha256:${"2".repeat(64)}`,
+      },
+      message: /tag does not resolve to the exact approved image ID/u,
+    },
+    {
+      label: "container image substitution",
+      options: {
+        containerImageId: `sha256:${"2".repeat(64)}`,
+        projectLabel: "77-dominion-challenge",
+      },
+      message: /container does not use the exact approved image ID/u,
+    },
+  ]) {
+    await t.test(scenario.label, async () => {
+      const boundary = await makeFakeBoundary(scenario.options);
+      try {
+        const result = spawnSync(
+          "bash",
+          [
+            isolatedRepository.rehearsalPath,
+            "--release-commit",
+            isolatedRepository.releaseCommit,
+            ...boundary.arguments,
+          ],
+          {
+            cwd: isolatedRepository.repoRoot,
+            encoding: "utf8",
+            env: cleanEnvironment({
+              FAKE_RECONCILIATION_LOG: boundary.logPath,
+              SUPABASE_CLI_BIN: boundary.fakeSupabase,
+            }),
+          },
+        );
+        assert.notEqual(result.status, 0);
+        assert.match(result.stderr, scenario.message);
+        assert.doesNotMatch(
+          await readLog(boundary.logPath),
+          /createdb|dropdb|docker:exec /u,
+        );
+      } finally {
+        await boundary.close();
+        await rm(boundary.fixtureRoot, { force: true, recursive: true });
+      }
+    });
   }
 });
 
 test("accepts pnpm's one literal leading argument separator", async () => {
   const boundary = await makeFakeBoundary({ cliVersion: "9.9.9" });
+  const isolatedRepository = await makeCommittedBoundaryRepository();
   try {
     const result = spawnSync(
       "bash",
-      [rehearsalPath, "--", "--release-commit", git(["rev-parse", "HEAD"])],
+      [
+        isolatedRepository.rehearsalPath,
+        "--",
+        "--release-commit",
+        isolatedRepository.releaseCommit,
+        ...boundary.arguments,
+      ],
       {
-        cwd: repositoryRoot,
+        cwd: isolatedRepository.repoRoot,
         encoding: "utf8",
         env: cleanEnvironment({
-          DOCKER_BIN: boundary.fakeDocker,
           FAKE_RECONCILIATION_LOG: boundary.logPath,
           SUPABASE_CLI_BIN: boundary.fakeSupabase,
         }),
@@ -351,21 +1084,28 @@ test("accepts pnpm's one literal leading argument separator", async () => {
     assert.match(result.stderr, /expected pinned Supabase CLI 2\.109\.0/u);
     assert.match(await readLog(boundary.logPath), /^supabase:--version$/mu);
   } finally {
+    await rm(isolatedRepository.fixtureRoot, { force: true, recursive: true });
+    await boundary.close();
     await rm(boundary.fixtureRoot, { force: true, recursive: true });
   }
 });
 
 test("CLI and container identity failures stop before database creation", async () => {
+  const isolatedRepository = await makeCommittedBoundaryRepository();
   const wrongCli = await makeFakeBoundary({ cliVersion: "9.9.9" });
   try {
     const result = spawnSync(
       "bash",
-      [rehearsalPath, "--release-commit", git(["rev-parse", "HEAD"])],
+      [
+        isolatedRepository.rehearsalPath,
+        "--release-commit",
+        isolatedRepository.releaseCommit,
+        ...wrongCli.arguments,
+      ],
       {
-        cwd: repositoryRoot,
+        cwd: isolatedRepository.repoRoot,
         encoding: "utf8",
         env: cleanEnvironment({
-          DOCKER_BIN: wrongCli.fakeDocker,
           FAKE_RECONCILIATION_LOG: wrongCli.logPath,
           SUPABASE_CLI_BIN: wrongCli.fakeSupabase,
         }),
@@ -375,6 +1115,7 @@ test("CLI and container identity failures stop before database creation", async 
     assert.match(result.stderr, /expected pinned Supabase CLI 2\.109\.0/u);
     assert.doesNotMatch(await readLog(wrongCli.logPath), /^docker:/mu);
   } finally {
+    await wrongCli.close();
     await rm(wrongCli.fixtureRoot, { force: true, recursive: true });
   }
 
@@ -385,12 +1126,16 @@ test("CLI and container identity failures stop before database creation", async 
   try {
     const result = spawnSync(
       "bash",
-      [rehearsalPath, "--release-commit", git(["rev-parse", "HEAD"])],
+      [
+        isolatedRepository.rehearsalPath,
+        "--release-commit",
+        isolatedRepository.releaseCommit,
+        ...wrongProject.arguments,
+      ],
       {
-        cwd: repositoryRoot,
+        cwd: isolatedRepository.repoRoot,
         encoding: "utf8",
         env: cleanEnvironment({
-          DOCKER_BIN: wrongProject.fakeDocker,
           FAKE_RECONCILIATION_LOG: wrongProject.logPath,
           SUPABASE_CLI_BIN: wrongProject.fakeSupabase,
         }),
@@ -401,6 +1146,8 @@ test("CLI and container identity failures stop before database creation", async 
     const calls = await readLog(wrongProject.logPath);
     assert.doesNotMatch(calls, /createdb|dropdb| exec /u);
   } finally {
+    await rm(isolatedRepository.fixtureRoot, { force: true, recursive: true });
+    await wrongProject.close();
     await rm(wrongProject.fixtureRoot, { force: true, recursive: true });
   }
 });

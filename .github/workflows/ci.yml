@@ -66,6 +66,8 @@ jobs:
         run: pnpm install --frozen-lockfile
       - name: Test profile-photo cleanup Cron rehearsal harness
         run: pnpm run test:profile-photo-cleanup-cron
+      - name: Test production profile-photo cleanup Cron policy
+        run: pnpm run test:production-profile-photo-cleanup-cron
       - name: Validate migration execution compatibility
         run: pnpm run check:migrations
       - name: Test the migration compatibility gate
@@ -74,18 +76,35 @@ jobs:
         run: pnpm run test:reconciliation-stage
       - name: Test production backup and restore evidence boundaries
         run: pnpm run test:production-backup-restore
+      - name: Test restored encrypted production backup release gate
+        run: pnpm run test:free-production-backup-evidence
+      - name: Test free production backup encryption and boundaries
+        run: pnpm run test:free-production-backup
       - name: Test production one-version reconciliation boundaries
         run: pnpm run test:production-reconciliation
+      - name: Test production Auth canary policy guard
+        run: pnpm run test:production-auth-canary-policy
+      - name: Test production canary entitlement operator
+        run: pnpm run test:production-canary-entitlement-operator
       - name: Test canonical database manifest gates
         run: pnpm run test:database-manifest
       - name: Start local Supabase
         run: pnpm run supabase:start
+      - name: Execute production canary SQL in isolated PostgreSQL
+        run: pnpm run test:production-canary-entitlement-sql
       - name: Rebuild from the migration chain
         run: pnpm run supabase:reset
       - name: Prove migration SQL and history roll back together
         run: pnpm run test:migration-atomicity
       - name: Rehearse the production baseline reconciliation
-        run: pnpm run test:baseline-reconciliation
+        run: |
+          # Hosted toolcache modes vary; keep the production executable pinning policy strict.
+          # This owner-only copy is used solely by the local reconciliation rehearsal.
+          node_runtime="$(mktemp -d "$RUNNER_TEMP/dominion-node.XXXXXX")"
+          chmod 700 "$node_runtime"
+          node_source="$(node -p 'require("node:fs").realpathSync(process.execPath)')"
+          /usr/bin/install -m 0500 "$node_source" "$node_runtime/node"
+          NODE_BIN="$node_runtime/node" pnpm run test:baseline-reconciliation
       - name: Test migrations and RLS
         run: pnpm run test:database
       - name: Test RPC retries and concurrency

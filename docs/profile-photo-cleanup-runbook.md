@@ -17,38 +17,30 @@ pointer and account-erasure state.
    Function secrets. The release workflow fails closed when it is absent,
    deploys `process-profile-photo-cleanup` with platform JWT verification off,
    and calls its authenticated health mode.
-3. In Supabase Vault, create `profile_photo_project_url` containing the project
-   URL and `profile_photo_worker_secret` containing the same worker secret. Do
-   not put either value in a migration, repository file, client variable, or
-   Cron job text.
-4. Enable the Supabase Cron and `pg_net` integrations, then create the job below
-   through the Dashboard SQL editor after reviewing the decrypted-secret names.
+3. Dispatch the protected `full` production release. After the release proves
+   exact zero-pending migration history, synchronizes Function secrets, and
+   deploys `process-profile-photo-cleanup`, it runs
+   `scripts/configure-production-profile-photo-cleanup-cron.mjs`. The script
+   uses the Supabase Management API to enable `pg_cron` in `pg_catalog` and
+   `pg_net` in `extensions`, then creates or updates the two named Vault values
+   and the one active five-minute job. The operation is transaction-locked,
+   idempotent, parameterized, and verified before the hosted worker health
+   request can run.
+4. Do not create or edit this job through direct `cron.job` writes. The release
+   uses only Supabase's supported `cron.schedule` and `cron.alter_job` APIs. Its
+   stored command reads `profile_photo_project_url` and
+   `profile_photo_worker_secret` only through `vault.decrypted_secrets`; it
+   never contains the project URL or worker credential. Management API errors
+   are status-only, and the fixed verification `SELECT` returns counts and
+   booleans rather than a decrypted value. It uses the privileged query role
+   only because Supabase's read-only role correctly cannot decrypt Vault.
 
-```sql
-select cron.schedule(
-  'process-profile-photo-cleanup',
-  '*/5 * * * *',
-  $job$
-  select net.http_post(
-    url := (
-      select decrypted_secret
-      from vault.decrypted_secrets
-      where name = 'profile_photo_project_url'
-    ) || '/functions/v1/process-profile-photo-cleanup',
-    headers := jsonb_build_object(
-      'Content-Type', 'application/json',
-      'x-dominion-worker-key', (
-        select decrypted_secret
-        from vault.decrypted_secrets
-        where name = 'profile_photo_worker_secret'
-      )
-    ),
-    body := '{"limit":25}'::jsonb,
-    timeout_milliseconds := 10000
-  ) as request_id;
-  $job$
-);
-```
+The GitHub `production` environment must provide the protected secret
+`SUPABASE_ACCESS_TOKEN`, variable `SUPABASE_PROJECT_REF`, variable
+`VITE_SUPABASE_URL`, and secret `PROFILE_PHOTO_WORKER_SECRET`. Never put their
+values in a migration, repository file, command argument, job text, or release
+log. A setup or verification mismatch fails the backend release before health
+proof and therefore prevents the frontend release.
 
 Supabase records runs in `cron.job_run_details`. Keep the job at five-minute
 intervals unless local rehearsal and closed-canary load evidence support a

@@ -5,23 +5,36 @@ import {
   productionAuthCanaryErrors,
   verifyProductionAuthCanary,
 } from '../../scripts/verify-production-auth-canary.mjs';
+import {
+  PRODUCTION_RECOVERY_REDIRECT_URL,
+  PRODUCTION_SITE_URL,
+  PRODUCTION_SUPABASE_PROJECT_REF,
+} from '../../scripts/production-auth-canary-policy.mjs';
 
 describe('production Supabase Auth canary gate', () => {
-  test('requires both public signup paths to be explicitly closed', () => {
+  test('requires public signup paths to be closed at the exact production URLs', () => {
     assert.deepEqual(productionAuthCanaryErrors({
       disable_signup: true,
       external_anonymous_users_enabled: false,
+      site_url: PRODUCTION_SITE_URL,
+      uri_allow_list: PRODUCTION_RECOVERY_REDIRECT_URL,
     }), []);
     assert.deepEqual(productionAuthCanaryErrors({
       disable_signup: false,
       external_anonymous_users_enabled: true,
+      site_url: 'https://wrong.example',
+      uri_allow_list: 'https://wrong.example/reset-password.html',
     }), [
       'Supabase Auth disable_signup must be true',
       'Supabase Auth external_anonymous_users_enabled must be false',
+      'Supabase Auth site_url must be the reviewed production origin',
+      'Supabase Auth uri_allow_list must contain only the reviewed recovery redirect',
     ]);
     assert.deepEqual(productionAuthCanaryErrors({}), [
       'Supabase Auth disable_signup must be true',
       'Supabase Auth external_anonymous_users_enabled must be false',
+      'Supabase Auth site_url must be the reviewed production origin',
+      'Supabase Auth uri_allow_list must contain only the reviewed recovery redirect',
     ]);
   });
 
@@ -29,7 +42,7 @@ describe('production Supabase Auth canary gate', () => {
     const calls = [];
     const verified = await verifyProductionAuthCanary({
       accessToken: 'test-management-token',
-      projectRef: 'project-ref',
+      projectRef: PRODUCTION_SUPABASE_PROJECT_REF,
       fetchImpl: async (...args) => {
         calls.push(args);
         return {
@@ -38,6 +51,8 @@ describe('production Supabase Auth canary gate', () => {
           json: async () => ({
             disable_signup: true,
             external_anonymous_users_enabled: false,
+            site_url: PRODUCTION_SITE_URL,
+            uri_allow_list: PRODUCTION_RECOVERY_REDIRECT_URL,
           }),
         };
       },
@@ -47,9 +62,11 @@ describe('production Supabase Auth canary gate', () => {
     assert.equal(calls.length, 1);
     assert.equal(
       calls[0][0],
-      'https://api.supabase.com/v1/projects/project-ref/config/auth',
+      `https://api.supabase.com/v1/projects/${PRODUCTION_SUPABASE_PROJECT_REF}/config/auth`,
     );
-    assert.deepEqual(calls[0][1], {
+    const { signal, ...requestOptions } = calls[0][1];
+    assert.ok(signal instanceof AbortSignal);
+    assert.deepEqual(requestOptions, {
       method: 'GET',
       headers: {
         Accept: 'application/json',
@@ -67,7 +84,7 @@ describe('production Supabase Auth canary gate', () => {
     await assert.rejects(
       verifyProductionAuthCanary({
         accessToken: 'test-management-token',
-        projectRef: 'project-ref',
+        projectRef: PRODUCTION_SUPABASE_PROJECT_REF,
         fetchImpl: async () => ({
           ok: true,
           status: 200,
@@ -88,7 +105,7 @@ describe('production Supabase Auth canary gate', () => {
     await assert.rejects(
       verifyProductionAuthCanary({
         accessToken: 'test-management-token',
-        projectRef: 'project-ref',
+        projectRef: PRODUCTION_SUPABASE_PROJECT_REF,
         fetchImpl: async () => ({
           ok: false,
           status: 403,
@@ -99,7 +116,7 @@ describe('production Supabase Auth canary gate', () => {
         }),
       }),
       (error) => {
-        assert.equal(error.message, 'Unable to read the Supabase Auth configuration (HTTP 403).');
+        assert.equal(error.message, 'Supabase Auth configuration verification failed (HTTP 403).');
         assert.doesNotMatch(error.message, new RegExp(responseMarker));
         return true;
       },
@@ -109,25 +126,25 @@ describe('production Supabase Auth canary gate', () => {
 
   test('fails closed for missing credentials, network errors, and invalid JSON', async () => {
     await assert.rejects(
-      verifyProductionAuthCanary({ accessToken: '', projectRef: 'project-ref' }),
-      /SUPABASE_ACCESS_TOKEN is required/,
+      verifyProductionAuthCanary({ accessToken: '', projectRef: PRODUCTION_SUPABASE_PROJECT_REF }),
+      /SUPABASE_ACCESS_TOKEN must be a non-empty token/,
     );
     await assert.rejects(
       verifyProductionAuthCanary({ accessToken: 'token', projectRef: '' }),
-      /SUPABASE_PROJECT_REF is required/,
+      /SUPABASE_PROJECT_REF must be the reviewed production project/,
     );
     await assert.rejects(
       verifyProductionAuthCanary({
         accessToken: 'token',
-        projectRef: 'project-ref',
+        projectRef: PRODUCTION_SUPABASE_PROJECT_REF,
         fetchImpl: async () => { throw new Error('response payload'); },
       }),
-      /Unable to read the Supabase Auth configuration\./,
+      /Supabase Auth configuration verification request failed\./,
     );
     await assert.rejects(
       verifyProductionAuthCanary({
         accessToken: 'token',
-        projectRef: 'project-ref',
+        projectRef: PRODUCTION_SUPABASE_PROJECT_REF,
         fetchImpl: async () => ({
           ok: true,
           status: 200,

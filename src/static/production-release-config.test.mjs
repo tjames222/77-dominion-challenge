@@ -4,15 +4,21 @@ import { describe, test } from 'node:test';
 
 const read = (path) => readFileSync(new URL(path, import.meta.url), 'utf8');
 const workflow = read('../../.github/workflows/deploy.yml');
+const previewWorkflow = read('../../.github/workflows/cloudflare-preview.yml');
+const canaryEntitlementWorkflow = read(
+  '../../.github/workflows/manage-production-canary-entitlement.yml',
+);
 const workflows = [
   workflow,
+  previewWorkflow,
+  canaryEntitlementWorkflow,
   read('../../.github/workflows/ci.yml'),
   read('../../.github/workflows/browser-quality.yml'),
 ];
 const headers = read('../../public/_headers');
 const setup = read('../../CLOUDFLARE_PAGES_SETUP.md');
 const functionEnvironmentExample = read('../../supabase/.env.example');
-const authCanaryVerifier = read('../../scripts/verify-production-auth-canary.mjs');
+const authCanaryVerifier = read('../../scripts/production-auth-canary-policy.mjs');
 const canaryRunbook = read('../../docs/production-canary-operator-runbook.md');
 const localProductionRunner = read('../../scripts/rehearse-local-production-stack.sh');
 const localProductionSpec = read('../../tests/e2e/local-production-stack.spec.mjs');
@@ -40,10 +46,70 @@ describe('production release configuration', () => {
   test('uses one protected Cloudflare deployment after backend verification', () => {
     assert.match(workflow, /needs:\s*frontend[\s\S]*?environment: production/);
     assert.match(workflow, /cloudflare\/wrangler-action@[0-9a-f]{40} # v3/);
-    assert.match(workflow, /pages deploy dist[\s\S]*?--project-name=77-dominion-challenge[\s\S]*?--branch=main/);
+    assert.match(
+      workflow,
+      /CLOUDFLARE_PAGES_PROJECT: \$\{\{ vars\.CLOUDFLARE_PAGES_PROJECT \}\}[\s\S]*?pages deploy dist[\s\S]*?--project-name=\$\{\{ env\.CLOUDFLARE_PAGES_PROJECT \}\}[\s\S]*?--branch=main/,
+    );
     assert.match(workflow, /CLOUDFLARE_API_TOKEN/);
     assert.match(workflow, /CLOUDFLARE_ACCOUNT_ID/);
     assert.doesNotMatch(workflow, /deploy-pages|configure-pages|github-pages/);
+    const deployJob = workflow.slice(workflow.indexOf('\n  deploy:'));
+    const exactProjectGate = 'if [[ "${CLOUDFLARE_PAGES_PROJECT:-}" != "77-dominion-live" ]]';
+    assert.ok(deployJob.indexOf(exactProjectGate) !== -1);
+    assert.ok(
+      deployJob.indexOf(exactProjectGate)
+        < deployJob.indexOf('- name: Download immutable frontend artifact'),
+    );
+  });
+
+  test('builds develop without live credentials and deploys only through the preview environment', () => {
+    assert.match(previewWorkflow, /push:\s*\n\s*branches:\s*\n\s*- develop/u);
+    assert.match(previewWorkflow, /if: github\.ref == 'refs\/heads\/develop'/u);
+    assert.match(previewWorkflow, /permissions: \{\}/u);
+    assert.match(
+      previewWorkflow,
+      /build:[\s\S]*?permissions:\s*\n\s*contents: read[\s\S]*?persist-credentials: false/u,
+    );
+    assert.match(previewWorkflow, /VITE_ENABLE_MOCKS: "true"/u);
+    assert.match(previewWorkflow, /VITE_ENABLE_SUPABASE_AUTH_IN_MOCKS: "false"/u);
+    assert.match(previewWorkflow, /VITE_ENABLE_PRODUCTION_CONNECTIONS: "false"/u);
+    assert.match(previewWorkflow, /VITE_ENABLE_BILLING: "false"/u);
+    assert.match(previewWorkflow, /VITE_ENABLE_PUBLIC_SIGNUP: "false"/u);
+    assert.doesNotMatch(
+      previewWorkflow.slice(0, previewWorkflow.indexOf('\n  deploy:')),
+      /VITE_SUPABASE_URL|VITE_SUPABASE_PUBLISHABLE_KEY|STRIPE_SECRET|CLOUDFLARE_API_TOKEN/u,
+    );
+    assert.match(previewWorkflow, /environment: cloudflare-preview/u);
+    assert.match(
+      previewWorkflow,
+      /deploy:[\s\S]*?permissions:[\s\S]*?actions: read[\s\S]*?deployments: write/u,
+    );
+    assert.match(
+      previewWorkflow,
+      /pages deploy dist[\s\S]*?--project-name=\$\{\{ env\.CLOUDFLARE_PAGES_PROJECT \}\}[\s\S]*?--branch=develop/,
+    );
+    const deployJob = previewWorkflow.slice(previewWorkflow.indexOf('\n  deploy:'));
+    const exactProjectGate = 'if [[ "${CLOUDFLARE_PAGES_PROJECT:-}" != "77-dominion-live" ]]';
+    assert.ok(deployJob.indexOf(exactProjectGate) !== -1);
+    assert.ok(
+      deployJob.indexOf(exactProjectGate)
+        < deployJob.indexOf('- name: Download immutable preview artifact'),
+    );
+    assert.match(previewWorkflow, /retention-days: 1/u);
+  });
+
+  test('historical and typo Pages project names cannot reach either deployment', () => {
+    const exactProjectGate = /if \[\[ "\$\{CLOUDFLARE_PAGES_PROJECT:-\}" != "([^"]+)" \]\]; then/u;
+    for (const source of [workflow, previewWorkflow]) {
+      const deployJob = source.slice(source.indexOf('\n  deploy:'));
+      assert.match(deployJob, /CLOUDFLARE_PAGES_PROJECT: \$\{\{ vars\.CLOUDFLARE_PAGES_PROJECT \}\}/u);
+      const match = deployJob.match(exactProjectGate);
+      assert.equal(match?.[1], '77-dominion-live');
+      assert.ok(match.index < deployJob.indexOf('pages deploy dist'));
+      for (const invalidName of ['77-dominion-challenge', '77-dominion-lvie']) {
+        assert.notEqual(invalidName, match[1]);
+      }
+    }
   });
 
   test('gates every production release on the closed hosted Auth policy', () => {
@@ -63,15 +129,21 @@ describe('production release configuration', () => {
 
     const authGate = workflow.indexOf('canary-policy:');
     const backend = workflow.indexOf('\n  backend:');
-    const firstBackendMutation = workflow.indexOf('supabase link --project-ref');
-    assert.ok(authGate !== -1 && authGate < backend && backend < firstBackendMutation);
+    const frontend = workflow.indexOf('\n  frontend:', backend);
+    const backendJob = workflow.slice(backend, frontend);
+    const firstBackendMutation = backendJob.indexOf('--credential-only');
+    assert.ok(authGate !== -1 && authGate < backend && firstBackendMutation !== -1);
+    assert.match(
+      workflow.slice(workflow.indexOf('\n  compatibility-guards:'), backend),
+      /compatibility-guards:[\s\S]*?- canary-policy[\s\S]*?- cloudflare-policy[\s\S]*?frontend-rollback-history:[\s\S]*?- canary-policy[\s\S]*?- cloudflare-policy/,
+    );
 
     assert.match(
       authCanaryVerifier,
       /https:\/\/api\.supabase\.com\/v1\/projects/,
     );
     assert.match(authCanaryVerifier, /\/config\/auth/);
-    assert.match(authCanaryVerifier, /method: 'GET'/);
+    assert.match(authCanaryVerifier, /method:\s*["']GET["']/);
     assert.match(authCanaryVerifier, /config\.disable_signup !== true/);
     assert.match(
       authCanaryVerifier,
@@ -119,9 +191,12 @@ describe('production release configuration', () => {
       workflow,
       /name: Synchronize enabled Stripe Function secrets\s*\n\s*if: env\.BILLING_ENABLED == 'true'[\s\S]*?supabase secrets set[\s\S]*?STRIPE_SECRET_KEY[\s\S]*?STRIPE_WEBHOOK_SECRET[\s\S]*?STRIPE_MEMBERSHIP_PRICE_ID/,
     );
+    const backendStart = workflow.indexOf('\n  backend:');
+    const frontendStart = workflow.indexOf('\n  frontend:', backendStart);
+    const backendJob = workflow.slice(backendStart, frontendStart);
     assert.ok(
-      workflow.indexOf('name: Validate enabled billing configuration')
-        < workflow.indexOf('supabase link --project-ref'),
+      backendJob.indexOf('name: Validate enabled billing configuration')
+        < backendJob.indexOf('--credential-only'),
       'enabled billing secrets must be validated before the first backend mutation',
     );
 
@@ -167,19 +242,20 @@ describe('production release configuration', () => {
     assert.doesNotMatch(workflow, /cat [^\n]*(?:billing|stripe).*response/i);
   });
 
-  test('documents a UUID-bound, expiring, auditable canary grant and rollback', () => {
-    assert.match(canaryRunbook, /target Auth user UUID/i);
-    assert.match(canaryRunbook, /'membership_active'/);
-    assert.match(canaryRunbook, /'production_canary'/);
+  test('documents an internally UUID-bound, expiring, auditable canary grant and rollback', () => {
+    assert.match(canaryRunbook, /sole existing non-anonymous Auth user/i);
+    assert.match(canaryRunbook, /`membership_active`/);
+    assert.match(canaryRunbook, /`production_canary`/);
     assert.match(canaryRunbook, /interval '2 hours'/);
-    assert.match(canaryRunbook, /grant_start timestamptz := statement_timestamp\(\)/);
+    assert.match(canaryRunbook, /pg_catalog\.gen_random_uuid\(\)/);
     assert.match(canaryRunbook, /real (?:browser )?session/i);
     assert.match(canaryRunbook, /cancel-membership[\s\S]*create-checkout-session[\s\S]*create-customer-portal-session[\s\S]*exact `503`/i);
-    assert.match(canaryRunbook, /canary_grant_id/);
+    assert.match(canaryRunbook, /never accepts or prints an Auth[\s\S]*grant UUID/i);
     assert.match(canaryRunbook, /billing_customers/);
     assert.match(canaryRunbook, /subscriptions/);
     assert.match(canaryRunbook, /legacy `purchases`/);
     assert.match(canaryRunbook, /status = 'revoked'/);
+    assert.doesNotMatch(canaryRunbook, /canary_user_id|canary_grant_id/);
     assert.match(canaryRunbook, /frontend-only/);
     assert.match(canaryRunbook, /roll forward[\s\S]*Never reset hosted/i);
   });
@@ -188,8 +264,8 @@ describe('production release configuration', () => {
     assert.match(workflow, /SUPABASE_PROJECT_REF: \$\{\{ vars\.SUPABASE_PROJECT_REF \}\}/);
     assert.equal(
       workflow.match(/expected_supabase_url="https:\/\/\$\{SUPABASE_PROJECT_REF\}\.supabase\.co"/g)?.length,
-      2,
-      'backend and frontend must both reject a cross-project configuration',
+      3,
+      'compatibility, backend, and frontend must all reject a cross-project configuration',
     );
     assert.match(workflow, /VITE_SUPABASE_URL%\//);
     assert.match(workflow, /PUBLIC_SITE_URL must be an HTTPS production origin/);

@@ -1,13 +1,19 @@
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawn, spawnSync } from 'node:child_process';
+import { createHash, X509Certificate } from 'node:crypto';
 import {
   chmodSync,
   existsSync,
   mkdtempSync,
+  mkdirSync,
+  readdirSync,
   readFileSync,
+  realpathSync,
   rmSync,
+  statSync,
   writeFileSync,
 } from 'node:fs';
+import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -44,6 +50,152 @@ function databaseSafeEnvironment(overrides = {}) {
     'NODE_OPTIONS', 'NODE_PATH',
   ]) delete environment[name];
   return { ...environment, ...overrides };
+}
+
+function sha256File(filename) {
+  return createHash('sha256').update(readFileSync(filename)).digest('hex');
+}
+
+function testCaPem() {
+  for (const candidate of ['/etc/ssl/cert.pem', '/etc/ssl/certs/ca-certificates.crt']) {
+    try {
+      const bundle = readFileSync(candidate, 'utf8');
+      for (const match of bundle.matchAll(
+        /-----BEGIN CERTIFICATE-----[\s\S]*?-----END CERTIFICATE-----\n?/gu,
+      )) {
+        try {
+          if (new X509Certificate(match[0]).ca) {
+            return match[0].endsWith('\n') ? match[0] : `${match[0]}\n`;
+          }
+        } catch { /* try the next certificate */ }
+      }
+    } catch { /* try the next platform bundle */ }
+  }
+  throw new Error('no system CA certificate is available for the offline fixture');
+}
+
+async function makeDockerSocket(filename) {
+  const server = createServer();
+  await new Promise((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(filename, () => {
+      server.off('error', reject);
+      resolve();
+    });
+  });
+  server.unref();
+  chmodSync(filename, 0o600);
+  const metadata = statSync(filename);
+  return {
+    server,
+    path: filename,
+    device: String(metadata.dev),
+    inode: String(metadata.ino),
+    ownerUid: String(metadata.uid),
+    ownerMode: String(metadata.mode & 0o777),
+  };
+}
+
+async function waitForFileMatch(filename, pattern, timeoutMs = 15_000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const contents = existsSync(filename) ? readFileSync(filename, 'utf8') : '';
+    if (pattern.test(contents)) return contents;
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+  throw new Error(`timed out waiting for ${pattern}`);
+}
+
+function cleanOperatorEnvironment(overrides = {}) {
+  const launcher = new URL('./run-production-operator-clean.sh', import.meta.url).pathname;
+  const repository = new URL('../', import.meta.url).pathname.replace(/\/$/u, '');
+  const nodeArchive = new URL('../package.json', import.meta.url).pathname;
+  const launcherSha256 = sha256File(launcher);
+  const environment = databaseSafeEnvironment({
+    PATH: '/usr/bin:/bin:/usr/sbin:/sbin',
+    DOMINION_CLEAN_ENV_LAUNCHER: 'dominion-production-operator/v1',
+    DOMINION_CLEAN_ENV_LAUNCHER_PATH: launcher,
+    DOMINION_CLEAN_ENV_LAUNCHER_SHA256: launcherSha256,
+    DOMINION_ENTRYPOINT_SHA256: launcherSha256,
+    DOMINION_MACOS_TCB_ATTESTATION_SHA256: 'b'.repeat(64),
+    DOMINION_OPERATOR_PACK_LAUNCHER_SHA256: 'a'.repeat(64),
+    DOMINION_RELEASE_COMMIT: '1'.repeat(40),
+    DOMINION_RELEASE_REPOSITORY: repository,
+    DOMINION_REPOSITORY_OPERATION: 'capture',
+    DOMINION_REPOSITORY_OPERATOR_CHILD: 'dominion-repository-operator-clean/v1',
+    NODE_BIN: process.execPath,
+    NODE_BIN_SHA256: sha256File(process.execPath),
+    NODE_ARCHIVE: nodeArchive,
+    NODE_ARCHIVE_SHA256: sha256File(nodeArchive),
+    ...overrides,
+  });
+  for (const name of Object.keys(environment)) {
+    if (name.startsWith('NODE_') && ![
+      'NODE_BIN',
+      'NODE_BIN_SHA256',
+      'NODE_ARCHIVE',
+      'NODE_ARCHIVE_SHA256',
+    ].includes(name)) {
+      delete environment[name];
+    }
+  }
+  return environment;
+}
+
+function makeOfflineLowerManifestFixture(fixtureRoot) {
+  const scripts = join(fixtureRoot, 'scripts');
+  mkdirSync(scripts, { mode: 0o700 });
+  const supabaseTemp = join(fixtureRoot, 'supabase', '.temp');
+  mkdirSync(supabaseTemp, { mode: 0o700, recursive: true });
+  writeFileSync(
+    join(supabaseTemp, 'postgres-version'),
+    readFileSync(new URL('../supabase/.temp/postgres-version', import.meta.url)),
+    { mode: 0o600 },
+  );
+  writeFileSync(
+    join(fixtureRoot, 'supabase', 'config.toml'),
+    readFileSync(new URL('../supabase/config.toml', import.meta.url)),
+    { mode: 0o600 },
+  );
+  const names = [
+    'baseline-data-fingerprint.sql',
+    'capture-database-manifest.sh',
+    'compare-database-manifests.mjs',
+    'database-manifest.sql',
+    'pin-production-input.mjs',
+    'production-backup-common.sh',
+    'run-production-operator-clean.sh',
+    'validate-postgres-credentials.mjs',
+  ];
+  for (const name of names) {
+    const source = new URL(`./${name}`, import.meta.url).pathname;
+    let contents = readFileSync(source, 'utf8');
+    if (name === 'production-backup-common.sh') {
+      const productionMapping =
+        'production_backup_expected_repository_entrypoint="capture-production-backup.sh"';
+      assert.ok(contents.includes(productionMapping));
+      contents = contents.replace(
+        productionMapping,
+        'production_backup_expected_repository_entrypoint="capture-database-manifest.sh"',
+      );
+    }
+    writeFileSync(join(scripts, name), contents, {
+      mode: name.endsWith('.sh') ? 0o700 : 0o600,
+    });
+  }
+  const launcher = join(scripts, 'run-production-operator-clean.sh');
+  const nodeArchive = join(scripts, 'database-manifest.sql');
+  return {
+    capture: join(scripts, 'capture-database-manifest.sh'),
+    environment: {
+      DOMINION_CLEAN_ENV_LAUNCHER_PATH: launcher,
+      DOMINION_CLEAN_ENV_LAUNCHER_SHA256: sha256File(launcher),
+      DOMINION_ENTRYPOINT_SHA256: sha256File(launcher),
+      DOMINION_RELEASE_REPOSITORY: fixtureRoot,
+      NODE_ARCHIVE: nodeArchive,
+      NODE_ARCHIVE_SHA256: sha256File(nodeArchive),
+    },
+  };
 }
 
 function manifestRecord(key, value = key) {
@@ -819,24 +971,35 @@ test('manifest and fingerprint resolve optional Iceberg without querying an abse
   assert.match(fingerprintSql, /Baseline fingerprint refused: required platform relation\(s\) are absent/u);
 });
 
-test('db-url capture falls back to the pinned Docker psql client', () => {
-  const fixtureRoot = mkdtempSync(join(tmpdir(), 'database-manifest-docker-psql.'));
+test('db-url capture falls back to the pinned Docker psql client', async () => {
+  const fixtureRoot = realpathSync(
+    mkdtempSync('/tmp/dm-docker.'),
+  );
+  let dockerSocket;
   try {
+    const lowerManifestFixture = makeOfflineLowerManifestFixture(fixtureRoot);
     const projectRef = 'abcdefghijklmnopqrst';
+    const databaseHost = 'aws-0-us-east-1.pooler.supabase.com';
     const fakeDocker = join(fixtureRoot, 'docker');
     const dockerLog = join(fixtureRoot, 'docker.log');
+    const dockerState = join(fixtureRoot, 'docker.state');
     const output = join(fixtureRoot, 'manifest.jsonl');
     const databaseUrlFile = join(fixtureRoot, 'database-url');
     const databasePassfile = join(fixtureRoot, 'database.pgpass');
+    const sslRootCertFile = join(fixtureRoot, 'supabase-root.crt');
     const postgresImageId = `sha256:${'9'.repeat(64)}`;
+    dockerSocket = await makeDockerSocket(join(fixtureRoot, 'docker.sock'));
+    writeFileSync(sslRootCertFile, testCaPem(), { mode: 0o600 });
     writeFileSync(
       databaseUrlFile,
-      `postgresql://postgres.${projectRef}@aws-0-us-east-1.pooler.supabase.com:5432/postgres?sslmode=require\n`,
+      `postgresql://postgres.${projectRef}@${databaseHost}:5432/postgres`
+        + `?sslmode=verify-full&sslrootcert=${encodeURIComponent(sslRootCertFile)}`
+        + '&options=-c%20jit%3Don\n',
       { mode: 0o600 },
     );
     writeFileSync(
       databasePassfile,
-      `aws-0-us-east-1.pooler.supabase.com:5432:postgres:postgres.${projectRef}:fixture-secret\n`,
+      `${databaseHost}:5432:postgres:postgres.${projectRef}:fixture-secret\n`,
       { mode: 0o600 },
     );
     chmodSync(databaseUrlFile, 0o600);
@@ -845,49 +1008,124 @@ test('db-url capture falls back to the pinned Docker psql client', () => {
       '#!/usr/bin/env bash',
       'set -euo pipefail',
       'printf \'%s\\n\' "$*" >>"$FAKE_DOCKER_LOG"',
-      'if [[ "${1:-} ${2:-}" == "context inspect" ]]; then',
-      '  printf \'%s\\n\' \'unix:///var/run/docker.sock\'',
+      `container_id="${'a'.repeat(64)}"`,
+      'if [[ "${1:-}" == "ps" ]]; then',
+      '  if [[ "${FAKE_DOCKER_ABSENCE_QUERY_FAIL:-}" == "1" && "$*" == *"--filter id="* ]]; then',
+      '    exit 75',
+      '  fi',
       '  exit 0',
       'fi',
       'if [[ "${1:-} ${2:-}" == "image inspect" ]]; then',
       '  printf \'%s\\n\' "$FAKE_POSTGRES_IMAGE_ID"',
       '  exit 0',
       'fi',
+      'if [[ "${1:-} ${2:-}" == "container inspect" ]]; then',
+      '  [[ -f "$FAKE_DOCKER_STATE" ]] || exit 1',
+      '  IFS="|" read -r state_name state_token state_image <"$FAKE_DOCKER_STATE"',
+      '  [[ "${3:-}" == "$container_id" || "${3:-}" == "$state_name" ]] || exit 1',
+      '  if [[ "$*" == *"com.dominion.production-client"* ]]; then',
+      '    printf \'%s\\n\' "$container_id|$state_image|$state_image|true|$FAKE_PROJECT_REF|$state_token|database-manifest"',
+      '  else',
+      '    printf \'%s\\n\' "$container_id"',
+      '  fi',
+      '  exit 0',
+      'fi',
+      'if [[ "${1:-}" == "diff" ]]; then exit 0; fi',
+      'if [[ "${1:-} ${2:-}" == "rm --force" ]]; then',
+      '  if [[ "${FAKE_DOCKER_RM_DELAY:-}" == "1" ]]; then',
+      '    printf \'%s\\n\' "cleanup-rm-window" >>"$FAKE_DOCKER_LOG"',
+      '    /bin/sleep 0.5',
+      '  fi',
+      '  rm -f "$FAKE_DOCKER_STATE"',
+      '  printf \'%s\\n\' "$container_id"',
+      '  exit 0',
+      'fi',
       '[[ "${1:-}" == "run" ]]',
+      'shift',
+      'cidfile=""; name=""; token=""; image=""',
+      'while (( $# > 0 )); do',
+      '  case "$1" in',
+      '    --cidfile) cidfile="$2"; shift 2 ;;',
+      '    --name) name="$2"; shift 2 ;;',
+      '    --label)',
+      '      case "$2" in com.dominion.ownership-token=*) token="${2#*=}" ;; esac',
+      '      shift 2 ;;',
+      '    sha256:*) image="$1"; shift ;;',
+      '    *) shift ;;',
+      '  esac',
+      'done',
+      '[[ -n "$cidfile" && -n "$name" && -n "$token" && -n "$image" ]]',
+      'if [[ "${FAKE_DOCKER_UNRESOLVED_INTERRUPT:-}" == "1" ]]; then',
+      '  kill -TERM "$PPID"',
+      '  exit 143',
+      'fi',
+      'if [[ "${FAKE_DOCKER_DELAYED_INTERRUPT:-}" == "1" ]]; then',
+      '  (',
+      '    trap "" HUP INT TERM',
+      '    /bin/sleep 0.2',
+      '    printf \'%s|%s|%s\\n\' "$name" "$token" "$image" >"$FAKE_DOCKER_STATE"',
+      '    printf \'%s\\n\' "$container_id" >"$cidfile"',
+      '  ) &',
+      '  disown',
+      '  kill -TERM "$PPID"',
+      '  exit 143',
+      'fi',
+      'printf \'%s|%s|%s\\n\' "$name" "$token" "$image" >"$FAKE_DOCKER_STATE"',
+      'printf \'%s\\n\' "$container_id" >"$cidfile"',
       'printf \'%s\\n\' \'{"key":"fixture/docker","kind":"fixture","identity":"docker","definition":{}}\'',
     ].join('\n'));
     chmodSync(fakeDocker, 0o755);
 
-    execFileSync('bash', [
-      new URL('./capture-database-manifest.sh', import.meta.url).pathname,
+    const captureArguments = [
+      lowerManifestFixture.capture,
       '--db-url-file',
       databaseUrlFile,
       '--database-client-contract',
-      'exact-docker-pgpass/v1',
+      'exact-supavisor-session-jit-pgpass-verify-full/v2',
       '--database-passfile',
       databasePassfile,
+      '--database-host',
+      databaseHost,
+      '--ssl-root-cert-file',
+      sslRootCertFile,
+      '--ssl-root-cert-file-sha256',
+      sha256File(sslRootCertFile),
+      '--url-ssl-root-cert-file',
+      sslRootCertFile,
       '--project-ref',
       projectRef,
       '--docker-bin',
       fakeDocker,
+      '--docker-bin-sha256',
+      sha256File(fakeDocker),
+      '--docker-socket', dockerSocket.path,
+      '--docker-socket-device', dockerSocket.device,
+      '--docker-socket-inode', dockerSocket.inode,
+      '--docker-socket-owner-uid', dockerSocket.ownerUid,
+      '--docker-socket-owner-mode', dockerSocket.ownerMode,
       '--postgres-image',
       'public.ecr.aws/supabase/postgres:17.6.1.141',
       '--postgres-image-id',
       postgresImageId,
       '--output',
       output,
-    ], {
-      env: databaseSafeEnvironment({
-        FAKE_DOCKER_LOG: dockerLog,
-        FAKE_POSTGRES_IMAGE_ID: postgresImageId,
-        SUPABASE_INTERNAL_IMAGE_REGISTRY: 'public.ecr.aws',
-      }),
+    ];
+    const captureEnvironment = cleanOperatorEnvironment({
+      ...lowerManifestFixture.environment,
+      FAKE_DOCKER_LOG: dockerLog,
+      FAKE_DOCKER_STATE: dockerState,
+      FAKE_POSTGRES_IMAGE_ID: postgresImageId,
+      FAKE_PROJECT_REF: projectRef,
+      SUPABASE_INTERNAL_IMAGE_REGISTRY: 'public.ecr.aws',
+    });
+    execFileSync('bash', captureArguments, {
+      env: captureEnvironment,
       stdio: ['ignore', 'pipe', 'pipe'],
     });
 
     assert.match(
       readFileSync(dockerLog, 'utf8'),
-      new RegExp(`run --rm --pull never --network bridge --log-driver none --interactive [^\\n]* --entrypoint psql ${postgresImageId} postgresql://postgres\\.abcdefghijklmnopqrst@aws-0-us-east-1\\.pooler\\.supabase\\.com:5432/postgres\\?sslmode=require --no-psqlrc --quiet --set ON_ERROR_STOP=1 --file -`, 'u'),
+      new RegExp(`run --cidfile [^\\n]* --pull never --network bridge --log-driver none --interactive [^\\n]* --entrypoint psql ${postgresImageId} postgresql://postgres\\.abcdefghijklmnopqrst@aws-0-us-east-1\\.pooler\\.supabase\\.com:5432/postgres\\?sslmode=verify-full[^\\n]*options=-c(?:\\+|%20)jit%3Don`, 'u'),
     );
     assert.match(readFileSync(dockerLog, 'utf8'), /image inspect public\.ecr\.aws\/supabase\/postgres:17\.6\.1\.141 --format \{\{\.Id\}\}/u);
     assert.doesNotMatch(readFileSync(dockerLog, 'utf8'), /fixture-secret/u);
@@ -895,28 +1133,193 @@ test('db-url capture falls back to the pinned Docker psql client', () => {
       [...parseManifestText(readFileSync(output, 'utf8')).keys()],
       ['fixture/docker'],
     );
+    assert.equal(
+      readdirSync(fixtureRoot).some((name) => name.startsWith('.database-manifest-container.')),
+      false,
+      'successful capture must remove its pinned runtime',
+    );
+
+    const absenceFailureOutput = join(fixtureRoot, 'absence-failure-manifest.jsonl');
+    const absenceFailureArguments = [...captureArguments];
+    absenceFailureArguments[absenceFailureArguments.indexOf('--output') + 1] = absenceFailureOutput;
+    const absenceFailure = spawnSync('bash', absenceFailureArguments, {
+      env: {
+        ...captureEnvironment,
+        FAKE_DOCKER_ABSENCE_QUERY_FAIL: '1',
+      },
+      encoding: 'utf8',
+      timeout: 15_000,
+    });
+    assert.notEqual(absenceFailure.status, 0);
+    assert.equal(existsSync(absenceFailureOutput), false);
+    assert.equal(existsSync(dockerState), false, absenceFailure.stderr);
+    assert.match(absenceFailure.stderr, /preserved container recovery state at/u);
+    const absenceFailureRuntimes = readdirSync(fixtureRoot)
+      .filter((name) => name.startsWith('.database-manifest-container.'));
+    assert.equal(absenceFailureRuntimes.length, 1);
+    assert.equal(
+      existsSync(join(
+        fixtureRoot,
+        absenceFailureRuntimes[0],
+        'container-recovery.json',
+      )),
+      true,
+    );
+    rmSync(join(fixtureRoot, absenceFailureRuntimes[0]), {
+      recursive: true,
+      force: true,
+    });
+
+    const interruptedOutput = join(fixtureRoot, 'interrupted-manifest.jsonl');
+    const interruptedArguments = [...captureArguments];
+    interruptedArguments[interruptedArguments.indexOf('--output') + 1] = interruptedOutput;
+    const interrupted = spawnSync('bash', interruptedArguments, {
+      env: {
+        ...captureEnvironment,
+        FAKE_DOCKER_DELAYED_INTERRUPT: '1',
+      },
+      encoding: 'utf8',
+      timeout: 15_000,
+    });
+    assert.notEqual(interrupted.status, 0);
+    assert.equal(interrupted.signal, null);
+    assert.equal(existsSync(interruptedOutput), false);
+    assert.equal(existsSync(dockerState), false, interrupted.stderr);
+    assert.match(readFileSync(dockerLog, 'utf8'), /rm --force [a-f0-9]{64}/u);
+    assert.equal(
+      readdirSync(fixtureRoot).some((name) => name.startsWith('.database-manifest-container.')),
+      false,
+      'successful delayed adoption must remove its recovery runtime after interrupt cleanup',
+    );
+
+    writeFileSync(dockerLog, '');
+    const secondSignalOutput = join(fixtureRoot, 'second-signal-manifest.jsonl');
+    const secondSignalArguments = [...captureArguments];
+    secondSignalArguments[secondSignalArguments.indexOf('--output') + 1] = secondSignalOutput;
+    const secondSignalChild = spawn('bash', secondSignalArguments, {
+      detached: true,
+      env: {
+        ...captureEnvironment,
+        FAKE_DOCKER_DELAYED_INTERRUPT: '1',
+        FAKE_DOCKER_RM_DELAY: '1',
+      },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    let secondSignalStderr = '';
+    secondSignalChild.stderr.setEncoding('utf8');
+    secondSignalChild.stderr.on('data', (chunk) => {
+      secondSignalStderr += chunk;
+    });
+    const secondSignalCompletion = new Promise((resolve, reject) => {
+      secondSignalChild.once('error', reject);
+      secondSignalChild.once('close', (status, signal) => resolve({ status, signal }));
+    });
+    let secondSignalFinished = false;
+    try {
+      await waitForFileMatch(dockerLog, /cleanup-rm-window/u);
+      process.kill(-secondSignalChild.pid, 'SIGQUIT');
+      const secondSignalResult = await secondSignalCompletion;
+      secondSignalFinished = true;
+      assert.notEqual(secondSignalResult.status, 0, secondSignalStderr);
+      assert.equal(secondSignalResult.signal, null, secondSignalStderr);
+      assert.equal(existsSync(secondSignalOutput), false);
+      assert.equal(existsSync(dockerState), false, secondSignalStderr);
+      assert.equal(
+        readdirSync(fixtureRoot).some((name) => name.startsWith('.database-manifest-container.')),
+        false,
+        'second cleanup signal must not strand the container runtime',
+      );
+    } finally {
+      if (!secondSignalFinished) {
+        try {
+          process.kill(-secondSignalChild.pid, 'SIGKILL');
+        } catch (error) {
+          if (error.code !== 'ESRCH') throw error;
+        }
+      }
+    }
+
+    const unresolvedOutput = join(fixtureRoot, 'unresolved-manifest.jsonl');
+    const unresolvedArguments = [...captureArguments];
+    unresolvedArguments[unresolvedArguments.indexOf('--output') + 1] = unresolvedOutput;
+    const unresolved = spawnSync('bash', unresolvedArguments, {
+      env: {
+        ...captureEnvironment,
+        FAKE_DOCKER_UNRESOLVED_INTERRUPT: '1',
+      },
+      encoding: 'utf8',
+      timeout: 15_000,
+    });
+    assert.notEqual(unresolved.status, 0);
+    assert.match(unresolved.stderr, /preserved container recovery state at/u);
+    const recoveryRuntimes = readdirSync(fixtureRoot)
+      .filter((name) => name.startsWith('.database-manifest-container.'));
+    assert.equal(recoveryRuntimes.length, 1);
+    const recoveryStateFile = join(
+      fixtureRoot,
+      recoveryRuntimes[0],
+      'container-recovery.json',
+    );
+    const recoveryState = JSON.parse(readFileSync(recoveryStateFile, 'utf8'));
+    assert.equal(recoveryState.artifactContract, 'dominion-database-manifest-client-recovery/v1');
+    assert.equal(recoveryState.status, 'create-pending');
+    assert.equal(recoveryState.imageId, postgresImageId);
+    assert.equal(recoveryState.projectRef, projectRef);
+    assert.equal(recoveryState.operation, 'database-manifest');
+    assert.deepEqual(recoveryState.mounts, {
+      passfile: {
+        source: databasePassfile,
+        target: '/tmp/dominion/pgpass',
+        readOnly: true,
+      },
+      rootCert: {
+        source: sslRootCertFile,
+        target: '/tmp/dominion/supabase-ca.crt',
+        readOnly: true,
+      },
+    });
+    assert.deepEqual(recoveryState.dockerContext, {
+      endpoint: `unix://${dockerSocket.path}`,
+      socketPath: dockerSocket.path,
+      device: dockerSocket.device,
+      inode: dockerSocket.inode,
+      ownerUid: Number(dockerSocket.ownerUid),
+      ownerMode: Number(dockerSocket.ownerMode),
+    });
+    assert.match(recoveryState.ownershipToken, /^[a-f0-9]{64}$/u);
+    assert.equal(statSync(recoveryStateFile).mode & 0o777, 0o600);
   } finally {
+    if (dockerSocket) await new Promise((resolve) => dockerSocket.server.close(resolve));
     rmSync(fixtureRoot, { recursive: true, force: true });
   }
 });
-
-test('host psql manifest capture uses only the explicit pgpass boundary', () => {
-  const fixtureRoot = mkdtempSync(join(tmpdir(), 'database-manifest-host-psql.'));
+test('host psql manifest capture uses only the explicit pgpass boundary', async () => {
+  const fixtureRoot = realpathSync(
+    mkdtempSync('/tmp/dm-host.'),
+  );
+  let dockerSocket;
   try {
+    const lowerManifestFixture = makeOfflineLowerManifestFixture(fixtureRoot);
     const projectRef = 'abcdefghijklmnopqrst';
+    const databaseHost = 'aws-0-us-east-1.pooler.supabase.com';
     const fakePsql = join(fixtureRoot, 'psql');
     const psqlLog = join(fixtureRoot, 'psql.log');
     const output = join(fixtureRoot, 'manifest.jsonl');
     const databaseUrlFile = join(fixtureRoot, 'database-url');
     const databasePassfile = join(fixtureRoot, 'database.pgpass');
+    const sslRootCertFile = join(fixtureRoot, 'supabase-root.crt');
+    dockerSocket = await makeDockerSocket(join(fixtureRoot, 'docker.sock'));
+    writeFileSync(sslRootCertFile, testCaPem(), { mode: 0o600 });
     writeFileSync(
       databaseUrlFile,
-      `postgresql://postgres.${projectRef}@aws-0-us-east-1.pooler.supabase.com:5432/postgres?sslmode=require\n`,
+      `postgresql://postgres.${projectRef}@${databaseHost}:5432/postgres`
+        + `?sslmode=verify-full&sslrootcert=${encodeURIComponent(sslRootCertFile)}`
+        + '&options=-c%20jit%3Don\n',
       { mode: 0o600 },
     );
     writeFileSync(
       databasePassfile,
-      `aws-0-us-east-1.pooler.supabase.com:5432:postgres:postgres.${projectRef}:fixture-secret\n`,
+      `${databaseHost}:5432:postgres:postgres.${projectRef}:fixture-secret\n`,
       { mode: 0o600 },
     );
     writeFileSync(fakePsql, [
@@ -924,6 +1327,8 @@ test('host psql manifest capture uses only the explicit pgpass boundary', () => 
       'set -euo pipefail',
       '[[ -z "${PGPASSWORD:-}" && -z "${PGOPTIONS:-}" && -z "${PGSERVICE:-}" ]]',
       `[[ "\${PGPASSFILE:-}" == '${databasePassfile}' ]]`,
+      `[[ "\${PGSSLROOTCERT:-}" == '${sslRootCertFile}' ]]`,
+      '[[ "${PGSSLMODE:-}" == "verify-full" ]]',
       `printf '%s\\n' "$*" >'${psqlLog}'`,
       'printf \'%s\\n\' \'{"key":"fixture/host","kind":"fixture","identity":"host","definition":{}}\'',
     ].join('\n'));
@@ -931,14 +1336,40 @@ test('host psql manifest capture uses only the explicit pgpass boundary', () => 
     chmodSync(databaseUrlFile, 0o600);
     chmodSync(databasePassfile, 0o600);
 
-    execFileSync('bash', [
-      new URL('./capture-database-manifest.sh', import.meta.url).pathname,
+    const manifestArguments = [
       '--db-url-file', databaseUrlFile,
       '--database-passfile', databasePassfile,
+      '--database-host', databaseHost,
+      '--ssl-root-cert-file', sslRootCertFile,
+      '--ssl-root-cert-file-sha256', sha256File(sslRootCertFile),
+      '--url-ssl-root-cert-file', sslRootCertFile,
       '--project-ref', projectRef,
+      '--docker-socket', dockerSocket.path,
+      '--docker-socket-device', dockerSocket.device,
+      '--docker-socket-inode', dockerSocket.inode,
+      '--docker-socket-owner-uid', dockerSocket.ownerUid,
+      '--docker-socket-owner-mode', dockerSocket.ownerMode,
       '--output', output,
+    ];
+    const productionLowerHelper = spawnSync('bash', [
+      new URL('./capture-database-manifest.sh', import.meta.url).pathname,
+      ...manifestArguments,
     ], {
-      env: databaseSafeEnvironment({ PSQL_BIN: fakePsql }),
+      env: cleanOperatorEnvironment({ PSQL_BIN: fakePsql }),
+      encoding: 'utf8',
+    });
+    assert.notEqual(productionLowerHelper.status, 0);
+    assert.match(
+      productionLowerHelper.stderr,
+      /operation does not match the executing repository entrypoint/u,
+    );
+    assert.equal(existsSync(psqlLog), false);
+
+    execFileSync('bash', [lowerManifestFixture.capture, ...manifestArguments], {
+      env: cleanOperatorEnvironment({
+        ...lowerManifestFixture.environment,
+        PSQL_BIN: fakePsql,
+      }),
       stdio: ['ignore', 'pipe', 'pipe'],
     });
 
@@ -949,26 +1380,37 @@ test('host psql manifest capture uses only the explicit pgpass boundary', () => 
       ['fixture/host'],
     );
   } finally {
+    if (dockerSocket) await new Promise((resolve) => dockerSocket.server.close(resolve));
     rmSync(fixtureRoot, { recursive: true, force: true });
   }
 });
 
-test('remote manifest capture rejects ambient libpq credentials before psql', () => {
-  const fixtureRoot = mkdtempSync(join(tmpdir(), 'database-manifest-ambient.'));
+test('remote manifest capture rejects ambient libpq credentials before psql', async () => {
+  const fixtureRoot = realpathSync(
+    mkdtempSync('/tmp/dm-ambient.'),
+  );
+  let dockerSocket;
   try {
+    const lowerManifestFixture = makeOfflineLowerManifestFixture(fixtureRoot);
     const projectRef = 'abcdefghijklmnopqrst';
+    const databaseHost = 'aws-0-us-east-1.pooler.supabase.com';
     const fakePsql = join(fixtureRoot, 'psql');
     const touched = join(fixtureRoot, 'psql-ran');
     const databaseUrlFile = join(fixtureRoot, 'database-url');
     const databasePassfile = join(fixtureRoot, 'database.pgpass');
+    const sslRootCertFile = join(fixtureRoot, 'supabase-root.crt');
+    dockerSocket = await makeDockerSocket(join(fixtureRoot, 'docker.sock'));
+    writeFileSync(sslRootCertFile, testCaPem(), { mode: 0o600 });
     writeFileSync(
       databaseUrlFile,
-      `postgresql://postgres.${projectRef}@aws-0-us-east-1.pooler.supabase.com:5432/postgres?sslmode=require\n`,
+      `postgresql://postgres.${projectRef}@${databaseHost}:5432/postgres`
+        + `?sslmode=verify-full&sslrootcert=${encodeURIComponent(sslRootCertFile)}`
+        + '&options=-c%20jit%3Don\n',
       { mode: 0o600 },
     );
     writeFileSync(
       databasePassfile,
-      `aws-0-us-east-1.pooler.supabase.com:5432:postgres:postgres.${projectRef}:fixture-secret\n`,
+      `${databaseHost}:5432:postgres:postgres.${projectRef}:fixture-secret\n`,
       { mode: 0o600 },
     );
     writeFileSync(fakePsql, `#!/usr/bin/env bash\ntouch '${touched}'\n`, { mode: 0o755 });
@@ -977,17 +1419,31 @@ test('remote manifest capture rejects ambient libpq credentials before psql', ()
     chmodSync(databasePassfile, 0o600);
 
     assert.throws(() => execFileSync('bash', [
-      new URL('./capture-database-manifest.sh', import.meta.url).pathname,
+      lowerManifestFixture.capture,
       '--db-url-file', databaseUrlFile,
       '--database-passfile', databasePassfile,
+      '--database-host', databaseHost,
+      '--ssl-root-cert-file', sslRootCertFile,
+      '--ssl-root-cert-file-sha256', sha256File(sslRootCertFile),
+      '--url-ssl-root-cert-file', sslRootCertFile,
       '--project-ref', projectRef,
+      '--docker-socket', dockerSocket.path,
+      '--docker-socket-device', dockerSocket.device,
+      '--docker-socket-inode', dockerSocket.inode,
+      '--docker-socket-owner-uid', dockerSocket.ownerUid,
+      '--docker-socket-owner-mode', dockerSocket.ownerMode,
       '--output', join(fixtureRoot, 'manifest.jsonl'),
     ], {
-      env: { ...process.env, PSQL_BIN: fakePsql, PGPASSWORD: 'ambient-secret' },
+      env: cleanOperatorEnvironment({
+        ...lowerManifestFixture.environment,
+        PSQL_BIN: fakePsql,
+        PGPASSWORD: 'ambient-secret',
+      }),
       stdio: ['ignore', 'pipe', 'pipe'],
     }), /Command failed/u);
     assert.equal(existsSync(touched), false);
   } finally {
+    if (dockerSocket) await new Promise((resolve) => dockerSocket.server.close(resolve));
     rmSync(fixtureRoot, { recursive: true, force: true });
   }
 });
