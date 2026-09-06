@@ -235,6 +235,12 @@ Before approving the GitHub `production` environment deployment, confirm:
 1. The release commit is on `main`, came through a reviewed pull request, and all
    three validation jobs passed for that exact commit.
 2. A recent production backup or point-in-time recovery window is available.
+   For this Free-plan initial cutover, run the protected
+   [Free production backup workflow](free-production-backup.md), preserve the
+   encrypted artifact locally, and verify local decryption with the separately
+   retained private key. The compatibility release requires its successful
+   `backup_run_id` for the same frozen commit; the backup must be less than
+   24 hours old and must have passed its isolated restore comparison.
 3. New migrations are additive or have an approved compatibility plan for the
    currently deployed frontend and functions.
 4. Every new Edge Function secret is present in the inventory and has an owner.
@@ -735,18 +741,24 @@ FOU-752/753 must not use the normal backend-first order for their first producti
 2. Rerun the aggregate journal inventory from that evidence record. Journal
    rows, objects, multipart-upload parents and parts, and nonterminal
    `journal-progress` retention work must all be zero. Also require globally
-   empty `billing_customers`, `subscriptions`, and legacy `purchases` (when the
-   table exists), and prove the target Auth UUID has no existing
-   `membership_active` entitlement.
+   empty `billing_customers`, `subscriptions`, and `membership_active`, require
+   that the baseline removed legacy `purchases`, and prove there is exactly one
+   non-anonymous Auth user with its matching profile.
+   Before granting access, capture and restore-verify the
+   [free encrypted backup](free-production-backup.md) from this exact `main`
+   commit. Keep the downloaded backup and private key on the operator machine.
 3. Following [`production-canary-operator-runbook.md`](production-canary-operator-runbook.md),
-   authorize exactly one existing non-anonymous Auth UUID with exactly one new,
-   release-SHA-bound `production_canary` entitlement for no more than two hours.
+   dispatch the protected canary operator's `grant` operation. It selects only
+   the sole existing non-anonymous Auth user with its matching profile and
+   internally generates exactly one new, release-SHA-bound `production_canary`
+   entitlement for no more than two hours without printing either UUID.
    The reconciled baseline schema present by migration 13 supports
    `source_type`, `source_id`, bounded `ends_at`, and release metadata. This
    narrowly timed grant is required to exercise the compatibility client; it is
    not permission to skip the compatibility deployment or go directly to full.
 4. Manually dispatch **Release production** from the exact reviewed
-   release-candidate ref with `release_scope=compatibility-cutover`. Before
+   release-candidate ref with `release_scope=compatibility-cutover` and the
+   successful same-commit `backup_run_id`. Before
    synchronizing a Function secret or deploying anything, this scope uses the
    strict pinned CLI parser plus a dedicated read-only Management API query to
    prove remote history is exactly migrations 1–13. A separate aggregate-only
@@ -768,8 +780,9 @@ FOU-752/753 must not use the normal backend-first order for their first producti
    the previous database and empty bucket in place during this verification
    window. Require exact authenticated `503` responses from all three disabled
    billing functions and the workflow's exact webhook `503` evidence.
-6. Rerun the zero-data and zero-billing inventories and verify that the exact
-   UUID/grant/SHA-bound entitlement is still active and unmodified. Stop on any
+6. Rerun the zero-data and zero-billing inventories and verify through the
+   aggregate-only gate that the exact grant/SHA-bound entitlement is still
+   active and unmodified. Stop on any
    nonzero result; export or explicitly disposition user data and use the
    Storage API for object deletion. If the grant has expired or cannot remain
    valid through the full verification, revoke it and restart the reviewed
@@ -793,9 +806,12 @@ FOU-752/753 must not use the normal backend-first order for their first producti
    signup stays closed; if that second account does not yet exist, the release
    remains closed and final acceptance is blocked until it is invited and the
    denial check passes.
-10. Re-run the exact grant verification, then revoke that same UUID/grant-bound
-    row and prove a fresh target-account session is denied as specified in the
-    canary runbook. Preserve the revoked audit row and the UTC evidence.
+10. Re-run the release's aggregate-only canary gate, then dispatch the
+    protected canary operator's `revoke` operation from the same frozen release
+    SHA. It revokes only the sole active generated-UUID canary for that SHA and
+    verifies the preserved audit row. Then prove a fresh target-account session
+    is denied as specified in the canary runbook. Preserve the revoked audit row
+    and the UTC evidence.
 
 ```sql
 select id, public, file_size_limit, allowed_mime_types

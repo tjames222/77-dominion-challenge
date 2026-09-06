@@ -1,0 +1,98 @@
+name: Manage production canary entitlement
+
+on:
+  workflow_dispatch:
+    inputs:
+      operation:
+        description: Grant or revoke the one release-bound production canary entitlement.
+        required: true
+        type: choice
+        options:
+          - grant
+          - revoke
+      confirm_production_change:
+        description: Confirm this exact protected production canary operation.
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: production-release
+  cancel-in-progress: false
+
+jobs:
+  authorize:
+    name: Authorize the exact production canary operation
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    env:
+      CONFIRM_PRODUCTION_CHANGE: ${{ inputs.confirm_production_change }}
+      PRODUCTION_CANARY_OPERATION: ${{ inputs.operation }}
+    steps:
+      - name: Require canonical protected main and explicit confirmation
+        shell: bash
+        run: |
+          if [[ "${GITHUB_EVENT_NAME}" != "workflow_dispatch" ]]; then
+            echo "::error::This workflow accepts only an explicit manual dispatch."
+            exit 1
+          fi
+          if [[ "${GITHUB_REPOSITORY}" != "tjames222/77-dominion-challenge" ]]; then
+            echo "::error::This workflow may run only in the canonical repository."
+            exit 1
+          fi
+          if [[ "${GITHUB_REF}" != "refs/heads/main" ]]; then
+            echo "::error::Production canary changes must be dispatched from protected main."
+            exit 1
+          fi
+          if [[ ! "${GITHUB_SHA}" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::The protected release commit is not canonical."
+            exit 1
+          fi
+          if [[ "${CONFIRM_PRODUCTION_CHANGE}" != "true" ]]; then
+            echo "::error::Explicit production canary confirmation is required."
+            exit 1
+          fi
+          if [[ "${PRODUCTION_CANARY_OPERATION}" != "grant" \
+            && "${PRODUCTION_CANARY_OPERATION}" != "revoke" ]]; then
+            echo "::error::The operation must be exactly grant or revoke."
+            exit 1
+          fi
+
+  manage:
+    name: Apply and independently verify the bounded canary operation
+    needs: authorize
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    environment: production
+    env:
+      PRODUCTION_CANARY_OPERATION: ${{ inputs.operation }}
+      SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+      SUPABASE_PROJECT_REF: ${{ vars.SUPABASE_PROJECT_REF }}
+    steps:
+      - name: Checkout the exact protected release commit
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+          persist-credentials: false
+      - name: Setup Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+      - name: Apply and verify the exact release-bound canary operation
+        shell: bash
+        run: |
+          umask 077
+          /usr/bin/env -i \
+            GITHUB_SHA="$GITHUB_SHA" \
+            HOME="$RUNNER_TEMP" \
+            LANG=C.UTF-8 \
+            PATH="$PATH" \
+            PRODUCTION_CANARY_OPERATION="$PRODUCTION_CANARY_OPERATION" \
+            SUPABASE_ACCESS_TOKEN="$SUPABASE_ACCESS_TOKEN" \
+            SUPABASE_PROJECT_REF="$SUPABASE_PROJECT_REF" \
+            TMPDIR="$RUNNER_TEMP" \
+            node scripts/manage-production-canary-entitlement.mjs

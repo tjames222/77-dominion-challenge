@@ -1,0 +1,79 @@
+name: Free production backup
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: production-release
+  cancel-in-progress: false
+
+jobs:
+  backup:
+    name: Capture encrypted backup and verify isolated restore
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: production
+    steps:
+      - name: Require protected main
+        shell: bash
+        run: |
+          [[ "$GITHUB_REF" == refs/heads/main ]] || exit 1
+      - name: Checkout exact release
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Setup Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+      - name: Setup Supabase CLI
+        uses: supabase/setup-cli@3c2f5e2ae34c34e428e8e206e2c4d21fa2d20fbf # v2
+        with:
+          version: 2.109.0
+      - name: Verify backup encryption and boundary checks
+        run: node --test scripts/free-production-backup.test.mjs
+      - name: Capture and rehearse restore
+        id: backup
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_PROJECT_REF: ${{ vars.SUPABASE_PROJECT_REF }}
+          PRODUCTION_BACKUP_PUBLIC_KEY: ${{ vars.PRODUCTION_BACKUP_PUBLIC_KEY }}
+        shell: bash
+        run: |
+          set +x
+          ulimit -c 0
+          /usr/bin/env -i \
+            HOME="$HOME" PATH="$PATH" LANG=C.UTF-8 TMPDIR="$RUNNER_TEMP" \
+            GITHUB_ACTIONS="$GITHUB_ACTIONS" GITHUB_REF="$GITHUB_REF" \
+            GITHUB_SHA="$GITHUB_SHA" GITHUB_RUN_ID="$GITHUB_RUN_ID" \
+            GITHUB_RUN_ATTEMPT="$GITHUB_RUN_ATTEMPT" GITHUB_OUTPUT="$GITHUB_OUTPUT" \
+            GITHUB_REPOSITORY="$GITHUB_REPOSITORY" RUNNER_TEMP="$RUNNER_TEMP" \
+            SUPABASE_ACCESS_TOKEN="$SUPABASE_ACCESS_TOKEN" \
+            SUPABASE_PROJECT_REF="$SUPABASE_PROJECT_REF" \
+            PRODUCTION_BACKUP_PUBLIC_KEY="$PRODUCTION_BACKUP_PUBLIC_KEY" \
+            node scripts/free-production-backup.mjs
+      - name: Retain encrypted backup for seven days
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: production-backup-${{ github.sha }}-${{ github.run_id }}
+          path: ${{ steps.backup.outputs.artifact_directory }}
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
+      - name: Revoke temporary login roles after interruption
+        if: always()
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_PROJECT_REF: ${{ vars.SUPABASE_PROJECT_REF }}
+        shell: bash
+        run: |
+          set +x
+          /usr/bin/env -i \
+            HOME="$HOME" PATH="$PATH" LANG=C.UTF-8 TMPDIR="$RUNNER_TEMP" \
+            SUPABASE_ACCESS_TOKEN="$SUPABASE_ACCESS_TOKEN" \
+            SUPABASE_PROJECT_REF="$SUPABASE_PROJECT_REF" \
+            node scripts/prepare-existing-supabase-cli-state.mjs --revoke-credentials

@@ -22,6 +22,9 @@ const backendReleaseRunbookPath = fileURLToPath(
 const canaryRunbookPath = fileURLToPath(
   new URL("../docs/production-canary-operator-runbook.md", import.meta.url),
 );
+const canaryOperatorPath = fileURLToPath(
+  new URL("./manage-production-canary-entitlement.mjs", import.meta.url),
+);
 const baselinePath = fileURLToPath(
   new URL("../supabase/migrations/20260707170000_baseline.sql", import.meta.url),
 );
@@ -85,10 +88,10 @@ test("the FOU-759 runbook orders one bounded entitlement between migration 13 an
     backendRunbook.indexOf("### FOU-759 two-stage avatar and journal cutover"),
   );
   const migration13 = section.indexOf("through migration 13");
-  const grant = section.indexOf("authorize exactly one");
+  const grant = section.indexOf("protected canary operator's `grant` operation");
   const compatibility = section.indexOf("release_scope=compatibility-cutover");
   const full = section.indexOf("release_scope=full");
-  const revoke = section.indexOf("revoke that same UUID/grant-bound");
+  const revoke = section.indexOf("protected canary operator's `revoke` operation");
   assert.ok(
     migration13 !== -1
       && grant > migration13
@@ -116,9 +119,10 @@ test("the migration-13 schema and canary SQL support the exact bounded grant", (
   assert.doesNotMatch(entitlementTable, /source_type[^\n]*check/u);
 
   const canaryRunbook = readFileSync(canaryRunbookPath, "utf8");
-  assert.match(canaryRunbook, /'production_canary'/u);
-  assert.match(canaryRunbook, /grant_start \+ interval '2 hours'/u);
-  assert.match(canaryRunbook, /jsonb_build_object\('release_sha', target_release\)/u);
+  const canaryOperator = readFileSync(canaryOperatorPath, "utf8");
+  assert.match(canaryOperator, /'production_canary'/u);
+  assert.match(canaryOperator, /grant_start \+ interval '2 hours'/u);
+  assert.match(canaryOperator, /jsonb_build_object\('release_sha', target_release\)/u);
   assert.match(canaryRunbook, /exact same row—not a replacement/u);
   assert.match(canaryRunbook, /This is not a direct-full\s+exception/u);
   assert.match(canaryRunbook, /final acceptance is\s+blocked/u);
