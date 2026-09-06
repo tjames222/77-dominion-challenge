@@ -13,6 +13,7 @@ import {
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
+import { createCredentialLifetime } from "./production-database-credential-lifetime.mjs";
 import {
   buildTemporaryDatabaseCredentials,
   buildTemporaryLoginProbeArguments,
@@ -436,7 +437,7 @@ test("mints production credentials against a canonical probe workdir without sta
   const probeWorkdir = await makeCredentialDirectory();
   const credentials = await makeCredentialDirectory();
   const supabaseHome = await makeCredentialDirectory();
-  const management = managementFetch();
+  const management = managementFetch({ login: { password: "temporary-password", role: "cli_login_role", ttl_seconds: 600 } });
   const readinessCalls = [];
   try {
     const result = await prepareProductionSupabaseDatabaseCredentials({
@@ -450,12 +451,14 @@ test("mints production credentials against a canonical probe workdir without sta
         return true;
       },
       supabaseHome,
+      monotonicNow: () => 1_000_000_000n,
     });
 
     assert.deepEqual(result, {
       credentialsPrepared: true,
       projectRef: ref,
       verified: true,
+      credentialLifetime: createCredentialLifetime({ projectRef: ref, issuedAtNs: 1_000_000_000n, ttlSeconds: 600 }),
     });
     assert.deepEqual(
       management.requests.map(({ url }) => url),
@@ -468,6 +471,7 @@ test("mints production credentials against a canonical probe workdir without sta
     assert.equal(readinessCalls.length, 1);
     assert.equal(readinessCalls[0].stageDirectory, probeWorkdir);
     assert.equal(readinessCalls[0].supabaseHome, supabaseHome);
+    assert.deepEqual(JSON.parse(await readFile(path.join(credentials, "credential-deadline"), "utf8")), result.credentialLifetime);
     assert.equal(
       await readFile(path.join(credentials, "database-url"), "utf8"),
       `postgresql://cli_login_role.${ref}@aws-1-us-west-2.pooler.supabase.com:5432/postgres?sslmode=require&connect_timeout=10`,
@@ -484,6 +488,7 @@ test("mints production credentials against a canonical probe workdir without sta
       "database-url",
       "database-passfile",
       "credential-ready",
+      "credential-deadline",
     ]) {
       assert.equal((await stat(path.join(credentials, name))).mode & 0o777, 0o600);
     }
@@ -785,7 +790,7 @@ test("a short-lived login response is revoked before credentials are written", a
     login: {
       password: "temporary-password",
       role: "cli_login_role",
-      ttl_seconds: 3599,
+      ttl_seconds: 299,
     },
   });
   try {
@@ -811,6 +816,116 @@ test("a short-lived login response is revoked before credentials are written", a
     await rm(credentials, { recursive: true, force: true });
     await rm(supabaseHome, { recursive: true, force: true });
   }
+});
+
+test("production request and readiness latency consume one deadline before ready is published", async () => {
+  for (const [requestSeconds, readinessSeconds, expectedCode] of [[60, 60, null], [120, 30, null], [120, 31, "credential-lifetime-budget"], [180, 0, "credential-lifetime-budget"]]) {
+    const probeWorkdir = await makeCredentialDirectory();
+    const credentials = await makeCredentialDirectory();
+    const supabaseHome = await makeCredentialDirectory();
+    const management = managementFetch({ login: { password: "temporary-password", role: "cli_login_role", ttl_seconds: 300 } });
+    let now = 1_000_000_000n;
+    let probes = 0;
+    try {
+      const operation = () => prepareProductionSupabaseDatabaseCredentials({
+        accessToken: token, credentialDirectory: credentials, probeWorkdir, projectRef: ref, supabaseHome,
+        monotonicNow: () => now,
+        fetchImplementation: async (url, options) => {
+          const response = await management.fetchImplementation(url, options);
+          if (options.method === "POST") now += BigInt(requestSeconds) * 1_000_000_000n;
+          return response;
+        },
+        readinessProbe: async () => {
+          probes++;
+          assert.equal((await readdir(credentials)).includes("credential-ready"), false);
+          now += BigInt(readinessSeconds) * 1_000_000_000n;
+          return true;
+        },
+      });
+      if (expectedCode) {
+        await assert.rejects(operation, { diagnosticCode: expectedCode });
+        assert.deepEqual(await readdir(credentials), []);
+        assert.equal(management.requests.at(-1).options.method, "DELETE");
+      } else {
+        const result = await operation();
+        assert.equal(result.credentialLifetime.issuedAtNs, "1000000000");
+        assert.equal(result.credentialLifetime.deadlineNs, "271000000000");
+        assert.equal(await readFile(path.join(credentials, "credential-ready"), "utf8"), ref);
+      }
+      assert.equal(probes, requestSeconds === 180 ? 0 : 1);
+      assert.equal(management.requests.filter(({ options }) => options.method === "POST").length, 1);
+    } finally {
+      await rm(probeWorkdir, { recursive: true, force: true });
+      await rm(credentials, { recursive: true, force: true });
+      await rm(supabaseHome, { recursive: true, force: true });
+    }
+  }
+});
+
+test("readiness interruption or exhausted lifetime never schedules another probe", async () => {
+  for (const diagnosticCode of ["credential-operation-interrupted", "credential-lifetime-expired", "credential-lifetime-budget", "credential-lifetime-contract"]) {
+    let probes = 0;
+    let delays = 0;
+    await assert.rejects(() => waitForTemporaryDatabaseLogin({
+      databaseUrl: "fixture", passfilePath: "/fixture", stageDirectory: "/fixture", supabaseHome: "/fixture",
+      credentialLifetime: createCredentialLifetime({ projectRef: ref, issuedAtNs: 0n, ttlSeconds: 300 }),
+      monotonicNow: () => 0n,
+      delayImplementation: async () => { delays++; },
+      probeAttempt: async () => { probes++; const error = new Error("private fixture details"); error.diagnosticCode = diagnosticCode; throw error; },
+    }), { diagnosticCode });
+    assert.equal(probes, 1);
+    assert.equal(delays, 0);
+  }
+});
+
+test("login response diagnostics distinguish validation failures without exposing fields", () => {
+  const poolerUrl = `postgresql://postgres.${ref}@aws-1-us-west-2.pooler.supabase.com:5432/postgres?sslmode=require`;
+  const valid = { role: "cli_login_fixture", password: "secret-password-never-log", ttl_seconds: 3600 };
+  for (const [patch, expectedCode] of [
+    [{ role: "unexpected-role" }, "login-role-format"],
+    [{ password: "short" }, "login-password-format"],
+    [{ ttl_seconds: "3600" }, "login-ttl-format"],
+    [{ ttl_seconds: 299 }, "login-ttl-below-300"],
+    [{ ttl_seconds: 300 }, "login-ttl-below-900"],
+    [{ ttl_seconds: 899 }, "login-ttl-below-900"],
+    [{ ttl_seconds: 900 }, "login-ttl-below-3600"],
+    [{ ttl_seconds: 3599 }, "login-ttl-below-3600"],
+    [{ ttl_seconds: 7201 }, "login-ttl-above-7200"],
+  ]) {
+    assert.throws(() => buildTemporaryDatabaseCredentials({ login: { ...valid, ...patch }, poolerUrl, projectRef: ref }), (error) => {
+      assert.equal(error.diagnosticCode, expectedCode);
+      assert.doesNotMatch(error.message, /secret-password|unexpected-role|300|7201/u);
+      return true;
+    });
+  }
+});
+
+test("pooler predicate diagnostics retain exact checks without exposing response values", () => {
+  for (const [overrides, expectedCode] of [
+    [{ identifier: "unexpected-project" }, "pooler-identifier"],
+    [{ db_user: "unexpected-user" }, "pooler-db-user"],
+    [{ db_user: "postgres" }, "pooler-db-user-unqualified"],
+    [{ db_name: "unexpected-database" }, "pooler-db-name"],
+    [{ is_using_scram_auth: false }, "pooler-scram"],
+    [{ connectionString: "private-alias-value" }, "pooler-alias-mismatch"],
+    [{ connectionString: undefined }, "pooler-alias-snake-only"],
+    [{ connection_string: undefined }, "pooler-alias-camel-only"],
+    [{ default_pool_size: -1 }, "pooler-default-pool-size"],
+    [{ max_client_conn: "200" }, "pooler-max-client-count"],
+    [{ db_port: 5432 }, "pooler-port-mode"],
+    [{ pool_mode: "unsupported" }, "pooler-port-mode"],
+    [{ db_host: "unexpected-host" }, "pooler-metadata-url-mismatch"],
+    [{ connection_string: "not a URL" }, "pooler-url-format"],
+  ]) {
+    assert.throws(() => normalizePrimaryPoolerConfig([primaryPooler(overrides)], ref), (error) => {
+      assert.equal(error.diagnosticCode, expectedCode);
+      assert.doesNotMatch(error.message, /unexpected|private-alias/u);
+      return true;
+    });
+  }
+  assert.throws(() => normalizePrimaryPoolerConfig([], ref), (error) => error.diagnosticCode === "pooler-primary-none");
+  assert.throws(() => normalizePrimaryPoolerConfig([primaryPooler(), primaryPooler()], ref), (error) => error.diagnosticCode === "pooler-primary-multiple");
+  assert.throws(() => normalizePrimaryPoolerConfig({}, ref), (error) => error.diagnosticCode === "pooler-response-shape");
 });
 
 test("temporary login API failures never inspect or expose the response body", async () => {

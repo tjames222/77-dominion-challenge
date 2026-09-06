@@ -6,6 +6,16 @@ import { DAILY_STANDARD_ROUTE_LIST } from './daily-standard-routes.mjs';
 const read = (path) => readFile(new URL(path, import.meta.url), 'utf8');
 
 describe('Today’s Actions retirement', () => {
+  it('keeps both the HTML redirect and canonical Pages URL non-cacheable and non-indexed', async () => {
+    const headers = await read('../../public/_headers');
+    const rules = headers.split(/\r?\n(?=\/)/);
+    for (const route of ['/today-actions.html', '/today-actions']) {
+      const rule = rules.find((block) => block.split(/\r?\n/, 1)[0] === route) || '';
+      assert.match(rule, /^  Cache-Control: no-store\r?$/m, `${route} must not be cached`);
+      assert.match(rule, /^  X-Robots-Tag: noindex\r?$/m, `${route} must not be indexed`);
+    }
+  });
+
   it('keeps the legacy URL as a minimal production-safe redirect', async () => {
     const [developmentRedirect, productionRedirect, redirectScript, dashboardSource] = await Promise.all([
       read('../../today-actions.html'),

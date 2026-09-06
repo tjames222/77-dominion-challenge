@@ -8,10 +8,14 @@ import path from 'node:path';
 import { pipeline } from 'node:stream/promises';
 import { pathToFileURL } from 'node:url';
 import { prepareProductionSupabaseDatabaseCredentials, revokeProductionSupabaseDatabaseCredentials } from './prepare-existing-supabase-cli-state.mjs';
+import { remainingCredentialMilliseconds, runDeadlineProcess } from './production-database-credential-lifetime.mjs';
 
 export const PROJECT_REF = 'mimolwojppbtsbvtqwpo';
 export const POSTGRES_IMAGE = 'public.ecr.aws/supabase/postgres:17.6.1.141';
 export const MAX_ENCRYPTED_BYTES = 49 * 1024 * 1024;
+export const REMOTE_BACKUP_ROLE_SQL = 'SET SESSION ROLE postgres';
+export const REMOTE_BACKUP_PREFLIGHT_SQL = `${REMOTE_BACKUP_ROLE_SQL}; BEGIN READ ONLY; SELECT (current_user = 'postgres')::text, (current_setting('transaction_read_only') = 'on')::text; ROLLBACK;`;
+export const LOCAL_RESTORE_ROLE_SNAPSHOT_SQL = "SELECT coalesce(jsonb_agg(to_jsonb(r) ORDER BY r.oid), '[]'::jsonb)::text FROM pg_catalog.pg_roles AS r;";
 const sha256 = (bytes) => createHash('sha256').update(bytes).digest('hex');
 const fail = (message) => { throw new Error(message); };
 
@@ -89,6 +93,26 @@ export function parseInventory(text, expectedVersions) {
   const histories = records.filter((r) => r.kind === 'history');
   assert.equal(histories.length, 1);
   assert.deepEqual(histories[0].versions, expectedVersions, 'Backup is only approved for the exact 1–13 checkpoint');
+  const eventTriggerRecords = records.filter((r) => r.kind === 'eventTriggers');
+  assert.equal(eventTriggerRecords.length, 1, 'Missing unique event-trigger inventory');
+  assert(Array.isArray(eventTriggerRecords[0].entries));
+  const triggerFields = ['name', 'event', 'enabled', 'tags', 'owner', 'ownerSuper', 'functionSchema', 'functionName', 'functionIdentityArguments', 'functionOwner'].sort();
+  let previousName;
+  for (const trigger of eventTriggerRecords[0].entries) {
+    assert(trigger && typeof trigger === 'object' && !Array.isArray(trigger));
+    assert.deepEqual(Object.keys(trigger).sort(), triggerFields);
+    for (const field of ['name', 'owner', 'functionSchema', 'functionName', 'functionOwner']) {
+      assert.equal(typeof trigger[field], 'string');
+      assert(trigger[field].length > 0 && !trigger[field].includes('\0'));
+    }
+    assert(['login', 'ddl_command_start', 'ddl_command_end', 'sql_drop', 'table_rewrite'].includes(trigger.event));
+    assert(['O', 'D', 'R', 'A'].includes(trigger.enabled));
+    assert.equal(typeof trigger.ownerSuper, 'boolean');
+    assert.equal(typeof trigger.functionIdentityArguments, 'string');
+    assert(trigger.tags === null || (Array.isArray(trigger.tags) && trigger.tags.every((tag) => typeof tag === 'string' && tag.length > 0)));
+    if (previousName !== undefined) assert(Buffer.compare(Buffer.from(previousName), Buffer.from(trigger.name)) < 0, 'Event triggers must be unique and C-sorted');
+    previousName = trigger.name;
+  }
   for (const record of tables) {
     assert(Number.isSafeInteger(record.count) && record.count >= 0);
     assert.match(record.sha256, /^[a-f0-9]{64}$/u);
@@ -111,6 +135,39 @@ export function localRestoreRoles(original, sourceBootstrapRole) {
   }).join('\n');
 }
 
+export async function restoreLocalArchiveWithRoleCompatibility({ localSql, restoreArchive }) {
+  // These callbacks are permanently bound to the owned, network-none restore
+  // container below. No hosted endpoint, role name, or SQL comes from callers.
+  const before = await localSql(LOCAL_RESTORE_ROLE_SNAPSHOT_SQL);
+  const roles = JSON.parse(before);
+  assert(Array.isArray(roles));
+  const postgres = roles.filter((role) => role.rolname === 'postgres');
+  assert.equal(postgres.length, 1, 'Expected one isolated postgres role');
+  assert.equal(postgres[0].rolsuper, false, 'Isolated postgres must initially be non-superuser');
+  const bootstrap = roles.find((role) => role.oid === '10');
+  assert.equal(bootstrap?.rolname, 'backup_restore_admin', 'Unexpected isolated bootstrap administrator');
+  assert.equal(bootstrap?.rolsuper, true, 'Isolated bootstrap administrator must remain superuser');
+  let operationFailure;
+  let downgradeFailure;
+  try {
+    // Stock PostgreSQL requires a superuser target owner when replaying event
+    // triggers. Only this disposable role changes; the captured SQL is intact.
+    await localSql('ALTER ROLE postgres SUPERUSER;');
+    await restoreArchive();
+  } catch (error) {
+    operationFailure = { error };
+  } finally {
+    try { await localSql('ALTER ROLE postgres NOSUPERUSER;'); }
+    catch (error) { downgradeFailure = { error }; }
+  }
+  // Preserve the primary restore diagnostic even if teardown must also handle
+  // a failed downgrade. Either failure exits to owned-container cleanup.
+  if (operationFailure) throw operationFailure.error;
+  if (downgradeFailure) throw downgradeFailure.error;
+  assert.equal(await localSql(LOCAL_RESTORE_ROLE_SNAPSHOT_SQL), before,
+    'Isolated role attributes changed during archive restore');
+}
+
 const comparableInventory = (text) => JSON.stringify(text.trim().split('\n').map((line) => {
   const record = JSON.parse(line);
   if (record.kind === 'boundary') {
@@ -124,24 +181,175 @@ function cleanEnvironment() {
   return { PATH: process.env.PATH, HOME: process.env.HOME, LANG: 'C.UTF-8' };
 }
 
-async function command(executable, args, { output, log, env = cleanEnvironment(), input } = {}) {
-  const child = spawn(executable, args, { env, stdio: [input ? 'pipe' : 'ignore', 'pipe', 'pipe'] });
+const safeDiagnosticCodes = new Set([
+  'login-response-shape', 'login-role-format', 'login-password-format',
+  'login-ttl-format', 'login-ttl-below-300', 'login-ttl-below-900',
+  'login-ttl-below-3600', 'login-ttl-above-7200',
+  'pooler-response-shape', 'pooler-primary-none', 'pooler-primary-multiple', 'pooler-identifier',
+  'pooler-db-user', 'pooler-db-user-unqualified', 'pooler-db-name', 'pooler-scram',
+  'pooler-alias-mismatch', 'pooler-alias-snake-only', 'pooler-alias-camel-only',
+  'pooler-default-pool-size', 'pooler-max-client-count', 'pooler-port-mode',
+  'pooler-url-format', 'pooler-url-protocol', 'pooler-url-user',
+  'pooler-url-endpoint', 'pooler-metadata-url-mismatch', 'pooler-normalized-boundary',
+  'docker-daemon-permission', 'docker-daemon-unavailable', 'docker-mount-invalid',
+  'docker-runtime-permission', 'docker-container-exists', 'docker-resource-limit',
+  'docker-command-failed', 'executable-unavailable',
+  'credential-lifetime-contract', 'credential-lifetime-expired', 'credential-lifetime-budget',
+  'credential-operation-timeout', 'credential-operation-interrupted',
+  'pg-restore-error', 'pg-restore-query-error', 'pg-restore-permission',
+  'pg-restore-permission-schema', 'pg-restore-permission-function',
+  'pg-restore-permission-table', 'pg-restore-permission-sequence',
+  'pg-restore-permission-database', 'pg-restore-permission-language',
+  'pg-restore-permission-tablespace', 'pg-restore-permission-create-extension',
+  'pg-restore-permission-create-event-trigger', 'pg-restore-permission-superuser-required',
+  'pg-restore-permission-admin-required', 'pg-restore-permission-set-required',
+  'pg-restore-permission-event-trigger-owner', 'pg-restore-permission-grant-role',
+  'pg-restore-permission-revoke-role', 'pg-restore-permission-grant-as-role',
+  'pg-restore-permission-revoke-by-role', 'pg-restore-permission-set-parameter',
+  'pg-restore-permission-set-session-authorization', 'pg-restore-permission-set-role',
+  'pg-restore-permission-other',
+  'pg-restore-ownership', 'pg-restore-existing-object', 'pg-restore-missing-object',
+  'pg-restore-extension-unavailable', 'pg-restore-server-setting',
+  'pg-restore-syntax', 'pg-restore-data', 'pg-restore-input',
+]);
+
+export function classifyPgRestoreFailure(stderr) {
+  // pg_restore appends the failed SQL (including arbitrary function bodies)
+  // after its primary error. Only inspect the first anchored error header;
+  // neither later error-looking text nor Command was/CONTEXT can classify it.
+  const first = stderr.split(/\r?\n/u).find((line) => line.startsWith('pg_restore: error: '));
+  if (!first) return null;
+  const primary = first.slice('pg_restore: error: '.length);
+  if (/^(?:could not read from input file|input file (?:does not appear|is too short)|unsupported version .* in file header)/u.test(primary)) return 'pg-restore-input';
+  const prefix = 'could not execute query: ERROR: ';
+  if (!primary.startsWith(prefix)) return 'pg-restore-error';
+  const detail = primary.slice(prefix.length).trimStart();
+  if (/^(?:could not open extension control file|extension .+ is not available)/u.test(detail)) return 'pg-restore-extension-unavailable';
+  if (/^(?:unrecognized configuration parameter|invalid value for parameter)/u.test(detail)) return 'pg-restore-server-setting';
+  if (/^syntax error\b/u.test(detail)) return 'pg-restore-syntax';
+  // PostgreSQL 17 object, role-grant, and GUC checks use these literal prefixes.
+  // Return only fixed categories, never the following object or role name.
+  // ADMIN/SET reasons in DETAIL or HINT are deliberately not inferred here.
+  for (const [permissionPrefix, code] of [
+    ['permission denied for schema ', 'pg-restore-permission-schema'],
+    ['permission denied for function ', 'pg-restore-permission-function'],
+    ['permission denied for table ', 'pg-restore-permission-table'],
+    ['permission denied for sequence ', 'pg-restore-permission-sequence'],
+    ['permission denied for database ', 'pg-restore-permission-database'],
+    ['permission denied for language ', 'pg-restore-permission-language'],
+    ['permission denied for tablespace ', 'pg-restore-permission-tablespace'],
+    ['permission denied to create extension ', 'pg-restore-permission-create-extension'],
+    ['permission denied to create event trigger ', 'pg-restore-permission-create-event-trigger'],
+    ['permission denied to change owner of event trigger ', 'pg-restore-permission-event-trigger-owner'],
+    ['permission denied to grant role ', 'pg-restore-permission-grant-role'],
+    ['permission denied to revoke role ', 'pg-restore-permission-revoke-role'],
+    ['permission denied to grant privileges as role ', 'pg-restore-permission-grant-as-role'],
+    ['permission denied to revoke privileges granted by role ', 'pg-restore-permission-revoke-by-role'],
+    ['permission denied to set parameter ', 'pg-restore-permission-set-parameter'],
+    ['permission denied to set session authorization ', 'pg-restore-permission-set-session-authorization'],
+    ['permission denied to set role ', 'pg-restore-permission-set-role'],
+  ]) {
+    if (detail.startsWith(permissionPrefix)) return code;
+  }
+  if (/^must be (?:a )?superuser\b/u.test(detail)) return 'pg-restore-permission-superuser-required';
+  if (/^must have ADMIN option\b/u.test(detail)) return 'pg-restore-permission-admin-required';
+  if (/^must have SET option\b/u.test(detail)) return 'pg-restore-permission-set-required';
+  if (/^permission denied\b/u.test(detail)) return 'pg-restore-permission-other';
+  if (/^(?:must be owner\b|must be member of role\b|must be able to SET ROLE\b)/u.test(detail)) return 'pg-restore-ownership';
+  if (/^(?:schema|relation|type|function|role|extension|publication|policy|trigger|constraint) .+ already exists\b/u.test(detail)) return 'pg-restore-existing-object';
+  if (/^(?:schema|relation|type|function|role|extension|publication|policy|trigger|constraint) .+ does not exist\b/u.test(detail)) return 'pg-restore-missing-object';
+  if (/^(?:duplicate key value violates|insert or update on table .+ violates|new row for relation .+ violates|null value in column .+ violates)/u.test(detail)) return 'pg-restore-data';
+  return 'pg-restore-query-error';
+}
+
+export function classifyDockerFailure(stderr, spawnErrorCode) {
+  if (spawnErrorCode === 'ENOENT') return 'executable-unavailable';
+  const restoreCode = classifyPgRestoreFailure(stderr);
+  if (restoreCode) return restoreCode;
+  if (/permission denied while trying to connect to the docker|permission denied.*docker.sock/iu.test(stderr)) return 'docker-daemon-permission';
+  if (/cannot connect to the docker daemon|is the docker daemon running/iu.test(stderr)) return 'docker-daemon-unavailable';
+  if (/invalid mount config|bind source path does not exist|error mounting/iu.test(stderr)) return 'docker-mount-invalid';
+  if (/permission denied|operation not permitted/iu.test(stderr)) return 'docker-runtime-permission';
+  if (/container name.*already in use/iu.test(stderr)) return 'docker-container-exists';
+  if (/no space left on device|cannot allocate memory|out of memory/iu.test(stderr)) return 'docker-resource-limit';
+  return 'docker-command-failed';
+}
+
+export function classifyBackupFailure(error) {
+  if (safeDiagnosticCodes.has(error?.diagnosticCode)) return error.diagnosticCode;
+  const message = typeof error?.message === 'string' ? error.message : '';
+  const prefix = 'Existing-project CLI state is invalid: ';
+  if (message.startsWith(prefix)) {
+    const detail = message.slice(prefix.length);
+    for (const [label, code] of [
+      ['the exact project lookup', 'project'],
+      ['the exact project pooler lookup', 'pooler'],
+      ['the temporary database login request', 'login'],
+    ]) {
+      const status = detail.match(new RegExp(`^${label} returned HTTP ([1-5][0-9]{2})$`, 'u'));
+      if (status) return `credential-${code}-http-${status[1]}`;
+      if (detail === `${label} request failed` || detail === `${label} failed`) return `credential-${code}-network`;
+      if (detail === `${label} returned a redirect`) return `credential-${code}-redirect`;
+      if (detail === `${label} did not return JSON`) return `credential-${code}-json`;
+    }
+    if (detail === 'the Management API project identity, region, health, or PostgreSQL contract does not match') return 'credential-project-contract';
+    if (/^(the primary pooler|the pooler response|the pooler Management API|the normalized pooler)/u.test(detail)) return 'credential-pooler-contract';
+    if (detail === 'the temporary database login did not become ready') return 'credential-login-readiness';
+    if (/credential.directory|credential directory/u.test(detail)) return 'credential-directory-contract';
+    if (/supabase-home|isolated Supabase home/u.test(detail)) return 'credential-home-contract';
+    if (/probe-workdir/u.test(detail)) return 'credential-probe-directory-contract';
+    if (detail === 'SUPABASE_ACCESS_TOKEN is missing or malformed') return 'credential-token-contract';
+    return 'credential-helper-contract';
+  }
+  if (['EACCES', 'EPERM'].includes(error?.code)) return 'filesystem-permission';
+  if (error?.code === 'ENOENT') return 'filesystem-path-missing';
+  if (error?.code === 'ENOSPC') return 'filesystem-space';
+  if (error?.code === 'ERR_ASSERTION') return 'boundary-assertion';
+  return 'unclassified';
+}
+
+async function command(executable, args, { output, log, env = cleanEnvironment(), input, deadlineNs } = {}) {
   const errors = createWriteStream(log, { flags: 'a', mode: 0o600 });
-  child.stderr.pipe(errors, { end: false });
+  let privateStderr = '';
   let captured = '';
   let piping;
-  if (output) piping = pipeline(child.stdout, createWriteStream(output, { flags: 'wx', mode: 0o600 }));
-  else child.stdout.on('data', (chunk) => { captured += chunk; if (captured.length > 1024 * 1024) child.kill(); });
-  if (input) {
-    child.stdin.on('error', () => {});
-    createReadStream(input).pipe(child.stdin);
+  let spawnErrorCode;
+  let pipingError;
+  const setup = (child) => {
+    child.stderr.on('data', (chunk) => {
+      if (privateStderr.length < 32_768) privateStderr += chunk.toString().slice(0, 32_768 - privateStderr.length);
+    });
+    child.stderr.pipe(errors, { end: false });
+    if (output) piping = pipeline(child.stdout, createWriteStream(output, { flags: 'wx', mode: 0o600 })).catch((error) => { pipingError = error; });
+    else child.stdout.on('data', (chunk) => { captured += chunk; if (captured.length > 1024 * 1024) child.kill(); });
+    if (input) {
+      child.stdin.on('error', () => {});
+      createReadStream(input).pipe(child.stdin);
+    }
+    child.once('error', (error) => { spawnErrorCode = error.code; });
+  };
+  let status;
+  try {
+    const stdio = [input ? 'pipe' : 'ignore', 'pipe', 'pipe'];
+    if (deadlineNs) {
+      status = await runDeadlineProcess(executable, args, { deadlineNs, env, stdio, onSpawn: setup });
+    } else {
+      const child = spawn(executable, args, { env, stdio });
+      setup(child);
+      status = await new Promise((resolve) => { child.once('close', resolve); });
+    }
+    await piping;
+    if (pipingError) throw pipingError;
+  } finally {
+    await piping;
+    await new Promise((resolve) => errors.end(resolve));
   }
-  const status = await new Promise((resolve) => {
-    child.once('error', () => resolve(-1)); child.once('close', resolve);
-  });
-  await piping;
-  await new Promise((resolve) => errors.end(resolve));
-  if (status !== 0) fail(`Backup operation failed (${path.basename(executable)}); sensitive diagnostics were kept out of logs`);
+  if (status !== 0) {
+    const error = new Error('Backup subprocess failed; private diagnostics are suppressed');
+    if (executable === 'docker') error.diagnosticCode = classifyDockerFailure(privateStderr, spawnErrorCode);
+    else if (spawnErrorCode === 'ENOENT') error.diagnosticCode = 'executable-unavailable';
+    throw error;
+  }
   return captured.trim();
 }
 
@@ -193,10 +401,11 @@ export async function runBackup() {
     assert.match(imageId, /^sha256:[a-f0-9]{64}$/u);
     stage('temporary-credentials');
     minted = true;
-    await prepareProductionSupabaseDatabaseCredentials({
+    const { credentialLifetime } = await prepareProductionSupabaseDatabaseCredentials({
       accessToken: token, credentialDirectory: credentials, projectRef: PROJECT_REF,
       supabaseHome, probeWorkdir,
     });
+    stage('credential-files');
     const databaseUrl = new URL((await readFile(path.join(credentials, 'database-url'), 'utf8')).trim());
     assert.equal(databaseUrl.password, '');
     const passfile = path.join(credentials, 'database-passfile');
@@ -204,30 +413,50 @@ export async function runBackup() {
     const owner = `${process.getuid()}:${process.getgid()}`;
     const captureName = `dominion-backup-capture-${randomBytes(12).toString('hex')}`;
     containers.push(captureName);
-    await command('docker', ['run', '--detach', '--name', captureName, '--label', `com.dominion.backup-owner=${ownershipToken}`, '--pull', 'never', '--read-only', '--cap-drop', 'ALL', '--security-opt', 'no-new-privileges', '--log-driver', 'none', '--user', owner, '--tmpfs', '/tmp:rw,nosuid,nodev,noexec,size=64m', '--mount', `type=bind,source=${runtime},target=${runtime},readonly`, '--entrypoint', 'sleep', imageId, '1800'], { log });
+    stage('capture-container');
+    remainingCredentialMilliseconds(credentialLifetime, PROJECT_REF);
+    await command('docker', ['run', '--detach', '--name', captureName, '--label', `com.dominion.backup-owner=${ownershipToken}`, '--pull', 'never', '--read-only', '--cap-drop', 'ALL', '--security-opt', 'no-new-privileges', '--log-driver', 'none', '--user', owner, '--tmpfs', '/tmp:rw,nosuid,nodev,noexec,size=64m', '--mount', `type=bind,source=${runtime},target=${runtime},readonly`, '--entrypoint', 'sleep', imageId, '1800'], { log, deadlineNs: credentialLifetime.deadlineNs });
     const remoteEnv = [
       '-e', `PGHOST=${databaseUrl.hostname}`, '-e', 'PGPORT=5432',
       '-e', `PGUSER=${decodeURIComponent(databaseUrl.username)}`, '-e', 'PGDATABASE=postgres',
       '-e', `PGPASSFILE=${passfile}`, '-e', 'PGSSLMODE=require', '-e', 'PGCONNECT_TIMEOUT=10',
+      // Defense in depth only: poolers may discard startup options. Every
+      // remote command below explicitly switches role after authentication.
       '-e', 'PGOPTIONS=-c default_transaction_read_only=on -c role=postgres',
     ];
-    const remote = (args, output) => command('docker', ['exec', ...remoteEnv, captureName, ...args], { log, output });
+    const remote = async (args, output) => {
+      try {
+        remainingCredentialMilliseconds(credentialLifetime, PROJECT_REF);
+        const result = await command('docker', ['exec', ...remoteEnv, captureName, ...args], { log, output, deadlineNs: credentialLifetime.deadlineNs });
+        remainingCredentialMilliseconds(credentialLifetime, PROJECT_REF);
+        return result;
+      } catch (error) {
+        // Killing docker exec alone does not stop its in-container query.
+        // Remove and verify the owned capture container before any later work.
+        await removeContainer(captureName);
+        containers.splice(containers.indexOf(captureName), 1);
+        throw error;
+      }
+    };
+    stage('remote-session-preflight');
+    assert.equal(await remote(['psql', '-X', '-q', '-At', '-v', 'ON_ERROR_STOP=1', '-c', REMOTE_BACKUP_PREFLIGHT_SQL]), 'true|true',
+      'The explicit backup role or read-only transaction contract failed');
     const inventorySql = path.join(runtime, 'inventory.sql');
     await writeFile(inventorySql, await readFile(path.join(repository, 'scripts/free-backup-inventory.sql')), { flag: 'wx', mode: 0o600 });
     const before = path.join(capture, 'inventory.jsonl');
     stage('inventory-before');
-    await remote(['psql', '-X', '-q', '-v', 'ON_ERROR_STOP=1', '-f', inventorySql], before);
+    await remote(['psql', '-X', '-q', '-v', 'ON_ERROR_STOP=1', '-c', REMOTE_BACKUP_ROLE_SQL, '-f', inventorySql], before);
     const beforeText = await readFile(before, 'utf8');
     const inventory = parseInventory(beforeText, expectedVersions);
     const sourceBootstrapRole = inventory.find((r) => r.kind === 'boundary').bootstrapRole;
     console.log('Production checkpoint verified; capturing a read-only logical backup.');
     stage('roles-capture');
-    await remote(['pg_dumpall', '--roles-only', '--no-role-passwords'], path.join(capture, 'roles.sql'));
+    await remote(['pg_dumpall', '--roles-only', '--no-role-passwords', '--role=postgres'], path.join(capture, 'roles.sql'));
     stage('database-dump');
-    await remote(['pg_dump', '--format=custom', '--compress=0', '--lock-wait-timeout=15000'], path.join(capture, 'database.dump'));
+    await remote(['pg_dump', '--format=custom', '--compress=0', '--lock-wait-timeout=15000', '--role=postgres'], path.join(capture, 'database.dump'));
     const after = path.join(runtime, 'after.jsonl');
     stage('inventory-after');
-    await remote(['psql', '-X', '-q', '-v', 'ON_ERROR_STOP=1', '-f', inventorySql], after);
+    await remote(['psql', '-X', '-q', '-v', 'ON_ERROR_STOP=1', '-c', REMOTE_BACKUP_ROLE_SQL, '-f', inventorySql], after);
     assert.equal(await readFile(after, 'utf8'), beforeText, 'Source database changed during backup');
     await revokeProductionSupabaseDatabaseCredentials({ accessToken: token, projectRef: PROJECT_REF });
     minted = false;
@@ -253,7 +482,10 @@ export async function runBackup() {
     await writeFile(localRoles, localRestoreRoles(await readFile(path.join(capture, 'roles.sql'), 'utf8'), sourceBootstrapRole), { flag: 'wx', mode: 0o600 });
     await local([...psql, '--single-transaction'], { input: localRoles });
     stage('archive-restore');
-    await local(['pg_restore', '--host=/restore', '--username=backup_restore_admin', '--dbname=postgres', '--single-transaction', '--exit-on-error'], { input: path.join(capture, 'database.dump') });
+    await restoreLocalArchiveWithRoleCompatibility({
+      localSql: (sql) => local([...psql, '-At', '-c', sql]),
+      restoreArchive: () => local(['pg_restore', '--host=/restore', '--username=backup_restore_admin', '--dbname=postgres', '--single-transaction', '--exit-on-error'], { input: path.join(capture, 'database.dump') }),
+    });
     const restored = path.join(runtime, 'restored.jsonl');
     stage('content-verify');
     await local(psql, { input: inventorySql, output: restored });
@@ -276,16 +508,16 @@ export async function runBackup() {
     await writeFile(path.join(artifactDirectory, 'backup-manifest.json'), JSON.stringify(manifest, null, 2) + '\n', { flag: 'wx', mode: 0o600 });
     if (process.env.GITHUB_OUTPUT) await writeFile(process.env.GITHUB_OUTPUT, `artifact_directory=${artifactDirectory}\n`, { flag: 'a' });
     success = true;
-  } catch {
-    fail(`Backup failed at stage ${phase}; no private diagnostic text is emitted`);
+  } catch (error) {
+    fail(`Backup failed at stage ${phase} (${classifyBackupFailure(error)}); no private diagnostic text is emitted`);
   } finally {
     let cleanupFailed = false;
-    if (minted) {
-      try { await revokeProductionSupabaseDatabaseCredentials({ accessToken: token, projectRef: PROJECT_REF }); }
-      catch { cleanupFailed = true; }
-    }
     for (const name of containers) {
       try { await removeContainer(name); }
+      catch { cleanupFailed = true; }
+    }
+    if (minted) {
+      try { await revokeProductionSupabaseDatabaseCredentials({ accessToken: token, projectRef: PROJECT_REF }); }
       catch { cleanupFailed = true; }
     }
     await rm(runtime, { recursive: true, force: true });
@@ -302,7 +534,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
     } else if (process.argv.length === 2) await runBackup();
     else fail('Use no arguments in Actions, or decrypt <backup.enc> <new-output.tar> <manifest.json> <private-key.pem>');
   } catch (error) {
-    console.error(/^Backup failed at stage [a-z-]+; no private diagnostic text is emitted$/u.test(error.message)
+    console.error(/^Backup failed at stage [a-z-]+ \([a-z0-9-]+\); no private diagnostic text is emitted$/u.test(error.message)
       ? error.message : 'Production backup failed; no data, SQL, credentials, or private diagnostics are emitted.');
     process.exitCode = 1;
   }

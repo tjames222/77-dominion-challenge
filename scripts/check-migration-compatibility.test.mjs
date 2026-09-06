@@ -442,7 +442,7 @@ test("package, CI, and production deploy run the gate before migrations", async 
   );
   const deployNode = deployWorkflow.indexOf("node-version: 22");
   const deployDryRun = deployWorkflow.indexOf(
-    'db push --db-url="$database_url" --dry-run',
+    '--operation dry-run',
   );
   const deploySecretTopology = deployWorkflow.indexOf(
     "name: Validate Edge Function secret topology",
@@ -452,7 +452,7 @@ test("package, CI, and production deploy run the gate before migrations", async 
     deploySecretTopology,
   );
   const deployApply = deployWorkflow.indexOf(
-    'migration up --db-url="$database_url"',
+    '--operation migrate',
   );
   const deploySecretSync = deployWorkflow.indexOf(
     "name: Synchronize Edge Function secrets",
@@ -500,36 +500,23 @@ test("package, CI, and production deploy run the gate before migrations", async 
   );
   assert.equal(
     deployWorkflow.split(
-      "for credential_file in database-url database-passfile credential-ready; do",
+      "for credential_file in database-url database-passfile credential-deadline credential-ready; do",
     ).length - 1,
     6,
   );
+  assert.doesNotMatch(deployWorkflow, /database_url|--db-url|PGPASSFILE/u);
+  assert.equal(deployWorkflow.split('node scripts/run-production-database-operation.mjs').length - 1, 6);
+  assert.equal(deployWorkflow.split('--credential-directory "$credential_directory"').length - 1, 12);
   assert.equal(
-    deployWorkflow.split(
-      'database_url="$(<"${credential_directory}/database-url")"',
-    ).length - 1,
-    6,
-  );
-  assert.equal(
-    deployWorkflow.split(
-      'PGPASSFILE="${credential_directory}/database-passfile"',
-    ).length - 1,
-    6,
-  );
-  assert.equal(
-    deployWorkflow.split('--db-url="$database_url"').length - 1,
-    6,
-  );
-  assert.equal(
-    deployWorkflow.match(/migration list --db-url="\$database_url"/gu)?.length,
+    deployWorkflow.match(/--operation history/gu)?.length,
     4,
   );
   assert.equal(
-    deployWorkflow.match(/db push --db-url="\$database_url" --dry-run/gu)?.length,
+    deployWorkflow.match(/--operation dry-run/gu)?.length,
     1,
   );
   assert.equal(
-    deployWorkflow.match(/migration up --db-url="\$database_url"/gu)?.length,
+    deployWorkflow.match(/--operation migrate/gu)?.length,
     1,
   );
 
@@ -549,28 +536,18 @@ test("package, CI, and production deploy run the gate before migrations", async 
   assert.equal(finalRemoteRevocations.length, 3);
 
   const privateDatabaseCliLaunches = deployWorkflow.match(
-    /\/usr\/bin\/env -i \\\n\s+CI=1 \\\n\s+HOME="\$supabase_home" \\\n\s+LANG=C\.UTF-8 \\\n\s+PATH="\$PATH" \\\n\s+PGPASSFILE="\$\{credential_directory\}\/database-passfile" \\\n\s+SUPABASE_HOME="\$supabase_home" \\\n\s+SUPABASE_NO_KEYRING=1 \\\n\s+SUPABASE_PROFILE=supabase \\\n\s+SUPABASE_TELEMETRY_DISABLED=1 \\\n\s+TMPDIR="\$supabase_home" \\\n\s+supabase --profile=supabase --workdir="\$GITHUB_WORKSPACE" \\\n\s+[^\n]*--db-url="\$database_url"/gu,
+    /\/usr\/bin\/env -i \\\n\s+CI=1 \\\n\s+HOME="\$supabase_home" \\\n\s+LANG=C\.UTF-8 \\\n\s+PATH="\$PATH" \\\n\s+SUPABASE_HOME="\$supabase_home" \\\n\s+SUPABASE_NO_KEYRING=1 \\\n\s+SUPABASE_PROFILE=supabase \\\n\s+SUPABASE_TELEMETRY_DISABLED=1 \\\n\s+TMPDIR="\$supabase_home" \\\n\s+node scripts\/run-production-database-operation\.mjs \\\n\s+--operation (?:history|dry-run|migrate) \\\n\s+--credential-directory "\$credential_directory" \\\n\s+--supabase-home "\$supabase_home" \\\n\s+--workdir "\$GITHUB_WORKSPACE"/gu,
   ) ?? [];
   assert.equal(privateDatabaseCliLaunches.length, 6);
 
-  const databaseUrlVariableLines = deployWorkflow.split("\n").filter((line) =>
-    line.includes("database_url")
-  );
-  assert.equal(databaseUrlVariableLines.length, 18);
-  for (const line of databaseUrlVariableLines) {
-    assert.match(
-      line,
-      /^\s+(?:unset database_url|database_url="\$\(<"\$\{credential_directory\}\/database-url"\)"|[^\n]*--db-url="\$database_url"[^\n]*)$/u,
-    );
-  }
   const databaseUrlFileLines = deployWorkflow.split("\n").filter((line) =>
     line.includes("database-url")
   );
-  assert.equal(databaseUrlFileLines.length, 12);
+  assert.equal(databaseUrlFileLines.length, 6);
   for (const line of databaseUrlFileLines) {
     assert.match(
       line,
-      /^\s+(?:for credential_file in database-url database-passfile credential-ready; do|database_url="\$\(<"\$\{credential_directory\}\/database-url"\)")$/u,
+      /^\s+for credential_file in database-url database-passfile credential-deadline credential-ready; do$/u,
     );
   }
   assert.doesNotMatch(deployWorkflow, /\bGITHUB_ENV\b/u);
@@ -615,7 +592,7 @@ test("package, CI, and production deploy run the gate before migrations", async 
   );
   assert.match(
     deployWorkflow,
-    /supabase --profile=supabase --workdir="\$GITHUB_WORKSPACE" \\\n\s+--agent=no --yes db push --db-url="\$database_url" --dry-run/u,
+    /node scripts\/run-production-database-operation\.mjs \\\n\s+--operation dry-run/u,
   );
   assert.match(
     deployWorkflow,
@@ -730,17 +707,18 @@ test("package, CI, and production deploy run the gate before migrations", async 
       && authenticated401 < compatibilityCleanup,
   );
   assert.equal(
-    compatibilityJob.match(/migration list --db-url="\$database_url"/gu)?.length,
+    compatibilityJob.match(/--operation history/gu)?.length,
     1,
   );
   assert.equal(
-    compatibilityJob.match(/--db-url="\$database_url"/gu)?.length,
+    compatibilityJob.match(/node scripts\/run-production-database-operation\.mjs/gu)?.length,
     1,
   );
   assert.doesNotMatch(
     compatibilityJob,
     /\b(?:migration\s+up|db\s+push|db\s+reset|migration\s+repair)\b/u,
   );
+  assert.doesNotMatch(compatibilityJob, /--operation (?:dry-run|migrate)/u);
   assert.match(
     deployWorkflow,
     /inputs\.release_scope == 'frontend-only'[\s\S]*needs\.backend\.result == 'skipped'[\s\S]*needs\.compatibility-guards\.result == 'skipped'/u,
@@ -764,12 +742,12 @@ test("package, CI, and production deploy run the gate before migrations", async 
   );
   assert.equal(
     frontendRollbackHistoryJob.match(
-      /migration list --db-url="\$database_url"/gu,
+      /--operation history/gu,
     )?.length,
     1,
   );
   assert.equal(
-    frontendRollbackHistoryJob.match(/--db-url="\$database_url"/gu)?.length,
+    frontendRollbackHistoryJob.match(/node scripts\/run-production-database-operation\.mjs/gu)?.length,
     1,
   );
   assert.doesNotMatch(
@@ -780,6 +758,7 @@ test("package, CI, and production deploy run the gate before migrations", async 
     frontendRollbackHistoryJob,
     /\b(?:migration\s+up|db\s+push|db\s+reset|migration\s+repair)\b/u,
   );
+  assert.doesNotMatch(frontendRollbackHistoryJob, /--operation (?:dry-run|migrate)/u);
   assert.match(
     deployWorkflow,
     /inputs\.release_scope == 'frontend-only'[\s\S]*needs\.frontend-rollback-history\.result == 'success'/u,
@@ -792,19 +771,19 @@ test("package, CI, and production deploy run the gate before migrations", async 
       && backendFinalRevocation < frontendJobStart,
   );
   assert.equal(
-    backendJob.match(/migration list --db-url="\$database_url"/gu)?.length,
+    backendJob.match(/--operation history/gu)?.length,
     2,
   );
   assert.equal(
-    backendJob.match(/db push --db-url="\$database_url" --dry-run/gu)?.length,
+    backendJob.match(/--operation dry-run/gu)?.length,
     1,
   );
   assert.equal(
-    backendJob.match(/migration up --db-url="\$database_url"/gu)?.length,
+    backendJob.match(/--operation migrate/gu)?.length,
     1,
   );
   assert.equal(
-    backendJob.match(/--db-url="\$database_url"/gu)?.length,
+    backendJob.match(/node scripts\/run-production-database-operation\.mjs/gu)?.length,
     4,
   );
   assert.doesNotMatch(backendJob, /\b(?:db\s+reset|migration\s+repair)\b/u);
