@@ -4,7 +4,7 @@ import { generateKeyPairSync } from 'node:crypto';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { decryptBackup, encryptBackup, localRestoreRoles, parseInventory, recipientKey } from './free-production-backup.mjs';
+import { classifyBackupFailure, classifyDockerFailure, decryptBackup, encryptBackup, localRestoreRoles, parseInventory, recipientKey } from './free-production-backup.mjs';
 
 const { publicKey, privateKey } = generateKeyPairSync('rsa', {
   modulusLength: 4096,
@@ -52,6 +52,20 @@ test('backup recipient requires RSA-4096', () => {
   assert.throws(() => recipientKey(weak), /RSA-4096/);
 });
 
+test('diagnostics emit only fixed codes, never private response or Docker text', () => {
+  const secret = 'sensitive-secret-fixture';
+  assert.equal(classifyBackupFailure(new Error(secret)), 'unclassified');
+  assert.equal(classifyBackupFailure(Object.assign(new Error(secret), { diagnosticCode: secret })), 'unclassified');
+  assert.equal(classifyBackupFailure(Object.assign(new Error(secret), { diagnosticCode: 'login-ttl-below-900' })), 'login-ttl-below-900');
+  assert.equal(classifyBackupFailure(Object.assign(new Error(secret), { diagnosticCode: 'pooler-scram' })), 'pooler-scram');
+  assert.equal(classifyBackupFailure(new Error('Existing-project CLI state is invalid: the exact project pooler lookup returned HTTP 403')), 'credential-pooler-http-403');
+  assert.equal(classifyBackupFailure(new Error('Existing-project CLI state is invalid: the exact project lookup request failed')), 'credential-project-network');
+  assert.equal(classifyBackupFailure(new Error('Existing-project CLI state is invalid: the Management API project identity, region, health, or PostgreSQL contract does not match')), 'credential-project-contract');
+  assert.equal(classifyDockerFailure(`invalid mount config: bind source path does not exist: ${secret}`), 'docker-mount-invalid');
+  assert.equal(classifyDockerFailure(`permission denied while trying to connect to the docker API: ${secret}`), 'docker-daemon-permission');
+  assert.equal(classifyDockerFailure(secret), 'docker-command-failed');
+});
+
 test('isolated role replay adapts only membership grantor identity', () => {
   const original = 'CREATE ROLE source_admin;\nALTER ROLE source_admin WITH SUPERUSER;\nGRANT pgsodium_keyholder TO service_role WITH INHERIT TRUE, SET TRUE GRANTED BY "source_admin";\n';
   assert.equal(localRestoreRoles(original, 'source_admin'), original.replace(' GRANTED BY "source_admin";', ' GRANTED BY backup_restore_admin;'));
@@ -97,6 +111,8 @@ test('workflow limits plaintext lifetime and publishes only completed encrypted 
   assert.match(source, /'--network', 'none'/);
   assert.match(source, /'--roles-only', '--no-role-passwords'/);
   assert.match(source, /'--single-transaction', '--exit-on-error'/);
+  assert.match(source, /stage\('credential-files'\)/);
+  assert.match(source, /stage\('capture-container'\)/);
   assert.match(startup, /cron.launch_active_jobs=off/);
   assert.doesNotMatch(source, /supabase.*(?:db reset|migration (?:up|repair))|console\.log\((?:beforeText|token|databaseUrl)/);
 });

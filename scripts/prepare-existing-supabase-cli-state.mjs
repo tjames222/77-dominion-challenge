@@ -30,8 +30,10 @@ const FORBIDDEN_NODE_ENVIRONMENT = Object.freeze([
   "NODE_TLS_REJECT_UNAUTHORIZED",
 ]);
 
-function fail(message) {
-  throw new Error(`Existing-project CLI state is invalid: ${message}`);
+function fail(message, diagnosticCode) {
+  const error = new Error(`Existing-project CLI state is invalid: ${message}`);
+  if (diagnosticCode) error.diagnosticCode = diagnosticCode;
+  throw error;
 }
 
 export function requireCleanNodeRuntimeEnvironment(environment) {
@@ -147,20 +149,20 @@ function requireSafePoolerUrl(connectionString, projectRef) {
     || connectionString.length === 0
     || /[\u0000-\u001f\u007f]/u.test(connectionString)
   ) {
-    fail("the primary pooler connection string is missing or malformed");
+    fail("the primary pooler connection string is missing or malformed", "pooler-url-format");
   }
 
   let parsed;
   try {
     parsed = new URL(connectionString);
   } catch {
-    fail("the primary pooler connection string is not a URL");
+    fail("the primary pooler connection string is not a URL", "pooler-url-format");
   }
   if (!["postgres:", "postgresql:"].includes(parsed.protocol)) {
-    fail("the primary pooler URL must use PostgreSQL");
+    fail("the primary pooler URL must use PostgreSQL", "pooler-url-protocol");
   }
   if (parsed.username !== `postgres.${projectRef}`) {
-    fail("the primary pooler username is not bound to the exact project");
+    fail("the primary pooler username is not bound to the exact project", "pooler-url-user");
   }
   if (
     parsed.hostname !== EXPECTED_POOLER_HOST
@@ -169,37 +171,47 @@ function requireSafePoolerUrl(connectionString, projectRef) {
     || !["", "?sslmode=require"].includes(parsed.search)
     || parsed.hash !== ""
   ) {
-    fail("the primary pooler URL is outside the expected Supabase boundary");
+    fail("the primary pooler URL is outside the expected Supabase boundary", "pooler-url-endpoint");
   }
   return parsed;
 }
 
 export function normalizePrimaryPoolerConfig(value, projectRef) {
   if (!Array.isArray(value)) {
-    fail("the pooler Management API response must be an array");
+    fail("the pooler Management API response must be an array", "pooler-response-shape");
   }
   const primaryConfigs = value.filter((entry) =>
     isPlainObject(entry) && entry.database_type === "PRIMARY"
   );
   if (primaryConfigs.length !== 1) {
-    fail("the pooler response must contain exactly one PRIMARY database");
+    fail("the pooler response must contain exactly one PRIMARY database",
+      primaryConfigs.length === 0 ? "pooler-primary-none" : "pooler-primary-multiple");
   }
   const primary = primaryConfigs[0];
+  const metadataMessage = "the primary pooler metadata is not canonical";
+  if (primary.identifier !== projectRef) fail(metadataMessage, "pooler-identifier");
+  if (primary.db_user !== `postgres.${projectRef}`) {
+    fail(metadataMessage, primary.db_user === "postgres" ? "pooler-db-user-unqualified" : "pooler-db-user");
+  }
+  if (primary.db_name !== "postgres") fail(metadataMessage, "pooler-db-name");
+  if (primary.is_using_scram_auth !== true) fail(metadataMessage, "pooler-scram");
+  if (primary.connectionString !== primary.connection_string) {
+    const code = primary.connectionString === undefined && typeof primary.connection_string === "string"
+      ? "pooler-alias-snake-only"
+      : primary.connection_string === undefined && typeof primary.connectionString === "string"
+      ? "pooler-alias-camel-only" : "pooler-alias-mismatch";
+    fail(metadataMessage, code);
+  }
+  if (!isNullableNonnegativeInteger(primary.default_pool_size)) fail(metadataMessage, "pooler-default-pool-size");
+  if (!isNullableNonnegativeInteger(primary.max_client_conn)) fail(metadataMessage, "pooler-max-client-count");
   if (
-    primary.identifier !== projectRef
-    || primary.db_user !== `postgres.${projectRef}`
-    || primary.db_name !== "postgres"
-    || primary.is_using_scram_auth !== true
-    || primary.connectionString !== primary.connection_string
-    || !isNullableNonnegativeInteger(primary.default_pool_size)
-    || !isNullableNonnegativeInteger(primary.max_client_conn)
-    || !Number.isInteger(primary.db_port)
+    !Number.isInteger(primary.db_port)
     || ![5432, 6543].includes(primary.db_port)
     || !["session", "transaction"].includes(primary.pool_mode)
     || (primary.pool_mode === "transaction" && primary.db_port !== 6543)
     || (primary.pool_mode === "session" && primary.db_port !== 5432)
   ) {
-    fail("the primary pooler metadata is not canonical");
+    fail(metadataMessage, "pooler-port-mode");
   }
 
   const parsed = requireSafePoolerUrl(primary.connection_string, projectRef);
@@ -207,7 +219,7 @@ export function normalizePrimaryPoolerConfig(value, projectRef) {
     parsed.hostname !== primary.db_host
     || Number(parsed.port) !== primary.db_port
   ) {
-    fail("the primary pooler URL does not match its metadata");
+    fail("the primary pooler URL does not match its metadata", "pooler-metadata-url-mismatch");
   }
 
   // The Management API can return either the documented placeholder or a real
@@ -221,28 +233,33 @@ export function normalizePrimaryPoolerConfig(value, projectRef) {
     || verified.port !== "5432"
     || verified.search !== "?sslmode=require"
   ) {
-    fail("the normalized pooler URL is not credential-free session mode");
+    fail("the normalized pooler URL is not credential-free session mode", "pooler-normalized-boundary");
   }
   return normalized;
 }
 
 function requireTemporaryLoginResponse(value) {
+  const message = "the temporary login-role response is malformed or too short-lived";
+  if (!isPlainObject(value)) fail(message, "login-response-shape");
   if (
-    !isPlainObject(value)
-    || typeof value.role !== "string"
+    typeof value.role !== "string"
     || !/^cli_login_[a-z0-9_]*$/u.test(value.role)
     || Buffer.byteLength(value.role, "utf8") > 63
-    || typeof value.password !== "string"
+  ) fail(message, "login-role-format");
+  if (
+    typeof value.password !== "string"
     || value.password.length < 16
     || value.password.length > 1024
     || /[\u0000-\u001f\u007f]/u.test(value.password)
     || value.password !== value.password.trimEnd()
-    || !Number.isInteger(value.ttl_seconds)
-    || value.ttl_seconds < MINIMUM_TEMPORARY_LOGIN_TTL_SECONDS
-    || value.ttl_seconds > 7200
-  ) {
-    fail("the temporary login-role response is malformed or too short-lived");
+  ) fail(message, "login-password-format");
+  if (!Number.isInteger(value.ttl_seconds)) fail(message, "login-ttl-format");
+  if (value.ttl_seconds < MINIMUM_TEMPORARY_LOGIN_TTL_SECONDS) {
+    const bucket = value.ttl_seconds < 300 ? "login-ttl-below-300"
+      : value.ttl_seconds < 900 ? "login-ttl-below-900" : "login-ttl-below-3600";
+    fail(message, bucket);
   }
+  if (value.ttl_seconds > 7200) fail(message, "login-ttl-above-7200");
   return value;
 }
 

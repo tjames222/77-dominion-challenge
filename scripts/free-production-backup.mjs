@@ -124,9 +124,72 @@ function cleanEnvironment() {
   return { PATH: process.env.PATH, HOME: process.env.HOME, LANG: 'C.UTF-8' };
 }
 
+const safeDiagnosticCodes = new Set([
+  'login-response-shape', 'login-role-format', 'login-password-format',
+  'login-ttl-format', 'login-ttl-below-300', 'login-ttl-below-900',
+  'login-ttl-below-3600', 'login-ttl-above-7200',
+  'pooler-response-shape', 'pooler-primary-none', 'pooler-primary-multiple', 'pooler-identifier',
+  'pooler-db-user', 'pooler-db-user-unqualified', 'pooler-db-name', 'pooler-scram',
+  'pooler-alias-mismatch', 'pooler-alias-snake-only', 'pooler-alias-camel-only',
+  'pooler-default-pool-size', 'pooler-max-client-count', 'pooler-port-mode',
+  'pooler-url-format', 'pooler-url-protocol', 'pooler-url-user',
+  'pooler-url-endpoint', 'pooler-metadata-url-mismatch', 'pooler-normalized-boundary',
+  'docker-daemon-permission', 'docker-daemon-unavailable', 'docker-mount-invalid',
+  'docker-runtime-permission', 'docker-container-exists', 'docker-resource-limit',
+  'docker-command-failed', 'executable-unavailable',
+]);
+
+export function classifyDockerFailure(stderr, spawnErrorCode) {
+  if (spawnErrorCode === 'ENOENT') return 'executable-unavailable';
+  if (/permission denied while trying to connect to the docker|permission denied.*docker.sock/iu.test(stderr)) return 'docker-daemon-permission';
+  if (/cannot connect to the docker daemon|is the docker daemon running/iu.test(stderr)) return 'docker-daemon-unavailable';
+  if (/invalid mount config|bind source path does not exist|error mounting/iu.test(stderr)) return 'docker-mount-invalid';
+  if (/permission denied|operation not permitted/iu.test(stderr)) return 'docker-runtime-permission';
+  if (/container name.*already in use/iu.test(stderr)) return 'docker-container-exists';
+  if (/no space left on device|cannot allocate memory|out of memory/iu.test(stderr)) return 'docker-resource-limit';
+  return 'docker-command-failed';
+}
+
+export function classifyBackupFailure(error) {
+  if (safeDiagnosticCodes.has(error?.diagnosticCode)) return error.diagnosticCode;
+  const message = typeof error?.message === 'string' ? error.message : '';
+  const prefix = 'Existing-project CLI state is invalid: ';
+  if (message.startsWith(prefix)) {
+    const detail = message.slice(prefix.length);
+    for (const [label, code] of [
+      ['the exact project lookup', 'project'],
+      ['the exact project pooler lookup', 'pooler'],
+      ['the temporary database login request', 'login'],
+    ]) {
+      const status = detail.match(new RegExp(`^${label} returned HTTP ([1-5][0-9]{2})$`, 'u'));
+      if (status) return `credential-${code}-http-${status[1]}`;
+      if (detail === `${label} request failed` || detail === `${label} failed`) return `credential-${code}-network`;
+      if (detail === `${label} returned a redirect`) return `credential-${code}-redirect`;
+      if (detail === `${label} did not return JSON`) return `credential-${code}-json`;
+    }
+    if (detail === 'the Management API project identity, region, health, or PostgreSQL contract does not match') return 'credential-project-contract';
+    if (/^(the primary pooler|the pooler response|the pooler Management API|the normalized pooler)/u.test(detail)) return 'credential-pooler-contract';
+    if (detail === 'the temporary database login did not become ready') return 'credential-login-readiness';
+    if (/credential.directory|credential directory/u.test(detail)) return 'credential-directory-contract';
+    if (/supabase-home|isolated Supabase home/u.test(detail)) return 'credential-home-contract';
+    if (/probe-workdir/u.test(detail)) return 'credential-probe-directory-contract';
+    if (detail === 'SUPABASE_ACCESS_TOKEN is missing or malformed') return 'credential-token-contract';
+    return 'credential-helper-contract';
+  }
+  if (['EACCES', 'EPERM'].includes(error?.code)) return 'filesystem-permission';
+  if (error?.code === 'ENOENT') return 'filesystem-path-missing';
+  if (error?.code === 'ENOSPC') return 'filesystem-space';
+  if (error?.code === 'ERR_ASSERTION') return 'boundary-assertion';
+  return 'unclassified';
+}
+
 async function command(executable, args, { output, log, env = cleanEnvironment(), input } = {}) {
   const child = spawn(executable, args, { env, stdio: [input ? 'pipe' : 'ignore', 'pipe', 'pipe'] });
   const errors = createWriteStream(log, { flags: 'a', mode: 0o600 });
+  let privateStderr = '';
+  child.stderr.on('data', (chunk) => {
+    if (privateStderr.length < 32_768) privateStderr += chunk.toString().slice(0, 32_768 - privateStderr.length);
+  });
   child.stderr.pipe(errors, { end: false });
   let captured = '';
   let piping;
@@ -136,12 +199,18 @@ async function command(executable, args, { output, log, env = cleanEnvironment()
     child.stdin.on('error', () => {});
     createReadStream(input).pipe(child.stdin);
   }
+  let spawnErrorCode;
   const status = await new Promise((resolve) => {
-    child.once('error', () => resolve(-1)); child.once('close', resolve);
+    child.once('error', (error) => { spawnErrorCode = error.code; resolve(-1); }); child.once('close', resolve);
   });
   await piping;
   await new Promise((resolve) => errors.end(resolve));
-  if (status !== 0) fail(`Backup operation failed (${path.basename(executable)}); sensitive diagnostics were kept out of logs`);
+  if (status !== 0) {
+    const error = new Error('Backup subprocess failed; private diagnostics are suppressed');
+    if (executable === 'docker') error.diagnosticCode = classifyDockerFailure(privateStderr, spawnErrorCode);
+    else if (spawnErrorCode === 'ENOENT') error.diagnosticCode = 'executable-unavailable';
+    throw error;
+  }
   return captured.trim();
 }
 
@@ -197,6 +266,7 @@ export async function runBackup() {
       accessToken: token, credentialDirectory: credentials, projectRef: PROJECT_REF,
       supabaseHome, probeWorkdir,
     });
+    stage('credential-files');
     const databaseUrl = new URL((await readFile(path.join(credentials, 'database-url'), 'utf8')).trim());
     assert.equal(databaseUrl.password, '');
     const passfile = path.join(credentials, 'database-passfile');
@@ -204,6 +274,7 @@ export async function runBackup() {
     const owner = `${process.getuid()}:${process.getgid()}`;
     const captureName = `dominion-backup-capture-${randomBytes(12).toString('hex')}`;
     containers.push(captureName);
+    stage('capture-container');
     await command('docker', ['run', '--detach', '--name', captureName, '--label', `com.dominion.backup-owner=${ownershipToken}`, '--pull', 'never', '--read-only', '--cap-drop', 'ALL', '--security-opt', 'no-new-privileges', '--log-driver', 'none', '--user', owner, '--tmpfs', '/tmp:rw,nosuid,nodev,noexec,size=64m', '--mount', `type=bind,source=${runtime},target=${runtime},readonly`, '--entrypoint', 'sleep', imageId, '1800'], { log });
     const remoteEnv = [
       '-e', `PGHOST=${databaseUrl.hostname}`, '-e', 'PGPORT=5432',
@@ -276,8 +347,8 @@ export async function runBackup() {
     await writeFile(path.join(artifactDirectory, 'backup-manifest.json'), JSON.stringify(manifest, null, 2) + '\n', { flag: 'wx', mode: 0o600 });
     if (process.env.GITHUB_OUTPUT) await writeFile(process.env.GITHUB_OUTPUT, `artifact_directory=${artifactDirectory}\n`, { flag: 'a' });
     success = true;
-  } catch {
-    fail(`Backup failed at stage ${phase}; no private diagnostic text is emitted`);
+  } catch (error) {
+    fail(`Backup failed at stage ${phase} (${classifyBackupFailure(error)}); no private diagnostic text is emitted`);
   } finally {
     let cleanupFailed = false;
     if (minted) {
@@ -302,7 +373,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
     } else if (process.argv.length === 2) await runBackup();
     else fail('Use no arguments in Actions, or decrypt <backup.enc> <new-output.tar> <manifest.json> <private-key.pem>');
   } catch (error) {
-    console.error(/^Backup failed at stage [a-z-]+; no private diagnostic text is emitted$/u.test(error.message)
+    console.error(/^Backup failed at stage [a-z-]+ \([a-z0-9-]+\); no private diagnostic text is emitted$/u.test(error.message)
       ? error.message : 'Production backup failed; no data, SQL, credentials, or private diagnostics are emitted.');
     process.exitCode = 1;
   }

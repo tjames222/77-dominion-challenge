@@ -813,6 +813,56 @@ test("a short-lived login response is revoked before credentials are written", a
   }
 });
 
+test("login response diagnostics distinguish validation failures without exposing fields", () => {
+  const poolerUrl = `postgresql://postgres.${ref}@aws-1-us-west-2.pooler.supabase.com:5432/postgres?sslmode=require`;
+  const valid = { role: "cli_login_fixture", password: "secret-password-never-log", ttl_seconds: 3600 };
+  for (const [patch, expectedCode] of [
+    [{ role: "unexpected-role" }, "login-role-format"],
+    [{ password: "short" }, "login-password-format"],
+    [{ ttl_seconds: "3600" }, "login-ttl-format"],
+    [{ ttl_seconds: 299 }, "login-ttl-below-300"],
+    [{ ttl_seconds: 300 }, "login-ttl-below-900"],
+    [{ ttl_seconds: 899 }, "login-ttl-below-900"],
+    [{ ttl_seconds: 900 }, "login-ttl-below-3600"],
+    [{ ttl_seconds: 3599 }, "login-ttl-below-3600"],
+    [{ ttl_seconds: 7201 }, "login-ttl-above-7200"],
+  ]) {
+    assert.throws(() => buildTemporaryDatabaseCredentials({ login: { ...valid, ...patch }, poolerUrl, projectRef: ref }), (error) => {
+      assert.equal(error.diagnosticCode, expectedCode);
+      assert.doesNotMatch(error.message, /secret-password|unexpected-role|300|7201/u);
+      return true;
+    });
+  }
+});
+
+test("pooler predicate diagnostics retain exact checks without exposing response values", () => {
+  for (const [overrides, expectedCode] of [
+    [{ identifier: "unexpected-project" }, "pooler-identifier"],
+    [{ db_user: "unexpected-user" }, "pooler-db-user"],
+    [{ db_user: "postgres" }, "pooler-db-user-unqualified"],
+    [{ db_name: "unexpected-database" }, "pooler-db-name"],
+    [{ is_using_scram_auth: false }, "pooler-scram"],
+    [{ connectionString: "private-alias-value" }, "pooler-alias-mismatch"],
+    [{ connectionString: undefined }, "pooler-alias-snake-only"],
+    [{ connection_string: undefined }, "pooler-alias-camel-only"],
+    [{ default_pool_size: -1 }, "pooler-default-pool-size"],
+    [{ max_client_conn: "200" }, "pooler-max-client-count"],
+    [{ db_port: 5432 }, "pooler-port-mode"],
+    [{ pool_mode: "unsupported" }, "pooler-port-mode"],
+    [{ db_host: "unexpected-host" }, "pooler-metadata-url-mismatch"],
+    [{ connection_string: "not a URL" }, "pooler-url-format"],
+  ]) {
+    assert.throws(() => normalizePrimaryPoolerConfig([primaryPooler(overrides)], ref), (error) => {
+      assert.equal(error.diagnosticCode, expectedCode);
+      assert.doesNotMatch(error.message, /unexpected|private-alias/u);
+      return true;
+    });
+  }
+  assert.throws(() => normalizePrimaryPoolerConfig([], ref), (error) => error.diagnosticCode === "pooler-primary-none");
+  assert.throws(() => normalizePrimaryPoolerConfig([primaryPooler(), primaryPooler()], ref), (error) => error.diagnosticCode === "pooler-primary-multiple");
+  assert.throws(() => normalizePrimaryPoolerConfig({}, ref), (error) => error.diagnosticCode === "pooler-response-shape");
+});
+
 test("temporary login API failures never inspect or expose the response body", async () => {
   const stage = await makeStage();
   const credentials = await makeCredentialDirectory();
