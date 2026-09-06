@@ -18,6 +18,15 @@ describe('private-group invitation browser page', () => {
     assert.equal(PRODUCTION_ENTRYPOINTS.invite, 'invite.html');
   });
 
+  test('keeps no-referrer on both the HTML redirect and canonical Pages URL', () => {
+    const headers = readFileSync(new URL('../../public/_headers', import.meta.url), 'utf8');
+    const rules = headers.split(/\r?\n(?=\/)/);
+    for (const route of ['/invite.html', '/invite']) {
+      const rule = rules.find((block) => block.split(/\r?\n/, 1)[0] === route) || '';
+      assert.match(rule, /^  Referrer-Policy: no-referrer\r?$/m, `${route} must suppress referrers`);
+    }
+  });
+
   test('requires a distinct user gesture before confirmation', () => {
     assert.match(inviteHtml, /id="confirmInviteButton"[^>]*hidden/);
     assert.match(inviteJs, /\$\('confirmInviteButton'\)\?\.addEventListener\('click'/);
