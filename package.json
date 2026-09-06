@@ -30,6 +30,7 @@
     "rehearse:profile-photo-cleanup-cron": "bash scripts/rehearse-profile-photo-cleanup-cron.sh",
     "test:production-backup-restore": "node --test scripts/run-production-operator-clean.test.mjs scripts/production-backup-restore.test.mjs",
     "test:free-production-backup-evidence": "node --test scripts/verify-free-production-backup-evidence.test.mjs",
+    "test:free-production-backup": "node --test scripts/free-production-backup.test.mjs",
     "test:production-reconciliation": "node --test scripts/verify-production-reconciliation-preflight.test.mjs scripts/run-production-reconciliation-step.test.mjs",
     "test:production-auth-canary-policy": "node --test scripts/production-auth-canary-policy.test.mjs",
     "test:production-canary-entitlement-operator": "node --test scripts/manage-production-canary-entitlement.test.mjs",
