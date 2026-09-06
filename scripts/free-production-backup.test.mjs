@@ -4,7 +4,7 @@ import { generateKeyPairSync } from 'node:crypto';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { classifyBackupFailure, classifyDockerFailure, decryptBackup, encryptBackup, localRestoreRoles, parseInventory, recipientKey, REMOTE_BACKUP_PREFLIGHT_SQL, REMOTE_BACKUP_ROLE_SQL } from './free-production-backup.mjs';
+import { classifyBackupFailure, classifyDockerFailure, classifyPgRestoreFailure, decryptBackup, encryptBackup, localRestoreRoles, parseInventory, recipientKey, REMOTE_BACKUP_PREFLIGHT_SQL, REMOTE_BACKUP_ROLE_SQL } from './free-production-backup.mjs';
 
 const { publicKey, privateKey } = generateKeyPairSync('rsa', {
   modulusLength: 4096,
@@ -145,4 +145,29 @@ test('remote role selection is explicit after connect and never changes the isol
   assert.doesNotMatch(inventory, /SET (?:SESSION )?ROLE/u);
   const restore = source.slice(source.indexOf("stage('local-init')"));
   assert.doesNotMatch(restore, /REMOTE_BACKUP_ROLE_SQL|--role=postgres/u);
+});
+
+test('restore diagnostics classify only the first primary error and never appended SQL', () => {
+  const cases = [
+    ['permission denied for schema private_fixture', 'pg-restore-permission'],
+    ['must be owner of relation private_fixture', 'pg-restore-ownership'],
+    ['schema "private_fixture" already exists', 'pg-restore-existing-object'],
+    ['function private_fixture() does not exist', 'pg-restore-missing-object'],
+    ['extension "private_fixture" is not available', 'pg-restore-extension-unavailable'],
+    ['unrecognized configuration parameter "private_fixture"', 'pg-restore-server-setting'],
+    ['syntax error at or near "private_fixture"', 'pg-restore-syntax'],
+    ['duplicate key value violates unique constraint "private_fixture"', 'pg-restore-data'],
+    ['an unrecognized private fixture failure', 'pg-restore-query-error'],
+  ];
+  for (const [message, expected] of cases) {
+    const text = `pg_restore: error: could not execute query: ERROR:  ${message}\nDETAIL: permission denied private fixture\nCommand was: CREATE FUNCTION fixture() RETURNS void AS $$\npg_restore: error: could not execute query: ERROR: permission denied\nRAISE EXCEPTION 'permission denied';\n$$ LANGUAGE plpgsql;`;
+    assert.equal(classifyPgRestoreFailure(text), expected);
+    assert.equal(classifyDockerFailure(text), expected);
+    assert.equal(classifyBackupFailure({ diagnosticCode: expected, message: text }), expected);
+    assert(!expected.includes('private_fixture'));
+  }
+  assert.equal(classifyDockerFailure('pg_restore: error: an unknown restore failure\nCommand was: permission denied'), 'pg-restore-error');
+  assert.equal(classifyPgRestoreFailure('pg_restore: error: input file does not appear to be a valid archive'), 'pg-restore-input');
+  assert.equal(classifyPgRestoreFailure('docker: permission denied'), null);
+  assert.equal(classifyPgRestoreFailure('notice: pg_restore: error: permission denied'), null);
 });

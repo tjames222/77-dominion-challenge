@@ -142,10 +142,38 @@ const safeDiagnosticCodes = new Set([
   'docker-command-failed', 'executable-unavailable',
   'credential-lifetime-contract', 'credential-lifetime-expired', 'credential-lifetime-budget',
   'credential-operation-timeout', 'credential-operation-interrupted',
+  'pg-restore-error', 'pg-restore-query-error', 'pg-restore-permission',
+  'pg-restore-ownership', 'pg-restore-existing-object', 'pg-restore-missing-object',
+  'pg-restore-extension-unavailable', 'pg-restore-server-setting',
+  'pg-restore-syntax', 'pg-restore-data', 'pg-restore-input',
 ]);
+
+export function classifyPgRestoreFailure(stderr) {
+  // pg_restore appends the failed SQL (including arbitrary function bodies)
+  // after its primary error. Only inspect the first anchored error header;
+  // neither later error-looking text nor Command was/CONTEXT can classify it.
+  const first = stderr.split(/\r?\n/u).find((line) => line.startsWith('pg_restore: error: '));
+  if (!first) return null;
+  const primary = first.slice('pg_restore: error: '.length);
+  if (/^(?:could not read from input file|input file (?:does not appear|is too short)|unsupported version .* in file header)/u.test(primary)) return 'pg-restore-input';
+  const prefix = 'could not execute query: ERROR: ';
+  if (!primary.startsWith(prefix)) return 'pg-restore-error';
+  const detail = primary.slice(prefix.length).trimStart();
+  if (/^(?:could not open extension control file|extension .+ is not available)/u.test(detail)) return 'pg-restore-extension-unavailable';
+  if (/^(?:unrecognized configuration parameter|invalid value for parameter)/u.test(detail)) return 'pg-restore-server-setting';
+  if (/^syntax error\b/u.test(detail)) return 'pg-restore-syntax';
+  if (/^(?:permission denied\b|must be superuser\b|must have (?:ADMIN|SET) option\b)/u.test(detail)) return 'pg-restore-permission';
+  if (/^(?:must be owner\b|must be member of role\b|must be able to SET ROLE\b)/u.test(detail)) return 'pg-restore-ownership';
+  if (/^(?:schema|relation|type|function|role|extension|publication|policy|trigger|constraint) .+ already exists\b/u.test(detail)) return 'pg-restore-existing-object';
+  if (/^(?:schema|relation|type|function|role|extension|publication|policy|trigger|constraint) .+ does not exist\b/u.test(detail)) return 'pg-restore-missing-object';
+  if (/^(?:duplicate key value violates|insert or update on table .+ violates|new row for relation .+ violates|null value in column .+ violates)/u.test(detail)) return 'pg-restore-data';
+  return 'pg-restore-query-error';
+}
 
 export function classifyDockerFailure(stderr, spawnErrorCode) {
   if (spawnErrorCode === 'ENOENT') return 'executable-unavailable';
+  const restoreCode = classifyPgRestoreFailure(stderr);
+  if (restoreCode) return restoreCode;
   if (/permission denied while trying to connect to the docker|permission denied.*docker.sock/iu.test(stderr)) return 'docker-daemon-permission';
   if (/cannot connect to the docker daemon|is the docker daemon running/iu.test(stderr)) return 'docker-daemon-unavailable';
   if (/invalid mount config|bind source path does not exist|error mounting/iu.test(stderr)) return 'docker-mount-invalid';
