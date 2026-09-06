@@ -116,3 +116,17 @@ test('workflow limits plaintext lifetime and publishes only completed encrypted 
   assert.match(startup, /cron.launch_active_jobs=off/);
   assert.doesNotMatch(source, /supabase.*(?:db reset|migration (?:up|repair))|console\.log\((?:beforeText|token|databaseUrl)/);
 });
+
+test('all remote capture commands share the credential deadline and stop the owned container on failure', async () => {
+  const source = await readFile(new URL('./free-production-backup.mjs', import.meta.url), 'utf8');
+  const remote = source.slice(source.indexOf('const remote = async'), source.indexOf('const inventorySql ='));
+  assert.equal((remote.match(/remainingCredentialMilliseconds\(credentialLifetime, PROJECT_REF\)/gu) ?? []).length, 2);
+  assert.match(remote, /deadlineNs: credentialLifetime\.deadlineNs/u);
+  assert.match(remote, /catch \(error\) \{[\s\S]*await removeContainer\(captureName\);[\s\S]*throw error;/u);
+  assert.match(source, /'1800'\], \{ log, deadlineNs: credentialLifetime\.deadlineNs \}\)/u);
+  const cleanup = source.slice(source.indexOf('let cleanupFailed = false;'));
+  assert(cleanup.indexOf('await removeContainer(name)') < cleanup.indexOf('await revokeProductionSupabaseDatabaseCredentials'));
+  for (const diagnosticCode of ['credential-lifetime-expired', 'credential-operation-timeout', 'credential-operation-interrupted']) {
+    assert.equal(classifyBackupFailure({ diagnosticCode, message: 'private fixture data' }), diagnosticCode);
+  }
+});
