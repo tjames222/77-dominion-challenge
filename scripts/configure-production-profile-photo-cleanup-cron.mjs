@@ -159,7 +159,7 @@ export const VERIFY_PROFILE_PHOTO_CLEANUP_QUERY = `with expected as materialized
 ), project_secret_state as materialized (
   select
     pg_catalog.count(*)::integer as secret_count,
-    pg_catalog.coalesce(
+    coalesce(
       pg_catalog.bool_and(secret.decrypted_secret = expected.project_url),
       false
     ) as value_matches
@@ -169,7 +169,7 @@ export const VERIFY_PROFILE_PHOTO_CLEANUP_QUERY = `with expected as materialized
 ), worker_secret_state as materialized (
   select
     pg_catalog.count(*)::integer as secret_count,
-    pg_catalog.coalesce(
+    coalesce(
       pg_catalog.bool_and(secret.decrypted_secret = expected.worker_secret),
       false
     ) as value_matches
@@ -179,26 +179,26 @@ export const VERIFY_PROFILE_PHOTO_CLEANUP_QUERY = `with expected as materialized
 ), job_state as materialized (
   select
     pg_catalog.count(*)::integer as job_count,
-    pg_catalog.coalesce(pg_catalog.bool_and(job.schedule = '${CRON_SCHEDULE}'), false)
+    coalesce(pg_catalog.bool_and(job.schedule = '${CRON_SCHEDULE}'), false)
       as schedule_matches,
-    pg_catalog.coalesce(
+    coalesce(
       pg_catalog.bool_and(
         job.command = $profile_photo_cleanup_job$${PROFILE_PHOTO_CLEANUP_CRON_COMMAND}$profile_photo_cleanup_job$
       ),
       false
     ) as command_matches,
-    pg_catalog.coalesce(pg_catalog.bool_and(job.active), false) as active,
-    pg_catalog.coalesce(
+    coalesce(pg_catalog.bool_and(job.active), false) as active,
+    coalesce(
       pg_catalog.bool_and(job.command !~* 'https?://'),
       false
     ) as contains_no_embedded_url,
-    pg_catalog.coalesce(
+    coalesce(
       pg_catalog.bool_and(
         pg_catalog.strpos(job.command, expected.project_url) = 0
       ),
       false
     ) as contains_no_project_url,
-    pg_catalog.coalesce(
+    coalesce(
       pg_catalog.bool_and(
         pg_catalog.strpos(job.command, expected.worker_secret) = 0
       ),

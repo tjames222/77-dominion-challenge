@@ -14,6 +14,10 @@ import {
   verifyRevokeResponse,
 } from "./manage-production-canary-entitlement.mjs";
 import { reconciledHistoryVersions } from "./verify-production-migration-cutover-plan.mjs";
+import {
+  PROFILE_PHOTO_CLEANUP_CRON_COMMAND,
+  VERIFY_PROFILE_PHOTO_CLEANUP_QUERY,
+} from "./configure-production-profile-photo-cleanup-cron.mjs";
 
 // This suite never accepts a database URL or an existing container. PostgreSQL
 // has no network and stores its complete test cluster only in temporary memory.
@@ -178,4 +182,42 @@ test("real PostgreSQL permits emergency revocation after expiry and post-cutover
     rollback;`);
   verifyRevokeResponse([rows[1]]);
   assert.equal(rows[0].ends_at, rows[2].ends_at, "revocation must not extend an expired entitlement");
+});
+
+test("real PostgreSQL evaluates cleanup Cron verification for empty and configured fixtures", () => {
+  const projectUrl = "https://canary-sql-test.invalid";
+  const workerSecret = "local-test-worker-secret-not-a-production-credential";
+  const query = VERIFY_PROFILE_PHOTO_CLEANUP_QUERY
+    .replaceAll("$1", `'${projectUrl}'`).replaceAll("$2", `'${workerSecret}'`);
+  const [empty, configured] = psql(`begin;
+    create schema vault;
+    create table vault.decrypted_secrets (name text, decrypted_secret text);
+    create schema cron;
+    create table cron.job (jobname text, schedule text, command text, active boolean);
+    ${jsonQuery(query)}
+    insert into vault.decrypted_secrets values
+      ('profile_photo_project_url', '${projectUrl}'),
+      ('profile_photo_worker_secret', '${workerSecret}');
+    insert into cron.job values (
+      'process-profile-photo-cleanup', '*/5 * * * *',
+      $job$${PROFILE_PHOTO_CLEANUP_CRON_COMMAND}$job$, true
+    );
+    ${jsonQuery(query)}
+    rollback;`);
+  for (const key of ["project_url_secret_count", "worker_secret_count", "job_count"]) {
+    assert.equal(empty[key], 0);
+    assert.equal(configured[key], 1);
+  }
+  for (const key of [
+    "project_url_secret_matches", "worker_secret_matches", "job_schedule_matches",
+    "job_command_matches", "job_active", "job_contains_no_embedded_url",
+    "job_contains_no_project_url", "job_contains_no_worker_secret",
+  ]) {
+    assert.equal(empty[key], false, `${key} must fail closed for an empty aggregate`);
+    assert.equal(configured[key], true, `${key} must pass for the exact fixture`);
+  }
+  // This isolated grammar/aggregate fixture deliberately installs no extensions.
+  for (const key of ["pg_cron_schema_matches", "pg_net_schema_matches", "vault_schema_matches"]) {
+    assert.equal(configured[key], false);
+  }
 });

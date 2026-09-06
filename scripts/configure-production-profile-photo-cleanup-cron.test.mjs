@@ -163,6 +163,15 @@ test("SQL uses supported extension schemas, a transaction lock, and only support
     VERIFY_PROFILE_PHOTO_CLEANUP_QUERY,
     /\b(?:insert|update|delete|create|alter|drop|grant|revoke|truncate)\b/iu,
   );
+  // Conditional expressions are PostgreSQL grammar, not callable functions.
+  for (const query of [
+    EXTENSION_SETUP_QUERY,
+    CONFIGURE_PROFILE_PHOTO_CLEANUP_QUERY,
+    VERIFY_PROFILE_PHOTO_CLEANUP_QUERY,
+    PROFILE_PHOTO_CLEANUP_CRON_COMMAND,
+  ]) {
+    assert.doesNotMatch(query, /\b\w+\.(?:coalesce|nullif|least|greatest)\s*\(/iu);
+  }
 });
 
 test("the stored Cron command contains only Vault references, not protected values or an origin", () => {
