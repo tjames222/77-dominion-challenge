@@ -65,3 +65,10 @@ test('rejects stale/future receipts, reused release, wrong types and extra priva
   assert.throws(() => verifyProof({ proof: { ...proof, entitlementsFingerprint } }));
   assert.throws(() => verifyProof({ entitlementsFingerprint: { ...entitlementsFingerprint, uuid: 'private' } }));
 });
+
+test('new one-time approval accepts only the exact revoked 0507c5e predecessor, never the spent 8779421 contract', () => {
+  assert.equal(PRIOR_PRODUCTION_CANARY_RELEASE_SHA, '0507c5e3b63d03f5e8ce7781aad463134d992871');
+  const earlierMetadata = { ...metadata, priorReleaseSha: '877942113f1d18e73f2e51e6b467915b37b0c67b' };
+  assert.throws(() => createRestartProof({ metadata: earlierMetadata, entitlementsFingerprint, signingPrivateKey: keys.privateKey }));
+  assert.throws(() => verifyProof({ proof: { ...proof, priorReleaseSha: earlierMetadata.priorReleaseSha }, expectedMetadata: earlierMetadata }));
+});

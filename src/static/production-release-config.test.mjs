@@ -224,15 +224,18 @@ describe('production release configuration', () => {
       /supabase functions deploy stripe-webhook[^\n]*--no-verify-jwt/,
     );
 
-    const authenticatedBillingSmoke = workflow.match(
-      /for billing_function in \\\n([\s\S]*?)\n\s*done/,
-    )?.[1];
-    assert.ok(authenticatedBillingSmoke, 'authenticated billing smoke loop must be present');
-    for (const functionName of guardedBillingFunctions.slice(0, 3)) {
-      assert.match(authenticatedBillingSmoke, new RegExp(functionName));
+    const compatibilityJob = workflow.slice(
+      workflow.indexOf('\n  compatibility-guards:'),
+      workflow.indexOf('\n  frontend-rollback-history:'),
+    );
+    for (const releaseJob of [compatibilityJob, backendJob]) {
+      assert.equal(
+        releaseJob.match(/node scripts\/verify-production-billing-guards\.mjs/g)?.length,
+        1,
+        'each release stage must run the shared 401/401/exact-503 billing matrix',
+      );
+      assert.doesNotMatch(releaseJob, /for billing_function in|billing_status/);
     }
-    assert.match(workflow, /billing_status[\s\S]*?!= "401"/);
-    assert.match(workflow, /unauthenticated \$\{billing_function\} gateway smoke test/);
     assert.match(
       workflow,
       /if \[\[ "\$\{BILLING_ENABLED\}" == "false" \]\]; then\s*webhook_expected_status="503"/,
