@@ -1,5 +1,8 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
+import { parseMigrationList } from "./verify-reconciliation-history.mjs";
+import { verifyProductionMigrationCutoverPlan } from "./verify-production-migration-cutover-plan.mjs";
 import {
   authoritativeMigrationHistoryQuery,
   fetchRawMigrationHistory,
@@ -10,6 +13,35 @@ import {
 
 const versions = ["20260707170000", "20260708154000"];
 const responseRows = versions.map((version) => ({ version }));
+
+test("real CLI display fixtures retain exact initial and completed raw-history gates", () => {
+  const fixtures = JSON.parse(readFileSync(
+    new URL("./fixtures/migration-list-cli-2.109.0.json", import.meta.url), "utf8",
+  ));
+  for (const [name, mode, remoteCount] of [
+    ["initial-13-of-53.txt", "initial-cutover", 13],
+    ["all-53.txt", "post-cutover", 53],
+  ]) {
+    const parsed = parseMigrationList(fixtures.fixtures.find((fixture) => fixture.name === name).output);
+    assert.equal(parsed.local.length, 53);
+    assert.equal(parsed.remote.length, remoteCount);
+    assert.equal(verifyProductionMigrationCutoverPlan(parsed).mode, mode);
+    const rawResponse = parsed.remote.map((version) => ({ version }));
+    assert.deepEqual(verifyRawMigrationHistory({ rawResponse, cliRemote: parsed.remote }), parsed.remote);
+    assert.throws(() => verifyRawMigrationHistory({
+      rawResponse: rawResponse.slice(0, -1), cliRemote: parsed.remote,
+    }), /does not exactly match/u);
+    if (mode === "post-cutover") {
+      assert(parsed.remote.includes("20260720240000"));
+      assert.throws(() => verifyRawMigrationHistory({
+        rawResponse: rawResponse.map((row) => ({
+          version: row.version === "20260720240000" ? "20260720245959" : row.version,
+        })),
+        cliRemote: parsed.remote,
+      }), /does not exactly match/u);
+    }
+  }
+});
 
 test("parses an exact ordered raw migration inventory", () => {
   assert.deepEqual(parseRawMigrationHistoryResponse(responseRows), versions);
