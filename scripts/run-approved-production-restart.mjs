@@ -9,7 +9,7 @@ const execute = promisify(execFile);
 export const REPOSITORY = 'tjames222/77-dominion-challenge';
 export const PRODUCTION_ENVIRONMENT_ID = 19832155387;
 export const CONTROLLER_BUDGET_MS = 105 * 60 * 1000;
-const priorRelease = '0507c5e3b63d03f5e8ce7781aad463134d992871';
+const priorRelease = 'f2472a26aad529b5dccc3d60f5b6970e1372b501';
 const origin = 'https://77-dominion-live.pages.dev';
 const workflows = Object.freeze({ restart: 'restart-production-canary.yml', compatibility: 'deploy.yml', full: 'deploy.yml', revoke: 'manage-production-canary-entitlement.yml' });
 const idPattern = /^[1-9][0-9]{0,15}$/u;
@@ -36,6 +36,30 @@ export function verifyControllerRun(run, { runId, workflow, releaseSha, dispatch
   requireThat(['queued', 'requested', 'waiting', 'pending', 'in_progress', 'completed'].includes(run.status),
     'Unexpected workflow state; no further action was taken.');
   return run;
+}
+
+export function verifyControllerReleaseJobs(jobList, { phase, runId, releaseSha }) {
+  requireThat(['compatibility', 'full'].includes(phase), 'Unexpected release job verification phase.');
+  requireThat(Array.isArray(jobList?.jobs) && jobList.total_count === jobList.jobs.length
+    && jobList.jobs.length > 0 && jobList.jobs.length <= 100, 'Completed release job inventory is incomplete.');
+  const ids = new Set();
+  for (const job of jobList.jobs) {
+    requireThat(Number.isSafeInteger(job.id) && job.id > 0 && !ids.has(job.id)
+      && String(job.run_id) === runId && job.head_sha === releaseSha && job.status === 'completed'
+      && (!Object.hasOwn(job, 'run_attempt') || job.run_attempt === 1),
+    'Completed release job identity or state is not exact.');
+    ids.add(job.id);
+  }
+  const requiredNames = [
+    phase === 'compatibility' ? 'Deploy disabled billing guards for compatibility cutover' : 'Migrate, deploy, and verify backend',
+    'Build production frontend',
+    'Deploy frontend to Cloudflare Pages',
+  ];
+  for (const name of requiredNames) {
+    const matching = jobList.jobs.filter(job => job.name === name);
+    requireThat(matching.length === 1 && matching[0].conclusion === 'success',
+      'The release reported success without every required deployment job succeeding; inspect the exact run before any further action.');
+  }
 }
 
 export async function verifyPublicRelease({ repository, fetchImpl = fetch }) {
@@ -137,6 +161,11 @@ export async function runApprovedRestart({ releaseSha, backupRunId, gh, journal,
       if (run.status === 'completed') {
         await journal({ event: 'completed', phase, runId, conclusion: run.conclusion, at: iso(wallNow()) });
         if (run.conclusion !== 'success') throw new Stop(`${phase} completed without success.`, true);
+        if (phase === 'compatibility' || phase === 'full') {
+          // Workflow success can include skipped jobs. It is not deployment proof.
+          verifyControllerReleaseJobs(await api(`/actions/runs/${runId}/attempts/1/jobs?per_page=100`), { phase, runId, releaseSha });
+          await journal({ event: 'release-jobs-verified', phase, runId, at: iso(wallNow()) });
+        }
         return runId;
       }
       const pending = await api(`/actions/runs/${runId}/pending_deployments`);

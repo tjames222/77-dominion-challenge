@@ -86,6 +86,9 @@ The only separately approved replacement is the
 it requires the prior grant to be revoked first, a new reviewed frozen release,
 fresh encrypted archival and local recovery proof, and the dedicated restart
 workflow. It is not available to renew a grant between stages or repeat a restart.
+The currently approved exception targets only revoked release
+`f2472a26aad529b5dccc3d60f5b6970e1372b501`; the earlier 8779421- and
+0507c5e-bound replacement approvals were used and are spent.
 
 ## Before granting canary access
 
