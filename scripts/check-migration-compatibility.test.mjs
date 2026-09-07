@@ -682,7 +682,7 @@ test("package, CI, and production deploy run the gate before migrations", async 
     'supabase functions deploy cancel-membership --project-ref "$SUPABASE_PROJECT_REF"',
   );
   const authenticated401 = compatibilityJob.indexOf(
-    'if [[ "$billing_status" != "401" ]]',
+    "node scripts/verify-production-billing-guards.mjs",
   );
   const compatibilityCleanup = compatibilityJob.indexOf(
     "name: Revoke any remaining compatibility database login roles",

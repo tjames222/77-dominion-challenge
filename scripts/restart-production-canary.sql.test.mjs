@@ -145,6 +145,7 @@ for (const [name, change] of [
   ['purchases table', 'create table public.purchases(id integer);'],
   ['unrevoked old grant', "update public.entitlements set status='active';"],
   ['wrong prior SHA', `update public.entitlements set metadata=jsonb_build_object('release_sha','${'b'.repeat(40)}');`],
+  ['spent earlier 8779421 grant', "update public.entitlements set metadata=jsonb_build_object('release_sha','877942113f1d18e73f2e51e6b467915b37b0c67b');"],
   ['extra metadata', "update public.entitlements set metadata=metadata || '{\"extra\":true}'::jsonb;"],
   ['wrong source', "update public.entitlements set source_type='stripe';"],
   ['noncanonical source UUID', "update public.entitlements set source_id='not-a-uuid';"],

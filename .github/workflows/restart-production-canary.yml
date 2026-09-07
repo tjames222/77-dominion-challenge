@@ -38,7 +38,7 @@ jobs:
           [[ "$GITHUB_REPOSITORY" == tjames222/77-dominion-challenge ]] || exit 1
           [[ "$GITHUB_REF" == refs/heads/main ]] || exit 1
           [[ "$GITHUB_SHA" =~ ^[0-9a-f]{40}$ ]] || exit 1
-          [[ "$GITHUB_SHA" != 877942113f1d18e73f2e51e6b467915b37b0c67b ]] || exit 1
+          [[ "$GITHUB_SHA" != 0507c5e3b63d03f5e8ce7781aad463134d992871 ]] || exit 1
           [[ "$BACKUP_RUN_ID" =~ ^[1-9][0-9]{0,15}$ ]] || exit 1
           [[ "$CONFIRM_ARCHIVED_RESTART" == true ]] || exit 1
 

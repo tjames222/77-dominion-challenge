@@ -337,22 +337,7 @@ jobs:
         shell: bash
         run: |
           supabase functions list --project-ref "$SUPABASE_PROJECT_REF"
-          for billing_function in \
-            cancel-membership \
-            create-checkout-session \
-            create-customer-portal-session; do
-            billing_status="$(curl --silent --show-error --output "${RUNNER_TEMP}/compatibility-${billing_function}-response.json" --write-out '%{http_code}' \
-              --request POST \
-              --header "apikey: ${VITE_SUPABASE_PUBLISHABLE_KEY}" \
-              --header "Content-Type: application/json" \
-              --header "Origin: ${PUBLIC_SITE_URL}" \
-              --data '{}' \
-              "${VITE_SUPABASE_URL}/functions/v1/${billing_function}")"
-            if [[ "$billing_status" != "401" ]]; then
-              echo "::error::Expected the unauthenticated ${billing_function} gateway guard to return 401; received ${billing_status}."
-              exit 1
-            fi
-          done
+          node scripts/verify-production-billing-guards.mjs
       - name: Revoke any remaining compatibility database login roles
         if: always()
         shell: bash
@@ -1247,23 +1232,7 @@ jobs:
         run: |
           supabase functions list --project-ref "$SUPABASE_PROJECT_REF"
 
-          for billing_function in \
-            cancel-membership \
-            create-checkout-session \
-            create-customer-portal-session; do
-            billing_response="${RUNNER_TEMP}/${billing_function}-response.json"
-            billing_status="$(curl --silent --show-error --output "$billing_response" --write-out '%{http_code}' \
-              --request POST \
-              --header "apikey: ${VITE_SUPABASE_PUBLISHABLE_KEY}" \
-              --header "Content-Type: application/json" \
-              --header "Origin: ${PUBLIC_SITE_URL}" \
-              --data '{}' \
-              "${VITE_SUPABASE_URL}/functions/v1/${billing_function}")"
-            if [[ "$billing_status" != "401" ]]; then
-              echo "::error::Expected the unauthenticated ${billing_function} gateway smoke test to return 401; received ${billing_status}."
-              exit 1
-            fi
-          done
+          node scripts/verify-production-billing-guards.mjs
 
           webhook_expected_status="400"
           if [[ "${BILLING_ENABLED}" == "false" ]]; then

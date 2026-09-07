@@ -1,0 +1,5 @@
+{
+  "noCredentials": { "status": 401, "body": { "code": 401, "message": "Missing authorization header" } },
+  "invalidBearer": { "status": 401, "body": { "code": 401, "message": "Invalid JWT" } },
+  "disabledBilling": { "status": 503, "body": { "error": "Billing is temporarily unavailable." } }
+}
