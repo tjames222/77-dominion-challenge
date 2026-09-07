@@ -84,6 +84,8 @@ jobs:
         run: pnpm run test:production-reconciliation
       - name: Test production Auth canary policy guard
         run: pnpm run test:production-auth-canary-policy
+      - name: Test production billing gateway and disabled-handler guards
+        run: pnpm run test:production-billing-guards
       - name: Test production canary entitlement operator
         run: pnpm run test:production-canary-entitlement-operator
       - name: Test archived production canary restart boundaries
