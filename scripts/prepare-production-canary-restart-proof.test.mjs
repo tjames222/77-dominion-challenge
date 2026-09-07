@@ -6,7 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { createProofFromEncryptedBackup, inspectRestartTar, parseRestartProofArguments, readOwnerFile,
   requirePrivateDirectory, restartSubprocessEnvironment, verifyRestartBackupMetadata, writeNewRestartProof } from './prepare-production-canary-restart-proof.mjs';
-import { verifyRestartProof } from './production-canary-restart-proof.mjs';
+import { PRIOR_PRODUCTION_CANARY_RELEASE_SHA, verifyRestartProof } from './production-canary-restart-proof.mjs';
 import { reconciledHistoryVersions } from './verify-production-migration-cutover-plan.mjs';
 
 const rsa = generateKeyPairSync('rsa', { modulusLength: 4096 });
@@ -87,6 +87,7 @@ test('authenticated local recovery signs only the public envelope and privately 
   const proof = createProofFromEncryptedBackup(input);
   const { signature, ...expectedMetadata } = proof;
   assert.equal(proof.backupRunAttempt, 2);
+  assert.equal(proof.priorReleaseSha, PRIOR_PRODUCTION_CANARY_RELEASE_SHA);
   assert.equal(proof.artifactId, artifactId);
   assert.equal(proof.createdAt, createdAt);
   assert.equal(Buffer.from(signature, 'base64').length, 64);
@@ -99,7 +100,7 @@ test('authenticated local recovery signs only the public envelope and privately 
 
 test('metadata rejects wrong release, path, event, attempt, repository, artifact association, expiry and inventory', () => {
   const mutations = [
-    (v) => { v.releaseSha = '0507c5e3b63d03f5e8ce7781aad463134d992871'; },
+    (v) => { v.releaseSha = 'f2472a26aad529b5dccc3d60f5b6970e1372b501'; },
     (v) => { v.run.head_sha = 'b'.repeat(40); }, (v) => { v.run.head_branch = 'develop'; },
     (v) => { v.run.path = '.github/workflows/deploy.yml'; }, (v) => { v.run.event = 'pull_request'; },
     (v) => { v.run.status = 'in_progress'; }, (v) => { v.run.conclusion = 'failure'; },

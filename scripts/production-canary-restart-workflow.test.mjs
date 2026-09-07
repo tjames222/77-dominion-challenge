@@ -13,7 +13,7 @@ test('archived restart has one explicit manual confirmation and one protected mu
   assert.equal((workflow.match(/environment: production/gu) ?? []).length, 1);
   for (const boundary of ['$GITHUB_EVENT_NAME" == workflow_dispatch', '$GITHUB_REPOSITORY" == tjames222/77-dominion-challenge',
     '$GITHUB_REF" == refs/heads/main', '$CONFIRM_ARCHIVED_RESTART" == true',
-    '$GITHUB_SHA" != 0507c5e3b63d03f5e8ce7781aad463134d992871']) assert.ok(workflow.includes(boundary));
+    '$GITHUB_SHA" != f2472a26aad529b5dccc3d60f5b6970e1372b501']) assert.ok(workflow.includes(boundary));
   assert.match(workflow, /restart:\n[\s\S]*?needs: authorize\n[\s\S]*?timeout-minutes: 5\n    environment: production/u);
   assert.doesNotMatch(workflow, /pull_request_target:|schedule:|workflow_call:|secrets: inherit|write-all|continue-on-error: true/u);
 });

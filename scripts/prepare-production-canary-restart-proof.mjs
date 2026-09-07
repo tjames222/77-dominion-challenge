@@ -14,7 +14,7 @@ import { reconciledHistoryVersions } from './verify-production-migration-cutover
 import { createRestartProof } from './production-canary-restart-proof.mjs';
 
 const REPOSITORY = 'tjames222/77-dominion-challenge';
-const PRIOR_RELEASE = '0507c5e3b63d03f5e8ce7781aad463134d992871';
+const PRIOR_RELEASE = 'f2472a26aad529b5dccc3d60f5b6970e1372b501';
 const SOURCE = fileURLToPath(new URL('../', import.meta.url));
 const SHA = /^[a-f0-9]{40}$/u;
 const ID = /^[1-9][0-9]{0,15}$/u;
