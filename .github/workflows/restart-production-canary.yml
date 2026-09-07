@@ -1,0 +1,108 @@
+name: Restart one archived production canary
+
+on:
+  workflow_dispatch:
+    inputs:
+      backup_run_id:
+        description: Fresh restored encrypted backup for this exact release, downloaded and locally recovery-verified.
+        required: true
+        type: string
+      confirm_archived_restart:
+        description: Replace only the exact prior revoked grant after verified encrypted archival; authorize one new two-hour grant.
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  actions: read
+  contents: read
+
+concurrency:
+  group: production-release
+  cancel-in-progress: false
+
+jobs:
+  authorize:
+    name: Authorize the one archived canary restart
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    env:
+      BACKUP_RUN_ID: ${{ inputs.backup_run_id }}
+      CONFIRM_ARCHIVED_RESTART: ${{ inputs.confirm_archived_restart }}
+    steps:
+      - name: Require exact repository, protected main, backup, and confirmation
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$GITHUB_EVENT_NAME" == workflow_dispatch ]] || exit 1
+          [[ "$GITHUB_REPOSITORY" == tjames222/77-dominion-challenge ]] || exit 1
+          [[ "$GITHUB_REF" == refs/heads/main ]] || exit 1
+          [[ "$GITHUB_SHA" =~ ^[0-9a-f]{40}$ ]] || exit 1
+          [[ "$GITHUB_SHA" != 877942113f1d18e73f2e51e6b467915b37b0c67b ]] || exit 1
+          [[ "$BACKUP_RUN_ID" =~ ^[1-9][0-9]{0,15}$ ]] || exit 1
+          [[ "$CONFIRM_ARCHIVED_RESTART" == true ]] || exit 1
+
+  restart:
+    name: Verify local recovery proof and replace the exact revoked canary
+    needs: authorize
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    environment: production
+    env:
+      BACKUP_RUN_ID: ${{ inputs.backup_run_id }}
+      PRODUCTION_BACKUP_PUBLIC_KEY: ${{ vars.PRODUCTION_BACKUP_PUBLIC_KEY }}
+    steps:
+      - name: Checkout the exact reviewed release
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Setup Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+      - name: Select the exact successful encrypted backup
+        id: backup
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          artifact_id="$(/usr/bin/env -i \
+            BACKUP_RUN_ID="$BACKUP_RUN_ID" GH_TOKEN="$GH_TOKEN" \
+            GITHUB_SHA="$GITHUB_SHA" PATH="$PATH" \
+            node scripts/verify-free-production-backup-evidence.mjs --select)"
+          printf 'artifact_id=%s\n' "$artifact_id" >> "$GITHUB_OUTPUT"
+      - name: Download only the selected encrypted archive
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          artifact-ids: ${{ steps.backup.outputs.artifact_id }}
+          path: ${{ runner.temp }}/production-restart-backup
+          merge-multiple: true
+          github-token: ${{ github.token }}
+          repository: tjames222/77-dominion-challenge
+          run-id: ${{ inputs.backup_run_id }}
+      - name: Verify the signed recovery proof and perform one atomic exact-match restart
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_PROJECT_REF: ${{ vars.SUPABASE_PROJECT_REF }}
+          PRODUCTION_CANARY_RESTART_PUBLIC_KEY: ${{ vars.PRODUCTION_CANARY_RESTART_PUBLIC_KEY }}
+          PRODUCTION_CANARY_RESTART_RECOVERY_PROOF: ${{ vars.PRODUCTION_CANARY_RESTART_RECOVERY_PROOF }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          set +x
+          umask 077
+          ulimit -c 0
+          /usr/bin/env -i \
+            HOME="$RUNNER_TEMP" PATH="$PATH" LANG=C.UTF-8 \
+            GITHUB_SHA="$GITHUB_SHA" GH_TOKEN="$GH_TOKEN" \
+            BACKUP_RUN_ID="$BACKUP_RUN_ID" \
+            SUPABASE_ACCESS_TOKEN="$SUPABASE_ACCESS_TOKEN" \
+            SUPABASE_PROJECT_REF="$SUPABASE_PROJECT_REF" \
+            PRODUCTION_BACKUP_PUBLIC_KEY="$PRODUCTION_BACKUP_PUBLIC_KEY" \
+            PRODUCTION_CANARY_RESTART_PUBLIC_KEY="$PRODUCTION_CANARY_RESTART_PUBLIC_KEY" \
+            PRODUCTION_CANARY_RESTART_RECOVERY_PROOF="$PRODUCTION_CANARY_RESTART_RECOVERY_PROOF" \
+            node scripts/restart-production-canary.mjs \
+              --backup-directory "$RUNNER_TEMP/production-restart-backup"
