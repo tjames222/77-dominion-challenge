@@ -163,6 +163,9 @@ the grant's two-hour lifetime and cannot renew or extend that lifetime. Each
 phase is dispatched at most once, and GitHub run identities, attempts, jobs,
 pending environment gates, and frozen `main` are revalidated before further
 mutation. No workflow check is bypassed by automated environment approval.
+An aggregate successful compatibility/full run is not sufficient: the exact
+attempt-1 completed-job inventory must also prove the scope's backend/guard job, frontend
+build, and Cloudflare deployment all succeeded before public HTTP verification.
 
 ## Stops, uncertainty, and final acceptance
 

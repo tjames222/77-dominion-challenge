@@ -4,10 +4,20 @@ import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
 import { CONTROLLER_BUDGET_MS, PRODUCTION_ENVIRONMENT_ID, REPOSITORY,
-  createControllerJournal, runApprovedRestart, verifyControllerRun, verifyPublicRelease } from './run-approved-production-restart.mjs';
+  createControllerJournal, runApprovedRestart, verifyControllerReleaseJobs, verifyControllerRun, verifyPublicRelease } from './run-approved-production-restart.mjs';
 
 const releaseSha = 'a'.repeat(40);
 const baseline = Date.parse('2026-09-07T04:00:00.000Z');
+function completedJobs(phase, runId) {
+  const names = [
+    phase === 'compatibility' ? 'Deploy disabled billing guards for compatibility cutover' : 'Migrate, deploy, and verify backend',
+    'Build production frontend',
+    'Deploy frontend to Cloudflare Pages',
+  ];
+  const jobs = names.map((name, index) => ({ id: Number(runId) * 10 + index,
+    run_id: Number(runId), run_attempt: 1, head_sha: releaseSha, name, status: 'completed', conclusion: 'success' }));
+  return { total_count: jobs.length, jobs };
+}
 function fixture(overrides = {}) {
   let now = baseline, monotonic = 0, id = 100;
   const runs = new Map(), events = [], calls = [], approvals = [];
@@ -52,8 +62,10 @@ function fixture(overrides = {}) {
       overrides.gate?.(gate, run);
       return JSON.stringify([gate]);
     }
-    if (suffix === '/jobs?per_page=100') {
-      const data = { total_count: 1, jobs: [{ id: Number(runId) * 10, run_id: Number(runId), head_sha: releaseSha, status: 'waiting' }] };
+    if (suffix === '/jobs?per_page=100' || suffix === '/attempts/1/jobs?per_page=100') {
+      assert.equal(suffix, run.poll > 2 ? '/attempts/1/jobs?per_page=100' : '/jobs?per_page=100');
+      const data = suffix === '/attempts/1/jobs?per_page=100' ? completedJobs(run.phase, runId)
+        : { total_count: 1, jobs: [{ id: Number(runId) * 10, run_id: Number(runId), head_sha: releaseSha, status: 'waiting' }] };
       overrides.jobs?.(data, run);
       return JSON.stringify(data);
     }
@@ -77,12 +89,80 @@ test('one-shot success journals before each mutation and approves transient gate
   assert.equal(result.revokeStillRequired, true);
   assert.deepEqual(f.approvals, ['101', '102', '103']);
   assert.equal(f.events.filter(e => e.event === 'dispatch-intent').length, 3);
+  assert.deepEqual(f.events.filter(e => e.event === 'release-jobs-verified').map(e => e.phase), ['compatibility', 'full']);
+  assert.deepEqual(f.calls.filter(args => args[1]?.includes('/attempts/1/jobs')).map(args => args[1]), [
+    `repos/${REPOSITORY}/actions/runs/102/attempts/1/jobs?per_page=100`,
+    `repos/${REPOSITORY}/actions/runs/103/attempts/1/jobs?per_page=100`,
+  ]);
   for (const phase of ['restart', 'compatibility', 'full']) {
     const names = f.events.filter(e => e.phase === phase).map(e => e.event);
     assert.ok(names.indexOf('dispatch-intent') < names.indexOf('dispatched'));
     assert.ok(names.indexOf('approval-intent') < names.indexOf('approved'));
   }
 });
+
+for (const phase of ['compatibility', 'full']) {
+  test(`aggregate ${phase} success with skipped Cloudflare deployment stops before public proof or any later dispatch`, async () => {
+    let smokeCount = 0;
+    const f = fixture({
+      jobs(data, run) {
+        if (run.phase === phase && run.poll > 2) {
+          data.jobs.find(job => job.name === 'Deploy frontend to Cloudflare Pages').conclusion = 'skipped';
+        }
+      },
+      smoke() { smokeCount++; },
+    });
+    await assert.rejects(f.invoke(), /without every required deployment job succeeding/u);
+    assert.deepEqual([...f.runs.values()].map(run => run.phase), phase === 'compatibility'
+      ? ['restart', 'compatibility'] : ['restart', 'compatibility', 'full']);
+    assert.equal(smokeCount, phase === 'compatibility' ? 0 : 1);
+    assert.equal(f.events.some(event => event.event === 'success'), false);
+    assert.equal(f.events.some(event => event.event === 'release-jobs-verified' && event.phase === phase), false);
+    assert.equal(f.events.at(-1).event, 'stopped');
+    assert.equal(f.events.at(-1).terminalFailure, false);
+  });
+}
+
+test('completed release job proof permits expected skipped ancestors but requires exact scope-specific successes', () => {
+  for (const phase of ['compatibility', 'full']) {
+    const data = completedJobs(phase, '102');
+    data.jobs.push({ id: 2000, run_id: 102, head_sha: releaseSha, name: 'Prove frontend-only is post-cutover and fully applied', status: 'completed', conclusion: 'skipped' });
+    data.total_count++;
+    verifyControllerReleaseJobs(data, { phase, runId: '102', releaseSha });
+    const otherPhase = phase === 'compatibility' ? 'full' : 'compatibility';
+    assert.throws(() => verifyControllerReleaseJobs(data, { phase: otherPhase, runId: '102', releaseSha }), /required deployment job/u);
+  }
+});
+
+test('attempt-specific job evidence accepts an omitted optional run_attempt field', () => {
+  // GitHub's job schema marks run_attempt optional; the GET endpoint itself is
+  // pinned to attempts/1, and every present attempt field must agree with it.
+  const data = completedJobs('compatibility', '102');
+  for (const job of data.jobs) delete job.run_attempt;
+  verifyControllerReleaseJobs(data, { phase: 'compatibility', runId: '102', releaseSha });
+});
+
+for (const mutation of [
+  data => { data.total_count++; },
+  data => { data.jobs = []; data.total_count = 0; },
+  data => { data.jobs[0].id = data.jobs[1].id; },
+  data => { data.jobs[0].head_sha = 'b'.repeat(40); },
+  data => { data.jobs[0].run_id++; },
+  data => { data.jobs[0].run_attempt = 2; },
+  data => { data.jobs[0].run_attempt = null; },
+  data => { data.jobs[0].run_attempt = '1'; },
+  data => { data.jobs[0].status = 'in_progress'; },
+  data => { data.jobs[0].conclusion = 'failure'; },
+  data => { data.jobs[1].conclusion = 'cancelled'; },
+  data => { data.jobs[2].name = 'Unknown deployment job'; },
+  data => { data.jobs.push({ ...data.jobs[2], id: 2000 }); data.total_count++; },
+]) {
+  test('completed job inventory rejects incompleteness, duplicates, identity drift or required-job failure', () => {
+    const data = completedJobs('compatibility', '102');
+    mutation(data);
+    assert.throws(() => verifyControllerReleaseJobs(data, { phase: 'compatibility', runId: '102', releaseSha }));
+  });
+}
 
 for (const phase of ['compatibility', 'full']) test(`terminal ${phase} failure revokes once after verified restart`, async () => {
   const f = fixture({ run(data, run) { if (run.phase === phase && data.status === 'completed') data.conclusion = 'failure'; } });
