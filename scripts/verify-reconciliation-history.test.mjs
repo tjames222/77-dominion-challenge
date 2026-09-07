@@ -1,4 +1,6 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -13,8 +15,11 @@ import {
 
 const scriptDirectory = path.dirname(fileURLToPath(import.meta.url));
 const scriptPath = path.join(scriptDirectory, "verify-reconciliation-history.mjs");
+const pinnedCliFixtures = JSON.parse(readFileSync(
+  new URL("./fixtures/migration-list-cli-2.109.0.json", import.meta.url), "utf8",
+));
 
-function migrationList(localVersions, remoteVersions) {
+function migrationList(localVersions, remoteVersions, timestampCells = {}) {
   const count = Math.max(localVersions.length, remoteVersions.length);
   const headers = ["Local", "Remote", "Time (UTC)"];
   const values = [];
@@ -22,8 +27,9 @@ function migrationList(localVersions, remoteVersions) {
     const local = localVersions[index] ? `\`${localVersions[index]}\`` : "` `";
     const remote = remoteVersions[index] ? `\`${remoteVersions[index]}\`` : "` `";
     const version = localVersions[index] || remoteVersions[index];
-    const timestamp = `${version.slice(0, 4)}-${version.slice(4, 6)}-${version.slice(6, 8)} `
-      + `${version.slice(8, 10)}:${version.slice(10, 12)}:${version.slice(12, 14)}`;
+    const timestamp = timestampCells[version]
+      ?? `${version.slice(0, 4)}-${version.slice(4, 6)}-${version.slice(6, 8)} `
+        + `${version.slice(8, 10)}:${version.slice(10, 12)}:${version.slice(12, 14)}`;
     values.push([local, remote, `\`${timestamp}\``]);
   }
   const widths = headers.map((header, cellIndex) =>
@@ -70,6 +76,75 @@ test("parses the pinned CLI table with blank local or remote cells", () => {
     local: [],
     remote: HISTORICAL_RECONCILIATION_VERSIONS.slice(0, 1),
   });
+});
+
+test("preserves canonical IDs while matching calendar and raw CLI timestamp displays", () => {
+  // Literal Go time.Parse outcomes, independent of the parser implementation.
+  const displays = [
+    ["00000101000000", "0000-01-01 00:00:00"],
+    ["19000229120000", "19000229120000"],
+    ["20000229120000", "2000-02-29 12:00:00"],
+    ["20240229123456", "2024-02-29 12:34:56"],
+    ["20250229120000", "20250229120000"],
+    ["20260431000000", "20260431000000"],
+    ["20260720240000", "20260720240000"],
+    ["20260720236000", "20260720236000"],
+    ["20260720235960", "20260720235960"],
+    ["20261301000000", "20261301000000"],
+    ["20260001000000", "20260001000000"],
+    ["20260100000000", "20260100000000"],
+  ];
+  for (const [version, timestamp] of displays) {
+    for (const [local, remote] of [[[version], []], [[], [version]], [[version], [version]]]) {
+      assert.deepEqual(
+        parseMigrationList(migrationList(local, remote, { [version]: timestamp })),
+        { local, remote },
+      );
+    }
+  }
+});
+
+test("parses literal tables rendered by the unmodified pinned CLI modules", () => {
+  assert.equal(pinnedCliFixtures.cliVersion, "2.109.0");
+  assert.equal(pinnedCliFixtures.sourceCommit, "49db0064c4b3bd197c1305ccb9b1cf7ba8c4b443");
+  const mixedVersions = [
+    "20240229123456", "20250229010203", "20260101000000",
+    "20260720235960", "20260720236000", "20260720240000",
+  ];
+  for (const fixture of pinnedCliFixtures.fixtures) {
+    assert.equal(Buffer.byteLength(fixture.output), fixture.bytes);
+    assert.equal(createHash("sha256").update(fixture.output).digest("hex"), fixture.sha256);
+    const local = fixture.name === "mixed-calendar.txt"
+      ? mixedVersions
+      : pinnedCliFixtures.repositoryMigrationVersions;
+    assert.deepEqual(parseMigrationList(fixture.output), {
+      local,
+      remote: local.slice(0, fixture.remoteCount),
+    });
+  }
+});
+
+test("rejects raw calendar IDs, normalized invalid dates, and mismatched raw timestamps", () => {
+  for (const [version, timestamp] of [
+    ["20260720235959", "20260720235959"],
+    ["20000229120000", "20000229120000"],
+    ["20260720240000", "2026-07-20 24:00:00"],
+    ["20260720240000", "2026-07-21 00:00:00"],
+    ["20250229120000", "2025-03-01 12:00:00"],
+    ["20250229120000", "2025-02-29 12:00:00"],
+    ["19000229120000", "1900-02-29 12:00:00"],
+    ["20260720236000", "2026-07-20 23:60:00"],
+    ["20260720235960", "2026-07-20 23:59:60"],
+    ["20260720240000", "20260720250000"],
+    ["20260720240000", "2026072024000"],
+    ["20260720240000", "202607202400000"],
+    ["20260720240000", "2026072024000x"],
+  ]) {
+    assert.throws(
+      () => parseMigrationList(migrationList([version], [], { [version]: timestamp })),
+      /migration timestamp/u,
+    );
+  }
 });
 
 test("rejects malformed, legacy, and versionless data rows", () => {

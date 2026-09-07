@@ -20,8 +20,16 @@ function parseQuotedCell(value, label) {
 }
 
 function expectedTimestamp(version) {
-  return `${version.slice(0, 4)}-${version.slice(4, 6)}-${version.slice(6, 8)} `
+  const timestamp = `${version.slice(0, 4)}-${version.slice(4, 6)}-${version.slice(6, 8)} `
     + `${version.slice(8, 10)}:${version.slice(10, 12)}:${version.slice(12, 14)}`;
+  const isoTimestamp = timestamp.replace(" ", "T");
+  const parsed = new Date(`${isoTimestamp}Z`);
+  // CLI v2.109.0 returns the original migration ID when Go time.Parse fails.
+  // Round-trip validation rejects JavaScript's normalized dates and hour 24.
+  return Number.isFinite(parsed.getTime())
+      && parsed.toISOString().slice(0, 19) === isoTimestamp
+    ? timestamp
+    : version;
 }
 
 export function parseMigrationList(output) {
@@ -90,7 +98,7 @@ export function parseMigrationList(output) {
     if (remoteValue && !remoteIsVersion) {
       fail(`invalid remote version cell: ${remoteValue}.`);
     }
-    if (!/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/u.test(timestampValue)) {
+    if (!/^(?:\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}|\d{14})$/u.test(timestampValue)) {
       fail(`invalid migration timestamp cell: ${timestampValue}.`);
     }
     const displayedVersions = [localValue, remoteValue].filter(Boolean);

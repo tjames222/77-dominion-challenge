@@ -81,6 +81,11 @@ receive one internally generated, release-SHA-bound
 same-commit full release and revoked afterward. This is not a direct-full
 exception. Never skip compatibility, extend or replace the grant between
 stages, use more than one entitled account, or advance `main` before revocation.
+The only separately approved replacement is the
+[one archived restart of the fixed prior release](production-canary-archived-restart.md):
+it requires the prior grant to be revoked first, a new reviewed frozen release,
+fresh encrypted archival and local recovery proof, and the dedicated restart
+workflow. It is not available to renew a grant between stages or repeat a restart.
 
 ## Before granting canary access
 
@@ -141,7 +146,10 @@ uses the read-only endpoint to re-query aggregate counts only. It requires one
 exact active, two-hour, same-SHA row and the unchanged closed-canary inventory.
 Neither UUID, the row, response bodies, nor the access token is printed or
 stored in an artifact. No arbitrary SQL, replacement, extension, delete, or
-retry mode exists. If any step fails, stop and investigate; do not run SQL by
+retry mode exists in this ordinary grant helper. The narrowly approved
+[archived restart](production-canary-archived-restart.md) uses a separate helper
+and proof; do not rerun `operation=grant` to achieve it. If any step fails, stop
+and investigate; do not run SQL by
 hand or weaken a guard. Once it succeeds, the exact same row—not a replacement—
 must span compatibility and full.
 
@@ -173,12 +181,17 @@ full run selects exactly one immutable artifact from a successful exact-SHA
 after the zero-pending migration gate. Then dispatch
 `release_scope=full` from that exact same SHA and reuse the same grant. If the
 grant expires or cannot cover both stages, revoke it and restart the reviewed
-sequence; never extend it or issue a replacement as a shortcut.
+approval process; never extend it or issue a replacement as a shortcut. The
+retained audit row prevents the ordinary grant helper from issuing another grant.
+Only the exact [one-time archived restart](production-canary-archived-restart.md)
+has separate approval; any other replacement requires a new explicit review and
+authorization.
 
 Do not rerun a successful compatibility dispatch at the same SHA: two artifacts
 with the exact name are intentionally treated as ambiguous and fail closed.
-Restart from a newly reviewed release SHA if the successful stage must be
-repeated.
+Repeating a successful stage requires a newly reviewed release SHA and explicit
+approval of its access/recovery plan. It does not authorize a canary renewal or
+another use of the one-time archived restart.
 
 After compatibility and again after full, verify all of the following and
 record the results:
@@ -220,7 +233,11 @@ launch.
 ## Revoke and prove removal
 
 Revoke at the end of the test even if the two-hour expiry has passed. Preserve
-the audit row; do not delete it. While `main` is still frozen at the exact
+the audit row; do not delete it. The separately approved
+[archived restart](production-canary-archived-restart.md) preserves the complete
+old row in a verified, durably retained encrypted backup before replacing only
+the fixed prior-release row. That exception does not apply to the new grant,
+which must remain retained after revocation. While `main` is still frozen at the exact
 release commit, manually dispatch **Manage production canary entitlement** with
 `operation=revoke`, select the explicit confirmation, and approve its protected
 `production` environment job.
