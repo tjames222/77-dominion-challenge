@@ -63,6 +63,10 @@ receipt. Never populate a public-key variable with private-key PEM text.
 From the clean new release checkout, use explicit absolute paths. The download
 parent and output parent must already be ordinary owner-only `0700` directories;
 the output file must not exist. Place them outside the repository checkout.
+Use the reviewed clean operator environment without Node preload/debugger or
+heap-snapshot settings, and disable core dumps (`ulimit -c 0`) before starting
+the local helper. Child GitHub/git commands use a reconstructed environment;
+that does not undo instrumentation loaded before Node itself starts.
 
 ```sh
 node scripts/prepare-production-canary-restart-proof.mjs \
