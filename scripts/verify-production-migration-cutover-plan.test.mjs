@@ -41,8 +41,12 @@ function migrationList(localVersions, remoteVersions) {
     const local = localVersions[index] ? `\`${localVersions[index]}\`` : "` `";
     const remote = remoteVersions[index] ? `\`${remoteVersions[index]}\`` : "` `";
     const version = localVersions[index] || remoteVersions[index];
-    const timestamp = `${version.slice(0, 4)}-${version.slice(4, 6)}-${version.slice(6, 8)} `
-      + `${version.slice(8, 10)}:${version.slice(10, 12)}:${version.slice(12, 14)}`;
+    // Literal pinned-CLI exception in the reviewed 53-version inventory: hour 24
+    // is not a calendar timestamp, so CLI v2.109.0 displays the unchanged ID.
+    const timestamp = version === "20260720240000"
+      ? "20260720240000"
+      : `${version.slice(0, 4)}-${version.slice(4, 6)}-${version.slice(6, 8)} `
+        + `${version.slice(8, 10)}:${version.slice(10, 12)}:${version.slice(12, 14)}`;
     values.push([local, remote, `\`${timestamp}\``]);
   }
   const widths = headers.map((header, cellIndex) =>
