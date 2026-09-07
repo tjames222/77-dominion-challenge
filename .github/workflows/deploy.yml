@@ -1469,6 +1469,7 @@ jobs:
   deploy:
     name: Deploy frontend to Cloudflare Pages
     needs: frontend
+    if: ${{ always() && !cancelled() && needs.frontend.result == 'success' }}
     environment: production
     runs-on: ubuntu-latest
     timeout-minutes: 15

@@ -24,6 +24,56 @@ const localProductionRunner = read('../../scripts/rehearse-local-production-stac
 const localProductionSpec = read('../../tests/e2e/local-production-stack.spec.mjs');
 const defaultPlaywrightConfig = read('../../playwright.config.mjs');
 
+function extractedJobCondition(job) {
+  const lines = job.split('\n');
+  const start = lines.findIndex(line => line.startsWith('    if: '));
+  assert.ok(start >= 0, 'job must define its own status-aware condition');
+  const value = lines[start].slice('    if: '.length);
+  if (value === '>-') {
+    const expression = [];
+    for (let index = start + 1; index < lines.length && lines[index].startsWith('      '); index++) {
+      expression.push(lines[index].trim());
+    }
+    assert.ok(expression.length > 0);
+    return expression.join(' ');
+  }
+  assert.match(value, /^\$\{\{ .+ \}\}$/u);
+  return value.slice(4, -3);
+}
+
+function compileFixedJobCondition(source) {
+  // This test-only translator accepts only the exact expression language used
+  // by these two jobs. String-only == is equivalent to === for the known GitHub
+  // result/scope values. Nothing else from workflow text is executable JS.
+  const token = /\s+|always\(\)|cancelled\(\)|needs\.[a-z][a-z0-9-]*\.result|inputs\.release_scope|'[a-z-]+'|==|&&|\|\||[()!]/uy;
+  const translated = [];
+  let offset = 0;
+  let hasStatusFunction = false;
+  while (offset < source.length) {
+    token.lastIndex = offset;
+    const match = token.exec(source);
+    assert.ok(match && match.index === offset, 'unexpected token in reviewed workflow condition');
+    const value = match[0];
+    offset = token.lastIndex;
+    if (/^\s+$/u.test(value)) continue;
+    if (value === 'always()') { translated.push('true'); hasStatusFunction = true; }
+    else if (value === 'cancelled()') { translated.push('state.cancelled'); hasStatusFunction = true; }
+    else if (value.startsWith('needs.')) translated.push(`state.needs[${JSON.stringify(value.slice(6, -7))}]`);
+    else if (value === 'inputs.release_scope') translated.push('state.releaseScope');
+    else if (value.startsWith("'")) translated.push(JSON.stringify(value.slice(1, -1)));
+    else translated.push(value === '==' ? '===' : value);
+  }
+  assert.ok(hasStatusFunction, 'a status function is required to override implicit success()');
+  return new Function('state', `"use strict"; return (${translated.join(' ')});`);
+}
+
+function* outcomeCombinations(keys, outcomes, prefix = {}) {
+  if (keys.length === 0) { yield prefix; return; }
+  for (const result of outcomes) {
+    yield* outcomeCombinations(keys.slice(1), outcomes, { ...prefix, [keys[0]]: result });
+  }
+}
+
 describe('production release configuration', () => {
   test('requires an explicit release from the protected main branch', () => {
     assert.match(workflow, /on:\s*\n\s*workflow_dispatch:/);
@@ -60,6 +110,55 @@ describe('production release configuration', () => {
       deployJob.indexOf(exactProjectGate)
         < deployJob.indexOf('- name: Download immutable frontend artifact'),
     );
+  });
+
+  test('publishing overrides transitive skips only after a successful frontend and never after cancellation', () => {
+    const deployStart = workflow.indexOf('\n  deploy:');
+    const frontendStart = workflow.indexOf('\n  frontend:');
+    assert.ok(frontendStart >= 0 && deployStart > frontendStart);
+    const deployJob = workflow.slice(deployStart);
+    assert.match(deployJob, /needs: frontend\n\s*if: \$\{\{ always\(\) && !cancelled\(\) && needs\.frontend\.result == 'success' \}\}\n\s*environment: production/u);
+    assert.match(deployJob, /name: production-frontend-\$\{\{ github\.sha \}\}/u);
+    assert.match(deployJob, /--commit-hash=\$\{\{ github\.sha \}\}/u);
+    assert.match(deployJob, /name: Create keyed one-time compatibility attestation/u);
+    assert.doesNotMatch(deployJob, /continue-on-error:/u);
+
+    const frontendJob = workflow.slice(frontendStart, deployStart);
+    const frontendCondition = compileFixedJobCondition(extractedJobCondition(frontendJob));
+    const publishCondition = compileFixedJobCondition(extractedJobCondition(deployJob));
+    const outcomes = ['success', 'failure', 'skipped', 'cancelled', undefined];
+    const shared = { validation: 'success', 'canary-policy': 'success', 'cloudflare-policy': 'success' };
+    const expectedByScope = {
+      full: { ...shared, 'frontend-rollback-history': 'skipped', backend: 'success', 'compatibility-guards': 'skipped' },
+      'compatibility-cutover': { ...shared, 'frontend-rollback-history': 'skipped', backend: 'skipped', 'compatibility-guards': 'success' },
+      'frontend-only': { ...shared, 'frontend-rollback-history': 'success', backend: 'skipped', 'compatibility-guards': 'skipped' },
+    };
+    let combinations = 0;
+    for (const [releaseScope, expected] of Object.entries(expectedByScope)) {
+      const keys = Object.keys(expected);
+      for (const needs of outcomeCombinations(keys, outcomes)) {
+        const shouldBuild = keys.every(key => needs[key] === expected[key]);
+        for (const cancelled of [false, true]) {
+          const willBuild = frontendCondition({ needs, releaseScope, cancelled });
+          assert.equal(willBuild, shouldBuild, `${releaseScope} frontend prerequisite matrix`);
+          for (const frontendResult of outcomes) {
+            // If the frontend cannot run, its DAG result is skipped regardless
+            // of which hypothetical build completion we are checking.
+            const actualResult = willBuild ? frontendResult : 'skipped';
+            assert.equal(publishCondition({ needs: { frontend: actualResult }, releaseScope, cancelled }),
+              shouldBuild && frontendResult === 'success' && !cancelled,
+              `${releaseScope} publishing result/cancellation matrix`);
+          }
+        }
+        combinations++;
+      }
+    }
+    assert.equal(combinations, 3 * (outcomes.length ** 6));
+    for (const releaseScope of ['unknown', undefined]) {
+      for (const needs of Object.values(expectedByScope)) {
+        assert.equal(frontendCondition({ needs, releaseScope, cancelled: false }), false);
+      }
+    }
   });
 
   test('builds develop without live credentials and deploys only through the preview environment', () => {

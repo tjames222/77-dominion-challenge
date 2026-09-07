@@ -146,6 +146,7 @@ for (const [name, change] of [
   ['unrevoked old grant', "update public.entitlements set status='active';"],
   ['wrong prior SHA', `update public.entitlements set metadata=jsonb_build_object('release_sha','${'b'.repeat(40)}');`],
   ['spent earlier 8779421 grant', "update public.entitlements set metadata=jsonb_build_object('release_sha','877942113f1d18e73f2e51e6b467915b37b0c67b');"],
+  ['spent earlier 0507c5e grant', "update public.entitlements set metadata=jsonb_build_object('release_sha','0507c5e3b63d03f5e8ce7781aad463134d992871');"],
   ['extra metadata', "update public.entitlements set metadata=metadata || '{\"extra\":true}'::jsonb;"],
   ['wrong source', "update public.entitlements set source_type='stripe';"],
   ['noncanonical source UUID', "update public.entitlements set source_id='not-a-uuid';"],
