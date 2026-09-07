@@ -1,6 +1,6 @@
 import { createPrivateKey, createPublicKey, KeyObject, sign, verify } from 'node:crypto';
 
-export const PRIOR_PRODUCTION_CANARY_RELEASE_SHA = '0507c5e3b63d03f5e8ce7781aad463134d992871';
+export const PRIOR_PRODUCTION_CANARY_RELEASE_SHA = 'f2472a26aad529b5dccc3d60f5b6970e1372b501';
 export const PRODUCTION_CANARY_RESTART_PROOF_CONTRACT = 'dominion-production-canary-restart-proof/v1';
 export const PRODUCTION_CANARY_RESTART_PROOF_DOMAIN = 'dominion-production-canary-restart-recovery/v1\0';
 const fields = Object.freeze(['schemaVersion', 'artifactContract', 'priorReleaseSha', 'releaseSha',

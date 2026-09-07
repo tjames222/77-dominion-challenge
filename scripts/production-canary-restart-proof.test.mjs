@@ -66,9 +66,18 @@ test('rejects stale/future receipts, reused release, wrong types and extra priva
   assert.throws(() => verifyProof({ entitlementsFingerprint: { ...entitlementsFingerprint, uuid: 'private' } }));
 });
 
-test('new one-time approval accepts only the exact revoked 0507c5e predecessor, never the spent 8779421 contract', () => {
-  assert.equal(PRIOR_PRODUCTION_CANARY_RELEASE_SHA, '0507c5e3b63d03f5e8ce7781aad463134d992871');
-  const earlierMetadata = { ...metadata, priorReleaseSha: '877942113f1d18e73f2e51e6b467915b37b0c67b' };
-  assert.throws(() => createRestartProof({ metadata: earlierMetadata, entitlementsFingerprint, signingPrivateKey: keys.privateKey }));
-  assert.throws(() => verifyProof({ proof: { ...proof, priorReleaseSha: earlierMetadata.priorReleaseSha }, expectedMetadata: earlierMetadata }));
+test('new one-time approval is fixed to the exact revoked f2472a2 predecessor', () => {
+  assert.equal(PRIOR_PRODUCTION_CANARY_RELEASE_SHA, 'f2472a26aad529b5dccc3d60f5b6970e1372b501');
+  assert.deepEqual(verifyProof(), { verified: true });
 });
+
+for (const spentPredecessor of [
+  '877942113f1d18e73f2e51e6b467915b37b0c67b',
+  '0507c5e3b63d03f5e8ce7781aad463134d992871',
+]) {
+  test(`new approval rejects the spent ${spentPredecessor.slice(0, 7)} predecessor contract`, () => {
+    const earlierMetadata = { ...metadata, priorReleaseSha: spentPredecessor };
+    assert.throws(() => createRestartProof({ metadata: earlierMetadata, entitlementsFingerprint, signingPrivateKey: keys.privateKey }));
+    assert.throws(() => verifyProof({ proof: { ...proof, priorReleaseSha: spentPredecessor }, expectedMetadata: earlierMetadata }));
+  });
+}

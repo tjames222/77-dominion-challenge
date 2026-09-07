@@ -4,14 +4,16 @@ This is one explicit exception to the ordinary
 [canary operator runbook](production-canary-operator-runbook.md), not a renewal
 mechanism or a public-launch approval. It applies only to the revoked canary
 bound to prior release
-`0507c5e3b63d03f5e8ce7781aad463134d992871`.
+`f2472a26aad529b5dccc3d60f5b6970e1372b501`.
 
-This exact replacement was separately approved after the previous compatibility
-attempt stopped on an incorrect billing gateway smoke expectation. The earlier
-8779421-bound exception was used and is no longer accepted. Its encrypted audit
-archive remains retained. This new exception requires another fresh backup of
-the currently revoked 0507c5e row and authorizes only one replacement; it does
-not turn either exception into a reusable renewal mechanism.
+The user separately approved this exact replacement after the f2472a2
+compatibility run built the frontend but skipped its publishing job. The public
+HTTP check stopped the controller before full, and the f2472a2 grant was revoked
+through its same-SHA workflow. The earlier 8779421- and 0507c5e-bound exceptions
+were both used and are no longer accepted; their encrypted audit archives remain
+retained. This new exception requires another fresh backup of the currently
+revoked f2472a2 row and authorizes only one replacement. It does not renew any
+earlier approval or make any replacement contract reusable.
 
 The old grant must already be revoked and inactive. A fresh encrypted backup
 must preserve its complete original row, and the operator must prove local key
@@ -126,7 +128,8 @@ tables and repeats those checks before replacing the row; concurrent drift or
 any mismatch stops it. The final aggregate-only read must verify the new grant.
 
 Use the reviewed local controller to dispatch this workflow and then the
-compatibility/full releases with their corrected billing gateway smoke matrix.
+compatibility/full releases with their corrected publishing condition,
+attempt-bound deployment-job proof, and existing billing gateway smoke matrix.
 The flag below explicitly authorizes
 the controller to approve only the bound runs' protected production gates.
 It requires the approved operator's existing GitHub login and a clean exact
