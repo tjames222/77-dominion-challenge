@@ -4,7 +4,14 @@ This is one explicit exception to the ordinary
 [canary operator runbook](production-canary-operator-runbook.md), not a renewal
 mechanism or a public-launch approval. It applies only to the revoked canary
 bound to prior release
-`877942113f1d18e73f2e51e6b467915b37b0c67b`.
+`0507c5e3b63d03f5e8ce7781aad463134d992871`.
+
+This exact replacement was separately approved after the previous compatibility
+attempt stopped on an incorrect billing gateway smoke expectation. The earlier
+8779421-bound exception was used and is no longer accepted. Its encrypted audit
+archive remains retained. This new exception requires another fresh backup of
+the currently revoked 0507c5e row and authorizes only one replacement; it does
+not turn either exception into a reusable renewal mechanism.
 
 The old grant must already be revoked and inactive. A fresh encrypted backup
 must preserve its complete original row, and the operator must prove local key
@@ -119,7 +126,8 @@ tables and repeats those checks before replacing the row; concurrent drift or
 any mismatch stops it. The final aggregate-only read must verify the new grant.
 
 Use the reviewed local controller to dispatch this workflow and then the
-unchanged compatibility/full releases. The flag below explicitly authorizes
+compatibility/full releases with their corrected billing gateway smoke matrix.
+The flag below explicitly authorizes
 the controller to approve only the bound runs' protected production gates.
 It requires the approved operator's existing GitHub login and a clean exact
 release checkout. The journal parent must be a canonical absolute owner-only

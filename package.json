@@ -33,6 +33,7 @@
     "test:free-production-backup": "node --test scripts/free-production-backup.test.mjs",
     "test:production-reconciliation": "node --test scripts/verify-production-reconciliation-preflight.test.mjs scripts/run-production-reconciliation-step.test.mjs",
     "test:production-auth-canary-policy": "node --test scripts/production-auth-canary-policy.test.mjs",
+    "test:production-billing-guards": "node --test scripts/verify-production-billing-guards.test.mjs",
     "test:production-canary-entitlement-operator": "node --test scripts/manage-production-canary-entitlement.test.mjs",
     "test:production-canary-entitlement-sql": "node --test scripts/manage-production-canary-entitlement.sql.test.mjs",
     "test:production-canary-restart": "node --test scripts/production-canary-restart-proof.test.mjs scripts/prepare-production-canary-restart-proof.test.mjs scripts/restart-production-canary.test.mjs scripts/run-approved-production-restart.test.mjs scripts/production-canary-restart-workflow.test.mjs",

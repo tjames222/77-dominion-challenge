@@ -69,6 +69,15 @@ enabled = false
 [functions.stripe-webhook]
 verify_jwt = false
 
+[functions.cancel-membership]
+verify_jwt = true
+
+[functions.create-checkout-session]
+verify_jwt = true
+
+[functions.create-customer-portal-session]
+verify_jwt = true
+
 [functions.share-snapshot]
 verify_jwt = false
 

@@ -99,7 +99,7 @@ test('authenticated local recovery signs only the public envelope and privately 
 
 test('metadata rejects wrong release, path, event, attempt, repository, artifact association, expiry and inventory', () => {
   const mutations = [
-    (v) => { v.releaseSha = '877942113f1d18e73f2e51e6b467915b37b0c67b'; },
+    (v) => { v.releaseSha = '0507c5e3b63d03f5e8ce7781aad463134d992871'; },
     (v) => { v.run.head_sha = 'b'.repeat(40); }, (v) => { v.run.head_branch = 'develop'; },
     (v) => { v.run.path = '.github/workflows/deploy.yml'; }, (v) => { v.run.event = 'pull_request'; },
     (v) => { v.run.status = 'in_progress'; }, (v) => { v.run.conclusion = 'failure'; },
