@@ -62,6 +62,10 @@ test('creator training claims once after create and never auto-opens on refresh'
   await expect(layer).toBeVisible();
   await expect(page.locator('#crewTrainingProgress')).toHaveText('Step 1 of 7');
   await expect(page.locator('#crewTrainingTitle')).toBeFocused();
+  expect(await page.locator('.crew-training-backdrop').evaluate((element) => {
+    const style = getComputedStyle(element);
+    return [style.backdropFilter, style.webkitBackdropFilter || 'none'];
+  })).toEqual(['none', 'none']);
   await expect(page.locator('main')).toHaveAttribute('inert', '');
   expect(await trainingRows(page)).toMatchObject([{
     status: 'in_progress',

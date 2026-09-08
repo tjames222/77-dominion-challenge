@@ -37,6 +37,10 @@ test('crew training exposes an accessible seven-step coachmark shell', () => {
   assert.match(css, /\.crew-training-actions button\s*\{[^}]*min-height:\s*44px/s);
   assert.match(css, /@media \(prefers-reduced-motion: reduce\)/);
   assert.match(css, /@media \(forced-colors: active\)/);
+  const backdrop = sourceBetween(css, '.crew-training-backdrop {', '.crew-training-layer.is-modal .crew-training-backdrop');
+  assert.match(backdrop, /backdrop-filter:\s*none/);
+  assert.match(backdrop, /-webkit-backdrop-filter:\s*none/);
+  assert.doesNotMatch(backdrop, /blur\(/);
 });
 
 test('page load reads training progress but never claims or opens it', () => {
