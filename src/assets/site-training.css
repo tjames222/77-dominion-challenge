@@ -33,10 +33,11 @@
   position: relative;
   z-index: 1;
   display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
   width: min(100%, 410px);
   max-height: calc(100dvh - 32px);
   gap: 12px;
-  overflow: auto;
+  overflow: hidden;
   padding: 20px;
   color: var(--text);
   background: var(--surface);
@@ -64,6 +65,26 @@
 .site-training-coachmark h2,
 .site-training-coachmark p { margin: 0; }
 .site-training-description { color: var(--text-muted); line-height: 1.55; }
+.site-training-lesson {
+  display: grid;
+  align-content: start;
+  gap: 12px;
+  min-height: 0;
+  /* Leave room inside the scrolling clip for the title's 3px focus ring and
+     offset, without reducing the readable copy width or growing the card. */
+  padding: 6px;
+  margin: -6px;
+  overflow: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+}
+.site-training-lesson > [hidden] { display: none; }
+.site-training-focus-cue {
+  color: var(--accent-strong);
+  font-size: .76rem;
+  font-weight: 900;
+  letter-spacing: .03em;
+}
 .site-training-close {
   display: grid;
   flex: 0 0 auto;
@@ -92,11 +113,29 @@
   background: color-mix(in srgb, var(--danger) 10%, var(--surface));
   font-weight: 800;
 }
-.site-training-actions { justify-content: flex-end; flex-wrap: wrap; padding-block-start: 4px; }
+.site-training-actions { justify-content: flex-end; flex-wrap: wrap; padding-block-start: 4px; overflow: visible; }
 .site-training-actions button { min-height: 44px; min-width: 0; white-space: nowrap; flex-shrink: 0; }
+/* Keep the hit target still when a pointer sits at its edge. The global
+   secondary-button lift can otherwise repeatedly enter and leave :hover. */
+.site-training-layer .site-training-coachmark .site-training-actions button[data-training-action]:is(:hover, :active) { transform: none; }
 .site-training-target {
   pointer-events: none;
   scroll-margin: 96px 16px;
+}
+/* The app's entrance reveal must be finished for the highlighted content.
+   This temporary class is applied only to known reveal targets/ancestors;
+   arbitrary product transforms, filters, and animation state stay untouched. */
+.site-training-reveal-settled.reveal:is(.pending-reveal, .is-visible),
+.site-training-reveal-settled.reveal:is(.pending-reveal, .is-visible) :is(
+  .app-icon, .science-icon, .summary-icon, .feed-item, .landing-grid article,
+  .mini-proof-grid article, .timeline article, .standard-stack article,
+  .verse-grid article, .stat-card
+) {
+  opacity: 1;
+  transform: none;
+  filter: none;
+  transition: none;
+  animation: none;
 }
 .site-training-close:focus-visible,
 .site-training-actions button:focus-visible,
@@ -107,35 +146,29 @@
 }
 @media (max-width: 640px) {
   .site-training-layer { align-items: end; padding: max(12px, env(safe-area-inset-top)) max(12px, env(safe-area-inset-right)) max(12px, env(safe-area-inset-bottom)) max(12px, env(safe-area-inset-left)); }
-  .site-training-coachmark {
-    position: relative;
-    inset: auto;
-    width: 100%;
-    max-height: calc(100dvh - max(12px, env(safe-area-inset-top)));
-    padding: 18px;
-    border-right: 0;
-    border-bottom: 0;
-    border-left: 0;
-    border-radius: 22px 22px 0 0;
-  }
-  .site-training-layer.has-target .site-training-coachmark {
-    position: fixed;
-    left: var(--site-training-left, 0);
-    top: var(--site-training-top, 0);
-    width: calc(100% - 24px);
-    border: 1px solid var(--border);
-    border-radius: 18px;
-  }
-  .site-training-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .site-training-actions [data-training-action="next"] { grid-column: 1 / -1; grid-row: 1; }
 }
-@media (max-width: 360px) {
-  .site-training-actions { grid-template-columns: 1fr; }
-  .site-training-actions [data-training-action="next"] { grid-column: auto; }
+.site-training-layer.is-mobile .site-training-coachmark {
+  position: fixed;
+  left: var(--site-training-left, 12px);
+  top: var(--site-training-top, 12px);
+  width: calc(100% - 24px);
+  gap: 8px;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: 18px;
 }
-@container (max-width: 280px) {
+.site-training-layer.is-mobile .site-training-lesson { gap: 8px; }
+.site-training-layer.is-mobile .site-training-coachmark h2 { font-size: 1.22rem; line-height: 1.2; }
+.site-training-layer.is-mobile .site-training-description { font-size: .94rem; line-height: 1.45; }
+.site-training-layer.is-mobile .site-training-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.site-training-layer.is-mobile .site-training-actions button { padding: 10px 8px; }
+.site-training-layer.is-mobile .site-training-actions [data-training-action="next"] { grid-column: 1 / -1; grid-row: 1; }
+/* Stack only below the width needed for two complete secondary labels, such
+   as a pinched visual viewport; ordinary 320px phones keep two action rows. */
+@container (max-width: 230px) {
   .site-training-actions { display: grid; grid-template-columns: 1fr; }
-  .site-training-actions [data-training-action="next"] { grid-column: auto; }
+  .site-training-layer.is-mobile .site-training-actions { grid-template-columns: 1fr; }
+  .site-training-layer.is-mobile .site-training-actions [data-training-action="next"] { grid-column: auto; }
 }
 @media (prefers-reduced-motion: reduce) {
   .site-training-coachmark,

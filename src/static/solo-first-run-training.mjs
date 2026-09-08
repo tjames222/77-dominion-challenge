@@ -172,6 +172,7 @@ export function createSoloFirstRunTraining({
   runtime: sharedRuntime = null,
   runtimeFactory = createSiteTrainingRuntime,
   navigate = null,
+  beforeOpen = null,
 } = {}) {
   const actorId = text(user?.userId);
   const page = siteTrainingPageForRoute(registry, windowLike?.location?.pathname || '');
@@ -333,8 +334,18 @@ export function createSoloFirstRunTraining({
 
   const continueOnCurrentRoute = async ({ trigger = null, launch = null } = {}) => {
     if (!onCurrentRoute()) return null;
-    const focusTrigger = resolveTrigger(trigger);
     const overall = runtime.state.overall;
+    const opensCoachmark = overall.status === 'not_started'
+      || overall.status === 'stopped'
+      || (overall.status === 'in_progress' && runtime.state.page.status !== 'completed');
+    const action = overall.status === 'not_started'
+      ? 'start' : overall.status === 'stopped' ? 'resume' : 'continue';
+    // The navigation drawer owns a separate visual layer. Close it before the
+    // training modal isolates the page, and restore focus outside the drawer.
+    const candidate = opensCoachmark && typeof beforeOpen === 'function'
+      ? beforeOpen({ action, control: trigger || control, page })
+      : trigger;
+    const focusTrigger = resolveTrigger(candidate);
     let result = runtime.state;
     try {
       if (overall.status === 'not_started') {
