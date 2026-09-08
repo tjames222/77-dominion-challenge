@@ -6,14 +6,29 @@
   z-index: 1100;
   display: grid;
   place-items: center;
+  pointer-events: none;
   padding: max(16px, env(safe-area-inset-top)) max(16px, env(safe-area-inset-right)) max(16px, env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left));
 }
 .site-training-backdrop {
   position: absolute;
   inset: 0;
   background: color-mix(in srgb, #050608 70%, transparent);
-  backdrop-filter: blur(3px);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  pointer-events: auto;
 }
+.site-training-layer.has-target .site-training-backdrop { background: transparent; pointer-events: none; }
+.site-training-scrim { position: absolute; background: color-mix(in srgb, #050608 70%, transparent); pointer-events: auto; }
+.site-training-spotlight {
+  position: absolute;
+  box-sizing: border-box;
+  border: 4px solid var(--accent);
+  border-radius: 10px;
+  box-shadow: 0 0 0 2px #050608, 0 0 0 3px #fff;
+  pointer-events: none;
+}
+.site-training-layer:not(.has-target) .site-training-scrim,
+.site-training-layer:not(.has-target) .site-training-spotlight { display: none; }
 .site-training-coachmark {
   position: relative;
   z-index: 1;
@@ -28,11 +43,15 @@
   border: 1px solid color-mix(in srgb, var(--accent) 46%, var(--border));
   border-radius: 18px;
   box-shadow: var(--shadow);
+  pointer-events: auto;
+  container-type: inline-size;
 }
 .site-training-layer.has-target .site-training-coachmark {
   position: fixed;
   left: var(--site-training-left, 50%);
   top: var(--site-training-top, 50%);
+  /* A diffuse panel shadow must not spill back into the clear target hole. */
+  box-shadow: none;
 }
 .site-training-header,
 .site-training-actions {
@@ -47,6 +66,7 @@
 .site-training-description { color: var(--text-muted); line-height: 1.55; }
 .site-training-close {
   display: grid;
+  flex: 0 0 auto;
   place-items: center;
   width: 44px;
   min-height: 44px;
@@ -72,15 +92,10 @@
   background: color-mix(in srgb, var(--danger) 10%, var(--surface));
   font-weight: 800;
 }
-.site-training-actions { justify-content: flex-end; padding-block-start: 4px; }
-.site-training-actions button { min-height: 44px; }
+.site-training-actions { justify-content: flex-end; flex-wrap: wrap; padding-block-start: 4px; }
+.site-training-actions button { min-height: 44px; min-width: 0; white-space: nowrap; flex-shrink: 0; }
 .site-training-target {
-  position: relative;
-  z-index: 1101;
   pointer-events: none;
-  outline: 4px solid color-mix(in srgb, var(--accent) 78%, transparent);
-  outline-offset: 6px;
-  border-radius: 10px;
   scroll-margin: 96px 16px;
 }
 .site-training-close:focus-visible,
@@ -91,9 +106,8 @@
   outline-offset: 3px;
 }
 @media (max-width: 640px) {
-  .site-training-layer { align-items: end; padding: max(12px, env(safe-area-inset-top)) 0 0; }
-  .site-training-coachmark,
-  .site-training-layer.has-target .site-training-coachmark {
+  .site-training-layer { align-items: end; padding: max(12px, env(safe-area-inset-top)) max(12px, env(safe-area-inset-right)) max(12px, env(safe-area-inset-bottom)) max(12px, env(safe-area-inset-left)); }
+  .site-training-coachmark {
     position: relative;
     inset: auto;
     width: 100%;
@@ -104,11 +118,23 @@
     border-left: 0;
     border-radius: 22px 22px 0 0;
   }
+  .site-training-layer.has-target .site-training-coachmark {
+    position: fixed;
+    left: var(--site-training-left, 0);
+    top: var(--site-training-top, 0);
+    width: calc(100% - 24px);
+    border: 1px solid var(--border);
+    border-radius: 18px;
+  }
   .site-training-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .site-training-actions [data-training-action="next"] { grid-column: 1 / -1; grid-row: 1; }
 }
 @media (max-width: 360px) {
   .site-training-actions { grid-template-columns: 1fr; }
+  .site-training-actions [data-training-action="next"] { grid-column: auto; }
+}
+@container (max-width: 280px) {
+  .site-training-actions { display: grid; grid-template-columns: 1fr; }
   .site-training-actions [data-training-action="next"] { grid-column: auto; }
 }
 @media (prefers-reduced-motion: reduce) {
@@ -120,5 +146,5 @@
   .site-training-coachmark,
   .site-training-close,
   .site-training-actions button { border: 2px solid CanvasText; }
-  .site-training-target { outline: 4px solid Highlight; forced-color-adjust: auto; }
+  .site-training-spotlight { border: 4px solid Highlight; box-shadow: none; forced-color-adjust: none; }
 }
