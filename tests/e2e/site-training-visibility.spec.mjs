@@ -351,3 +351,220 @@ test('resizing an open Dashboard lesson re-reveals its real page target', async 
   await expect.poll(() => page.locator('.site-training-target').boundingBox().then((bounds) => bounds.y >= 0 && bounds.y + bounds.height <= 400)).toBe(true);
   await page.evaluate(() => window.__visibilityCoachmark.destroy());
 });
+
+const PHONE_LESSON_CASES = [
+  { width: 390, height: 844, theme: 'dark' },
+  { width: 375, height: 667, theme: 'dark' },
+  { width: 360, height: 640, theme: 'dark' },
+  { width: 320, height: 568, theme: 'dark' },
+  { width: 390, height: 844, theme: 'light' },
+  { width: 390, height: 844, theme: 'dominion-night' },
+  { width: 390, height: 844, theme: 'dominion-platinum' },
+];
+
+async function expectPhoneLessonReadable(page) {
+  // Do not click/screenshot a locator first: either can scroll hidden controls
+  // into view and conceal the owner's actual first-render regression.
+  await expect.poll(() => page.evaluate(() => {
+    const panel = document.querySelector('.site-training-coachmark');
+    const bounds = panel.getBoundingClientRect();
+    const viewport = window.visualViewport;
+    const viewportBottom = (viewport?.offsetTop || 0) + (viewport?.height || innerHeight);
+    const inside = (rect) => rect.top >= bounds.top && rect.bottom <= bounds.bottom
+      && rect.left >= bounds.left && rect.right <= bounds.right && rect.bottom <= viewportBottom;
+    const nodes = [...panel.querySelectorAll('#siteTrainingTitle, #siteTrainingDescription, [data-training-action]')];
+    const visible = nodes.filter((node) => !node.hidden);
+    const controls = visible.filter((node) => node.matches('button'));
+    const copy = visible.filter((node) => !node.matches('button'));
+    const lesson = panel.querySelector('.site-training-lesson');
+    const lessonBounds = lesson?.getBoundingClientRect() || bounds;
+    const insideLesson = (rect) => inside(rect) && rect.top >= lessonBounds.top
+      && rect.bottom <= lessonBounds.bottom && rect.left >= lessonBounds.left && rect.right <= lessonBounds.right;
+    const title = panel.querySelector('#siteTrainingTitle');
+    const titleBounds = title.getBoundingClientRect();
+    const titleStyle = getComputedStyle(title);
+    const focusClearance = Math.max(0, parseFloat(titleStyle.outlineWidth) + parseFloat(titleStyle.outlineOffset));
+    const focusVisible = document.activeElement !== title || (
+      titleBounds.top - focusClearance >= lessonBounds.top - 1
+      && titleBounds.bottom + focusClearance <= lessonBounds.bottom + 1
+      && titleBounds.left - focusClearance >= lessonBounds.left - 1
+      && titleBounds.right + focusClearance <= lessonBounds.right + 1);
+    return panel.scrollHeight <= panel.clientHeight + 1 && visible.every((node) => inside(node.getBoundingClientRect()))
+      && (!lesson || lesson.scrollHeight <= lesson.clientHeight + 1)
+      && focusVisible
+      && controls.every((node) => {
+        const rect = node.getBoundingClientRect();
+        const hit = document.elementFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2);
+        const text = document.createRange();
+        text.selectNodeContents(node);
+        return rect.height >= 44 && (hit === node || node.contains(hit)) && text.getClientRects().length === 1;
+      }) && copy.every((node) => {
+        const text = document.createRange();
+        text.selectNodeContents(node);
+        return [...text.getClientRects()].every(insideLesson);
+      });
+  })).toBe(true);
+}
+
+for (const { width, height, theme } of PHONE_LESSON_CASES) {
+  test(`phone Dashboard step six shows all copy, actions and focus at ${width}x${height} in ${theme}`, async ({ page, app }, testInfo) => {
+    await page.setViewportSize({ width, height });
+    await app.open(ROUTE_BY_ID.dashboard, { state: 'activeSolo', theme });
+    await page.evaluate(() => {
+      let sequence = 0;
+      Object.defineProperty(globalThis.crypto, 'randomUUID', {
+        configurable: true,
+        value: () => `00000000-0000-4000-8000-${(++sequence).toString(16).padStart(12, '0')}`,
+      });
+    });
+    await page.getByRole('button', { name: 'Open menu' }).click();
+    await page.getByRole('button', { name: 'Start Training', exact: true }).click();
+    await expect(page.locator('.site-training-layer')).toBeVisible();
+    // The drawer has its own blur layer and must be visually closed, not just
+    // inert, before a spotlight can reveal the actual Dashboard behind it.
+    await expect(page.locator('body')).not.toHaveClass(/menu-open/);
+    await expect(page.locator('.global-menu-button')).toHaveAttribute('aria-expanded', 'false');
+    for (let step = 1; step < 6; step += 1) {
+      await expect(page.locator('#siteTrainingProgress')).toContainText(`Step ${step} of 9`);
+      await page.locator('[data-training-action="next"]').click();
+    }
+    await expect(page.locator('#siteTrainingProgress')).toContainText('Step 6 of 9');
+    await expect(page.locator('#siteTrainingTitle')).toHaveText('Complete your seven Daily Actions');
+    await testInfo.attach('step-six-first-render', { body: await page.screenshot(), contentType: 'image/png' });
+    await expectPhoneLessonReadable(page);
+    await expect.poll(() => page.evaluate(() => {
+      const target = document.querySelector('[data-training-target="dashboard-standards"]').getBoundingClientRect();
+      const hole = document.querySelector('.site-training-spotlight').getBoundingClientRect();
+      const panel = document.querySelector('.site-training-coachmark').getBoundingClientRect();
+      const heading = document.getElementById('todaysScorecardTitle').getBoundingClientRect();
+      return hole.height >= 100 && hole.top >= 0 && hole.bottom < panel.top
+        && target.top < hole.bottom && target.bottom > hole.top
+        && heading.top >= hole.top && heading.bottom <= hole.bottom
+        && hole.left <= target.left && hole.right >= target.right;
+    })).toBe(true);
+    await expect(page.locator('.site-training-coachmark')).toContainText('Highlighted above');
+    await page.locator('[data-training-action="next"]').click();
+    await expect(page.locator('#siteTrainingProgress')).toContainText('Step 7 of 9');
+    await expectPhoneLessonReadable(page);
+    await page.locator('[data-training-action="back"]').click();
+    await expect(page.locator('#siteTrainingProgress')).toContainText('Step 6 of 9');
+    await expectPhoneLessonReadable(page);
+    await page.locator('[data-training-action="stop"]').click();
+    await expect(page.locator('.site-training-layer')).toBeHidden();
+    await expect(page.locator('.site-training-target')).toHaveCount(0);
+    await expect(page.locator('body')).not.toHaveAttribute('data-dialog-open');
+    await expect(page.locator('.global-menu-button')).toBeFocused();
+    await page.getByRole('button', { name: 'Open menu' }).click();
+    await page.getByRole('button', { name: 'Resume Training', exact: true }).click();
+    await expect(page.locator('body')).not.toHaveClass(/menu-open/);
+    await expect(page.locator('#siteTrainingProgress')).toContainText('Step 6 of 9');
+    await expectPhoneLessonReadable(page);
+    await page.locator('[data-training-action="stop"]').click();
+    await expect(page.locator('.global-menu-button')).toBeFocused();
+  });
+}
+
+test('orientation lesson releases mobile height when the viewport grows', async ({ page, app }) => {
+  await page.setViewportSize({ width: 320, height: 400 });
+  await app.open(ROUTE_BY_ID.dashboard, { state: 'activeSolo' });
+  await page.evaluate(async () => {
+    const { createSiteTrainingCoachmark } = await import('/src/static/site-training-coachmark.mjs');
+    window.__visibilityCoachmark = createSiteTrainingCoachmark();
+    window.__visibilityCoachmark.open();
+    window.__visibilityCoachmark.render({ step: {
+      id: 'orientation', title: 'Complete your seven Daily Actions',
+      description: 'The scorecard groups today’s Mind, Spirit, and Body actions and shows which ones are complete.',
+    }, index: 5, total: 9 });
+  });
+  await page.setViewportSize({ width: 1280, height: 1000 });
+  await expect.poll(() => page.locator('.site-training-coachmark').evaluate((panel) => {
+    const lesson = panel.querySelector('.site-training-lesson');
+    return !panel.style.maxHeight && !panel.style.getPropertyValue('--site-training-left')
+      && !panel.style.getPropertyValue('--site-training-top') && lesson.scrollHeight <= lesson.clientHeight + 1;
+  })).toBe(true);
+});
+
+test('phone fallback recovers the same target near the card boundary', async ({ page, app }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await app.open(ROUTE_BY_ID.dashboard, { state: 'activeSolo' });
+  await page.evaluate(async () => {
+    const { createSiteTrainingCoachmark } = await import('/src/static/site-training-coachmark.mjs');
+    const target = document.createElement('div');
+    target.dataset.trainingTarget = 'boundary-fixture';
+    target.style.cssText = 'position:fixed;left:40px;top:540px;width:200px;height:30px;background:white;color:black';
+    target.textContent = 'Fixed target';
+    document.body.append(target);
+    window.__visibilityCoachmark = createSiteTrainingCoachmark();
+    window.__visibilityCoachmark.open();
+    window.__visibilityCoachmark.render({ step: {
+      id: 'boundary', title: 'Read the target', description: 'The highlighted control is here.', target: 'boundary-fixture',
+    }, index: 1, total: 3 });
+  });
+  await expect(page.locator('.site-training-layer')).toHaveClass(/has-target/);
+  await page.evaluate(() => {
+    document.querySelector('[data-training-target="boundary-fixture"]').style.top = '800px';
+    window.dispatchEvent(new Event('scroll'));
+  });
+  await expect(page.locator('#siteTrainingFallback')).toBeVisible();
+  await expect(page.locator('.site-training-layer')).not.toHaveClass(/has-target/);
+  await page.evaluate(() => {
+    document.querySelector('[data-training-target="boundary-fixture"]').style.top = '540px';
+    window.dispatchEvent(new Event('scroll'));
+  });
+  await expect(page.locator('.site-training-layer')).toHaveClass(/has-target/);
+  await expect(page.locator('#siteTrainingFallback')).toBeHidden();
+  await expect(page.locator('.site-training-coachmark')).toHaveAttribute('aria-describedby', 'siteTrainingDescription');
+});
+
+test('phone Resume reveals the real scorecard without entrance blur or movement', async ({ page, app }) => {
+  await page.setViewportSize({ width: 320, height: 568 });
+  await page.emulateMedia({ reducedMotion: 'no-preference' });
+  await app.open(ROUTE_BY_ID.dashboard, { state: 'activeSolo' });
+  await page.addInitScript(() => {
+    let sequence = 1000;
+    Object.defineProperty(crypto, 'randomUUID', { configurable: true,
+      value: () => `00000000-0000-4000-8000-${(++sequence).toString(16).padStart(12, '0')}` });
+  });
+  await page.evaluate(() => {
+    let sequence = 0;
+    Object.defineProperty(crypto, 'randomUUID', { configurable: true,
+      value: () => `00000000-0000-4000-8000-${(++sequence).toString(16).padStart(12, '0')}` });
+  });
+  await page.getByRole('button', { name: 'Open menu' }).click();
+  await page.getByRole('button', { name: 'Start Training', exact: true }).click();
+  for (let step = 1; step < 6; step += 1) await page.locator('[data-training-action="next"]').click();
+  await expect(page.locator('#siteTrainingProgress')).toContainText('Step 6 of 9');
+  await page.locator('[data-training-action="stop"]').click();
+  await page.reload();
+  await page.getByRole('button', { name: 'Open menu' }).click();
+  await page.getByRole('button', { name: 'Resume Training', exact: true }).click();
+  await expect(page.locator('#siteTrainingProgress')).toContainText('Step 6 of 9');
+  await expect(page.locator('body')).not.toHaveClass(/menu-open/);
+  await expectPhoneLessonReadable(page);
+  // Observe consecutive frames rather than waiting out the animation: training
+  // must reveal the actual target immediately and keep the card stable.
+  const frames = await page.evaluate(async () => {
+    const result = [];
+    for (let frame = 0; frame < 45; frame += 1) {
+      await new Promise(requestAnimationFrame);
+      const target = document.querySelector('.site-training-target');
+      const rect = target.getBoundingClientRect();
+      const css = getComputedStyle(target);
+      const hole = document.querySelector('.site-training-spotlight').getBoundingClientRect();
+      const heading = document.getElementById('todaysScorecardTitle').getBoundingClientRect();
+      const button = document.querySelector('[data-training-action="stop"]').getBoundingClientRect();
+      result.push({ top: rect.top, buttonTop: button.top, transform: css.transform,
+        filter: css.filter, opacity: css.opacity,
+        headingVisible: heading.top >= hole.top && heading.bottom <= hole.bottom });
+    }
+    return result;
+  });
+  expect(frames.every((frame) => frame.top >= 12 && frame.headingVisible
+    && frame.transform === 'none' && frame.filter === 'none' && frame.opacity === '1')).toBe(true);
+  expect(Math.max(...frames.map((frame) => frame.top)) - Math.min(...frames.map((frame) => frame.top))).toBeLessThan(1);
+  expect(Math.max(...frames.map((frame) => frame.buttonTop)) - Math.min(...frames.map((frame) => frame.buttonTop))).toBeLessThan(1);
+  await page.locator('[data-training-action="stop"]').click();
+  await expect(page.locator('.site-training-target')).toHaveCount(0);
+  await expect(page.locator('.site-training-reveal-settled')).toHaveCount(0);
+  await expect(page.locator('.global-menu-button')).toBeFocused();
+});

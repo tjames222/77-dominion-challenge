@@ -230,6 +230,11 @@ describe('shared sticky menu', () => {
     assert.match(menuJs, /Restart page training/);
     assert.match(menuJs, /role="alert" aria-live="assertive"/);
     assert.match(menuJs, /runtime:\s*pageTrainingControls\?\.runtime \|\| null/);
+    assert.match(
+      menuJs,
+      /createSoloFirstRunTraining\(\{\s*user,\s*runtime:\s*pageTrainingControls\?\.runtime \|\| null,\s*beforeOpen:\s*closeMenuForTraining,/,
+      'full-site training must close the same navigation drawer as page training',
+    );
     assert.match(menuJs, /function openMenu\(\) \{\s*void refreshTrainingControllers\(\)/);
     assert.match(
       menuJs,

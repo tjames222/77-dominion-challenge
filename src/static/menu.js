@@ -404,6 +404,7 @@ async function buildMenu() {
       const nextTraining = createSoloFirstRunTraining({
         user,
         runtime: pageTrainingControls?.runtime || null,
+        beforeOpen: closeMenuForTraining,
       });
       if (nextTraining.available) {
         soloFirstRunTraining = nextTraining;
