@@ -4,6 +4,26 @@ import { resolveSiteTrainingStep } from './site-training-registry.mjs';
 const STYLE_URL = new URL('../assets/site-training.css', import.meta.url).href;
 const TARGET_PATTERN = /^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/;
 
+// A phone needs two deliberate regions, not a small floating card squeezed
+// into whichever gap a large target happens to leave behind.
+export function siteTrainingMobileLayout(panel, viewport, targeted = true) {
+  const left = (viewport.left || 0) + Math.max(12, viewport.padding?.left || 0);
+  const top = (viewport.top || 0) + Math.max(12, viewport.padding?.top || 0);
+  const right = (viewport.left || 0) + viewport.width - Math.max(12, viewport.padding?.right || 0);
+  const bottom = (viewport.top || 0) + viewport.height - Math.max(12, viewport.padding?.bottom || 0);
+  const available = Math.max(0, bottom - top);
+  const gap = targeted ? 14 : 0;
+  // At extreme zoom the action footer takes priority. Only the lesson body
+  // may scroll; normal phone sizes retain all copy and a useful target area.
+  const reserved = targeted ? Math.min(100, Math.max(0, available - (panel.chromeHeight || 0) - 48 - gap)) : 0;
+  const height = Math.min(panel.height, Math.max(0, available - reserved - gap));
+  const panelTop = bottom - height;
+  return {
+    panel: { left, top: panelTop, maxHeight: height },
+    targetRegion: { left, top, right, bottom: panelTop - gap },
+  };
+}
+
 // The scrim has a real hole; no target reparenting, z-index promotion, or clone
 // can change product layout, accessible names, disabled state, or live content.
 export function siteTrainingGeometry(target, panel, viewport) {
@@ -19,11 +39,20 @@ export function siteTrainingGeometry(target, panel, viewport) {
   const safeTop = top + Math.max(margin, viewport.padding?.top || 0);
   const safeRight = right - Math.max(margin, viewport.padding?.right || 0);
   const safeBottom = bottom - Math.max(margin, viewport.padding?.bottom || 0);
+  const mobile = viewport.width <= 640 ? siteTrainingMobileLayout(panel, viewport) : null;
+  const highlightTop = mobile?.targetRegion.top ?? top + edge;
+  const highlightBottom = mobile?.targetRegion.bottom ?? bottom - edge;
+  // Padding cannot manufacture a highlight for a target that has no actual
+  // intersection with the visible region reserved for it.
+  if (target.right <= left + edge || target.left >= right - edge
+    || target.bottom <= highlightTop || target.top >= highlightBottom) return null;
   const hole = {
     left: Math.max(left + edge, target.left - 8),
+    // Sticky controls can start at the safe-region edge and cannot be moved
+    // by page scrolling. Keep their padded outline outside the actual control.
     top: Math.max(top + edge, target.top - 8),
     right: Math.min(right - edge, target.right + 8),
-    bottom: Math.min(bottom - edge, target.bottom + 8),
+    bottom: Math.min(highlightBottom, target.bottom + 8),
   };
   if (hole.right <= hole.left || hole.bottom <= hole.top) return null;
   const width = Math.min(panel.width, safeRight - safeLeft);
@@ -46,7 +75,7 @@ export function siteTrainingGeometry(target, panel, viewport) {
   const panelTop = fit.above ? hole.top - gap - height : fit.top;
   return {
     hole,
-    panel: {
+    panel: mobile?.panel || {
       left: fit.left,
       top: clamp(panelTop, safeTop, safeBottom - height),
       maxHeight: height,
@@ -147,6 +176,10 @@ export function createSiteTrainingCoachmark({
   error.setAttribute('role', 'alert');
   error.setAttribute('aria-live', 'assertive');
   error.hidden = true;
+  const lesson = element(ownerDocument, 'div', 'site-training-lesson');
+  const focusCue = element(ownerDocument, 'p', 'site-training-focus-cue', '↑ Highlighted above');
+  focusCue.hidden = true;
+  lesson.append(focusCue, title, description, fallback, error);
 
   const actions = element(ownerDocument, 'div', 'site-training-actions');
   const backButton = element(ownerDocument, 'button', 'secondary', 'Back');
@@ -159,7 +192,7 @@ export function createSiteTrainingCoachmark({
   nextButton.type = 'button';
   nextButton.dataset.trainingAction = 'next';
   actions.append(backButton, stopButton, nextButton);
-  panel.append(header, title, description, fallback, error, actions);
+  panel.append(header, lesson, actions);
   layer.append(backdrop, panel);
   ownerDocument.body.append(layer);
 
@@ -172,9 +205,16 @@ export function createSiteTrainingCoachmark({
     replay: false,
     target: null,
     observedTargets: [],
+    settledReveals: [],
     trigger: null,
   };
   let resizeFrame = null;
+
+  const clearPanelPosition = () => {
+    panel.style.removeProperty('--site-training-left');
+    panel.style.removeProperty('--site-training-top');
+    panel.style.removeProperty('max-height');
+  };
 
   const clearTarget = () => {
     if (resizeFrame !== null) {
@@ -184,13 +224,14 @@ export function createSiteTrainingCoachmark({
     resizeObserver?.unobserve(panel);
     state.observedTargets.forEach((target) => resizeObserver?.unobserve(target));
     state.observedTargets = [];
+    state.settledReveals.forEach((target) => target.classList.remove('site-training-reveal-settled'));
+    state.settledReveals = [];
     state.target?.classList?.remove('site-training-target');
     state.target = null;
-    panel.style.removeProperty('--site-training-left');
-    panel.style.removeProperty('--site-training-top');
-    panel.style.removeProperty('max-height');
+    clearPanelPosition();
     panel.style.removeProperty('max-width');
     layer.classList.remove('has-target');
+    focusCue.hidden = true;
   };
 
   const setBusy = (busy, message = 'Saving page training…') => {
@@ -205,6 +246,7 @@ export function createSiteTrainingCoachmark({
   const setError = (message = '') => {
     error.textContent = String(message || '').trim();
     error.hidden = !error.textContent;
+    if (state.open) schedulePosition();
   };
 
   const setFallback = (visible) => {
@@ -224,17 +266,41 @@ export function createSiteTrainingCoachmark({
     }
   };
 
+  const measureLayout = ({ targeted = Boolean(state.target) } = {}) => {
+    const view = ownerDocument.defaultView;
+    const visual = view.visualViewport;
+    const mobile = (visual?.width || view.innerWidth) <= 640;
+    layer.classList.toggle('is-mobile', mobile);
+    // Assess every target against the same lesson content, independent of a
+    // previous fallback. Extra fallback copy must not shrink the candidate
+    // target region and prevent an otherwise visible target from recovering.
+    fallback.hidden = targeted;
+    focusCue.hidden = !mobile || !targeted;
+    const css = view.getComputedStyle(layer);
+    const padding = Object.fromEntries(['left', 'top', 'right', 'bottom'].map((side) => [
+      side, Math.max(12, Number.parseFloat(css.getPropertyValue(`padding-${side}`)) || 0),
+    ]));
+    const viewport = { left: visual?.offsetLeft || 0, top: visual?.offsetTop || 0,
+      width: visual?.width || view.innerWidth, height: visual?.height || view.innerHeight, padding };
+    // Pinch zoom changes the visual viewport without changing CSS breakpoints.
+    // Clamp actual width first so natural lesson height includes line wrapping.
+    panel.style.maxWidth = `${Math.max(0, viewport.width - padding.left - padding.right)}px`;
+    const bounds = panel.getBoundingClientRect();
+    const chromeHeight = bounds.height - lesson.getBoundingClientRect().height;
+    const dimensions = { width: bounds.width, height: chromeHeight + lesson.scrollHeight, chromeHeight };
+    return { viewport, dimensions, mobile: mobile ? siteTrainingMobileLayout(dimensions, viewport, targeted) : null };
+  };
+
   const revealTarget = () => {
     if (!state.open || !state.target) return;
     state.target.scrollIntoView?.({ block: 'center', inline: 'nearest', behavior: 'instant' });
     const body = ownerDocument.body;
     if (!state.modalOwner?.isActive || body.style.position !== 'fixed' || !body.hasAttribute('data-dialog-open')) return;
     const view = ownerDocument.defaultView;
-    const viewport = view.visualViewport;
-    const css = view.getComputedStyle(layer);
-    const top = (viewport?.offsetTop || 0) + Math.max(12, Number.parseFloat(css.paddingTop) || 0) + 8;
-    const bottom = (viewport?.offsetTop || 0) + (viewport?.height || view.innerHeight)
-      - Math.max(12, Number.parseFloat(css.paddingBottom) || 0) - 8;
+    const layout = measureLayout();
+    const { viewport } = layout;
+    const top = (layout.mobile?.targetRegion.top ?? viewport.top + viewport.padding.top) + 8;
+    const bottom = (layout.mobile?.targetRegion.bottom ?? viewport.top + viewport.height - viewport.padding.bottom) - 8;
     const bounds = state.target.getBoundingClientRect();
     if (bounds.top >= top && bounds.bottom <= bottom) return;
     // The modal owns a fixed-body scroll lock, so native scrolling can reveal
@@ -251,11 +317,21 @@ export function createSiteTrainingCoachmark({
   };
 
   const position = () => {
-    if (!state.open || !state.target) return;
+    if (!state.open) return;
     const view = ownerDocument.defaultView;
-    if (!siteTrainingTargetAvailable(state.target, view) || state.target.isConnected === false) {
+    if (state.target && (!siteTrainingTargetAvailable(state.target, view) || state.target.isConnected === false)) {
       clearTarget();
       setFallback(true);
+    }
+    const { viewport, dimensions, mobile } = measureLayout();
+    const placePanel = (placement) => {
+      panel.style.setProperty('--site-training-left', `${placement.left}px`);
+      panel.style.setProperty('--site-training-top', `${placement.top}px`);
+      panel.style.maxHeight = `${placement.maxHeight}px`;
+    };
+    if (!state.target) {
+      if (mobile) placePanel(mobile.panel);
+      else clearPanelPosition();
       return;
     }
     const targetBounds = state.target.getBoundingClientRect();
@@ -274,31 +350,22 @@ export function createSiteTrainingCoachmark({
         visible.bottom = Math.min(visible.bottom, bounds.bottom);
       }
     }
-    const viewport = view.visualViewport;
-    const layerStyle = view.getComputedStyle(layer);
-    const padding = Object.fromEntries(['left', 'top', 'right', 'bottom'].map((side) => [
-      side, Math.max(12, Number.parseFloat(layerStyle.getPropertyValue(`padding-${side}`)) || 0),
-    ]));
-    // Pinch zoom changes the visual viewport without changing CSS breakpoints.
-    // Clamp the actual rendered width before measuring wrapping and height.
-    panel.style.maxWidth = `${Math.max(0, (viewport?.width || view.innerWidth) - padding.left - padding.right)}px`;
-    const panelBounds = panel.getBoundingClientRect();
-    const geometry = siteTrainingGeometry(visible, {
-      width: panelBounds.width,
-      height: Math.max(panelBounds.height, panel.scrollHeight + panelBounds.height - panel.clientHeight),
-    }, { left: viewport?.offsetLeft || 0, top: viewport?.offsetTop || 0, width: viewport?.width || view.innerWidth, height: viewport?.height || view.innerHeight, padding });
+    const geometry = siteTrainingGeometry(visible, dimensions, viewport);
     layer.classList.toggle('has-target', Boolean(geometry));
     setFallback(!geometry);
-    if (!geometry) { panel.style.removeProperty('max-height'); return; }
+    focusCue.hidden = !mobile || !geometry;
+    if (!geometry) {
+      if (mobile) placePanel(measureLayout({ targeted: false }).mobile.panel);
+      else clearPanelPosition();
+      return;
+    }
     const setRect = (node, bounds) => Object.entries(bounds).forEach(([property, value]) => {
       node.style[property] = `${value}px`;
     });
     geometry.panes.forEach((bounds, index) => setRect(panes[index], bounds));
     const { hole } = geometry;
     setRect(spotlight, { left: hole.left, top: hole.top, width: hole.right - hole.left, height: hole.bottom - hole.top });
-    panel.style.setProperty('--site-training-left', `${geometry.panel.left}px`);
-    panel.style.setProperty('--site-training-top', `${geometry.panel.top}px`);
-    panel.style.maxHeight = `${geometry.panel.maxHeight}px`;
+    placePanel(geometry.panel);
   };
 
   const repositionForResize = () => {
@@ -332,7 +399,7 @@ export function createSiteTrainingCoachmark({
 
   const controller = {
     elements: {
-      layer, backdrop, panel, progress, closeButton, title, description, fallback, error,
+      layer, backdrop, panel, progress, closeButton, title, description, fallback, error, lesson, focusCue,
       actions, backButton, stopButton, nextButton,
     },
     get isBusy() { return state.busy; },
@@ -354,14 +421,22 @@ export function createSiteTrainingCoachmark({
         throw new TypeError('A published page training step is required.');
       }
       clearTarget();
+      resizeObserver?.observe(panel);
       const resolved = resolveSiteTrainingStep(step, capabilities);
       const selector = siteTrainingTargetSelector(resolved.target);
       const target = selector ? ownerDocument.querySelector(selector) : null;
       if (resolved.available && siteTrainingTargetAvailable(target, ownerDocument.defaultView)) {
         state.target = target;
         target.classList.add('site-training-target');
-        resizeObserver?.observe(panel);
         for (let observed = target; observed && observed !== ownerDocument.body; observed = observed.parentElement) {
+          // Settle only the app's known entrance-reveal presentation while it
+          // is highlighted. Preserve unrelated transforms and the reveal
+          // controller's own pending/visible state; remove our class on exit.
+          if (observed.matches?.('.reveal.pending-reveal, .reveal.is-visible')
+            && !observed.classList.contains('site-training-reveal-settled')) {
+            observed.classList.add('site-training-reveal-settled');
+            state.settledReveals.push(observed);
+          }
           state.observedTargets.push(observed);
           resizeObserver?.observe(observed);
         }
@@ -387,6 +462,8 @@ export function createSiteTrainingCoachmark({
       nextButton.textContent = state.finalStep ? 'Finish' : 'Next';
       layer.classList.toggle('has-target', Boolean(state.target));
       setError('');
+      lesson.scrollTop = 0;
+      panel.scrollTop = 0;
       revealTarget();
       position();
       focusTitle();

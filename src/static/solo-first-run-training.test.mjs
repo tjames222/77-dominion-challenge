@@ -221,6 +221,110 @@ describe('Solo first-run contracts', () => {
 });
 
 describe('Solo first-run orchestration', () => {
+  for (const [status, action, method] of [
+    ['not_started', 'start', 'start'],
+    ['stopped', 'resume', 'resume'],
+    ['in_progress', 'continue', 'open'],
+  ]) {
+    test(`${action} closes the drawer before opening and restores focus to its visible toggle`, async () => {
+      const env = browser();
+      const runtime = fakeRuntimeFactory(trainingState({ overallStatus: status, pageStatus: status }));
+      let drawerOpen = true;
+      const control = Object.assign(fakeControl(), {
+        focus() {},
+        isConnected: true,
+        closest() { return drawerOpen ? null : { inert: true }; },
+      });
+      const menuButton = { focus() {}, isConnected: true, closest: () => null };
+      const beforeOpenCalls = [];
+      const controller = createSoloFirstRunTraining({
+        user: USER,
+        window: env.window,
+        document: {
+          activeElement: control,
+          querySelector: (selector) => selector === '.global-menu-button' ? menuButton : null,
+          querySelectorAll: () => [],
+        },
+        api: { getChallengeActivation: async () => ACTIVE_SOLO },
+        runtimeFactory: runtime.factory,
+        beforeOpen(input) {
+          assert.equal(runtime.calls[method].length, 0, 'the drawer must close before modal isolation');
+          beforeOpenCalls.push(input);
+          drawerOpen = false;
+          return menuButton;
+        },
+      });
+      controller.attachControl(control);
+      await controller.refresh({ autoOpen: false });
+      assert.equal(beforeOpenCalls.length, 0, 'reading progress must not close the menu');
+      await controller.activate({ trigger: control });
+      assert.equal(drawerOpen, false);
+      assert.equal(beforeOpenCalls.length, 1);
+      assert.equal(beforeOpenCalls[0].action, action);
+      assert.equal(beforeOpenCalls[0].control, control);
+      assert.equal(beforeOpenCalls[0].page.id, 'dashboard');
+      assert.equal(runtime.calls[method].length, 1);
+      assert.equal(runtime.calls[method][0].trigger, menuButton);
+      controller.destroy();
+    });
+  }
+
+  test('keeps the menu untouched when current training cannot be verified', async () => {
+    for (const failure of ['activation', 'hydration', 'route']) {
+      const env = browser();
+      const runtime = fakeRuntimeFactory(trainingState({
+        currentPageId: failure === 'route' ? 'unpublished-page' : 'dashboard',
+      }));
+      let beforeOpenCalls = 0;
+      const controller = createSoloFirstRunTraining({
+        user: USER,
+        window: env.window,
+        document: { querySelector: () => null, querySelectorAll: () => [] },
+        api: {
+          getChallengeActivation: async () => {
+            if (failure === 'activation') throw new Error('Activation unavailable');
+            return ACTIVE_SOLO;
+          },
+        },
+        runtimeFactory(options) {
+          const created = runtime.factory(options);
+          if (failure === 'hydration') {
+            const state = created.state;
+            state.contractValid = false;
+            created.hydrate = async () => { throw new Error('Training unavailable'); };
+          }
+          return created;
+        },
+        beforeOpen() { beforeOpenCalls += 1; },
+      });
+      await assert.rejects(controller.activate(), /unavailable|could not be verified/i);
+      assert.equal(beforeOpenCalls, 0, failure);
+      assert.equal(runtime.calls.start.length + runtime.calls.resume.length + runtime.calls.open.length, 0);
+      controller.destroy();
+    }
+  });
+
+  test('does not close the menu when a completed page only advances to the next route', async () => {
+    const env = browser();
+    const runtime = fakeRuntimeFactory(trainingState({
+      overallStatus: 'in_progress',
+      pageStatus: 'completed',
+    }));
+    let beforeOpenCalls = 0;
+    const controller = createSoloFirstRunTraining({
+      user: USER,
+      window: env.window,
+      document: { querySelector: () => null, querySelectorAll: () => [] },
+      api: { getChallengeActivation: async () => ACTIVE_SOLO },
+      runtimeFactory: runtime.factory,
+      beforeOpen() { beforeOpenCalls += 1; },
+    });
+    await controller.activate();
+    assert.equal(runtime.calls.advance > 0, true);
+    assert.equal(beforeOpenCalls, 0);
+    controller.destroy();
+  });
+
   test('consumes the exact FOU-1440 handoff once after a confirmed actor-bound claim', async () => {
     const env = browser();
     const launch = createSoloTrainingLaunch({
@@ -306,12 +410,14 @@ describe('Solo first-run orchestration', () => {
     }));
     const control = fakeControl();
     const activations = [ACTIVE_SOLO, { ...ACTIVE_SOLO, mode: 'group' }];
+    let beforeOpenCalls = 0;
     const controller = createSoloFirstRunTraining({
       user: USER,
       window: env.window,
       document: { querySelector: () => null, querySelectorAll: () => [] },
       api: { getChallengeActivation: async () => activations.shift() },
       runtimeFactory: runtime.factory,
+      beforeOpen() { beforeOpenCalls += 1; },
     });
     controller.attachControl(control);
     await controller.refresh({ autoOpen: false });
@@ -323,6 +429,7 @@ describe('Solo first-run orchestration', () => {
     assert.equal(runtime.calls.resume.length, 0);
     assert.equal(runtime.calls.open.length, 0);
     assert.equal(runtime.calls.destroy, 1);
+    assert.equal(beforeOpenCalls, 0, 'failed authorization must leave the menu available');
     assert.equal(control.hidden, true);
     controller.destroy();
   });
@@ -412,6 +519,7 @@ describe('Solo first-run orchestration', () => {
       currentPageIndex: 11,
     }));
     const navigations = [];
+    let beforeOpenCalls = 0;
     const controller = createSoloFirstRunTraining({
       user: USER,
       window: env.window,
@@ -419,10 +527,12 @@ describe('Solo first-run orchestration', () => {
       api: { getChallengeActivation: async () => ACTIVE_SOLO },
       runtimeFactory: runtime.factory,
       navigate: (route) => navigations.push(route),
+      beforeOpen() { beforeOpenCalls += 1; },
     });
     await controller.refresh({ autoOpen: false });
     await controller.activate();
     assert.deepEqual(navigations, ['/profile.html']);
+    assert.equal(beforeOpenCalls, 0, 'cross-route navigation does not open a local coachmark');
     assert.deepEqual(readSoloTrainingControlRequest(env.window.sessionStorage, USER.userId), {
       schemaVersion: 1,
       actorId: USER.userId,
