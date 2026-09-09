@@ -35,7 +35,7 @@ test('public share text/plain is rendered as hardened HTML on only the three pro
       assert.equal(url, upstream);
       assert.equal(options.method, 'GET');
       assert.deepEqual(options.headers, { Accept: 'text/html' });
-      assert.equal(options.redirect, 'error');
+      assert.equal(options.redirect, 'manual');
       assert.equal(options.credentials, 'omit');
       assert.equal(options.cache, 'no-store');
       assert.ok(options.signal instanceof AbortSignal);

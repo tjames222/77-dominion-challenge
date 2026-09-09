@@ -118,7 +118,7 @@ export function createPublicShareWorker(fetchImpl = globalThis.fetch) {
       // No incoming credentials, headers, query parameters, or cookies enter
       // this request. There is one fixed public GET endpoint and no retries.
       upstream = await beforeAbort(fetchImpl(`${UPSTREAM}/${token}`, {
-        method: 'GET', headers: { Accept: 'text/html' }, redirect: 'error',
+        method: 'GET', headers: { Accept: 'text/html' }, redirect: 'manual',
         credentials: 'omit', cache: 'no-store', referrerPolicy: 'no-referrer',
         signal: controller.signal,
       }), controller.signal);
