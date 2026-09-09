@@ -4,11 +4,13 @@ import test from "node:test";
 import {
   configureProductionFunctionOrigins,
   verifyProductionDomainPages,
+  verifyProductionSharePages,
 } from "./configure-production-function-origins.mjs";
 import {
   PRODUCTION_ALLOWED_SITE_URLS,
   PRODUCTION_SITE_ORIGINS,
   PRODUCTION_SITE_URL,
+  PRODUCTION_SHARE_URL,
   PRODUCTION_SUPABASE_PROJECT_REF,
 } from "./production-auth-canary-policy.mjs";
 
@@ -20,6 +22,7 @@ const settings = {
   projectRef: PRODUCTION_SUPABASE_PROJECT_REF,
   publicSiteUrl: PRODUCTION_SITE_URL,
   allowedSiteUrls: PRODUCTION_ALLOWED_SITE_URLS,
+  publicShareUrl: PRODUCTION_SHARE_URL,
 };
 
 function harness({ inventory = [], override } = {}) {
@@ -48,22 +51,33 @@ function harness({ inventory = [], override } = {}) {
       });
     }
     assert.equal(options.method, "GET");
+    if (url.endsWith("/share")) return new Response(`<title>Share unavailable | Dominion</title><a href="${PRODUCTION_SITE_URL}">Visit Dominion</a>`, {
+      status: 404,
+      headers: {
+        "content-type": "text/html; charset=utf-8",
+        "x-dominion-share-route": "1",
+        "cache-control": "private, no-store, max-age=0",
+        "referrer-policy": "no-referrer",
+        "x-content-type-options": "nosniff",
+      },
+    });
     if (url.endsWith(".html")) return new Response(null, { status: 308, headers: { location: new URL(url).pathname.replace(/\.html$/, "") } });
     return new Response(html, { headers: { "content-type": "text/html; charset=utf-8" } });
   };
   return { calls, fetchImpl };
 }
 
-test("only two fixed origin secrets are written after all public route and canonical redirect checks", async () => {
+test("only three fixed public URL secrets are written after all public route and canonical redirect checks", async () => {
   const { calls, fetchImpl } = harness({ inventory: [{ name: "STRIPE_SECRET_KEY", value: "never-log-me" }] });
   assert.equal(await configureProductionFunctionOrigins({ ...settings, fetchImpl }), true);
-  assert.equal(calls.length, 25);
-  assert.equal(calls[15].url, secretsUrl);
-  const write = calls[16];
+  assert.equal(calls.length, 28);
+  assert.equal(calls[18].url, secretsUrl);
+  const write = calls[19];
   assert.equal(write.url, secretsUrl);
   assert.deepEqual(JSON.parse(write.options.body), [
     { name: "PUBLIC_SITE_URL", value: PRODUCTION_SITE_URL },
     { name: "PUBLIC_ALLOWED_SITE_URLS", value: PRODUCTION_ALLOWED_SITE_URLS },
+    { name: "PUBLIC_SHARE_URL", value: PRODUCTION_SHARE_URL },
   ]);
   for (const { url, options } of calls) {
     assert.equal(options.redirect, url.endsWith(".html") ? "manual" : "error");
@@ -77,8 +91,8 @@ test("only two fixed origin secrets are written after all public route and canon
 test("legacy origin alias is aligned only when it already exists", async () => {
   const { calls, fetchImpl } = harness({ inventory: [{ name: "ALLOWED_SITE_ORIGINS" }, { name: "OTHER_SECRET" }] });
   await configureProductionFunctionOrigins({ ...settings, fetchImpl });
-  assert.deepEqual(JSON.parse(calls[16].options.body).map(({ name }) => name), ["PUBLIC_SITE_URL", "PUBLIC_ALLOWED_SITE_URLS", "ALLOWED_SITE_ORIGINS"]);
-  assert.equal(JSON.parse(calls[16].options.body)[2].value, PRODUCTION_ALLOWED_SITE_URLS);
+  assert.deepEqual(JSON.parse(calls[19].options.body).map(({ name }) => name), ["PUBLIC_SITE_URL", "PUBLIC_ALLOWED_SITE_URLS", "PUBLIC_SHARE_URL", "ALLOWED_SITE_ORIGINS"]);
+  assert.equal(JSON.parse(calls[19].options.body)[3].value, PRODUCTION_ALLOWED_SITE_URLS);
 });
 
 test("wrong project, variables, token, or runtime fail before all requests", async () => {
@@ -86,6 +100,10 @@ test("wrong project, variables, token, or runtime fail before all requests", asy
     { projectRef: "another-project" },
     { publicSiteUrl: "https://untrusted.invalid" },
     { allowedSiteUrls: "https://*.77dominion.com" },
+    { publicShareUrl: "http://mimolwojppbtsbvtqwpo.supabase.co/share-snapshot" },
+    { publicShareUrl: "https://mimolwojppbtsbvtqwpo.supabase.co/functions/v1/share-snapshot" },
+    { publicShareUrl: "https://77dominion.com/share?next=untrusted" },
+    { publicShareUrl: undefined },
     { accessToken: "" },
     { accessToken: " token" },
     { accessToken: "token\n" },
@@ -118,6 +136,34 @@ test("public verification is read-only and requires exact existing release bytes
   assert.ok(calls.every(({ options }) => options.method === "GET" && options.headers === undefined));
 });
 
+test("public share verification probes only tokenless HTML routes without credentials", async () => {
+  const { calls, fetchImpl } = harness();
+  assert.equal(await verifyProductionSharePages({ fetchImpl }), true);
+  assert.deepEqual(calls.map(({ url }) => url), PRODUCTION_SITE_ORIGINS.map((origin) => `${origin}/share`));
+  assert.ok(calls.every(({ options }) => options.method === "GET" && options.headers === undefined));
+});
+
+test("missing, redirected, text/plain, cached, or unrecognized share routes block all secret writes", async () => {
+  for (const replacement of [
+    () => new Response(html, { status: 200, headers: { "content-type": "text/html" } }),
+    () => new Response(null, { status: 302, headers: { location: "https://untrusted.invalid" } }),
+    ...["content-type", "x-dominion-share-route", "cache-control", "referrer-policy", "x-content-type-options", "body"].map((invalid) => () => new Response(invalid === "body" ? html : `<title>Share unavailable | Dominion</title><a href="${PRODUCTION_SITE_URL}">Visit</a>`, {
+      status: 404,
+      headers: {
+        "content-type": invalid === "content-type" ? "text/plain" : "text/html",
+        "x-dominion-share-route": invalid === "x-dominion-share-route" ? "old" : "1",
+        "cache-control": invalid === "cache-control" ? "public, max-age=300" : "private, no-store",
+        "referrer-policy": invalid === "referrer-policy" ? "unsafe-url" : "no-referrer",
+        "x-content-type-options": invalid === "x-content-type-options" ? "" : "nosniff",
+      },
+    })),
+  ]) {
+    const { calls, fetchImpl } = harness({ override: (url) => url.endsWith("/share") ? replacement() : undefined });
+    await assert.rejects(configureProductionFunctionOrigins({ ...settings, fetchImpl }), /Public share page check/);
+    assert.ok(calls.every(({ url }) => url !== secretsUrl));
+  }
+});
+
 test("secret inventory errors prevent any write and do not leak response details", async () => {
   for (const response of [
     new Response(token, { status: 403 }),
@@ -134,7 +180,7 @@ test("secret inventory errors prevent any write and do not leak response details
 test("secret update failures do not continue or leak bodies", async () => {
   const { calls, fetchImpl } = harness({ override: (url, options) => url === secretsUrl && options.method === "POST" ? new Response(token, { status: 403 }) : undefined });
   await assert.rejects(configureProductionFunctionOrigins({ ...settings, fetchImpl }), /origin update failed \(HTTP 403\)/);
-  assert.equal(calls.length, 17);
+  assert.equal(calls.length, 20);
 });
 
 test("CORS validation rejects blocked custom origins, wildcards, and missing headers", async () => {
@@ -172,6 +218,7 @@ test("the protected configuration workflow verifies pages and origins before cha
   assert.match(workflow, /environment: production/);
   assert.match(workflow, /refs\/heads\/main/);
   assert.match(workflow, /PUBLIC_ALLOWED_SITE_URLS: \$\{\{ vars.PUBLIC_ALLOWED_SITE_URLS \}\}/);
+  assert.match(workflow, /PUBLIC_SHARE_URL: \$\{\{ vars.PUBLIC_SHARE_URL \}\}/);
   assert.ok(workflow.indexOf("node scripts/configure-production-function-origins.mjs") < workflow.indexOf("node scripts/configure-production-auth-canary.mjs"));
   assert.doesNotMatch(workflow, /supabase db|functions deploy|secrets list|service_role|STRIPE_SECRET/);
 });
