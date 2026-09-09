@@ -73,16 +73,36 @@ whether another user owns the identifier.
 
 ## Public renderer and social crawlers
 
-`GET /functions/v1/share-snapshot/{64-character-token}` returns a complete HTML
-document without JavaScript. It includes canonical, Open Graph, Twitter card,
+The Edge Function handler builds a complete HTML document for
+`GET /functions/v1/share-snapshot/{64-character-token}` without JavaScript.
+It includes canonical, Open Graph, Twitter card,
 description, and image metadata plus a branded readable fallback page. Responses
 use `no-store`, `no-referrer`, a restrictive CSP, `nosniff`, and frame denial so
 revocation takes effect on the next request and the bearer token is not sent as a
 referrer.
 
-`PUBLIC_SHARE_URL` may point to a custom HTTPS route that proxies this Function.
-If it is absent, creation uses the deployed Function URL. `PUBLIC_SITE_URL` is
-required for the canonical Dominion destination and preview image.
+Production requires the explicit Function secret and matching GitHub production
+variable `PUBLIC_SHARE_URL=https://77dominion.com/share`. This uses the existing
+`share-snapshot` Function's supported public-URL override; new links and their
+canonical/`og:url` metadata then use the configured HTTPS Cloudflare route,
+regardless of the Function's internal request URL. `PUBLIC_SITE_URL` remains
+`https://77dominion.com` for the Dominion destination and preview image.
+
+The public `/share/{64-character-token}` route belongs to the existing
+`77-dominion-live` Cloudflare Pages project and forwards only the public share
+request to the existing Supabase Function. No replacement project or paid
+Supabase custom domain is required. Supabase's shared API domain rewrites HTML
+GET responses to `text/plain`, so correcting a direct Supabase link's path alone
+does not make it a rendered share page. The Cloudflare route must return HTML
+with the same privacy and no-cache protections. See
+[Supabase's HTML restriction](https://supabase.com/docs/guides/functions/limits).
+
+Do not leave `PUBLIC_SHARE_URL` unset in production. The current Function still
+falls back to `req.url` when the override is absent or invalid. Behind the hosted
+gateway, that URL can use internal HTTP routing without the external
+`/functions/v1` prefix. This release configures the supported override; it does
+not change or harden that fallback code. Do not point the override at `/share`
+until the Cloudflare route is deployed and verified.
 
 ## Lifecycle, abuse controls, and deletion
 
@@ -107,10 +127,36 @@ window and monitoring owner.
 
 ## Release and verification
 
-The release workflow applies the migration, synchronizes optional
-`PUBLIC_SHARE_URL`, deploys `share-snapshot` with gateway JWT verification off,
-and confirms a tokenless request returns the generic `404`. Before enabling the
-composer, verify a real preview/create/revoke cycle and run the resulting URL
-through the intended social-platform debuggers. Confirm revoked and expired URLs
-return the same unavailable page and that no private field appears in page source
-or metadata.
+The full backend release can synchronize `PUBLIC_SHARE_URL` and deploy
+`share-snapshot` with gateway JWT verification off. Its tokenless `404` smoke
+alone does not prove generated URLs or rendered HTML work. The production share
+link repair uses this order instead:
+
+1. Review and deploy the Cloudflare `/share` route through the protected
+   frontend release to the existing Pages project. Do not change the Supabase
+   project, database, or deployed Edge Function code for this repair.
+2. Verify the tokenless/invalid public route returns the intended unavailable
+   HTML, not an app fallback or raw source. Check its MIME type, security
+   headers, and no-store behavior without opening a real user's bearer link.
+3. Set the matching GitHub production `PUBLIC_SHARE_URL` variable, then use the
+   reviewed protected configuration workflow to synchronize the exact
+   `https://77dominion.com/share` Function override only after route-readiness
+   verification. Function-secret changes take effect without redeploying the
+   Edge Function. Keep existing Auth/origin policy and safe-off billing gates.
+4. Verify a signed-in preview and an explicitly authorized synthetic
+   create/read/revoke cycle. New links and page canonical/`og:url` values must
+   use the apex HTTPS `/share/` route; valid public pages must render as HTML,
+   and revoked/expired links must use the same generic unavailable response.
+   Do not record bearer tokens or private account data in logs or artifacts.
+
+Local regression tests use only synthetic tokens and mocked RPCs. They confirm
+the configured route wins over internal HTTP URLs, rewritten paths, forged Host
+and forwarding headers, and request query/fragment values for both create URLs
+and public metadata. They do not exercise the unsafe unset-override fallback or
+claim the live configuration has already been applied.
+
+Testing a real public share link increments its aggregate view telemetry;
+creation and revocation also write snapshot state. Treat those checks as
+authorized tests, not read-only probes. Once authorized end-to-end verification
+passes, test intended social-platform previews without exposing private fields
+in page source or metadata.

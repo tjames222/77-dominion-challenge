@@ -3,6 +3,7 @@ const REQUEST_TIMEOUT_MS = 20_000;
 
 export const PRODUCTION_SUPABASE_PROJECT_REF = "mimolwojppbtsbvtqwpo";
 export const PRODUCTION_SITE_URL = "https://77dominion.com";
+export const PRODUCTION_SHARE_URL = `${PRODUCTION_SITE_URL}/share`;
 export const PRODUCTION_SITE_ORIGINS = Object.freeze([
   PRODUCTION_SITE_URL,
   "https://www.77dominion.com",
