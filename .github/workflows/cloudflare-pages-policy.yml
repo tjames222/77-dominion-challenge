@@ -8,6 +8,11 @@ on:
         required: true
         default: false
         type: boolean
+      configure_custom_domain:
+        description: Add only 77dominion.com to the existing production project and its existing DNS zone; never create a project or replace records.
+        required: true
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -27,6 +32,7 @@ jobs:
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       CLOUDFLARE_PAGES_PROJECT: ${{ vars.CLOUDFLARE_PAGES_PROJECT }}
       CLOUDFLARE_ALLOW_PROJECT_CREATE: ${{ inputs.create_missing_project }}
+      CLOUDFLARE_CONFIGURE_CUSTOM_DOMAIN: ${{ inputs.configure_custom_domain }}
       SUPABASE_PROJECT_REF: ${{ vars.SUPABASE_PROJECT_REF }}
       VITE_SUPABASE_URL: ${{ vars.VITE_SUPABASE_URL }}
       VITE_SUPABASE_PUBLISHABLE_KEY: ${{ vars.VITE_SUPABASE_PUBLISHABLE_KEY }}
@@ -36,6 +42,10 @@ jobs:
         run: |
           if [[ "${GITHUB_REF}" != "refs/heads/main" ]]; then
             echo "::error::Cloudflare production policy may be configured only from the protected main branch."
+            exit 1
+          fi
+          if [[ "${CLOUDFLARE_CONFIGURE_CUSTOM_DOMAIN}" == "true" && "${CLOUDFLARE_ALLOW_PROJECT_CREATE}" == "true" ]]; then
+            echo "::error::Custom-domain setup must never create or switch projects."
             exit 1
           fi
       - name: Require the exact isolated Pages project
@@ -52,4 +62,8 @@ jobs:
         with:
           node-version: 22
       - name: Configure and verify the Pages project policy
+        if: ${{ !inputs.configure_custom_domain }}
         run: node scripts/configure-cloudflare-pages-policy.mjs
+      - name: Configure only the approved apex domain on the existing project
+        if: ${{ inputs.configure_custom_domain }}
+        run: node scripts/configure-production-custom-domain.mjs

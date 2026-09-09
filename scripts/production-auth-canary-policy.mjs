@@ -2,15 +2,26 @@ const AUTH_CONFIG_BASE_URL = "https://api.supabase.com/v1/projects";
 const REQUEST_TIMEOUT_MS = 20_000;
 
 export const PRODUCTION_SUPABASE_PROJECT_REF = "mimolwojppbtsbvtqwpo";
-export const PRODUCTION_SITE_URL = "https://77-dominion-live.pages.dev";
+export const PRODUCTION_SITE_URL = "https://77dominion.com";
+export const PRODUCTION_SITE_ORIGINS = Object.freeze([
+  PRODUCTION_SITE_URL,
+  "https://www.77dominion.com",
+  "https://77-dominion-live.pages.dev",
+]);
+export const PRODUCTION_ALLOWED_SITE_URLS = PRODUCTION_SITE_ORIGINS.join(",");
 export const PRODUCTION_RECOVERY_REDIRECT_URL =
   `${PRODUCTION_SITE_URL}/reset-password.html`;
+export const PRODUCTION_RECOVERY_REDIRECT_URLS = Object.freeze(
+  PRODUCTION_SITE_ORIGINS.map((origin) => `${origin}/reset-password.html`),
+);
+export const PRODUCTION_RECOVERY_REDIRECT_ALLOW_LIST =
+  PRODUCTION_RECOVERY_REDIRECT_URLS.join(",");
 
 export const CLOSED_AUTH_CONFIG_PATCH = Object.freeze({
   disable_signup: true,
   external_anonymous_users_enabled: false,
   site_url: PRODUCTION_SITE_URL,
-  uri_allow_list: PRODUCTION_RECOVERY_REDIRECT_URL,
+  uri_allow_list: PRODUCTION_RECOVERY_REDIRECT_ALLOW_LIST,
 });
 
 function requireAccessToken(accessToken) {
@@ -105,6 +116,18 @@ async function requestAuthConfig({
   return response;
 }
 
+function hasExactRecoveryRedirects(value) {
+  if (typeof value !== "string" || /[\u0000-\u001f\u007f]/u.test(value)) {
+    return false;
+  }
+  const entries = value.split(",").map((entry) => entry.trim());
+  // Supabase may return the same allowlist in a different order. Only the
+  // reviewed complete set is accepted: no missing, duplicate, or extra entry.
+  return entries.length === PRODUCTION_RECOVERY_REDIRECT_URLS.length &&
+    new Set(entries).size === entries.length &&
+    entries.every((entry) => PRODUCTION_RECOVERY_REDIRECT_URLS.includes(entry));
+}
+
 export function productionAuthCanaryErrors(config) {
   if (!config || typeof config !== "object" || Array.isArray(config)) {
     return ["Supabase returned an invalid Auth configuration response"];
@@ -122,9 +145,9 @@ export function productionAuthCanaryErrors(config) {
   if (config.site_url !== PRODUCTION_SITE_URL) {
     errors.push("Supabase Auth site_url must be the reviewed production origin");
   }
-  if (config.uri_allow_list !== PRODUCTION_RECOVERY_REDIRECT_URL) {
+  if (!hasExactRecoveryRedirects(config.uri_allow_list)) {
     errors.push(
-      "Supabase Auth uri_allow_list must contain only the reviewed recovery redirect",
+      "Supabase Auth uri_allow_list must contain exactly the three reviewed recovery redirects",
     );
   }
   return errors;

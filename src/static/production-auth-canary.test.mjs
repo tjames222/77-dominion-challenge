@@ -6,7 +6,7 @@ import {
   verifyProductionAuthCanary,
 } from '../../scripts/verify-production-auth-canary.mjs';
 import {
-  PRODUCTION_RECOVERY_REDIRECT_URL,
+  PRODUCTION_RECOVERY_REDIRECT_ALLOW_LIST,
   PRODUCTION_SITE_URL,
   PRODUCTION_SUPABASE_PROJECT_REF,
 } from '../../scripts/production-auth-canary-policy.mjs';
@@ -17,7 +17,7 @@ describe('production Supabase Auth canary gate', () => {
       disable_signup: true,
       external_anonymous_users_enabled: false,
       site_url: PRODUCTION_SITE_URL,
-      uri_allow_list: PRODUCTION_RECOVERY_REDIRECT_URL,
+      uri_allow_list: PRODUCTION_RECOVERY_REDIRECT_ALLOW_LIST,
     }), []);
     assert.deepEqual(productionAuthCanaryErrors({
       disable_signup: false,
@@ -28,13 +28,13 @@ describe('production Supabase Auth canary gate', () => {
       'Supabase Auth disable_signup must be true',
       'Supabase Auth external_anonymous_users_enabled must be false',
       'Supabase Auth site_url must be the reviewed production origin',
-      'Supabase Auth uri_allow_list must contain only the reviewed recovery redirect',
+      'Supabase Auth uri_allow_list must contain exactly the three reviewed recovery redirects',
     ]);
     assert.deepEqual(productionAuthCanaryErrors({}), [
       'Supabase Auth disable_signup must be true',
       'Supabase Auth external_anonymous_users_enabled must be false',
       'Supabase Auth site_url must be the reviewed production origin',
-      'Supabase Auth uri_allow_list must contain only the reviewed recovery redirect',
+      'Supabase Auth uri_allow_list must contain exactly the three reviewed recovery redirects',
     ]);
   });
 
@@ -52,7 +52,7 @@ describe('production Supabase Auth canary gate', () => {
             disable_signup: true,
             external_anonymous_users_enabled: false,
             site_url: PRODUCTION_SITE_URL,
-            uri_allow_list: PRODUCTION_RECOVERY_REDIRECT_URL,
+            uri_allow_list: PRODUCTION_RECOVERY_REDIRECT_ALLOW_LIST,
           }),
         };
       },

@@ -14,24 +14,65 @@ official [`GET /v1/projects/{ref}/config/auth`](https://supabase.com/docs/refere
 endpoint before any release scope can proceed. It fails unless
 `disable_signup` is exactly `true` and
 `external_anonymous_users_enabled` is exactly `false`, `site_url` is exactly
-`https://77-dominion-live.pages.dev`, and `uri_allow_list` contains only
-`https://77-dominion-live.pages.dev/reset-password.html`. The check is
+`https://77dominion.com`, and `uri_allow_list` contains exactly these three
+password-recovery callbacks, in any order without duplicates or extra entries:
+
+- `https://77dominion.com/reset-password.html`
+- `https://www.77dominion.com/reset-password.html`
+- `https://77-dominion-live.pages.dev/reset-password.html`
+
+The check is
 read-only, keeps the management token in memory, and never prints the response body.
 The production Management API token must include the documented
 `auth_config_read` permission (or `auth:read` OAuth scope).
+These are the reviewed target settings, not evidence that hosted configuration
+has already been applied; record the successful protected run and verification
+before claiming completion.
 
 ## Configure closed Auth and production URLs before release
 
-When the read-only release gate reports that either path is open, use the
+When the read-only release gate reports an open signup path or stale URL policy, use the
 manual **Configure production Supabase Auth canary** workflow at
 `.github/workflows/configure-production-auth-canary.yml`. Dispatch it only from
 the protected `main` branch, select the explicit confirmation checkbox, and
 approve its protected `production` environment job. The workflow requires the
-production `SUPABASE_ACCESS_TOKEN` secret and `SUPABASE_PROJECT_REF` variable;
-the helper refuses any project reference other than the reviewed production
-project.
+production `SUPABASE_ACCESS_TOKEN` secret, the unchanged `SUPABASE_PROJECT_REF`
+variable, and these exact non-secret production variables:
 
-The helper sends one request to Supabase's official
+- `PUBLIC_SITE_URL=https://77dominion.com`
+- `PUBLIC_ALLOWED_SITE_URLS=https://77dominion.com,https://www.77dominion.com,https://77-dominion-live.pages.dev`
+
+The workflow shares the `production-release` concurrency group with releases,
+with cancellation disabled, so the configuration change cannot overlap an
+active release. It keeps the existing Supabase and Cloudflare projects; creating,
+replacing, or switching projects requires separate explicit user approval.
+
+The protected job runs these helpers in order:
+
+1. `scripts/configure-production-function-origins.mjs` first verifies that the
+   apex and `www` custom domains serve the same HTTPS homepage, login page, and
+   password-recovery page bytes as `https://77-dominion-live.pages.dev`. These
+   public checks carry no Management API token and precede all configuration
+   writes. If DNS, TLS, or page identity is not ready, stop without bypassing the
+   check and finish the custom-domain attachment on the existing Pages project.
+2. That helper reads the Function secret-name inventory and synchronizes only
+   `PUBLIC_SITE_URL` and `PUBLIC_ALLOWED_SITE_URLS`. If the historical
+   `ALLOWED_SITE_ORIGINS` alias is present, it aligns that alias with the same
+   exact three-origin list; it does not create an absent alias or touch any
+   unrelated secret. It verifies sharing preflights accept all three approved
+   origins and reject unapproved origins, then checks the tokenless public share
+   response points to the apex. Existing share links are not opened or changed.
+3. Only after those checks pass, `scripts/configure-production-auth-canary.mjs`
+   applies and GET-verifies the fixed closed Auth policy below.
+
+Function-secret updates are available without a Function redeployment. This
+configuration workflow does not run migrations or publish a frontend; a
+frontend-only release does not perform the origin-secret synchronization.
+Keep `www` and the existing Pages origin usable, without adding forced
+cross-origin redirects. Sessions remain origin-scoped, so first use of the apex
+may require a new sign-in without revoking existing sessions.
+
+The Auth helper sends one request to Supabase's official
 [`PATCH /v1/projects/{ref}/config/auth`](https://supabase.com/docs/reference/api/v1-update-auth-service-config)
 endpoint with exactly this body:
 
@@ -39,25 +80,28 @@ endpoint with exactly this body:
 {
   "disable_signup": true,
   "external_anonymous_users_enabled": false,
-  "site_url": "https://77-dominion-live.pages.dev",
-  "uri_allow_list": "https://77-dominion-live.pages.dev/reset-password.html"
+  "site_url": "https://77dominion.com",
+  "uri_allow_list": "https://77dominion.com/reset-password.html,https://www.77dominion.com/reset-password.html,https://77-dominion-live.pages.dev/reset-password.html"
 }
 ```
 
-It then performs the official GET and requires both exact boolean values before
-succeeding. Both requests reject redirects and use bounded timeouts. Error
+It then performs the official GET and requires both exact boolean values, the
+apex Site URL, and the complete three-callback set before succeeding. Both
+requests reject redirects and use bounded timeouts. Error
 responses and configuration bodies are never printed, and failure messages
 contain at most the HTTP status. Do not broaden the body to synchronize the
 entire Auth object: the GET response can contain unrelated provider and SMTP
-configuration that this procedure is not approved to change. Supplying the
-single exact `uri_allow_list` value also removes stale preview, localhost, and
-historical production callbacks from the hosted tenant.
+configuration that this procedure is not approved to change. The fixed
+`uri_allow_list` preserves the approved `www` and Pages recovery callbacks while
+excluding stale preview, localhost, wildcard, and unrelated callbacks.
 
 For a fine-grained Management API token, Supabase currently documents
 `auth_config_write` and `project_admin_write` for PATCH and `auth_config_read`
 for the verification GET (or the corresponding `auth:write` and `auth:read`
-OAuth scopes). Environment approval is authorization to make only this fixed,
-idempotent policy change; it is not approval to alter providers, URLs, email
+OAuth scopes). Function-secret synchronization also requires the documented
+Edge Function Secrets read/write permissions. Environment approval is
+authorization to make only the fixed origin-secret and Auth-policy changes
+above; it is not approval to alter other URLs, providers, billing, email
 templates, existing users, or sessions.
 
 With billing disabled, Stripe credentials are not release prerequisites. The
