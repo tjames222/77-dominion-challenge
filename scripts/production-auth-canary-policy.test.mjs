@@ -6,7 +6,11 @@ import { fileURLToPath } from "node:url";
 import {
   CLOSED_AUTH_CONFIG_PATCH,
   configureProductionAuthCanary,
+  PRODUCTION_ALLOWED_SITE_URLS,
+  PRODUCTION_RECOVERY_REDIRECT_ALLOW_LIST,
   PRODUCTION_RECOVERY_REDIRECT_URL,
+  PRODUCTION_RECOVERY_REDIRECT_URLS,
+  PRODUCTION_SITE_ORIGINS,
   PRODUCTION_SITE_URL,
   PRODUCTION_SUPABASE_PROJECT_REF,
   productionAuthCanaryErrors,
@@ -30,7 +34,7 @@ function exactResponse({
     disable_signup: true,
     external_anonymous_users_enabled: false,
     site_url: PRODUCTION_SITE_URL,
-    uri_allow_list: PRODUCTION_RECOVERY_REDIRECT_URL,
+    uri_allow_list: PRODUCTION_RECOVERY_REDIRECT_ALLOW_LIST,
   }),
 } = {}) {
   return { status, redirected, json };
@@ -55,6 +59,33 @@ async function captureRejection(promise) {
   assert.fail("Expected the promise to reject.");
 }
 
+test("the policy pins the approved domains without changing the production project", () => {
+  assert.equal(PRODUCTION_SUPABASE_PROJECT_REF, "mimolwojppbtsbvtqwpo");
+  assert.equal(PRODUCTION_SITE_URL, "https://77dominion.com");
+  assert.deepEqual(PRODUCTION_SITE_ORIGINS, [
+    "https://77dominion.com",
+    "https://www.77dominion.com",
+    "https://77-dominion-live.pages.dev",
+  ]);
+  assert.equal(
+    PRODUCTION_ALLOWED_SITE_URLS,
+    "https://77dominion.com,https://www.77dominion.com,https://77-dominion-live.pages.dev",
+  );
+  assert.equal(PRODUCTION_RECOVERY_REDIRECT_URL, "https://77dominion.com/reset-password.html");
+  assert.deepEqual(PRODUCTION_RECOVERY_REDIRECT_URLS, [
+    "https://77dominion.com/reset-password.html",
+    "https://www.77dominion.com/reset-password.html",
+    "https://77-dominion-live.pages.dev/reset-password.html",
+  ]);
+  assert.equal(
+    PRODUCTION_RECOVERY_REDIRECT_ALLOW_LIST,
+    "https://77dominion.com/reset-password.html,https://www.77dominion.com/reset-password.html,https://77-dominion-live.pages.dev/reset-password.html",
+  );
+  assert.ok(Object.isFrozen(PRODUCTION_SITE_ORIGINS));
+  assert.ok(Object.isFrozen(PRODUCTION_RECOVERY_REDIRECT_URLS));
+  assert.ok(Object.isFrozen(CLOSED_AUTH_CONFIG_PATCH));
+});
+
 test("the closed policy requires exact booleans and production URLs", () => {
   assert.deepEqual(productionAuthCanaryErrors(null), [
     "Supabase returned an invalid Auth configuration response",
@@ -66,7 +97,7 @@ test("the closed policy requires exact booleans and production URLs", () => {
     "Supabase Auth disable_signup must be true",
     "Supabase Auth external_anonymous_users_enabled must be false",
     "Supabase Auth site_url must be the reviewed production origin",
-    "Supabase Auth uri_allow_list must contain only the reviewed recovery redirect",
+    "Supabase Auth uri_allow_list must contain exactly the three reviewed recovery redirects",
   ]);
   assert.deepEqual(
     productionAuthCanaryErrors({
@@ -77,7 +108,7 @@ test("the closed policy requires exact booleans and production URLs", () => {
       "Supabase Auth disable_signup must be true",
       "Supabase Auth external_anonymous_users_enabled must be false",
       "Supabase Auth site_url must be the reviewed production origin",
-      "Supabase Auth uri_allow_list must contain only the reviewed recovery redirect",
+      "Supabase Auth uri_allow_list must contain exactly the three reviewed recovery redirects",
     ],
   );
   assert.deepEqual(
@@ -85,11 +116,60 @@ test("the closed policy requires exact booleans and production URLs", () => {
       disable_signup: true,
       external_anonymous_users_enabled: false,
       site_url: PRODUCTION_SITE_URL,
-      uri_allow_list: PRODUCTION_RECOVERY_REDIRECT_URL,
+      uri_allow_list: PRODUCTION_RECOVERY_REDIRECT_ALLOW_LIST,
       unrelated: "ignored",
     }),
     [],
   );
+});
+
+test("the exact recovery allowlist accepts reordering but fails closed on broadening or omissions", () => {
+  assert.deepEqual(productionAuthCanaryErrors({
+    ...CLOSED_AUTH_CONFIG_PATCH,
+    uri_allow_list: [...PRODUCTION_RECOVERY_REDIRECT_URLS].reverse().join(", "),
+  }), []);
+
+  for (const uri_allow_list of [
+    undefined,
+    null,
+    [],
+    "",
+    PRODUCTION_RECOVERY_REDIRECT_URL,
+    PRODUCTION_RECOVERY_REDIRECT_URLS.slice(0, 2).join(","),
+    `${PRODUCTION_RECOVERY_REDIRECT_ALLOW_LIST},`,
+    `,${PRODUCTION_RECOVERY_REDIRECT_ALLOW_LIST}`,
+    `${PRODUCTION_RECOVERY_REDIRECT_ALLOW_LIST},${PRODUCTION_RECOVERY_REDIRECT_URL}`,
+    [PRODUCTION_RECOVERY_REDIRECT_URL, PRODUCTION_RECOVERY_REDIRECT_URL, PRODUCTION_RECOVERY_REDIRECT_URLS[2]].join(","),
+    `${PRODUCTION_RECOVERY_REDIRECT_ALLOW_LIST},https://attacker.example/reset-password.html`,
+    PRODUCTION_RECOVERY_REDIRECT_ALLOW_LIST.replace("https://www.77dominion.com", "https://attacker.example"),
+    PRODUCTION_RECOVERY_REDIRECT_ALLOW_LIST.replace("https://77-dominion-live.pages.dev", "https://develop.77-dominion-live.pages.dev"),
+    PRODUCTION_RECOVERY_REDIRECT_ALLOW_LIST.replace("https://www.77dominion.com", "http://localhost:5173"),
+    PRODUCTION_RECOVERY_REDIRECT_ALLOW_LIST.replace("https://www.77dominion.com", "https://*.77dominion.com"),
+    PRODUCTION_RECOVERY_REDIRECT_ALLOW_LIST.replace("reset-password.html", "**"),
+    PRODUCTION_RECOVERY_REDIRECT_ALLOW_LIST.replace("reset-password.html", "reset-password.html/"),
+    PRODUCTION_RECOVERY_REDIRECT_ALLOW_LIST.replace("reset-password.html", "reset-password.html?next=https://attacker.example"),
+    `${PRODUCTION_RECOVERY_REDIRECT_ALLOW_LIST}\n`,
+  ]) {
+    assert.deepEqual(productionAuthCanaryErrors({
+      ...CLOSED_AUTH_CONFIG_PATCH,
+      uri_allow_list,
+    }), ["Supabase Auth uri_allow_list must contain exactly the three reviewed recovery redirects"]);
+  }
+});
+
+test("only the apex is canonical while other approved origins remain compatible", () => {
+  for (const site_url of [
+    "https://www.77dominion.com",
+    "https://77-dominion-live.pages.dev",
+    "https://77dominion.com/",
+    "http://77dominion.com",
+    "https://77dominion.com@attacker.example",
+  ]) {
+    assert.deepEqual(productionAuthCanaryErrors({
+      ...CLOSED_AUTH_CONFIG_PATCH,
+      site_url,
+    }), ["Supabase Auth site_url must be the reviewed production origin"]);
+  }
 });
 
 test("configuration PATCHes only the fixed fields and then GET-verifies", async () => {
@@ -122,7 +202,7 @@ test("configuration PATCHes only the fixed fields and then GET-verifies", async 
     disable_signup: true,
     external_anonymous_users_enabled: false,
     site_url: PRODUCTION_SITE_URL,
-    uri_allow_list: PRODUCTION_RECOVERY_REDIRECT_URL,
+    uri_allow_list: PRODUCTION_RECOVERY_REDIRECT_ALLOW_LIST,
   });
 
   assert.equal(getCall.url, authConfigUrl);

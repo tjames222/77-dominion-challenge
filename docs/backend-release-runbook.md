@@ -126,9 +126,9 @@ The prelaunch environment model deliberately uses no paid staging project:
 | Name | Required | Purpose |
 | --- | --- | --- |
 | `SUPABASE_PROJECT_REF` | Yes | Production Supabase project targeted by the release |
-| `PUBLIC_SITE_URL` | Yes | Canonical HTTPS origin returned by billing flows |
+| `PUBLIC_SITE_URL` | Yes | Exact canonical origin `https://77dominion.com`, used by share destinations and billing return flows |
 | `PUBLIC_SHARE_URL` | Optional | Custom HTTPS route for public share snapshots; defaults to the Edge Function URL |
-| `PUBLIC_ALLOWED_SITE_URLS` | Recommended | Comma-separated exact approved production or custom origins |
+| `PUBLIC_ALLOWED_SITE_URLS` | Yes for custom-domain configuration | Exact comma-separated apex, `www`, and existing production Pages origins listed below |
 | `VITE_SUPABASE_URL` | Yes | Public Supabase URL baked into the frontend |
 | `VITE_SUPABASE_PUBLISHABLE_KEY` | Yes | Public publishable key baked into the frontend |
 | `VITE_YOUVERSION_VERSE_URL` | Optional | Configured daily-verse source |
@@ -150,8 +150,17 @@ variable override cannot enable them. Treat any future `VITE_*` release toggle a
 document its safe default here, leave it disabled until its backend is deployed
 and verified, and record who approved enabling it.
 
-`PUBLIC_ALLOWED_SITE_URLS` is an exact-origin allowlist. Do not add `develop`,
-feature-preview, or localhost origins to the production value.
+The reviewed target production values are:
+
+- `PUBLIC_SITE_URL=https://77dominion.com`
+- `PUBLIC_ALLOWED_SITE_URLS=https://77dominion.com,https://www.77dominion.com,https://77-dominion-live.pages.dev`
+
+These settings describe the intended configuration, not a completed hosted
+change. Keep the GitHub production variables and Supabase Function secrets
+matched. `PUBLIC_ALLOWED_SITE_URLS` is an exact-origin allowlist: do not add
+`develop`, feature-preview, localhost, or wildcard origins. Keep the existing
+Pages project and `www` entry point usable; do not create or switch projects
+without explicit user approval or add forced cross-origin redirects here.
 
 Supabase injects `SUPABASE_URL`, `SUPABASE_ANON_KEY`, and
 `SUPABASE_SERVICE_ROLE_KEY` into deployed functions. Never duplicate those values
@@ -162,7 +171,23 @@ sets `BILLING_ENABLED=true`; with the current value `false`, the guarded billing
 Functions remain deployed but return `503` without contacting Stripe.
 `ALLOWED_SITE_ORIGINS`
 is supported only as a compatibility alias; new configuration should use
-`PUBLIC_ALLOWED_SITE_URLS`.
+`PUBLIC_ALLOWED_SITE_URLS`. Because the CORS helper unions these values, the
+custom-domain configuration helper aligns the alias to the same three-origin
+list only if it already exists, without creating it or modifying other secrets.
+
+For this configuration-only change, use the existing protected **Configure
+production Supabase Auth canary** workflow after the reviewed policy is on
+`main`. It shares the `production-release` concurrency group with release jobs
+and does not cancel an active release. Its first helper,
+`scripts/configure-production-function-origins.mjs`, requires both custom
+domains' HTTPS homepage, login, and recovery pages to match the existing Pages
+origin byte-for-byte before any write. It then synchronizes only the approved
+origin secrets, verifies allowed and rejected sharing preflights, and verifies
+the tokenless public share destination. Only then does
+`scripts/configure-production-auth-canary.mjs` PATCH and GET-verify the four fixed
+Auth fields. DNS/TLS/page failures must be resolved on the existing Cloudflare
+project before proceeding. No Function redeployment or migration is required;
+a frontend-only release does not synchronize these origin secrets.
 
 The integration worker secret requires the provider credential key ring. The two
 retired Community secrets are optional only while its production worker is
@@ -264,11 +289,14 @@ Before approving the GitHub `production` environment deployment, confirm:
    only a versioned envelope with the release SHA and a keyed HMAC-SHA-256 proof;
    it contains no Auth UUID, entitlement row, raw row fingerprint, credential,
    or reversible canary data.
-9. Supabase Auth is already closed: the official Management API Auth config must
+9. Before release, the official Management API Auth config must
    report `disable_signup=true` and
    `external_anonymous_users_enabled=false`, with `site_url` exactly
-   `https://77-dominion-live.pages.dev` and `uri_allow_list` exactly
-   `https://77-dominion-live.pages.dev/reset-password.html`. The workflow checks
+   `https://77dominion.com` and `uri_allow_list` containing exactly
+   `https://77dominion.com/reset-password.html`,
+   `https://www.77dominion.com/reset-password.html`, and
+   `https://77-dominion-live.pages.dev/reset-password.html`, with no duplicates,
+   missing callbacks, wildcards, or extra entries. The workflow checks
    these exact values before any release scope and before temporary database
    credentials, migrations, Function secrets, or Function deployment. It never prints
    the Auth response. See
@@ -276,8 +304,13 @@ Before approving the GitHub `production` environment deployment, confirm:
    for the UUID-bound owner canary procedure.
    If any value differs, dispatch **Configure production Supabase Auth
    canary** from `main` and approve its protected `production` environment job
-   before dispatching the release. That separate workflow changes only those
-   four reviewed fields, rejects redirects, and GET-verifies the resulting state.
+   before dispatching the release. That existing workflow first verifies both
+   custom domains against the Pages site, synchronizes the exact origin Function
+   secrets, and verifies sharing preflights. It then changes only the four
+   reviewed Auth fields, rejects Management API redirects, and GET-verifies the
+   resulting state. Its shared `production-release` concurrency group prevents
+   overlapping configuration and release runs. Record successful verification;
+   the documented policy alone is not evidence that the live settings changed.
 
 ### One-time migration-history reconciliation
 
@@ -923,7 +956,8 @@ next stage when one fails:
 3. **Verify the closed Auth policy:** read the hosted Auth configuration through
    Supabase's official Management API and require `disable_signup=true` plus
    `external_anonymous_users_enabled=false`, the exact production Site URL, and
-   the sole exact password-recovery redirect. This read-only step gates all
+   the exact three password-recovery callbacks for the apex, `www`, and existing
+   production Pages origin. This read-only step gates all
    release scopes and completes before the workflow can access or mutate the
    backend.
 4. **Guard the compatibility cutover:** only for
