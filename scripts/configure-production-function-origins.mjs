@@ -4,6 +4,7 @@ import {
   PRODUCTION_ALLOWED_SITE_URLS,
   PRODUCTION_SITE_ORIGINS,
   PRODUCTION_SITE_URL,
+  PRODUCTION_SHARE_URL,
   PRODUCTION_SUPABASE_PROJECT_REF,
 } from "./production-auth-canary-policy.mjs";
 
@@ -108,15 +109,39 @@ export async function verifyProductionFunctionOrigins({ fetchImpl = globalThis.f
   return true;
 }
 
+// Never probe a real token here: public GETs can record snapshot view telemetry.
+// The tokenless route proves Cloudflare is serving HTML rather than Supabase's
+// shared-domain text/plain response before newly generated links point at it.
+export async function verifyProductionSharePages({ fetchImpl = globalThis.fetch } = {}) {
+  for (const origin of PRODUCTION_SITE_ORIGINS) {
+    const stage = `Public share page check for ${origin}`;
+    const response = await request(fetchImpl, `${origin}/share`, { method: "GET" }, 404, stage);
+    if (!/^text\/html(?:;|$)/i.test(response.headers.get("content-type") || "") ||
+      response.headers.get("x-dominion-share-route") !== "1" ||
+      !/(?:^|,)\s*no-store\s*(?:,|$)/i.test(response.headers.get("cache-control") || "") ||
+      response.headers.get("referrer-policy") !== "no-referrer" ||
+      response.headers.get("x-content-type-options") !== "nosniff") {
+      throw new Error(`${stage} did not return the reviewed private, no-store HTML route.`);
+    }
+    const body = await readText(response, stage);
+    if (!body.includes("<title>Share unavailable | Dominion</title>") ||
+      !body.includes(`href="${PRODUCTION_SITE_URL}"`)) {
+      throw new Error(`${stage} did not return the reviewed unavailable page.`);
+    }
+  }
+  return true;
+}
+
 export async function configureProductionFunctionOrigins({
   accessToken = process.env.SUPABASE_ACCESS_TOKEN,
   projectRef = process.env.SUPABASE_PROJECT_REF,
   publicSiteUrl = process.env.PUBLIC_SITE_URL,
   allowedSiteUrls = process.env.PUBLIC_ALLOWED_SITE_URLS,
+  publicShareUrl = process.env.PUBLIC_SHARE_URL,
   fetchImpl = globalThis.fetch,
 } = {}) {
   if (projectRef !== PRODUCTION_SUPABASE_PROJECT_REF) throw new Error("SUPABASE_PROJECT_REF must remain the reviewed production project.");
-  if (publicSiteUrl !== PRODUCTION_SITE_URL || allowedSiteUrls !== PRODUCTION_ALLOWED_SITE_URLS) {
+  if (publicSiteUrl !== PRODUCTION_SITE_URL || allowedSiteUrls !== PRODUCTION_ALLOWED_SITE_URLS || publicShareUrl !== PRODUCTION_SHARE_URL) {
     throw new Error("GitHub production URL variables must match the exact reviewed custom-domain policy.");
   }
   if (typeof accessToken !== "string" || !accessToken || accessToken !== accessToken.trim() || /[\u0000-\u001f\u007f]/u.test(accessToken)) {
@@ -124,6 +149,7 @@ export async function configureProductionFunctionOrigins({
   }
   if (typeof fetchImpl !== "function") throw new Error("A Fetch-compatible runtime is required.");
   await verifyProductionDomainPages({ fetchImpl });
+  await verifyProductionSharePages({ fetchImpl });
   const headers = { Accept: "application/json", Authorization: `Bearer ${accessToken}` };
   const inventoryResponse = await request(fetchImpl, SECRETS_URL, { method: "GET", headers }, 200, "Function secret-name inventory");
   let inventory;
@@ -134,6 +160,7 @@ export async function configureProductionFunctionOrigins({
   const secrets = [
     { name: "PUBLIC_SITE_URL", value: PRODUCTION_SITE_URL },
     { name: "PUBLIC_ALLOWED_SITE_URLS", value: PRODUCTION_ALLOWED_SITE_URLS },
+    { name: "PUBLIC_SHARE_URL", value: PRODUCTION_SHARE_URL },
   ];
   // A historical alias is unioned by the CORS helper. Align it only if present;
   // preserve every unrelated secret, including billing and provider settings.
