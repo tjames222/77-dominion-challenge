@@ -407,6 +407,30 @@
   font: inherit;
   line-height: 1.45;
 }
+.journal-select-field {
+  min-width: 0;
+}
+.journal-select-field select {
+  min-height: 56px;
+  padding-inline: 16px 48px;
+  appearance: none;
+  background-image:
+    linear-gradient(45deg, transparent 50%, var(--text-muted) 50%),
+    linear-gradient(135deg, var(--text-muted) 50%, transparent 50%);
+  background-position:
+    calc(100% - 21px) 50%,
+    calc(100% - 15px) 50%;
+  background-repeat: no-repeat;
+  background-size: 6px 6px, 6px 6px;
+}
+.journal-select-field select:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--accent) 58%, var(--border));
+}
+.journal-select-field select:focus {
+  background-image:
+    linear-gradient(45deg, transparent 50%, var(--accent) 50%),
+    linear-gradient(135deg, var(--accent) 50%, transparent 50%);
+}
 .community-form input,
 .community-form select,
 .journal-form input,
@@ -1682,6 +1706,11 @@
   .leaderboard-member-trigger { transition: none; }
 }
 @media (forced-colors: active) {
+  .journal-select-field select {
+    appearance: auto;
+    background-image: none;
+    padding-inline-end: 16px;
+  }
   .invite-people-button,
   .provider-button,
   .provider-mark,
