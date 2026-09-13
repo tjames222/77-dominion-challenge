@@ -21,7 +21,9 @@ jobs:
   browser-quality:
     name: Routes, accessibility, and visuals
     runs-on: ubuntu-latest
-    timeout-minutes: 35
+    # The combined badge/reward suite already takes 33 minutes before the new
+    # production-mode MFA/Admin matrices. Preserve every check with bounded headroom.
+    timeout-minutes: 45
     env:
       CI: true
       E2E_STRICT_THEME_BOOTSTRAP: ${{ vars.E2E_STRICT_THEME_BOOTSTRAP || 'false' }}

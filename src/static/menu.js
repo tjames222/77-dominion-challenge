@@ -49,8 +49,13 @@ async function refreshAdminMenuItem() {
   removeAdminMenuItem();
   const request = adminMenuRequest; const hydration = menuHydrationRequest;
   try {
+    // The shared menu must obey the existing login/MFA presentation gate before
+    // making even a readiness RPC. The direct Admin route handles its own
+    // explicit AAL1 readiness/challenge screen separately.
+    const user = await getLocalOrSessionUser();
+    if (request !== adminMenuRequest || hydration !== menuHydrationRequest || !user?.authenticated || !user.userId) return;
     const owner = await getAdminSessionOwner();
-    if (request !== adminMenuRequest || hydration !== menuHydrationRequest) return;
+    if (request !== adminMenuRequest || hydration !== menuHydrationRequest || owner.actorId !== user.userId) return;
     const context = await getSiteAdminContext({ expectedUserId: owner.actorId });
     if (request !== adminMenuRequest || hydration !== menuHydrationRequest || !context.adminReady
       || !context.permissions.some((permission) => ['users.read', 'audit.read'].includes(permission))) return;
