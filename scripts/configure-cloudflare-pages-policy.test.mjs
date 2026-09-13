@@ -134,6 +134,7 @@ test('policy patch disables only automatic production and restricts previews to 
   for (const [name, value] of Object.entries({
     ...CLOUDFLARE_BUILD_PINS,
     ...CLOUDFLARE_PREVIEW_MOCK_FLAGS,
+    VITE_ENABLE_DOMINION_NIGHT_THEME: 'true',
   })) {
     assert.deepEqual(patch.deployment_configs.preview.env_vars[name], {
       type: 'plain_text',
@@ -144,6 +145,7 @@ test('policy patch disables only automatic production and restricts previews to 
     assert.equal(patch.deployment_configs.preview.env_vars[name], null);
   }
   assert.equal(patch.deployment_configs.preview.env_vars.VITE_ENABLE_E2E_FIXTURES, null);
+  assert.equal(patch.deployment_configs.production.env_vars.VITE_ENABLE_DOMINION_NIGHT_THEME, undefined);
 
   const expectedProductionValues = {
     ...CLOUDFLARE_BUILD_PINS,
@@ -560,6 +562,27 @@ test('verification requires exact plaintext mock flags', () => {
   assert.deepEqual(cloudflarePagesPolicyErrors(project, productionEnvironment), [
     'VITE_ENABLE_MOCKS must be the approved plaintext mock value',
     'VITE_ENABLE_PUBLIC_SIGNUP must be the approved plaintext mock value',
+  ]);
+});
+
+test('theme release availability is pinned only in preview policy, not production variables', () => {
+  for (const value of [undefined, 'false']) {
+    const project = validProject();
+    if (value === undefined) {
+      delete project.deployment_configs.preview.env_vars.VITE_ENABLE_DOMINION_NIGHT_THEME;
+    } else {
+      project.deployment_configs.preview.env_vars.VITE_ENABLE_DOMINION_NIGHT_THEME.value = value;
+    }
+    assert.deepEqual(cloudflarePagesPolicyErrors(project, productionEnvironment), [
+      'VITE_ENABLE_DOMINION_NIGHT_THEME must be the approved plaintext mock value',
+    ]);
+  }
+  const project = validProject();
+  project.deployment_configs.production.env_vars.VITE_ENABLE_DOMINION_NIGHT_THEME = {
+    type: 'plain_text', value: 'true',
+  };
+  assert.deepEqual(cloudflarePagesPolicyErrors(project, productionEnvironment), [
+    'VITE_ENABLE_DOMINION_NIGHT_THEME must be absent from the production environment',
   ]);
 });
 

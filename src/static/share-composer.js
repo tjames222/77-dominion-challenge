@@ -1,3 +1,6 @@
+// Keep styles in the component dependency graph: Vite loads/extracts them before
+// this module can expose a composer, including clean URLs and first-time visits.
+import '../assets/share-composer.css';
 import {
   completeSharingReward,
   createShareSnapshot,
@@ -346,6 +349,9 @@ export function initShareComposer(ownerDocument = globalThis.document) {
       trigger.addEventListener('click', () => {
         dialog.open(trigger);
         chooseKind(trigger.dataset.shareKind);
+        // Selection is established after open starts the preview; focus the
+        // selected radio now, including the very first use of this singleton.
+        dialog.focus();
       });
     });
   };

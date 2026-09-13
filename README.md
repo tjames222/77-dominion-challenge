@@ -129,11 +129,21 @@ Workout difficulty describes the work performed and never changes points. Histor
 
 ### Feature-flagged Dominion Night theme
 
-The alternate dark visual profile is registered as `dominion-night` and remains
-hidden unless `VITE_ENABLE_DOMINION_NIGHT_THEME=true`. The rollout flag controls
-availability, while permanent reward entitlement controls whether an authenticated
-user may select it in Profile. Its palette, asset behavior, contrast checks, and
-route audit are documented in `docs/dominion-night-theme-audit.md`.
+Dominion Night is approved for the current release (FOU-1494). Both the protected
+production frontend workflow and canonical `develop` mock preview explicitly set
+`VITE_ENABLE_DOMINION_NIGHT_THEME=true`; canonical builds reject an omitted or
+disabled flag. Local `.env.example` uses the same enabled release state. Source
+HTML retains its safe disabled default until Vite compiles the release flag.
+
+The flag controls availability only. Permanent, server-authoritative reward
+ownership still controls selection in Profile; the reward catalog supplies the
+current threshold and progress. Signed-out, unverified, stale, and non-owner
+clients fall back to Dark. Light and Dark remain public choices. Every build
+audits the shipped bootstrap and linked Dominion Night CSS on all HTML entry
+points, including entitlement rejection and revocation. Production configuration
+remains owned by the protected workflow, not a competing Cloudflare production
+variable. Its palette and route audit are in
+`docs/dominion-night-theme-audit.md`.
 
 ## Billing and monetization
 

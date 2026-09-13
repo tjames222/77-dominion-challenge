@@ -1,6 +1,18 @@
 @import url('./site-training.css');
 
 :root {
+  /* One shared navigation stack. Application dialogs/training keep 900+.
+   * Menu surfaces and the open toggle are body children, outside the header's
+   * sticky/isolation context (and any themed page surface contexts).
+   */
+  --layer-page: 0;
+  --layer-secondary-navigation: 110;
+  --layer-member-navigation: 120;
+  --layer-primary-header: 140;
+  --layer-menu-backdrop: 160;
+  --layer-menu-drawer: 170;
+  --layer-menu-close: 180;
+  --layer-application-overlay: 900;
   --topbar-sticky-height: calc(72px + env(safe-area-inset-top));
   --member-tabs-sticky-height: 0px;
   --navigation-stack-gap: clamp(8px, 1.6vw, 12px);
@@ -10,13 +22,26 @@ html {
   scroll-padding-top: calc(var(--topbar-sticky-height) + var(--member-tabs-sticky-height) + 24px);
   overflow-x: clip;
 }
+html.menu-scroll-locked {
+  overflow: hidden;
+  overscroll-behavior: none;
+}
+html.menu-scroll-locked.menu-scroll-gutter {
+  scrollbar-gutter: stable;
+}
+body.menu-open {
+  overscroll-behavior: none;
+}
+[data-sticky-secondary-tabs] {
+  z-index: var(--layer-secondary-navigation);
+}
 body {
   overflow-x: clip;
 }
 .topbar {
   position: sticky;
   top: 0;
-  z-index: 140;
+  z-index: var(--layer-primary-header);
   isolation: isolate;
   min-height: var(--topbar-sticky-height);
   margin-top: calc(-1 * max(var(--shell-pad, clamp(18px, 4vw, 34px)), env(safe-area-inset-top)));
@@ -201,6 +226,16 @@ body:not(.challenge-finished) .dashboard-shell > :is(.topbar, .member-tabs) + .d
   visibility: hidden;
   pointer-events: none;
 }
+.menu-open [data-sticky-secondary-tabs] {
+  visibility: hidden;
+  pointer-events: none;
+}
+.global-menu-button-placeholder {
+  display: inline-block;
+  flex: 0 0 auto;
+  visibility: hidden;
+  pointer-events: none;
+}
 .global-streak-details {
   display: grid;
   gap: 18px;
@@ -342,7 +377,7 @@ body:not(.challenge-finished) .dashboard-shell > :is(.topbar, .member-tabs) + .d
 }
 .global-menu-button {
   position: relative;
-  z-index: 180;
+  z-index: var(--layer-menu-close);
   display: inline-grid;
   place-items: center;
   width: 46px;
@@ -390,7 +425,7 @@ body:not(.challenge-finished) .dashboard-shell > :is(.topbar, .member-tabs) + .d
   position: fixed;
   top: calc(14px + env(safe-area-inset-top));
   right: max(16px, env(safe-area-inset-right));
-  z-index: 180;
+  z-index: var(--layer-menu-close);
   margin-left: 0;
   transform: rotate(90deg) scale(1.03);
   color: var(--accent-strong);
@@ -405,7 +440,7 @@ body:not(.challenge-finished) .dashboard-shell > :is(.topbar, .member-tabs) + .d
 .global-menu-backdrop {
   position: fixed;
   inset: 0;
-  z-index: 90;
+  z-index: var(--layer-menu-backdrop);
   visibility: hidden;
   pointer-events: none;
   opacity: 0;
@@ -417,7 +452,7 @@ body:not(.challenge-finished) .dashboard-shell > :is(.topbar, .member-tabs) + .d
   position: fixed;
   top: 0;
   right: 0;
-  z-index: 100;
+  z-index: var(--layer-menu-drawer);
   display: grid;
   grid-template-rows: repeat(4, auto);
   align-content: start;

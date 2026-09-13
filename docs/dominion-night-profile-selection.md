@@ -15,6 +15,14 @@ At initial page paint, an entitlement theme resolves to Dark. After the authenti
 
 ## Rollout and rollback
 
-Enable the CSS profile and Profile picker only after the reward catalog migration is live. Validate locked, partial-progress, owned, request-failure, and signed-out states before enabling the release flag.
+FOU-1494 approves the existing CSS profile and Profile picker for the current
+release. Production and canonical develop builds explicitly enable the flag and
+reject accidental omission or disablement. The canonical preview remains fully
+mocked; production still reconciles ownership against the authenticated reward
+catalog. Reward thresholds and ownership are not changed by this release toggle.
 
-To pause the theme, disable the feature flag or reward definition. Do not delete reward entitlement rows. Re-enabling both controls restores selection for members whose ownership is still authoritative.
+Pausing release availability requires a reviewed change to the workflow flag
+and its canonical build/artifact guards together, or a separately approved
+reward-definition change. Do not bypass the guards with a Cloudflare production
+variable, and do not delete reward entitlement rows. Restoring availability
+allows members whose ownership remains authoritative to select their theme again.

@@ -299,7 +299,7 @@ test('Solo confirmation activates once, claims training, and resumes after refre
 
   await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
   await expect.poll(() => page.evaluate(() => window.scrollY)).toBeGreaterThan(0);
-  const menuButton = page.getByRole('button', { name: 'Open menu' });
+  const menuButton = page.locator('.global-menu-button');
   await menuButton.click();
   await expect(page.getByRole('navigation', { name: 'Global navigation' })).toBeVisible();
   await menuButton.click();

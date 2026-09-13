@@ -56,6 +56,7 @@ function previewEnvironmentPatch() {
   for (const [name, value] of Object.entries({
     ...CLOUDFLARE_BUILD_PINS,
     ...CLOUDFLARE_PREVIEW_MOCK_FLAGS,
+    VITE_ENABLE_DOMINION_NIGHT_THEME: 'true',
   })) {
     envVars[name] = { type: 'plain_text', value };
   }
@@ -335,6 +336,7 @@ export function cloudflarePagesPolicyErrors(
     const expectedPreviewValues = {
       ...CLOUDFLARE_BUILD_PINS,
       ...CLOUDFLARE_PREVIEW_MOCK_FLAGS,
+      VITE_ENABLE_DOMINION_NIGHT_THEME: 'true',
     };
     for (const [name, expectedValue] of Object.entries(expectedPreviewValues)) {
       const entry = previewEnv[name];

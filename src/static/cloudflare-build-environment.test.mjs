@@ -27,6 +27,7 @@ describe('Cloudflare frontend build environment normalization', () => {
       const input = {
         CF_PAGES: 'true',
         CF_PAGES_BRANCH: branch,
+        VITE_ENABLE_DOMINION_NIGHT_THEME: 'true',
         VITE_ENABLE_MOCKS: 'false',
         VITE_ENABLE_SUPABASE_AUTH_IN_MOCKS: 'true',
         VITE_ENABLE_PRODUCTION_CONNECTIONS: 'true',
@@ -41,6 +42,7 @@ describe('Cloudflare frontend build environment normalization', () => {
       const normalized = normalizeCloudflareFrontendEnvironment(input);
 
       assert.equal(normalized.VITE_ENABLE_MOCKS, 'true');
+      assert.equal(normalized.VITE_ENABLE_DOMINION_NIGHT_THEME, 'true');
       assert.equal(normalized.VITE_ENABLE_SUPABASE_AUTH_IN_MOCKS, 'false');
       assert.equal(normalized.VITE_ENABLE_PRODUCTION_CONNECTIONS, 'false');
       assert.equal(normalized.VITE_ENABLE_GROUP_INTEGRATIONS, 'false');
@@ -64,6 +66,7 @@ describe('Cloudflare frontend build environment normalization', () => {
     const environment = {
       CF_PAGES: 'true',
       CF_PAGES_BRANCH: 'main',
+      VITE_ENABLE_DOMINION_NIGHT_THEME: 'true',
       VITE_ENABLE_MOCKS: 'false',
       VITE_ENABLE_PRODUCTION_CONNECTIONS: 'true',
       VITE_ENABLE_BILLING: 'false',
@@ -93,6 +96,22 @@ describe('Cloudflare frontend build environment normalization', () => {
     );
     assert.equal(isCloudflarePreviewEnvironment(environment), false);
   });
+
+  for (const branch of ['main', 'develop']) {
+    for (const flag of [undefined, 'false', 'TRUE', ' true', 'true ', '1']) {
+      test(`rejects ${branch} when the approved theme flag is ${JSON.stringify(flag)}`, () => {
+        const normalized = normalizeCloudflareFrontendEnvironment({
+          CF_PAGES: 'true',
+          CF_PAGES_BRANCH: branch,
+          VITE_ENABLE_DOMINION_NIGHT_THEME: flag,
+        });
+        assert.equal(normalized.VITE_ENABLE_DOMINION_NIGHT_THEME, flag);
+        assert.ok(frontendEnvironmentErrors(normalized).includes(
+          `VITE_ENABLE_DOMINION_NIGHT_THEME must be true on ${branch}`,
+        ));
+      });
+    }
+  }
 
   test('passes the same sanitized environment to every build step', () => {
     const calls = [];

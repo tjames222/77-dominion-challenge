@@ -40,7 +40,7 @@ test.describe('authenticated route guards', () => {
 
 test('global navigation is keyboard operable and Escape closes it', async ({ page, app }) => {
   await app.open(ROUTE_BY_ID.dashboard);
-  const menuButton = page.getByRole('button', { name: 'Open menu' });
+  const menuButton = page.locator('.global-menu-button');
   const menu = page.locator('.global-menu');
   const memberTabs = page.locator('[data-member-tabs]');
   const firstMenuLink = menu.locator('a').first();
@@ -61,7 +61,11 @@ test('global navigation is keyboard operable and Escape closes it', async ({ pag
   await expect(firstMenuLink).toBeFocused();
 
   await page.keyboard.press('Shift+Tab');
+  await expect(menuButton).toBeFocused();
+  await page.keyboard.press('Shift+Tab');
   await expect(lastMenuControl).toBeFocused();
+  await page.keyboard.press('Tab');
+  await expect(menuButton).toBeFocused();
   await page.keyboard.press('Tab');
   await expect(firstMenuLink).toBeFocused();
 
@@ -83,7 +87,7 @@ test('global navigation is keyboard operable and Escape closes it', async ({ pag
 test('global navigation stays compact away from the top without shifting layout', async ({ page, app }) => {
   await app.open(ROUTE_BY_ID.dashboard);
   const topbar = page.locator('.topbar');
-  const menuButton = page.getByRole('button', { name: 'Open menu' });
+  const menuButton = page.locator('.global-menu-button');
   const initialBox = await topbar.boundingBox();
 
   await page.evaluate(() => window.scrollTo(0, 640));
