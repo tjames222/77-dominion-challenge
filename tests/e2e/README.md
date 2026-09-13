@@ -71,6 +71,11 @@ can differ from the Linux comparison environment.
   1440x1000 in each enabled theme.
 - first-paint.spec.mjs checks the selected root theme and browser
   color-scheme at first contentful paint.
+- share-composer-routes.spec.mjs opens the shared composer on all 16 authenticated
+  header routes at clean URLs and after hard refresh, verifies computed component
+  styles, and covers delayed CSS, four themes, text zoom, and keyboard/axe checks
+  in Chromium and WebKit. The mobile visual matrix includes Dashboard, Rewards,
+  and Journal composer baselines, including Dominion Platinum.
 - regression-sensitivity.spec.mjs proves controlled accessibility and visual
   changes are rejected while the test itself remains green.
 - local-production-stack.spec.mjs is outside the normal mock suite and proves a

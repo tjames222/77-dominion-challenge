@@ -25,7 +25,6 @@ import { normalizeChallengeStartDate } from './shared-header-state.mjs';
 
 const GAME_STATS_STORAGE_KEY = 'dominion:gameStats';
 const CHECK_IN_DATES_STORAGE_KEY = 'dominion:checkInDates';
-const SHARE_COMPOSER_STYLESHEET = new URL('../assets/share-composer.css', import.meta.url).href;
 const DEFAULT_GAME_STATS = Object.freeze({
   currentAppStreak: 0,
   bestAppStreak: 0,
@@ -57,24 +56,6 @@ function formatChallengeStartDate(value) {
     day: 'numeric',
     year: 'numeric',
   }).format(new Date(year, month - 1, day));
-}
-
-function ensureShareComposerStyles(ownerDocument) {
-  const existing = [...ownerDocument.querySelectorAll('link[rel="stylesheet"]')]
-    .find((link) => {
-      const source = link.getAttribute('href') || '';
-      return link.href === SHARE_COMPOSER_STYLESHEET
-        || /(?:^|\/)share-composer(?:-[A-Za-z0-9_-]+)?\.css(?:[?#]|$)/.test(source);
-    });
-  if (existing) {
-    existing.dataset.globalShareComposerStyles = '';
-    return;
-  }
-  const link = ownerDocument.createElement('link');
-  link.rel = 'stylesheet';
-  link.href = SHARE_COMPOSER_STYLESHEET;
-  link.dataset.globalShareComposerStyles = '';
-  ownerDocument.head?.append(link);
 }
 
 function createStreakDetailsContent(ownerDocument) {
@@ -212,7 +193,6 @@ export function createAuthenticatedHeaderActions({
     throw new TypeError('Authenticated header actions require a topbar and document.');
   }
 
-  ensureShareComposerStyles(ownerDocument);
   topbar.classList.add('has-authenticated-header-actions');
 
   let trailingActions = topbar.querySelector('.topbar-trailing-actions');

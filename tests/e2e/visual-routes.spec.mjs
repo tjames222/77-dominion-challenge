@@ -1,6 +1,7 @@
 import {
   expectNoHorizontalOverflow,
   expectStableScreenshot,
+  expect,
   test,
 } from './support/app-test.mjs';
 import { PRODUCTION_ROUTES } from './support/routes.mjs';
@@ -26,4 +27,28 @@ test.describe('all-route visual matrix', () => {
     await expectStableScreenshot(page, app, 'global-navigation-open.png', { fullPage: false });
     app.assertNoRuntimeErrors();
   });
+});
+
+test.describe('mobile shared composer visual matrix', () => {
+  for (const routeId of ['dashboard', 'badgesRewards', 'privateJournal']) {
+    test(`${routeId} branded Share composer`, async ({ page, app }, testInfo) => {
+      test.skip(testInfo.project.metadata.breakpoint !== 'mobile', 'Mobile dialog baseline');
+      const route = PRODUCTION_ROUTES.find((candidate) => candidate.id === routeId);
+      await app.open(route, { theme: testInfo.project.metadata.theme });
+      await page.locator('.shared-header-share').click();
+      await expect(page.locator('[data-share-method="copy_link"]')).toBeEnabled();
+      await expectStableScreenshot(page, app, `${routeId}-share-composer.png`, { fullPage: false });
+      app.assertNoRuntimeErrors();
+    });
+
+    test(`${routeId} Platinum Share composer`, async ({ page, app }, testInfo) => {
+      test.skip(testInfo.project.name !== 'visual-mobile-dark', 'One dedicated Platinum mobile baseline');
+      const route = PRODUCTION_ROUTES.find((candidate) => candidate.id === routeId);
+      await app.open(route, { state: 'rewardsUnlocked', theme: 'dominion-platinum' });
+      await page.locator('.shared-header-share').click();
+      await expect(page.locator('[data-share-method="copy_link"]')).toBeEnabled();
+      await expectStableScreenshot(page, app, `${routeId}-share-composer-platinum.png`, { fullPage: false });
+      app.assertNoRuntimeErrors();
+    });
+  }
 });
