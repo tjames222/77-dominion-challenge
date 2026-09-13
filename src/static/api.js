@@ -113,8 +113,12 @@ import {
 import {
   MEMBER_PROGRESS_BADGE_PAGE_SIZE,
   MEMBER_PROGRESS_UNAVAILABLE,
+  mapMemberProgressRpcError,
   mockLifetimeLevel,
+  normalizeMemberProgressAwardId,
+  normalizeMemberProgressCursor,
   normalizeMemberProgressProfile,
+  paginateMemberProgressBadges,
 } from './member-progress-profile.mjs';
 import {
   applySiteTrainingTransition,
@@ -3680,11 +3684,17 @@ function getMockLeaderboard({ crewId = null, window = 'week' } = {}) {
     .map((row, index) => ({ ...row, rank: index + 1 }));
 }
 
-function mockBadgeIsAfterCursor(badge, cursor) {
-  if (!cursor) return true;
-  const earnedAt = String(badge.earnedAt || '');
-  if (earnedAt < cursor.earnedAt) return true;
-  return earnedAt === cursor.earnedAt && String(badge.key || '') > cursor.badgeKey;
+// Preview awards historically used opaque IDs. Give those records tab-local
+// UUIDs for this read-only API; a reload starts a new first-page cursor.
+const mockMemberBadgeIds = new Map();
+function mockMemberBadgeIdentity(memberId, badge) {
+  const existing = normalizeMemberProgressAwardId(badge.awardId);
+  if (existing) return existing;
+  const key = JSON.stringify([memberId, badge.awardId || [badge.key, badge.scopeKey]]);
+  if (!mockMemberBadgeIds.has(key)) {
+    mockMemberBadgeIds.set(key, `ffffffff-ffff-4000-8000-${(mockMemberBadgeIds.size + 1).toString(16).padStart(12, '0')}`);
+  }
+  return mockMemberBadgeIds.get(key);
 }
 
 function getMockCrewMemberProgressProfile({ crewId, userId, cursor, limit }) {
@@ -3703,14 +3713,7 @@ function getMockCrewMemberProgressProfile({ crewId, userId, cursor, limit }) {
   const badges = [...fixture.badges]
     .map(mapBadge)
     .filter(Boolean)
-    .sort((left, right) => (
-      String(right.earnedAt || '').localeCompare(String(left.earnedAt || ''))
-      || String(left.key || '').localeCompare(String(right.key || ''))
-    ));
-  const pageCandidates = badges.filter((badge) => mockBadgeIsAfterCursor(badge, cursor));
-  const page = pageCandidates.slice(0, limit);
-  const hasMore = pageCandidates.length > limit;
-  const finalBadge = page.at(-1);
+    .map((badge) => ({ ...badge, awardId: mockMemberBadgeIdentity(target.userId, badge) }));
 
   return normalizeMemberProgressProfile({
     memberId: target.userId,
@@ -3718,12 +3721,7 @@ function getMockCrewMemberProgressProfile({ crewId, userId, cursor, limit }) {
     avatarUrl: target.avatarUrl || '',
     role: target.role,
     level: mockLifetimeLevel(fixture.lifetimePoints),
-    badgeCount: badges.length,
-    badges: page,
-    hasMore,
-    nextCursor: hasMore && finalBadge
-      ? { earnedAt: finalBadge.earnedAt, badgeKey: finalBadge.key }
-      : null,
+    ...paginateMemberProgressBadges(badges, cursor, limit),
   }, { expectedMemberId: userId });
 }
 
@@ -4324,15 +4322,7 @@ export async function getCrewMemberProgressProfile({
     Math.max(Math.floor(Number(limit) || MEMBER_PROGRESS_BADGE_PAGE_SIZE), 1),
     24,
   );
-  const normalizedCursor = cursor
-    && Number.isFinite(Date.parse(cursor.earnedAt))
-    && typeof cursor.badgeKey === 'string'
-    && cursor.badgeKey.trim()
-    ? {
-        earnedAt: new Date(cursor.earnedAt).toISOString(),
-        badgeKey: cursor.badgeKey.trim().slice(0, 120),
-      }
-    : null;
+  const normalizedCursor = normalizeMemberProgressCursor(cursor);
   if (!crewId || !userId || (cursor && !normalizedCursor)) {
     throw new Error(MEMBER_PROGRESS_UNAVAILABLE);
   }
@@ -4364,9 +4354,10 @@ export async function getCrewMemberProgressProfile({
     target_badge_cursor_earned_at: normalizedCursor?.earnedAt || null,
     target_badge_cursor_key: normalizedCursor?.badgeKey || null,
     target_badge_limit: normalizedLimit,
+    target_badge_cursor_award_id: normalizedCursor?.awardId || null,
   });
-  if (error) throw error;
   await requireUser(actor.id);
+  if (error) throw mapMemberProgressRpcError(error);
   const profile = normalizeMemberProgressProfile(data, { expectedMemberId: userId });
   return {
     ...profile,

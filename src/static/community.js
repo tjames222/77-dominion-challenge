@@ -49,6 +49,8 @@ import {
 import {
   MEMBER_PROGRESS_BADGE_PAGE_SIZE,
   MEMBER_PROGRESS_UNAVAILABLE,
+  MEMBER_BADGE_CURSOR_RESTART,
+  MEMBER_BADGE_CURSOR_RESTART_CODE,
   createMemberProgressRevalidationGate,
   createMemberProgressRequestGate,
   memberProgressRoleLabel,
@@ -86,6 +88,7 @@ const state = {
   leaderboard: { window: 'week', rows: [], requestId: 0 },
   memberProgress: {
     announcement: '',
+    cursorRestartRequired: false,
     crewId: '',
     dialog: null,
     gate: createMemberProgressRequestGate(),
@@ -819,13 +822,14 @@ function renderMemberProgressDialog() {
   }
 
   if (progress.unavailable || !progress.profile) {
-    dialog.setError(MEMBER_PROGRESS_UNAVAILABLE);
+    const message = progress.cursorRestartRequired ? MEMBER_BADGE_CURSOR_RESTART : MEMBER_PROGRESS_UNAVAILABLE;
+    dialog.setError(message);
     content.innerHTML = `
       <div class="member-progress-unavailable">
         <span class="app-icon icon-shield" aria-hidden="true"></span>
-        <h3>${escapeHtml(MEMBER_PROGRESS_UNAVAILABLE)}</h3>
+        <h3>${escapeHtml(message)}</h3>
         <p>This private-group view may have changed. Retry to verify access again.</p>
-        <button class="secondary" type="button" data-member-progress-retry>Try again</button>
+        <button class="secondary" type="button" data-member-progress-retry>${progress.cursorRestartRequired ? 'Reload badges' : 'Try again'}</button>
       </div>
     `;
     return;
@@ -878,8 +882,9 @@ function renderMemberProgressDialog() {
   `;
 }
 
-function showMemberProgressUnavailable() {
+function showMemberProgressUnavailable({ cursorRestartRequired = false } = {}) {
   const progress = state.memberProgress;
+  progress.cursorRestartRequired = cursorRestartRequired;
   progress.loading = false;
   progress.loadingMore = false;
   progress.profile = null;
@@ -893,6 +898,7 @@ function clearMemberProgress({ close = true, reason = 'access-changed' } = {}) {
   progress.gate.invalidate();
   progress.revalidationGate.reset();
   progress.announcement = '';
+  progress.cursorRestartRequired = false;
   progress.crewId = '';
   progress.loading = false;
   progress.loadingMore = false;
@@ -919,6 +925,7 @@ async function openMemberProgress(trigger, memberId) {
   progress.revalidationGate.reset();
   const request = progress.gate.begin({ crewId: crew.id, memberId, kind: 'profile' });
   progress.announcement = '';
+  progress.cursorRestartRequired = false;
   progress.crewId = crew.id;
   progress.loading = true;
   progress.loadingMore = false;
@@ -1064,12 +1071,14 @@ async function loadMoreMemberProgressBadges(button) {
     );
     nextFocus?.focus?.({ preventScroll: true });
     return true;
-  } catch {
+  } catch (error) {
     if (!progress.gate.isCurrent(request, {
       crewId: activeCrew()?.id || '',
       memberId: progress.memberId,
     })) return false;
-    showMemberProgressUnavailable();
+    showMemberProgressUnavailable({
+      cursorRestartRequired: error?.code === MEMBER_BADGE_CURSOR_RESTART_CODE,
+    });
     ensureMemberProgressDialog().elements.content.querySelector('[data-member-progress-retry]')
       ?.focus?.({ preventScroll: true });
     return false;

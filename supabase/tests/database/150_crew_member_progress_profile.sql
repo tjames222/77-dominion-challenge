@@ -76,17 +76,17 @@ from pg_catalog.generate_series(1, 14) series;
 select ok(
   has_function_privilege(
     'authenticated',
-    'public.get_crew_member_progress_profile(uuid,uuid,timestamptz,text,integer)',
+    'public.get_crew_member_progress_profile(uuid,uuid,timestamptz,text,integer,uuid)',
     'execute'
   )
   and not has_function_privilege(
     'anon',
-    'public.get_crew_member_progress_profile(uuid,uuid,timestamptz,text,integer)',
+    'public.get_crew_member_progress_profile(uuid,uuid,timestamptz,text,integer,uuid)',
     'execute'
   )
   and not has_function_privilege(
     'service_role',
-    'public.get_crew_member_progress_profile(uuid,uuid,timestamptz,text,integer)',
+    'public.get_crew_member_progress_profile(uuid,uuid,timestamptz,text,integer,uuid)',
     'execute'
   ),
   'only authenticated clients can execute the narrow member-progress RPC'
@@ -95,7 +95,7 @@ select ok(
 select ok(
   (select prosecdef and provolatile = 'v' and proconfig @> array['search_path=""']
    from pg_proc
-   where oid = 'public.get_crew_member_progress_profile(uuid,uuid,timestamptz,text,integer)'::regprocedure),
+   where oid = 'public.get_crew_member_progress_profile(uuid,uuid,timestamptz,text,integer,uuid)'::regprocedure),
   'the lock-taking RPC is a volatile security-definer boundary with an empty search path'
 );
 
@@ -108,10 +108,10 @@ select ok(
 
 select ok(
   position('pg_advisory_xact_lock_shared' in pg_get_functiondef(
-    'public.get_crew_member_progress_profile(uuid,uuid,timestamptz,text,integer)'::regprocedure
+    'public.get_crew_member_progress_profile(uuid,uuid,timestamptz,text,integer,uuid)'::regprocedure
   )) > 0
   and position('for share' in lower(pg_get_functiondef(
-    'public.get_crew_member_progress_profile(uuid,uuid,timestamptz,text,integer)'::regprocedure
+    'public.get_crew_member_progress_profile(uuid,uuid,timestamptz,text,integer,uuid)'::regprocedure
   ))) > 0,
   'the RPC serializes entitlement, crew, membership, and account-erasure races'
 );
@@ -185,7 +185,7 @@ select is(
    from pg_catalog.jsonb_object_keys(
      (select payload #> '{badges,0}' from member_progress_results where key = 'first')
    ) key),
-  array['description','earnedAt','icon','key','name','tier'],
+  array['awardId','description','earnedAt','icon','key','name','tier'],
   'badge rows contain presentation fields and ordering data only'
 );
 select ok(

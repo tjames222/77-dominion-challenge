@@ -138,6 +138,15 @@ export default defineConfig({
       use: { ...devices['iPhone 13'], browserName: 'webkit', viewport: { width: 390, height: 844 } },
     },
     {
+      name: 'webkit-member-badges-mobile',
+      testMatch: /(?:scoped-member-badges|member-progress-profile)\.spec\.mjs/,
+      // Existing visual baselines are Chromium/Linux; retain all functional
+      // privacy/recovery coverage here without creating macOS snapshots.
+      grepInvert: /on-brand/,
+      metadata: { breakpoint: 'mobile', theme: 'dark', colorScheme: 'dark' },
+      use: { ...devices['iPhone 13'], browserName: 'webkit', viewport: { width: 390, height: 844 } },
+    },
+    {
       name: 'webkit-share-composer-mobile',
       testMatch: /share-composer-routes\.spec\.mjs/,
       metadata: { breakpoint: 'mobile', theme: 'dark', colorScheme: 'dark' },

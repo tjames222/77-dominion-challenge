@@ -13895,3 +13895,4 @@ revoke execute on function public.grant_sharing_reward_after_invite_redemption()
 \ir migrations/20260913035046_durable_reward_celebrations.sql
 \ir migrations/20260913062841_site_admin_foundation.sql
 \ir migrations/20260913065057_site_admin_read_apis.sql
+\ir migrations/20260913072708_scoped_member_badge_pagination.sql
