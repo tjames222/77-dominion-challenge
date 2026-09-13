@@ -104,8 +104,38 @@ Reproduce the mechanical font artifact in a temporary virtual environment with
 there is no additional production runtime dependency. Do not replace the original
 font or commit platform-specific visual baselines when regenerating the subset.
 
+## In-flight activation and training reads
+
+`getChallengeActivation` and `getSiteTrainingState` now coalesce only concurrently
+pending calls for the same actor, endpoint, contract version and server arguments.
+Each settled result is immediately evicted; consumers receive independent copies.
+There is no TTL/SWR store, local persistence, service worker, cached authorization,
+or memoization of mutations. Real-wire reads keep the captured expected actor and
+verify it with `getUser` before and after the shared RPC. A deterministic API
+integration test verifies two concurrent consumers produce one activation RPC,
+with both pre/post authentication checks retained; this is not a hosted latency
+measurement or proof of production round-trip budgets.
+
+Synchronous auth-event, sign-out, local login, cross-tab storage, offline/online and
+visibility invalidation fences delayed responses with an epoch. A→B→A cannot reuse
+an earlier A promise. Activation/group mutations clear pending reads before and
+after completion, including failed responses. Training mutations invalidate only
+the training query so they do not cancel an unrelated activation read. Read-only
+mock membership canonicalization explicitly does not self-invalidate; real mock
+membership mutations do. Authentication, reward entitlement, app-visit and
+celebration-claim operations are not coalesced by this module.
+
+The remaining app-visit/game-summary work must coordinate with FOU-1499's durable
+badge-claim contract; do not memoize its claim or acknowledgement mutations. Domain
+bootstrap, pagination, broader lifecycle/realtime invalidation and initial-graph
+targets remain open. The in-flight primitive deliberately introduces no settled
+cache while those full invalidation contracts are still being established.
+
 ## References
 
 Cache behavior follows [Cloudflare Pages headers](https://developers.cloudflare.com/pages/configuration/headers/)
 and [serving pages](https://developers.cloudflare.com/pages/configuration/serving-pages/).
 Font generation uses the official [fontTools subset interface](https://fonttools.readthedocs.io/en/latest/subset/index.html).
+Authoritative identity checks and synchronous invalidation follow Supabase's
+[getUser](https://supabase.com/docs/reference/javascript/auth-getuser) and
+[auth-state subscription](https://supabase.com/docs/reference/javascript/auth-onauthstatechange) contracts.

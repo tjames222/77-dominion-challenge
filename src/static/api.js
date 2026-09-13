@@ -4,6 +4,7 @@ import { createAdminReadClient, adminReadError } from './admin-read-client.mjs';
 import { createAdminPreview } from './admin-preview.mjs';
 import { createMfaSessionGuard } from './mfa-session-guard.mjs';
 import { assertEarlyAccessActor, normalizeEarlyAccessRequest, postEarlyAccessRequest } from './early-access-request.mjs';
+import { createInflightActorReads } from './inflight-actor-reads.mjs';
 import {
   DEFAULT_CHALLENGE_DEFINITIONS,
   acknowledgeChallengeRecord,
@@ -223,6 +224,32 @@ export function getMfaAuthAdapter() {
   if (!usesSupabaseAuthentication() || !mfaAdapter) throw new Error('Live account security is unavailable in this preview.');
   return mfaAdapter;
 }
+const inflightActorReads = createInflightActorReads();
+async function invalidateReadsAroundMutation(operation, query = '') {
+  inflightActorReads.invalidate(query);
+  try {
+    return await operation();
+  } finally {
+    inflightActorReads.invalidate(query);
+  }
+}
+// A separate synchronous observer fences requests before any UI auth callback
+// schedules rehydration. No Supabase method is called from this callback.
+supabase?.auth.onAuthStateChange((event, session) => {
+  inflightActorReads.observeAuth(event, session?.user?.id || '');
+});
+globalThis.window?.addEventListener('storage', (event) => {
+  if (!event.key || event.key.startsWith('dominion:') || /^sb-.+-auth-token/.test(event.key)) {
+    inflightActorReads.invalidate();
+  }
+});
+for (const event of ['online', 'offline', 'dominion:challenge-activation-updated',
+  'dominion:challenge-start-date-updated']) {
+  globalThis.window?.addEventListener(event, () => inflightActorReads.invalidate());
+}
+globalThis.document?.addEventListener('visibilitychange', () => {
+  if (!document.hidden) inflightActorReads.invalidate();
+});
 export function isLocalDemoMode() {
   if (typeof window === 'undefined') return false;
   return ENABLE_MOCKS || (import.meta.env.DEV && ['localhost', '127.0.0.1', '::1'].includes(window.location.hostname));
@@ -627,6 +654,7 @@ export function sanitizeReturnTo(returnTo, fallback = './dashboard.html') {
 
 export async function clearAuthSession() {
   cancelAdminReads();
+  inflightActorReads.invalidate();
   if (usesSupabaseAuthentication()) {
     try {
       const result = await supabase.auth.signOut();
@@ -651,6 +679,7 @@ export async function clearAuthSession() {
 export function saveLocalMockUser(user) {
   if (!isLocalDemoMode()) throw new Error('Preview login is unavailable outside local demo mode.');
   cancelAdminReads();
+  inflightActorReads.invalidate();
   const nextUser = {
     name: String(user?.name || '').trim() || 'Member',
     email: String(user?.email || '').trim(),
@@ -2362,6 +2391,7 @@ function readMockChallengeActivation() {
 }
 
 function writeMockChallengeActivation(activation) {
+  inflightActorReads.invalidate();
   const normalized = normalizeChallengeActivationMutation(activation);
   const storedStates = readJson(MOCK_CHALLENGE_ACTIVATION_KEY, {});
   const states = storedStates && typeof storedStates === 'object' && !Array.isArray(storedStates)
@@ -2389,21 +2419,24 @@ const requireCapturedActivationActor = (expectedUserId) => {
 
 export async function getChallengeActivation({ expectedUserId } = {}) {
   const capturedActorId = requireCapturedActivationActor(expectedUserId);
-  if (isLocalDemoMode()) {
-    await requireHybridPreviewUser(capturedActorId);
-    if (getMockUserId() !== capturedActorId) {
-      throw new Error('The signed-in account changed. Try again.');
+  return inflightActorReads.run({ actorId: capturedActorId, query: 'get_challenge_activation', version: 1 }, async () => {
+    if (isLocalDemoMode()) {
+      await requireHybridPreviewUser(capturedActorId);
+      if (getMockUserId() !== capturedActorId) {
+        throw new Error('The signed-in account changed. Try again.');
+      }
+      return readMockChallengeActivation();
     }
-    return readMockChallengeActivation();
-  }
 
-  const client = requireSupabase();
-  const user = await requireUser(capturedActorId);
-  const { data, error } = await client.rpc('get_challenge_activation', {
-    target_expected_actor_id: user.id,
+    const client = requireSupabase();
+    const user = await requireUser(capturedActorId);
+    const { data, error } = await client.rpc('get_challenge_activation', {
+      target_expected_actor_id: user.id,
+    });
+    await requireUser(capturedActorId);
+    if (error) return challengeActivationReadError(error);
+    return normalizeChallengeActivation(data);
   });
-  if (error) return challengeActivationReadError(error);
-  return normalizeChallengeActivation(data);
 }
 
 export async function activateSoloChallenge({
@@ -2436,12 +2469,12 @@ export async function activateSoloChallenge({
 
   const client = requireSupabase();
   const user = await requireUser(capturedActorId);
-  const { data, error } = await client.rpc('activate_solo_challenge', {
+  const { data, error } = await invalidateReadsAroundMutation(() => client.rpc('activate_solo_challenge', {
     target_start_date: startDate,
     target_time_zone: timeZone,
     target_request_id: requestId,
     target_expected_actor_id: user.id,
-  });
+  }));
   if (error) throw error;
   return normalizeChallengeActivationMutation(data);
 }
@@ -2489,12 +2522,12 @@ export async function activateGroupChallenge({
 
   const client = requireSupabase();
   const user = await requireUser(capturedActorId);
-  const { data, error } = await client.rpc('activate_group_challenge', {
+  const { data, error } = await invalidateReadsAroundMutation(() => client.rpc('activate_group_challenge', {
     target_crew_id: crewId,
     target_time_zone: timeZone,
     target_request_id: requestId,
     target_expected_actor_id: user.id,
-  });
+  }));
   if (error) throw error;
   return normalizeChallengeActivationMutation(data);
 }
@@ -2535,13 +2568,13 @@ export async function updateChallengeStartDate({
 
   const client = requireSupabase();
   const user = await requireUser(capturedActorId);
-  const { data, error } = await client.rpc('set_challenge_start_date', {
+  const { data, error } = await invalidateReadsAroundMutation(() => client.rpc('set_challenge_start_date', {
     target_start_date: startDate,
     target_time_zone: timeZone,
     target_request_id: requestId,
     target_expected_revision: expectedRevision,
     target_expected_actor_id: user.id,
-  });
+  }));
   if (error) throw error;
   return normalizeChallengeActivationMutation(data);
 }
@@ -2924,6 +2957,7 @@ function applyMockOverallSiteTrainingTransition(state, program, action, actorId,
 }
 
 function runMockSiteTrainingOperation(operation, actorId) {
+  inflightActorReads.invalidate('get_site_training_state');
   if (getMockUserId() !== actorId) throw new Error('The signed-in account changed. Try again.');
   const signature = JSON.stringify({
     scope: operation.scope,
@@ -3026,28 +3060,32 @@ export async function getSiteTrainingState({ page, program = null, expectedUserI
   const actorId = requireCapturedSiteTrainingActor(expectedUserId);
   requireSiteTrainingPage(page);
   if (program) requireSiteTrainingProgram(program, 'overall');
-  if (isLocalDemoMode()) {
-    await requireHybridPreviewUser(actorId);
-    if (getMockUserId() !== actorId) throw new Error('The signed-in account changed. Try again.');
-    return mockSiteTrainingSnapshot(
-      page,
-      program,
-      actorId,
-      readMockSiteTrainingStore(actorId, { readOnly: true }),
-    );
-  }
+  return inflightActorReads.run({ actorId, query: 'get_site_training_state', version: 1,
+    args: [page.id, page.contentVersion, program?.id || null, program?.version || null] }, async () => {
+    if (isLocalDemoMode()) {
+      await requireHybridPreviewUser(actorId);
+      if (getMockUserId() !== actorId) throw new Error('The signed-in account changed. Try again.');
+      return mockSiteTrainingSnapshot(
+        page,
+        program,
+        actorId,
+        readMockSiteTrainingStore(actorId, { readOnly: true }),
+      );
+    }
 
-  const client = requireSupabase();
-  const user = await requireUser(actorId);
-  const { data, error } = await client.rpc('get_site_training_state', {
-    target_page_id: page.id,
-    target_page_content_version: page.contentVersion,
-    target_program_id: program?.id || null,
-    target_program_version: program?.version || null,
-    target_expected_actor_id: user.id,
+    const client = requireSupabase();
+    const user = await requireUser(actorId);
+    const { data, error } = await client.rpc('get_site_training_state', {
+      target_page_id: page.id,
+      target_page_content_version: page.contentVersion,
+      target_program_id: program?.id || null,
+      target_program_version: program?.version || null,
+      target_expected_actor_id: user.id,
+    });
+    await requireUser(actorId);
+    if (error) return siteTrainingReadError(error);
+    return normalizeSiteTrainingState(data, { expectedPage: page, expectedProgram: program });
   });
-  if (error) return siteTrainingReadError(error);
-  return normalizeSiteTrainingState(data, { expectedPage: page, expectedProgram: program });
 }
 
 export async function claimSiteTraining({
@@ -3073,10 +3111,10 @@ export async function claimSiteTraining({
   }
   const client = requireSupabase();
   const user = await requireUser(actorId);
-  const { data, error } = await client.rpc(
+  const { data, error } = await invalidateReadsAroundMutation(() => client.rpc(
     'claim_site_training',
     siteTrainingRpcParameters(operation, user.id),
-  );
+  ), 'get_site_training_state');
   if (error) throw error;
   return normalizeSiteTrainingResult(data, page, operation.program, operation);
 }
@@ -3107,10 +3145,10 @@ export async function transitionSiteTraining({
   }
   const client = requireSupabase();
   const user = await requireUser(actorId);
-  const { data, error } = await client.rpc(
+  const { data, error } = await invalidateReadsAroundMutation(() => client.rpc(
     'transition_site_training',
     siteTrainingRpcParameters(operation, user.id),
-  );
+  ), 'get_site_training_state');
   if (error) throw error;
   return normalizeSiteTrainingResult(data, page, operation.program, operation);
 }
@@ -3530,11 +3568,14 @@ function ensureMockCrews() {
     }));
   });
 
-  saveMockCrewMembers(members);
+  // Canonicalizing a read is not a membership mutation and must not invalidate
+  // the activation read that is currently using this same snapshot.
+  saveMockCrewMembers(members, { invalidateReads: false });
   return { crews, members };
 }
 
-function saveMockCrewMembers(members) {
+function saveMockCrewMembers(members, { invalidateReads = true } = {}) {
+  if (invalidateReads) inflightActorReads.invalidate();
   writeJson(
     MOCK_CREW_MEMBERS_KEY,
     prepareMockCrewMembersForStorage(members, getMockUserId()),
@@ -4039,7 +4080,7 @@ export async function createCrewAndActivateGroup({
 
   const client = requireSupabase();
   const user = await requireUser(capturedActorId);
-  const { data, error } = await client.rpc('create_crew_and_activate_group', {
+  const { data, error } = await invalidateReadsAroundMutation(() => client.rpc('create_crew_and_activate_group', {
     target_crew_request_id: crewRequestId,
     target_activation_request_id: activationRequestId,
     target_name: name,
@@ -4047,7 +4088,7 @@ export async function createCrewAndActivateGroup({
     target_challenge_start_date: challengeStartDate,
     target_time_zone: timeZone,
     target_expected_actor_id: user.id,
-  });
+  }));
   if (error) throw error;
   return normalizeCreatedGroupStart(data);
 }
@@ -4245,10 +4286,10 @@ export async function deleteCrew({ crewId, requestId = newCrewLifecycleRequestId
 
   const client = requireSupabase();
   await requireUser();
-  const { data, error } = await client.rpc('delete_crew', {
+  const { data, error } = await invalidateReadsAroundMutation(() => client.rpc('delete_crew', {
     target_crew_id: crewId,
     target_request_id: requestId,
-  });
+  }));
   if (error) throw error;
   return data;
 }
@@ -4271,10 +4312,10 @@ export async function leaveCrew({ crewId, requestId = newCrewLifecycleRequestId(
 
   const client = requireSupabase();
   await requireUser();
-  const { data, error } = await client.rpc('leave_crew', {
+  const { data, error } = await invalidateReadsAroundMutation(() => client.rpc('leave_crew', {
     target_crew_id: crewId,
     target_request_id: requestId,
-  });
+  }));
   if (error) throw error;
   return data;
 }
@@ -4706,9 +4747,9 @@ export async function confirmCrewInvite(continuationToken, { expectedUserId = ''
 
   const client = requireSupabase();
   await requireUser(expectedUserId);
-  const { data, error } = await client.rpc('confirm_crew_invite', {
+  const { data, error } = await invalidateReadsAroundMutation(() => client.rpc('confirm_crew_invite', {
     continuation_token: continuationToken,
-  });
+  }));
   if (error) throw error;
   return data || { status: 'invalid' };
 }
