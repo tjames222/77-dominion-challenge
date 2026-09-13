@@ -18,6 +18,7 @@ import {
 
 const read = (relativePath) => readFile(new URL(relativePath, import.meta.url), 'utf8');
 const frontendEnvironmentErrors = (environment) => rawFrontendEnvironmentErrors({
+  VITE_ENABLE_DOMINION_NIGHT_THEME: 'true',
   VITE_ENABLE_BILLING: 'false',
   VITE_ENABLE_PUBLIC_SIGNUP: 'false',
   ...environment,
@@ -170,6 +171,7 @@ describe('dev authentication runtime', () => {
 describe('Cloudflare frontend environment gate', () => {
   test('requires both production-canary flags to be exactly false on canonical branches', () => {
     assert.deepEqual(rawFrontendEnvironmentErrors({
+      VITE_ENABLE_DOMINION_NIGHT_THEME: 'true',
       CF_PAGES: 'true',
       CF_PAGES_BRANCH: 'develop',
       VITE_ENABLE_MOCKS: 'true',
@@ -179,6 +181,7 @@ describe('Cloudflare frontend environment gate', () => {
     ]);
 
     assert.deepEqual(rawFrontendEnvironmentErrors({
+      VITE_ENABLE_DOMINION_NIGHT_THEME: 'true',
       CF_PAGES: 'true',
       CF_PAGES_BRANCH: 'main',
       VITE_ENABLE_MOCKS: 'false',
@@ -192,6 +195,7 @@ describe('Cloudflare frontend environment gate', () => {
     ]);
 
     assert.deepEqual(rawFrontendEnvironmentErrors({
+      VITE_ENABLE_DOMINION_NIGHT_THEME: 'true',
       CF_PAGES: 'true',
       CF_PAGES_BRANCH: 'main',
       VITE_ENABLE_MOCKS: 'false',
@@ -208,6 +212,7 @@ describe('Cloudflare frontend environment gate', () => {
 
     for (const nonExactFalse of ['FALSE', ' false', 'false ']) {
       assert.deepEqual(rawFrontendEnvironmentErrors({
+        VITE_ENABLE_DOMINION_NIGHT_THEME: 'true',
         CF_PAGES: 'true',
         CF_PAGES_BRANCH: 'main',
         VITE_ENABLE_MOCKS: 'false',
