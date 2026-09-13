@@ -54,7 +54,8 @@ describe('preview challenge controls', () => {
     assert.match(celebrationBlock, /queueCheckInCelebrations\(/);
     assert.match(celebrationBlock, /refreshChallengeProgression\(/);
     assert.match(dashboardJs, /item\.kind === 'reward'\) return showRewardToast\(item\.reward\)/);
-    assert.match(dashboardJs, /item\.kind === 'badge'\) return showBadgeCelebration\(item\.badge\)/);
+    assert.match(dashboardJs, /item\.kind === 'badge'[\s\S]*?const controller = showBadgeCelebration\(item\.badge\)/);
+    assert.match(dashboardJs, /acknowledgeBadgeCelebrations/);
     assert.match(dashboardJs, /queueChallengeUnlockCelebration\(result\.claimedUnlocks, celebrationDelay, owner\)/);
     assert.match(dashboardJs, /claimChallengeUnlocks\(\{ expectedUserId: owner\.userId \}\)/);
   });

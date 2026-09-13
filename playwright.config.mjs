@@ -130,6 +130,12 @@ export default defineConfig({
       use: { ...devices['iPhone 13'], browserName: 'webkit', viewport: { width: 390, height: 844 } },
     },
     {
+      name: 'webkit-badges-mobile',
+      testMatch: /deterministic-badges\.spec\.mjs/,
+      metadata: { breakpoint: 'mobile', theme: 'dark', colorScheme: 'dark' },
+      use: { ...devices['iPhone 13'], browserName: 'webkit', viewport: { width: 390, height: 844 } },
+    },
+    {
       name: 'webkit-training-mobile',
       testMatch: /(?:site-training-visibility|solo-first-run-training)\.spec\.mjs/,
       metadata: { breakpoint: 'mobile', theme: 'dark', colorScheme: 'dark' },

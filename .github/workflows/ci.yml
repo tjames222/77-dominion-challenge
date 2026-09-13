@@ -100,6 +100,8 @@ jobs:
         run: pnpm run test:early-access-sql
       - name: Execute archived canary restart SQL in isolated PostgreSQL
         run: pnpm run test:production-canary-restart-sql
+      - name: Verify deterministic badge SQL and concurrent celebration claims
+        run: pnpm run test:deterministic-badges-sql
       - name: Rebuild from the migration chain
         run: pnpm run supabase:reset
       - name: Prove migration SQL and history roll back together

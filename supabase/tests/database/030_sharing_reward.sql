@@ -169,8 +169,8 @@ select is(
 );
 select is(
   (select entry_date from public.user_badges where user_id = '30000000-0000-4000-8000-000000000003' and badge_key = 'sharing'),
-  null,
-  'the Sharing badge does not consume a daily badge date'
+  (select (recorded_at at time zone 'UTC')::date from public.sharing_reward_evidence where user_id='30000000-0000-4000-8000-000000000003' order by recorded_at,id limit 1),
+  'the Sharing badge retains the verified event date without imposing a daily badge cap'
 );
 
 insert into sharing_test_state (key, payload)

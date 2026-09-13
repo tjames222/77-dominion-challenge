@@ -55,6 +55,9 @@ import {
   shouldUseSupabaseAuthentication,
 } from './preview-auth-runtime.mjs';
 import { normalizeEarnedBadges } from './badges-rewards.mjs';
+import { PREVIEW_BADGE_STATE_KEY, normalizePreviewBadgeState, recordPreviewBadgeEvent,
+  claimPreviewBadgeCelebrations, acknowledgePreviewBadgeCelebrations, previewBadgeCollection } from './badge-preview-state.mjs';
+import { evaluateBadgeEvent } from './badge-evaluation.mjs';
 import { normalizeJournalEntry, sortJournalEntries } from './journal-entry.mjs';
 import { assertJournalDateAllowed, isJournalDateKey } from './journal-date-picker.mjs';
 import {
@@ -934,8 +937,10 @@ const mapCrew = (item) => {
 };
 
 const mapBadge = (badge) => {
-  const definition = badge.badge_definitions || badge;
+  const definition = badge?.metadata?.awardDefinition || badge?.badge_definitions || badge;
   return badge ? {
+    awardId: badge.id || badge.awardId || null,
+    scopeKey: badge.scope_key || badge.scopeKey || 'lifetime',
     key: badge.badge_key || badge.key,
     name: definition?.name || badge.name || 'Badge',
     description: definition?.description || badge.description || '',
@@ -948,7 +953,9 @@ const mapBadge = (badge) => {
     requirement: definition?.requirement || badge.requirement || badge.metadata?.requirement || definition?.description || '',
     earningEvidence: badge.earningEvidence || badge.earning_evidence || badge.metadata?.earningEvidence || null,
     legacy: badge.legacy === true || badge.metadata?.legacy === true,
-    retired: definition?.retired === true || badge.retired === true || badge.metadata?.retired === true,
+    retired: badge.badge_definitions?.retired === true || definition?.retired === true || badge.retired === true || badge.metadata?.retired === true,
+    displayOrder: definition?.displayOrder ?? definition?.sort_order ?? badge.displayOrder ?? 10000,
+    celebrationSeenAt: badge.celebration_seen_at || badge.celebrationSeenAt || null,
   } : null;
 };
 
@@ -1597,32 +1604,24 @@ export async function completeSharingReward(completionToken, { expectedUserId = 
     if (expectedUserId && getMockUserId() !== expectedUserId) {
       throw new Error('The signed-in account changed. Try again.');
     }
-    const existing = readMockUserValue(MOCK_SHARING_REWARD_KEY, null);
-    if (existing) return { granted: false, alreadyGranted: true, ...existing };
-
-    const grantedAt = new Date().toISOString();
-    const stats = readMockUserValue('dominion:gameStats', {});
-    writeMockUserValue('dominion:gameStats', {
-      ...stats,
-      totalPoints: Number(stats.totalPoints ?? stats.challengePoints ?? 0) + 14,
-      challengePoints: Number(stats.challengePoints ?? stats.totalPoints ?? 0) + 14,
+    const actorId = requireMockRewardActor(expectedUserId);
+    return withPreviewBadgeState(actorId, (state) => {
+      const existing = readMockUserValue(MOCK_SHARING_REWARD_KEY, null, actorId);
+      if (existing) return { granted: false, alreadyGranted: true, ...existing };
+      const grantedAt = new Date().toISOString();
+      const stats = readMockUserValue('dominion:gameStats', {}, actorId);
+      writeMockUserValue('dominion:gameStats', {
+        ...stats,
+        totalPoints: Number(stats.totalPoints ?? stats.challengePoints ?? 0) + 14,
+        challengePoints: Number(stats.challengePoints ?? stats.totalPoints ?? 0) + 14,
+      }, actorId);
+      const awards = evaluateBadgeEvent({ source: 'share', sourceId: 'preview-sharing',
+        localDate: grantedAt.slice(0, 10), occurredAt: grantedAt, verified_share: 1 }, state.awards);
+      state.awards.push(...awards.map((award) => ({ ...award, awardId: 'preview:sharing:lifetime' })));
+      const grant = { points: 14, badgeKey: 'sharing', grantedAt };
+      writeMockUserValue(MOCK_SHARING_REWARD_KEY, grant, actorId);
+      return { granted: true, alreadyGranted: false, ...grant };
     });
-    const badges = readMockUserValue('dominion:badges', []);
-    if (!badges.some((badge) => (badge.badge_key || badge.key) === 'sharing')) {
-      badges.unshift({
-        key: 'sharing',
-        name: 'Share the Challenge',
-        description: 'Shared the challenge or brought another person into a private group.',
-        category: 'community',
-        tier: 'bronze',
-        icon: 'share',
-        earnedAt: grantedAt,
-      });
-      writeMockUserValue('dominion:badges', badges);
-    }
-    const grant = { points: 14, badgeKey: 'sharing', grantedAt };
-    writeMockUserValue(MOCK_SHARING_REWARD_KEY, grant);
-    return { granted: true, alreadyGranted: false, ...grant };
   }
 
   const client = requireSupabase();
@@ -2046,7 +2045,7 @@ export async function getDashboard() {
       .maybeSingle(),
     client
       .from('user_badges')
-      .select('badge_key, earned_at, entry_date, metadata, badge_definitions(name, description, category, tier, icon)')
+      .select('id, scope_key, badge_key, earned_at, entry_date, metadata, badge_definitions(name, description, category, tier, icon, requirement, retired, sort_order)')
       .eq('user_id', user.id)
       .order('earned_at', { ascending: false })
       .limit(12),
@@ -3083,7 +3082,73 @@ export async function getCommunityFeed() {
   return data.map(mapFeedItem);
 }
 
+async function withPreviewBadgeState(expectedUserId, operation) {
+  const user = await getLocalOrSessionUser();
+  if (!expectedUserId || !user?.authenticated || user.userId !== expectedUserId) throw new Error('The signed-in account changed. Try again.');
+  if (!globalThis.navigator?.locks?.request) throw new Error('This preview browser cannot safely synchronize badge history.');
+  return navigator.locks.request(`dominion:badges:${expectedUserId}`, async () => {
+    const current = await getLocalOrSessionUser();
+    if (!current?.authenticated || current.userId !== expectedUserId) throw new Error('The signed-in account changed. Try again.');
+    const state = normalizePreviewBadgeState(readMockUserValue(PREVIEW_BADGE_STATE_KEY, null, expectedUserId), readMockUserValue('dominion:badges', [], expectedUserId));
+    const result = operation(state);
+    writeMockUserValue(PREVIEW_BADGE_STATE_KEY, state, expectedUserId);
+    writeMockUserValue('dominion:badges', state.awards, expectedUserId);
+    return result;
+  });
+}
+
+export async function recordPreviewCheckInBadges(entry, { expectedUserId = '' } = {}) {
+  if (!isLocalDemoMode()) throw new Error('Preview badge events cannot be submitted to production.');
+  return withPreviewBadgeState(expectedUserId, (state) => {
+    recordPreviewBadgeEvent(state, { source: 'check_in', sourceId: `preview-check-in:${entry.date}`,
+      occurredAt: entry.createdAt || new Date().toISOString(), localDate: entry.date, challengeDay: entry.day,
+      completed: entry.completed, workoutDifficultySelections: entry.workoutDifficultySelections || {} });
+    return state.awards.map(mapBadge);
+  });
+}
+
+export async function claimBadgeCelebrations({ expectedUserId = '', claimToken = crypto.randomUUID() } = {}) {
+  if (isLocalDemoMode()) return withPreviewBadgeState(expectedUserId, (state) => ({ claimToken,
+    badges: claimPreviewBadgeCelebrations(state, claimToken).map(mapBadge) }));
+  const client = requireSupabase();
+  const user = await requireUser(expectedUserId);
+  const { data, error } = await client.rpc('claim_badge_celebrations', { target_expected_actor_id: user.id, target_claim_token: claimToken });
+  if (error) throw error;
+  await requireUser(user.id);
+  return { claimToken, badges: (Array.isArray(data) ? data : []).map(mapBadge).filter(Boolean) };
+}
+
+export async function acknowledgeBadgeCelebrations({ expectedUserId = '', claimToken, awardIds = [] } = {}) {
+  const verify = (ids) => {
+    if (!Array.isArray(ids) || awardIds.some((id) => !ids.includes(id))) throw new Error('Badge acknowledgment is still pending.');
+    return ids;
+  };
+  if (isLocalDemoMode()) return verify(await withPreviewBadgeState(expectedUserId, (state) => acknowledgePreviewBadgeCelebrations(state, claimToken, awardIds)));
+  const client = requireSupabase();
+  const user = await requireUser(expectedUserId);
+  const { data, error } = await client.rpc('acknowledge_badge_celebrations', {
+    target_expected_actor_id: user.id, target_claim_token: claimToken, target_award_ids: awardIds,
+  });
+  if (error) throw error;
+  await requireUser(user.id);
+  return verify(data);
+}
+
 export async function recordAppVisit({ expectedUserId = '' } = {}) {
+  if (isLocalDemoMode()) return withPreviewBadgeState(expectedUserId, (state) => {
+    const activation = readMockChallengeActivation();
+    const occurredAt = new Date().toISOString();
+    const date = dateKeyForTimeZone(new Date(occurredAt), activation.timeZone || browserTimeZone());
+    const newBadges = recordPreviewBadgeEvent(state, { source: 'app_visit', sourceId: `preview-app-visit:${date}`, localDate: date, occurredAt });
+    const stats = readMockUserValue('dominion:gameStats', {}, expectedUserId);
+    const yesterday = new Date(Date.parse(`${date}T00:00:00Z`) - 86400000).toISOString().slice(0, 10);
+    const streak = stats.lastSeenDate === date ? Math.max(stats.currentAppStreak || 0, 1)
+      : stats.lastSeenDate === yesterday ? Math.max(stats.currentAppStreak || 0, 0) + 1 : 1;
+    const nextStats = { ...stats, currentAppStreak: streak, bestAppStreak: Math.max(stats.bestAppStreak || 0, streak), lastSeenDate: date };
+    writeMockUserValue('dominion:gameStats', nextStats, expectedUserId);
+    return { totalPoints: nextStats.totalPoints || 0, currentAppStreak: streak,
+      bestAppStreak: nextStats.bestAppStreak, newBadges };
+  });
   const client = requireSupabase();
   const user = await requireUser(expectedUserId);
   const { data, error } = await client.rpc('record_app_visit', {
@@ -3110,7 +3175,7 @@ export async function getGameSummary() {
       .maybeSingle(),
     client
       .from('user_badges')
-      .select('badge_key, earned_at, entry_date, metadata, badge_definitions(name, description, category, tier, icon)')
+      .select('id, scope_key, badge_key, earned_at, entry_date, metadata, badge_definitions(name, description, category, tier, icon, requirement, retired, sort_order)')
       .eq('user_id', user.id)
       .order('earned_at', { ascending: false })
       .limit(12),
@@ -3125,10 +3190,36 @@ export async function getGameSummary() {
   };
 }
 
+export async function getBadgeCollection({ expectedUserId = '' } = {}) {
+  let actorId;
+  if (isLocalDemoMode()) {
+    await requireHybridPreviewUser(expectedUserId);
+    actorId = requireMockRewardActor(expectedUserId);
+  } else actorId = (await requireUser(expectedUserId)).id;
+  const earnedBadges = await getEarnedBadges({ expectedUserId: actorId });
+  if (isLocalDemoMode()) {
+    requireMockRewardActor(actorId);
+    const activation = readMockChallengeActivation();
+    const state = normalizePreviewBadgeState(readMockUserValue(PREVIEW_BADGE_STATE_KEY, null, actorId), earnedBadges);
+    const today = dateKeyForTimeZone(new Date(), activation.timeZone || browserTimeZone());
+    return { ...previewBadgeCollection(state, activation, today), earnedBadges };
+  }
+  const client = requireSupabase();
+  const user = await requireUser(actorId);
+  const { data, error } = await client.rpc('get_badge_collection', { target_expected_actor_id: user.id });
+  if (error) throw error;
+  await requireUser(user.id);
+  if (data?.catalogVersion !== 1 || !Array.isArray(data?.items)) throw new Error('Badge catalog is temporarily unavailable.');
+  return { ...data, earnedBadges };
+}
+
 export async function getEarnedBadges({ pageSize = 100, expectedUserId = '' } = {}) {
   if (isLocalDemoMode()) {
+    await requireHybridPreviewUser(expectedUserId);
     const actorId = requireMockRewardActor(expectedUserId);
-    const badges = normalizeEarnedBadges(readMockUserValue('dominion:badges', []).map(mapBadge).filter(Boolean));
+    const state = readMockUserValue(PREVIEW_BADGE_STATE_KEY, null, actorId);
+    const raw = state?.schemaVersion === 1 ? state.awards : readMockUserValue('dominion:badges', [], actorId);
+    const badges = normalizeEarnedBadges((Array.isArray(raw) ? raw : []).map(mapBadge).filter(Boolean));
     requireMockRewardActor(actorId);
     return badges;
   }
@@ -3142,10 +3233,11 @@ export async function getEarnedBadges({ pageSize = 100, expectedUserId = '' } = 
   while (true) {
     const { data, error } = await client
       .from('user_badges')
-      .select('badge_key, earned_at, entry_date, metadata, badge_definitions(name, description, category, tier, icon)')
+      .select('id, scope_key, badge_key, earned_at, entry_date, metadata, badge_definitions(name, description, category, tier, icon, requirement, retired, sort_order)')
       .eq('user_id', user.id)
       .order('earned_at', { ascending: false })
       .order('badge_key', { ascending: true })
+      .order('scope_key', { ascending: true })
       .range(offset, offset + normalizedPageSize - 1);
     if (error) throw error;
 

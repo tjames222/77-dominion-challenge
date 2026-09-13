@@ -539,10 +539,10 @@ test('Dashboard reward queue dismisses safely and advances to the earned tier', 
   const badge = page.locator('#badgeCelebration');
   await expect(dayComplete).toBeHidden();
   await expect(badge).toBeVisible();
-  await expect(badge).toHaveAttribute('data-tier', 'silver');
-  await expect(badge).toContainText('Silver Badge Earned');
+  await expect(badge).toHaveAttribute('data-tier', 'bronze');
+  await expect(badge).toContainText('Bronze Badge Earned');
 
-  await badge.getByRole('heading', { name: 'Two Weeks Complete' }).click();
+  await badge.getByRole('heading', { name: 'Seven for Seven' }).click();
   await expect(badge).toBeVisible();
   await page.keyboard.press('Escape');
   await expect(badge).toBeHidden();
@@ -599,7 +599,7 @@ test('a completed share grants +14 and the Sharing badge only once', async ({ pa
   const nativeShare = dialog.getByRole('button', { name: 'Share from this device' });
   await expect(nativeShare).toBeEnabled();
   await nativeShare.click();
-  await expect(dialog.getByRole('status')).toContainText('You earned +14 points and the Sharing badge.');
+  await expect(dialog.locator('.share-composer-status')).toContainText('You earned +14 points and the Sharing badge.');
 
   const firstGrant = await page.evaluate(() => ({
     stats: JSON.parse(localStorage.getItem('dominion:gameStats') || '{}'),
@@ -609,7 +609,7 @@ test('a completed share grants +14 and the Sharing badge only once', async ({ pa
   expect(firstGrant.badges.filter((badge) => badge.key === 'sharing')).toHaveLength(1);
 
   await nativeShare.click();
-  await expect(dialog.getByRole('status')).toContainText('already earned');
+  await expect(dialog.locator('.share-composer-status')).toContainText('already earned');
   const secondTotal = await page.evaluate(() => (
     JSON.parse(localStorage.getItem('dominion:gameStats') || '{}').totalPoints
   ));
@@ -618,7 +618,7 @@ test('a completed share grants +14 and the Sharing badge only once', async ({ pa
   await page.goto(ROUTE_BY_ID.badgesRewards.path);
   await expect(page.locator('#rewardsList[aria-busy="false"]')).toBeVisible();
   const sharingBadge = page.locator('[data-badge-key="sharing"]');
-  await expect(sharingBadge).toHaveAttribute('aria-label', /View Share the Challenge badge details/);
+  await expect(sharingBadge).toHaveAttribute('aria-label', /View Sharing badge details/);
   await expect(sharingBadge.locator('.icon-share')).toHaveCount(1);
 });
 
