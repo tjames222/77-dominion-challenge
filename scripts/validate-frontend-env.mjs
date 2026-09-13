@@ -62,6 +62,12 @@ export function frontendEnvironmentErrors(environment = {}) {
   if (!isCloudflareBuild) return [];
 
   const errors = [];
+  if (
+    (branch === 'main' || branch === 'develop')
+    && environment.VITE_ENABLE_DOMINION_NIGHT_THEME !== 'true'
+  ) {
+    errors.push(`VITE_ENABLE_DOMINION_NIGHT_THEME must be true on ${branch}`);
+  }
   if (enablesE2eFixtures) {
     errors.push('VITE_ENABLE_E2E_FIXTURES must be unset for Cloudflare builds');
   }

@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { describe, test } from 'node:test';
+import { AUTHENTICATED_HEADER_ROUTES } from './shared-header-state.mjs';
 
 const read = (relativePath) => readFileSync(new URL(relativePath, import.meta.url), 'utf8');
 const api = read('./api.js');
@@ -25,12 +26,10 @@ describe('sharing composer browser integration', () => {
 
   test('loads one shared public composer and a distinct private-invitation dialog', () => {
     [rewards, community].forEach((html) => {
-      assert.match(html, /src\/assets\/share-composer\.css/);
       assert.match(html, /src\/static\/share-composer\.js/);
     });
     assert.match(dashboard, /src\/static\/menu\.js/);
     assert.doesNotMatch(dashboard, /src\/(?:assets|static)\/share-composer/);
-    assert.match(sharedHeader, /ensureShareComposerStyles\(ownerDocument\)/);
     assert.match(sharedHeader, /initShareComposer\(ownerDocument\)/);
     assert.match(sharedHeader, /shareButton\.dataset\.shareKind = 'progress'/);
     assert.doesNotMatch(dashboard, /data-share-composer|data-share-kind=|Share my progress/);
@@ -51,6 +50,16 @@ describe('sharing composer browser integration', () => {
     assert.match(inviteDialog, /dataset\.inviteTab/);
   });
 
+  test('owns its stylesheet through one static Vite dependency on every header route', () => {
+    assert.match(composer, /import '\.\.\/assets\/share-composer\.css';/);
+    assert.doesNotMatch(sharedHeader, /ensureShareComposerStyles|SHARE_COMPOSER_STYLESHEET|globalShareComposerStyles/);
+    for (const route of AUTHENTICATED_HEADER_ROUTES) {
+      const html = read(`../../${route}`);
+      assert.match(html, /src\/static\/menu\.js/, route);
+      assert.doesNotMatch(html, /href="[^"]*share-composer\.css/, `${route} must not duplicate component-owned styles`);
+    }
+  });
+
   test('routes private invitations through explicit Link, Code, and QR actions', () => {
     assert.doesNotMatch(communityJs, /getOrCreateCrewInvite/);
     assert.doesNotMatch(communityJs, /navigator\.clipboard/);
@@ -62,6 +71,9 @@ describe('sharing composer browser integration', () => {
 
   test('supports keyboard focus, narrow screens, and reduced ambiguity between methods', () => {
     assert.match(css, /:focus-visible/);
+    assert.match(css, /\.share-flow-option:focus-within/);
+    assert.match(css, /input:checked \+ span small\s*\{\s*color: var\(--text\)/);
+    assert.match(composer, /chooseKind\(trigger\.dataset\.shareKind\);[\s\S]*?dialog\.focus\(\);/);
     assert.match(css, /@media \(max-width: 540px\)/);
     assert.match(composer, /data-share-method/);
     assert.match(composer, /Share from this device/);

@@ -161,6 +161,23 @@ describe('shared sticky menu', () => {
     assert.doesNotMatch(menuCss, /scroll-padding-top:\s*calc\((?:76|88)px/);
   });
 
+  test('shares navigation layers and isolates the covered page without changing sticky geometry', () => {
+    assert.match(declarationsFor('.topbar'), /z-index:\s*var\(--layer-primary-header\)/);
+    assert.match(declarationsFor('.global-menu-backdrop'), /z-index:\s*var\(--layer-menu-backdrop\)/);
+    assert.match(declarationsFor('.global-menu'), /z-index:\s*var\(--layer-menu-drawer\)/);
+    assert.match(declarationsFor('.menu-open .global-menu-button'), /z-index:\s*var\(--layer-menu-close\)/);
+    assert.match(declarationsFor('html.menu-scroll-locked'), /overflow:\s*hidden/);
+    assert.doesNotMatch(declarationsFor('body.menu-open'), /overflow\s*:/, 'body overflow would create a new sticky scroll container');
+    assert.match(menuCss, /\.menu-open \[data-sticky-secondary-tabs\]\s*\{[^}]*visibility:\s*hidden/);
+    assert.match(menuJs, /button\.replaceWith\(menuButtonPlaceholder\)/);
+    assert.match(menuJs, /document\.body\.appendChild\(button\)/);
+    assert.match(menuJs, /menuButtonPlaceholder\.replaceWith\(button\)/);
+    assert.match(menuJs, /menuBackgroundState\.set\(element/);
+    assert.match(menuJs, /element\.inert = true/);
+    assert.match(menuJs, /element\.setAttribute\('aria-hidden', 'true'\)/);
+    assert.match(menuJs, /menuBackgroundObserver\?\.disconnect\(\)/);
+  });
+
   test('preserves mobile touch targets, safe areas, and reduced-motion preferences', () => {
     const menuButton = declarationsFor('.global-menu-button');
     const reducedMotion = menuCss.slice(menuCss.indexOf('@media (prefers-reduced-motion: reduce)'));
@@ -204,8 +221,10 @@ describe('shared sticky menu', () => {
     assert.match(menuJs, /event\.key !== 'Tab'/);
     assert.match(menuJs, /styles\.display !== 'none'/);
     assert.match(menuJs, /styles\.visibility !== 'hidden'/);
-    assert.match(menuJs, /focusIsOutside \|\| document\.activeElement === first/);
-    assert.match(menuJs, /document\.activeElement === last/);
+    assert.match(menuJs, /focusable\.indexOf\(document\.activeElement\)/);
+    assert.match(menuJs, /event\.shiftKey \? -1 : 1/);
+    assert.match(menuJs, /element\.getClientRects\(\)\.length > 0/);
+    assert.match(menuJs, /focusWithoutScroll\(next\)/);
   });
 
   test('keeps authenticated site training independent from optional header actions', () => {

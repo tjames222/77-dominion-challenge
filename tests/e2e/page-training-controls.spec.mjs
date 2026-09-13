@@ -113,7 +113,7 @@ async function openExistingStateRoute(page, app, route) {
 }
 
 async function openMenu(page) {
-  const trigger = page.getByRole('button', { name: 'Open menu' });
+  const trigger = page.locator('.global-menu-button');
   if (await trigger.getAttribute('aria-expanded') !== 'true') await trigger.click();
   await expect(page.locator('.global-menu')).toBeVisible();
   return trigger;

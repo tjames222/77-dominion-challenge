@@ -150,6 +150,26 @@ variable override cannot enable them. Treat any future `VITE_*` release toggle a
 document its safe default here, leave it disabled until its backend is deployed
 and verified, and record who approved enabling it.
 
+FOU-1494 approves `VITE_ENABLE_DOMINION_NIGHT_THEME=true` for the current release.
+The protected production frontend job and canonical `develop` preview job pin
+that value explicitly. Main and develop environment validation reject an
+omitted, disabled, or non-exact value; preview sanitization does not silently
+repair it. The Cloudflare preview policy also pins it for canonical previews.
+Do not add this toggle to the Cloudflare **production** environment or enable
+automatic production builds: the immutable artifact remains workflow-owned.
+An approved direct-upload release must use the same exact build flag and run
+`pnpm run build`, including its artifact verification, before upload.
+
+`scripts/verify-theme-artifacts.mjs` verifies every production HTML entry point
+loads the synchronous enabled bootstrap and links the theme profile with its
+core semantic tokens.
+It executes the shipped registry to check immutable release metadata, public
+Light/Dark availability, missing/tampered ownership rejection, grant recognition,
+and revocation fallback. A missing route, disabled canonical artifact, missing
+CSS profile, or removed entitlement gate fails the build. Theme rollout does
+not alter rewards, their current catalog threshold, ownership rows, billing,
+public signup, provider integrations, or production data.
+
 The reviewed target production values are:
 
 - `PUBLIC_SITE_URL=https://77dominion.com`
@@ -233,7 +253,8 @@ unless Cloudflare reports all of the following:
   included and no excluded preview branches;
 - the preview environment explicitly enables browser-local mocks, explicitly
   disables hybrid Auth, production connections, billing, public signup, and
-  provider integrations, and contains none of the live-connection variables
+  provider integrations, enables the approved Dominion Night release flag, and
+  contains none of the live-connection variables
   rejected by `scripts/validate-frontend-env.mjs`.
 
 The same helper is available to protected release jobs as

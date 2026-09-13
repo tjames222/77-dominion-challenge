@@ -34,6 +34,9 @@ let menuHydrationRequest = 0;
 let globalMenuListenersBound = false;
 let soloFirstRunTraining = null;
 let pageTrainingControls = null;
+let menuButtonPlaceholder = null;
+let menuBackgroundObserver = null;
+const menuBackgroundState = new Map();
 
 const loggedInLinks = [
   ['Dashboard', './dashboard.html'],
@@ -74,30 +77,76 @@ function trapMenuFocus(event) {
   if (event.key !== 'Tab' || !document.body.classList.contains('menu-open')) return;
 
   const menu = document.querySelector('.global-menu');
-  const focusable = [...(menu?.querySelectorAll(MENU_FOCUSABLE_SELECTOR) || [])]
+  const button = document.querySelector('.global-menu-button');
+  const focusable = [...(menu?.querySelectorAll(MENU_FOCUSABLE_SELECTOR) || []), button]
     .filter((element) => {
+      if (!element) return false;
       const styles = window.getComputedStyle(element);
       return !element.hidden
         && element.getAttribute('aria-hidden') !== 'true'
         && styles.display !== 'none'
-        && styles.visibility !== 'hidden';
+        && styles.visibility !== 'hidden'
+        && element.getClientRects().length > 0;
     });
   if (!focusable.length) {
     event.preventDefault();
     return;
   }
 
-  const first = focusable[0];
-  const last = focusable[focusable.length - 1];
-  const focusIsOutside = !menu.contains(document.activeElement);
-
-  if (event.shiftKey && (focusIsOutside || document.activeElement === first)) {
-    event.preventDefault();
-    focusWithoutScroll(last);
-  } else if (!event.shiftKey && (focusIsOutside || document.activeElement === last)) {
-    event.preventDefault();
-    focusWithoutScroll(first);
+  // Explicit cycling also includes buttons when Safari's native Tab preference
+  // skips them. The lifted close toggle belongs to this same focus sequence.
+  const activeIndex = focusable.indexOf(document.activeElement);
+  const nextIndex = activeIndex < 0
+    ? (event.shiftKey ? focusable.length - 1 : 0)
+    : (activeIndex + (event.shiftKey ? -1 : 1) + focusable.length) % focusable.length;
+  const next = focusable[nextIndex];
+  event.preventDefault();
+  focusWithoutScroll(next);
+  if (menu.contains(next)) {
+    const controlBox = next.getBoundingClientRect();
+    const menuBox = menu.getBoundingClientRect();
+    if (controlBox.top < menuBox.top) menu.scrollTop -= menuBox.top - controlBox.top + 8;
+    else if (controlBox.bottom > menuBox.bottom) menu.scrollTop += controlBox.bottom - menuBox.bottom + 8;
   }
+}
+
+function isolateMenuBackground() {
+  for (const element of document.body.children) {
+    if (element.matches('.global-menu, .global-menu-backdrop, .global-menu-button, script, style, link')) continue;
+    if (!menuBackgroundState.has(element)) {
+      menuBackgroundState.set(element, {
+        inert: element.getAttribute('inert'),
+        ariaHidden: element.getAttribute('aria-hidden'),
+      });
+    }
+    element.inert = true;
+    element.setAttribute('aria-hidden', 'true');
+  }
+}
+
+function restoreMenuBackground() {
+  menuBackgroundObserver?.disconnect();
+  menuBackgroundObserver = null;
+  for (const [element, state] of menuBackgroundState) {
+    for (const [attribute, value] of [['inert', state.inert], ['aria-hidden', state.ariaHidden]]) {
+      if (value === null) element.removeAttribute(attribute);
+      else element.setAttribute(attribute, value);
+    }
+  }
+  menuBackgroundState.clear();
+}
+
+function liftMenuButton(button) {
+  if (!button || menuButtonPlaceholder) return;
+  const styles = window.getComputedStyle(button);
+  menuButtonPlaceholder = document.createElement('span');
+  menuButtonPlaceholder.className = 'global-menu-button-placeholder';
+  menuButtonPlaceholder.setAttribute('aria-hidden', 'true');
+  for (const property of ['width', 'height', 'marginTop', 'marginRight', 'marginBottom', 'marginLeft']) {
+    menuButtonPlaceholder.style[property] = styles[property];
+  }
+  button.replaceWith(menuButtonPlaceholder);
+  document.body.appendChild(button);
 }
 
 function syncMenuExpandedState(isOpen) {
@@ -105,6 +154,7 @@ function syncMenuExpandedState(isOpen) {
   const menu = document.querySelector('.global-menu');
 
   button?.setAttribute('aria-expanded', String(isOpen));
+  button?.setAttribute('aria-label', isOpen ? 'Close menu' : 'Open menu');
   if (memberTabs) {
     memberTabs.inert = isOpen;
     memberTabs.setAttribute?.('aria-hidden', String(isOpen));
@@ -123,6 +173,10 @@ function closeMenu() {
   const wasOpen = document.body.classList.contains('menu-open');
   const button = document.querySelector('.global-menu-button');
   document.body.classList.remove('menu-open');
+  document.documentElement.classList.remove('menu-scroll-locked', 'menu-scroll-gutter');
+  restoreMenuBackground();
+  if (menuButtonPlaceholder && button) menuButtonPlaceholder.replaceWith(button);
+  menuButtonPlaceholder = null;
   syncMenuExpandedState(false);
   syncTopbarScrollState?.();
 
@@ -152,7 +206,12 @@ function refreshTrainingControllers({ hideWhileLoading = true } = {}) {
 
 function openMenu() {
   void refreshTrainingControllers();
+  liftMenuButton(document.querySelector('.global-menu-button'));
   document.body.classList.add('menu-open');
+  // Preserve a currently occupied desktop scrollbar gutter, but do not add a
+  // new gutter to pages/browsers that had none before opening the drawer.
+  document.documentElement.classList.toggle('menu-scroll-gutter', window.innerWidth > document.documentElement.clientWidth);
+  document.documentElement.classList.add('menu-scroll-locked');
   syncMenuExpandedState(true);
   topbar?.classList.remove('topbar-collapsed');
   const menu = document.querySelector('.global-menu');
@@ -162,6 +221,10 @@ function openMenu() {
       return !element.hidden && styles.display !== 'none' && styles.visibility !== 'hidden';
     });
   focusWithoutScroll(firstVisibleControl);
+  isolateMenuBackground();
+  menuBackgroundObserver?.disconnect();
+  menuBackgroundObserver = new MutationObserver(isolateMenuBackground);
+  menuBackgroundObserver.observe(document.body, { childList: true });
 }
 
 function initScrollResponsiveTopbar() {
@@ -300,6 +363,7 @@ async function buildMenu() {
       ? 'Join the 77-day challenge'
       : 'Invite-only early access';
 
+  const menuHadFocus = menu.contains(document.activeElement);
   menu.innerHTML = `
     <div class="global-menu-header">
       <div>
@@ -337,9 +401,14 @@ async function buildMenu() {
     ` : ''}
     ${isLoggedIn ? '<button class="global-menu-logout" type="button">Log Out</button>' : ''}
   `;
+  // Auth/window-focus hydration replaces drawer controls. Keep an open menu's
+  // keyboard context inside the fresh drawer instead of leaving focus on body.
+  if (menuHadFocus && document.body.classList.contains('menu-open')) {
+    focusWithoutScroll(menu.querySelector('.global-menu-links a'));
+  }
 
   const trailingActions = topbar.querySelector('.topbar-trailing-actions');
-  (trailingActions || topbar).appendChild(button);
+  if (!document.body.classList.contains('menu-open')) (trailingActions || topbar).appendChild(button);
   syncMenuExpandedState(document.body.classList.contains('menu-open'));
   menu.querySelector('.global-menu-close')?.addEventListener('click', closeMenu);
   menu.querySelector('.global-menu-logout')?.addEventListener('click', async () => {
@@ -536,6 +605,8 @@ window.addEventListener(SOLO_TRAINING_LAUNCH_EVENT, (event) => {
 window.addEventListener('focus', () => {
   void buildMenu();
 });
+
+window.addEventListener('pagehide', closeMenu);
 
 document.addEventListener('visibilitychange', () => {
   if (!document.hidden) void buildMenu();
