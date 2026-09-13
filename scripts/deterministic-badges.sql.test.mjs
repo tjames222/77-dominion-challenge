@@ -82,6 +82,21 @@ before(async()=>{
 beforeEach(()=>query("truncate public.user_badges,public.check_ins,public.game_point_events,public.user_game_stats,private.badge_app_visits,public.sharing_reward_evidence,public.challenge_entries,private.badge_test_outbound;update public.profiles set challenge_start_date='2026-01-01';"));
 after(()=>{if(created){const removed=docker(['rm','--force',container]);assert.equal(removed.status,0,removed.stderr);}});
 
+test('checked-in local badge seed replays idempotently with scoped award identities',async()=>{
+  const seed=await readFile(new URL('../supabase/seed.sql',import.meta.url),'utf8');
+  const badgeSeed=seed.match(/insert into public\.user_badges \([\s\S]*?;/)?.[0];
+  assert.ok(badgeSeed,'The canonical local seed must contain its badge fixtures');
+  const fixture=badgeSeed.replaceAll('20000000-0000-4000-8000-000000000002',other);
+  query(fixture);
+  const select="select jsonb_build_object('id',id,'actor',user_id,'key',badge_key,'scope',scope_key,'earnedAt',earned_at,'metadata',metadata) from public.user_badges order by badge_key;";
+  const first=query(select);
+  query(fixture);
+  assert.deepEqual(query(select),first,'Re-seeding must preserve the same award IDs and rows');
+  assert.equal(first.length,2);
+  assert.ok(first.every(row=>row.scope==='lifetime'&&row.metadata.fixture===true));
+  assert.deepEqual(first.map(row=>row.key),['faithful_start','honest_partial']);
+});
+
 test('every SQL rule matches JavaScript at one-before/exact/one-after',()=>{
   for(const rule of BADGE_CATALOG.filter(r=>r.status==='active')) for(const delta of [-1,0,1]) {
     const facts={source:rule.source,instanceId:'original77:2026-01-01',[rule.metric]:rule.threshold+delta,workouts:delta===0?{[rule.predicate]:'one'}:{}};
