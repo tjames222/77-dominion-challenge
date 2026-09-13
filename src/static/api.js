@@ -1,4 +1,5 @@
 import { createClient } from '@supabase/supabase-js';
+import { assertEarlyAccessActor, normalizeEarlyAccessRequest, postEarlyAccessRequest } from './early-access-request.mjs';
 import {
   DEFAULT_CHALLENGE_DEFINITIONS,
   acknowledgeChallengeRecord,
@@ -607,6 +608,40 @@ export async function getLocalOrSessionUser() {
   return null;
 }
 
+export async function submitEarlyAccessRequest(input, { expectedUserId = '' } = {}) {
+  const request = normalizeEarlyAccessRequest(input);
+  const actor = await getLocalOrSessionUser();
+  assertEarlyAccessActor(actor, expectedUserId);
+  if (actor?.authenticated && actor.email?.trim().toLowerCase() !== request.email) {
+    throw new Error('Use the email for your signed-in account.');
+  }
+  if (isLocalDemoMode()) {
+    // Preview receipts store no submitted name/email and never call production.
+    const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(request.email));
+    const key = [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, '0')).join('');
+    assertEarlyAccessActor(await getLocalOrSessionUser(), expectedUserId);
+    try {
+      if (!request.website && !localStorage.getItem(`dominion:preview:early-access:${key}`)) {
+        localStorage.setItem(`dominion:preview:early-access:${key}`, JSON.stringify({ status: 'pending', createdAt: new Date().toISOString() }));
+      }
+    } catch {
+      throw new Error('This browser couldn’t save the preview request. Your details are still here—please try again.');
+    }
+    return { received: true, preview: true };
+  }
+  requireSupabase();
+  const session = await getAuthSession();
+  if ((session?.user?.id || '') !== expectedUserId) {
+    throw new Error('The signed-in account changed. Please review the form and try again.');
+  }
+  const result = await postEarlyAccessRequest(request, {
+    endpoint: `${SUPABASE_URL}/functions/v1/request-early-access`,
+    publicKey: SUPABASE_KEY, accessToken: session?.access_token || '',
+  });
+  assertEarlyAccessActor(await getLocalOrSessionUser(), expectedUserId);
+  return result;
+}
+
 const normalizeThemePreference = (preference = {}) => ({
   themeKey: typeof (preference.themeKey ?? preference.theme_key) === 'string'
     ? (preference.themeKey ?? preference.theme_key)
@@ -910,6 +945,10 @@ const mapBadge = (badge) => {
     earnedAt: badge.earned_at || badge.earnedAt || null,
     entryDate: badge.entry_date || badge.entryDate || badge.metadata?.entryDate || null,
     metadata: badge.metadata || {},
+    requirement: definition?.requirement || badge.requirement || badge.metadata?.requirement || definition?.description || '',
+    earningEvidence: badge.earningEvidence || badge.earning_evidence || badge.metadata?.earningEvidence || null,
+    legacy: badge.legacy === true || badge.metadata?.legacy === true,
+    retired: definition?.retired === true || badge.retired === true || badge.metadata?.retired === true,
   } : null;
 };
 

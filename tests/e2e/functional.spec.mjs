@@ -618,7 +618,7 @@ test('a completed share grants +14 and the Sharing badge only once', async ({ pa
   await page.goto(ROUTE_BY_ID.badgesRewards.path);
   await expect(page.locator('#rewardsList[aria-busy="false"]')).toBeVisible();
   const sharingBadge = page.locator('[data-badge-key="sharing"]');
-  await expect(sharingBadge).toContainText('Share the Challenge');
+  await expect(sharingBadge).toHaveAttribute('aria-label', /View Share the Challenge badge details/);
   await expect(sharingBadge.locator('.icon-share')).toHaveCount(1);
 });
 

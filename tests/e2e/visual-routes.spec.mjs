@@ -5,8 +5,27 @@ import {
   test,
 } from './support/app-test.mjs';
 import { PRODUCTION_ROUTES, ROUTE_BY_ID } from './support/routes.mjs';
+import { seedBadgeGallery } from './support/badge-gallery-fixtures.mjs';
 
 const dashboardRoute = PRODUCTION_ROUTES.find((route) => route.id === 'dashboard');
+
+for (const platinum of [false, true]) {
+  test(`earned badge grid and detail visual contract${platinum ? ': Platinum' : ''}`, async ({ page, app }, testInfo) => {
+    test.skip(platinum && testInfo.project.metadata.theme !== 'dark', 'One Platinum case per breakpoint');
+    const theme = platinum ? 'dominion-platinum' : testInfo.project.metadata.theme;
+    await seedBadgeGallery(page, app, { theme });
+    await page.goto('/badges-rewards', { waitUntil: 'networkidle' });
+    await app.stable();
+    await page.getByRole('tab', { name: 'Badges', exact: true }).click();
+    await expect(page.locator('.badge-gallery-tile')).toHaveCount(3);
+    await page.locator('#badgesGallery').scrollIntoViewIfNeeded();
+    await expectStableScreenshot(page, app, `earned-badge-grid${platinum ? '-platinum' : ''}.png`, { fullPage: false });
+    await page.locator('[data-badge-key="perfect_week"]').click();
+    await expect(page.getByRole('dialog', { name: 'Seven for Seven' })).toBeVisible();
+    await expectStableScreenshot(page, app, `earned-badge-detail${platinum ? '-platinum' : ''}.png`, { fullPage: false });
+    app.assertNoRuntimeErrors();
+  });
+}
 
 test.describe('all-route visual matrix', () => {
   for (const route of PRODUCTION_ROUTES) {

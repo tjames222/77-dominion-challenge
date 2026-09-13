@@ -1211,6 +1211,8 @@ jobs:
         run: supabase functions deploy stripe-webhook --project-ref "$SUPABASE_PROJECT_REF" --no-verify-jwt
       - name: Deploy public share renderer
         run: supabase functions deploy share-snapshot --project-ref "$SUPABASE_PROJECT_REF" --no-verify-jwt
+      - name: Deploy public early-access request intake
+        run: supabase functions deploy request-early-access --project-ref "$SUPABASE_PROJECT_REF" --no-verify-jwt
       - name: Deploy integration delivery worker
         if: steps.function-secrets.outputs.integration_runtime_enabled == 'true'
         run: supabase functions deploy process-integration-outbox --project-ref "$SUPABASE_PROJECT_REF" --no-verify-jwt
@@ -1233,6 +1235,8 @@ jobs:
           supabase functions list --project-ref "$SUPABASE_PROJECT_REF"
 
           node scripts/verify-production-billing-guards.mjs
+
+          node scripts/verify-production-early-access.mjs
 
           webhook_expected_status="400"
           if [[ "${BILLING_ENABLED}" == "false" ]]; then

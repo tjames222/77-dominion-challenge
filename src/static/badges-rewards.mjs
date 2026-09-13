@@ -33,6 +33,16 @@ const safePercent = (value) => {
 
 const safeKey = (value) => String(value || '').trim();
 
+export const validBadgeTimestamp = (value) => {
+  if (typeof value !== 'string') return null;
+  const parts = value.match(/^(\d{4}-\d{2}-\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d{1,9})?(Z|[+-]\d{2}:\d{2})$/);
+  if (!parts || Number(parts[2]) > 23 || Number(parts[3]) > 59 || Number(parts[4]) > 59) return null;
+  const day = new Date(`${parts[1]}T00:00:00Z`);
+  if (!Number.isFinite(day.getTime()) || day.toISOString().slice(0, 10) !== parts[1]) return null;
+  const timestamp = Date.parse(value);
+  return Number.isFinite(timestamp) ? timestamp : null;
+};
+
 export const escapeHtml = (value = '') => String(value).replace(/[&<>"']/g, (character) => ({
   '&': '&amp;',
   '<': '&lt;',
@@ -63,15 +73,21 @@ export function normalizeEarnedBadges(badges = []) {
       earnedAt: badge?.earnedAt || badge?.earned_at || null,
       entryDate: badge?.entryDate || badge?.entry_date || badge?.metadata?.entryDate || null,
       metadata: badge?.metadata && typeof badge.metadata === 'object' ? badge.metadata : {},
+      requirement: Object.hasOwn(badge, 'requirement')
+        ? String(badge.requirement || '')
+        : String(badge?.metadata?.requirement || badge?.description || ''),
+      earningEvidence: badge?.earningEvidence || badge?.earning_evidence || badge?.metadata?.earningEvidence || null,
+      legacy: badge?.legacy === true || badge?.metadata?.legacy === true,
+      retired: badge?.retired === true || badge?.metadata?.retired === true,
     };
     const existing = byKey.get(key);
-    if (!existing || String(normalized.earnedAt || '') > String(existing.earnedAt || '')) {
+    if (!existing || (validBadgeTimestamp(normalized.earnedAt) ?? -Infinity) > (validBadgeTimestamp(existing.earnedAt) ?? -Infinity)) {
       byKey.set(key, normalized);
     }
   }
 
   return [...byKey.values()].sort((left, right) => (
-    String(right.earnedAt || right.entryDate || '').localeCompare(String(left.earnedAt || left.entryDate || ''))
+    ((validBadgeTimestamp(right.earnedAt) ?? -Infinity) - (validBadgeTimestamp(left.earnedAt) ?? -Infinity))
     || left.key.localeCompare(right.key)
   ));
 }

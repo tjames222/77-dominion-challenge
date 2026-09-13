@@ -34,6 +34,10 @@ const supabaseConfigPath = path.join(
   "supabase",
   "config.toml",
 );
+// Update alongside each reviewed pgTAP addition; these exact inventory checks
+// must not silently accept missing files or fewer planned assertions.
+const expectedFileCount = 33;
+const expectedAssertionCount = 1504;
 
 const fakeCliSource = `#!/usr/bin/env bash
 set -euo pipefail
@@ -69,7 +73,7 @@ emit_files() {
 case "\${FAKE_PGTAP_MODE:-pass}" in
   pass)
     emit_files
-    echo "Files=\${#files[@]}, Tests=1482, 1 wallclock secs"
+    echo "Files=\${#files[@]}, Tests=${expectedAssertionCount}, 1 wallclock secs"
     echo "Result: PASS"
     ;;
   notests)
@@ -88,7 +92,7 @@ case "\${FAKE_PGTAP_MODE:-pass}" in
     ;;
   omit-profile-limit)
     emit_files
-    echo "Files=\${#files[@]}, Tests=1482, 1 wallclock secs"
+    echo "Files=\${#files[@]}, Tests=${expectedAssertionCount}, 1 wallclock secs"
     echo "Result: PASS"
     ;;
   malformed-summary)
@@ -97,7 +101,7 @@ case "\${FAKE_PGTAP_MODE:-pass}" in
     ;;
   nonzero)
     emit_files
-    echo "Files=\${#files[@]}, Tests=1482, 1 wallclock secs"
+    echo "Files=\${#files[@]}, Tests=${expectedAssertionCount}, 1 wallclock secs"
     echo "Result: FAIL"
     exit 2
     ;;
@@ -158,7 +162,7 @@ test("the database inventory and latest lifecycle foundations stay complete", as
   );
 
   const inventory = await currentDatabaseInventory();
-  assert.equal(inventory.length, 32);
+  assert.equal(inventory.length, expectedFileCount);
   assert.ok(inventory.includes("095_profile_photo_registration_limits.sql"));
   assert.ok(inventory.includes("100_single_crew_lifecycle.sql"));
   assert.ok(inventory.includes("110_crew_training.sql"));
@@ -173,6 +177,7 @@ test("the database inventory and latest lifecycle foundations stay complete", as
   assert.ok(inventory.includes("190_launch_reward_catalog.sql"));
   assert.ok(inventory.includes("195_trusted_profile_photo_upload.sql"));
   assert.ok(inventory.includes("200_journal_date_enforcement.sql"));
+  assert.ok(inventory.includes("210_early_access_requests.sql"));
 
   let plannedAssertions = 0;
   for (const filename of inventory) {
@@ -182,7 +187,7 @@ test("the database inventory and latest lifecycle foundations stay complete", as
     plannedAssertions += Number.parseInt(plan[1], 10);
   }
 
-  assert.equal(plannedAssertions, 1482);
+  assert.equal(plannedAssertions, expectedAssertionCount);
 
   const activationMigration = await readFile(activationMigrationPath, "utf8");
   assert.match(
@@ -209,9 +214,9 @@ test("the runner succeeds from an unrelated directory and reports every file", a
   assert.match(result.args[2], /\/pgtap-tests\.[^/]+$/);
   assert.match(
     result.stdout,
-    /Database pgTAP summary: source_files=32 files=32 assertions=1482/,
+    new RegExp(`Database pgTAP summary: source_files=${expectedFileCount} files=${expectedFileCount} assertions=${expectedAssertionCount}`),
   );
-  assert.match(result.stdout, /all 32 files and 1482 assertions executed/);
+  assert.match(result.stdout, new RegExp(`all ${expectedFileCount} files and ${expectedAssertionCount} assertions executed`));
 });
 
 test("an exit-zero NOTESTS result fails closed", async () => {
@@ -232,7 +237,7 @@ test("a source and executed-file count mismatch fails closed", async () => {
   const result = await runFixture("count-mismatch");
 
   assert.notEqual(result.status, 0);
-  assert.match(result.stderr, /source inventory has 32 file\(s\), but Supabase executed 31/);
+  assert.match(result.stderr, new RegExp(`source inventory has ${expectedFileCount} file\\(s\\), but Supabase executed ${expectedFileCount - 1}`));
 });
 
 test("omitting the FOU-800 pgTAP file fails even when counts look valid", async () => {
