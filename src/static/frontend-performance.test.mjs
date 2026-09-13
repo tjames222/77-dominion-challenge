@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs';
 import { runInNewContext } from 'node:vm';
 import { htmlAssetReferences, staticModuleReferences } from '../../scripts/measure-frontend-bundles.mjs';
 import { communityPreviewMessage, renderInitialPreviewFeedback } from './preview-feedback.mjs';
+import { verifyHeroBytes } from '../../scripts/verify-hero-artwork.mjs';
 
 test('bundle audit counts entry scripts, bootstrap, CSS and module preloads', () => {
   assert.deepEqual(htmlAssetReferences('<script src="./theme-bootstrap.js"></script><script type="module" src="./assets/page-Abc123.js"></script><link rel="modulepreload" href="./assets/shared-Def456.js"><link rel="stylesheet" href="./assets/app-123abc.css"><link rel="icon" href="/favicon.png">'),
@@ -62,4 +63,24 @@ test('known preview feedback is present before first paint without adding a prod
   }
   const config = readFileSync(new URL('../../vite.config.mjs', import.meta.url), 'utf8');
   assert.match(config, /mocksEnabled: env\.VITE_ENABLE_MOCKS === 'true'/);
+});
+
+test('responsive artwork preserves pinned bytes, dimensions, budgets and original fallback content', () => {
+  const manifest = JSON.parse(readFileSync(new URL('../assets/hero/hero-artwork.json', import.meta.url), 'utf8'));
+  const html = readFileSync(new URL('../../index.html', import.meta.url), 'utf8');
+  assert.equal(manifest.encoder, 'cwebp 1.6.0');
+  assert.equal(manifest.variants.length, 8);
+  for (const variant of ['dark', 'light']) {
+    assert.deepEqual(manifest.variants.filter((entry) => entry.variant === variant).map((entry) => entry.width), [480, 768, 1200, 1536]);
+    assert.ok(html.includes(`src="${manifest.originals[variant].url}"`));
+  }
+  for (const entry of manifest.variants) {
+    const bytes = readFileSync(new URL(`../assets/hero/${entry.file}`, import.meta.url));
+    verifyHeroBytes(bytes, entry);
+    assert.throws(() => verifyHeroBytes(bytes, { ...entry, sha256: 'wrong' }), /hash mismatch/);
+    assert.throws(() => verifyHeroBytes(bytes, { ...entry, height: entry.height + 1 }), /dimensions changed/);
+    assert.ok(html.includes(`${entry.file} ${entry.width}w`));
+  }
+  assert.equal((html.match(/width="1536" height="1024" loading="lazy"/g) || []).length, 2);
+  assert.equal((html.match(/<source type="image\/webp"/g) || []).length, 2);
 });

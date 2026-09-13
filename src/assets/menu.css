@@ -107,6 +107,10 @@ body:not(.challenge-finished) .dashboard-shell > :is(.topbar, .member-tabs) + .d
   z-index: 1;
   transition: opacity 200ms ease;
 }
+.topbar > .brand-name {
+  /* Keep the brand beside Back before authenticated actions hydrate. */
+  margin-inline-end: auto;
+}
 .topbar.topbar-collapsed > * {
   opacity: .84;
 }

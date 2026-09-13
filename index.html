@@ -37,18 +37,22 @@
       </section>
 
       <section class="hero-poster reveal" data-section-surface="accent" aria-label="77 Days No Excuses Only Faithfulness">
-        <img
-          data-theme-asset
-          src="https://pub-53499389187a4de4984349b4f9b36b74.r2.dev/5317DC26-DA71-4E5E-8964-01B9EAF033AF.png"
-          data-theme-src-dark="https://pub-53499389187a4de4984349b4f9b36b74.r2.dev/5317DC26-DA71-4E5E-8964-01B9EAF033AF.png"
-          data-theme-src-light="https://pub-53499389187a4de4984349b4f9b36b74.r2.dev/photo_1783734046.5413918.png"
-          alt="77 Days. No Excuses. Only Faithfulness."
-          width="1536"
-          height="1024"
-          style="height: auto"
-          loading="lazy"
-          decoding="async"
-        />
+        <picture class="hero-artwork hero-artwork-dark">
+          <source type="image/webp" srcset="./src/assets/hero/hero-dark-480.webp 480w, ./src/assets/hero/hero-dark-768.webp 768w, ./src/assets/hero/hero-dark-1200.webp 1200w, ./src/assets/hero/hero-dark-1536.webp 1536w" sizes="(min-width: 908px) 860px, (min-width: 600px) calc(100vw - 48px), 92vw" />
+          <img
+            src="https://pub-53499389187a4de4984349b4f9b36b74.r2.dev/5317DC26-DA71-4E5E-8964-01B9EAF033AF.png"
+            alt="77 Days. No Excuses. Only Faithfulness."
+            width="1536" height="1024" loading="lazy" decoding="async"
+          />
+        </picture>
+        <picture class="hero-artwork hero-artwork-light">
+          <source type="image/webp" srcset="./src/assets/hero/hero-light-480.webp 480w, ./src/assets/hero/hero-light-768.webp 768w, ./src/assets/hero/hero-light-1200.webp 1200w, ./src/assets/hero/hero-light-1536.webp 1536w" sizes="(min-width: 908px) 860px, (min-width: 600px) calc(100vw - 48px), 92vw" />
+          <img
+            src="https://pub-53499389187a4de4984349b4f9b36b74.r2.dev/photo_1783734046.5413918.png"
+            alt="77 Days. No Excuses. Only Faithfulness."
+            width="1536" height="1024" loading="lazy" decoding="async"
+          />
+        </picture>
       </section>
 
       <section class="card landing-section reveal" data-section-surface="plain">

@@ -104,6 +104,37 @@ Reproduce the mechanical font artifact in a temporary virtual environment with
 there is no additional production runtime dependency. Do not replace the original
 font or commit platform-specific visual baselines when regenerating the subset.
 
+## Responsive landing artwork and measured layout corrections
+
+The remaining multi-megabyte landing image now uses four local, content-hashed
+WebP widths (480/768/1200/1536), encoded from the exact existing PNGs without
+cropping or artwork changes. Dark candidates are 16/36/67/115 KB; Light candidates
+are 22/48/88/149 KB. The original R2 URLs remain native `<picture>` fallbacks.
+Both pictures reserve the original 1536×1024 aspect ratio. CSS hides the inactive
+picture before layout, and native lazy loading does not fetch it. Only Light
+selects the Light picture; Dark, Night and Platinum retain the approved Dark
+artwork fallback. This depends on the existing secure root-theme selection and
+does not grant theme entitlement. Browser tests cover both engines, all four
+themes, theme changes, one-image accessibility and non-WebP fallback selection.
+
+`hero-artwork.json` pins original/derivative SHA-256 hashes, bytes, dimensions and
+encoder options. To reproduce, download the two manifest URLs to a temporary
+directory as `hero-dark.png` and `hero-light.png`, then run
+`node scripts/encode-hero-artwork.mjs /path/to/temp` with `cwebp 1.6.0` installed.
+The script verifies original hashes before encoding; it makes no network request.
+Source and production-build checks enforce byte budgets, intrinsic dimensions,
+hashed HTML references and original fallbacks. See the official
+[cwebp reference](https://developers.google.com/speed/webp/docs/cwebp) and
+[native lazy-loading behavior](https://web.dev/articles/browser-level-image-lazy-loading).
+
+The deployed diagnostic also traced Community's desktop shift to the brand
+moving from the far right when authenticated controls arrived. Its existing
+header now reserves the same left-aligned brand position before hydration.
+Rewards on narrow phones reserve two progress-label rows and two lines of status
+copy, so replacing placeholder points/copy does not add a row or collapse space.
+These changes still require a pinned deployed remeasurement; no local geometry
+test is presented as proof of final LCP/CLS gates.
+
 ## In-flight activation and training reads
 
 `getChallengeActivation` and `getSiteTrainingState` now coalesce only concurrently

@@ -1,5 +1,6 @@
 import { readFile, readdir, stat } from 'node:fs/promises';
 import { verifyThemeArtifacts } from './verify-theme-artifacts.mjs';
+import { verifyHeroArtwork } from './verify-hero-artwork.mjs';
 
 const distRoot = new URL('../dist/', import.meta.url);
 const assetNames = await readdir(new URL('assets/', distRoot));
@@ -43,3 +44,4 @@ for (const name of builtFiles) {
 console.log(`Verified production Inter font, license, and reward placeholder audit (${brandFonts[0]}).`);
 const themeRoutes = await verifyThemeArtifacts();
 console.log(`Verified Dominion Night release state, linked CSS, and entitlement gates on ${themeRoutes} HTML entry points.`);
+console.log(`Verified ${await verifyHeroArtwork(distRoot)} hashed hero images, byte budgets, intrinsic dimensions, and original fallbacks.`);

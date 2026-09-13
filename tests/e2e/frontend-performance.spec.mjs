@@ -1,6 +1,97 @@
 import { test, expect } from './support/app-test.mjs';
 import { ROUTE_BY_ID } from './support/routes.mjs';
 
+for (const theme of ['dark', 'light', 'dominion-night', 'dominion-platinum']) {
+  test(`landing loads only responsive ${theme} artwork and preserves the original fallback`, async ({ page, app }) => {
+    const requested = [];
+    page.on('request', (request) => {
+      if (request.resourceType() === 'image') requested.push(request.url());
+    });
+    // The screenshot helper intentionally forces every lazy image to eager.
+    // Use normal navigation here to measure the application's native behavior.
+    await app.seed(theme.startsWith('dominion-') ? 'member' : 'guest', theme);
+    await page.goto(ROUTE_BY_ID.landing.path, { waitUntil: 'networkidle' });
+    await expect(page.locator('html')).toHaveAttribute('data-theme', theme);
+    const variant = theme === 'light' ? 'light' : 'dark';
+    const active = page.locator(`.hero-artwork-${variant} img`);
+    const inactive = page.locator(`.hero-artwork-${variant === 'light' ? 'dark' : 'light'}`);
+    await active.scrollIntoViewIfNeeded();
+    await expect(active).toBeVisible();
+    await expect(inactive).toBeHidden();
+    await expect(page.getByRole('img', { name: '77 Days. No Excuses. Only Faithfulness.' })).toHaveCount(1);
+    await expect.poll(() => active.evaluate((image) => image.complete && image.naturalWidth > 0)).toBe(true);
+    const dimensions = await active.evaluate((image) => ({
+      width: image.getAttribute('width'), height: image.getAttribute('height'),
+      current: image.currentSrc, ratio: image.getBoundingClientRect().width / image.getBoundingClientRect().height,
+    }));
+    expect(dimensions.width).toBe('1536');
+    expect(dimensions.height).toBe('1024');
+    expect(dimensions.ratio).toBeCloseTo(1.5, 2);
+    expect(dimensions.current).toMatch(new RegExp(`/hero-${variant}-(?:480|768|1200|1536)(?:-[\\w-]+)?\\.webp$`));
+    expect(requested.filter((url) => /\/hero-(?:dark|light)-/.test(url))).toEqual([dimensions.current]);
+    expect(requested.filter((url) => /r2\.dev\//.test(url))).toEqual([]);
+
+    const next = variant === 'light' ? 'dark' : 'light';
+    await page.evaluate((value) => window.DominionThemeRuntime.setTheme(value), next);
+    const switched = page.locator(`.hero-artwork-${next} img`);
+    await expect(switched).toBeVisible();
+    await expect.poll(() => switched.evaluate((image) => image.complete && image.naturalWidth > 0)).toBe(true);
+    expect(await switched.evaluate((image) => image.currentSrc)).toContain(`/hero-${next}-`);
+    await expect(page.locator(`.hero-artwork-${variant}`)).toBeHidden();
+
+    // An engine that does not support WebP selects the unchanged original PNG.
+    const fallback = await switched.getAttribute('src');
+    await page.locator(`.hero-artwork-${next} source`).evaluate((source) => { source.type = 'image/unsupported-test'; });
+    await expect.poll(() => switched.evaluate((image) => image.currentSrc)).toBe(fallback);
+    app.assertNoRuntimeErrors();
+  });
+}
+
+test('Community brand position is stable when authenticated menu actions hydrate', async ({ page, app }) => {
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await app.seed('member');
+  let release;
+  const blocked = new Promise((resolve) => { release = resolve; });
+  await page.route(/\/menu(?:-[\w-]+)?\.js(?:\?|$)/, async (route) => { await blocked; await route.continue(); });
+  let before;
+  try {
+    await page.goto(ROUTE_BY_ID.community.path, { waitUntil: 'commit' });
+    const brand = page.locator('.topbar > .brand-name');
+    await expect(brand).toBeVisible();
+    await expect(brand).toHaveCSS('font-weight', '900');
+    await page.evaluate(async () => { await document.fonts.load('900 16px "Inter"'); });
+    before = await brand.evaluate((node) => node.getBoundingClientRect().x);
+    expect(before).toBeLessThan(600);
+  } finally { release(); }
+  await expect(page.locator('.shared-header-share')).toBeVisible();
+  expect(await page.locator('.topbar > .brand-name').evaluate((node) => node.getBoundingClientRect().x)).toBeCloseTo(before, 1);
+  app.assertNoRuntimeErrors();
+});
+
+test('phone Rewards progress reserves the same rows before and after data hydration', async ({ page, app }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await app.seed('member');
+  let release;
+  const blocked = new Promise((resolve) => { release = resolve; });
+  await page.route(/\/(?:badges-rewards|badgesRewards)(?:-[\w-]+)?\.js(?:\?|$)/, async (route) => { await blocked; await route.continue(); });
+  const geometry = () => page.locator('.game-level-progress-panel').evaluate((panel) => ({
+    heading: panel.querySelector('.game-level-progress-heading').getBoundingClientRect().height,
+    copy: panel.querySelector('.game-momentum-message').getBoundingClientRect().height,
+    trackOffset: panel.querySelector('.game-level-progress-track').getBoundingClientRect().top - panel.getBoundingClientRect().top,
+  }));
+  let before;
+  try {
+    await page.goto(ROUTE_BY_ID.badgesRewards.path, { waitUntil: 'commit' });
+    await expect(page.locator('.game-level-progress-heading')).toHaveCSS('display', 'grid');
+    await page.evaluate(async () => { await document.fonts.load('400 16px "Inter"'); await document.fonts.load('900 16px "Inter"'); });
+    before = await geometry();
+    expect(before.copy).toBeGreaterThan(40);
+  } finally { release(); }
+  await expect(page.locator(ROUTE_BY_ID.badgesRewards.ready)).toBeVisible();
+  expect(await geometry()).toEqual(before);
+  app.assertNoRuntimeErrors();
+});
+
 test('the preview notice arrives in Community HTML before hydration can move the page', async ({ request }) => {
   const response = await request.get('/community.html');
   const html = await response.text();

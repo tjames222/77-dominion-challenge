@@ -907,3 +907,14 @@
     transition: none;
   }
 }
+
+@media (max-width: 460px) {
+  .badges-rewards-shell .game-level-progress-heading {
+    /* Both the placeholder and the actual points label use two stable rows. */
+    display: grid;
+  }
+
+  .badges-rewards-shell .game-momentum-message {
+    min-height: 2.9em;
+  }
+}
