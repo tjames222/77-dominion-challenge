@@ -6,6 +6,9 @@ accounts, and **does not grant anyone admin access**. It does not alter crew
 roles, Stripe entitlements, existing owner testing grants, challenge state,
 points, badges, rewards, journal content, or account lifecycle requests.
 
+The separate follow-on [account and audit read APIs](site-admin-read-apis.md)
+add bounded summaries without changing this authorization/activation model.
+
 ## Canonical authorization
 
 `private.site_roles`, `site_permissions`, `site_role_permissions`, and
@@ -172,8 +175,8 @@ committed. Full Supabase/Auth-schema migration, pgTAP and advisor validation mus
 run in the existing free CI/local stack before release. The minimal fixture is
 not evidence that a hosted migration or hosted role grant has happened.
 
-FOU-1502 remains incomplete: admin route/navigation/dashboard, allowlisted
-server-paginated user/metrics/operations/audit reads, Auth Admin CRUD and session
+FOU-1502 remains incomplete: admin route/navigation/dashboard, remaining user
+summary fields and metrics/operations reads, Auth Admin CRUD and session
 revocation orchestration, separate testing grants and effective test clock,
 safe simulated side effects, Profile test-toggle removal, two-account full-stack
 and browser coverage, and the explicit first-admin activation are follow-up

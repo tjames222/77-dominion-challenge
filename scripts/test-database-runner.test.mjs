@@ -36,8 +36,8 @@ const supabaseConfigPath = path.join(
 );
 // Update alongside each reviewed pgTAP addition; these exact inventory checks
 // must not silently accept missing files or fewer planned assertions.
-const expectedFileCount = 36;
-const expectedAssertionCount = 1566;
+const expectedFileCount = 37;
+const expectedAssertionCount = 1586;
 
 const fakeCliSource = `#!/usr/bin/env bash
 set -euo pipefail
@@ -181,6 +181,7 @@ test("the database inventory and latest lifecycle foundations stay complete", as
   assert.ok(inventory.includes("220_deterministic_badges.sql"));
   assert.ok(inventory.includes("230_durable_reward_celebrations.sql"));
   assert.ok(inventory.includes("240_site_admin_foundation.sql"));
+  assert.ok(inventory.includes("250_site_admin_reads.sql"));
 
   let plannedAssertions = 0;
   for (const filename of inventory) {

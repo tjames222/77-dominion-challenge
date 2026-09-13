@@ -106,6 +106,8 @@ jobs:
         run: pnpm run test:reward-celebration-sql
       - name: Verify site-admin authorization and recovery boundaries
         run: pnpm run test:site-admin-foundation-sql
+      - name: Verify bounded site-admin account and audit reads
+        run: pnpm run test:site-admin-reads-sql
       - name: Rebuild from the migration chain
         run: pnpm run supabase:reset
       - name: Check local database security and performance advisors
