@@ -107,6 +107,7 @@ export default defineConfig({
         /local-production-stack\.spec\.mjs/,
         /mfa-live-auth\.spec\.mjs/,
         /admin-live\.spec\.mjs/,
+        /daily-action-bootstrap-live\.spec\.mjs/,
       ],
       metadata: {
         breakpoint: 'desktop',

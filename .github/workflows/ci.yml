@@ -112,6 +112,8 @@ jobs:
       - name: Verify early-access review and denial boundaries
         timeout-minutes: 5
         run: pnpm run test:early-access-admin-sql
+      - name: Verify focused Daily Action SQL and canonical date boundaries
+        run: pnpm run test:daily-bootstrap-sql
       - name: Rebuild from the migration chain
         run: pnpm run supabase:reset
       - name: Check local database security and performance advisors

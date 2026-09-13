@@ -15,6 +15,8 @@ const playwrightConfig = readFileSync(
   'utf8',
 );
 const mfaPlaywrightConfig = readFileSync(new URL('../../playwright.mfa.config.mjs', import.meta.url), 'utf8');
+const dailyBootstrapConfig = readFileSync(new URL('../../playwright.daily-bootstrap.config.mjs', import.meta.url), 'utf8');
+const ciWorkflow = readFileSync(new URL('../../.github/workflows/ci.yml', import.meta.url), 'utf8');
 const deployWorkflow = readFileSync(
   new URL('../../.github/workflows/deploy.yml', import.meta.url),
   'utf8',
@@ -70,6 +72,18 @@ test('required browser CI includes production-mode MFA with only a local synthet
   assert.match(mfaPlaywrightConfig, /const baseURL = `http:\/\/127\.0\.0\.1:\$\{port\}`/);
   assert.doesNotMatch(mfaPlaywrightConfig, /supabase\.co|SUPABASE_ACCESS_TOKEN|SERVICE_ROLE_KEY|CLOUDFLARE_API_TOKEN/);
   assert.match(mfaPlaywrightConfig, /outputFolder: 'playwright-report'/);
+});
+
+test('Daily Action bootstrap gates use production wiring with only synthetic local data', () => {
+  assert.equal(packageJson.scripts['test:e2e:daily-bootstrap'], 'playwright test --config=playwright.daily-bootstrap.config.mjs');
+  assert.equal(packageJson.scripts['test:daily-bootstrap-sql'], 'node --test scripts/daily-action-bootstrap.sql.test.mjs');
+  assert.match(workflow, /- name: Verify focused production-built Daily Action reads\n\s+run: pnpm test:e2e:daily-bootstrap/);
+  assert.match(ciWorkflow, /- name: Verify focused Daily Action SQL and canonical date boundaries\n\s+run: pnpm run test:daily-bootstrap-sql/);
+  assert.match(playwrightConfig, /\/daily-action-bootstrap-live\\\.spec\\\.mjs\//);
+  assert.match(dailyBootstrapConfig, /VITE_ENABLE_MOCKS: 'false', VITE_ENABLE_PRODUCTION_CONNECTIONS: 'true'/);
+  assert.match(dailyBootstrapConfig, /VITE_SUPABASE_URL: `\$\{baseURL\}\/__daily_fixture__`/);
+  assert.match(dailyBootstrapConfig, /const baseURL = `http:\/\/127\.0\.0\.1:\$\{port\}`/);
+  assert.doesNotMatch(dailyBootstrapConfig, /supabase\.co|SUPABASE_ACCESS_TOKEN|SERVICE_ROLE_KEY|CLOUDFLARE_API_TOKEN/);
 });
 
 test('browser diagnostics are short-lived and uploaded only when the gate fails', () => {

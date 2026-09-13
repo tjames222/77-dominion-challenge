@@ -64,6 +64,9 @@ jobs:
       - name: Verify production-built admin read boundaries
         run: pnpm test:e2e:admin
 
+      - name: Verify focused production-built Daily Action reads
+        run: pnpm test:e2e:daily-bootstrap
+
       - name: Check committed visual baselines
         id: visual-baselines
         shell: bash

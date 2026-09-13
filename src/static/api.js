@@ -1,6 +1,7 @@
 import { createClient } from '@supabase/supabase-js';
 import { authSessionIdentity, createSupabaseMfaAdapter, sessionRequiresMfa } from './mfa-auth.mjs';
 import { createAdminReadClient, adminReadError } from './admin-read-client.mjs';
+import { createDailyActionBootstrapClient } from './daily-action-bootstrap.mjs';
 import { createAdminPreview } from './admin-preview.mjs';
 import { createMfaSessionGuard } from './mfa-session-guard.mjs';
 import { assertEarlyAccessActor, normalizeEarlyAccessRequest, postEarlyAccessRequest } from './early-access-request.mjs';
@@ -3172,6 +3173,30 @@ export async function transitionSiteTraining({
   return normalizeSiteTrainingResult(data, page, operation.program, operation);
 }
 
+let dailyActionBootstrapClient = null;
+export function invalidateDailyActionBootstrap() { dailyActionBootstrapClient?.invalidate(); }
+export async function getDailyActionBootstrap({ expectedUserId, timeZone = browserTimeZone(), entryDate = null } = {}) {
+  if (!dailyActionBootstrapClient) {
+    const client = requireSupabase();
+    dailyActionBootstrapClient = createDailyActionBootstrapClient({
+      getSession: getAuthSession, getUser: requireUser, sessionIdentity: authSessionIdentity,
+      requiresMfa: () => sessionRequiresMfa(client.auth), subscribe: subscribeToAuthStateChanges,
+      request: async (args, signal) => {
+        const { data, error } = await client.rpc('get_daily_action_bootstrap', args).abortSignal(signal);
+        if (error) throw error;
+        return data;
+      },
+    });
+  }
+  return dailyActionBootstrapClient.read({ expectedUserId, timeZone, entryDate });
+}
+if (typeof window !== 'undefined') {
+  window.addEventListener('pagehide', invalidateDailyActionBootstrap);
+  window.addEventListener('storage', (event) => {
+    if (event.key === null || event.key === supabaseAuthStorageKey) invalidateDailyActionBootstrap();
+  });
+}
+
 const rpcDraft = async (name, parameters, { expectedUserId = '', mutation = false } = {}) => {
   try {
     const client = requireSupabase();
@@ -3180,11 +3205,14 @@ const rpcDraft = async (name, parameters, { expectedUserId = '', mutation = fals
     const rpcParameters = mutation
       ? { ...parameters, target_expected_actor_id: user.id }
       : parameters;
+    if (mutation) invalidateDailyActionBootstrap();
     const { data, error } = await client.rpc(name, rpcParameters);
     if (error) throw error;
     return normalizeDailyStandardDraft(data, parameters.target_entry_date);
   } catch (error) {
     throw naturalizeDailyActionError(error);
+  } finally {
+    if (mutation) invalidateDailyActionBootstrap();
   }
 };
 
