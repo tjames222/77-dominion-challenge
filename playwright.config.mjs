@@ -141,6 +141,12 @@ export default defineConfig({
       metadata: { breakpoint: 'mobile', theme: 'dark', colorScheme: 'dark' },
       use: { ...devices['iPhone 13'], browserName: 'webkit', viewport: { width: 390, height: 844 } },
     },
+    {
+      name: 'webkit-early-access-mobile',
+      testMatch: /early-access\.spec\.mjs/,
+      metadata: { breakpoint: 'mobile', theme: 'dark', colorScheme: 'dark' },
+      use: { ...devices['iPhone 13'], browserName: 'webkit', viewport: { width: 390, height: 844 } },
+    },
     ...visualProjects,
   ],
 });
