@@ -56,6 +56,9 @@ jobs:
       - name: Hybrid dev authentication regression
         run: pnpm test:e2e:auth
 
+      - name: MFA production-mode authentication regression
+        run: pnpm test:e2e:mfa
+
       - name: Check committed visual baselines
         id: visual-baselines
         shell: bash

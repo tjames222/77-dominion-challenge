@@ -55,6 +55,7 @@ export async function installFou1452SupabaseAuthStub(context) {
     created_at: user.createdAt,
     updated_at: user.updatedAt,
     is_anonymous: false,
+    factors: [],
   });
 
   const createSession = (user) => {
@@ -68,6 +69,8 @@ export async function installFou1452SupabaseAuthStub(context) {
         exp: nowSeconds + 3600,
         iat: nowSeconds,
         role: 'authenticated',
+        aal: 'aal1',
+        amr: [{ method: 'password', timestamp: nowSeconds }],
         session_id: sessionId,
         sub: user.id,
       }),

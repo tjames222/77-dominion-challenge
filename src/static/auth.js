@@ -1,4 +1,5 @@
 import { initReveal } from './reveal';
+import { mfaChallengeHref } from './mfa-navigation.mjs';
 import { buildInviteAuthHref, isInviteReturnPath } from './invite-flow.mjs';
 import {
   buildChallengeStartAuthHref,
@@ -6,6 +7,8 @@ import {
 } from './challenge-start-intent.mjs';
 import {
   getBillingState,
+  getAuthSession,
+  getMfaAuthAdapter,
   hasSupabaseAuthentication,
   isLocalDemoMode,
   saveLocalMockUser,
@@ -94,6 +97,12 @@ if (form) {
           return;
         }
 
+        if (result.mfaRequired) {
+          if (passwordInput) passwordInput.value = '';
+          window.location.href = mfaChallengeHref(returnTo, window.location.origin);
+          return;
+        }
+
         saveLocalUserFromSession(result.session, name);
         if (returnTo && returnTo !== './dashboard.html') {
           window.location.href = returnTo;
@@ -124,5 +133,19 @@ if (form) {
       }
     }
   });
+}
+
+// A user returning to Login mid-challenge keeps the pending second-factor flow.
+if (!signupPage && hasSupabaseAuthentication()) {
+  void (async () => {
+    try {
+      const session = await getAuthSession();
+      if (!session?.user?.id) return;
+      const state = await getMfaAuthAdapter().getState({ expectedUserId: session.user.id });
+      if (state.requiresChallenge) window.location.replace(mfaChallengeHref(returnTo, window.location.origin));
+    } catch {
+      // The explicit login form remains retryable; never log provider payloads.
+    }
+  })();
 }
 initReveal();

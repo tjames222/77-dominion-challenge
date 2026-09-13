@@ -4,7 +4,8 @@ import { AUTHENTICATED_HEADER_ROUTES } from '../../src/static/shared-header-stat
 import { PRODUCTION_ROUTES, ROUTE_BY_ID } from './support/routes.mjs';
 
 const authenticatedHeaderRoutes = PRODUCTION_ROUTES.filter((route) => (
-  route.access !== 'public' || ['membership', 'science'].includes(route.id)
+  route.sharedHeaderActions !== false
+    && (route.access !== 'public' || ['membership', 'science'].includes(route.id))
 ));
 
 async function logInAsPreviewAccount(page, user, { logOutFirst = true } = {}) {
@@ -24,6 +25,8 @@ async function logInAsPreviewAccount(page, user, { logOutFirst = true } = {}) {
 test('authenticated header allowlist covers every eligible production route', () => {
   const expectedEntries = authenticatedHeaderRoutes.map((route) => route.htmlEntry).sort();
   expect([...AUTHENTICATED_HEADER_ROUTES].sort()).toEqual(expectedEntries);
+  expect(PRODUCTION_ROUTES.filter((route) => route.sharedHeaderActions === false).map((route) => route.htmlEntry))
+    .toEqual(['account-security.html']);
 });
 
 async function installHeaderHeightProbe(page) {

@@ -83,7 +83,7 @@ function assertAccentCadence(sections, label) {
 
 describe('app-wide section surface cadence', () => {
   test('audits every active Vite HTML input without route exceptions', () => {
-    assert.equal(activeRoutes.length, 26);
+    assert.equal(activeRoutes.length, 27);
     for (const route of activeRoutes) {
       const source = readFileSync(new URL(`../../${route}`, import.meta.url), 'utf8');
       const sections = directPageSections(source);
