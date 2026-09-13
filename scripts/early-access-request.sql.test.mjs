@@ -3,6 +3,7 @@ import { spawn, spawnSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { after, before, beforeEach, test } from 'node:test';
+import { fileURLToPath } from 'node:url';
 
 // Never accepts a hosted URL or an existing container. The complete cluster is
 // private temporary memory, with no published ports and no Docker network.
@@ -222,4 +223,68 @@ test('canonical pgTAP intake contract passes on the exact migration', async () =
   assert.match(result.stdout, /1\.\.34/);
   assert.doesNotMatch(result.stdout, /not ok|Looks like you failed/);
   assert.equal((result.stdout.match(/^ok \d+ /gm) || []).length, 34);
+});
+
+test('schema-drift provider fixture loads the canonical intake and current Auth dependency shapes', async () => {
+  // This additional database is inside the same UUID-named, network-none tmpfs
+  // cluster. It cannot target a hosted database or an existing local stack.
+  const database = 'schema_drift_fixture';
+  const fixture = await readFile(new URL('./fixtures/schema-drift-provider.sql', import.meta.url), 'utf8');
+  assert.doesNotMatch(fixture.replace(/^\s*--.*$/gm, ''), /\b(?:grant|revoke|alter\s+(?:role|user)|owner\s+to)\b[^;]*;/i);
+  query(`create database ${database} template template0;`);
+  const fixtureCommand = [...command.slice(0, -1), database];
+  const run = (sql) => docker(fixtureCommand, sql);
+  let result = run(fixture);
+  assert.equal(result.status, 0, result.stderr || result.error?.message);
+
+  result = run(`select json_build_object(
+    'emailType',format_type(a.atttypid,a.atttypmod),
+    'anonymousNotNull',(select attnotnull from pg_attribute where attrelid='auth.users'::regclass and attname='is_anonymous'),
+    'metadataNullable',(select not attnotnull from pg_attribute where attrelid='auth.users'::regclass and attname='raw_user_meta_data'),
+    'serviceRead',has_table_privilege('service_role','auth.users','select'),
+    'owner',pg_get_userbyid(c.relowner))
+    from pg_attribute a join pg_class c on c.oid=a.attrelid
+    where a.attrelid='auth.users'::regclass and a.attname='email';
+    -- Parse the exact fields needed by intake and combined Admin/Daily Action.
+    select u.id,u.email,u.email_confirmed_at,u.is_anonymous,u.deleted_at,u.banned_until,
+      u.created_at,u.last_sign_in_at,s.id,s.user_id,s.factor_id,s.aal,s.not_after,
+      f.id,f.user_id,f.factor_type,f.status,a.session_id,a.authentication_method,a.updated_at
+    from auth.users u join auth.sessions s on s.user_id=u.id
+    join auth.mfa_factors f on f.id=s.factor_id
+    join auth.mfa_amr_claims a on a.session_id=s.id where false;
+    select json_build_object('aal',enum_range(null::auth.aal_level),
+      'type',enum_range(null::auth.factor_type),'status',enum_range(null::auth.factor_status));`);
+  assert.equal(result.status, 0, result.stderr || result.error?.message);
+  assert.deepEqual(result.stdout.trim().split('\n').map(JSON.parse), [
+    { emailType: 'character varying(255)', anonymousNotNull: true, metadataNullable: true, serviceRead: false, owner: 'postgres' },
+    { aal: ['aal1', 'aal2', 'aal3'], type: ['totp', 'webauthn', 'phone'], status: ['unverified', 'verified'] },
+  ]);
+
+  // Stream only reviewed SQL into the owned tmpfs. This also works with a
+  // remote Docker daemon, without exposing .env/config state or account data.
+  const sqlDirectory = '/tmp/schema-drift-canonical';
+  const archive = spawnSync('tar', ['-C', fileURLToPath(new URL('../supabase', import.meta.url)),
+    '-cf', '-', 'schema.sql', 'migrations'], { timeout: 30_000, maxBuffer: 8 * 1024 * 1024 });
+  assert.equal(archive.status, 0, archive.stderr?.toString() || archive.error?.message);
+  const directory = docker(['exec', container, 'mkdir', sqlDirectory]);
+  assert.equal(directory.status, 0, directory.stderr || directory.error?.message);
+  const copied = docker(['exec', '-i', container, 'tar', '-C', sqlDirectory, '-xf', '-'], archive.stdout);
+  assert.equal(copied.status, 0, copied.stderr || copied.error?.message);
+
+  // Reproduce CI's former missing-column failure using the actual canonical loader.
+  // Disconnect rolls back this intentionally failing transaction.
+  result = run(`begin;set local search_path=public,extensions;
+    alter table auth.users drop column email_confirmed_at;
+    \\i ${sqlDirectory}/schema.sql\ncommit;`);
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /column u\.email_confirmed_at does not exist/);
+
+  result = run(`begin;set local search_path=public,extensions;
+    \\i ${sqlDirectory}/schema.sql\ncommit;
+    select json_build_object('identityHelper',to_regprocedure('private.early_access_verified_identity_matches(uuid,text)') is not null,
+      'serviceRead',has_table_privilege('service_role','auth.users','select'),
+      'authRows',(select count(*) from auth.users));`);
+  assert.equal(result.status, 0, result.stderr || result.error?.message);
+  assert.deepEqual(JSON.parse(result.stdout.trim().split('\n').at(-1)),
+    { identityHelper: true, serviceRead: false, authRows: 0 });
 });

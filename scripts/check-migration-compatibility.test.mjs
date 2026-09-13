@@ -403,6 +403,8 @@ test("package, CI, and production deploy run the gate before migrations", async 
     schemaDriftHelper,
     /--single-transaction\s*\\\s*\n\s*--file=supabase\/schema\.sql/,
   );
+  assert.match(schemaDriftHelper, /--file=scripts\/fixtures\/schema-drift-provider\.sql/);
+  assert.doesNotMatch(schemaDriftHelper, /create table auth\.users/i);
   assert.deepEqual(migrationCompatibilityViolations(canonicalSchema), []);
 
   const repositoryStart = startHelper.indexOf(
