@@ -63,7 +63,7 @@ test('training coalescing uses every server argument and retains expected-actor 
 });
 
 test('auth loss, cross-tab changes and mutation settlement invalidate without caching authorization', () => {
-  assert.match(api, /clearAuthSession\(\) \{\s+inflightActorReads\.invalidate\(\)/);
+  assert.match(api, /clearAuthSession\(\) \{\s+cancelAdminReads\(\);\s+inflightActorReads\.invalidate\(\)/);
   assert.match(api, /inflightActorReads\.observeAuth\(event, session\?\.user\?\.id \|\| ''\)/);
   assert.match(api, /addEventListener\('storage',[\s\S]*inflightActorReads\.invalidate\(\)/);
   assert.match(api, /finally \{\s+inflightActorReads\.invalidate\(query\)/);

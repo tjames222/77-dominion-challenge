@@ -87,7 +87,10 @@ export default defineConfig(({ mode }) => {
               // Keep exactly the existing static menu graph together. Moving
               // the controllers out must not turn its shared state/contract
               // helpers into additional startup requests on every route.
-              { name: 'menu', test: isSharedMenuModule, priority: 20 },
+              // Account Security intentionally imports shared API/theme code
+              // without the menu entry. Keep that entry's dependency set so a
+              // shared import cannot execute menu listeners or hydration.
+              { name: 'menu', test: isSharedMenuModule, priority: 20, entriesAware: true },
               // The optional controllers and catalog share one failure/reload
               // boundary. The higher-priority menu owns their common helpers;
               // dynamic imports (including the coachmark UI) stay separate.

@@ -279,6 +279,51 @@ boundaries, dashboard/daily-action request budgets and bounded history. The
 deployed asset/layout timings above do not measure this later extraction; a new
 pinned before/after run is required after root review and preview publication.
 
+## MFA/Admin and badge integration audit (2026-09-13, not deployed)
+
+The combined backlog candidate adds Account Security, read-only Admin, durable
+badge/reward UI and their shared API contracts. The shared menu group must now
+use `entriesAware: true`: Account Security shares API and theme imports but
+deliberately has no menu entry. Grouping those modules without preserving entry
+sets caused the Security entry to execute menu listeners and hydration. An actual
+in-memory production graph test now rejects menu, shared-header and training
+modules in that entry; production-built Chromium/WebKit tests also require no
+menu UI or private reads during its MFA challenge or refocus.
+
+Admin readiness refresh starts before the optional training import, with the
+existing MFA gate and actor/session fences unchanged. Delayed and failed training
+downloads cannot prevent the Admin link from being independently revalidated.
+Pending readiness reads are still aborted on logout; dedicated production-built
+tests exercise both successful and failed sign-out while such a read is pending,
+without suppressing page errors.
+
+This safety-preserving integration **fails the unchanged interim performance
+audit**, not just the final completion targets. The same canonical mock-only
+develop build, Night enabled and billing/signup/integrations disabled, measures:
+
+| Route | JS gzip | CSS gzip | Initial graph requests / ceiling |
+| --- | ---: | ---: | ---: |
+| Landing | 139691 | 38091 | 10 / 7 |
+| Login | 142992 | 35281 | 11 / 7 |
+| Dashboard | 159253 | 36283 | 12 / 7 |
+| Rewards | 151512 | 39326 | 11 / 7 |
+| Community | 165105 | 43495 | 12 / 8 |
+| Profile | 146045 | 35281 | 9 / 6 |
+| Bible reading | 144924 | 35281 | 9 / 6 |
+
+Login, Dashboard and Rewards also exceed their interim JS ceilings; Dashboard
+and Rewards exceed CSS ceilings. The controller/catalog remains a deferred
+14336-byte gzip chunk, with a 4579-byte UI chunk and 1577-byte UI stylesheet;
+these are included in the all-chunk audit. Account Security itself is 129736
+bytes JS gzip, 29603 CSS gzip and seven initial graph requests. No ceilings,
+target percentages, measurement rules or privacy constraints were relaxed.
+
+These figures describe the combined candidate, not an isolated before/after
+comparison with the older training-only checkpoint above. The added domain/UI
+features and entry-safe split require further graph/API work. FOU-1501 remains
+open; this local checkpoint is neither deployed timing evidence nor a passing
+performance release claim.
+
 ## Interim automated budgets
 
 `pnpm run check:frontend-performance` audits a freshly built canonical mock preview
