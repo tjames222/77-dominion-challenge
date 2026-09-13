@@ -15,6 +15,7 @@
     "test:e2e": "playwright test",
     "test:e2e:auth": "playwright test --config=playwright.fou-1452.config.mjs",
     "test:e2e:mfa": "playwright test --config=playwright.mfa.config.mjs",
+    "test:e2e:admin": "playwright test --config=playwright.admin.config.mjs",
     "test:e2e:local-production": "bash scripts/rehearse-local-production-stack.sh",
     "test:e2e:headed": "playwright test --headed --project=chromium-functional",
     "test:e2e:update": "playwright test --update-snapshots=all",

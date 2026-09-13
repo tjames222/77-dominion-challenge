@@ -20,9 +20,16 @@ test.describe('production route smoke coverage', () => {
 
 test.describe('authenticated route guards', () => {
   for (const route of AUTHENTICATED_ROUTES) {
-    test(route.id + ' sends a logged-out visitor to login', async ({ page, app }) => {
+    test(route.id + (route.guestGate === 'inline-admin' ? ' shows a private-data-free login gate' : ' sends a logged-out visitor to login'), async ({ page, app }) => {
       await app.seed('guest');
       await page.goto(route.path);
+      if (route.guestGate === 'inline-admin') {
+        await expect(page.locator('#adminLogin')).toBeVisible();
+        await expect(page.locator('#adminLogin')).toHaveAttribute('href', './login.html?returnTo=admin.html');
+        await expect(page.locator('#adminWorkspace')).toBeHidden();
+        await expect(page.locator('#adminUsersRows tr, #adminAuditRows tr')).toHaveCount(0);
+        return;
+      }
       await expect(page).toHaveURL(/\/login\.html\?returnTo=/);
       await expect(page.locator('#authForm')).toBeVisible();
     });

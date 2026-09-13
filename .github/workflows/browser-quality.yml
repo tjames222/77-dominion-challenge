@@ -59,6 +59,9 @@ jobs:
       - name: MFA production-mode authentication regression
         run: pnpm test:e2e:mfa
 
+      - name: Verify production-built admin read boundaries
+        run: pnpm test:e2e:admin
+
       - name: Check committed visual baselines
         id: visual-baselines
         shell: bash

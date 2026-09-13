@@ -2,7 +2,9 @@
 
 These four read-only RPCs extend the [security foundation](site-admin-foundation.md).
 They do not construct an Auth Admin client, change accounts/roles, append audit
-events, or expose an admin UI. No migration grants anyone admin access.
+events, or expose an admin UI by themselves. The separately shipped
+[read-only admin screen](site-admin-read-ui.md) consumes these contracts.
+No migration grants anyone admin access.
 
 Every call first requires its own captured expected actor, current canonical
 permission, live healthy Auth session/account, allowed Origin, and verified
@@ -141,8 +143,9 @@ through schema-only reads and expanded in a separate commit.
 This is not the entire Users screen contract. Testing-grant status/expiry and
 effective Stripe-versus-test access, challenge current day/canonical completion,
 badge/reward aggregates, DAU/retention/other product metrics, operational queues,
-CRUD/recovery/global session revocation, admin UI and browser tests remain
-follow-up work. They are omitted rather than inferred from incomplete state.
+CRUD/recovery/global session revocation remain follow-up work. They are omitted
+rather than inferred from incomplete state. The read-only UI and browser tests
+are documented separately; neither completes those remaining ticket requirements.
 
 References: [Supabase security](https://supabase.com/docs/guides/security/product-security),
 [Postgres multi-column indexes](https://www.postgresql.org/docs/current/indexes-multicolumn.html),

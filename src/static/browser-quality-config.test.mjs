@@ -60,6 +60,8 @@ test('manual baseline generation forcibly rewrites every screenshot', () => {
 
 test('required browser CI includes production-mode MFA with only a local synthetic provider', () => {
   assert.equal(packageJson.scripts['test:e2e:mfa'], 'playwright test --config=playwright.mfa.config.mjs');
+  assert.equal(packageJson.scripts['test:e2e:admin'], 'playwright test --config=playwright.admin.config.mjs');
+  assert.match(workflow, /- name: Verify production-built admin read boundaries\n\s+run: pnpm test:e2e:admin/);
   assert.match(workflow, /- name: Hybrid dev authentication regression\n\s+run: pnpm test:e2e:auth\n\n\s+- name: MFA production-mode authentication regression\n\s+run: pnpm test:e2e:mfa/);
   assert.match(playwrightConfig, /\/mfa-live-auth\\\.spec\\\.mjs\//);
   assert.match(mfaPlaywrightConfig, /VITE_ENABLE_MOCKS: 'false', VITE_ENABLE_PRODUCTION_CONNECTIONS: 'true'/);

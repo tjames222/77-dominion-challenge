@@ -106,6 +106,7 @@ export default defineConfig({
         /fou-1452-hybrid-auth\.spec\.mjs/,
         /local-production-stack\.spec\.mjs/,
         /mfa-live-auth\.spec\.mjs/,
+        /admin-live\.spec\.mjs/,
       ],
       metadata: {
         breakpoint: 'desktop',
@@ -127,6 +128,12 @@ export default defineConfig({
     {
       name: 'webkit-badge-gallery-mobile',
       testMatch: /badge-(?:gallery|collection)\.spec\.mjs/,
+      metadata: { breakpoint: 'mobile', theme: 'dark', colorScheme: 'dark' },
+      use: { ...devices['iPhone 13'], browserName: 'webkit', viewport: { width: 390, height: 844 } },
+    },
+    {
+      name: 'webkit-admin-mobile',
+      testMatch: /admin-preview\.spec\.mjs/,
       metadata: { breakpoint: 'mobile', theme: 'dark', colorScheme: 'dark' },
       use: { ...devices['iPhone 13'], browserName: 'webkit', viewport: { width: 390, height: 844 } },
     },

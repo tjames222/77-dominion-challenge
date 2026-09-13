@@ -70,6 +70,17 @@ export const PRODUCTION_ROUTES = Object.freeze([
     surfaces: ['navigation', 'actions', 'error'],
   },
   {
+    id: 'admin',
+    path: '/admin.html',
+    htmlEntry: 'admin.html',
+    title: 'Administration | Dominion',
+    access: 'authenticated',
+    guestGate: 'inline-admin',
+    defaultState: 'member',
+    ready: '#adminTitle',
+    surfaces: ['navigation', 'forms', 'error'],
+  },
+  {
     id: 'accountSecurity',
     path: '/account-security.html',
     htmlEntry: 'account-security.html',

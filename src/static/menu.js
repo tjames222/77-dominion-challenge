@@ -2,6 +2,9 @@ import {
   clearAuthSession,
   getLocalOrSessionUser,
   subscribeToAuthStateChanges,
+  getSiteAdminContext,
+  getAdminSessionOwner,
+  subscribeToAdminInvalidation,
 } from './api';
 import {
   clearThemeEntitlementState,
@@ -37,6 +40,28 @@ let pageTrainingControls = null;
 let menuButtonPlaceholder = null;
 let menuBackgroundObserver = null;
 const menuBackgroundState = new Map();
+let adminMenuRequest = 0;
+function removeAdminMenuItem() {
+  adminMenuRequest += 1;
+  document.querySelector('[data-admin-menu-item]')?.remove();
+}
+async function refreshAdminMenuItem() {
+  removeAdminMenuItem();
+  const request = adminMenuRequest; const hydration = menuHydrationRequest;
+  try {
+    const owner = await getAdminSessionOwner();
+    if (request !== adminMenuRequest || hydration !== menuHydrationRequest) return;
+    const context = await getSiteAdminContext({ expectedUserId: owner.actorId });
+    if (request !== adminMenuRequest || hydration !== menuHydrationRequest || !context.adminReady
+      || !context.permissions.some((permission) => ['users.read', 'audit.read'].includes(permission))) return;
+    const nav = document.querySelector('.global-menu nav'); if (!nav) return;
+    const link = document.createElement('a'); link.href = './admin.html';
+    link.textContent = context.preview ? 'Admin (preview)' : 'Admin'; link.dataset.adminMenuItem = '';
+    link.addEventListener('click', closeMenu); nav.append(link);
+  } catch { if (request === adminMenuRequest) removeAdminMenuItem(); }
+}
+subscribeToAdminInvalidation(removeAdminMenuItem);
+window.addEventListener('pagehide', removeAdminMenuItem);
 
 const loggedInLinks = [
   ['Dashboard', './dashboard.html'],
@@ -207,6 +232,7 @@ function refreshTrainingControllers({ hideWhileLoading = true } = {}) {
 function openMenu() {
   void refreshTrainingControllers();
   liftMenuButton(document.querySelector('.global-menu-button'));
+  void refreshAdminMenuItem();
   document.body.classList.add('menu-open');
   // Preserve a currently occupied desktop scrollbar gutter, but do not add a
   // new gutter to pages/browsers that had none before opening the drawer.
@@ -368,8 +394,8 @@ async function buildMenu() {
     <div class="global-menu-header">
       <div>
         <p class="eyebrow">Dominion</p>
-        <h2>${profileLabel}</h2>
-        <span>${profileSubtext}</span>
+        <h2 data-menu-profile-label></h2>
+        <span data-menu-profile-subtext></span>
       </div>
       <button class="global-menu-close" type="button" aria-label="Close menu">×</button>
     </div>
@@ -406,6 +432,9 @@ async function buildMenu() {
   if (menuHadFocus && document.body.classList.contains('menu-open')) {
     focusWithoutScroll(menu.querySelector('.global-menu-links a'));
   }
+  // Names and email addresses are text, never markup—even on an admin page.
+  menu.querySelector('[data-menu-profile-label]').textContent = profileLabel;
+  menu.querySelector('[data-menu-profile-subtext]').textContent = profileSubtext;
 
   const trailingActions = topbar.querySelector('.topbar-trailing-actions');
   if (!document.body.classList.contains('menu-open')) (trailingActions || topbar).appendChild(button);
@@ -501,6 +530,7 @@ async function buildMenu() {
     destroyTrainingControllers();
   }
   currentMenuOwner = nextOwner;
+  void refreshAdminMenuItem();
 }
 
 initThemeState();
@@ -513,6 +543,7 @@ initTopbarStickyOffset();
 buildMenu();
 
 subscribeToAuthStateChanges(({ event, user }) => {
+  removeAdminMenuItem();
   const nextOwner = user?.authenticated ? String(user?.userId || user?.email || '') : '';
   const ownerChanged = event === 'SIGNED_OUT' || nextOwner !== currentMenuOwner;
   menuHydrationRequest += 1;

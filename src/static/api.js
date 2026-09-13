@@ -1,5 +1,7 @@
 import { createClient } from '@supabase/supabase-js';
 import { authSessionIdentity, createSupabaseMfaAdapter, sessionRequiresMfa } from './mfa-auth.mjs';
+import { createAdminReadClient, adminReadError } from './admin-read-client.mjs';
+import { createAdminPreview } from './admin-preview.mjs';
 import { createMfaSessionGuard } from './mfa-session-guard.mjs';
 import { assertEarlyAccessActor, normalizeEarlyAccessRequest, postEarlyAccessRequest } from './early-access-request.mjs';
 import {
@@ -534,6 +536,60 @@ export function subscribeToAuthStateChanges(listener) {
   return () => data?.subscription?.unsubscribe?.();
 }
 
+let adminReadClient = null;
+const adminInvalidationListeners = new Set();
+const notifyAdminInvalidation = (reason = '') => { for (const listener of adminInvalidationListeners) { try { listener(reason); } catch { /* Clear every subscribed view. */ } } };
+function getAdminReadClient() {
+  if (adminReadClient) return adminReadClient;
+  // URL/local metadata alone cannot activate this branch in a production build.
+  if (ENABLE_MOCKS && !usesSupabaseAuthentication()) {
+    const selected = new URLSearchParams(globalThis.location?.search || '').get('admin-preview');
+    adminReadClient = createAdminPreview({ getUser: getLocalOrSessionUser, mode: ['ready', 'mfa'].includes(selected) ? selected : 'member' });
+    adminReadClient.subscribe(notifyAdminInvalidation);
+    return adminReadClient;
+  }
+  if (!usesSupabaseAuthentication()) throw adminReadError('ADMIN_SIGNED_OUT');
+  adminReadClient = createAdminReadClient({
+    getSession: getAuthSession,
+    getUser: async () => { const { data, error } = await supabase.auth.getUser(); if (error) throw adminReadError('ADMIN_SIGNED_OUT'); return data?.user; },
+    sessionIdentity: authSessionIdentity,
+    subscribe: subscribeToAuthStateChanges,
+    request: async (name, args, { token, signal }) => {
+      const response = await fetch(`${SUPABASE_URL}/rest/v1/rpc/${name}`, {
+        method: 'POST', credentials: 'omit', cache: 'no-store', redirect: 'error', signal,
+        headers: { apikey: SUPABASE_KEY, Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify(args),
+      });
+      const raw = await response.text();
+      if (raw.length > 262144) throw adminReadError();
+      let value; try { value = JSON.parse(raw); } catch { throw adminReadError(); }
+      if (!response.ok) {
+        const code = response.status === 401 ? 'ADMIN_SIGNED_OUT' : response.status === 403 ? 'ADMIN_DENIED'
+          : response.status === 404 ? 'ADMIN_NOT_FOUND' : value?.message === 'admin_invalid_cursor' ? 'ADMIN_INVALID_CURSOR'
+            : value?.message === 'admin_invalid_input' ? 'ADMIN_INVALID_INPUT' : 'ADMIN_UNAVAILABLE';
+        throw adminReadError(code);
+      }
+      return value;
+    },
+  });
+  adminReadClient.subscribe(notifyAdminInvalidation);
+  return adminReadClient;
+}
+export const getAdminSessionOwner = () => getAdminReadClient().owner();
+export const getSiteAdminContext = (options = {}) => getAdminReadClient().read('get_site_admin_context', {}, options);
+export const listSiteAdminUsers = (args, options = {}) => getAdminReadClient().read('site_admin_list_users', args, options);
+export const getSiteAdminUser = (id, options = {}) => getAdminReadClient().read('site_admin_get_user', { target_user_id: id }, options);
+export const listSiteAdminAudit = (args, options = {}) => getAdminReadClient().read('site_admin_list_audit', args, options);
+export const getSiteAdminAuditEvent = (id, options = {}) => getAdminReadClient().read('site_admin_get_audit_event', { target_event_id: id }, options);
+export function subscribeToAdminInvalidation(listener) { adminInvalidationListeners.add(listener); return () => adminInvalidationListeners.delete(listener); }
+export function cancelAdminReads() { if (adminReadClient?.invalidate) adminReadClient.invalidate(); else notifyAdminInvalidation(); }
+if (typeof window !== 'undefined') {
+  window.addEventListener('pagehide', cancelAdminReads);
+  window.addEventListener('storage', (event) => {
+    if (event.key === null || [supabaseAuthStorageKey, 'dominion:user', MOCK_USER_ID_KEY, MOCK_USER_IDS_BY_IDENTITY_KEY].includes(event.key)) cancelAdminReads();
+  });
+}
+
 export function getCurrentAppPath() {
   if (typeof window === 'undefined') return './dashboard.html';
   const path = window.location.pathname.split('/').pop() || 'dashboard.html';
@@ -566,6 +622,7 @@ export function sanitizeReturnTo(returnTo, fallback = './dashboard.html') {
 }
 
 export async function clearAuthSession() {
+  cancelAdminReads();
   if (usesSupabaseAuthentication()) {
     try {
       await supabase.auth.signOut();
@@ -583,6 +640,7 @@ export async function clearAuthSession() {
 
 export function saveLocalMockUser(user) {
   if (!isLocalDemoMode()) throw new Error('Preview login is unavailable outside local demo mode.');
+  cancelAdminReads();
   const nextUser = {
     name: String(user?.name || '').trim() || 'Member',
     email: String(user?.email || '').trim(),
