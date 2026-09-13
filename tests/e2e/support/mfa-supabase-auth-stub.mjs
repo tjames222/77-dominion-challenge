@@ -13,6 +13,7 @@ export async function installMfaSupabaseStub(context, { enrolled = true, appAcce
   let sequence = 0;
   let verificationGate = null;
   let loseVerifyResponse = false;
+  let logoutOutage = false;
   let factorVerified = enrolled;
   let sessionId = S;
   const user = () => ({ id: A, aud: 'authenticated', role: 'authenticated', email: 'mfa.synthetic@example.test', user_metadata: { name: 'Synthetic Member' }, factors: factorVerified ? [{ id: F, status: 'verified', factor_type: 'totp', friendly_name: 'My authenticator' }] : [] });
@@ -31,7 +32,10 @@ export async function installMfaSupabaseStub(context, { enrolled = true, appAcce
     const body = request.postData() ? request.postDataJSON() : {};
     if (path === '/auth/v1/token') return json(route, session('aal1'));
     if (path === '/auth/v1/user') return auth ? json(route, user()) : json(route, { code: 'session_not_found', message: 'Synthetic session missing' }, 403);
-    if (path === '/auth/v1/logout') { tokens.delete(access); return json(route, {}); }
+    if (path === '/auth/v1/logout') {
+      if (logoutOutage) return json(route, { code: 'unexpected_failure', message: 'SYNTHETIC_PRIVATE_LOGOUT_RESPONSE' }, 503);
+      tokens.delete(access); return json(route, {});
+    }
     if (path === '/auth/v1/factors' && request.method() === 'POST') return json(route, { id: F, type: 'totp', totp: { secret: 'JBSWY3DPEHPK3PXP', qr_code: '<svg></svg>' } });
     if (path === `/auth/v1/factors/${F}/challenge`) return json(route, { id: C, expires_at: Math.floor(Date.now() / 1000) + 120 });
     if (path === `/auth/v1/factors/${F}/verify`) {
@@ -55,6 +59,7 @@ export async function installMfaSupabaseStub(context, { enrolled = true, appAcce
     requests,
     privateRequests: () => requests.filter((request) => request.path.startsWith('/rest/') || request.path.startsWith('/functions/')),
     loseNextVerificationResponse() { loseVerifyResponse = true; },
+    setLogoutOutage(value = true) { logoutOutage = value; },
     rotateSession() { sessionId = '22222222-2222-4222-8222-222222222222'; },
     holdVerification() { let release; verificationGate = new Promise((resolve) => { release = resolve; }); return () => { release(); verificationGate = null; }; },
   };
