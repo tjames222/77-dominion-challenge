@@ -40,6 +40,7 @@
     "test:production-canary-restart": "node --test scripts/production-canary-restart-proof.test.mjs scripts/prepare-production-canary-restart-proof.test.mjs scripts/restart-production-canary.test.mjs scripts/run-approved-production-restart.test.mjs scripts/production-canary-restart-workflow.test.mjs",
     "test:production-canary-restart-sql": "node --test scripts/restart-production-canary.sql.test.mjs",
     "test:deterministic-badges-sql": "node --test scripts/deterministic-badges.sql.test.mjs",
+    "test:site-admin-foundation-sql": "node --test scripts/site-admin-foundation.sql.test.mjs",
     "test:cloudflare-pages-policy": "node --test scripts/configure-cloudflare-pages-policy.test.mjs scripts/configure-production-custom-domain.test.mjs",
     "configure:cloudflare-pages-policy": "node scripts/configure-cloudflare-pages-policy.mjs",
     "capture:production-backup": "bash scripts/run-production-operator-clean.sh --operation capture --",
