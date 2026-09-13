@@ -407,6 +407,37 @@
   font: inherit;
   line-height: 1.45;
 }
+.journal-select-field {
+  position: relative;
+  min-width: 0;
+}
+.journal-form .journal-select-field select {
+  min-height: 56px;
+  padding-inline: 16px 48px;
+  appearance: none;
+  font-size: 1rem;
+  font-weight: 700;
+  letter-spacing: normal;
+  text-transform: none;
+}
+.journal-select-field::after {
+  content: '';
+  position: absolute;
+  inset-inline-end: 20px;
+  bottom: 25px;
+  width: 8px;
+  height: 8px;
+  border-inline-end: 2px solid var(--text-muted);
+  border-bottom: 2px solid var(--text-muted);
+  transform: rotate(45deg);
+  pointer-events: none;
+}
+.journal-form .journal-select-field select:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--accent) 58%, var(--border));
+}
+.journal-select-field:focus-within::after {
+  border-color: var(--accent);
+}
 .community-form input,
 .community-form select,
 .journal-form input,
@@ -1682,6 +1713,11 @@
   .leaderboard-member-trigger { transition: none; }
 }
 @media (forced-colors: active) {
+  .journal-form .journal-select-field select {
+    appearance: auto;
+    padding-inline-end: 16px;
+  }
+  .journal-select-field::after { display: none; }
   .invite-people-button,
   .provider-button,
   .provider-mark,
