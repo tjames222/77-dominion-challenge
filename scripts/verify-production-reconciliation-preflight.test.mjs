@@ -20,6 +20,7 @@ import { createServer } from "node:net";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { HISTORICAL_RECONCILIATION_VERSIONS } from "./prepare-reconciliation-stage.mjs";
+import { copyInitialCutoverMigrations } from "./fixtures/copy-initial-cutover-migrations.mjs";
 
 const scriptDirectory = path.dirname(fileURLToPath(import.meta.url));
 const repositoryRoot = path.resolve(scriptDirectory, "..");
@@ -181,10 +182,9 @@ async function copyReleaseRepository(root) {
     recursive: true,
     mode: 0o700,
   });
-  await cp(
+  await copyInitialCutoverMigrations(
     path.join(repositoryRoot, "supabase", "migrations"),
     path.join(repository, "supabase", "migrations"),
-    { recursive: true },
   );
   await cp(
     path.join(repositoryRoot, "supabase", "config.toml"),
