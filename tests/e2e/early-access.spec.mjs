@@ -134,6 +134,59 @@ test('early-access controls are accessible, responsive, and usable in forced col
   await expect(page.getByLabel('Email', { exact: true })).toBeFocused();
 });
 
+test('page exit scrubs personal drafts and BFCache restoration rechecks the current account', async ({ page, app }) => {
+  await app.open(ROUTE_BY_ID.membership, { state: 'member' });
+  await page.getByLabel('Name', { exact: true }).fill('Private cached draft');
+  const scrubbed = await page.evaluate(() => {
+    window.dispatchEvent(new PageTransitionEvent('pagehide', { persisted: true }));
+    const form = document.getElementById('earlyAccessForm');
+    return { hidden: form.hidden, name: form.elements.name.value, email: form.elements.email.value,
+      busy: form.getAttribute('aria-busy'), status: document.getElementById('earlyAccessStatus').textContent,
+      error: document.getElementById('earlyAccessError').textContent };
+  });
+  expect(scrubbed).toEqual({ hidden: true, name: '', email: '', busy: 'false', status: '', error: '' });
+  await page.evaluate(async () => {
+    const api = await import('/src/static/api.js');
+    api.saveLocalMockUser({ name: 'Restored Account', email: 'restored@example.test' });
+    window.dispatchEvent(new StorageEvent('storage', { key: 'dominion:user' }));
+  });
+  await expect(page.locator('#earlyAccessForm')).toBeHidden();
+  await expect(page.getByLabel('Email', { exact: true })).toHaveValue('');
+  await Promise.all([
+    page.waitForEvent('load'),
+    page.evaluate(() => window.dispatchEvent(new PageTransitionEvent('pageshow', { persisted: true }))),
+  ]);
+  await expect(page.locator('#earlyAccessForm')).toBeVisible();
+  await expect(page.getByLabel('Name', { exact: true })).toHaveValue('Restored Account');
+  await expect(page.getByLabel('Email', { exact: true })).toHaveValue('restored@example.test');
+});
+
+test('late submission results cannot repopulate a page after its lifecycle has ended', async ({ page, app }) => {
+  await app.open(ROUTE_BY_ID.membership, { state: 'guest' });
+  await fill(page);
+  await page.evaluate(() => {
+    const original = crypto.subtle.digest.bind(crypto.subtle);
+    crypto.subtle.digest = async (...args) => {
+      await new Promise((resolve) => { window.releaseEarlyAccessDigest = resolve; });
+      return original(...args);
+    };
+  });
+  await page.getByRole('button', { name: 'Request early access', exact: true }).click();
+  await expect(page.locator('#earlyAccessForm')).toHaveAttribute('aria-busy', 'true');
+  await page.evaluate(() => {
+    window.dispatchEvent(new PageTransitionEvent('pagehide', { persisted: true }));
+    window.releaseEarlyAccessDigest();
+  });
+  // A request already sent may finish; its response must not restore cached UI.
+  await expect.poll(async () => (await receipts(page)).length).toBe(1);
+  await expect(page.locator('#earlyAccessForm')).toBeHidden();
+  await expect(page.locator('#earlyAccessForm')).toHaveAttribute('aria-busy', 'false');
+  await expect(page.locator('#earlyAccessStatus')).toHaveText('');
+  await expect(page.locator('#earlyAccessError')).toHaveText('');
+  await expect(page.getByLabel('Name', { exact: true })).toHaveValue('');
+  await expect(page.getByLabel('Email', { exact: true })).toHaveValue('');
+});
+
 test('without JavaScript no request can send personal details in a URL', async ({ browser, baseURL }) => {
   const context = await browser.newContext({ javaScriptEnabled: false });
   const page = await context.newPage();

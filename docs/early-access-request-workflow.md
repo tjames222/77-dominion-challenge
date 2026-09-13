@@ -6,6 +6,9 @@ verified account email. Loading prevents repeat clicks, failure preserves the
 form, and account changes clear the preceding account's details. The form is
 hidden until its handler and identity check are ready, with a POST-only fallback
 and a no-JavaScript explanation so personal details cannot enter a GET URL.
+Page exit scrubs the inputs and request state, invalidates pending callbacks,
+and unsubscribes from Auth. A back-forward-cache restoration reloads and checks
+the current identity before showing a new form.
 
 This is **intake only**. It does not create accounts, send emails/invitations,
 approve requests, grant membership, enable public signup, or enable billing.

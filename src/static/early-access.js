@@ -19,6 +19,7 @@ if (section && form) {
   let hydrated = false;
   let epoch = 0;
   let busy = false;
+  let suspended = false;
   const setBusy = (value) => {
     busy = value;
     form.setAttribute('aria-busy', String(value));
@@ -26,12 +27,13 @@ if (section && form) {
     submit.textContent = value ? 'Sending request…' : 'Request early access';
   };
   const hydrate = async ({ clear = false } = {}) => {
+    if (suspended) return;
     const generation = ++epoch;
     if (clear) {
       form.reset();
       status.textContent = '';
       error.textContent = '';
-      form.hidden = false;
+      form.hidden = true;
       setBusy(false);
       hydrated = false;
     }
@@ -59,13 +61,33 @@ if (section && form) {
     error.textContent = '';
     form.hidden = false;
   };
-  subscribeToAuthStateChanges(({ user }) => {
+  const unsubscribeAuthState = subscribeToAuthStateChanges(({ user }) => {
     const nextId = user?.authenticated ? user.userId : '';
     const nextEmail = nextId ? (user.email || '') : '';
     if (nextId !== actorId || nextEmail !== actorEmail) void hydrate({ clear: true });
   });
   window.addEventListener('storage', (event) => {
     if (event.key === 'dominion:user' || event.key === null) void hydrate({ clear: true });
+  });
+  window.addEventListener('pagehide', () => {
+    suspended = true;
+    epoch += 1;
+    hydrated = false;
+    actorId = '';
+    actorEmail = '';
+    form.reset();
+    email.readOnly = false;
+    form.hidden = true;
+    status.textContent = '';
+    error.textContent = '';
+    retry.hidden = true;
+    setBusy(false);
+    unsubscribeAuthState();
+  });
+  window.addEventListener('pageshow', (event) => {
+    // A restored document must re-check the current account before any form
+    // state becomes visible. Never reuse the identity from its cached lifetime.
+    if (event.persisted) window.location.reload();
   });
   retry.addEventListener('click', () => void hydrate());
   form.addEventListener('submit', async (event) => {
