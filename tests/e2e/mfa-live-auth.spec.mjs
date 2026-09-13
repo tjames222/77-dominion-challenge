@@ -19,6 +19,25 @@ async function verify(page) {
   await expect(page.locator('#securitySuccess')).toBeVisible();
 }
 
+test('Account Security challenge has no menu hydration or private reads on load and refocus', async ({ context, page }) => {
+  const auth = await installMfaSupabaseStub(context);
+  const errors = [];
+  page.on('pageerror', error => errors.push(error.message));
+  await login(page, './support.html');
+  await expect(page.locator('#securityVerifyForm')).toBeVisible();
+  await page.waitForLoadState('networkidle');
+  expect(auth.privateRequests()).toEqual([]);
+  await expect(page.locator('.global-menu, .global-menu-button, .shared-header-share, .shared-header-streak, .site-training-layer')).toHaveCount(0);
+  await page.evaluate(() => {
+    window.dispatchEvent(new Event('focus'));
+    document.dispatchEvent(new Event('visibilitychange'));
+  });
+  await page.waitForLoadState('networkidle');
+  await expect(page.locator('#securityVerifyForm')).toBeVisible();
+  expect(auth.privateRequests()).toEqual([]);
+  expect(errors).toEqual([]);
+});
+
 for (const enrolled of [false, true]) {
   test(`provider sign-out outage remains retryable and clears MFA secrets (${enrolled ? 'existing challenge' : 'new enrollment'})`, async ({ context, page }) => {
     const auth = await installMfaSupabaseStub(context, { enrolled });
@@ -72,6 +91,44 @@ test('shared menu reports logout outage without navigation or an unhandled rejec
   expect(await page.evaluate(() => localStorage.getItem('sb-127-auth-token'))).toBeNull();
   expect(pageErrors).toEqual([]);
 });
+
+for (const outage of [false, true]) {
+  test(`shared menu cancels pending Admin readiness without an unhandled rejection during ${outage ? 'failed' : 'successful'} logout`, async ({ context, page }) => {
+    const auth = await installMfaSupabaseStub(context, { enrolled: false });
+    const pageErrors = [];
+    page.on('pageerror', error => pageErrors.push(error.message));
+    await login(page, './support.html');
+    await expect(page).toHaveURL(/\/support\.html$/);
+    await page.waitForLoadState('networkidle');
+    let release;
+    const gate = new Promise(resolve => { release = resolve; });
+    await page.route('**/rest/v1/rpc/get_site_admin_context', async route => {
+      await gate;
+      await route.fulfill({ contentType: 'application/json', body: JSON.stringify({
+        schemaVersion: 1, actorId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+        role: 'member', adminReady: false, permissions: [],
+      }) });
+    });
+    try {
+      const pending = page.waitForRequest('**/rest/v1/rpc/get_site_admin_context');
+      await page.getByRole('button', { name: 'Open menu', exact: true }).click();
+      await pending;
+      auth.setLogoutOutage(outage);
+      await page.getByRole('button', { name: 'Log Out', exact: true }).click();
+      if (outage) {
+        await expect(page.locator('.global-menu-logout-feedback')).toHaveText('Sign out could not be confirmed. Retry signing out before leaving this device.');
+        await expect(page).toHaveURL(/\/support\.html$/);
+      } else {
+        await expect(page).toHaveURL(/\/index\.html$/);
+        expect(await page.evaluate(() => localStorage.getItem('sb-127-auth-token'))).toBeNull();
+      }
+      release();
+      await page.waitForLoadState('networkidle');
+      await expect(page.locator('[data-admin-menu-item]')).toHaveCount(0);
+      expect(pageErrors).toEqual([]);
+    } finally { release(); }
+  });
+}
 
 for (const [target, destination] of [['./invite.html', '/invite.html'], ['./community.html?intent=challenge-start', '/community.html']]) {
   test(`live SDK login challenges before private hydration and preserves ${destination}`, async ({ context, page }) => {

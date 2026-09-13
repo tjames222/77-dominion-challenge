@@ -14,13 +14,14 @@ import { initThemeState } from './theme-state';
 import { initThemeAssets } from './theme-assets';
 import { createAuthenticatedHeaderActions } from './shared-header-actions.js';
 import { shouldShowAuthenticatedHeaderActions } from './shared-header-state.mjs';
-import { closeShareComposer } from './share-composer.js';
+import { closeShareComposer } from './share-composer-loader.js';
 import {
   SOLO_TRAINING_LAUNCH_EVENT,
   SOLO_TRAINING_LAUNCH_STORAGE_KEY,
-  createSoloFirstRunTraining,
-} from './solo-first-run-training.mjs';
-import { createPageTrainingControls } from './page-training-controls.mjs';
+} from './challenge-start-flow.mjs';
+import { hasSiteTrainingRoute } from './site-training-contract.mjs';
+import { loadMenuTrainingControllers } from './menu-training-loader.mjs';
+import { createSiteTrainingLoadRecovery, TRAINING_RELOAD_LABEL, TRAINING_RELOAD_MESSAGE } from './site-training-load-recovery.mjs';
 import { RELEASE_GATES } from './release-gates.mjs';
 
 const topbar = document.querySelector('.topbar');
@@ -37,6 +38,7 @@ let menuHydrationRequest = 0;
 let globalMenuListenersBound = false;
 let soloFirstRunTraining = null;
 let pageTrainingControls = null;
+let trainingLoadRecovery = null;
 let menuButtonPlaceholder = null;
 let menuBackgroundObserver = null;
 const menuBackgroundState = new Map();
@@ -214,6 +216,8 @@ function closeMenu() {
 }
 
 function destroyTrainingControllers() {
+  trainingLoadRecovery?.destroy();
+  trainingLoadRecovery = null;
   soloFirstRunTraining?.destroy();
   soloFirstRunTraining = null;
   pageTrainingControls?.destroy();
@@ -418,9 +422,12 @@ async function buildMenu() {
     ${isLoggedIn ? `
       <section class="global-menu-training-section" aria-label="Training" hidden>
         <p class="eyebrow">Training</p>
+        <p class="global-menu-training-load-status" role="status" hidden></p>
+        <button class="global-menu-training-load-recovery" type="button" hidden></button>
         <div class="global-menu-full-training" aria-label="Full-site Solo training">
           <span>Full-site Solo walkthrough</span>
           <button class="global-menu-training" type="button" hidden>Start Training</button>
+          <p class="global-menu-full-training-feedback" role="alert" aria-live="assertive" hidden></p>
         </div>
         <div class="global-menu-page-training" role="group" aria-label="This page" hidden>
           <span>This page</span>
@@ -505,7 +512,42 @@ async function buildMenu() {
     sharedHeaderActions.destroy();
     sharedHeaderActions = null;
   }
-  if (isLoggedIn && nextOwner) {
+  // The regular navigation is already interactive before this optional graph
+  // loads. Public pages and visitors never download member training modules.
+  currentMenuOwner = nextOwner;
+  // Admin readiness is independent of the optional training graph. Start its
+  // existing actor-fenced refresh even if the import is delayed or fails.
+  void refreshAdminMenuItem();
+  if (isLoggedIn && nextOwner && hasSiteTrainingRoute(window.location?.pathname || '')) {
+    const section = menu.querySelector('.global-menu-training-section');
+    const loadStatus = menu.querySelector('.global-menu-training-load-status');
+    const recoveryButton = menu.querySelector('.global-menu-training-load-recovery');
+    section.hidden = false;
+    loadStatus.hidden = false;
+    loadStatus.textContent = 'Loading training…';
+    let controllers;
+    try {
+      controllers = await loadMenuTrainingControllers();
+    } catch (error) {
+      if (requestId !== menuHydrationRequest || currentMenuOwner !== nextOwner) return;
+      trainingLoadRecovery ||= createSiteTrainingLoadRecovery({ id: 'menu-training-load-recovery' });
+      trainingLoadRecovery.record(error);
+      loadStatus.textContent = TRAINING_RELOAD_MESSAGE;
+      recoveryButton.textContent = TRAINING_RELOAD_LABEL;
+      recoveryButton.hidden = false;
+      recoveryButton.addEventListener('click', () => {
+        const trigger = closeMenuForTraining();
+        trainingLoadRecovery?.open(trigger);
+      });
+      return;
+    }
+    // Auth/focus rehydration, logout, and pagehide can happen during import.
+    // Old continuations may cache public code but must not create actor-owned
+    // controllers, make reads, attach controls, or auto-open a walkthrough.
+    if (requestId !== menuHydrationRequest || currentMenuOwner !== nextOwner) return;
+    loadStatus.hidden = true;
+    section.hidden = true;
+    const { createPageTrainingControls, createSoloFirstRunTraining } = controllers;
     let pageTrainingRefresh = null;
     if (!pageTrainingControls) {
       const nextPageTraining = createPageTrainingControls({
@@ -531,16 +573,21 @@ async function buildMenu() {
       if (nextTraining.available) {
         soloFirstRunTraining = nextTraining;
         currentTrainingOwner = nextOwner;
-        void Promise.resolve(pageTrainingRefresh)
-          .then(() => soloFirstRunTraining?.refresh());
+        const training = soloFirstRunTraining;
+        void Promise.resolve(pageTrainingRefresh).then(() => {
+          if (training === soloFirstRunTraining && currentMenuOwner === nextOwner) return training.refresh();
+        });
       } else {
         nextTraining.destroy();
       }
     } else {
-      void Promise.resolve(pageTrainingRefresh).then(() => soloFirstRunTraining?.refresh({
-        autoOpen: false,
-        consumeHandoff: false,
-      }));
+      const training = soloFirstRunTraining;
+      void Promise.resolve(pageTrainingRefresh).then(() => {
+        if (training === soloFirstRunTraining && currentMenuOwner === nextOwner) return training.refresh({
+          autoOpen: false,
+          consumeHandoff: false,
+        });
+      });
     }
     pageTrainingControls?.attachControls({
       section: menu.querySelector('.global-menu-training-section'),
@@ -549,12 +596,12 @@ async function buildMenu() {
       restart: menu.querySelector('.global-menu-page-training-restart'),
       feedback: menu.querySelector('.global-menu-page-training-feedback'),
     });
-    soloFirstRunTraining?.attachControl(menu.querySelector('.global-menu-training'));
+    soloFirstRunTraining?.attachControl(menu.querySelector('.global-menu-training'), {
+      feedback: menu.querySelector('.global-menu-full-training-feedback'),
+    });
   } else {
     destroyTrainingControllers();
   }
-  currentMenuOwner = nextOwner;
-  void refreshAdminMenuItem();
 }
 
 initThemeState();
@@ -661,7 +708,15 @@ window.addEventListener('focus', () => {
   void buildMenu();
 });
 
-window.addEventListener('pagehide', closeMenu);
+window.addEventListener('pagehide', () => {
+  menuHydrationRequest += 1;
+  destroyTrainingControllers();
+  closeMenu();
+});
+
+window.addEventListener('pageshow', (event) => {
+  if (event.persisted) void buildMenu();
+});
 
 document.addEventListener('visibilitychange', () => {
   if (!document.hidden) void buildMenu();

@@ -1,0 +1,25 @@
+{
+  "fontToolsVersion": "4.59.0",
+  "brotliVersion": "1.1.0",
+  "originalSha256": "693b77d4f32ee9b8bfc995589b5fad5e99adf2832738661f5402f9978429a8e3",
+  "subsetSha256": "0d2bdeed3a0e01fd713532651d3081bff92ed32b1904edb51aea92c278a6e950",
+  "unicodeSelection": "U+0000-00FF,U+2000-206F,U+20AC,U+2122,U+2190-21FF,U+2212,U+2215,U+2219,U+2300-27FF",
+  "subsetBytes": 80132,
+  "subsetGlyphCodepoints": 401,
+  "extendedGlyphCodepoints": 2451,
+  "layoutFeatures": "fontTools defaults plus tnum",
+  "axes": [
+    [
+      "opsz",
+      14.0,
+      14.0,
+      32.0
+    ],
+    [
+      "wght",
+      100.0,
+      400.0,
+      900.0
+    ]
+  ]
+}

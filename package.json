@@ -11,6 +11,7 @@
     "preview": "vite preview --host 0.0.0.0",
     "test": "node --test src/static/*.test.mjs",
     "test:frontend": "pnpm run test",
+    "check:frontend-performance": "node scripts/check-frontend-performance.mjs",
     "check:frontend": "pnpm run test:frontend && pnpm run test:cloudflare-pages-policy && pnpm run build",
     "test:e2e": "playwright test",
     "test:e2e:auth": "playwright test --config=playwright.fou-1452.config.mjs",

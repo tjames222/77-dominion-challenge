@@ -1,0 +1,94 @@
+{
+  "encoder": "cwebp 1.6.0",
+  "options": [
+    "-q",
+    "82",
+    "-m",
+    "6",
+    "-sharp_yuv",
+    "-metadata",
+    "icc"
+  ],
+  "originals": {
+    "dark": {
+      "url": "https://pub-53499389187a4de4984349b4f9b36b74.r2.dev/5317DC26-DA71-4E5E-8964-01B9EAF033AF.png",
+      "sha256": "d788671ce96e2cae297b4ca2905772d7e61139d81c3a96c3406a774506d1c222",
+      "bytes": 2110034,
+      "width": 1536,
+      "height": 1024
+    },
+    "light": {
+      "url": "https://pub-53499389187a4de4984349b4f9b36b74.r2.dev/photo_1783734046.5413918.png",
+      "sha256": "4bde2f579869cfc8cce604c1cd77d72d899e934985ca345b3e9db5ac15e70c91",
+      "bytes": 1939899,
+      "width": 1536,
+      "height": 1024
+    }
+  },
+  "variants": [
+    {
+      "variant": "dark",
+      "file": "hero-dark-480.webp",
+      "width": 480,
+      "height": 320,
+      "bytes": 16492,
+      "sha256": "e3b3665b7e88219842ef5988b3ce8abebcd3fb1d3ea7880fa7f12024b05f8dfa"
+    },
+    {
+      "variant": "dark",
+      "file": "hero-dark-768.webp",
+      "width": 768,
+      "height": 512,
+      "bytes": 35734,
+      "sha256": "3d68ebc21e0d2528bf6b27f45978e16eb8ea8062a3d1d2a0d2c194c31472eb6f"
+    },
+    {
+      "variant": "dark",
+      "file": "hero-dark-1200.webp",
+      "width": 1200,
+      "height": 800,
+      "bytes": 66560,
+      "sha256": "b0e6ec6f1b0e3ee810dd99512d1afb11f87f587499ccabc1a52fd1ffa010c81e"
+    },
+    {
+      "variant": "dark",
+      "file": "hero-dark-1536.webp",
+      "width": 1536,
+      "height": 1024,
+      "bytes": 115158,
+      "sha256": "c86d28383649809426c6740d1ff97640822bac92056091cbaa92846093ffaa43"
+    },
+    {
+      "variant": "light",
+      "file": "hero-light-480.webp",
+      "width": 480,
+      "height": 320,
+      "bytes": 22110,
+      "sha256": "47682a3b4d12952b882447c5da351ed85bb9ab0d46dd74a3741b40e1ba43e831"
+    },
+    {
+      "variant": "light",
+      "file": "hero-light-768.webp",
+      "width": 768,
+      "height": 512,
+      "bytes": 48004,
+      "sha256": "a5f25c255cde2f677c2b1d8b29fd5b5cbb116af419fb08bd7a3df201ce918ea6"
+    },
+    {
+      "variant": "light",
+      "file": "hero-light-1200.webp",
+      "width": 1200,
+      "height": 800,
+      "bytes": 88332,
+      "sha256": "de1066631c9d663e7ccc69aa88f54b18e3ee2a5388b4dcb10ae0b2500e318379"
+    },
+    {
+      "variant": "light",
+      "file": "hero-light-1536.webp",
+      "width": 1536,
+      "height": 1024,
+      "bytes": 149478,
+      "sha256": "c8efda835c747b1cbdc66bcef1a109caab3df0178c07284cea8e7a3826159368"
+    }
+  ]
+}

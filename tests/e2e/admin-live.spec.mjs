@@ -7,6 +7,34 @@ async function noStoredPayload(page) {
   const value = await page.evaluate(() => JSON.stringify({ ...localStorage, ...sessionStorage }));
   expect(value).not.toMatch(/member28@example.invalid|Preview Member 28|staff_access_review|activationSnapshot/);
 }
+for (const outcome of ['delayed', 'failed']) {
+  test(`Admin menu readiness is independent of ${outcome} optional training`, async ({ context, page }) => {
+    const auth = await installAdminStub(context);
+    let release;
+    const gate = new Promise(resolve => { release = resolve; });
+    await page.route(/\/menu-training-controllers(?:-[\w-]+)?\.(?:mjs|js)(?:\?|$)/, async route => {
+      if (outcome === 'failed') return route.fulfill({ status: 503, contentType: 'text/javascript', body: '/* synthetic unavailable chunk */' });
+      await gate; return route.continue();
+    });
+    try {
+      await page.goto('/science.html', { waitUntil: 'domcontentloaded' });
+      // This must arrive from buildMenu before opening the drawer: openMenu's
+      // independent refresh cannot conceal a skipped post-hydration refresh.
+      await expect(page.locator('[data-admin-menu-item]')).toHaveCount(1);
+      await page.getByRole('button', { name: 'Open menu', exact: true }).click();
+      await expect(page.locator('[data-admin-menu-item]')).toBeVisible();
+      await expect(page.locator('.global-menu-links a[href="./private-journal.html"]')).toBeVisible();
+      if (outcome === 'failed') await expect(page.getByRole('button', { name: 'Reload to load training', exact: true })).toBeVisible();
+      else await expect(page.locator('.global-menu-training-load-status')).toHaveText('Loading training…');
+      auth.role('member');
+      await page.keyboard.press('Escape');
+      await page.getByRole('button', { name: 'Open menu', exact: true }).click();
+      await expect.poll(() => auth.requests.filter(request => request.path.endsWith('/get_site_admin_context')).length).toBeGreaterThanOrEqual(3);
+      await expect(page.locator('[data-admin-menu-item]')).toHaveCount(0);
+      await expect(page.locator('.global-menu-links a[href="./private-journal.html"]')).toBeVisible();
+    } finally { release(); }
+  });
+}
 for (const [name, options] of [['member and crew admin metadata', { role: 'member' }], ['AAL1 admin', { aal: 'aal1' }]]) {
   test(`${name} never loads private rows or accepts preview URL bypass`, async ({ context, page }) => {
     const auth = await installAdminStub(context, options);

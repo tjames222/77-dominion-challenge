@@ -360,6 +360,46 @@ describe('Solo first-run orchestration', () => {
     controller.destroy();
   });
 
+  test('a failed handoff import stays durable and never opens reload confirmation automatically', async () => {
+    const env = browser();
+    const launch = createSoloTrainingLaunch({ actorId: USER.userId, activation: ACTIVE_SOLO });
+    persistSoloTrainingLaunch(env.window.localStorage, launch);
+    const saved = env.window.localStorage.getItem(SOLO_TRAINING_LAUNCH_STORAGE_KEY);
+    const runtime = fakeRuntimeFactory(trainingState());
+    const control = fakeControl();
+    const feedback = fakeControl();
+    let confirmations = 0;
+    const controller = createSoloFirstRunTraining({
+      user: USER,
+      window: env.window,
+      document: { querySelector: () => null, querySelectorAll: () => [] },
+      api: { getChallengeActivation: async () => ACTIVE_SOLO },
+      runtimeFactory(options) {
+        return {
+          ...runtime.factory(options),
+          prepare: async () => { throw Object.assign(new Error('Save unfinished work and reload.'), { code: 'SITE_TRAINING_RELOAD_REQUIRED' }); },
+        };
+      },
+      confirmationFactory() {
+        return { open() { confirmations += 1; }, destroy() {} };
+      },
+    });
+    controller.attachControl(control, { feedback });
+    const originalWarn = console.warn;
+    console.warn = () => {};
+    try { await controller.refresh(); } finally { console.warn = originalWarn; }
+    assert.equal(runtime.calls.start.length, 0);
+    assert.equal(env.window.localStorage.getItem(SOLO_TRAINING_LAUNCH_STORAGE_KEY), saved);
+    assert.equal(confirmations, 0);
+    assert.equal(control.textContent, 'Reload to load training');
+    assert.equal(feedback.hidden, false);
+    assert.match(feedback.textContent, /Save any unfinished work/);
+    control.dispatchEvent(new Event('click'));
+    assert.equal(confirmations, 1);
+    controller.destroy();
+    assert.equal(env.window.localStorage.getItem(SOLO_TRAINING_LAUNCH_STORAGE_KEY), saved);
+  });
+
   test('keeps missing-handoff Solo progress untouched until Start Training is chosen', async () => {
     const env = browser();
     const runtime = fakeRuntimeFactory(trainingState());
