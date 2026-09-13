@@ -43,6 +43,14 @@ export const validBadgeTimestamp = (value) => {
   return Number.isFinite(timestamp) ? timestamp : null;
 };
 
+export function badgeAwardIdentity(badge = {}) {
+  const awardId = safeKey(badge?.awardId || badge?.id);
+  if (awardId) return `award:${awardId}`;
+  const key = safeKey(badge?.key || badge?.badgeKey || badge?.badge_key);
+  const scope = safeKey(badge?.scopeKey || badge?.scope_key) || 'lifetime';
+  return key ? `badge:${JSON.stringify([key, scope])}` : '';
+}
+
 export const escapeHtml = (value = '') => String(value).replace(/[&<>"']/g, (character) => ({
   '&': '&amp;',
   '<': '&lt;',
@@ -61,8 +69,13 @@ export function normalizeEarnedBadges(badges = []) {
   for (const badge of Array.isArray(badges) ? badges : []) {
     const key = safeKey(badge?.key || badge?.badgeKey || badge?.badge_key);
     if (!key) continue;
+    const awardId = safeKey(badge?.awardId || badge?.id);
+    const scopeKey = safeKey(badge?.scopeKey || badge?.scope_key) || 'lifetime';
+    const identity = badgeAwardIdentity(badge);
     const normalized = {
       key,
+      awardId,
+      scopeKey,
       name: String(badge?.name || 'Badge'),
       description: String(badge?.description || 'Earned through challenge progress.'),
       category: safeKey(badge?.category) || 'challenge',
@@ -75,20 +88,22 @@ export function normalizeEarnedBadges(badges = []) {
       metadata: badge?.metadata && typeof badge.metadata === 'object' ? badge.metadata : {},
       requirement: Object.hasOwn(badge, 'requirement')
         ? String(badge.requirement || '')
-        : String(badge?.metadata?.requirement || badge?.description || ''),
+        : String(badge?.metadata?.awardDefinition?.requirement || badge?.metadata?.requirement || badge?.description || ''),
       earningEvidence: badge?.earningEvidence || badge?.earning_evidence || badge?.metadata?.earningEvidence || null,
       legacy: badge?.legacy === true || badge?.metadata?.legacy === true,
       retired: badge?.retired === true || badge?.metadata?.retired === true,
+      displayOrder: Number.isFinite(badge?.displayOrder) ? badge.displayOrder : 10000,
     };
-    const existing = byKey.get(key);
+    const existing = byKey.get(identity);
     if (!existing || (validBadgeTimestamp(normalized.earnedAt) ?? -Infinity) > (validBadgeTimestamp(existing.earnedAt) ?? -Infinity)) {
-      byKey.set(key, normalized);
+      byKey.set(identity, normalized);
     }
   }
 
   return [...byKey.values()].sort((left, right) => (
     ((validBadgeTimestamp(right.earnedAt) ?? -Infinity) - (validBadgeTimestamp(left.earnedAt) ?? -Infinity))
     || left.key.localeCompare(right.key)
+    || left.scopeKey.localeCompare(right.scopeKey)
   ));
 }
 
