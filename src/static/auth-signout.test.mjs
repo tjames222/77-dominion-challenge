@@ -5,11 +5,15 @@ import { createClient } from '@supabase/supabase-js';
 
 const MESSAGE = 'Sign out could not be confirmed. Retry signing out before leaving this device.';
 const source = readFileSync(new URL('./api.js', import.meta.url), 'utf8');
-const body = source.slice(source.indexOf('export async function clearAuthSession()'), source.indexOf('export function saveLocalMockUser'))
+const body = source.slice(source.indexOf('export async function clearAuthSession('), source.indexOf('export function saveLocalMockUser'))
   .replace('export async function', 'async function');
-function clearFunction(client, storage, cancelled = []) {
-  return new Function('usesSupabaseAuthentication', 'supabase', 'isHybridAuthPreview', 'localStorage', 'MOCK_USER_ID_KEY', 'cancelAdminReads', 'inflightActorReads', `${body};return clearAuthSession;`)(
-    () => true, client, () => false, storage, 'dominion:mockUserId',
+const redirect = source.slice(source.indexOf('export function redirectToLogin('), source.indexOf('export function sanitizeReturnTo('))
+  .replace('export function', 'function');
+function authFunctions(client, storage, window = { location: {} }, cancelled = []) {
+  window.addEventListener ||= () => {};
+  return new Function('usesSupabaseAuthentication', 'supabase', 'isHybridAuthPreview', 'localStorage', 'MOCK_USER_ID_KEY', 'window', 'cancelAdminReads', 'inflightActorReads',
+    `let logoutNavigationPending = false;${body};${redirect};return { clear: clearAuthSession, redirect: redirectToLogin };`)(
+    () => true, client, () => false, storage, 'dominion:mockUserId', window,
     () => cancelled.push('admin'), { invalidate() {} },
   );
 }
@@ -38,7 +42,7 @@ test('actual SDK provider outage preserves the session, rejects safely, and perm
   try {
     assert.ok((await client.auth.getSession()).data.session);
     const cancelled = [];
-    const clear = clearFunction(client, storage, cancelled);
+    const { clear } = authFunctions(client, storage, undefined, cancelled);
     await assert.rejects(clear(), { message: MESSAGE });
     assert.deepEqual(cancelled, ['admin']);
     assert.ok((await client.auth.getSession()).data.session, 'No false claim that the provider revoked the session');
@@ -56,7 +60,7 @@ test('actual SDK provider outage preserves the session, rejects safely, and perm
 test('thrown provider failures are replaced with fixed copy and no cause or raw payload', async () => {
   const values = new Map([['dominion:user', 'keep until confirmed']]);
   const storage = { removeItem: key => values.delete(key) };
-  const clear = clearFunction({ auth: { signOut: async () => { throw new Error('SYNTHETIC_PRIVATE_TOKEN_PAYLOAD'); } } }, storage);
+  const { clear } = authFunctions({ auth: { signOut: async () => { throw new Error('SYNTHETIC_PRIVATE_TOKEN_PAYLOAD'); } } }, storage);
   await assert.rejects(clear(), error => {
     assert.equal(error.message, MESSAGE);
     assert.equal(error.cause, undefined);
@@ -64,4 +68,62 @@ test('thrown provider failures are replaced with fixed copy and no cause or raw 
     return true;
   });
   assert.equal(values.get('dominion:user'), 'keep until confirmed');
+});
+
+test('explicit logout owns navigation through synchronous observers and delayed completion', async () => {
+  const destinations = [];
+  let pagehide;
+  const window = {
+    location: { set href(value) { destinations.push(value); } },
+    addEventListener(event, listener, options) {
+      assert.equal(event, 'pagehide');
+      assert.deepEqual(options, { once: true });
+      pagehide = listener;
+    },
+  };
+  const values = new Map([['dominion:user', 'synthetic identity']]);
+  let complete;
+  const confirmation = new Promise(resolve => { complete = resolve; });
+  const client = { auth: { signOut: async () => {
+    functions.redirect('./private-journal.html');
+    await confirmation;
+    return { error: null };
+  } } };
+  const functions = authFunctions(client, { removeItem: key => values.delete(key) }, window);
+  const pending = functions.clear({ redirectToLanding: true });
+  assert.deepEqual(destinations, []);
+  assert.equal(values.has('dominion:user'), true, 'local identity is not claimed cleared before provider confirmation');
+  complete();
+  await pending;
+  functions.redirect('./private-journal.html');
+  assert.deepEqual(destinations, ['./index.html'], 'late guards cannot override the confirmed destination');
+  assert.equal(values.has('dominion:user'), false);
+  pagehide();
+  functions.redirect('./private-journal.html');
+  assert.equal(destinations.at(-1), './login.html?returnTo=.%2Fprivate-journal.html', 'BFCache restoration does not retain the old navigation reservation');
+});
+
+test('logout failure releases the navigation reservation and a retry can own it again', async () => {
+  const destinations = [];
+  const window = { location: { set href(value) { destinations.push(value); } } };
+  let outage = true;
+  const functions = authFunctions({ auth: { signOut: async () => ({ error: outage ? new Error('PRIVATE') : null }) } }, { removeItem() {} }, window);
+  await assert.rejects(functions.clear({ redirectToLanding: true }), { message: MESSAGE });
+  assert.deepEqual(destinations, []);
+  functions.redirect('./private-journal.html');
+  assert.deepEqual(destinations, ['./login.html?returnTo=.%2Fprivate-journal.html']);
+  outage = false;
+  await functions.clear({ redirectToLanding: true });
+  assert.equal(destinations.at(-1), './index.html');
+});
+
+test('plain signout retains private-route Login guards and does not select a menu destination', async () => {
+  const destinations = [];
+  const window = { location: { set href(value) { destinations.push(value); } } };
+  const functions = authFunctions({ auth: { signOut: async () => {
+    functions.redirect('./private-journal.html');
+    return { error: null };
+  } } }, { removeItem() {} }, window);
+  await functions.clear();
+  assert.deepEqual(destinations, ['./login.html?returnTo=.%2Fprivate-journal.html']);
 });
