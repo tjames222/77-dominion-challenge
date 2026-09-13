@@ -4,6 +4,7 @@ import { verifyThemeArtifacts } from './verify-theme-artifacts.mjs';
 const distRoot = new URL('../dist/', import.meta.url);
 const assetNames = await readdir(new URL('assets/', distRoot));
 const brandFonts = assetNames.filter((name) => /^InterVariable-[\w-]+\.woff2$/.test(name));
+const uiFonts = assetNames.filter((name) => /^InterLatinUI-[\w-]+\.woff2$/.test(name));
 
 if (brandFonts.length !== 1) {
   throw new Error(`Expected one built Inter variable font, found ${brandFonts.length}.`);
@@ -13,6 +14,10 @@ const fontStats = await stat(new URL(`assets/${brandFonts[0]}`, distRoot));
 if (fontStats.size < 100_000) {
   throw new Error(`Built Inter variable font is unexpectedly small (${fontStats.size} bytes).`);
 }
+
+if (uiFonts.length !== 1) throw new Error(`Expected one built Inter UI subset, found ${uiFonts.length}.`);
+const uiFontStats = await stat(new URL(`assets/${uiFonts[0]}`, distRoot));
+if (uiFontStats.size > 100_000) throw new Error(`Inter UI font exceeds 100 KB (${uiFontStats.size} bytes).`);
 
 const license = await readFile(new URL('fonts/Inter-LICENSE.txt', distRoot), 'utf8');
 if (!license.includes('SIL OPEN FONT LICENSE Version 1.1')) {

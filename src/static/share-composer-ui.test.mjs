@@ -26,7 +26,7 @@ describe('sharing composer browser integration', () => {
 
   test('loads one shared public composer and a distinct private-invitation dialog', () => {
     [rewards, community].forEach((html) => {
-      assert.match(html, /src\/static\/share-composer\.js/);
+      assert.match(html, /src\/static\/share-composer-loader\.js/);
     });
     assert.match(dashboard, /src\/static\/menu\.js/);
     assert.doesNotMatch(dashboard, /src\/(?:assets|static)\/share-composer/);

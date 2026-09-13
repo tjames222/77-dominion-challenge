@@ -14,7 +14,7 @@ import { initThemeState } from './theme-state';
 import { initThemeAssets } from './theme-assets';
 import { createAuthenticatedHeaderActions } from './shared-header-actions.js';
 import { shouldShowAuthenticatedHeaderActions } from './shared-header-state.mjs';
-import { closeShareComposer } from './share-composer.js';
+import { closeShareComposer } from './share-composer-loader.js';
 import {
   SOLO_TRAINING_LAUNCH_EVENT,
   SOLO_TRAINING_LAUNCH_STORAGE_KEY,

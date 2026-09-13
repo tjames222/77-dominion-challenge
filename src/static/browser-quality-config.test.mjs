@@ -27,6 +27,7 @@ const stylesCss = readFileSync(
   new URL('../assets/styles.css', import.meta.url),
   'utf8',
 );
+const fontFacesCss = readFileSync(new URL('../assets/fonts/inter-fonts.css', import.meta.url), 'utf8');
 const shareComposerCss = readFileSync(
   new URL('../assets/share-composer.css', import.meta.url),
   'utf8',
@@ -106,9 +107,10 @@ test('review baselines and release frontend artifacts keep their dedicated reten
 });
 
 test('production bundles the pinned Inter variable font as the brand family', () => {
+  assert.match(stylesCss, /@import '\.\/fonts\/inter-fonts\.css';/);
   assert.match(
-    stylesCss,
-    /@font-face \{[\s\S]*?font-family: "Inter";[\s\S]*?fonts\/InterVariable\.woff2[\s\S]*?font-weight: 100 900;[\s\S]*?font-display: swap;/,
+    fontFacesCss,
+    /@font-face \{[\s\S]*?font-family: "Inter";[\s\S]*?InterVariable\.woff2[\s\S]*?font-weight: 100 900;[\s\S]*?font-display: swap;/,
   );
   assert.match(
     stylesCss,
@@ -125,6 +127,31 @@ test('production bundles the pinned Inter variable font as the brand family', ()
   );
   assert.match(buildAssetVerifier, /fonts\/Inter-LICENSE\.txt/);
   assert.match(buildAssetVerifier, /InterVariable-/);
+});
+
+test('the everyday font stays under 100 KB without removing extended-language coverage', () => {
+  const font = readFileSync(new URL('../assets/fonts/InterLatinUI.woff2', import.meta.url));
+  const metadata = JSON.parse(readFileSync(new URL('../assets/fonts/inter-subset.json', import.meta.url), 'utf8'));
+  assert.ok(font.length <= 100_000);
+  assert.equal(font.length, metadata.subsetBytes);
+  assert.equal(createHash('sha256').update(font).digest('hex'), metadata.subsetSha256);
+  assert.equal(metadata.subsetGlyphCodepoints + metadata.extendedGlyphCodepoints, 2852);
+  const faces = [...fontFacesCss.matchAll(/unicode-range: ([^;]+);/g)].map((match) => {
+    const points = new Set();
+    for (const range of match[1].split(',')) {
+      const [start, end = start] = range.replace('U+', '').split('-').map((hex) => Number.parseInt(hex, 16));
+      for (let codepoint = start; codepoint <= end; codepoint += 1) points.add(codepoint);
+    }
+    return points;
+  });
+  assert.equal(faces.length, 2);
+  assert.equal(faces[0].size, metadata.extendedGlyphCodepoints);
+  assert.equal(faces[1].size, metadata.subsetGlyphCodepoints);
+  assert.ok([...faces[1]].every((codepoint) => !faces[0].has(codepoint)));
+  for (const codepoint of [0x41, 0xe9, 0x2014, 0x2192, 0x2605, 0x2713]) assert.ok(faces[1].has(codepoint));
+  for (const codepoint of [0x100, 0x391, 0x410]) assert.ok(faces[0].has(codepoint));
+  assert.ok(faces.every((face) => !face.has(0x1f680)), 'Unsupported emoji must not request either font.');
+  assert.match(buildAssetVerifier, /uiFontStats\.size > 100_000/);
 });
 
 test('visual comparisons wait for the production brand font without replacing it', () => {
