@@ -653,6 +653,27 @@ test('rehearsal cleanup is safe when Bash 3.2 sees no created databases', () => 
   );
 });
 
+test('platform-only baseline fixture excludes only the three exact later application Auth triggers', () => {
+  const rehearsal = readFileSync(new URL('./rehearse-baseline-reconciliation.sh', import.meta.url), 'utf8');
+  const filter = rehearsal.match(/\| awk '([\s\S]*?)\n      '/)?.[1];
+  assert.ok(filter);
+  const application = [
+    'CREATE TRIGGER initialize_site_member AFTER INSERT ON auth.users FOR EACH ROW EXECUTE FUNCTION private.initialize_site_member();',
+    'CREATE TRIGGER guard_final_site_admin_auth BEFORE DELETE OR UPDATE OF banned_until, deleted_at, email_confirmed_at, is_anonymous ON auth.users FOR EACH ROW EXECUTE FUNCTION private.guard_site_admin_recovery();',
+    'CREATE TRIGGER guard_final_site_admin_factor BEFORE DELETE OR UPDATE OF user_id, factor_type, status ON auth.mfa_factors FOR EACH ROW EXECUTE FUNCTION private.guard_site_admin_factor_recovery();',
+  ];
+  const preserved = [
+    'CREATE SCHEMA auth;',
+    'CREATE TRIGGER auth_platform_guard BEFORE UPDATE ON auth.users FOR EACH ROW EXECUTE FUNCTION auth.platform_guard();',
+    application[0].replace('private.initialize_site_member()', 'auth.initialize_site_member()'),
+    application[0].replace('ON auth.users', 'ON auth.other_users'),
+    application[1].replace('guard_final_site_admin_auth BEFORE', 'unknown_application_guard BEFORE'),
+  ];
+  const output = execFileSync('awk', [filter], { input: [...application, ...preserved].join('\n') + '\n', encoding: 'utf8' });
+  assert.equal(output, preserved.join('\n') + '\n');
+  assert.match(rehearsal, /--exclude-schema private/u);
+});
+
 test('rehearsal accepts only this repository local Supabase container', () => {
   const rehearsal = readFileSync(
     new URL('./rehearse-baseline-reconciliation.sh', import.meta.url),

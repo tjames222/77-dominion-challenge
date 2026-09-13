@@ -321,6 +321,15 @@ create_database() {
         -e '/^CREATE EXTENSION IF NOT EXISTS supabase_vault /d' \
         -e '/^COMMENT ON EXTENSION supabase_vault /d' \
     | awk '
+        # The baseline-1/2/3 fixture copies platform schemas only. These later
+        # application triggers live on Auth tables but their private functions
+        # are intentionally excluded above. Keep every unknown/platform trigger.
+        function is_site_admin_auth_trigger(line) {
+          return line ~ /^CREATE TRIGGER initialize_site_member .* ON auth\.users .* EXECUTE FUNCTION private\.initialize_site_member\(\);$/ \
+            || line ~ /^CREATE TRIGGER guard_final_site_admin_auth .* ON auth\.users .* EXECUTE FUNCTION private\.guard_site_admin_recovery\(\);$/ \
+            || line ~ /^CREATE TRIGGER guard_final_site_admin_factor .* ON auth\.mfa_factors .* EXECUTE FUNCTION private\.guard_site_admin_factor_recovery\(\);$/
+        }
+        is_site_admin_auth_trigger($0) { next }
         function is_inventory_relation(line) {
           return line ~ / ON storage\.(buckets|buckets_analytics|buckets_vectors|iceberg_namespaces|iceberg_tables|objects|s3_multipart_uploads|s3_multipart_uploads_parts|vector_indexes)( |;)/
         }

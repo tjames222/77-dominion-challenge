@@ -75,6 +75,28 @@ beforeEach(() => {
 });
 after(() => { if (created) { const removed = docker(['rm', '--force', container]); assert.equal(removed.status, 0, removed.stderr); } });
 
+test('baseline platform copy restores the real Auth dump without later application triggers', async () => {
+  const rehearsal = await readFile(new URL('./rehearse-baseline-reconciliation.sh', import.meta.url), 'utf8');
+  const filter = rehearsal.match(/\| awk '([\s\S]*?)\n      '/)?.[1];
+  assert.ok(filter);
+  const dump = docker(['exec', container, 'pg_dump', '-h', '/tmp', '-U', 'postgres', '-d', 'postgres', '--schema-only', '--schema=auth', '--no-owner', '--no-privileges']);
+  assert.equal(dump.status, 0, dump.stderr);
+  assert.match(dump.stdout, /CREATE TRIGGER initialize_site_member/);
+  assert.match(dump.stdout, /CREATE TRIGGER guard_final_site_admin_auth/);
+  assert.match(dump.stdout, /CREATE TRIGGER guard_final_site_admin_factor/);
+  const filtered = spawnSync('awk', [filter], { input: dump.stdout, encoding: 'utf8' });
+  assert.equal(filtered.status, 0, filtered.stderr);
+  const database = `platform_copy_${randomUUID().replaceAll('-', '')}`;
+  query(`create database ${database} template template0;`);
+  try {
+    const restored = docker([...command.slice(0, -1), database], filtered.stdout);
+    assert.equal(restored.status, 0, restored.stderr);
+    const verified = docker([...command.slice(0, -1), database], "select json_build_object('users',to_regclass('auth.users') is not null,'factors',to_regclass('auth.mfa_factors') is not null,'private',to_regnamespace('private') is not null,'rows',(select count(*) from auth.users));");
+    assert.equal(verified.status, 0, verified.stderr);
+    assert.deepEqual(JSON.parse(verified.stdout.trim()), { users: true, factors: true, private: false, rows: 0 });
+  } finally { query(`drop database ${database};`); }
+});
+
 test('existing/new accounts default to member without changing crew, Stripe or private content', () => {
   query(`insert into auth.users(id) values('${randomUUID()}');`);
   assert.deepEqual(query("select jsonb_build_object('count',count(*),'allMembers',bool_and(role_key='member')) from private.site_user_roles;"), [{ count: 4, allMembers: true }]);
