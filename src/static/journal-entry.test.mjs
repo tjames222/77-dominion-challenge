@@ -173,6 +173,10 @@ describe('text-only private journal', () => {
     assert.doesNotMatch(`${billingHtml}\n${membershipHtml}`, /progress photos/i);
     assert.match(communityCss, /\.journal-form-actions[\s\S]*grid-column:\s*1 \/ -1/);
     assert.match(communityCss, /@media \(min-width: 720px\)[\s\S]*\.journal-form[\s\S]*repeat\(2, 1fr\)/);
+    assert.match(communityCss, /\.journal-select-field select[\s\S]*appearance:\s*none/);
+    assert.match(communityCss, /\.journal-select-field select[\s\S]*min-height:\s*56px/);
+    assert.match(privateJournalHtml, /label class="journal-select-field"[\s\S]*name="mood"/);
+    assert.match(privateJournalHtml, /label class="journal-select-field"[\s\S]*name="energy"/);
   });
 
   test('removes the one-entry-per-date constraint and adds a deterministic timeline index', () => {
