@@ -22,6 +22,7 @@ import {
   rewardViewModel,
 } from './badges-rewards.mjs';
 import { renderGameProgress } from './game-progress.mjs';
+import { createBadgeGallery } from './badge-gallery.mjs';
 import {
   buildFulfillmentDialogModel,
 } from './reward-fulfillment.mjs';
@@ -37,6 +38,7 @@ const LEADERBOARD_PRESTIGE_WINDOW = 'week';
 const rewardNextPanel = $('rewardNextPanel');
 const rewardsList = $('rewardsList');
 const badgesGallery = $('badgesGallery');
+const badgeGallery = badgesGallery ? createBadgeGallery(badgesGallery) : null;
 const errorPanel = $('badgesRewardsError');
 const retryButton = $('badgesRewardsRetry');
 const tabs = Array.from(document.querySelectorAll('.badges-rewards-tab'));
@@ -94,13 +96,6 @@ tabs.forEach((tab, index) => {
     activateTab(tabs[nextIndex], { focus: true });
   });
 });
-
-const badgeCardMarkup = (badge) => {
-  const details = [badge.earnedLabel ? `Earned ${badge.earnedLabel}` : 'Recently earned', ...badge.achievementDetails]
-    .filter(Boolean)
-    .join(' · ');
-  return `<article class="badge-gallery-card ${escapeHtml(badge.tier)}" data-badge-key="${escapeHtml(badge.key)}"><span class="badge-gallery-icon app-icon ${escapeHtml(badge.iconClass)}" aria-hidden="true"></span><div><div class="badge-gallery-meta"><span>${escapeHtml(badge.tierLabel)}</span><small>${escapeHtml(details)}</small></div><h3>${escapeHtml(badge.name)}</h3><p>${escapeHtml(badge.description)}</p></div></article>`;
-};
 
 function renderNextUnlock(model) {
   const eyebrow = $('rewardNextEyebrow');
@@ -169,12 +164,7 @@ function renderPage() {
     ? `${model.unlockedCount} of ${model.rewards.length} unlocked`
     : 'No rewards yet';
 
-  if (badgesGallery) {
-    badgesGallery.setAttribute('aria-busy', 'false');
-    badgesGallery.innerHTML = model.badges.length
-      ? model.badges.map(badgeCardMarkup).join('')
-      : '<div class="badges-rewards-empty"><span class="app-icon icon-shield" aria-hidden="true"></span><div><strong>Your first badge is waiting.</strong><span>Complete an honest check-in to add proof of the work here.</span></div></div>';
-  }
+  badgeGallery?.render(model.badges);
   const badgeSummary = $('badgesGallerySummary');
   if (badgeSummary) badgeSummary.textContent = model.badges.length
     ? `${model.badges.length} earned`
@@ -293,7 +283,7 @@ function scrubAccountBoundPage() {
   pendingRewardKey = '';
   dismissAndScrubRewardDetail();
   rewardsList?.replaceChildren();
-  badgesGallery?.replaceChildren();
+  badgeGallery?.clear();
   const notice = $('rewardUnlockNotice');
   if (notice) notice.hidden = true;
   for (const id of [
@@ -590,10 +580,12 @@ retryButton?.addEventListener('click', () => loadBadgesAndRewards());
 
 window.addEventListener('storage', (event) => {
   dismissAndScrubRewardDetail();
-  if (['dominion:user', 'dominion:mockUserId', 'dominion:mockUserIdsByIdentity'].includes(event.key)) {
+  if (event.key === null || ['dominion:user', 'dominion:mockUserId', 'dominion:mockUserIdsByIdentity'].includes(event.key)) {
+    badgeGallery?.clear();
     void getLocalOrSessionUser()
       .then((user) => {
         if (!user?.authenticated || user.userId !== pageActorId) invalidatePageActor(user);
+        else void loadBadgesAndRewards({ claimUnlocks: false });
       })
       .catch(() => invalidatePageActor());
     return;

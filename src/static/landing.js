@@ -36,12 +36,12 @@ async function hydrateLandingCtas() {
 
   const user = await getLocalOrSessionUser();
   const isLoggedIn = Boolean(user?.authenticated);
-  let target = './membership.html';
-  let label = RELEASE_GATES.billingEnabled ? 'See the membership' : 'See early access';
+  let target = RELEASE_GATES.billingEnabled ? './membership.html' : './membership.html#early-access';
+  let label = RELEASE_GATES.billingEnabled ? 'See the membership' : 'Get Early Access';
 
   if (isLoggedIn) {
-    target = RELEASE_GATES.billingEnabled ? './billing.html' : './membership.html';
-    label = RELEASE_GATES.billingEnabled ? 'Activate membership' : 'Early access details';
+    target = RELEASE_GATES.billingEnabled ? './billing.html' : './membership.html#early-access';
+    label = RELEASE_GATES.billingEnabled ? 'Activate membership' : 'Get Early Access';
     if (hasSupabaseAuth() || isLocalDemoMode()) {
       try {
         const billing = await getBillingState();
@@ -64,7 +64,7 @@ async function hydrateLandingCtas() {
     billingCta.href = target;
     billingCta.textContent = isLoggedIn
       ? label
-      : RELEASE_GATES.billingEnabled ? 'See what you get' : 'See early access details';
+      : RELEASE_GATES.billingEnabled ? 'See what you get' : 'Get Early Access';
   }
 }
 

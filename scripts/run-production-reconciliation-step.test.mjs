@@ -21,6 +21,7 @@ import path from "node:path";
 import { createServer } from "node:net";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
+import { copyInitialCutoverMigrations } from "./fixtures/copy-initial-cutover-migrations.mjs";
 
 const sourceScripts = path.dirname(fileURLToPath(import.meta.url));
 const sourceRoot = path.resolve(sourceScripts, "..");
@@ -182,9 +183,10 @@ async function copyReleaseRepository(root, { runnerSourceTransform } = {}) {
   const repository = path.join(root, "repository");
   await mkdir(path.join(repository, "scripts"), { recursive: true });
   await mkdir(path.join(repository, "supabase", ".temp"), { recursive: true });
-  await cp(path.join(sourceRoot, "supabase", "migrations"), path.join(repository, "supabase", "migrations"), {
-    recursive: true,
-  });
+  await copyInitialCutoverMigrations(
+    path.join(sourceRoot, "supabase", "migrations"),
+    path.join(repository, "supabase", "migrations"),
+  );
   await cp(path.join(sourceRoot, "supabase", "config.toml"), path.join(repository, "supabase", "config.toml"));
   await cp(
     path.join(sourceRoot, "supabase", ".temp", "postgres-version"),

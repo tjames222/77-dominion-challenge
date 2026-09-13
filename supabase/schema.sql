@@ -13890,3 +13890,4 @@ revoke execute on function public.grant_sharing_reward_after_invite_redemption()
 \ir migrations/20260813192939_launch_reward_catalog_and_fulfillment.sql
 \ir migrations/20260813193158_trusted_profile_photo_upload_pipeline.sql
 \ir migrations/20260824204444_enforce_journal_entry_dates.sql
+\ir migrations/20260913023402_early_access_request_intake.sql

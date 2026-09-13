@@ -2031,32 +2031,32 @@ body.challenge-finished .reward-backdrop {
 .badge-celebration[data-tier="bronze"] {
   --celebration-accent: #b86b3d;
   --celebration-strong: #e9a06d;
-  --celebration-light: #ffd5b5;
-  --celebration-mid: #b96838;
-  --celebration-dark: #62301d;
+  --celebration-light: var(--badge-bronze-light);
+  --celebration-mid: var(--badge-bronze-mid);
+  --celebration-dark: var(--badge-bronze-dark);
   --celebration-deep: #190d08;
   --celebration-text: #ffe6d2;
-  --celebration-icon-text: #2c1105;
+  --celebration-icon-text: var(--badge-bronze-ink);
 }
 .badge-celebration[data-tier="silver"] {
   --celebration-accent: #aebbc3;
   --celebration-strong: #e1e9ed;
-  --celebration-light: #fbfdff;
-  --celebration-mid: #aebbc3;
-  --celebration-dark: #58656e;
+  --celebration-light: var(--badge-silver-light);
+  --celebration-mid: var(--badge-silver-mid);
+  --celebration-dark: var(--badge-silver-dark);
   --celebration-deep: #10171b;
   --celebration-text: #f0f6f8;
-  --celebration-icon-text: #182127;
+  --celebration-icon-text: var(--badge-silver-ink);
 }
 .badge-celebration[data-tier="gold"] {
   --celebration-accent: #d6ad54;
   --celebration-strong: #f0c96a;
-  --celebration-light: #fff3a8;
-  --celebration-mid: #d6ad54;
-  --celebration-dark: #7a4d12;
+  --celebration-light: var(--badge-gold-light);
+  --celebration-mid: var(--badge-gold-mid);
+  --celebration-dark: var(--badge-gold-dark);
   --celebration-deep: #15100a;
   --celebration-text: #fff4c4;
-  --celebration-icon-text: #201303;
+  --celebration-icon-text: var(--badge-gold-ink);
 }
 .challenge-unlock-celebration {
   --celebration-accent: #5fa36f;
