@@ -10,7 +10,9 @@ const container = `77dc-early-access-sql-${randomUUID()}`;
 const image = 'public.ecr.aws/supabase/postgres:17.6.1.141';
 const actorId = '10000000-0000-4000-8000-000000000001';
 const otherId = '10000000-0000-4000-8000-000000000002';
-let created = false;
+let created = false; let migration; let authOwnership;
+const migrationRole = 'fixture_migration';
+const helperCall = (id = actorId, email = 'sam@example.com') => `select to_json(private.early_access_verified_identity_matches(${id ? `'${id}'` : 'null'},${email ? `'${email}'` : 'null'}));`;
 const command = ['exec', '-i', container, 'psql', '-X', '-qAt', '-v', 'ON_ERROR_STOP=1', '-h', '/tmp', '-U', 'postgres', '-d', 'postgres'];
 function docker(args, input) {
   return spawnSync('docker', args, { input, encoding: 'utf8', timeout: 30_000, maxBuffer: 1024 * 1024 });
@@ -23,8 +25,8 @@ function query(sql) {
 function call(email = 'sam@example.com', id = null, name = 'Sam Example') {
   return `select public.submit_early_access_request_service('${name}', '${email}', ${id ? `'${id}'::uuid` : 'null'});`;
 }
-function rejects(sql, code) {
-  return `do $test$ begin begin ${sql} exception when sqlstate '${code}' then return; end; raise exception 'Expected ${code}'; end $test$;`;
+function rejects(sql, code, message = '') {
+  return `do $test$ begin begin ${sql} exception when sqlstate '${code}' then ${message ? `if sqlerrm <> '${message}' then raise; end if;` : ''} return; end; raise exception 'Expected ${code}'; end $test$;`;
 }
 function parallelQuery(sql) {
   return new Promise((resolve, reject) => {
@@ -51,16 +53,23 @@ before(async () => {
   }
   assert.equal(ready, true, 'Owned PostgreSQL fixture did not become ready');
   query(`create role anon; create role authenticated; create role service_role bypassrls;
-    create schema auth; create schema private; create schema extensions;
+    create role supabase_auth_admin nologin nosuperuser nocreatedb nocreaterole;
+    create role ${migrationRole} nologin nosuperuser nocreatedb nocreaterole nobypassrls;
+    create schema auth; create schema private authorization ${migrationRole}; create schema extensions;
     create schema supabase_migrations;
     create table supabase_migrations.schema_migrations(version text primary key);
     insert into supabase_migrations.schema_migrations values ('20260913023402');
-    grant usage on schema auth, private, public to service_role;
-    create table auth.users (id uuid primary key, email text, email_confirmed_at timestamptz, is_anonymous boolean default false);
-    grant select on auth.users to service_role;
-    insert into auth.users values ('${actorId}', 'sam@example.com', now(), false), ('${otherId}', 'other@example.com', now(), false);`);
-  const migration = await readFile(new URL('../supabase/migrations/20260913023402_early_access_request_intake.sql', import.meta.url), 'utf8');
-  query(`begin; ${migration} commit;`);
+    grant usage on schema auth, private, public to service_role,${migrationRole};
+    grant usage,create on schema public to ${migrationRole};
+    create table auth.users (id uuid primary key, email text, email_confirmed_at timestamptz, is_anonymous boolean default false,
+      deleted_at timestamptz,banned_until timestamptz,encrypted_password text default 'PRIVATE_AUTH_SENTINEL',raw_user_meta_data jsonb default '{"private":"PRIVATE_AUTH_SENTINEL"}');
+    create function auth.uid() returns uuid language sql stable as $$select nullif(coalesce(nullif(current_setting('request.jwt.claims',true),''),'{}')::jsonb->>'sub','')::uuid$$;
+    insert into auth.users(id,email,email_confirmed_at) values ('${actorId}', 'sam@example.com', now()), ('${otherId}', 'other@example.com', now());
+    alter table auth.users owner to supabase_auth_admin;
+    grant select,references on auth.users to ${migrationRole};`);
+  [authOwnership] = query("select json_build_array(relowner,relacl::text) from pg_class where oid='auth.users'::regclass;");
+  migration = await readFile(new URL('../supabase/migrations/20260913023402_early_access_request_intake.sql', import.meta.url), 'utf8');
+  query(`set role ${migrationRole};begin; ${migration} commit;`);
 });
 beforeEach(() => query('truncate private.early_access_requests, private.early_access_intake_attempts;'));
 after(() => {
@@ -83,6 +92,48 @@ test('real PostgreSQL stores normalized anonymous input and never creates accoun
   assert.equal(rows[1].form_version, 1);
   assert.ok(Date.parse(rows[1].created_at));
   assert.deepEqual(rows[2], { users: 2 });
+});
+
+test('the original signed-in RPC fails under true service privileges while anonymous intake succeeds', () => {
+  const originalCheck = `if p_user_id is not null and not exists (
+    select 1 from auth.users where id = p_user_id
+      and lower(email) = v_email and email_confirmed_at is not null
+      and not coalesce(is_anonymous, false)
+  ) then`;
+  const correctedCheck = 'if p_user_id is not null and not private.early_access_verified_identity_matches(p_user_id, v_email) then';
+  assert.ok(migration.includes(correctedCheck));
+  const legacyRpc = migration.slice(migration.indexOf('create function public.submit_early_access_request_service('))
+    .replace('create function public.', 'create or replace function public.').replace(correctedCheck, originalCheck);
+  // Restore the old body only inside this rolled-back, owned fixture transaction.
+  const result = query(`begin;set role ${migrationRole};${legacyRpc}reset role;
+    set role service_role;${call()}${rejects(call('sam@example.com', actorId), '42501', 'permission denied for table users')}rollback;`);
+  assert.deepEqual(result, [{ received: true }]);
+  assert.deepEqual(query(`set role service_role;${call('sam@example.com', actorId)}`), [{ received: true }]);
+});
+
+test('migration retains provider Auth ownership/ACLs and the service role cannot read any Auth rows', () => {
+  assert.deepEqual(query("select json_build_array(relowner,relacl::text) from pg_class where oid='auth.users'::regclass;"), [authOwnership]);
+  assert.deepEqual(query(`select json_build_object('owner',pg_get_userbyid(relowner),'serviceRead',has_table_privilege('service_role',oid,'select')) from pg_class where oid='auth.users'::regclass;
+    select json_build_object('superuser',rolsuper,'bypass',rolbypassrls) from pg_roles where rolname='${migrationRole}';`),
+  [{ owner: 'supabase_auth_admin', serviceRead: false }, { superuser: false, bypass: false }]);
+  query(`set role service_role;${rejects('select * from auth.users;', '42501')}`);
+  assert.doesNotMatch(migration, /grant\s+[^;]*\bon\s+auth\./i);
+});
+
+test('private helper returns only a boolean and rejects user context, wrong accounts and unhealthy identities', () => {
+  assert.deepEqual(query(`set role service_role;${helperCall()}${helperCall(otherId)}${helperCall(null)}${helperCall(actorId, null)}`), [true, false, false, false]);
+  assert.deepEqual(query(helperCall()), [false], 'privileged SQL without the service request context is not an applicant');
+  for (const role of ['anon', 'authenticated']) {
+    query(`set role ${role};${rejects(helperCall(), '42501')}`);
+  }
+  query(`set request.jwt.claims='{"sub":"${actorId}","role":"service_role"}';set role service_role;
+    ${rejects(call('sam@example.com', actorId), '42501', 'Verified account mismatch.')}`);
+  for (const change of ['email_confirmed_at=null', 'is_anonymous=true', 'deleted_at=now()', "banned_until=now()+interval '1 day'"]) {
+    query(`begin;update auth.users set ${change} where id='${actorId}';set role service_role;
+      ${rejects(call('sam@example.com', actorId), '42501', 'Verified account mismatch.')}rollback;`);
+  }
+  assert.deepEqual(query(`begin;update auth.users set banned_until=now()-interval '1 day' where id='${actorId}';set role service_role;${helperCall()}rollback;`), [true]);
+  assert.deepEqual(query(`set role service_role;${helperCall(randomUUID())}`), [false]);
 });
 
 test('verified duplicate links an anonymous request without replacing its name or status', () => {
@@ -159,7 +210,7 @@ test('canonical pgTAP intake contract passes on the exact migration', async () =
   const sql = await readFile(new URL('../supabase/tests/database/210_early_access_requests.sql', import.meta.url), 'utf8');
   const result = docker(command, sql);
   assert.equal(result.status, 0, result.stderr || result.error?.message);
-  assert.match(result.stdout, /1\.\.22/);
+  assert.match(result.stdout, /1\.\.34/);
   assert.doesNotMatch(result.stdout, /not ok|Looks like you failed/);
-  assert.equal((result.stdout.match(/^ok \d+ /gm) || []).length, 22);
+  assert.equal((result.stdout.match(/^ok \d+ /gm) || []).length, 34);
 });

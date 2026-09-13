@@ -31,6 +31,16 @@ Review and invitation operations belong to FOU-1742.
   When an Authorization header is present, it must pass the existing server-side
   `getUser` verification; invalid credentials never downgrade to an anonymous
   request. SQL rechecks the verified account/email before persistence.
+- That recheck uses `private.early_access_verified_identity_matches`, a
+  service-only, fixed-search-path definer helper returning **only a boolean**.
+  Supabase owns Auth and the service role has no direct Auth SELECT; the public
+  intake RPC remains INVOKER and keeps its restricted column-level writes.
+  The helper requires the effective request role to be `service_role` and
+  `auth.uid()` to be null: it is called by the separate server client, not a
+  forwarded user session. The applicant is the Edge-verified UUID/email pair,
+  independently checked against a confirmed, non-anonymous, non-deleted,
+  non-suspended Auth account. Neither metadata nor the service call's own UID
+  can confer applicant identity. Missing/mismatched identities fail generically.
 - An origin allowlist, honeypot, 2 KiB body limit, five-second body deadline, and
   atomic global limit of 20 accepted intake attempts/minute and 100/hour keep the
   free launch path bounded. Duplicates consume the same budget **before** lookup
@@ -69,6 +79,25 @@ pgTAP suite, and `pnpm run test:early-access-sql`. The latter creates only a
 random-name, network-disabled, tmpfs-only Postgres 17.6.1.141 fixture, tests the
 exact migration including concurrency, and removes only its own container.
 Browser coverage runs in Chromium and mobile Safari/WebKit.
+
+The intake SQL fixture now models Auth owned by `supabase_auth_admin` and an
+application migration role without superuser/bypass privileges. It does **not**
+invent a service-role Auth SELECT grant. A rolled-back legacy-body regression
+reproduces the original signed-in permission failure while confirming anonymous
+intake still works, then exercises the corrected real RPC. Ownership/ACLs,
+cross-account mismatches, helper context, unhealthy accounts, private boolean
+output, restricted writes and concurrent budgets are checked explicitly. The
+registered pgTAP contract has 34 assertions, including a service-role signed-in
+RPC call. An Edge test executes the actual SDK client factories with network
+stubbed, proving the incoming user token is verified separately and the RPC
+carries the service token with no applicant `sub`. CI runs the isolated SQL
+fixture after starting local Supabase, with a five-minute step limit.
+
+During this privilege correction, the original failure was reproduced locally,
+but Docker then exhausted its snapshot disk before the corrected SQL fixture
+could start. The Edge/client-context and inventory tests ran locally; corrected
+SQL execution must pass the existing free full-stack CI before release. No
+unrelated Docker resources were removed to work around the local limitation.
 
 Local development verification used that isolated fixture because the exact
 77 Dominion Supabase stack was not running. `supabase db advisors --local` could

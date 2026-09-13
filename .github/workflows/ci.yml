@@ -97,6 +97,7 @@ jobs:
       - name: Execute production canary SQL in isolated PostgreSQL
         run: pnpm run test:production-canary-entitlement-sql
       - name: Execute early-access intake SQL in isolated PostgreSQL
+        timeout-minutes: 5
         run: pnpm run test:early-access-sql
       - name: Execute archived canary restart SQL in isolated PostgreSQL
         run: pnpm run test:production-canary-restart-sql
