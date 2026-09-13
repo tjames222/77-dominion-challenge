@@ -32,6 +32,36 @@ async function mountCollection(page, app, theme = 'dark') {
 
 for (const theme of ['light', 'dark', 'dominion-night', 'dominion-platinum']) {
   for (const width of [390, 1440]) {
+    test(`route uses the actor-bound badge catalog: ${theme} ${width}px`, async ({ page, app }, testInfo) => {
+      await page.setViewportSize({ width, height: 900 });
+      await app.seed('rewardsUnlocked', theme);
+      await page.goto('/badges-rewards', { waitUntil: 'networkidle' });
+      await app.stable();
+      await page.getByRole('tab', { name: 'Badges', exact: true }).click();
+      const collection = page.locator('#badgesGallery');
+      await expect(collection).toHaveAttribute('aria-busy', 'false');
+      const catalog = await page.evaluate(async () => {
+        const api = await import('/src/static/api.js');
+        const actor = await api.getLocalOrSessionUser();
+        return api.getBadgeCollection({ expectedUserId: actor.userId });
+      });
+      const locked = catalog.items.filter((item) => item.visibility === 'public'
+        && ['active', 'blocked'].includes(item.status) && !item.earnedInCurrentScope);
+      await expect(collection.locator('[data-badge-requirement]')).toHaveCount(locked.length);
+      await expect(collection.locator('.badge-gallery-tile')).toHaveCount(catalog.earnedBadges.length);
+      await expect(collection.getByRole('heading', { name: 'Check-in milestones' })).toBeVisible();
+      const seven = collection.locator('[data-badge-requirement="check_ins_7"]');
+      await expect(seven).toContainText('0 of 7 check-ins');
+      const finisher = collection.locator('[data-badge-requirement="original_77_completed"]');
+      await expect(finisher).toContainText('Not available yet');
+      await expect(finisher.getByRole('progressbar')).toHaveCount(0);
+      await expectNoHorizontalOverflow(page);
+      assertNoBlockingAxeViolations(await analyzeAccessibility(page));
+      await page.evaluate(() => window.scrollTo(0, 0));
+      await page.screenshot({ path: testInfo.outputPath('badge-collection-route.png'), fullPage: true });
+      app.assertNoRuntimeErrors();
+    });
+
     test(`series requirements and earned details: ${theme} ${width}px`, async ({ page, app }, testInfo) => {
       await page.setViewportSize({ width, height: 900 });
       await mountCollection(page, app, theme);

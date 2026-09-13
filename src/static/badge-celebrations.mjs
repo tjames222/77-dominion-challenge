@@ -19,34 +19,6 @@ export function createBadgeCelebrationRecovery({ claim, acknowledge, storage, se
     try { storage.setItem(key(owner), JSON.stringify(rows)); pendingMemory.delete(owner.userId); }
     catch { pendingMemory.set(owner.userId, rows); }
   };
-  const tokenFor = (owner) => {
-    if (tokenPromises.has(owner.userId)) return tokenPromises.get(owner.userId);
-    const promise = (async () => {
-      const tokenKey = `dominion:badgeClaim:${owner.userId}`;
-      let token = sessionStorage.getItem(tokenKey) || crypto.randomUUID();
-      if (locks?.request) {
-        // Duplicating a tab copies sessionStorage. A document-held lock keeps
-        // the copied claim token from being reused by two live presenters.
-        const acquire = (candidate) => new Promise((resolve) => {
-          let release;
-          const held = new Promise((done) => { release = done; });
-          void locks.request(`dominion:badgePresenter:${owner.userId}:${candidate}`, { ifAvailable: true }, async (lock) => {
-            resolve(Boolean(lock));
-            if (lock) { releases.add(release); await held; releases.delete(release); }
-          }).catch(() => resolve(false));
-        });
-        if (!await acquire(token)) { token = crypto.randomUUID(); if (!await acquire(token)) throw Error('Badge presentation is unavailable.'); }
-      } else {
-        // Without document locks a fresh token is safe; any old lease recovers
-        // after the server's bounded two-minute timeout.
-        token = crypto.randomUUID();
-      }
-      sessionStorage.setItem(tokenKey, token);
-      return token;
-    })();
-    tokenPromises.set(owner.userId, promise);
-    return promise;
-  };
   const flush = (owner) => {
     if (!isCurrentOwner(owner)) return Promise.resolve();
     if (flushes.has(owner.userId)) return flushes.get(owner.userId);

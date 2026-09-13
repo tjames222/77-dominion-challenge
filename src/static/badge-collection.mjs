@@ -15,6 +15,7 @@ const METRIC_LABELS = new Map([
 ]);
 const text = (value, limit = 1200) => typeof value === 'string' ? value.trim().slice(0, limit) : '';
 const seriesKey = (value) => SERIES.has(value) ? value : 'other';
+let collectionSequence = 0;
 
 // Presentation only: progress and current-scope ownership must come from the
 // actor-bound catalog read. The UI never evaluates eligibility from totals.
@@ -78,6 +79,7 @@ const element = (document, tag, className, value = '') => {
 
 export function createBadgeCollection(container) {
   const document = container.ownerDocument;
+  const collectionId = `badge-collection-${++collectionSequence}`;
   const groups = new Map();
   let headingIndex = 0;
   const empty = element(document, 'p', 'badge-collection-empty', 'Your first badge is waiting. Post an honest check-in to begin your collection.');
@@ -126,7 +128,7 @@ export function createBadgeCollection(container) {
           const section = element(document, 'section', 'badge-series');
           section.dataset.badgeSeries = group.key;
           const heading = element(document, 'h3', '', group.label);
-          heading.id = `badge-series-title-${++headingIndex}`;
+          heading.id = `${collectionId}-series-title-${++headingIndex}`;
           section.setAttribute('aria-labelledby', heading.id);
           const earned = element(document, 'div', 'badges-gallery badge-series-earned');
           earned.setAttribute('aria-label', `Earned ${group.label.toLowerCase()} badges`);
