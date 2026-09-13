@@ -1,7 +1,34 @@
 set local lock_timeout = '5s';
 
-create index site_admin_users_created_id_idx on auth.users ((coalesce(created_at,'1970-01-01T00:00:00Z'::timestamptz)),id);
-create index site_admin_users_email_prefix_idx on auth.users (lower(email) text_pattern_ops);
+-- Auth is provider-owned. postgres has supported SELECT/TRIGGER/REFERENCES
+-- privileges, not ownership for CREATE INDEX. Keep search indexes in our own
+-- private schema and maintain their minimal inputs in the same Auth transaction.
+lock table auth.users in share row exclusive mode;
+create table private.site_admin_user_directory (
+  user_id uuid primary key references auth.users(id) on delete cascade,
+  email text,
+  created_at timestamptz
+);
+alter table private.site_admin_user_directory enable row level security;
+revoke all on private.site_admin_user_directory from public,anon,authenticated,service_role;
+create index site_admin_users_created_id_idx on private.site_admin_user_directory
+  ((coalesce(created_at,'1970-01-01T00:00:00Z'::timestamptz)),user_id);
+create index site_admin_users_email_prefix_idx on private.site_admin_user_directory(email text_pattern_ops);
+create function private.sync_site_admin_user_directory()
+returns trigger language plpgsql security definer set search_path='' as $$
+begin
+  insert into private.site_admin_user_directory(user_id,email,created_at)
+    values(new.id,lower(new.email),new.created_at)
+    on conflict(user_id) do update set email=excluded.email,created_at=excluded.created_at;
+  return new;
+end;
+$$;
+revoke all on function private.sync_site_admin_user_directory() from public,anon,authenticated,service_role;
+create trigger sync_site_admin_user_directory after insert or update of email,created_at on auth.users
+  for each row execute function private.sync_site_admin_user_directory();
+insert into private.site_admin_user_directory(user_id,email,created_at)
+  select id,lower(email),created_at from auth.users;
+
 create index site_admin_profiles_name_prefix_idx on public.profiles (lower(name) text_pattern_ops);
 create index site_admin_subscriptions_latest_idx on public.subscriptions (user_id,updated_at desc,id desc);
 create index site_admin_audit_target_sequence_idx on private.site_admin_audit (target_user_id,sequence_id desc);
@@ -89,11 +116,18 @@ begin
   -- are bind parameters. No OFFSET or full-table JSON aggregation is performed.
   execute format($query$
     select array_agg(q.id order by q.stamp %1$s,q.id %1$s) from (
-      select u.id,coalesce(u.created_at,'1970-01-01T00:00:00Z'::timestamptz) stamp
-      from auth.users u join private.site_user_roles r on r.user_id=u.id
-      where ($1='' or u.id in (
-        select a.id from auth.users a where lower(a.email) like $2 escape E'\\'
-        union select p.user_id from public.profiles p where lower(p.name) like $2 escape E'\\'))
+      select d.user_id id,coalesce(d.created_at,'1970-01-01T00:00:00Z'::timestamptz) stamp
+      from private.site_admin_user_directory d
+      -- One live primary-key lookup per candidate preserves the ordered index
+      -- path; a broad Auth join can misestimate the equality fences and scan all
+      -- accounts before LIMIT. This is not an Auth response or authority cache.
+      join lateral (
+        select u.id from auth.users u join private.site_user_roles r on r.user_id=u.id
+        where u.id=d.user_id
+        -- The projection is a search aid, never authority. Even an operator-
+        -- corrupted/stale row must not supply a false email/order match.
+        and d.email is not distinct from lower(u.email)
+        and d.created_at is not distinct from u.created_at
         and ($3='all' or r.role_key=$3)
         and ($4='all'
           or ($4='confirmed' and u.email_confirmed_at is not null and u.deleted_at is null)
@@ -102,8 +136,13 @@ begin
           or ($4='deleted' and u.deleted_at is not null)
           or ($4='deletion_pending' and exists(select 1 from public.account_lifecycle_requests l where l.user_id=u.id
             and l.request_type='account_deletion' and l.status in ('requested','in_progress'))))
-        and ($5 is null or (coalesce(u.created_at,'1970-01-01T00:00:00Z'::timestamptz),u.id) %2$s ($5,$6))
-      order by stamp %1$s,u.id %1$s limit $7
+        limit 1
+      ) verified on true
+      where ($1='' or d.user_id in (
+        select a.user_id from private.site_admin_user_directory a where a.email like $2 escape E'\\'
+        union select p.user_id from public.profiles p where lower(p.name) like $2 escape E'\\'))
+        and ($5 is null or (coalesce(d.created_at,'1970-01-01T00:00:00Z'::timestamptz),d.user_id) %2$s ($5,$6))
+      order by stamp %1$s,d.user_id %1$s limit $7
     ) q$query$,direction,comparator)
     into ids using needle,pattern,target_role,target_status,after_stamp,after_id,target_limit+1;
   select coalesce(jsonb_agg(private.site_admin_user_payload(v.id) order by v.ordinality),'[]') into items

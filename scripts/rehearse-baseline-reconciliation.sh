@@ -327,7 +327,8 @@ create_database() {
         function is_site_admin_auth_trigger(line) {
           return line ~ /^CREATE TRIGGER initialize_site_member .* ON auth\.users .* EXECUTE FUNCTION private\.initialize_site_member\(\);$/ \
             || line ~ /^CREATE TRIGGER guard_final_site_admin_auth .* ON auth\.users .* EXECUTE FUNCTION private\.guard_site_admin_recovery\(\);$/ \
-            || line ~ /^CREATE TRIGGER guard_final_site_admin_factor .* ON auth\.mfa_factors .* EXECUTE FUNCTION private\.guard_site_admin_factor_recovery\(\);$/
+            || line ~ /^CREATE TRIGGER guard_final_site_admin_factor .* ON auth\.mfa_factors .* EXECUTE FUNCTION private\.guard_site_admin_factor_recovery\(\);$/ \
+            || line ~ /^CREATE TRIGGER sync_site_admin_user_directory .* ON auth\.users .* EXECUTE FUNCTION private\.sync_site_admin_user_directory\(\);$/
         }
         is_site_admin_auth_trigger($0) { next }
         function is_inventory_relation(line) {

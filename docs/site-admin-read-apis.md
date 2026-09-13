@@ -65,7 +65,8 @@ no whole-table JSON payload.
 Search is a case-insensitive **literal prefix** of canonical Auth email or
 profile name. It trims outer spaces, allows at most 80 input characters, rejects
 control characters, and escapes `%`, `_`, and backslash. This is not arbitrary
-substring/full-text search. Supporting prefix indexes are explicit.
+substring/full-text search. Supporting prefix indexes are explicit and reside
+only in application-owned schemas.
 
 Role filter: `all`, `member`, `site_admin`.
 Status filter: `all`, `confirmed`, `unconfirmed`, `suspended`, `deletion_pending`,
@@ -120,18 +121,58 @@ overflow is a stable `admin_invalid_input`, not a leaked cast error.
 
 ## Validation and intentionally omitted fields
 
-The isolated PostgreSQL 17 fixture executes the exact migration, authorizes two
+The isolated PostgreSQL 17 fixture executes the exact migration as a
+non-superuser application owner, with the Auth tables owned by a distinct
+`supabase_auth_admin` role. It first reproduces the rejected original Auth index
+DDL, then verifies the corrected migration without ownership escalation or new
+Auth privileges. It authorizes two
 account shapes, injects privacy sentinels into excluded columns, and tests all
 four direct RPC boundaries, stale role/permissions/session, AAL1, malformed
 cursors, exact pages/ties/nulls, literal prefix search, status meanings, bigint
 audit IDs, no-store and read-only behavior. EXPLAIN on 3,000 seeded accounts
-verifies index paths in the actual list-query shape. The registered pgTAP 250 file
-checks all grants, private serializers, indexes and stable function settings.
+verifies prefix and ordered-keyset index paths in the actual list-query shape,
+including its bounded live Auth primary-key lookups. This proves those seeded
+plans, not a universal latency guarantee for every filter or account count. The
+registered pgTAP 250 file checks 28 grants, private serializers, indexes, projection
+boundaries and stable function settings.
 
-Only supporting indexes are added: Auth created-at/UUID and canonical email
-prefix, profile name prefix, latest user subscription, target audit sequence.
-Auth table rows, columns, policies and provider settings are not modified.
-Full-chain CI must still verify migration permission/schema compatibility.
+### Provider-owned Auth compatibility
+
+Supabase owns `auth.users`; the application migration role cannot create indexes
+on that relation merely because it has SELECT or TRIGGER privileges. The original
+unreleased index statements failed in full Supabase CI and are replaced here.
+No Auth ownership, grants, columns, data, policies or provider settings are changed.
+
+`private.site_admin_user_directory` contains exactly UUID, lowercased canonical
+Auth email and the original nullable Auth creation timestamp. It is a transactional
+search projection, **not an authorization or session cache**. RLS is enabled and
+all direct client/service grants are revoked. Its created-at/UUID and email-prefix
+indexes are application-owned; profile name, subscription and audit indexes also
+remain application-owned. It contains no health flags, roles, metadata, secrets or
+private content. Retention follows the Auth UUID's `ON DELETE CASCADE` reference.
+
+A private fixed-search-path definer trigger synchronizes Auth inserts and email/
+creation-date changes in the same transaction. A table lock covers trigger
+installation plus initial backfill, preventing an update gap. A failure rolls
+back the Auth write as well as the projection rather than silently leaving stale
+data; the fixture covers successful provider writes and failed INSERT/UPDATE
+rollback. Because a broken Auth trigger can disrupt account operations, full
+Supabase CI and a reviewed migration are required before deployment.
+
+Candidate IDs come from the private search indexes. Each is joined back to live
+Auth by its guaranteed primary key and the canonical role table; all health/status
+filters and the returned email/timestamps still come from Auth. Equality fences
+reject an operator-corrupted projection row instead of presenting a false search
+match or sort timestamp. Missing/corrupted rows can omit a search result and must
+be repaired operationally; they never grant admin authority. Direct account detail
+does not depend on the projection. No asynchronous synchronization or stale TTL
+is involved.
+
+The platform-only legacy rehearsal excludes exactly the new application trigger
+identity, alongside the three existing application Auth triggers, because their
+private functions are not part of that platform fixture. Unknown/platform
+triggers remain intact. A real Auth-only `pg_dump` restore regression covers this
+boundary. Full-chain CI must still verify provider schema compatibility.
 
 The local Supabase stack remains unavailable; `db advisors --local`,
 `db pull --local`, and `migration list --local` failed to connect. Raw SQL was
@@ -148,5 +189,6 @@ rather than inferred from incomplete state. The read-only UI and browser tests
 are documented separately; neither completes those remaining ticket requirements.
 
 References: [Supabase security](https://supabase.com/docs/guides/security/product-security),
+[Auth data and supported triggers](https://supabase.com/docs/guides/auth/managing-user-data),
 [Postgres multi-column indexes](https://www.postgresql.org/docs/current/indexes-multicolumn.html),
 [Supabase pagination](https://supabase.com/docs/guides/database/pagination).
