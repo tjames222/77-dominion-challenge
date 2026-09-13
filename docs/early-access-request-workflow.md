@@ -12,7 +12,9 @@ the current identity before showing a new form.
 
 This is **intake only**. It does not create accounts, send emails/invitations,
 approve requests, grant membership, enable public signup, or enable billing.
-Review and invitation operations belong to FOU-1742.
+Review and invitation operations belong to FOU-1742. Its bounded
+[server-side review/deny foundation](early-access-admin-review.md) does not yet
+provide the Admin queue UI or an invitation/approval path.
 
 ## Storage and authorization
 

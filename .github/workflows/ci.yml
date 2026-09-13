@@ -109,6 +109,9 @@ jobs:
         run: pnpm run test:site-admin-foundation-sql
       - name: Verify bounded site-admin account and audit reads
         run: pnpm run test:site-admin-reads-sql
+      - name: Verify early-access review and denial boundaries
+        timeout-minutes: 5
+        run: pnpm run test:early-access-admin-sql
       - name: Rebuild from the migration chain
         run: pnpm run supabase:reset
       - name: Check local database security and performance advisors

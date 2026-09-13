@@ -46,6 +46,7 @@
     "test:scoped-member-badges-sql": "node --test scripts/scoped-member-badges.sql.test.mjs",
     "test:site-admin-foundation-sql": "node --test scripts/site-admin-foundation.sql.test.mjs",
     "test:site-admin-reads-sql": "node --test scripts/site-admin-reads.sql.test.mjs",
+    "test:early-access-admin-sql": "node --test scripts/early-access-admin.sql.test.mjs",
     "test:cloudflare-pages-policy": "node --test scripts/configure-cloudflare-pages-policy.test.mjs scripts/configure-production-custom-domain.test.mjs",
     "configure:cloudflare-pages-policy": "node scripts/configure-cloudflare-pages-policy.mjs",
     "capture:production-backup": "bash scripts/run-production-operator-clean.sh --operation capture --",
