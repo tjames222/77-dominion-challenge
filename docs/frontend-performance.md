@@ -185,6 +185,13 @@ mock membership canonicalization explicitly does not self-invalidate; real mock
 membership mutations do. Authentication, reward entitlement, app-visit and
 celebration-claim operations are not coalesced by this module.
 
+The synchronous Auth observer also tracks the existing non-authoritative immutable
+session marker. A replacement session for the same actor, a missing marker, or an
+assurance-changing notification fences pending reads; genuine same-session
+`SIGNED_IN`/refocus notifications still coalesce. `TOKEN_REFRESHED`, `USER_UPDATED`
+and `MFA_CHALLENGE_VERIFIED` invalidate even when the marker is unchanged. This
+observer calls no Auth methods and does not replace the authoritative checks above.
+
 The remaining app-visit/game-summary work must coordinate with FOU-1499's durable
 badge-claim contract; do not memoize its claim or acknowledgement mutations. Domain
 bootstrap, pagination, broader lifecycle/realtime invalidation and initial-graph

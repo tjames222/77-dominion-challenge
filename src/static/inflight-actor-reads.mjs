@@ -4,11 +4,13 @@ const staleRead = () => Object.assign(new Error('The account or data changed. Pl
 
 // Coalesce only pending presentation reads, never authorization or mutations.
 // Nothing survives settlement; caller-owned result copies cannot contaminate a
-// second consumer. Epochs fence delayed A→B→A responses even when IDs match again.
+// second consumer. Epochs fence delayed actor/session A→B→A responses even when
+// IDs match again. The session marker is lifecycle evidence, never authority.
 export function createInflightActorReads() {
   let epoch = 0;
   let authKnown = false;
   let authActor = '';
+  let authSession = '';
   const pending = new Map();
   const queryEpochs = new Map();
 
@@ -23,14 +25,22 @@ export function createInflightActorReads() {
     }
   };
 
-  const observeAuth = (event, actorId = '') => {
+  const observeAuth = (event, actorId = '', sessionIdentity = '') => {
     const nextActor = String(actorId || '');
+    const nextSession = typeof sessionIdentity === 'string' ? sessionIdentity : '';
+    // The first normal INITIAL_SESSION may arrive after startup consumers.
+    // It establishes the marker only when those reads have the same actor.
+    // Later INITIAL_SESSION/SIGNED_IN notifications must match the marker too.
     const initialMatches = !authKnown && event === 'INITIAL_SESSION'
+      && Boolean(nextSession)
       && [...pending.values()].every((entry) => entry.actorId === nextActor);
-    if (!initialMatches && (!authKnown || authActor !== nextActor
-      || ['SIGNED_OUT', 'TOKEN_REFRESHED', 'USER_UPDATED', 'PASSWORD_RECOVERY'].includes(event))) invalidate();
+    const sameSession = authKnown && authActor === nextActor
+      && Boolean(nextSession) && authSession === nextSession;
+    if (!initialMatches && (!sameSession
+      || ['SIGNED_OUT', 'TOKEN_REFRESHED', 'USER_UPDATED', 'PASSWORD_RECOVERY', 'MFA_CHALLENGE_VERIFIED'].includes(event))) invalidate();
     authKnown = true;
     authActor = nextActor;
+    authSession = nextSession;
   };
 
   const run = ({ actorId, query, version, args = [] }, read) => {

@@ -53,11 +53,13 @@ test('A→B→A and sign-out invalidate delayed results synchronously, including
   }
 });
 
-test('token refresh, user updates and explicit data invalidation fence pending reads', async () => {
-  for (const action of [(scope) => scope.observeAuth('TOKEN_REFRESHED', 'A'),
-    (scope) => scope.observeAuth('USER_UPDATED', 'A'), (scope) => scope.invalidate()]) {
+test('token refresh, user updates, MFA verification and explicit invalidation fence same-session pending reads', async () => {
+  for (const action of [(scope) => scope.observeAuth('TOKEN_REFRESHED', 'A', 'A:session-1'),
+    (scope) => scope.observeAuth('USER_UPDATED', 'A', 'A:session-1'),
+    (scope) => scope.observeAuth('MFA_CHALLENGE_VERIFIED', 'A', 'A:session-1'),
+    (scope) => scope.invalidate()]) {
     const scope = createInflightActorReads();
-    scope.observeAuth('INITIAL_SESSION', 'A');
+    scope.observeAuth('INITIAL_SESSION', 'A', 'A:session-1');
     const pending = deferred();
     const result = scope.run(request(), () => pending.promise);
     const rejected = assert.rejects(result, { code: 'STALE_ACTOR_READ' });
@@ -69,9 +71,59 @@ test('initial session delivery for the already captured actor does not discard s
   const scope = createInflightActorReads();
   const pending = deferred();
   const result = scope.run(request(), () => pending.promise);
-  scope.observeAuth('INITIAL_SESSION', 'A');
+  scope.observeAuth('INITIAL_SESSION', 'A', 'A:session-1');
   pending.resolve({ okay: true });
   assert.deepEqual(await result, { okay: true });
+});
+
+for (const event of ['SIGNED_IN', 'INITIAL_SESSION']) test(`${event} for a replacement immutable session cannot reuse same-actor pending work`, async () => {
+  const scope = createInflightActorReads();
+  scope.observeAuth('INITIAL_SESSION', 'A', 'A:session-1');
+  const pending = deferred(); let calls = 0;
+  const old = scope.run(request(), () => { calls += 1; return pending.promise; });
+  const rejected = assert.rejects(old, { code: 'STALE_ACTOR_READ' });
+  await Promise.resolve();
+  scope.observeAuth(event, 'A', 'A:session-2');
+  const fresh = scope.run(request(), async () => { calls += 1; return { source: 'replacement' }; });
+  pending.resolve({ source: 'old session' });
+  await rejected; assert.deepEqual(await fresh, { source: 'replacement' });
+  assert.equal(calls, 2);
+});
+
+test('genuine same-session SIGNED_IN/refocus still shares one pending read', async () => {
+  const scope = createInflightActorReads();
+  scope.observeAuth('INITIAL_SESSION', 'A', 'A:session-1');
+  const pending = deferred(); let calls = 0;
+  const first = scope.run(request(), () => { calls += 1; return pending.promise; });
+  await Promise.resolve();
+  scope.observeAuth('SIGNED_IN', 'A', 'A:session-1');
+  const second = scope.run(request(), async () => { calls += 1; return { source: 'unexpected' }; });
+  pending.resolve({ source: 'same session' });
+  assert.deepEqual(await first, { source: 'same session' });
+  assert.deepEqual(await second, { source: 'same session' });
+  assert.equal(calls, 1);
+});
+
+test('same-actor session A→B→A cannot revive the original pending response', async () => {
+  const scope = createInflightActorReads();
+  scope.observeAuth('INITIAL_SESSION', 'A', 'A:session-1');
+  const pending = deferred();
+  const old = scope.run(request({ query: 'training' }), () => pending.promise);
+  const rejected = assert.rejects(old, { code: 'STALE_ACTOR_READ' });
+  await Promise.resolve();
+  scope.observeAuth('SIGNED_IN', 'A', 'A:session-2');
+  scope.observeAuth('SIGNED_IN', 'A', 'A:session-1');
+  pending.resolve({ private: 'old training' }); await rejected;
+});
+
+for (const initial of ['', 'A:session-1']) test(`a missing immutable-session marker cannot preserve pending work from ${initial || 'an unknown session'}`, async () => {
+  const scope = createInflightActorReads();
+  scope.observeAuth('INITIAL_SESSION', 'A', initial);
+  const pending = deferred();
+  const old = scope.run(request(), () => pending.promise);
+  const rejected = assert.rejects(old, { code: 'STALE_ACTOR_READ' });
+  await Promise.resolve(); scope.observeAuth('SIGNED_IN', 'A', '');
+  pending.resolve({}); await rejected;
 });
 
 test('failed requests evict immediately so a retry can succeed', async () => {

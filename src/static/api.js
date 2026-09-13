@@ -237,7 +237,7 @@ async function invalidateReadsAroundMutation(operation, query = '') {
 // A separate synchronous observer fences requests before any UI auth callback
 // schedules rehydration. No Supabase method is called from this callback.
 supabase?.auth.onAuthStateChange((event, session) => {
-  inflightActorReads.observeAuth(event, session?.user?.id || '');
+  inflightActorReads.observeAuth(event, session?.user?.id || '', authSessionIdentity(session));
 });
 globalThis.window?.addEventListener('storage', (event) => {
   if (!event.key || event.key.startsWith('dominion:') || /^sb-.+-auth-token/.test(event.key)) {

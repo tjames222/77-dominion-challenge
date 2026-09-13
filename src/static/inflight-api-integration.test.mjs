@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
 import { runInNewContext } from 'node:vm';
 import { createInflightActorReads } from './inflight-actor-reads.mjs';
+import { authSessionIdentity } from './mfa-auth.mjs';
 
 const api = readFileSync(new URL('./api.js', import.meta.url), 'utf8');
 const extract = (name, next) => api.slice(api.indexOf(`export async function ${name}`),
@@ -64,7 +65,7 @@ test('training coalescing uses every server argument and retains expected-actor 
 
 test('auth loss, cross-tab changes and mutation settlement invalidate without caching authorization', () => {
   assert.match(api, /clearAuthSession\(\{ redirectToLanding = false \} = \{\}\) \{\s+if \(redirectToLanding\) logoutNavigationPending = true;\s+try \{\s+cancelAdminReads\(\);\s+inflightActorReads\.invalidate\(\)/);
-  assert.match(api, /inflightActorReads\.observeAuth\(event, session\?\.user\?\.id \|\| ''\)/);
+  assert.match(api, /inflightActorReads\.observeAuth\(event, session\?\.user\?\.id \|\| '', authSessionIdentity\(session\)\)/);
   assert.match(api, /addEventListener\('storage',[\s\S]*inflightActorReads\.invalidate\(\)/);
   assert.match(api, /finally \{\s+inflightActorReads\.invalidate\(query\)/);
   for (const endpoint of ['activate_solo_challenge', 'activate_group_challenge', 'set_challenge_start_date',
@@ -76,4 +77,30 @@ test('auth loss, cross-tab changes and mutation settlement invalidate without ca
     const section = api.slice(offset, api.indexOf('\n}', offset) + 2);
     assert.doesNotMatch(section, /inflightActorReads\.run/);
   }
+});
+
+test('the real synchronous API observer forwards immutable sessions without calling Auth', async () => {
+  const actorId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+  const session = (id) => ({ user: { id: actorId }, access_token: `header.${Buffer.from(JSON.stringify({ sub: actorId, session_id: id })).toString('base64url')}.signature` });
+  const scope = createInflightActorReads(); let observer;
+  const start = api.indexOf('supabase?.auth.onAuthStateChange((event, session) => {');
+  assert.ok(start >= 0);
+  const callback = api.slice(start, api.indexOf('\n});', start) + 4);
+  runInNewContext(callback, { inflightActorReads: scope, authSessionIdentity,
+    supabase: { auth: new Proxy({ onAuthStateChange: (fn) => { observer = fn; } }, {
+      get(target, name) { if (!(name in target)) throw new Error(`Auth method ${String(name)} must not run inside the observer`); return target[name]; },
+    }) },
+  });
+  const firstSession = session('11111111-1111-4111-8111-111111111111');
+  observer('INITIAL_SESSION', firstSession);
+  let resolve; let calls = 0;
+  const pending = new Promise((yes) => { resolve = yes; });
+  const key = { actorId, query: 'get_site_training_state', version: 1, args: ['dashboard', 1] };
+  const old = scope.run(key, () => { calls += 1; return pending; });
+  const rejected = assert.rejects(old, { code: 'STALE_ACTOR_READ' });
+  await Promise.resolve();
+  observer('SIGNED_IN', session('22222222-2222-4222-8222-222222222222'));
+  const replacement = scope.run(key, async () => { calls += 1; return { source: 'replacement' }; });
+  resolve({ source: 'old session' });
+  await rejected; assert.deepEqual(await replacement, { source: 'replacement' }); assert.equal(calls, 2);
 });
