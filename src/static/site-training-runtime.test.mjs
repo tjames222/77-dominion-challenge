@@ -92,7 +92,7 @@ describe('site training runtime', () => {
     });
   }
 
-  test('a failed UI import retries without writes and closes a reopened menu immediately before creating its layer', async () => {
+  test('an injectable UI factory can recover without writes and closes a reopened menu immediately before creating its layer', async () => {
     const coachmark = fakeCoachmark();
     const order = [];
     let imports = 0;

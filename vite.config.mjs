@@ -4,6 +4,17 @@ import { PRODUCTION_ENTRYPOINTS } from './app-entrypoints.mjs';
 import { isCloudflarePreviewEnvironment } from './scripts/normalize-cloudflare-frontend-env.mjs';
 import { renderInitialPreviewFeedback } from './src/static/preview-feedback.mjs';
 
+export function resolveTrainingModulePreloads(filename, dependencies, { hostType }) {
+  // WebKit retains a failed modulepreload across location.reload, even for a
+  // no-store HTTP 503. Native import alone recovers in the new document. Omit
+  // only this optional UI's redundant JS preload; Vite still appends and awaits
+  // its CSS dependencies. Other imports and HTML preloads are unchanged.
+  if (hostType === 'js' && /(?:^|\/)site-training-ui(?:-[\w-]+)?\.js$/.test(filename)) {
+    return dependencies.filter((dependency) => dependency !== filename);
+  }
+  return dependencies;
+}
+
 export function productionShareRouteEnabled(env, buildEnvironment = process.env) {
   return ['1', 'true', 'yes'].includes(buildEnvironment.CF_PAGES)
     && buildEnvironment.CF_PAGES_BRANCH === 'main'
@@ -58,6 +69,7 @@ export default defineConfig(({ mode }) => {
       },
     ],
     build: {
+      modulePreload: { resolveDependencies: resolveTrainingModulePreloads },
       rollupOptions: {
         input: PRODUCTION_ENTRYPOINTS,
       },

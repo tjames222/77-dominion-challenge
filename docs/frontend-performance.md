@@ -196,8 +196,22 @@ cache while those full invalidation contracts are still being established.
 Training-state hydration does not import the coachmark implementation or CSS.
 The separate UI entry statically imports its stylesheet; Vite resolves both
 before opening the first overlay. Controls remain visible and busy during this
-load. A failed import starts no durable training mutation, and a later attempt
-can retry. Actor epochs and a separate presentation generation discard delayed
+load. A failed import starts no durable training mutation. Chromium and WebKit
+cache failed module requests for the document, so clearing an application promise
+cannot reliably retry. A failed JS/CSS load stays closed and both training controls
+offer **Reload to load training** with visible save-your-work guidance. Reload
+requires a second explicit confirmation, initially focused on **Keep editing**;
+failure, onboarding handoff, focus, and reconnect never reload automatically.
+There is no cache-busting import or draft/progress reset. The reload creates a new
+document that can fetch the UI again; saved onboarding handoffs remain recoverable.
+WebKit also retains a failed JavaScript `modulepreload` after a soft reload, even
+for a real HTTP 503 with `Cache-Control: no-store`. The narrow
+[`build.modulePreload.resolveDependencies`](https://vite.dev/config/build-options#build-modulepreload)
+resolver removes only the training UI's own dynamic JS preload, leaving native
+import, Vite's automatic CSS awaiting, other dependencies, and HTML preloads
+unchanged. A loopback HTTP regression builds the actual loader/UI in memory and
+verifies sticky failure then successful reload in Chromium and WebKit.
+Actor epochs and a separate presentation generation discard delayed
 opens after sign-out, an A→B→A cycle, dismissal or destruction. A dismissal during
 an already-running successful mutation keeps its confirmed progress but does not
 reopen the overlay. The menu is closed again immediately before creating/acquiring

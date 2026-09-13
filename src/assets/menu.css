@@ -553,7 +553,8 @@ body:not(.challenge-finished) .dashboard-shell > :is(.topbar, .member-tabs) + .d
 .global-menu-page-training[hidden],
 .global-menu-page-training-primary[hidden],
 .global-menu-page-training-restart[hidden],
-.global-menu-page-training-feedback[hidden] {
+.global-menu-page-training-feedback[hidden],
+.global-menu-full-training-feedback[hidden] {
   display: none;
 }
 .global-menu-training-section > .eyebrow {
@@ -576,7 +577,8 @@ body:not(.challenge-finished) .dashboard-shell > :is(.topbar, .member-tabs) + .d
   background: var(--surface);
 }
 .global-menu-page-training-feedback,
-.global-menu-logout-feedback {
+.global-menu-logout-feedback,
+.global-menu-full-training-feedback {
   margin: 2px 4px 0;
   color: color-mix(in srgb, var(--danger) 78%, var(--text));
   font-size: .78rem;

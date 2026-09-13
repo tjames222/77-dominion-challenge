@@ -5,6 +5,11 @@ import {
   siteTrainingPageForRoute,
 } from './site-training-registry.mjs';
 import { createSiteTrainingRuntime } from './site-training-runtime.mjs';
+import {
+  createSiteTrainingLoadRecovery,
+  TRAINING_RELOAD_LABEL,
+  TRAINING_RELOAD_MESSAGE,
+} from './site-training-load-recovery.mjs';
 
 const ACTIVE_ACTIVATION_STATUSES = new Set(['scheduled', 'active']);
 const ACTIVATION_MODES = new Set(['solo', 'group']);
@@ -136,6 +141,12 @@ export function createPageTrainingControls({
     section: null,
   };
   let listeners = { primary: null, restart: null };
+  const loadRecovery = createSiteTrainingLoadRecovery({
+    id: 'page-training-reload-confirmation',
+    document: ownerDocument,
+    window: windowLike,
+    confirmationFactory,
+  });
 
   const resolveApi = async () => {
     if (api) return api;
@@ -167,13 +178,15 @@ export function createPageTrainingControls({
     if (controls.primary) {
       controls.primary.hidden = !model.visible;
       controls.primary.disabled = busy;
-      controls.primary.textContent = model.label || 'Start page training';
+      controls.primary.textContent = loadRecovery.required ? TRAINING_RELOAD_LABEL : model.label || 'Start page training';
       controls.primary.dataset.trainingControlAction = model.action || '';
       controls.primary.setAttribute('aria-busy', String(busy));
+      if (loadRecovery.required) controls.primary.setAttribute('aria-haspopup', 'dialog');
+      else controls.primary.removeAttribute('aria-haspopup');
       setControlError(controls.primary);
     }
     if (controls.restart) {
-      controls.restart.hidden = !model.restartVisible;
+      controls.restart.hidden = !model.restartVisible || loadRecovery.required;
       controls.restart.disabled = busy;
       controls.restart.textContent = 'Restart page training';
       controls.restart.setAttribute('aria-busy', String(busy));
@@ -186,7 +199,9 @@ export function createPageTrainingControls({
     }
     if (controls.section) controls.section.hidden = !model.visible;
     if (controls.feedback) {
-      controls.feedback.textContent = model.visible ? lastError : '';
+      controls.feedback.textContent = model.visible
+        ? loadRecovery.required ? TRAINING_RELOAD_MESSAGE : lastError
+        : '';
       controls.feedback.hidden = !controls.feedback.textContent;
     }
   };
@@ -287,6 +302,7 @@ export function createPageTrainingControls({
         assertCurrent(capturedGeneration);
         return result;
       } catch (error) {
+        loadRecovery.record(error);
         if (error?.code === 'SITE_TRAINING_ACTOR_CHANGED') {
           runtime?.dismiss?.({ restoreFocus: false });
         }
@@ -330,6 +346,7 @@ export function createPageTrainingControls({
       activation = null;
       lastError = '';
       confirmationDialog?.close?.('activation-change');
+      loadRecovery.dismiss();
       runtime?.dismiss?.({ restoreFocus: false });
       renderControls();
     } else if (hideWhileLoading) {
@@ -388,6 +405,7 @@ export function createPageTrainingControls({
       }
       confirmationDialog?.destroy();
       confirmationDialog = null;
+      loadRecovery.dismiss();
       controls = {
         feedback: nextControls.feedback?.setAttribute ? nextControls.feedback : null,
         group: nextControls.group?.setAttribute ? nextControls.group : null,
@@ -398,6 +416,10 @@ export function createPageTrainingControls({
       listeners = {
         primary: controls.primary
           ? () => {
+            if (loadRecovery.required) {
+              loadRecovery.open(resolveVisibleTrigger(controls.primary, 'reload'));
+              return;
+            }
             const action = controls.primary.dataset.trainingControlAction;
             void activate(action, { control: controls.primary }).catch(() => {});
           }
@@ -440,6 +462,7 @@ export function createPageTrainingControls({
       listeners = { primary: null, restart: null };
       confirmationDialog?.destroy();
       confirmationDialog = null;
+      loadRecovery.destroy();
       runtimeUnsubscribe?.();
       runtimeUnsubscribe = null;
       if (ownsRuntime) runtime?.destroy();

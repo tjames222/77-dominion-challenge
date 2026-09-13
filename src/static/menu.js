@@ -427,6 +427,7 @@ async function buildMenu() {
         <div class="global-menu-full-training" aria-label="Full-site Solo training">
           <span>Full-site Solo walkthrough</span>
           <button class="global-menu-training" type="button" hidden>Start Training</button>
+          <p class="global-menu-full-training-feedback" role="alert" aria-live="assertive" hidden></p>
         </div>
         <div class="global-menu-page-training" role="group" aria-label="This page" hidden>
           <span>This page</span>
@@ -596,7 +597,9 @@ async function buildMenu() {
       restart: menu.querySelector('.global-menu-page-training-restart'),
       feedback: menu.querySelector('.global-menu-page-training-feedback'),
     });
-    soloFirstRunTraining?.attachControl(menu.querySelector('.global-menu-training'));
+    soloFirstRunTraining?.attachControl(menu.querySelector('.global-menu-training'), {
+      feedback: menu.querySelector('.global-menu-full-training-feedback'),
+    });
   } else {
     destroyTrainingControllers();
   }

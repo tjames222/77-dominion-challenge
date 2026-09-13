@@ -1,5 +1,214 @@
 import { test, expect } from './support/app-test.mjs';
 import { ROUTE_BY_ID } from './support/routes.mjs';
+import AxeBuilder from '@axe-core/playwright';
+import { fixtureFor, FIXED_USER_ID, FIXED_NOW } from './support/fixtures.mjs';
+import { createSoloTrainingLaunch, SOLO_TRAINING_LAUNCH_STORAGE_KEY, SOLO_TRAINING_LAUNCH_EVENT } from '../../src/static/challenge-start-flow.mjs';
+import { createServer } from 'node:http';
+import { fileURLToPath } from 'node:url';
+import { build } from 'vite';
+import { resolveTrainingModulePreloads } from '../../vite.config.mjs';
+
+const EXPECTED_ABORT_ERRORS = [
+  /Failed to load resource: net::ERR_FAILED/,
+  /Failed to load resource: (?:The operation couldn’t be completed|Load failed|cancelled)/,
+  /Failed to load resource: the server responded with a status of 503/,
+];
+
+test('real HTTP 503 training module failure recovers after reload without a failed JavaScript preload', async ({ page, app }) => {
+  // Build the actual loader/UI in memory so this regression also runs with the
+  // development test server. This is a real loopback HTTP failure, not browser
+  // interception (WebKit also caches failed modulepreloads outside Playwright).
+  const artifact = await build({
+    configFile: false,
+    root: fileURLToPath(new URL('../..', import.meta.url)),
+    base: './',
+    logLevel: 'silent',
+    build: {
+      write: false,
+      modulePreload: { resolveDependencies: resolveTrainingModulePreloads },
+      rollupOptions: {
+        input: { loader: fileURLToPath(new URL('../../src/static/site-training-ui-loader.mjs', import.meta.url)) },
+        preserveEntrySignatures: 'strict',
+        output: { entryFileNames: 'loader.js' },
+      },
+    },
+  });
+  const assets = new Map(artifact.output.map((asset) => [`/${asset.fileName}`, asset.type === 'chunk' ? asset.code : asset.source]));
+  let failing = true;
+  let attempts = 0;
+  const server = createServer((request, response) => {
+    response.setHeader('Cache-Control', 'no-store');
+    const pathname = new URL(request.url, 'http://localhost').pathname;
+    if (/\/site-training-ui(?:-[\w-]+)?\.js$/.test(pathname)) {
+      attempts += 1;
+      if (failing) { response.writeHead(503); response.end('Temporarily unavailable'); return; }
+    }
+    if (assets.has(pathname)) {
+      response.setHeader('Content-Type', pathname.endsWith('.css') ? 'text/css' : 'text/javascript');
+      response.end(assets.get(pathname));
+    } else if (pathname === '/') {
+      response.setHeader('Content-Type', 'text/html');
+      response.end('<!doctype html><title>Training load recovery</title><script type="module">import { loadSiteTrainingUi } from "/loader.js"; window.loadTraining = loadSiteTrainingUi;</script>');
+    } else { response.writeHead(404); response.end(); }
+  });
+  await new Promise((resolve, reject) => { server.once('error', reject); server.listen(0, '127.0.0.1', resolve); });
+  try {
+    await page.goto(`http://127.0.0.1:${server.address().port}/`);
+    const first = await page.evaluate(async () => {
+      try { await window.loadTraining(); return null; } catch (error) { return { code: error.code, message: error.message }; }
+    });
+    expect(first).toEqual({ code: 'SITE_TRAINING_RELOAD_REQUIRED', message: 'Training could not load. Save any unfinished work, then reload this page to try again.' });
+    expect(attempts).toBe(1);
+    await expect(page.locator('link[rel="modulepreload"][href*="site-training-ui"]')).toHaveCount(0);
+    failing = false;
+    expect(await page.evaluate(() => window.loadTraining().then(() => true, () => false))).toBe(false);
+    expect(attempts).toBe(1, 'A new application promise is not an in-document browser retry.');
+    await page.reload();
+    expect(await page.evaluate(async () => typeof (await window.loadTraining()).createSiteTrainingCoachmark)).toBe('function');
+    expect(attempts).toBe(2);
+    expect(await page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue('--site-training-styles-ready').trim())).toBe('1');
+    app.assertNoRuntimeErrors(EXPECTED_ABORT_ERRORS);
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
+
+for (const scenario of [
+  { theme: 'dark', scope: 'page', chunk: 'js' },
+  { theme: 'light', scope: 'solo', chunk: 'js' },
+  { theme: 'dominion-night', scope: 'page', chunk: 'css' },
+  { theme: 'dominion-platinum', scope: 'solo', chunk: 'css' },
+]) {
+  test(`failed training ${scenario.chunk} requires consented reload: ${scenario.scope} / ${scenario.theme}`, async ({ page, app }) => {
+    const chunkPattern = scenario.chunk === 'js'
+      ? /\/site-training-ui(?:-[\w-]+)?\.js(?:\?|$)/
+      : /\/(?:site-training-ui-[\w-]+|site-training)\.css(?:\?|$)/;
+    let attempts = 0;
+    let navigations = 0;
+    page.on('framenavigated', (frame) => { if (frame === page.mainFrame()) navigations += 1; });
+    await page.route(chunkPattern, async (route) => {
+      // Axe reads inaccessible stylesheets with XHR while auditing contrast.
+      // Count/interrupt the browser's actual module/stylesheet loads only.
+      if (['xhr', 'fetch'].includes(route.request().resourceType())) {
+        await route.continue();
+        return;
+      }
+      attempts += 1;
+      if (attempts === 1 && scenario.scope === 'solo') {
+        await route.fulfill({ status: 503, headers: { 'cache-control': 'no-store' }, body: 'Temporarily unavailable' });
+      } else if (attempts === 1) await route.abort('failed');
+      else await route.continue();
+    });
+    await app.open(ROUTE_BY_ID.dashboard, { state: 'activeSolo', theme: scenario.theme });
+    // A real DOM-only draft catches accidental reloads or product form clearing.
+    await page.evaluate(() => {
+      const draft = document.createElement('textarea');
+      draft.id = 'training-recovery-unsaved-draft';
+      draft.setAttribute('aria-label', 'Unfinished draft');
+      draft.value = 'Keep this unfinished thought';
+      document.querySelector('main').append(draft);
+    });
+    const trainingStorage = () => page.evaluate(() => Object.fromEntries(
+      Object.entries(localStorage).filter(([key]) => /siteTraining|soloTraining/i.test(key)),
+    ));
+    const savedBefore = await trainingStorage();
+    const navigationsBefore = navigations;
+    await page.getByRole('button', { name: 'Open menu', exact: true }).click();
+    const startName = scenario.scope === 'page' ? 'Start page training' : 'Start Training';
+    const group = page.locator(scenario.scope === 'page' ? '.global-menu-page-training' : '.global-menu-full-training');
+    await group.getByRole('button', { name: startName, exact: true }).click();
+    const reload = group.getByRole('button', { name: 'Reload to load training', exact: true });
+    await expect(reload).toBeVisible();
+    await expect(group.getByRole('alert')).toContainText('Save any unfinished work');
+    await expect(page.locator('.site-training-layer')).toHaveCount(0);
+    expect(await trainingStorage()).toEqual(savedBefore);
+    expect(attempts).toBe(1);
+    expect(navigations).toBe(navigationsBefore);
+    await reload.click();
+    const confirmation = page.getByRole('dialog', { name: 'Reload to load training?', exact: true });
+    await expect(confirmation).toBeVisible();
+    await expect(confirmation).toContainText('Reloading may discard unsaved changes');
+    const keepEditing = confirmation.getByRole('button', { name: 'Keep editing', exact: true });
+    await expect(keepEditing).toBeFocused();
+    const accessibility = await new AxeBuilder({ page })
+      .include(scenario.scope === 'page' ? '#page-training-reload-confirmation' : '#solo-training-reload-confirmation')
+      .withTags(['wcag2a', 'wcag2aa', 'wcag21aa']).analyze();
+    expect(accessibility.violations).toEqual([]);
+    await keepEditing.click();
+    await expect(confirmation).toBeHidden();
+    await expect(page.locator('.global-menu-button')).toBeFocused();
+    await expect(page.locator('#training-recovery-unsaved-draft')).toHaveValue('Keep this unfinished thought');
+    expect(navigations).toBe(navigationsBefore);
+    expect(await trainingStorage()).toEqual(savedBefore);
+
+    // A fresh activation/menu refresh must not mislabel a cached failure as a
+    // genuine in-document retry, and still must not reopen the training overlay.
+    await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+    await page.getByRole('button', { name: 'Open menu', exact: true }).click();
+    await expect(reload).toBeVisible();
+    await reload.click();
+    await expect(confirmation).toBeVisible();
+    await Promise.all([
+      page.waitForEvent('framenavigated', { predicate: (frame) => frame === page.mainFrame() }),
+      confirmation.getByRole('button', { name: 'Reload page', exact: true }).click(),
+    ]);
+    await expect(page.locator('#training-recovery-unsaved-draft')).toHaveCount(0);
+    await expect(page.locator('.site-training-layer')).toHaveCount(0);
+    expect(await trainingStorage()).toEqual(savedBefore);
+    await page.getByRole('button', { name: 'Open menu', exact: true }).click();
+    await group.getByRole('button', { name: startName, exact: true }).click();
+    await expect(page.locator('.site-training-coachmark')).toBeVisible();
+    await expect(page.locator('#siteTrainingTitle')).toBeFocused();
+    expect(await page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue('--site-training-styles-ready').trim())).toBe('1');
+    expect(attempts).toBe(2);
+    app.assertNoRuntimeErrors(EXPECTED_ABORT_ERRORS);
+  });
+}
+
+test('failed automatic Solo handoff survives until an explicitly confirmed reload succeeds', async ({ page, app }) => {
+  let attempts = 0;
+  await page.route(/\/site-training-ui(?:-[\w-]+)?\.js(?:\?|$)/, async (route) => {
+    attempts += 1;
+    if (attempts === 1) await route.abort('failed');
+    else await route.continue();
+  });
+  await app.open(ROUTE_BY_ID.dashboard, { state: 'activeSolo' });
+  const launch = createSoloTrainingLaunch({
+    actorId: FIXED_USER_ID,
+    activation: {
+      ...fixtureFor('activeSolo').json['dominion:mockChallengeActivation'][FIXED_USER_ID],
+      readState: 'ready', contractValid: true,
+    },
+    requestedAt: FIXED_NOW,
+  });
+  const serializedLaunch = JSON.stringify({ [FIXED_USER_ID]: launch });
+  await page.evaluate(({ key, value, event, actorId }) => {
+    localStorage.setItem(key, value);
+    window.dispatchEvent(new CustomEvent(event, { detail: { actorId } }));
+  }, { key: SOLO_TRAINING_LAUNCH_STORAGE_KEY, value: serializedLaunch, event: SOLO_TRAINING_LAUNCH_EVENT, actorId: FIXED_USER_ID });
+  await expect.poll(() => attempts).toBe(1);
+  await expect(page.locator('.site-training-layer')).toHaveCount(0);
+  await expect(page.getByRole('dialog', { name: 'Reload to load training?' })).toHaveCount(0);
+  await page.getByRole('button', { name: 'Open menu', exact: true }).click();
+  const recovery = page.locator('.global-menu-full-training').getByRole('button', { name: 'Reload to load training', exact: true });
+  await expect(recovery).toBeVisible();
+  expect(await page.evaluate((key) => localStorage.getItem(key), SOLO_TRAINING_LAUNCH_STORAGE_KEY)).toBe(serializedLaunch);
+  expect(await page.evaluate(() => localStorage.getItem('dominion:siteTrainingProgress'))).toBe(null);
+  await recovery.click();
+  const confirmation = page.getByRole('dialog', { name: 'Reload to load training?', exact: true });
+  await expect(confirmation.getByRole('button', { name: 'Keep editing', exact: true })).toBeFocused();
+  await Promise.all([
+    page.waitForEvent('framenavigated', { predicate: (frame) => frame === page.mainFrame() }),
+    confirmation.getByRole('button', { name: 'Reload page', exact: true }).click(),
+  ]);
+  // This was already a user-requested activation handoff, not an unsolicited
+  // new training start. It resumes once the new document can load the UI.
+  await expect(page.locator('.site-training-coachmark')).toBeVisible();
+  await expect(page.locator('#siteTrainingTitle')).toBeFocused();
+  expect(attempts).toBe(2);
+  expect(await page.evaluate((key) => localStorage.getItem(key), SOLO_TRAINING_LAUNCH_STORAGE_KEY)).toBe(null);
+  app.assertNoRuntimeErrors(EXPECTED_ABORT_ERRORS);
+});
 
 for (const theme of ['dark', 'light', 'dominion-night', 'dominion-platinum']) {
   test(`landing loads only responsive ${theme} artwork and preserves the original fallback`, async ({ page, app }) => {

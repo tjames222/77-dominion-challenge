@@ -11,6 +11,11 @@ import {
   siteTrainingProgramForPage,
 } from './site-training-registry.mjs';
 import { createSiteTrainingRuntime } from './site-training-runtime.mjs';
+import {
+  createSiteTrainingLoadRecovery,
+  TRAINING_RELOAD_LABEL,
+  TRAINING_RELOAD_MESSAGE,
+} from './site-training-load-recovery.mjs';
 
 export const SOLO_FIRST_RUN_PROGRAM_ID = 'solo-first-run';
 export const SOLO_TRAINING_CONTROL_REQUEST_KEY = 'dominion:soloTrainingControlRequests';
@@ -173,6 +178,7 @@ export function createSoloFirstRunTraining({
   runtimeFactory = createSiteTrainingRuntime,
   navigate = null,
   beforeOpen = null,
+  confirmationFactory,
 } = {}) {
   const actorId = text(user?.userId);
   const page = siteTrainingPageForRoute(registry, windowLike?.location?.pathname || '');
@@ -191,12 +197,19 @@ export function createSoloFirstRunTraining({
   let runtimeTransitionUnsubscribe = null;
   let servicePromise = null;
   let control = null;
+  let feedback = null;
   let controlListener = null;
   let destroyed = false;
   let generation = 0;
   let operationPromise = null;
   let refreshPromise = null;
   let lastError = '';
+  const loadRecovery = createSiteTrainingLoadRecovery({
+    id: 'solo-training-reload-confirmation',
+    document: ownerDocument,
+    window: windowLike,
+    confirmationFactory,
+  });
 
   const localStorage = windowLike?.localStorage;
   const sessionStorage = windowLike?.sessionStorage;
@@ -248,6 +261,7 @@ export function createSoloFirstRunTraining({
   const invalidateActivation = () => {
     generation += 1;
     activation = null;
+    loadRecovery.dismiss();
     if (ownsRuntime) {
       runtime?.destroy();
       runtime = null;
@@ -264,11 +278,19 @@ export function createSoloFirstRunTraining({
     });
     control.hidden = !available || !model.visible;
     control.disabled = busy;
-    control.textContent = busy ? 'Loading Training…' : model.label;
+    control.textContent = busy ? 'Loading Training…' : loadRecovery.required ? TRAINING_RELOAD_LABEL : model.label;
     control.dataset.trainingControlAction = model.action || '';
     control.setAttribute('aria-busy', String(Boolean(busy)));
+    if (loadRecovery.required) control.setAttribute('aria-haspopup', 'dialog');
+    else control.removeAttribute('aria-haspopup');
     if (lastError) control.title = lastError;
     else control.removeAttribute('title');
+    if (feedback) {
+      feedback.textContent = !control.hidden
+        ? loadRecovery.required ? TRAINING_RELOAD_MESSAGE : lastError
+        : '';
+      feedback.hidden = !feedback.textContent;
+    }
   };
 
   const navigateTo = (route) => {
@@ -425,6 +447,7 @@ export function createSoloFirstRunTraining({
         }
         return result;
       } catch (error) {
+        loadRecovery.record(error);
         lastError = text(error?.message).slice(0, 300) || 'Training is temporarily unavailable.';
         throw error;
       } finally {
@@ -504,11 +527,21 @@ export function createSoloFirstRunTraining({
     get activation() { return activation; },
     get runtime() { return runtime; },
     get state() { return runtime?.state || null; },
-    attachControl(nextControl) {
+    attachControl(nextControl, { feedback: nextFeedback = null } = {}) {
       if (control && controlListener) control.removeEventListener('click', controlListener);
+      loadRecovery.dismiss();
       control = nextControl?.addEventListener ? nextControl : null;
+      feedback = nextFeedback;
       controlListener = control
-        ? () => { void activate({ trigger: control }).catch(() => {}); }
+        ? () => {
+          if (loadRecovery.required) {
+            const candidate = typeof beforeOpen === 'function'
+              ? beforeOpen({ action: 'reload', control, page }) : control;
+            loadRecovery.open(resolveTrigger(candidate));
+            return;
+          }
+          void activate({ trigger: control }).catch(() => {});
+        }
         : null;
       if (controlListener) control.addEventListener('click', controlListener);
       renderControl();
@@ -526,6 +559,9 @@ export function createSoloFirstRunTraining({
       generation += 1;
       if (control && controlListener) control.removeEventListener('click', controlListener);
       if (control) control.hidden = true;
+      if (feedback) feedback.hidden = true;
+      feedback = null;
+      loadRecovery.destroy();
       control = null;
       controlListener = null;
       runtimeStateUnsubscribe?.();
