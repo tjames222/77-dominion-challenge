@@ -153,6 +153,12 @@ export default defineConfig({
       metadata: { breakpoint: 'mobile', theme: 'dark', colorScheme: 'dark' },
       use: { ...devices['iPhone 13'], browserName: 'webkit', viewport: { width: 390, height: 844 } },
     },
+    {
+      name: 'webkit-reward-celebrations-mobile',
+      testMatch: /reward-celebrations(?:-failure)?\.spec\.mjs/,
+      metadata: { breakpoint: 'mobile', theme: 'dark', colorScheme: 'dark' },
+      use: { ...devices['iPhone 13'], browserName: 'webkit', viewport: { width: 390, height: 844 } },
+    },
     ...visualProjects,
   ],
 });

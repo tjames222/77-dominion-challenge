@@ -2,7 +2,6 @@ import { initReveal } from './reveal';
 import {
   claimRewardOffer,
   claimChallengeUnlocks,
-  claimRewardEntitlementUnlocks,
   downloadRewardAsset,
   getAllRewardCatalog,
   getBillingState,
@@ -23,6 +22,7 @@ import {
 } from './badges-rewards.mjs';
 import { renderGameProgress } from './game-progress.mjs';
 import { createBadgeCollection } from './badge-collection.mjs';
+import { rewardKeyFromLocation } from './reward-celebrations.mjs';
 import {
   buildFulfillmentDialogModel,
 } from './reward-fulfillment.mjs';
@@ -517,15 +517,13 @@ async function loadBadgesAndRewards({ claimUnlocks = true } = {}) {
     if (feedback) feedback.textContent = '';
     if (!claimUnlocks) return;
 
-    const [ownershipClaim, challengeClaim] = await Promise.allSettled([
-      claimRewardEntitlementUnlocks({ expectedUserId }),
+    // Viewing a collection is not a presentation acknowledgement. Permanent
+    // rewards remain unseen until their queued celebration is dismissed.
+    const [challengeClaim] = await Promise.allSettled([
       claimChallengeUnlocks({ expectedUserId }),
     ]);
     if (requestId !== loadRequestId || pageActorId !== expectedUserId) return;
     const unlocks = [];
-    if (ownershipClaim.status === 'fulfilled') {
-      unlocks.push(...ownershipClaim.value.claimedUnlocks);
-    }
     if (challengeClaim.status === 'fulfilled') {
       unlocks.push(...challengeClaim.value.claimedUnlocks);
     }
@@ -647,7 +645,18 @@ async function bootBadgesAndRewards() {
     if (!user?.authenticated || user.userId !== pageActorId) invalidatePageActor(user);
   });
 
-  await loadBadgesAndRewards();
+  const deepLinkKey = rewardKeyFromLocation(window.location);
+  await loadBadgesAndRewards({ claimUnlocks: !deepLinkKey });
+  if (deepLinkKey && !actorInvalidated) {
+    activateTab(tabs.find((tab) => tab.dataset.tab === 'rewards-panel'));
+    const trigger = [...(rewardsList?.querySelectorAll('[data-view-reward]') || [])]
+      .find((button) => button.dataset.viewReward === deepLinkKey);
+    if (trigger) {
+      trigger.closest('[data-reward-key]')?.scrollIntoView({ block: 'center' });
+      trigger.focus({ preventScroll: true });
+      await openRewardDetail(deepLinkKey, trigger);
+    }
+  }
   requestAnimationFrame(() => initReveal());
 }
 

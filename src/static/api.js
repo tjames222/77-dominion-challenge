@@ -58,6 +58,7 @@ import { normalizeEarnedBadges } from './badges-rewards.mjs';
 import { PREVIEW_BADGE_STATE_KEY, normalizePreviewBadgeState, recordPreviewBadgeEvent,
   claimPreviewBadgeCelebrations, acknowledgePreviewBadgeCelebrations, previewBadgeCollection } from './badge-preview-state.mjs';
 import { evaluateBadgeEvent } from './badge-evaluation.mjs';
+import { claimPreviewRewardCelebrations, acknowledgePreviewRewardCelebrations } from './reward-celebration-preview.mjs';
 import { normalizeJournalEntry, sortJournalEntries } from './journal-entry.mjs';
 import { assertJournalDateAllowed, isJournalDateKey } from './journal-date-picker.mjs';
 import {
@@ -88,6 +89,7 @@ import {
   claimMockRewardEntitlementUnlocks,
   challengeProgressionToRewardCatalog,
   normalizeRewardCatalog,
+  normalizeReward,
 } from './reward-catalog.mjs';
 import { assertSingleCrew, newCrewLifecycleRequestId } from './crew-experience.mjs';
 import {
@@ -1756,6 +1758,59 @@ export async function getAllRewardCatalog({ pageSize = 100, expectedUserId = '' 
       nextCursor: null,
     },
   });
+}
+
+const MOCK_REWARD_CELEBRATION_LEASES_KEY = 'dominion:rewardCelebrationLeases';
+
+export async function claimRewardCelebrations({ expectedUserId = '', claimToken } = {}) {
+  if (isLocalDemoMode()) {
+    if (globalThis.navigator?.onLine === false) throw new Error('Reward delivery will retry when you are back online.');
+    await requireHybridPreviewUser(expectedUserId);
+    const actorId = requireMockRewardActor(expectedUserId);
+    const result = claimPreviewRewardCelebrations({
+      catalog: getMockRewardCatalog(),
+      leases: readMockUserValue(MOCK_REWARD_CELEBRATION_LEASES_KEY, {}),
+      claimToken,
+    });
+    writeMockUserValue(MOCK_REWARD_CELEBRATION_LEASES_KEY, result.leases);
+    await requireHybridPreviewUser(actorId);
+    requireMockRewardActor(actorId);
+    return { claimedUnlocks: result.claimedUnlocks, claimToken, leaseSeconds: 900 };
+  }
+  const client = requireSupabase();
+  const actor = await requireUser(expectedUserId);
+  const { data, error } = await client.rpc('claim_reward_celebrations', {
+    target_expected_actor_id: actor.id, target_claim_token: claimToken,
+  });
+  await requireUser(actor.id);
+  if (error) throw error;
+  return { ...data, claimedUnlocks: (data?.claimedUnlocks || []).map(normalizeReward) };
+}
+
+export async function acknowledgeRewardCelebrations({ expectedUserId = '', claimToken, rewardKeys = [] } = {}) {
+  if (isLocalDemoMode()) {
+    if (globalThis.navigator?.onLine === false) throw new Error('Reward acknowledgement will retry when you are back online.');
+    await requireHybridPreviewUser(expectedUserId);
+    const actorId = requireMockRewardActor(expectedUserId);
+    const result = acknowledgePreviewRewardCelebrations({
+      ownershipRecords: readMockUserValue(MOCK_REWARD_ENTITLEMENTS_KEY, []),
+      leases: readMockUserValue(MOCK_REWARD_CELEBRATION_LEASES_KEY, {}),
+      claimToken, rewardKeys,
+    });
+    writeMockUserValue(MOCK_REWARD_ENTITLEMENTS_KEY, result.ownershipRecords);
+    writeMockUserValue(MOCK_REWARD_CELEBRATION_LEASES_KEY, result.leases);
+    await requireHybridPreviewUser(actorId);
+    requireMockRewardActor(actorId);
+    return { acknowledgedKeys: result.acknowledgedKeys };
+  }
+  const client = requireSupabase();
+  const actor = await requireUser(expectedUserId);
+  const { data, error } = await client.rpc('acknowledge_reward_celebrations', {
+    target_expected_actor_id: actor.id, target_claim_token: claimToken, target_reward_keys: rewardKeys,
+  });
+  await requireUser(actor.id);
+  if (error) throw error;
+  return data || { acknowledgedKeys: [] };
 }
 
 export async function claimRewardEntitlementUnlocks({ expectedUserId = '' } = {}) {

@@ -13892,3 +13892,4 @@ revoke execute on function public.grant_sharing_reward_after_invite_redemption()
 \ir migrations/20260824204444_enforce_journal_entry_dates.sql
 \ir migrations/20260913023402_early_access_request_intake.sql
 \ir migrations/20260913033347_deterministic_badge_pipeline.sql
+\ir migrations/20260913035046_durable_reward_celebrations.sql

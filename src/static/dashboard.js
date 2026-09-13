@@ -2,7 +2,9 @@ import { initReveal } from './reveal';
 import { acquireDialogLayer } from './dialog.mjs';
 import {
   acknowledgeBadgeCelebrations,
+  acknowledgeRewardCelebrations,
   claimBadgeCelebrations,
+  claimRewardCelebrations,
   claimChallengeUnlocks,
   getBillingState,
   getChallengeActivation,
@@ -22,6 +24,8 @@ import {
 } from './api';
 import { badgeCatalogOrder, badgeCelebrationReason } from './badge-evaluation.mjs';
 import { createBadgeCelebrationRecovery } from './badge-celebrations.mjs';
+import { createRewardCelebrationRecovery } from './reward-celebrations.mjs';
+import { presentPermanentRewardCelebration } from './reward-celebration-view.js';
 import { DIFFICULTY_OPTIONS, calculateCheckInScore, normalizeWorkoutDifficulty } from './scoring.mjs';
 import { dailyStandardRoute } from './daily-standard-routes.mjs';
 import {
@@ -514,20 +518,15 @@ function showChallengeUnlockCelebration(challenges = []) {
     },
   };
 }
-function queueChallengeUnlockCelebration(challenges = [], delay = 0, owner = captureMutationOwner()) {
+function queueChallengeUnlockCelebration(challenges = [], owner = captureMutationOwner()) {
   if (!challenges.length || !isCurrentMutationOwner(owner)) return;
   const challengeKey = challenges.map((challenge) => challenge.key || challenge.id || challenge.title).sort().join(':');
-  const enqueue = () => {
-    if (!isCurrentMutationOwner(owner)) return;
-    enqueueCelebrationItems({
-      id: `challenge:${challengeKey}`,
-      kind: 'challenge',
-      challenges,
-      durationMs: BADGE_REVEAL_DURATION_MS,
-    });
-  };
-  if (delay > 0) window.setTimeout(enqueue, delay);
-  else enqueue();
+  enqueueCelebrationItems({
+    id: `challenge:${challengeKey}`,
+    kind: 'challenge',
+    challenges,
+    durationMs: BADGE_REVEAL_DURATION_MS,
+  });
 }
 let startDate = '';
 let challengeActivation = createChallengeActivationState('loading');
@@ -592,6 +591,13 @@ const badgeCelebrationRecovery = createBadgeCelebrationRecovery({
   sessionStorage,
   isCurrentOwner: (owner) => isCurrentMutationOwner(owner),
 });
+const permanentRewardRecovery = createRewardCelebrationRecovery({
+  claim: claimRewardCelebrations,
+  acknowledge: acknowledgeRewardCelebrations,
+  storage: localStorage,
+  sessionStorage,
+  isCurrentOwner: (owner) => isCurrentMutationOwner(owner),
+});
 const presentCelebrationItem = (item) => {
   if (item.kind === 'reward') return showRewardToast(item.reward);
   if (item.kind === 'badge') {
@@ -602,6 +608,10 @@ const presentCelebrationItem = (item) => {
     } };
   }
   if (item.kind === 'challenge') return showChallengeUnlockCelebration(item.challenges);
+  if (item.kind === 'permanentReward') return presentPermanentRewardCelebration(item, {
+    dismiss: (reason) => celebrationSequence.dismissCurrent(reason),
+    complete: (reward, reason) => permanentRewardRecovery.complete(reward, reason),
+  });
   return {};
 };
 const celebrationSequence = createCelebrationQueue({
@@ -637,7 +647,6 @@ function queueCheckInCelebrations({ id, points = 0, earnedBadges = [], status = 
 }
 async function refreshChallengeProgression({
   claimCelebrations = false,
-  celebrationDelay = 0,
   owner = captureMutationOwner(),
 } = {}) {
   if (!claimCelebrations) return [];
@@ -645,7 +654,7 @@ async function refreshChallengeProgression({
   try {
     const result = await claimChallengeUnlocks({ expectedUserId: owner.userId });
     if (!isCurrentMutationOwner(owner)) return [];
-    queueChallengeUnlockCelebration(result.claimedUnlocks, celebrationDelay, owner);
+    queueChallengeUnlockCelebration(result.claimedUnlocks, owner);
     return result.claimedUnlocks;
   } catch (error) {
     console.warn('Unable to claim challenge unlock celebrations', error);
@@ -1415,6 +1424,7 @@ async function handleDashboardAuthOwnerChange(nextUser, { force = false } = {}) 
       return;
     }
     await hydrateDashboardFromApi(nextOwner);
+    await recoverPendingCelebrations();
   } catch (error) {
     if (observedAuthOwner !== nextOwner) return;
     console.warn('Unable to rehydrate the dashboard after an account change', error);
@@ -1450,13 +1460,43 @@ function queuePendingBadgeCelebrations(earnedBadges) {
   })));
 }
 
+async function queuePermanentRewardAndChallengeCelebrations(owner, { recovery = false } = {}) {
+  if (!isCurrentMutationOwner(owner)) return;
+  const rewards = await permanentRewardRecovery.collect(owner, { recovery });
+  if (!isCurrentMutationOwner(owner)) return;
+  enqueueCelebrationItems(rewards);
+  // The challenge stage is appended only after reward delivery resolves. A
+  // failed reward lookup returns no items and cannot block challenge recovery.
+  if (canParticipateInChallenge()) await refreshChallengeProgression({ claimCelebrations: true, owner });
+}
+
+const pendingCelebrationRecoveries = new Map();
+function recoverPendingCelebrations() {
+  const owner = captureMutationOwner();
+  if (!owner || checkInSubmissionPending || document.hidden || navigator.onLine === false) return Promise.resolve();
+  const key = `${owner.userId}:${owner.epoch}`;
+  if (pendingCelebrationRecoveries.has(key)) return pendingCelebrationRecoveries.get(key);
+  const operation = (async () => {
+    const pendingBadges = await collectPendingBadgeCelebrations(owner);
+    if (!isCurrentMutationOwner(owner)) return;
+    queuePendingBadgeCelebrations(pendingBadges);
+    await queuePermanentRewardAndChallengeCelebrations(owner, { recovery: true });
+  })().finally(() => pendingCelebrationRecoveries.delete(key));
+  pendingCelebrationRecoveries.set(key, operation);
+  return operation;
+}
+
 function startDashboardForegroundRefresh() {
   const refreshIfVisible = () => {
-    if (document.hidden || !hasSupabaseAuth()) return;
-    void hydrateDashboardFromApi(observedAuthOwner);
+    if (document.hidden || navigator.onLine === false || checkInSubmissionPending || (!hasSupabaseAuth() && !localDemoMode)) return;
+    void hydrateDashboardFromApi(observedAuthOwner).then(() => recoverPendingCelebrations());
   };
   window.addEventListener('focus', refreshIfVisible);
   document.addEventListener('visibilitychange', refreshIfVisible);
+  // Recover remote-device grants while the page stays open and renew active
+  // delivery leases without polling hidden/offline pages.
+  const timer = window.setInterval(refreshIfVisible, 60_000);
+  window.addEventListener('pagehide', () => window.clearInterval(timer), { once: true });
 }
 
 async function recordDailyAppVisit() {
@@ -1475,16 +1515,11 @@ async function recordDailyAppVisit() {
       }, gameStats);
     }
     if (hasSupabaseAuth()) await refreshGameSummary(owner);
-    queuePendingBadgeCelebrations(await collectPendingBadgeCelebrations(owner));
     if (!isCurrentMutationOwner(owner)) return;
     render();
   } catch (error) {
     if (!isCurrentMutationOwner(owner)) return;
     console.warn('Unable to record daily app visit', error);
-  } finally {
-    if (isCurrentMutationOwner(owner) && canParticipateInChallenge()) {
-      await refreshChallengeProgression({ claimCelebrations: true, celebrationDelay: 450 });
-    }
   }
 }
 
@@ -1544,7 +1579,7 @@ window.addEventListener('online', () => {
   challengeStartFlow?.setOnline(true);
   setDashboardActivationStatus('Connection restored. Refreshing challenge activation…');
   render();
-  if (observedAuthOwner) void hydrateDashboardFromApi(observedAuthOwner);
+  if (observedAuthOwner) void hydrateDashboardFromApi(observedAuthOwner).then(() => recoverPendingCelebrations());
 });
 
 if (rewardBackdrop && rewardToast) {
@@ -1697,8 +1732,9 @@ window.addEventListener('storage', (event) => {
     'dominion:mockChallengeActivation',
     'dominion:mockChallengeStates',
     'dominion:mockChallengeThresholdsVersion',
+    'dominion:mockRewardEntitlements',
   ].includes(event.key)) {
-    void hydrateDashboardFromApi(observedAuthOwner);
+    void hydrateDashboardFromApi(observedAuthOwner).then(() => recoverPendingCelebrations());
     return;
   } else return;
 });
@@ -1845,10 +1881,7 @@ if (checkInButton) checkInButton.addEventListener('click', async () => {
       earnedBadges,
       status,
     });
-    await refreshChallengeProgression({
-      claimCelebrations: true,
-      celebrationDelay: 0,
-    });
+    await queuePermanentRewardAndChallengeCelebrations(submissionOwner);
   } catch (error) {
     if (!isCurrentMutationOwner(submissionOwner)) return;
     console.warn('Unable to sync check-in', error);
@@ -1896,6 +1929,7 @@ async function bootDashboard() {
     window.addEventListener('pagehide', unsubscribeAuth, { once: true });
     window.addEventListener('pagehide', () => invalidateDashboardOwner(''), { once: true });
     window.addEventListener('pagehide', () => badgeCelebrationRecovery.release(), { once: true });
+    window.addEventListener('pagehide', () => permanentRewardRecovery.release(), { once: true });
     window.addEventListener('pageshow', (event) => { if (event.persisted) window.location.reload(); });
 
     const billing = await getBillingState();
@@ -1913,9 +1947,7 @@ async function bootDashboard() {
   await hydrateDashboardFromApi(observedAuthOwner);
   render();
   if (hasSupabaseAuth() || localDemoMode) await recordDailyAppVisit();
-  else if (canParticipateInChallenge()) {
-    await refreshChallengeProgression({ claimCelebrations: true, celebrationDelay: 450 });
-  }
+  await recoverPendingCelebrations();
   startCountdownCard();
   startDashboardForegroundRefresh();
   requestAnimationFrame(() => initReveal());
