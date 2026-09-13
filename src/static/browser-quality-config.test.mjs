@@ -14,6 +14,7 @@ const playwrightConfig = readFileSync(
   new URL('../../playwright.config.mjs', import.meta.url),
   'utf8',
 );
+const mfaPlaywrightConfig = readFileSync(new URL('../../playwright.mfa.config.mjs', import.meta.url), 'utf8');
 const deployWorkflow = readFileSync(
   new URL('../../.github/workflows/deploy.yml', import.meta.url),
   'utf8',
@@ -55,6 +56,17 @@ test('manual baseline generation forcibly rewrites every screenshot', () => {
     workflow,
     /- name: Generate reviewable Linux visual baselines[\s\S]*?run: pnpm test:e2e:update/,
   );
+});
+
+test('required browser CI includes production-mode MFA with only a local synthetic provider', () => {
+  assert.equal(packageJson.scripts['test:e2e:mfa'], 'playwright test --config=playwright.mfa.config.mjs');
+  assert.match(workflow, /- name: Hybrid dev authentication regression\n\s+run: pnpm test:e2e:auth\n\n\s+- name: MFA production-mode authentication regression\n\s+run: pnpm test:e2e:mfa/);
+  assert.match(playwrightConfig, /\/mfa-live-auth\\\.spec\\\.mjs\//);
+  assert.match(mfaPlaywrightConfig, /VITE_ENABLE_MOCKS: 'false', VITE_ENABLE_PRODUCTION_CONNECTIONS: 'true'/);
+  assert.match(mfaPlaywrightConfig, /VITE_SUPABASE_URL: `\$\{baseURL\}\/__mfa_fixture__`/);
+  assert.match(mfaPlaywrightConfig, /const baseURL = `http:\/\/127\.0\.0\.1:\$\{port\}`/);
+  assert.doesNotMatch(mfaPlaywrightConfig, /supabase\.co|SUPABASE_ACCESS_TOKEN|SERVICE_ROLE_KEY|CLOUDFLARE_API_TOKEN/);
+  assert.match(mfaPlaywrightConfig, /outputFolder: 'playwright-report'/);
 });
 
 test('browser diagnostics are short-lived and uploaded only when the gate fails', () => {

@@ -70,6 +70,16 @@ export const PRODUCTION_ROUTES = Object.freeze([
     surfaces: ['navigation', 'actions', 'error'],
   },
   {
+    id: 'accountSecurity',
+    path: '/account-security.html',
+    htmlEntry: 'account-security.html',
+    title: 'Account Security | Dominion',
+    access: 'authenticated',
+    defaultState: 'member',
+    ready: '#securityCard[aria-busy="false"]',
+    surfaces: ['forms', 'actions', 'loading', 'error'],
+  },
+  {
     id: 'billing',
     path: '/billing.html',
     htmlEntry: 'billing.html',

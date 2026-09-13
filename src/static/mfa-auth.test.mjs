@@ -81,7 +81,7 @@ test('malformed code and foreign factor ID cannot initiate a provider challenge'
 test('provider confirmation is required even when verify returned no error', async () => {
   const { adapter, auth } = fixture({ enrolled: true });
   auth.mfa.verify = async () => ({ error: null });
-  await assert.rejects(adapter.verify({ expectedUserId: A, factorId: F, code: '012345' }), { code: 'MFA_NOT_CONFIRMED' });
+  await assert.rejects(adapter.verify({ expectedUserId: A, factorId: F, code: '012345' }), { code: 'MFA_NOT_CONFIRMED', factorVerified: true });
 });
 
 test('lost successful verify response reconciles provider AAL2 without removing the factor', async () => {
@@ -97,7 +97,7 @@ test('lost response with server-verified factor and client AAL1 permits a fresh-
   await adapter.enroll({ expectedUserId: A });
   const verify = auth.mfa.verify;
   auth.mfa.verify = async () => { state.factors = [factor()]; throw new Error('Response lost'); };
-  await assert.rejects(adapter.verify({ expectedUserId: A, factorId: F, code: '012345' }), { code: 'MFA_NOT_CONFIRMED' });
+  await assert.rejects(adapter.verify({ expectedUserId: A, factorId: F, code: '012345' }), { code: 'MFA_NOT_CONFIRMED', factorVerified: true });
   auth.mfa.verify = verify;
   assert.equal((await adapter.verify({ expectedUserId: A, factorId: F, code: '012345' })).verified, true);
 });
@@ -161,6 +161,30 @@ test('same-actor token refresh does not cancel verification', async () => {
   const verify = auth.mfa.verify;
   auth.mfa.verify = async (args) => { state.emit('TOKEN_REFRESHED', A); const result = await verify(args); state.emit('MFA_CHALLENGE_VERIFIED', A); return result; };
   assert.equal((await adapter.verify({ expectedUserId: A, factorId: F, code: '012345' })).verified, true);
+});
+
+test('pending enrollment survives same-session SIGNED_IN but not a new immutable session', async () => {
+  const eventSession = (sessionId, iat) => ({ user: { id: A }, access_token: `synthetic.${Buffer.from(JSON.stringify({ sub: A, session_id: sessionId, iat })).toString('base64url')}.synthetic` });
+  const same = '11111111-1111-4111-8111-111111111111';
+  const newer = '22222222-2222-4222-8222-222222222222';
+  const retained = fixture();
+  retained.state.listener('INITIAL_SESSION', eventSession(same, 1));
+  await retained.adapter.enroll({ expectedUserId: A });
+  retained.state.listener('SIGNED_IN', eventSession(same, 2));
+  assert.equal((await retained.adapter.verify({ expectedUserId: A, factorId: F, code: '012345' })).verified, true);
+  const replaced = fixture();
+  replaced.state.listener('INITIAL_SESSION', eventSession(same, 1));
+  await replaced.adapter.enroll({ expectedUserId: A });
+  replaced.state.listener('SIGNED_IN', eventSession(newer, 2));
+  await assert.rejects(replaced.adapter.verify({ expectedUserId: A, factorId: F, code: '012345' }), { code: 'MFA_FACTOR_UNAVAILABLE' });
+});
+
+test('factor limit and coordination failures use fixed copy without automatic cleanup', async () => {
+  const { adapter, auth } = fixture();
+  auth.mfa.enroll = async () => ({ error: { code: 'too_many_enrolled_mfa_factors', message: SECRET } });
+  await assert.rejects(adapter.enroll({ expectedUserId: A }), (error) => error.code === 'MFA_FACTOR_LIMIT' && !error.message.includes(SECRET));
+  auth.mfa.enroll = async () => { throw Object.assign(new Error(SECRET), { code: 'MFA_COORDINATION_UNAVAILABLE' }); };
+  await assert.rejects(adapter.enroll({ expectedUserId: A }), (error) => error.code === 'MFA_COORDINATION_UNAVAILABLE' && !error.message.includes(SECRET));
 });
 
 test('signout and disposal invalidate pending ownership; observer performs no provider calls', async () => {

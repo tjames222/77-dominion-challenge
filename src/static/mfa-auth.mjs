@@ -2,6 +2,18 @@ const FACTOR_ID = /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i;
 const CODE = /^\d{6}$/;
 const text = (value) => typeof value === 'string' ? value.trim() : '';
 
+// Non-authoritative lifecycle marker only; provider getUser/AAL checks still
+// decide actor and verification state. SIGNED_IN alone is not a new session:
+// Supabase can emit it when an existing browser tab regains focus.
+export function authSessionIdentity(session) {
+  try {
+    const encoded = session.access_token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/');
+    const payload = JSON.parse(globalThis.atob(encoded));
+    if (!FACTOR_ID.test(payload.session_id) || !FACTOR_ID.test(payload.sub) || payload.sub !== session.user?.id) return '';
+    return `${payload.sub}:${payload.session_id}`;
+  } catch { return ''; }
+}
+
 export function mfaError(code = 'MFA_UNAVAILABLE') {
   const messages = {
     MFA_UNAVAILABLE: 'Account security is temporarily unavailable. Please try again.',
@@ -12,15 +24,21 @@ export function mfaError(code = 'MFA_UNAVAILABLE') {
     MFA_INVALID_CODE: 'Enter the current six-digit code from your authenticator and try again.',
     MFA_FACTOR_UNAVAILABLE: 'This authenticator is no longer available. Reload account security.',
     MFA_RATE_LIMIT: 'Too many attempts. Wait a little, then try again.',
+    MFA_FACTOR_LIMIT: 'This account has reached its authenticator setup limit. Contact support for help; no authenticator has been removed.',
     MFA_NOT_CONFIRMED: 'Verification could not be confirmed. Try a fresh code; your authenticator has not been removed.',
+    MFA_COORDINATION_UNAVAILABLE: 'This browser cannot safely coordinate account security. Use a current browser with site storage enabled, then try again.',
   };
   return Object.assign(new Error(messages[code] || messages.MFA_UNAVAILABLE), { code });
 }
 
 function providerError(error, fallback = 'MFA_UNAVAILABLE') {
   const code = text(error?.code);
+  if (['MFA_ACTOR_CHANGED', 'MFA_COORDINATION_UNAVAILABLE'].includes(code)) return mfaError(code);
   if (['mfa_verification_failed', 'mfa_verification_rejected', 'mfa_challenge_expired'].includes(code)) return mfaError('MFA_INVALID_CODE');
   if (code.includes('rate_limit') || error?.status === 429) return mfaError('MFA_RATE_LIMIT');
+  if (code === 'too_many_enrolled_mfa_factors') return mfaError('MFA_FACTOR_LIMIT');
+  if (code === 'mfa_verified_factor_exists') return mfaError('MFA_ALREADY_ENABLED');
+  if (code === 'mfa_factor_not_found') return mfaError('MFA_FACTOR_UNAVAILABLE');
   if (code === 'session_not_found' || code === 'refresh_token_not_found') return mfaError('MFA_SIGNED_OUT');
   return mfaError(fallback);
 }
@@ -47,15 +65,19 @@ export function createSupabaseMfaAdapter(auth) {
   if (!auth?.mfa || typeof auth.getUser !== 'function') throw new TypeError('A Supabase Auth client is required.');
   let epoch = 0;
   let observedActor = null;
+  let observedSession = null;
   let destroyed = false;
   const pendingFactors = new Map();
   const subscription = auth.onAuthStateChange?.((event, session) => {
     const next = text(session?.user?.id);
-    if (event === 'SIGNED_OUT' || (observedActor !== null && next !== observedActor)) {
+    const nextSession = authSessionIdentity(session);
+    if (event === 'SIGNED_OUT' || (observedActor !== null && next !== observedActor)
+      || (observedSession && nextSession !== observedSession)) {
       epoch += 1;
       pendingFactors.clear();
     }
     observedActor = next;
+    observedSession = nextSession;
   });
 
   const assertEpoch = (captured) => {
@@ -116,7 +138,7 @@ export function createSupabaseMfaAdapter(auth) {
     let response;
     try {
       response = await auth.mfa.enroll({ factorType: 'totp', friendlyName: `Dominion ${globalThis.crypto.randomUUID().slice(0, 8)}`, issuer: '77 Dominion' });
-    } catch { throw mfaError('MFA_UNAVAILABLE'); }
+    } catch (error) { throw providerError(error); }
     if (response.error) throw providerError(response.error);
     await actor(state.userId, captured);
     const data = response.data;
@@ -141,7 +163,7 @@ export function createSupabaseMfaAdapter(auth) {
     }
     await actor(state.userId, captured);
     let challenge;
-    try { challenge = await auth.mfa.challenge({ factorId }); } catch { throw mfaError('MFA_UNAVAILABLE'); }
+    try { challenge = await auth.mfa.challenge({ factorId }); } catch (error) { throw providerError(error); }
     if (challenge.error) throw providerError(challenge.error);
     if (!FACTOR_ID.test(challenge.data?.id || '')) throw mfaError('MFA_UNAVAILABLE');
     await actor(state.userId, captured);
@@ -149,7 +171,10 @@ export function createSupabaseMfaAdapter(auth) {
     try {
       const result = await auth.mfa.verify({ factorId, challengeId: challenge.data.id, code: text(code) });
       verificationError = result.error || null;
-    } catch { verificationError = { code: 'response_lost' }; }
+    } catch (error) {
+      if (['MFA_ACTOR_CHANGED', 'MFA_COORDINATION_UNAVAILABLE'].includes(error?.code)) throw mfaError(error.code);
+      verificationError = { code: 'response_lost' };
+    }
     await actor(state.userId, captured);
     // Also reconcile a lost successful response; never guess success or delete
     // a factor because a network response was lost during verification.
@@ -162,8 +187,14 @@ export function createSupabaseMfaAdapter(auth) {
       pendingFactors.delete(factorId);
       return confirmed;
     }
-    if (verificationError) throw providerError(verificationError, 'MFA_NOT_CONFIRMED');
-    throw mfaError('MFA_NOT_CONFIRMED');
+    const failure = verificationError
+      ? providerError(verificationError, 'MFA_NOT_CONFIRMED')
+      : mfaError('MFA_NOT_CONFIRMED');
+    // The factor can become verified while a lost response leaves this client
+    // at AAL1. Let the UI clear enrollment secrets and switch to a fresh-code
+    // challenge without treating that partial state as session success.
+    failure.factorVerified = confirmed.factors.some((factor) => factor.id === factorId);
+    throw failure;
   };
 
   const cancelEnrollment = async ({ expectedUserId, factorId } = {}) => {

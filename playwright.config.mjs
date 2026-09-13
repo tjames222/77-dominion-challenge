@@ -105,6 +105,7 @@ export default defineConfig({
         /visual-routes\.spec\.mjs/,
         /fou-1452-hybrid-auth\.spec\.mjs/,
         /local-production-stack\.spec\.mjs/,
+        /mfa-live-auth\.spec\.mjs/,
       ],
       metadata: {
         breakpoint: 'desktop',
@@ -116,6 +117,12 @@ export default defineConfig({
         viewport: { width: 1440, height: 1000 },
         colorScheme: 'dark',
       },
+    },
+    {
+      name: 'webkit-mfa-mobile',
+      testMatch: /mfa-security\.spec\.mjs/,
+      metadata: { breakpoint: 'mobile', theme: 'dark', colorScheme: 'dark' },
+      use: { ...devices['iPhone 13'], browserName: 'webkit', viewport: { width: 390, height: 844 } },
     },
     {
       name: 'webkit-share-composer-mobile',

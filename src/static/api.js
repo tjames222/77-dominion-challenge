@@ -1,4 +1,6 @@
 import { createClient } from '@supabase/supabase-js';
+import { authSessionIdentity, createSupabaseMfaAdapter, sessionRequiresMfa } from './mfa-auth.mjs';
+import { createMfaSessionGuard } from './mfa-session-guard.mjs';
 import {
   DEFAULT_CHALLENGE_DEFINITIONS,
   acknowledgeChallengeRecord,
@@ -175,15 +177,40 @@ const ALLOW_SUPABASE_CLIENT = shouldCreateSupabaseClient({
   productionConnectionsEnabled: ENABLE_PRODUCTION_CONNECTIONS,
   localHybridEnabled: ENABLE_LOCAL_HYBRID_AUTH,
 });
+const supabaseAuthStorageKey = ALLOW_SUPABASE_CLIENT
+  ? `sb-${new URL(SUPABASE_URL).hostname.split('.')[0]}-auth-token`
+  : '';
+const browserAuthStorage = () => {
+  try { return globalThis.localStorage; } catch { return null; }
+};
+const mfaSessionGuard = ALLOW_SUPABASE_CLIENT ? createMfaSessionGuard({
+  supabaseUrl: SUPABASE_URL,
+  storageKey: supabaseAuthStorageKey,
+  storage: browserAuthStorage(),
+  fetch: globalThis.fetch,
+  locks: globalThis.navigator?.locks,
+  eventTarget: globalThis.window,
+}) : null;
 export const supabase = ALLOW_SUPABASE_CLIENT
   ? createClient(SUPABASE_URL, SUPABASE_KEY, {
+      global: { fetch: mfaSessionGuard.fetch },
       auth: {
+        // Keep the existing SDK storage key and one attributable session write.
+        // Do not configure a separate userStorage ahead of the guarded commit.
+        storageKey: supabaseAuthStorageKey,
+        storage: mfaSessionGuard.storage,
         persistSession: true,
         autoRefreshToken: true,
         detectSessionInUrl: true,
       },
     })
   : null;
+const mfaAdapter = supabase ? createSupabaseMfaAdapter(mfaSessionGuard.protectAuth(supabase.auth)) : null;
+export function cancelMfaOperations() { mfaSessionGuard?.cancelPending(); }
+export function getMfaAuthAdapter() {
+  if (!usesSupabaseAuthentication() || !mfaAdapter) throw new Error('Live account security is unavailable in this preview.');
+  return mfaAdapter;
+}
 export function isLocalDemoMode() {
   if (typeof window === 'undefined') return false;
   return ENABLE_MOCKS || (import.meta.env.DEV && ['localhost', '127.0.0.1', '::1'].includes(window.location.hostname));
@@ -492,7 +519,10 @@ export function subscribeToAuthStateChanges(listener) {
     if (!session?.user && isHybridAuthPreview()) clearLocalAuthenticatedIdentity();
     listener({
       event,
-      user: session?.user ? runtimeUserFromSession(session) : null,
+      sessionIdentity: authSessionIdentity(session),
+      // This synchronous observer must not persist an AAL1 login or call Auth
+      // methods. Owners verify/hydrate outside the provider callback.
+      user: session?.user ? sessionToUser(session) : null,
     });
   });
   return () => data?.subscription?.unsubscribe?.();
@@ -585,11 +615,13 @@ export function saveLocalUserFromSession(session, fallbackName) {
   return user;
 }
 
-function runtimeUserFromSession(session, fallbackName) {
-  return saveLocalUserFromSession(session, fallbackName);
-}
-
 export async function getLocalOrSessionUser() {
+  // Do not hydrate private header/theme/profile UI between password sign-in and
+  // the enrolled user's MFA challenge. The Auth-only security route is separate.
+  if (usesSupabaseAuthentication()) {
+    try { if (await sessionRequiresMfa(supabase.auth)) return null; }
+    catch { return null; }
+  }
   if (isLocalDemoMode()) {
     if (isHybridAuthPreview()) {
       try {
@@ -711,9 +743,14 @@ export async function signInWithPassword({ email, password }) {
     password,
   });
   if (error) throw error;
-  if (data.session?.access_token && hasSupabaseAuth()) await ensureProfile();
+  const mfaState = data.session?.access_token
+    ? await mfaAdapter.getState({ expectedUserId: data.user?.id })
+    : null;
+  if (data.session?.access_token && hasSupabaseAuth() && !mfaState?.requiresChallenge) {
+    await ensureProfile({ expectedUserId: data.user?.id });
+  }
 
-  return { session: data.session, user: data.user };
+  return { session: data.session, user: data.user, mfaRequired: mfaState?.requiresChallenge === true };
 }
 
 export async function requestPasswordRecovery(email) {

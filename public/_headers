@@ -12,6 +12,16 @@
 /invite
   Referrer-Policy: no-referrer
 
+/account-security.html
+  Cache-Control: no-store
+  Referrer-Policy: no-referrer
+  X-Robots-Tag: noindex, nofollow
+
+/account-security
+  Cache-Control: no-store
+  Referrer-Policy: no-referrer
+  X-Robots-Tag: noindex, nofollow
+
 /today-actions.html
   Cache-Control: no-store
   X-Robots-Tag: noindex

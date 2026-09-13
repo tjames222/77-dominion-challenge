@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#0e1116" />
+    <meta name="robots" content="noindex, nofollow" />
+    <meta name="referrer" content="no-referrer" />
+    <script vite-ignore src="./theme-bootstrap.js" data-enable-dominion-night="false"></script>
+    <title>Account Security | Dominion</title>
+    <link rel="stylesheet" href="./src/assets/styles.css" />
+    <link rel="stylesheet" href="./src/assets/product.css" />
+    <link rel="stylesheet" href="./src/assets/dominion-night.css" />
+    <link rel="stylesheet" href="./src/assets/dominion-platinum.css" />
+    <link rel="stylesheet" href="./src/assets/account-security.css" />
+  </head>
+  <body>
+    <main class="app-shell security-shell">
+      <header class="security-header"><a href="./index.html" aria-label="Dominion home">77 DOMINION</a><span>Account security</span></header>
+      <section class="card security-card" data-section-surface="plain" aria-labelledby="securityTitle" aria-busy="true" id="securityCard">
+        <p class="eyebrow">Protect your account</p>
+        <h1 id="securityTitle" tabindex="-1">Account security</h1>
+        <p class="lead" id="securityLead">Checking your secure session…</p>
+        <aside class="security-preview" id="securityPreview" aria-label="Preview simulation" hidden><strong>Preview simulation only.</strong> This does not enable MFA on a live account. Use the simulation code <strong>012345</strong>; do not add this demo to your authenticator.</aside>
+        <div id="securitySetup" hidden>
+          <h2>Add an authenticator</h2>
+          <p>Use a free authenticator app that supports time-based codes. After setup, you’ll enter a six-digit code when logging in.</p>
+          <p>Keep access to your authenticator. Removing or resetting one is not available on this screen.</p>
+          <p class="security-hint">Before setup, close or reload any older Dominion tabs, especially after an app update.</p>
+          <button class="primary" id="securityEnroll" type="button">Set up authenticator</button>
+        </div>
+        <div id="securityEnrollment" hidden>
+          <h2>1. Add this account to your app</h2>
+          <p>On another device, scan this QR code with your authenticator.</p>
+          <div class="security-qr-frame"><img id="securityQr" width="240" height="240" alt="Authenticator setup QR code. The manual setup key is available below." /></div>
+          <div class="security-manual">
+            <h3>On the same phone?</h3>
+            <p>Copy the setup key, open your authenticator, and choose to enter a setup key manually. Name the account “77 Dominion” and choose <strong>Time based</strong>.</p>
+            <label for="securityKey">Setup key — keep this private</label>
+            <input id="securityKey" class="security-key" type="text" readonly autocomplete="off" autocapitalize="off" spellcheck="false" />
+            <button class="secondary" id="securityCopy" type="button">Copy setup key</button>
+            <p class="security-hint">Only paste this into your authenticator. Clear your clipboard afterward.</p>
+          </div>
+        </div>
+        <form id="securityVerifyForm" autocomplete="off" hidden>
+          <h2 id="securityCodeTitle">Enter your authenticator code</h2>
+          <label id="securityFactorLabel" for="securityFactor" hidden>Authenticator<select id="securityFactor"></select></label>
+          <label for="securityCode">Six-digit code</label>
+          <input id="securityCode" class="security-code" type="text" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" minlength="6" maxlength="6" required aria-describedby="securityCodeHint" />
+          <p class="security-hint" id="securityCodeHint">Open your authenticator and enter the current code, including any starting zero. Codes change about every 30 seconds.</p>
+          <div class="security-actions"><button class="primary" id="securityVerify" type="submit">Verify code</button><button class="secondary" id="securityCancel" type="button">Cancel setup</button></div>
+        </form>
+        <div id="securitySuccess" hidden>
+          <h2>Authenticator enabled</h2>
+          <p id="securitySuccessCopy">Your authenticator and this session have been verified. Keep your authenticator available for your next login.</p>
+          <button class="primary" id="securityContinue" type="button">Continue</button>
+        </div>
+        <p class="security-status" id="securityStatus" role="status" aria-live="polite" aria-atomic="true" tabindex="-1"></p>
+        <button class="secondary" id="securityRetry" type="button" hidden>Retry security check</button>
+        <div class="security-footer"><a id="securityProfileLink" href="./profile.html" hidden>Back to profile</a><button class="security-signout" id="securitySignOut" type="button" hidden>Sign out</button></div>
+      </section>
+      <p class="security-footnote">Never share a setup key or one-time code with support. A verification code is entered only here or in your authenticator.</p>
+    </main>
+    <script type="module" src="./src/static/account-security.js"></script>
+  </body>
+</html>

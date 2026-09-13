@@ -12,12 +12,15 @@ test('MFA return preserves known local challenge intent and disallows auth loops
 });
 
 test('MFA return filters decoded sensitive query and fragment keys, case-insensitively', () => {
-  for (const key of ['%61ccess_token', 'ACCESS_TOKEN', 'refresh_token', 'c%6fde', 'token', 'invi%74e', 'SECRET']) {
+  for (const key of ['%61ccess_token', 'ACCESS_TOKEN', 'refresh_token', 'c%6fde', 'token', 'invi%74e', 'SECRET', 'provider_token', 'provider_refresh_token', 'token_hash', 'returnTo', 'next']) {
     for (const prefix of ['?', '#', '#?']) {
       assert.equal(mfaReturnTo(`/profile.html${prefix}${key}=private`, origin), './dashboard.html');
     }
   }
   assert.equal(mfaReturnTo('/invite?code=private', origin), './invite.html');
+  assert.equal(mfaReturnTo('/profile#future_provider_credential=private', origin), './profile.html');
+  assert.equal(mfaReturnTo('/profile?returnTo=%2Fprofile%23access_token%3Dprivate', origin), './dashboard.html');
+  assert.equal(mfaReturnTo('/community?intent=challenge-start', origin), './community.html?intent=challenge-start');
 });
 
 test('challenge and explicit fresh step-up modes use sanitized return targets', () => {
