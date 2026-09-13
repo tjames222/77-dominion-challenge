@@ -29,6 +29,19 @@ same-user session, mutations, storage changes, or page exit. MFA presentation
 gating and the existing guarded Supabase client remain in force. This is not a
 claim that all ordinary Data API endpoints enforce MFA on the server.
 
+Same-session Auth refreshes also increment a non-authoritative verification
+revision: an unchanged session UUID alone cannot preserve an earlier AAL check.
+The focused client checks MFA again after its verified-user/session post-check,
+then confirms the session marker. A notification overlapping verification repeats
+only those checks, up to three attempts; sustained refresh churn fails closed.
+Safe same-session refreshes keep the same pending RPC. No assurance decision or
+settled private response is cached. The page schedules its MFA gate check outside
+the synchronous Auth callback and clears the rendered draft before redirecting
+when a same-session refresh requires a challenge.
+If a notification lands after the last verification while its promise settles,
+the final publication fence rejects the response into the existing retry state;
+it never publishes private state using the superseded verification revision.
+
 All seven pages use this route-specific bootstrap in production wiring. Pure
 mock/hybrid preview keeps its existing actor-scoped simulated data path. A
 20-second loading deadline and explicit retry prevent an indefinite spinner.
@@ -47,6 +60,8 @@ conditions apply; session refreshes are additional.
 The new route loader makes **one focused RPC**, with two fresh `getUser` checks
 and local session/AAL checks. It requests no Dashboard feed, 90-day histories,
 stats, badges, separate billing decision, or draft/time-zone preflight.
+Overlapping Auth notifications can add bounded verification checks, but do not
+repeat the focused data RPC solely because a safe token refresh occurred.
 
 This is **not a one-request whole page**. Existing shared header, app visit,
 theme, admin-navigation readiness, and eligible training requests remain separate
@@ -65,6 +80,10 @@ recovery have separate costs. Further shared-shell/request work remains open.
   Cross-tab A → B → A and same-actor/new-session notifications reject held
   results and rehydrate outside the synchronous provider callback. An enrolled
   replacement session reaches the existing MFA gate without an Auth deadlock.
+  Same-session TOKEN_REFRESHED downgrade cases hold the focused post-response
+  verified-user request, assert no private draft is painted, and compare a safe
+  refresh that still completes using the same RPC. Already-rendered state is
+  confirmed cleared before the login/MFA navigation.
 - `pnpm test:daily-bootstrap-sql`: uniquely named, network-none/tmpfs PostgreSQL
   `17.6.1.141` fixture. Actual prerequisite SQL bodies plus the exact new migration
   run pgTAP280 with the normal clock. A test-only clock replacement then exercises
@@ -85,3 +104,8 @@ deployed before/after measurements remain required before claiming release
 verification or closing the performance ticket. Apply the migration before
 releasing the new frontend: there is deliberately no broad Dashboard fallback
 when the focused RPC is unavailable.
+
+The same-session assurance follow-up changes no SQL or inventory counts. It
+passed 844 frontend tests and 66 production-built Daily Action browser tests,
+including the post-response downgrade, safe-refresh, already-rendered cleanup,
+bounded churn, and promise-publication edge regressions described above.

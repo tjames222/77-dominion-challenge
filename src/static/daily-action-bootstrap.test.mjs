@@ -9,19 +9,21 @@ const deferred = () => { let resolve; const promise = new Promise((r) => { resol
 function fixture(options = {}) {
   let actor = A; let sid = 'session-1'; let observer; let requiresMfa = false;
   let response = async () => dailyBootstrapFixture({ actorId: actor });
+  let beforeUser = async () => {};
+  let beforeMfa = async () => {}; let mfaChecks = 0;
   let authChecks = 0; const calls = [];
   const client = createDailyActionBootstrapClient({
     getSession: async () => ({ user: { id: actor }, sid }),
-    getUser: async () => { authChecks += 1; return { id: actor }; },
+    getUser: async () => { authChecks += 1; await beforeUser(authChecks); return { id: actor }; },
     sessionIdentity: (session) => session.user.id ? `${session.user.id}:${session.sid}` : '',
-    requiresMfa: async () => requiresMfa,
+    requiresMfa: async () => { const result = requiresMfa; await beforeMfa(++mfaChecks); return result; },
     subscribe: (callback) => { observer = callback; return () => {}; },
     request: async (args, signal) => { calls.push({ args, signal }); return response(); },
     ...options,
   });
   return { client, calls, checks: () => authChecks,
     read: (args = {}) => client.read({ expectedUserId: A, timeZone: 'UTC', ...args }),
-    response(fn) { response = fn; }, mfa(value) { requiresMfa = value; },
+    response(fn) { response = fn; }, beforeUser(fn) { beforeUser = fn; }, beforeMfa(fn) { beforeMfa = fn; }, mfa(value) { requiresMfa = value; },
     switch(id, nextSid = sid, event = 'SIGNED_IN', notify = true) {
       actor = id; sid = nextSid;
       if (notify) observer({ event, sessionIdentity: `${actor}:${sid}` });
@@ -82,6 +84,50 @@ test('same-session focus notification retains the pending request', async () => 
   const pending = f.read(); await untilRequest(f); f.switch(A); gate.resolve(dailyBootstrapFixture());
   assert.equal((await pending).actorId, A); assert.equal(f.calls.length, 1);
 });
+for (const notification of [true, false]) test(`post-response user verification rejects an MFA downgrade ${notification ? 'with TOKEN_REFRESHED' : 'without a notification'}`, async () => {
+  const f = fixture(); f.switch(A);
+  const reached = deferred(); const release = deferred();
+  f.beforeUser(async (count) => { if (count === 2) { reached.resolve(); await release.promise; } });
+  const read = f.read(); const rejected = assert.rejects(read, { code: 'DAILY_ACTION_SIGNED_OUT' });
+  await reached.promise; f.mfa(true);
+  if (notification) f.switch(A, 'session-1', 'TOKEN_REFRESHED');
+  release.resolve(); await rejected;
+  assert.equal(f.calls.length, 1);
+});
+test('safe same-session TOKEN_REFRESHED during post-response verification retains one pending RPC', async () => {
+  const f = fixture(); f.switch(A);
+  const reached = deferred(); const release = deferred();
+  f.beforeUser(async (count) => { if (count === 2) { reached.resolve(); await release.promise; } });
+  const read = f.read(); await reached.promise;
+  f.switch(A, 'session-1', 'TOKEN_REFRESHED'); release.resolve();
+  assert.equal((await read).actorId, A); assert.equal(f.calls.length, 1);
+});
+test('a refresh overlapping the final AAL result repeats verification before returning private state', async () => {
+  const f = fixture(); f.switch(A);
+  f.beforeMfa(async (count) => {
+    if (count === 4) { f.mfa(true); f.switch(A, 'session-1', 'TOKEN_REFRESHED'); }
+  });
+  await assert.rejects(f.read(), { code: 'DAILY_ACTION_SIGNED_OUT' });
+  assert.equal(f.calls.length, 1);
+});
+test('post-response safe-refresh churn is bounded and fails closed without repeating the RPC', async () => {
+  const f = fixture(); f.switch(A);
+  f.beforeUser(async (count) => { if (count >= 2) f.switch(A, 'session-1', 'TOKEN_REFRESHED'); });
+  await assert.rejects(f.read(), { code: 'DAILY_ACTION_UNAVAILABLE' });
+  assert.equal(f.calls.length, 1); assert.equal(f.checks(), 4);
+});
+test('a downgrade queued after the final session check cannot publish the settled private response', async () => {
+  let sessions = 0; let f;
+  f = fixture({ getSession: async () => {
+    if (++sessions === 6) queueMicrotask(() => queueMicrotask(() => {
+      f.mfa(true); f.switch(A, 'session-1', 'TOKEN_REFRESHED');
+    }));
+    return { user: { id: A }, sid: 'session-1' };
+  } });
+  f.switch(A);
+  await assert.rejects(f.read(), { code: 'DAILY_ACTION_UNAVAILABLE' });
+  assert.equal(f.calls.length, 1);
+});
 test('enrolled AAL1 and lost Auth block reads; denied access still receives fresh owner checks', async () => {
   const f = fixture(); f.mfa(true);
   await assert.rejects(f.read(), { code: 'DAILY_ACTION_SIGNED_OUT' }); assert.equal(f.calls.length, 0);
@@ -107,5 +153,6 @@ test('all Daily Action live startup paths use only the focused bootstrap, retain
   assert.match(page, /nextDate = snapshot\.entryDate/);
   assert.match(page, /if \(!hasSupabaseAuth\(\)\) \{\s+const billing = await getBillingState/);
   assert.match(page, /force: sessionChanged/);
+  assert.match(page, /setTimeout\(\(\) => \{[\s\S]*getLocalOrSessionUser\(\)\.then/);
   assert.match(page, /actionLoadRetry/);
 });

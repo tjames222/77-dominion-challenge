@@ -52,6 +52,7 @@ export function normalizeDailyActionBootstrap(value, expectedActor, requestedDat
 // session token or entitlement is cached. The identity marker is NOT authority.
 export function createDailyActionBootstrapClient({ getSession, getUser, sessionIdentity, requiresMfa, subscribe, request, timeoutMs = 20_000 }) {
   let epoch = 0; let observedIdentity; let disposed = false;
+  let verificationRevision = 0;
   const pending = new Map();
   const invalidate = () => {
     epoch += 1;
@@ -60,23 +61,43 @@ export function createDailyActionBootstrapClient({ getSession, getUser, sessionI
   };
   const unsubscribe = subscribe?.(({ event, sessionIdentity: identity }) => {
     const next = typeof identity === 'string' ? identity : '';
+    // A stable session UUID does not guarantee unchanged assurance. This is
+    // only a verification revision, not a cached Auth/MFA decision. Harmless
+    // token refreshes retain their pending RPC and repeat the checks instead.
+    if (['SIGNED_IN', 'TOKEN_REFRESHED', 'USER_UPDATED', 'MFA_CHALLENGE_VERIFIED'].includes(event)) verificationRevision += 1;
     if (['SIGNED_OUT', 'USER_UPDATED'].includes(event)
       || (observedIdentity !== undefined && next !== observedIdentity)) invalidate();
     observedIdentity = next;
   });
   const assertEpoch = (version) => { if (disposed || epoch !== version) throw dailyActionBootstrapError('DAILY_ACTION_CHANGED'); };
-  async function verifyOwner(actorId, version, identity = null) {
-    assertEpoch(version);
-    const session = await getSession(); assertEpoch(version);
-    const marker = sessionIdentity(session);
-    if (!marker || !session?.user?.id) throw dailyActionBootstrapError('DAILY_ACTION_SIGNED_OUT');
-    if (session.user.id !== actorId || (identity !== null && marker !== identity)) throw dailyActionBootstrapError('DAILY_ACTION_CHANGED');
-    if (await requiresMfa()) throw dailyActionBootstrapError('DAILY_ACTION_SIGNED_OUT');
-    assertEpoch(version);
-    const user = await getUser(actorId); assertEpoch(version);
-    const current = await getSession(); assertEpoch(version);
-    if (user?.id !== actorId || sessionIdentity(current) !== marker) throw dailyActionBootstrapError('DAILY_ACTION_CHANGED');
-    return marker;
+  async function verifyOwner(actorId, version, signal, identity = null) {
+    const assertCurrent = () => {
+      assertEpoch(version);
+      if (signal.aborted) throw dailyActionBootstrapError('DAILY_ACTION_CHANGED');
+    };
+    // Auth refresh churn must fail closed, not keep a private request alive
+    // indefinitely. The transport's overall timeout remains a second bound.
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      assertCurrent();
+      const revision = verificationRevision;
+      const session = await getSession(); assertCurrent();
+      const marker = sessionIdentity(session);
+      if (!marker || !session?.user?.id) throw dailyActionBootstrapError('DAILY_ACTION_SIGNED_OUT');
+      if (session.user.id !== actorId || (identity !== null && marker !== identity)) throw dailyActionBootstrapError('DAILY_ACTION_CHANGED');
+      if (await requiresMfa()) throw dailyActionBootstrapError('DAILY_ACTION_SIGNED_OUT');
+      assertCurrent();
+      const user = await getUser(actorId); assertCurrent();
+      const current = await getSession(); assertCurrent();
+      if (user?.id !== actorId || sessionIdentity(current) !== marker) throw dailyActionBootstrapError('DAILY_ACTION_CHANGED');
+      // getUser/getSession can overlap a same-session assurance downgrade.
+      // The private response cannot pass on the earlier AAL check alone.
+      if (await requiresMfa()) throw dailyActionBootstrapError('DAILY_ACTION_SIGNED_OUT');
+      assertCurrent();
+      const finalSession = await getSession(); assertCurrent();
+      if (sessionIdentity(finalSession) !== marker) throw dailyActionBootstrapError('DAILY_ACTION_CHANGED');
+      if (revision === verificationRevision) return { identity: marker, revision };
+    }
+    throw dailyActionBootstrapError();
   }
   return {
     async read({ expectedUserId, timeZone, entryDate = null } = {}) {
@@ -96,13 +117,13 @@ export function createDailyActionBootstrapClient({ getSession, getUser, sessionI
         });
         const timer = setTimeout(() => { timedOut = true; operation.controller.abort(); }, timeoutMs);
         const work = (async () => {
-          const identity = await verifyOwner(actorId, version);
+          const owner = await verifyOwner(actorId, version, operation.controller.signal);
           if (operation.controller.signal.aborted) throw dailyActionBootstrapError('DAILY_ACTION_CHANGED');
           const raw = await request({ target_expected_actor_id: actorId,
             target_time_zone: timeZone, target_entry_date: entryDate }, operation.controller.signal);
           if (operation.controller.signal.aborted) throw dailyActionBootstrapError('DAILY_ACTION_CHANGED');
-          await verifyOwner(actorId, version, identity);
-          return normalizeDailyActionBootstrap(raw, actorId, entryDate);
+          const verified = await verifyOwner(actorId, version, operation.controller.signal, owner.identity);
+          return { value: normalizeDailyActionBootstrap(raw, actorId, entryDate), revision: verified.revision };
         })();
         operation.promise = Promise.race([work, cancellation]).catch((error) => {
           assertEpoch(version);
@@ -115,7 +136,12 @@ export function createDailyActionBootstrapClient({ getSession, getUser, sessionI
       }
       const result = await operation.promise;
       assertEpoch(version);
-      return structuredClone(result);
+      // Promise settlement itself yields. A notification after the final
+      // verification must not publish that now-stale private result. Normal
+      // overlapping refreshes were handled above; this last-edge case retries
+      // through the existing explicit load action instead of bypassing AAL.
+      if (result.revision !== verificationRevision) throw dailyActionBootstrapError();
+      return structuredClone(result.value);
     },
     invalidate,
     destroy() { invalidate(); disposed = true; unsubscribe?.(); },

@@ -72,15 +72,37 @@ let authOwnerEpoch = 0;
 let observedAuthSession = '';
 let loadRetryButton = null;
 let unsubscribeDailyAuth = null;
+let dailyAuthReview = 0;
 
 function observeDailyAuth() {
   unsubscribeDailyAuth?.();
   observedAuthSession = '';
-  unsubscribeDailyAuth = subscribeToAuthStateChanges(({ user, sessionIdentity }) => {
+  unsubscribeDailyAuth = subscribeToAuthStateChanges(({ event, user, sessionIdentity }) => {
+    const review = ++dailyAuthReview;
     const nextSession = String(sessionIdentity || '');
     const sessionChanged = Boolean(observedAuthSession && observedAuthSession !== nextSession);
     observedAuthSession = nextSession;
-    void handleDailyStandardAuthOwnerChange(user, { force: sessionChanged });
+    const nextOwner = String(user?.userId || '');
+    if (!nextOwner || nextOwner !== observedAuthOwner || sessionChanged || event === 'USER_UPDATED') {
+      void handleDailyStandardAuthOwnerChange(user, { force: sessionChanged || event === 'USER_UPDATED' });
+      return;
+    }
+    if (!['SIGNED_IN', 'TOKEN_REFRESHED', 'MFA_CHALLENGE_VERIFIED'].includes(event)) return;
+    const ownerEpoch = authOwnerEpoch;
+    // Never call or await Auth inside its synchronous notification callback.
+    // A normal same-session refresh keeps its current UI and pending data read;
+    // a required MFA challenge clears them before redirecting.
+    setTimeout(() => {
+      const current = () => review === dailyAuthReview && ownerEpoch === authOwnerEpoch
+        && nextOwner === observedAuthOwner && nextSession === observedAuthSession;
+      if (!current()) return;
+      void getLocalOrSessionUser().then((verifiedUser) => {
+        if (!current()) return;
+        if (verifiedUser?.userId !== nextOwner) void handleDailyStandardAuthOwnerChange(verifiedUser, { force: true });
+      }).catch(() => {
+        if (current()) void handleDailyStandardAuthOwnerChange(null, { force: true });
+      });
+    }, 0);
   });
 }
 

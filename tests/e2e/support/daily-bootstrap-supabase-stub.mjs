@@ -1,14 +1,15 @@
 import { dailyBootstrapFixture, DAILY_ACTOR as A } from '../../fixtures/daily-action-bootstrap.mjs';
 const encode = (value) => Buffer.from(JSON.stringify(value)).toString('base64url');
 export async function installDailyBootstrapStub(context, { status = 'active', appAccess = true,
-  theme = 'dark', enrolled = false, completed = [] } = {}) {
+  theme = 'dark', enrolled = false, aal = 'aal1', completed = [] } = {}) {
   const requests = []; let bootstrapGate = null; let failNext = false; let version = 2;
+  let userGate = null; let userGateActive = false; let heldUserRequests = 0;
   let savedCompleted = completed;
   const user = (id) => ({ id, aud: 'authenticated', role: 'authenticated', email: 'daily.synthetic@example.test',
     user_metadata: { name: 'Synthetic Daily Member' }, factors: enrolled ? [{ id: 'ffffffff-ffff-4fff-8fff-ffffffffffff', factor_type: 'totp', status: 'verified' }] : [] });
-  const sessionFor = (id = A, sid = '11111111-1111-4111-8111-111111111111') => {
+  const sessionFor = (id = A, sid = '11111111-1111-4111-8111-111111111111', level = aal) => {
     const now = Math.floor(Date.now()/1000);
-    return { access_token: `${encode({ alg:'HS256',typ:'JWT' })}.${encode({ sub:id,session_id:sid,aal:'aal1',exp:now+3600,iat:now,role:'authenticated',amr:[{method:'password',timestamp:now}] })}.${encode('synthetic-signature')}`,
+    return { access_token: `${encode({ alg:'HS256',typ:'JWT' })}.${encode({ sub:id,session_id:sid,aal:level,exp:now+3600,iat:now,role:'authenticated',amr:[{method:'password',timestamp:now}] })}.${encode('synthetic-signature')}`,
       refresh_token:'synthetic-only',expires_in:3600,expires_at:now+3600,token_type:'bearer',user:user(id) };
   };
   await context.addInitScript(({ session, theme }) => {
@@ -24,12 +25,16 @@ export async function installDailyBootstrapStub(context, { status = 'active', ap
     const actorId=claims.sub||A;
     requests.push({path,method:request.method(),args,actorId});
     const payload=()=>dailyBootstrapFixture({actorId,status,appAccess,completed:savedCompleted,version});
-    if(path==='/auth/v1/user')return json(route,user(actorId));
+    if(path==='/auth/v1/user'){
+      if(userGateActive&&userGate&&heldUserRequests===0){heldUserRequests+=1;await userGate;}
+      return json(route,user(actorId));
+    }
     if(path==='/auth/v1/token')return json(route,sessionFor(actorId));
     if(path==='/auth/v1/logout')return json(route,{});
     if(path==='/rest/v1/rpc/get_daily_action_bootstrap'){
       const held=payload();if(bootstrapGate)await bootstrapGate;
       if(failNext){failNext=false;return json(route,{message:'Synthetic unavailable'},503);}
+      if(userGate)userGateActive=true;
       return json(route,held);
     }
     if(path==='/rest/v1/rpc/get_challenge_activation')return json(route,payload().activation);
@@ -55,6 +60,8 @@ export async function installDailyBootstrapStub(context, { status = 'active', ap
     bootstrapRequests:()=>requests.filter(r=>r.path.endsWith('/get_daily_action_bootstrap')),
     completed(value){savedCompleted=[...value];},
     enrolled(value){enrolled=value;},
+    heldUserRequests:()=>heldUserRequests,
+    holdPostBootstrapUser(){let release;userGate=new Promise(r=>{release=r;});return()=>{release();userGate=null;userGateActive=false;};},
     failNext(){failNext=true;},
     hold(){let release;bootstrapGate=new Promise(r=>{release=r;});return()=>{release();bootstrapGate=null;};},
   };

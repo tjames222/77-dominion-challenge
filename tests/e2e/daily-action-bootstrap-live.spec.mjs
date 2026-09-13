@@ -17,6 +17,76 @@ async function replaceSessions(page, sessions) {
     channel.close();
   }, sessions);
 }
+async function refreshSameSession(page, session) {
+  await page.evaluate((value) => {
+    // The SDK receives its real cross-tab TOKEN_REFRESHED notification. A
+    // same-document storage write intentionally emits no synthetic storage
+    // event that would otherwise hide an assurance-observer regression.
+    localStorage.setItem('sb-127-auth-token', JSON.stringify(value));
+    const channel = new BroadcastChannel('sb-127-auth-token');
+    channel.postMessage({ event: 'TOKEN_REFRESHED', session: value });
+    channel.close();
+  }, session);
+}
+for (const downgrade of [true, false]) {
+  test(`same-session TOKEN_REFRESHED ${downgrade ? 'downgrade rejects' : 'safe refresh retains'} a response awaiting verified-user post-check`, async ({ page, context }) => {
+    const f = await installDailyBootstrapStub(context, { enrolled: true, aal: 'aal2', completed: ['bible'] });
+    const errors = []; page.on('pageerror', error => errors.push(error.message));
+    await page.goto('/bible-reading.html'); await usable(page);
+    // Let independent navigation/training reads finish before holding the
+    // focused retry's getUser, so this fixture cannot stall unrelated Auth.
+    await page.waitForLoadState('networkidle');
+    f.failNext(); await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+    await expect(page.locator('#actionLoadRetry')).toBeVisible();
+    await page.waitForLoadState('networkidle');
+    const renderedProgress = [];
+    await page.exposeFunction('recordDailyAssuranceProgress', value => renderedProgress.push(value));
+    await page.evaluate(() => {
+      const progress = document.getElementById('actionProgressCount');
+      new MutationObserver(() => { void window.recordDailyAssuranceProgress(progress.textContent); })
+        .observe(progress, { childList: true, characterData: true, subtree: true });
+    });
+    const release = f.holdPostBootstrapUser();
+    try {
+      await page.locator('#actionLoadRetry').click();
+      await expect.poll(() => f.heldUserRequests()).toBeGreaterThan(0);
+      expect(f.bootstrapRequests()).toHaveLength(3);
+      await expect(page.locator('#actionProgressCount')).toHaveText('0 of 7 complete');
+      await expect(page.locator('#actionCompletionToggle')).toBeDisabled();
+      await refreshSameSession(page, f.sessionFor(undefined, undefined, downgrade ? 'aal1' : 'aal2'));
+      release();
+      if (downgrade) {
+        await expect(page).toHaveURL(/account-security\.html/);
+        expect(f.bootstrapRequests()).toHaveLength(3);
+        expect(renderedProgress).not.toContain('1 of 7 complete');
+      } else {
+        await usable(page);
+        await expect(page.locator('#actionProgressCount')).toHaveText('1 of 7 complete');
+        expect(f.bootstrapRequests()).toHaveLength(3);
+      }
+      expect(errors).toEqual([]);
+    } finally { release(); }
+  });
+}
+test('same-session assurance downgrade clears an already rendered action before the MFA route', async ({ page, context }) => {
+  const f = await installDailyBootstrapStub(context, { enrolled: true, aal: 'aal2', completed: ['bible'] });
+  await page.goto('/bible-reading.html'); await usable(page);
+  await expect(page.locator('#actionProgressCount')).toHaveText('1 of 7 complete');
+  const statesBeforeExit = [];
+  await page.exposeFunction('recordDailyAssuranceClear', state => statesBeforeExit.push(state));
+  await page.evaluate(() => {
+    const progress = document.getElementById('actionProgressCount');
+    new MutationObserver(() => {
+      void window.recordDailyAssuranceClear({ progress: progress.textContent,
+        disabled: document.getElementById('actionCompletionToggle').disabled, path: location.pathname });
+    }).observe(progress, { childList: true, characterData: true, subtree: true });
+  });
+  const navigation = page.waitForURL(/account-security\.html/);
+  await refreshSameSession(page, f.sessionFor(undefined, undefined, 'aal1'));
+  await navigation;
+  expect(statesBeforeExit).toContainEqual({ progress: '0 of 7 complete', disabled: true, path: '/bible-reading.html' });
+  expect(f.bootstrapRequests()).toHaveLength(1);
+});
 for(const action of DAILY_STANDARD_ROUTE_LIST)for(const clean of [false,true]){
   test(`${action.id} ${clean?'clean':'html'} uses one focused route bootstrap`,async({page,context},testInfo)=>{
     const fixture=await installDailyBootstrapStub(context);
