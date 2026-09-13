@@ -67,6 +67,11 @@ can differ from the Linux comparison environment.
   violations.
 - states.spec.mjs covers loading, empty, error, locked, unlocked, submitted,
   validation, and open-navigation states.
+- menu-layers.spec.mjs checks real drawer/backdrop hit-testing, covered-page
+  isolation, Safari keyboard cycling, scroll locking and sticky restoration in
+  all four themes at phone, tablet, and desktop widths. It runs in Chromium and
+  the focused mobile WebKit project; open Rewards/Badges captures also join the
+  Linux visual matrix.
 - visual-routes.spec.mjs captures every route at 390x844, 768x1024, and
   1440x1000 in each enabled theme.
 - first-paint.spec.mjs checks the selected root theme and browser

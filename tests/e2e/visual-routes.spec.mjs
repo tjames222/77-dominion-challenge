@@ -4,7 +4,7 @@ import {
   expect,
   test,
 } from './support/app-test.mjs';
-import { PRODUCTION_ROUTES } from './support/routes.mjs';
+import { PRODUCTION_ROUTES, ROUTE_BY_ID } from './support/routes.mjs';
 
 const dashboardRoute = PRODUCTION_ROUTES.find((route) => route.id === 'dashboard');
 
@@ -52,3 +52,18 @@ test.describe('mobile shared composer visual matrix', () => {
     });
   }
 });
+for (const state of [
+  { tab: 'Rewards', scrollY: 0, name: 'rewards-top' },
+  { tab: 'Badges', scrollY: 300, name: 'badges-sticky' },
+]) {
+  test(`rewards navigation overlay visual contract: ${state.name}`, async ({ page, app }, testInfo) => {
+    await app.open(ROUTE_BY_ID.badgesRewards, { theme: testInfo.project.metadata.theme });
+    await page.getByRole('tab', { name: state.tab, exact: true }).click();
+    await page.evaluate((y) => window.scrollTo(0, y), state.scrollY);
+    await page.locator('.global-menu-button').evaluate((button) => button.focus({ preventScroll: true }));
+    await page.keyboard.press('Enter');
+    await page.getByRole('navigation', { name: 'Global navigation' }).waitFor({ state: 'visible' });
+    await expectStableScreenshot(page, app, `global-navigation-${state.name}.png`, { fullPage: false });
+    app.assertNoRuntimeErrors();
+  });
+}

@@ -148,7 +148,7 @@
 .member-tabs {
   position: sticky;
   top: calc(var(--topbar-sticky-height, 72px) + var(--navigation-stack-gap, 8px));
-  z-index: 120;
+  z-index: var(--layer-member-navigation, 120);
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 6px;

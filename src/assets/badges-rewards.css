@@ -47,7 +47,7 @@
 .badges-rewards-tabs {
   position: sticky;
   top: var(--badges-rewards-sticky-top);
-  z-index: 110;
+  z-index: var(--layer-secondary-navigation, 110);
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 6px;
