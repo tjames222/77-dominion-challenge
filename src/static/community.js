@@ -1,3 +1,4 @@
+import { communityPreviewMessage } from './preview-feedback.mjs';
 import {
   activateGroupChallenge,
   advanceCrewTraining,
@@ -1648,9 +1649,7 @@ async function bootCommunity() {
   );
 
   if (isLocalDemoMode()) {
-    setFeedback(GROUP_INTEGRATIONS_ENABLED
-      ? 'Preview mode: groups, leaderboards, and integrations use local mock data.'
-      : 'Preview mode: groups and leaderboards use local mock data. External channel connections are disabled.');
+    setFeedback(communityPreviewMessage(GROUP_INTEGRATIONS_ENABLED));
   }
   await Promise.all([refreshCrews(), refreshChallengeActivation()]);
   if (groupAccessOutcome === 'left') {

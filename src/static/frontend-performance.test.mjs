@@ -3,6 +3,7 @@ import { test } from 'node:test';
 import { readFileSync } from 'node:fs';
 import { runInNewContext } from 'node:vm';
 import { htmlAssetReferences, staticModuleReferences } from '../../scripts/measure-frontend-bundles.mjs';
+import { communityPreviewMessage, renderInitialPreviewFeedback } from './preview-feedback.mjs';
 
 test('bundle audit counts entry scripts, bootstrap, CSS and module preloads', () => {
   assert.deepEqual(htmlAssetReferences('<script src="./theme-bootstrap.js"></script><script type="module" src="./assets/page-Abc123.js"></script><link rel="modulepreload" href="./assets/shared-Def456.js"><link rel="stylesheet" href="./assets/app-123abc.css"><link rel="icon" href="/favicon.png">'),
@@ -47,4 +48,18 @@ test('cache policy separates immutable hashes from revalidated deploy pointers a
   assert.match(headers, /\/today-actions\n\s+Cache-Control: no-store/);
   const worker = readFileSync(new URL('../cloudflare/public-share-worker.mjs', import.meta.url), 'utf8');
   assert.match(worker, /private, no-store/);
+});
+
+test('known preview feedback is present before first paint without adding a production banner', () => {
+  const html = '<div class="community-feedback" id="communityFeedback" role="status" aria-live="polite"></div>';
+  assert.equal(renderInitialPreviewFeedback(html), html);
+  for (const integrationsEnabled of [false, true]) {
+    const output = renderInitialPreviewFeedback(html, { mocksEnabled: true, integrationsEnabled });
+    assert.match(output, /class="community-feedback active"/);
+    assert.match(output, /role="status" aria-live="polite"/);
+    assert.ok(output.includes(communityPreviewMessage(integrationsEnabled)));
+    assert.equal(renderInitialPreviewFeedback(output, { mocksEnabled: true, integrationsEnabled }), output);
+  }
+  const config = readFileSync(new URL('../../vite.config.mjs', import.meta.url), 'utf8');
+  assert.match(config, /mocksEnabled: env\.VITE_ENABLE_MOCKS === 'true'/);
 });

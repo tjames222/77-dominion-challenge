@@ -52,6 +52,9 @@ describe('sharing composer browser integration', () => {
 
   test('owns its stylesheet through one static Vite dependency on every header route', () => {
     assert.match(composer, /import '\.\.\/assets\/share-composer\.css';/);
+    assert.match(read('./share-composer-loader.js'), /import '\.\.\/assets\/share-trigger\.css';/);
+    assert.match(read('../assets/share-trigger.css'), /\.share-entry-button \{/);
+    assert.doesNotMatch(css, /\.share-entry-button/);
     assert.doesNotMatch(sharedHeader, /ensureShareComposerStyles|SHARE_COMPOSER_STYLESHEET|globalShareComposerStyles/);
     for (const route of AUTHENTICATED_HEADER_ROUTES) {
       const html = read(`../../${route}`);

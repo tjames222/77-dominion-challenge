@@ -1,6 +1,12 @@
 import { test, expect } from './support/app-test.mjs';
 import { ROUTE_BY_ID } from './support/routes.mjs';
 
+test('the preview notice arrives in Community HTML before hydration can move the page', async ({ request }) => {
+  const response = await request.get('/community.html');
+  const html = await response.text();
+  expect(html).toMatch(/class="community-feedback active" id="communityFeedback"[^>]*>Preview mode:/);
+});
+
 for (const route of [ROUTE_BY_ID.landing, ROUTE_BY_ID.login, ROUTE_BY_ID.dashboard, ROUTE_BY_ID.badgesRewards]) {
   test(`${route.id} loads only the everyday font and defers the share UI`, async ({ page, app }) => {
     const requests = [];
@@ -10,6 +16,18 @@ for (const route of [ROUTE_BY_ID.landing, ROUTE_BY_ID.login, ROUTE_BY_ID.dashboa
     expect(requests.filter((url) => /\/InterVariable(?:-[\w-]+)?\.woff2/.test(url))).toEqual([]);
     expect(requests.filter((url) => /\/share-composer(?!-loader)(?:-[\w-]+)?\.(?:js|css)(?:\?|$)/.test(url))).toEqual([]);
     await expect(page.locator('#shareComposerDialog')).toHaveCount(0);
+    const bodyTrigger = page.locator('.share-entry-button').first();
+    let triggerBefore = null;
+    if (await bodyTrigger.count()) {
+      triggerBefore = await bodyTrigger.evaluate((button) => ({
+        height: button.getBoundingClientRect().height,
+        radius: getComputedStyle(button).borderRadius,
+        weight: getComputedStyle(button).fontWeight,
+      }));
+      expect(triggerBefore.height).toBeGreaterThanOrEqual(44);
+      expect(triggerBefore.radius).toBe('999px');
+      expect(triggerBefore.weight).toBe('900');
+    }
     const share = page.locator('.shared-header-share');
     if (await share.count()) {
       await share.click();
@@ -17,6 +35,13 @@ for (const route of [ROUTE_BY_ID.landing, ROUTE_BY_ID.login, ROUTE_BY_ID.dashboa
       expect(requests.some((url) => /\/share-composer(?!-loader)(?:-[\w-]+)?\.(?:js|css)(?:\?|$)/.test(url))).toBe(true);
       await page.keyboard.press('Escape');
       await expect(share).toBeFocused();
+      if (triggerBefore) {
+        expect(await bodyTrigger.evaluate((button) => ({
+          height: button.getBoundingClientRect().height,
+          radius: getComputedStyle(button).borderRadius,
+          weight: getComputedStyle(button).fontWeight,
+        }))).toEqual(triggerBefore);
+      }
     }
     app.assertNoRuntimeErrors();
   });

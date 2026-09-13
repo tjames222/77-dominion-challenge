@@ -2,6 +2,7 @@ import { defineConfig, loadEnv } from 'vite';
 import { readFile } from 'node:fs/promises';
 import { PRODUCTION_ENTRYPOINTS } from './app-entrypoints.mjs';
 import { isCloudflarePreviewEnvironment } from './scripts/normalize-cloudflare-frontend-env.mjs';
+import { renderInitialPreviewFeedback } from './src/static/preview-feedback.mjs';
 
 export function productionShareRouteEnabled(env, buildEnvironment = process.env) {
   return ['1', 'true', 'yes'].includes(buildEnvironment.CF_PAGES)
@@ -45,10 +46,14 @@ export default defineConfig(({ mode }) => {
         name: 'dominion-theme-feature-flags',
         enforce: 'pre',
         transformIndexHtml(html) {
-          return html.replaceAll(
+          const themedHtml = html.replaceAll(
             'data-enable-dominion-night="false"',
             `data-enable-dominion-night="${String(dominionNightEnabled)}"`,
           );
+          return renderInitialPreviewFeedback(themedHtml, {
+            mocksEnabled: env.VITE_ENABLE_MOCKS === 'true',
+            integrationsEnabled: env.VITE_ENABLE_GROUP_INTEGRATIONS === 'true',
+          });
         },
       },
     ],

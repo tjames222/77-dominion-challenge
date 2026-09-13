@@ -78,11 +78,19 @@ flags, routes, profiles and fixture state; attach the JSON summaries to the tick
   of the deferred component, so a first open cannot race its CSS. Pending clicks
   coalesce, failures announce a retry, and synchronous account-reset generations
   invalidate delayed opens without loading the component merely to close it.
+  Always-visible Share buttons own a separate small static stylesheet; opening
+  the component must not restyle those existing controls or change their geometry.
 - Everyday Latin/punctuation/arrows/UI-symbol font traffic is 80132 bytes,
   77.3% below the original. The original font is unchanged and fetched only for
   its complementary extended-language glyph ranges. This is the documented
   100 KB exception for user text needing those glyphs, not lost language support.
   Unsupported emoji are excluded from both advertised ranges and use fallback.
+
+The deployed baseline also identified a preview-only Community shift: inserting
+the known mock-mode notice after hydration moved the group section down 120 px
+on a 390 px phone. The build now includes that notice in preview HTML before the
+first paint, using the same runtime copy. Production still gets an empty feedback
+area; no production-only layout claim is inferred from this preview fix.
 
 The font subset preserves all weight/optical-size axes, hinting, default shaping
 features and tabular numbers. The generator checks every retained glyph's advance
