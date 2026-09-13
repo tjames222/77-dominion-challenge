@@ -25,8 +25,8 @@ async function logInAsPreviewAccount(page, user, { logOutFirst = true } = {}) {
 test('authenticated header allowlist covers every eligible production route', () => {
   const expectedEntries = authenticatedHeaderRoutes.map((route) => route.htmlEntry).sort();
   expect([...AUTHENTICATED_HEADER_ROUTES].sort()).toEqual(expectedEntries);
-  expect(PRODUCTION_ROUTES.filter((route) => route.sharedHeaderActions === false).map((route) => route.htmlEntry))
-    .toEqual(['account-security.html']);
+  expect(PRODUCTION_ROUTES.filter((route) => route.sharedHeaderActions === false).map((route) => route.htmlEntry).sort())
+    .toEqual(['account-security.html', 'admin.html']);
 });
 
 async function installHeaderHeightProbe(page) {

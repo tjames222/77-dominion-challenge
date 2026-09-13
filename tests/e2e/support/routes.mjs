@@ -76,6 +76,7 @@ export const PRODUCTION_ROUTES = Object.freeze([
     title: 'Administration | Dominion',
     access: 'authenticated',
     guestGate: 'inline-admin',
+    sharedHeaderActions: false,
     defaultState: 'member',
     ready: '#adminTitle',
     surfaces: ['navigation', 'forms', 'error'],

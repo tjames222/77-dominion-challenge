@@ -32,6 +32,7 @@ test('anonymous direct URL has only a generic login gate', async ({ page }) => {
 test('server pagination, filters, snapshots and audit detail work without membership access', async ({ context, page }) => {
   const auth = await installAdminStub(context); await ready(page);
   await expect(page.locator('#adminPreview')).toBeHidden();
+  await expect(page.locator('.shared-header-share, .shared-header-streak')).toHaveCount(0);
   await page.locator('#adminNextPage').click(); await expect(page.locator('#adminUsersRows tr')).toHaveCount(3);
   await expect(page.locator('#adminPageLabel')).toHaveText('Page 2');
   await page.locator('#adminPreviousPage').click(); await expect(page.locator('#adminUsersRows tr')).toHaveCount(25);

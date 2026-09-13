@@ -5,6 +5,8 @@ redacted administrative audit list/details. The page is not a membership or
 billing route: a canonical authorized admin needs no subscription entitlement.
 It exposes no account mutation, testing grant, role-assignment, password reset,
 export, impersonation, journal, message, or metrics controls.
+Member Share/Streak header controls are deliberately absent, including after
+refresh; administration does not need to hydrate those member-data surfaces.
 
 The Admin menu item is absent from static navigation. It is appended only after
 the current actor's `get_site_admin_context` decision says `adminReady` and grants

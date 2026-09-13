@@ -2,6 +2,15 @@ import { test, expect, expectNoHorizontalOverflow } from './support/app-test.mjs
 import { ROUTE_BY_ID } from './support/routes.mjs';
 import AxeBuilder from '@axe-core/playwright';
 
+test('admin direct load and refresh never hydrate member Share or Streak controls', async ({ page, app }) => {
+  await app.open({ ...ROUTE_BY_ID.admin, path: '/admin.html?admin-preview=ready' });
+  await expect(page.locator('#adminUsersRows tr')).toHaveCount(25);
+  await expect(page.locator('.shared-header-share, .shared-header-streak')).toHaveCount(0);
+  await page.reload(); await expect(page.locator('#adminUsersRows tr')).toHaveCount(25);
+  await expect(page.locator('.shared-header-share, .shared-header-streak')).toHaveCount(0);
+  app.assertNoRuntimeErrors();
+});
+
 for (const theme of ['light', 'dark', 'dominion-night', 'dominion-platinum']) {
   for (const width of [390, 1440]) {
     test(`synthetic admin preview is labeled and usable: ${theme} ${width}`, async ({ page, app }, testInfo) => {
