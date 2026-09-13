@@ -4,6 +4,17 @@ import { ROUTE_BY_ID } from './support/routes.mjs';
 
 const syntheticKey = 'JBSWY3DPEHPK3PXP';
 
+test('security direct load and refresh do not expose member-data Share or App Streak controls', async ({ page, app }) => {
+  await app.open(ROUTE_BY_ID.accountSecurity);
+  for (const phase of ['direct load', 'refresh']) {
+    await expect(page.locator('#securityCard')).toHaveAttribute('aria-busy', 'false');
+    await expect(page.locator('.shared-header-share, .shared-header-streak'), phase).toHaveCount(0);
+    await expect(page.getByRole('button', { name: 'Set up authenticator' })).toBeEnabled();
+    if (phase === 'direct load') await page.reload({ waitUntil: 'networkidle' });
+  }
+  app.assertNoRuntimeErrors();
+});
+
 async function expectNoSecretPersistence(page) {
   const stored = await page.evaluate(() => ({
     local: JSON.stringify({ ...localStorage }), session: JSON.stringify({ ...sessionStorage }),

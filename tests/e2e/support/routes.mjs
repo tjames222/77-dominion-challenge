@@ -75,6 +75,9 @@ export const PRODUCTION_ROUTES = Object.freeze([
     htmlEntry: 'account-security.html',
     title: 'Account Security | Dominion',
     access: 'authenticated',
+    // Auth-only setup intentionally has no member-data/share header, including
+    // while an enrolled session is still completing its AAL1 challenge.
+    sharedHeaderActions: false,
     defaultState: 'member',
     ready: '#securityCard[aria-busy="false"]',
     surfaces: ['forms', 'actions', 'loading', 'error'],
