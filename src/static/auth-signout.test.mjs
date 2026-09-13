@@ -7,9 +7,10 @@ const MESSAGE = 'Sign out could not be confirmed. Retry signing out before leavi
 const source = readFileSync(new URL('./api.js', import.meta.url), 'utf8');
 const body = source.slice(source.indexOf('export async function clearAuthSession()'), source.indexOf('export function saveLocalMockUser'))
   .replace('export async function', 'async function');
-function clearFunction(client, storage) {
-  return new Function('usesSupabaseAuthentication', 'supabase', 'isHybridAuthPreview', 'localStorage', 'MOCK_USER_ID_KEY', `${body};return clearAuthSession;`)(
+function clearFunction(client, storage, cancelled = []) {
+  return new Function('usesSupabaseAuthentication', 'supabase', 'isHybridAuthPreview', 'localStorage', 'MOCK_USER_ID_KEY', 'cancelAdminReads', 'inflightActorReads', `${body};return clearAuthSession;`)(
     () => true, client, () => false, storage, 'dominion:mockUserId',
+    () => cancelled.push('admin'), { invalidate() {} },
   );
 }
 
@@ -36,12 +37,15 @@ test('actual SDK provider outage preserves the session, rejects safely, and perm
   });
   try {
     assert.ok((await client.auth.getSession()).data.session);
-    const clear = clearFunction(client, storage);
+    const cancelled = [];
+    const clear = clearFunction(client, storage, cancelled);
     await assert.rejects(clear(), { message: MESSAGE });
+    assert.deepEqual(cancelled, ['admin']);
     assert.ok((await client.auth.getSession()).data.session, 'No false claim that the provider revoked the session');
     assert.equal(values.get('dominion:user'), 'synthetic identity');
     outage = false;
     await clear();
+    assert.deepEqual(cancelled, ['admin', 'admin']);
     assert.equal((await client.auth.getSession()).data.session, null);
     assert.equal(values.has('dominion:user'), false);
     assert.equal(values.has('dominion:theme'), false);
