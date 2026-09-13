@@ -535,7 +535,13 @@ export function getCurrentAppPath() {
   return `./${path}${window.location.search}${window.location.hash}`;
 }
 
+// Only an explicit menu logout owns this document's next navigation. Auth
+// observers still synchronously clear private state while the SDK dispatches
+// SIGNED_OUT, but cannot race the confirmed logout destination with Login.
+let logoutNavigationPending = false;
+
 export function redirectToLogin(returnTo = getCurrentAppPath()) {
+  if (logoutNavigationPending) return;
   const target = encodeURIComponent(returnTo);
   window.location.href = `./login.html?returnTo=${target}`;
 }
@@ -560,26 +566,39 @@ export function sanitizeReturnTo(returnTo, fallback = './dashboard.html') {
   }
 }
 
-export async function clearAuthSession() {
-  if (usesSupabaseAuthentication()) {
-    try {
-      const result = await supabase.auth.signOut();
-      // Auth returns provider failures as { error }; fulfillment alone does
-      // not confirm logout or removal of the persisted SDK session.
-      if (result?.error) throw new Error('Sign out was not confirmed.');
-    } catch {
-      // Do not propagate a provider response, token, or transport error body.
-      throw new Error('Sign out could not be confirmed. Retry signing out before leaving this device.');
-    } finally {
-      if (isHybridAuthPreview()) clearLocalAuthenticatedIdentity();
+export async function clearAuthSession({ redirectToLanding = false } = {}) {
+  if (redirectToLanding) logoutNavigationPending = true;
+  try {
+    if (usesSupabaseAuthentication()) {
+      try {
+        const result = await supabase.auth.signOut();
+        // Auth returns provider failures as { error }; fulfillment alone does
+        // not confirm logout or removal of the persisted SDK session.
+        if (result?.error) throw new Error('Sign out was not confirmed.');
+      } catch {
+        // Do not propagate a provider response, token, or transport error body.
+        throw new Error('Sign out could not be confirmed. Retry signing out before leaving this device.');
+      } finally {
+        if (isHybridAuthPreview()) clearLocalAuthenticatedIdentity();
+      }
+    } else if (isLocalDemoMode() && readJson('dominion:user', null)?.email) {
+      // Adopt a legacy install's active ID before clearing the account pointer.
+      claimPreviewLegacyOwner(localStorage, getMockUserId());
     }
-  } else if (isLocalDemoMode() && readJson('dominion:user', null)?.email) {
-    // Adopt a legacy install's active ID before clearing the account pointer.
-    claimPreviewLegacyOwner(localStorage, getMockUserId());
+    localStorage.removeItem('dominion:user');
+    localStorage.removeItem(MOCK_USER_ID_KEY);
+    localStorage.removeItem('dominion:theme');
+    // Keep the reservation until this document exits: late private-route
+    // hydration must not replace the confirmed destination with Login.
+    if (redirectToLanding) {
+      // A BFCache restoration is no longer part of this logout navigation.
+      window.addEventListener('pagehide', () => { logoutNavigationPending = false; }, { once: true });
+      window.location.href = './index.html';
+    }
+  } catch (error) {
+    if (redirectToLanding) logoutNavigationPending = false;
+    throw error;
   }
-  localStorage.removeItem('dominion:user');
-  localStorage.removeItem(MOCK_USER_ID_KEY);
-  localStorage.removeItem('dominion:theme');
 }
 
 export function saveLocalMockUser(user) {

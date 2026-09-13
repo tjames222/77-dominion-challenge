@@ -424,9 +424,8 @@ async function buildMenu() {
     currentMenuOwner = '';
     clearThemeEntitlementState();
     try {
-      await clearAuthSession();
+      await clearAuthSession({ redirectToLanding: true });
       closeMenu();
-      window.location.href = './index.html';
     } catch {
       // Foreground/Auth hydration may have replaced the drawer controls while
       // the provider request was pending. Report failure in the current UI.
