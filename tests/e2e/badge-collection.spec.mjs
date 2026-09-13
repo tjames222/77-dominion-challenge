@@ -32,7 +32,7 @@ async function mountCollection(page, app, theme = 'dark') {
 
 for (const theme of ['light', 'dark', 'dominion-night', 'dominion-platinum']) {
   for (const width of [390, 1440]) {
-    test(`series requirements and earned details: ${theme} ${width}px`, async ({ page, app }) => {
+    test(`series requirements and earned details: ${theme} ${width}px`, async ({ page, app }, testInfo) => {
       await page.setViewportSize({ width, height: 900 });
       await mountCollection(page, app, theme);
       const collection = page.locator('#badgeCollectionFixture');
@@ -48,6 +48,7 @@ for (const theme of ['light', 'dark', 'dominion-night', 'dominion-platinum']) {
       await expect(tile).toBeFocused();
       await expectNoHorizontalOverflow(page);
       assertNoBlockingAxeViolations(await analyzeAccessibility(page));
+      await collection.screenshot({ path: testInfo.outputPath('badge-collection.png') });
       app.assertNoRuntimeErrors();
     });
   }

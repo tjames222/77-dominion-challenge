@@ -109,6 +109,38 @@ test('same-account insertion keeps selected badge and exact trigger identity', a
   expect(await page.evaluate(() => document.activeElement === window.__galleryOriginalTrigger)).toBe(true);
 });
 
+test('same-definition awards retain their own evidence and exact trigger after a scoped insertion', async ({ page, app }) => {
+  const sameDefinition = [
+    { ...GALLERY_BADGES[0], key: 'seven_sealed', awardId: 'legacy-1', scopeKey: 'lifetime', legacy: true, earnedAt: '2025-12-20T12:00:00Z' },
+    { ...GALLERY_BADGES[0], key: 'seven_sealed', awardId: 'current-1', scopeKey: 'original77:2026-01-01', legacy: false, earnedAt: '2026-01-07T12:00:00Z',
+      earningEvidence: { schemaVersion: 1, kind: 'perfect_streak', qualifyingValue: 7 } },
+  ];
+  await openGallery(page, app, { badges: sameDefinition });
+  await expect(page.locator('[data-badge-key="seven_sealed"]')).toHaveCount(2);
+  const current = page.locator('[data-badge-record-key="award:current-1"]');
+  await current.evaluate((node) => { window.__galleryScopedTrigger = node; });
+  await current.click();
+  await expect(page.getByRole('dialog')).toContainText('Reaching a 7-day perfect streak.');
+  await page.evaluate(async (badges) => {
+    const { writePreviewUserValue } = await import('/src/static/preview-user-state.mjs');
+    const owner = localStorage.getItem('dominion:mockUserId');
+    writePreviewUserValue(localStorage, owner, 'dominion:badges', [
+      { ...badges[1], awardId: 'next-1', scopeKey: 'original77:2026-03-01', earnedAt: '2026-03-07T12:00:00Z' }, ...badges,
+    ]);
+    window.dispatchEvent(new StorageEvent('storage', { key: 'dominion:badges' }));
+  }, sameDefinition);
+  await expect(page.locator('[data-badge-key="seven_sealed"]')).toHaveCount(3);
+  await expect(page.getByRole('dialog')).toContainText('Earned January 7, 2026');
+  await expect(current).toHaveAttribute('aria-expanded', 'true');
+  await expect(page.locator('[data-badge-record-key="award:next-1"]')).toHaveAttribute('aria-expanded', 'false');
+  await page.keyboard.press('Escape');
+  expect(await page.evaluate(() => document.activeElement === window.__galleryScopedTrigger)).toBe(true);
+  await page.locator('[data-badge-record-key="award:legacy-1"]').click();
+  await expect(page.getByRole('dialog')).toContainText('Detailed earning history is unavailable');
+  await expect(page.getByRole('dialog')).toContainText('Earned December 20, 2025');
+  app.assertNoRuntimeErrors();
+});
+
 test('200 percent text, landscape and forced colors keep content and controls reachable', async ({ page, app, browserName }) => {
   await page.setViewportSize({ width: 667, height: 375 });
   await openGallery(page, app, { badges: [{ ...GALLERY_BADGES[0], name: 'A long badge name '.repeat(8), description: 'A complete and helpful description. '.repeat(30) }] });

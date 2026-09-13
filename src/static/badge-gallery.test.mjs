@@ -40,6 +40,19 @@ describe('earned badge gallery contract', () => {
     assert.doesNotMatch(JSON.stringify(badge), /never-render/);
   });
 
+  it('keeps distinct challenge instances and preserved legacy awards of one definition', () => {
+    const records = [
+      { key: 'seven_sealed', awardId: 'legacy-1', scopeKey: 'lifetime', legacy: true, earnedAt: '2025-12-20T12:00:00Z' },
+      { key: 'seven_sealed', awardId: 'current-1', scopeKey: 'original77:2026-01-01', earnedAt: '2026-01-07T12:00:00Z' },
+      { key: 'seven_sealed', scopeKey: 'original77:2026-03-01', earnedAt: '2026-03-07T12:00:00Z' },
+    ];
+    const model = badgeGalleryModel([...records, records[1]]);
+    assert.equal(model.length, 3);
+    assert.deepEqual(model.map((record) => record.key), ['seven_sealed', 'seven_sealed', 'seven_sealed']);
+    assert.equal(new Set(model.map((record) => record.recordKey)).size, 3);
+    assert.deepEqual(model, badgeGalleryModel([...records].reverse()));
+  });
+
   it('never guesses earning evidence from names, raw metadata or unsupported versions', () => {
     for (const evidence of [null, {}, { schemaVersion: 2, kind: 'check_in', qualifyingValue: 1 },
       { schemaVersion: 1, kind: 'unknown', summary: 'private detail' },
