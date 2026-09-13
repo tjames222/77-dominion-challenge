@@ -513,6 +513,7 @@ body:not(.challenge-finished) .dashboard-shell > :is(.topbar, .member-tabs) + .d
 .global-menu-links a,
 .global-menu-page-training-primary,
 .global-menu-page-training-restart,
+.global-menu-training-load-recovery,
 .global-menu-training,
 .global-menu-logout {
   display: flex;
@@ -554,6 +555,8 @@ body:not(.challenge-finished) .dashboard-shell > :is(.topbar, .member-tabs) + .d
 .global-menu-page-training-primary[hidden],
 .global-menu-page-training-restart[hidden],
 .global-menu-page-training-feedback[hidden],
+.global-menu-training-load-recovery[hidden],
+.global-menu-training-load-status[hidden],
 .global-menu-full-training-feedback[hidden] {
   display: none;
 }
@@ -564,6 +567,7 @@ body:not(.challenge-finished) .dashboard-shell > :is(.topbar, .member-tabs) + .d
   display: none;
 }
 .global-menu-page-training-primary,
+.global-menu-training-load-recovery,
 .global-menu-page-training-restart {
   width: 100%;
   justify-content: center;

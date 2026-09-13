@@ -6,8 +6,8 @@ export function createMenuTrainingLoader({
     // Browser module maps can retain a failed import. Do not advertise a retry
     // that just repeats that cached rejection; recovery is an explicit reload.
     modulePromise ||= Promise.resolve().then(load).catch(() => {
-      const error = new Error('Training could not load. Save your work before reloading this page.');
-      error.code = 'SITE_TRAINING_RELOAD_REQUIRED';
+      const error = new Error(TRAINING_RELOAD_MESSAGE);
+      error.code = TRAINING_RELOAD_REQUIRED;
       throw error;
     });
     return modulePromise;
@@ -15,3 +15,4 @@ export function createMenuTrainingLoader({
 }
 
 export const loadMenuTrainingControllers = createMenuTrainingLoader();
+import { TRAINING_RELOAD_MESSAGE, TRAINING_RELOAD_REQUIRED } from './site-training-ui-loader.mjs';

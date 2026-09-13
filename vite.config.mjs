@@ -4,13 +4,22 @@ import { PRODUCTION_ENTRYPOINTS } from './app-entrypoints.mjs';
 import { isCloudflarePreviewEnvironment } from './scripts/normalize-cloudflare-frontend-env.mjs';
 import { renderInitialPreviewFeedback } from './src/static/preview-feedback.mjs';
 
+export function isSharedMenuModule(id) {
+  return /\/src\/static\/menu\.js$/.test(id)
+    || /\/src\/assets\/(?:styles|product|dialog|menu|dominion-night|dominion-platinum)\.css$/.test(id)
+    || id === '\0vite/modulepreload-polyfill.js';
+}
+
 export function resolveTrainingModulePreloads(filename, dependencies, { hostType }) {
   // WebKit retains a failed modulepreload across location.reload, even for a
   // no-store HTTP 503. Native import alone recovers in the new document. Omit
-  // only this optional UI's redundant JS preload; Vite still appends and awaits
+  // only these optional training chunks' redundant JS preload; Vite still appends and awaits
   // its CSS dependencies. Other imports and HTML preloads are unchanged.
-  if (hostType === 'js' && /(?:^|\/)site-training-ui(?:-[\w-]+)?\.js$/.test(filename)) {
-    return dependencies.filter((dependency) => dependency !== filename);
+  const optionalTrainingJs = /(?:^|\/)(?:site-training-ui|menu-training-controllers)(?:-[\w-]+)?\.js$/;
+  if (hostType === 'js' && optionalTrainingJs.test(filename)) {
+    // UI imports also refer back to the already-loaded controller/catalog.
+    // Preloading it again is redundant and WebKit may fetch it twice.
+    return dependencies.filter((dependency) => !optionalTrainingJs.test(dependency));
   }
   return dependencies;
 }
@@ -72,6 +81,20 @@ export default defineConfig(({ mode }) => {
       modulePreload: { resolveDependencies: resolveTrainingModulePreloads },
       rollupOptions: {
         input: PRODUCTION_ENTRYPOINTS,
+        output: {
+          codeSplitting: {
+            groups: [
+              // Keep exactly the existing static menu graph together. Moving
+              // the controllers out must not turn its shared state/contract
+              // helpers into additional startup requests on every route.
+              { name: 'menu', test: isSharedMenuModule, priority: 20 },
+              // The optional controllers and catalog share one failure/reload
+              // boundary. The higher-priority menu owns their common helpers;
+              // dynamic imports (including the coachmark UI) stay separate.
+              { name: 'menu-training-controllers', test: /\/src\/static\/menu-training-controllers\.mjs$/, priority: 10 },
+            ],
+          },
+        },
       },
     },
   };

@@ -5,7 +5,7 @@ import { measureFrontendBundles } from './measure-frontend-bundles.mjs';
 export function checkFrontendPerformance(measured, budgets, { requireTargets = false } = {}) {
   const violations = [];
   const remainingTargets = [];
-  const forbidden = /\/(?:share-composer(?!-loader)|site-training-ui)(?:-[\w-]+)?\.(?:js|css)$/;
+  const forbidden = /\/(?:share-composer(?!-loader)|site-training-ui|menu-training-controllers)(?:-[\w-]+)?\.(?:js|css)$/;
   for (const [name, budget] of Object.entries(budgets.routes)) {
     const route = measured.routes[name];
     if (!route) { violations.push(`${name}: missing measured entry`); continue; }

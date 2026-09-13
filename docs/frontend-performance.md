@@ -207,8 +207,9 @@ document that can fetch the UI again; saved onboarding handoffs remain recoverab
 WebKit also retains a failed JavaScript `modulepreload` after a soft reload, even
 for a real HTTP 503 with `Cache-Control: no-store`. The narrow
 [`build.modulePreload.resolveDependencies`](https://vite.dev/config/build-options#build-modulepreload)
-resolver removes only the training UI's own dynamic JS preload, leaving native
-import, Vite's automatic CSS awaiting, other dependencies, and HTML preloads
+resolver removes only the controller/catalog and training UI dynamic JS preloads
+from training imports, leaving native import, Vite's automatic CSS awaiting,
+unrelated dependencies, and HTML preloads
 unchanged. A loopback HTTP regression builds the actual loader/UI in memory and
 verifies sticky failure then successful reload in Chromium and WebKit.
 Actor epochs and a separate presentation generation discard delayed
@@ -217,10 +218,66 @@ an already-running successful mutation keeps its confirmed progress but does not
 reopen the overlay. The menu is closed again immediately before creating/acquiring
 the modal layer, covering a menu reopened while an import or request was pending.
 
-This is a deliberately small presentation-only split. Training controller/state
-code remains in the initial shared graph; the first measured local build saved
+This was a deliberately small presentation-only checkpoint. Training controller/state
+code remained in the initial shared graph; that first local build saved
 about 3.4 KB gzip, not the overall 40%/25% JS targets. It does not defer required
 first-run onboarding or change the published training catalog or progress RPCs.
+
+## Member training graph extraction (local checkpoint)
+
+The menu now uses a tiny schema/route contract instead of importing the normalized
+catalog just to read its schema version. A parity test keeps the fourteen-route
+index equal to the published catalog. Visitors never load the controller/catalog
+graph, including on public Science; authenticated members on supported routes
+still load it immediately for durable first-run handoff/resume. The coachmark
+implementation and styles remain a separate interaction/active-training load.
+This is not an artificial delay of required member work or an API latency claim.
+
+The regular menu is interactive before the optional graph arrives. Load status
+and the same save-work/reload confirmation remain accessible on failure. Auth
+changes, menu rehydration and pagehide fence stale import continuations; cached
+public code cannot attach the old actor's controls or auto-open their training.
+A restored back/forward document rehydrates the controls. No auth client, MFA
+guard, settled private cache, training RPC, catalog content or progress contract
+changed in this phase.
+
+Explicit [Rolldown code-splitting groups](https://rolldown.rs/reference/TypeAlias.CodeSplittingGroup)
+keep the existing shared menu dependencies and common styles together, while a
+lower-priority group contains only the optional controllers/catalog and their
+otherwise-unowned dependencies. Shared dialog CSS is packed with the menu styles
+(the Invite page also receives the dialog styles its menu had previously omitted).
+Existing CSS declarations are unchanged; the new reload action reuses the menu's
+54 px button styling and hidden-state rules. The generated ESM runtime remains a
+separate counted asset. No initial request budget was increased to accommodate
+the split.
+
+Canonical mock build comparison against `8f5bcc5`, using the same measurement
+script and policy as above:
+
+| Route | Checkpoint JS gzip | Extracted JS gzip | Initial graph requests |
+| --- | ---: | ---: | ---: |
+| Landing | 135059 | 123278 | 7 |
+| Login | 137214 | 125432 | 7 |
+| Dashboard | 152161 | 140417 | 7 |
+| Rewards | 141779 | 129976 | 7 |
+| Community | 160199 | 148455 | 8 |
+| Profile | 141420 | 129623 | 6 |
+| Bible reading | 140285 | 128500 | 6 |
+
+The shared menu is 119460 gzip bytes; the deferred controller/catalog chunk is
+14216 and coachmark UI is 4506. These optional bytes remain part of member runtime
+work and are included in the all-chunk audit. Full-built loopback HTTP503 tests
+cover both actual optional training chunks in Chromium and WebKit, including a
+cancelled reload confirmation, successful explicit reload, exactly one new
+request after reload, and style/focus readiness. The UI import must not preload
+the already-loaded controller again: WebKit otherwise refetches it with no-store
+responses. All other preloads and CSS waiting are preserved.
+
+**This checkpoint is not deployed performance completion.** It still exceeds all
+seven final JavaScript targets. Remaining work includes heavier API/domain module
+boundaries, dashboard/daily-action request budgets and bounded history. The
+deployed asset/layout timings above do not measure this later extraction; a new
+pinned before/after run is required after root review and preview publication.
 
 ## Interim automated budgets
 
@@ -229,7 +286,7 @@ against `frontend-performance-budgets.json`. Initial JS ceilings are the pinned
 baseline (no regression), CSS allows at most 2 KB gzip over that baseline for the
 static trigger/layout fixes, and initial static request counts cannot grow.
 Every JS chunk, including deferred chunks, is capped at 140 KB gzip. Sharing and
-training UI entry graphs must not become static dependencies. Image and font
+training UI/controller entry graphs must not become static dependencies. Image and font
 budgets are enforced separately by the production asset verifier.
 
 These interim checks intentionally print `targetsMet: false` while the 40% public
