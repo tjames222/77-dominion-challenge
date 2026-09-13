@@ -118,6 +118,12 @@ export default defineConfig({
       },
     },
     {
+      name: 'webkit-badge-gallery-mobile',
+      testMatch: /badge-gallery\.spec\.mjs/,
+      metadata: { breakpoint: 'mobile', theme: 'dark', colorScheme: 'dark' },
+      use: { ...devices['iPhone 13'], browserName: 'webkit', viewport: { width: 390, height: 844 } },
+    },
+    {
       name: 'webkit-share-composer-mobile',
       testMatch: /share-composer-routes\.spec\.mjs/,
       metadata: { breakpoint: 'mobile', theme: 'dark', colorScheme: 'dark' },

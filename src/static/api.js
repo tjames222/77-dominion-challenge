@@ -910,6 +910,10 @@ const mapBadge = (badge) => {
     earnedAt: badge.earned_at || badge.earnedAt || null,
     entryDate: badge.entry_date || badge.entryDate || badge.metadata?.entryDate || null,
     metadata: badge.metadata || {},
+    requirement: definition?.requirement || badge.requirement || badge.metadata?.requirement || definition?.description || '',
+    earningEvidence: badge.earningEvidence || badge.earning_evidence || badge.metadata?.earningEvidence || null,
+    legacy: badge.legacy === true || badge.metadata?.legacy === true,
+    retired: definition?.retired === true || badge.retired === true || badge.metadata?.retired === true,
   } : null;
 };
 
