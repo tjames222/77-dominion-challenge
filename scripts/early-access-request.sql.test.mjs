@@ -10,7 +10,7 @@ const container = `77dc-early-access-sql-${randomUUID()}`;
 const image = 'public.ecr.aws/supabase/postgres:17.6.1.141';
 const actorId = '10000000-0000-4000-8000-000000000001';
 const otherId = '10000000-0000-4000-8000-000000000002';
-let created = false; let migration; let authOwnership;
+let created = false; let migration; let authOwnership; let authSchemaOwnership;
 const migrationRole = 'fixture_migration';
 const helperCall = (id = actorId, email = 'sam@example.com') => `select to_json(private.early_access_verified_identity_matches(${id ? `'${id}'` : 'null'},${email ? `'${email}'` : 'null'}));`;
 const command = ['exec', '-i', container, 'psql', '-X', '-qAt', '-v', 'ON_ERROR_STOP=1', '-h', '/tmp', '-U', 'postgres', '-d', 'postgres'];
@@ -53,13 +53,18 @@ before(async () => {
   }
   assert.equal(ready, true, 'Owned PostgreSQL fixture did not become ready');
   query(`create role anon; create role authenticated; create role service_role bypassrls;
+    create role supabase_admin nologin nosuperuser nocreatedb nocreaterole;
     create role supabase_auth_admin nologin nosuperuser nocreatedb nocreaterole;
     create role ${migrationRole} nologin nosuperuser nocreatedb nocreaterole nobypassrls;
-    create schema auth; create schema private authorization ${migrationRole}; create schema extensions;
+    -- Match provider schema ownership/usage. Foreign-key checks execute as the
+    -- referenced table owner, who must be able to resolve its own Auth table.
+    create schema auth authorization supabase_admin;
+    create schema private authorization ${migrationRole}; create schema extensions;
     create schema supabase_migrations;
     create table supabase_migrations.schema_migrations(version text primary key);
     insert into supabase_migrations.schema_migrations values ('20260913023402');
     grant usage on schema auth, private, public to service_role,${migrationRole};
+    grant usage on schema auth to supabase_auth_admin;
     grant usage,create on schema public to ${migrationRole};
     create table auth.users (id uuid primary key, email text, email_confirmed_at timestamptz, is_anonymous boolean default false,
       deleted_at timestamptz,banned_until timestamptz,encrypted_password text default 'PRIVATE_AUTH_SENTINEL',raw_user_meta_data jsonb default '{"private":"PRIVATE_AUTH_SENTINEL"}');
@@ -68,6 +73,7 @@ before(async () => {
     alter table auth.users owner to supabase_auth_admin;
     grant select,references on auth.users to ${migrationRole};`);
   [authOwnership] = query("select json_build_array(relowner,relacl::text) from pg_class where oid='auth.users'::regclass;");
+  [authSchemaOwnership] = query("select json_build_array(nspowner,nspacl::text) from pg_namespace where nspname='auth';");
   migration = await readFile(new URL('../supabase/migrations/20260913023402_early_access_request_intake.sql', import.meta.url), 'utf8');
   query(`set role ${migrationRole};begin; ${migration} commit;`);
 });
@@ -113,6 +119,9 @@ test('the original signed-in RPC fails under true service privileges while anony
 
 test('migration retains provider Auth ownership/ACLs and the service role cannot read any Auth rows', () => {
   assert.deepEqual(query("select json_build_array(relowner,relacl::text) from pg_class where oid='auth.users'::regclass;"), [authOwnership]);
+  assert.deepEqual(query("select json_build_array(nspowner,nspacl::text) from pg_namespace where nspname='auth';"), [authSchemaOwnership]);
+  assert.deepEqual(query("select json_build_object('owner',pg_get_userbyid(nspowner),'ownerUsage',has_schema_privilege('supabase_auth_admin',oid,'usage')) from pg_namespace where nspname='auth';"),
+    [{ owner: 'supabase_admin', ownerUsage: true }]);
   assert.deepEqual(query(`select json_build_object('owner',pg_get_userbyid(relowner),'serviceRead',has_table_privilege('service_role',oid,'select')) from pg_class where oid='auth.users'::regclass;
     select json_build_object('superuser',rolsuper,'bypass',rolbypassrls) from pg_roles where rolname='${migrationRole}';`),
   [{ owner: 'supabase_auth_admin', serviceRead: false }, { superuser: false, bypass: false }]);
