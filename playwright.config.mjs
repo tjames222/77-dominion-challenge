@@ -166,7 +166,7 @@ export default defineConfig({
     },
     {
       name: 'webkit-training-mobile',
-      testMatch: /(?:site-training-visibility|solo-first-run-training)\.spec\.mjs/,
+      testMatch: /(?:site-training-visibility|solo-first-run-training|menu-training-loading)\.spec\.mjs/,
       metadata: { breakpoint: 'mobile', theme: 'dark', colorScheme: 'dark' },
       use: { ...devices['iPhone 13'], browserName: 'webkit', viewport: { width: 390, height: 844 } },
     },
