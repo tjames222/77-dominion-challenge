@@ -55,10 +55,42 @@ create schema extensions;
 create extension pgcrypto with schema extensions;
 
 create schema auth;
+-- Dependency fields/types verified against the pinned Auth schema. These empty
+-- tables do not fake a session, MFA factor, admin assignment, or permission.
+create type auth.aal_level as enum ('aal1', 'aal2', 'aal3');
+create type auth.factor_type as enum ('totp', 'webauthn', 'phone');
+create type auth.factor_status as enum ('unverified', 'verified');
 create table auth.users (
   id uuid primary key,
-  email text,
-  raw_user_meta_data jsonb not null default '{}'::jsonb
+  email varchar(255),
+  raw_user_meta_data jsonb,
+  created_at timestamptz,
+  last_sign_in_at timestamptz,
+  email_confirmed_at timestamptz,
+  is_anonymous boolean not null default false,
+  deleted_at timestamptz,
+  banned_until timestamptz
+);
+create table auth.mfa_factors (
+  id uuid primary key,
+  user_id uuid not null references auth.users(id) on delete cascade,
+  factor_type auth.factor_type not null,
+  status auth.factor_status not null
+);
+create table auth.sessions (
+  id uuid primary key,
+  user_id uuid not null references auth.users(id) on delete cascade,
+  factor_id uuid,
+  aal auth.aal_level,
+  not_after timestamptz
+);
+create table auth.mfa_amr_claims (
+  id uuid primary key,
+  session_id uuid not null references auth.sessions(id) on delete cascade,
+  authentication_method text not null,
+  created_at timestamptz not null,
+  updated_at timestamptz not null,
+  unique (session_id, authentication_method)
 );
 create function auth.uid()
 returns uuid

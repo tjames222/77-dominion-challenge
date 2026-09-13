@@ -231,3 +231,15 @@ test('the registered pgTAP foundation executes all 30 structural assertions', as
   const result = docker(command, sql);
   assert.equal(result.status, 0, result.stderr); assert.doesNotMatch(result.stdout, /^not ok/m); assert.match(result.stdout, /1\.\.30/);
 });
+
+test('canonical schema-drift Auth dependencies replay the foundation without fabricating readiness', async () => {
+  const script = await readFile(new URL('./check-schema-drift.sh', import.meta.url), 'utf8');
+  const authDependencies = script.match(/create schema auth;[\s\S]*?(?=create schema storage;)/)?.[0];
+  assert.ok(authDependencies, 'the canonical fixture must retain its Auth dependency section');
+  query(`drop schema private cascade;drop schema auth cascade;drop schema public cascade;create schema public;
+    ${authDependencies}grant usage on schema public,auth to authenticated;begin;${migration}commit;
+    insert into auth.users(id,email,email_confirmed_at)values('${actor}','fixture@example.invalid',now());`);
+  assert.deepEqual(query(`select to_jsonb(role_key) from private.site_user_roles where user_id='${actor}';select to_jsonb(count(*)) from auth.sessions;select to_jsonb(count(*)) from auth.mfa_factors;`), ['member', 0, 0]);
+  // A token-shaped setting alone cannot make an absent Auth session live.
+  query(asActor(denied(context().replace('select ', 'perform '), 'PT401')));
+});
