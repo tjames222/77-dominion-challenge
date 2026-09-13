@@ -399,7 +399,7 @@ async function buildMenu() {
         </div>
       </section>
     ` : ''}
-    ${isLoggedIn ? '<button class="global-menu-logout" type="button">Log Out</button>' : ''}
+    ${isLoggedIn ? '<button class="global-menu-logout" type="button">Log Out</button><p class="global-menu-logout-feedback" role="alert" aria-live="assertive" hidden></p>' : ''}
   `;
   // Auth/window-focus hydration replaces drawer controls. Keep an open menu's
   // keyboard context inside the fresh drawer instead of leaving focus on body.
@@ -411,16 +411,36 @@ async function buildMenu() {
   if (!document.body.classList.contains('menu-open')) (trailingActions || topbar).appendChild(button);
   syncMenuExpandedState(document.body.classList.contains('menu-open'));
   menu.querySelector('.global-menu-close')?.addEventListener('click', closeMenu);
-  menu.querySelector('.global-menu-logout')?.addEventListener('click', async () => {
+  menu.querySelector('.global-menu-logout')?.addEventListener('click', async (event) => {
+    const logout = event.currentTarget;
+    if (logout.disabled) return;
+    logout.disabled = true;
+    const feedback = menu.querySelector('.global-menu-logout-feedback');
+    feedback.hidden = true;
     closeShareComposer('logout');
     destroyTrainingControllers();
     sharedHeaderActions?.destroy();
     sharedHeaderActions = null;
     currentMenuOwner = '';
     clearThemeEntitlementState();
-    await clearAuthSession();
-    closeMenu();
-    window.location.href = './index.html';
+    try {
+      await clearAuthSession();
+      closeMenu();
+      window.location.href = './index.html';
+    } catch {
+      // Foreground/Auth hydration may have replaced the drawer controls while
+      // the provider request was pending. Report failure in the current UI.
+      const currentFeedback = menu.querySelector('.global-menu-logout-feedback');
+      const currentLogout = menu.querySelector('.global-menu-logout');
+      if (currentFeedback) {
+        currentFeedback.textContent = 'Sign out could not be confirmed. Retry signing out before leaving this device.';
+        currentFeedback.hidden = false;
+      }
+      if (currentLogout) {
+        currentLogout.disabled = false;
+        focusWithoutScroll(currentLogout);
+      }
+    }
   });
 
   if (!globalMenuListenersBound) {

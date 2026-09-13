@@ -19,6 +19,60 @@ async function verify(page) {
   await expect(page.locator('#securitySuccess')).toBeVisible();
 }
 
+for (const enrolled of [false, true]) {
+  test(`provider sign-out outage remains retryable and clears MFA secrets (${enrolled ? 'existing challenge' : 'new enrollment'})`, async ({ context, page }) => {
+    const auth = await installMfaSupabaseStub(context, { enrolled });
+    const pageErrors = [];
+    page.on('pageerror', error => pageErrors.push(error.message));
+    await login(page, './account-security.html');
+    if (enrolled) await expect(page.locator('#securityVerifyForm')).toBeVisible();
+    else {
+      await page.getByRole('button', { name: 'Set up authenticator' }).click();
+      await expect(page.locator('#securityKey')).toHaveValue('JBSWY3DPEHPK3PXP');
+    }
+    await page.getByLabel('Six-digit code', { exact: true }).fill('654321');
+    auth.setLogoutOutage();
+    await page.getByRole('button', { name: enrolled ? 'Sign out instead' : 'Sign out', exact: true }).click();
+    await expect(page.getByRole('status')).toHaveText('Sign out could not be confirmed. Retry signing out before leaving this device.');
+    await expect(page).toHaveURL(/account-security\.html/);
+    await expect(page.locator('#securityKey')).toHaveValue('');
+    await expect(page.locator('#securityQr')).not.toHaveAttribute('src');
+    await expect(page.locator('#securityCode')).toHaveValue('');
+    await expect(page.locator('#securitySuccess')).toBeHidden();
+    await expect(page.getByRole('button', { name: 'Sign out', exact: true })).toBeEnabled();
+    expect(await page.evaluate(() => Boolean(JSON.parse(localStorage.getItem('sb-127-auth-token') || 'null')?.access_token))).toBe(true);
+    const exposed = await page.evaluate(() => [document.body.textContent, JSON.stringify({ ...localStorage, ...sessionStorage })].join(' '));
+    expect(exposed).not.toMatch(/JBSWY3DPEHPK3PXP|SYNTHETIC_PRIVATE_LOGOUT_RESPONSE/);
+    auth.setLogoutOutage(false);
+    await page.getByRole('button', { name: 'Sign out', exact: true }).click();
+    await expect(page).toHaveURL(/\/login\.html$/);
+    expect(await page.evaluate(() => localStorage.getItem('sb-127-auth-token'))).toBeNull();
+    expect(pageErrors).toEqual([]);
+  });
+}
+
+test('shared menu reports logout outage without navigation or an unhandled rejection', async ({ context, page }) => {
+  const auth = await installMfaSupabaseStub(context, { enrolled: false });
+  const pageErrors = [];
+  page.on('pageerror', error => pageErrors.push(error.message));
+  await login(page, './support.html');
+  await expect(page).toHaveURL(/\/support\.html$/);
+  await page.getByRole('button', { name: 'Open menu', exact: true }).click();
+  auth.setLogoutOutage();
+  const logout = page.getByRole('button', { name: 'Log Out', exact: true });
+  await logout.click();
+  await expect(page.locator('.global-menu-logout-feedback')).toHaveText('Sign out could not be confirmed. Retry signing out before leaving this device.');
+  await expect(logout).toBeEnabled();
+  await expect(logout).toBeFocused();
+  await expect(page).toHaveURL(/\/support\.html$/);
+  expect(await page.evaluate(() => Boolean(JSON.parse(localStorage.getItem('sb-127-auth-token') || 'null')?.access_token))).toBe(true);
+  auth.setLogoutOutage(false);
+  await logout.click();
+  await expect(page).toHaveURL(/\/index\.html$/);
+  expect(await page.evaluate(() => localStorage.getItem('sb-127-auth-token'))).toBeNull();
+  expect(pageErrors).toEqual([]);
+});
+
 for (const [target, destination] of [['./invite.html', '/invite.html'], ['./community.html?intent=challenge-start', '/community.html']]) {
   test(`live SDK login challenges before private hydration and preserves ${destination}`, async ({ context, page }) => {
     const auth = await installMfaSupabaseStub(context);

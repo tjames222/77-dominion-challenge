@@ -563,7 +563,13 @@ export function sanitizeReturnTo(returnTo, fallback = './dashboard.html') {
 export async function clearAuthSession() {
   if (usesSupabaseAuthentication()) {
     try {
-      await supabase.auth.signOut();
+      const result = await supabase.auth.signOut();
+      // Auth returns provider failures as { error }; fulfillment alone does
+      // not confirm logout or removal of the persisted SDK session.
+      if (result?.error) throw new Error('Sign out was not confirmed.');
+    } catch {
+      // Do not propagate a provider response, token, or transport error body.
+      throw new Error('Sign out could not be confirmed. Retry signing out before leaving this device.');
     } finally {
       if (isHybridAuthPreview()) clearLocalAuthenticatedIdentity();
     }
