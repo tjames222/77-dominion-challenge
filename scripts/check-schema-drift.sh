@@ -47,89 +47,10 @@ bash "$repository_root/scripts/reset-local-database.sh"
 createdb --maintenance-db="$database_url" --template=template0 "$temp_database"
 temp_database_created=1
 
-# Canonical schema.sql references Supabase-owned auth and storage objects. The
-# isolated database only needs these minimal dependency shapes because the
-# comparison below is restricted to public/private application objects.
-psql "$temp_database_url" --set=ON_ERROR_STOP=1 --quiet <<'SQL'
-create schema extensions;
-create extension pgcrypto with schema extensions;
-
-create schema auth;
--- Dependency fields/types verified against the pinned Auth schema. These empty
--- tables do not fake a session, MFA factor, admin assignment, or permission.
-create type auth.aal_level as enum ('aal1', 'aal2', 'aal3');
-create type auth.factor_type as enum ('totp', 'webauthn', 'phone');
-create type auth.factor_status as enum ('unverified', 'verified');
-create table auth.users (
-  id uuid primary key,
-  email varchar(255),
-  raw_user_meta_data jsonb,
-  created_at timestamptz,
-  last_sign_in_at timestamptz,
-  email_confirmed_at timestamptz,
-  is_anonymous boolean not null default false,
-  deleted_at timestamptz,
-  banned_until timestamptz
-);
-create table auth.mfa_factors (
-  id uuid primary key,
-  user_id uuid not null references auth.users(id) on delete cascade,
-  factor_type auth.factor_type not null,
-  status auth.factor_status not null
-);
-create table auth.sessions (
-  id uuid primary key,
-  user_id uuid not null references auth.users(id) on delete cascade,
-  factor_id uuid,
-  aal auth.aal_level,
-  not_after timestamptz
-);
-create table auth.mfa_amr_claims (
-  id uuid primary key,
-  session_id uuid not null references auth.sessions(id) on delete cascade,
-  authentication_method text not null,
-  created_at timestamptz not null,
-  updated_at timestamptz not null,
-  unique (session_id, authentication_method)
-);
-create function auth.uid()
-returns uuid
-language sql
-stable
-as $$
-  select nullif(current_setting('request.jwt.claim.sub', true), '')::uuid;
-$$;
-create function auth.jwt()
-returns jsonb
-language sql
-stable
-as $$
-  select coalesce(nullif(current_setting('request.jwt.claims', true), ''), '{}')::jsonb;
-$$;
-
-create schema storage;
-create table storage.buckets (
-  id text primary key,
-  name text not null,
-  public boolean not null default false,
-  file_size_limit bigint,
-  allowed_mime_types text[]
-);
-create table storage.objects (
-  id uuid primary key default gen_random_uuid(),
-  bucket_id text,
-  name text not null,
-  owner uuid
-);
-alter table storage.objects enable row level security;
-create function storage.foldername(name text)
-returns text[]
-language sql
-immutable
-as $$
-  select string_to_array(name, '/');
-$$;
-SQL
+# Load only the reviewed provider dependency shapes into this disposable DB.
+# The application snapshot and its full comparison below remain unchanged.
+psql "$temp_database_url" --set=ON_ERROR_STOP=1 --quiet \
+  --file=scripts/fixtures/schema-drift-provider.sql
 
 PGOPTIONS="-c search_path=public,extensions" \
   psql "$temp_database_url" \
