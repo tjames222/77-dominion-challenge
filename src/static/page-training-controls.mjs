@@ -198,6 +198,7 @@ export function createPageTrainingControls({
         expectedUserId: actorId,
         api,
         document: ownerDocument,
+        beforeOpen,
         capabilities: () => soloFirstRunCapabilities({
           activation,
           document: ownerDocument,
@@ -260,6 +261,8 @@ export function createPageTrainingControls({
         } else if (!model.visible || model.action !== requestedAction) {
           throw new Error('Page training changed. Use the updated training control and try again.');
         }
+        await training.prepare?.();
+        assertCurrent(capturedGeneration);
         const focusTrigger = prevalidatedTrigger && preservedDialogTrigger(trigger, windowLike)
           ? trigger
           : usableFocusTrigger(trigger, windowLike)
@@ -272,9 +275,9 @@ export function createPageTrainingControls({
         if (requestedAction === 'resume') {
           if (training.state.page.status === 'stopped') {
             result = await training.resume({ scope: 'page', trigger: focusTrigger });
-          } else result = training.open({ scope: 'page', trigger: focusTrigger });
+          } else result = await training.open({ scope: 'page', trigger: focusTrigger });
         }
-        if (requestedAction === 'replay') result = training.replay({ trigger: focusTrigger });
+        if (requestedAction === 'replay') result = await training.replay({ trigger: focusTrigger });
         if (requestedAction === 'restart') {
           result = await training.restart({ trigger: focusTrigger });
         }

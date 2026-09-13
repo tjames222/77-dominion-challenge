@@ -307,6 +307,7 @@ export function createSoloFirstRunTraining({
         expectedUserId: actorId,
         api: service,
         document: ownerDocument,
+        beforeOpen,
         capabilities: () => soloFirstRunCapabilities({
           activation,
           document: ownerDocument,
@@ -333,6 +334,7 @@ export function createSoloFirstRunTraining({
   };
 
   const continueOnCurrentRoute = async ({ trigger = null, launch = null } = {}) => {
+    const capturedGeneration = generation;
     if (!onCurrentRoute()) return null;
     const overall = runtime.state.overall;
     const opensCoachmark = overall.status === 'not_started'
@@ -340,6 +342,8 @@ export function createSoloFirstRunTraining({
       || (overall.status === 'in_progress' && runtime.state.page.status !== 'completed');
     const action = overall.status === 'not_started'
       ? 'start' : overall.status === 'stopped' ? 'resume' : 'continue';
+    if (opensCoachmark) await runtime.prepare?.();
+    assertCurrent(capturedGeneration);
     // The navigation drawer owns a separate visual layer. Close it before the
     // training modal isolates the page, and restore focus outside the drawer.
     const candidate = opensCoachmark && typeof beforeOpen === 'function'
@@ -354,7 +358,7 @@ export function createSoloFirstRunTraining({
         result = await runtime.resume({ scope: 'overall', trigger: focusTrigger });
       } else if (overall.status === 'in_progress') {
         if (runtime.state.page.status === 'in_progress') {
-          runtime.open({ scope: 'overall', trigger: focusTrigger });
+          await runtime.open({ scope: 'overall', trigger: focusTrigger });
         } else if (runtime.state.page.status === 'completed') {
           result = await advanceCompletedPage();
         } else {
@@ -366,7 +370,7 @@ export function createSoloFirstRunTraining({
         clearLaunchAfterConfirmation(launch);
         if (runtime.state.overall.status === 'in_progress'
           && runtime.state.page.status === 'in_progress'
-          && onCurrentRoute()) runtime.open({ scope: 'overall', trigger: focusTrigger });
+          && onCurrentRoute()) await runtime.open({ scope: 'overall', trigger: focusTrigger });
         return runtime.state;
       }
       throw error;

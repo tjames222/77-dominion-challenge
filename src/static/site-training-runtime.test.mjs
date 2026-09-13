@@ -58,6 +58,95 @@ function fakeCoachmark() {
 }
 
 describe('site training runtime', () => {
+  for (const invalidate of ['actor-cycle', 'dismiss', 'destroy']) {
+    test(`a delayed UI import cannot claim or open after ${invalidate}`, async () => {
+      const coachmark = fakeCoachmark();
+      let release;
+      const loaded = new Promise((resolve) => { release = resolve; });
+      let imports = 0;
+      let writes = 0;
+      const runtime = createSiteTrainingRuntime({
+        registry, pathname: '/dashboard.html', expectedUserId: 'actor-1',
+        api: {
+          getSiteTrainingState: async () => readyState(),
+          claimSiteTraining: async () => { writes += 1; },
+        },
+        loadCoachmark: () => { imports += 1; return loaded; },
+      });
+      await runtime.hydrate();
+      assert.equal(imports, 0, 'State reads must not load presentation code.');
+      const pending = runtime.start();
+      assert.equal(imports, 1);
+      assert.equal(writes, 0, 'A failed UI import must not start durable training.');
+      if (invalidate === 'actor-cycle') {
+        runtime.setActor('actor-2');
+        runtime.setActor('actor-1');
+      } else runtime[invalidate]();
+      const rejected = assert.rejects(pending, {
+        code: invalidate === 'dismiss' ? 'SITE_TRAINING_OPEN_CANCELLED' : 'SITE_TRAINING_ACTOR_CHANGED',
+      });
+      release({ createSiteTrainingCoachmark: coachmark.factory });
+      await rejected;
+      assert.equal(writes, 0);
+      assert.equal(coachmark.openCalls, 0);
+    });
+  }
+
+  test('a failed UI import retries without writes and closes a reopened menu immediately before creating its layer', async () => {
+    const coachmark = fakeCoachmark();
+    const order = [];
+    let imports = 0;
+    let writes = 0;
+    let state = readyState();
+    const runtime = createSiteTrainingRuntime({
+      registry, pathname: '/dashboard.html', expectedUserId: 'actor-1',
+      api: {
+        getSiteTrainingState: async () => state,
+        claimSiteTraining: async (input) => {
+          writes += 1;
+          state = normalizeSiteTrainingMutation(applySiteTrainingTransition(state, input.action), { expectedPage: page });
+          return state;
+        },
+      },
+      loadCoachmark: async () => {
+        if (++imports === 1) throw new Error('Offline');
+        return { createSiteTrainingCoachmark: (options) => { order.push('create-layer'); return coachmark.factory(options); } };
+      },
+      beforeOpen: () => { order.push('close-menu'); },
+    });
+    await runtime.hydrate();
+    await assert.rejects(runtime.start(), /Offline/);
+    assert.equal(writes, 0);
+    await runtime.start();
+    assert.equal(imports, 2);
+    assert.equal(writes, 1);
+    assert.equal(coachmark.openCalls, 1);
+    assert.deepEqual(order, ['close-menu', 'create-layer']);
+  });
+
+  test('dismissing during a successful claim preserves confirmed progress without reopening', async () => {
+    const coachmark = fakeCoachmark();
+    let finish;
+    let started;
+    const requestStarted = new Promise((resolve) => { started = resolve; });
+    const runtime = createSiteTrainingRuntime({
+      registry, pathname: '/dashboard.html', expectedUserId: 'actor-1',
+      api: {
+        getSiteTrainingState: async () => readyState(),
+        claimSiteTraining: () => new Promise((resolve) => { finish = resolve; started(); }),
+      },
+      coachmarkFactory: coachmark.factory,
+    });
+    await runtime.hydrate();
+    const pending = runtime.start();
+    await requestStarted;
+    runtime.dismiss();
+    finish(normalizeSiteTrainingMutation(applySiteTrainingTransition(readyState(), 'start'), { expectedPage: page }));
+    assert.equal((await pending).page.status, 'in_progress');
+    assert.equal(runtime.state.page.status, 'in_progress');
+    assert.equal(coachmark.openCalls, 0);
+  });
+
   test('hydrates without claiming or opening and persists every live navigation action', async () => {
     const coachmark = fakeCoachmark();
     let state = readyState();
@@ -125,7 +214,7 @@ describe('site training runtime', () => {
       coachmarkFactory: coachmark.factory,
     });
     await runtime.hydrate();
-    runtime.replay();
+    await runtime.replay();
     await coachmark.invoke('next');
     await coachmark.invoke('finish');
     assert.equal(writes, 0);

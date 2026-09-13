@@ -132,8 +132,37 @@ moving from the far right when authenticated controls arrived. Its existing
 header now reserves the same left-aligned brand position before hydration.
 Rewards on narrow phones reserve two progress-label rows and two lines of status
 copy, so replacing placeholder points/copy does not add a row or collapse space.
-These changes still require a pinned deployed remeasurement; no local geometry
-test is presented as proof of final LCP/CLS gates.
+Pinned deployed remeasurement is recorded below; local geometry tests are not
+used as a substitute for those CDN measurements.
+
+### Verified asset/layout checkpoint
+
+Three sequential samples per route/profile/cache/URL-shape were run against
+`3fce81d8.77-dominion-live.pages.dev` at the baseline SHA above, then
+`99080616.77-dominion-live.pages.dev` at
+`1c10bc06e4355d8fc1e47b2ef3a7c6b352f1ac2b`. Each matrix contains 168
+navigations, with zero navigation errors. Every AFTER sample was below 2500 ms
+LCP and .10 CLS. These are mock-only lab results, not production RUM or real API
+round-trip evidence. The benchmark's desktop and 390×844 phone browser contexts
+use default DPR 1; separate iPhone/WebKit tests cover responsive source selection.
+
+| Clean, cold median | Before | After |
+| --- | ---: | ---: |
+| Phone Landing LCP | 23340 ms | 1280 ms |
+| Phone Landing transfer | 4585242 bytes | 278945 bytes |
+| Desktop Landing LCP | 3980 ms | 588 ms |
+| Desktop Community CLS | .228466 | .028724 |
+| Phone Community CLS | .293589 | .064647 |
+| Phone Rewards CLS | .063914 | .004694 |
+
+All eight deployed WebP candidates also matched their reviewed byte counts and
+SHA-256 hashes, `image/webp` MIME type, and one-year immutable caching; HTML
+returned `no-cache`. Reproduce the static verification with
+`node scripts/verify-deployed-hero-artwork.mjs <immutable-preview-url> <verified-sha>`.
+`summarize-deployed-performance.mjs` summarizes the raw before/after JSON matrices
+without including payloads, credentials, tokens, or customer data. The subsequent
+training-presentation split is a separate local checkpoint and is not included
+in these deployed measurements.
 
 ## In-flight activation and training reads
 
@@ -161,6 +190,39 @@ badge-claim contract; do not memoize its claim or acknowledgement mutations. Dom
 bootstrap, pagination, broader lifecycle/realtime invalidation and initial-graph
 targets remain open. The in-flight primitive deliberately introduces no settled
 cache while those full invalidation contracts are still being established.
+
+## Deferred training presentation
+
+Training-state hydration does not import the coachmark implementation or CSS.
+The separate UI entry statically imports its stylesheet; Vite resolves both
+before opening the first overlay. Controls remain visible and busy during this
+load. A failed import starts no durable training mutation, and a later attempt
+can retry. Actor epochs and a separate presentation generation discard delayed
+opens after sign-out, an A→B→A cycle, dismissal or destruction. A dismissal during
+an already-running successful mutation keeps its confirmed progress but does not
+reopen the overlay. The menu is closed again immediately before creating/acquiring
+the modal layer, covering a menu reopened while an import or request was pending.
+
+This is a deliberately small presentation-only split. Training controller/state
+code remains in the initial shared graph; the first measured local build saved
+about 3.4 KB gzip, not the overall 40%/25% JS targets. It does not defer required
+first-run onboarding or change the published training catalog or progress RPCs.
+
+## Interim automated budgets
+
+`pnpm run check:frontend-performance` audits a freshly built canonical mock preview
+against `frontend-performance-budgets.json`. Initial JS ceilings are the pinned
+baseline (no regression), CSS allows at most 2 KB gzip over that baseline for the
+static trigger/layout fixes, and initial static request counts cannot grow.
+Every JS chunk, including deferred chunks, is capped at 140 KB gzip. Sharing and
+training UI entry graphs must not become static dependencies. Image and font
+budgets are enforced separately by the production asset verifier.
+
+These interim checks intentionally print `targetsMet: false` while the 40% public
+and 25% authenticated JS reductions remain unfinished. Before closing FOU-1501,
+run `pnpm run check:frontend-performance -- --require-targets`; it must pass along
+with deployed timing/API/accessibility requirements. Passing only the interim
+regression ceiling does **not** mean the ticket is complete.
 
 ## References
 

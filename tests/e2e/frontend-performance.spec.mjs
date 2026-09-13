@@ -98,6 +98,47 @@ test('the preview notice arrives in Community HTML before hydration can move the
   expect(html).toMatch(/class="community-feedback active" id="communityFeedback"[^>]*>Preview mode:/);
 });
 
+for (const signOut of [false, true]) {
+  test(`delayed training UI ${signOut ? 'is discarded after sign-out' : 'keeps busy controls visible and waits for styles'}`, async ({ page, app }) => {
+    let release;
+    const blocked = new Promise((resolve) => { release = resolve; });
+    await page.route(/\/site-training-ui(?:-[\w-]+)?\.js(?:\?|$)/, async (route) => {
+      await blocked;
+      await route.continue();
+    });
+    await app.open(ROUTE_BY_ID.dashboard, { state: 'member' });
+    const menu = page.locator('.global-menu');
+    try {
+      await page.getByRole('button', { name: 'Open menu', exact: true }).click();
+      const start = page.getByRole('button', { name: 'Start page training', exact: true });
+      await start.click();
+      await expect(start).toBeVisible();
+      await expect(start).toHaveAttribute('aria-busy', 'true');
+      await expect(page.locator('.site-training-layer')).toHaveCount(0);
+      if (signOut) {
+        await page.evaluate(() => {
+          const oldValue = localStorage.getItem('dominion:user');
+          localStorage.removeItem('dominion:user');
+          window.dispatchEvent(new StorageEvent('storage', { key: 'dominion:user', oldValue, newValue: null }));
+        });
+        await expect(page.locator('.shared-header-share')).toHaveCount(0);
+      }
+    } finally { release(); }
+    if (signOut) {
+      await page.waitForLoadState('networkidle');
+      await expect(page.locator('.site-training-layer')).toHaveCount(0);
+    } else {
+      await expect(menu).toBeHidden();
+      const dialog = page.locator('.site-training-coachmark');
+      await expect(dialog).toBeVisible();
+      await expect(page.locator('#siteTrainingTitle')).toBeFocused();
+      expect(await page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue('--site-training-styles-ready').trim())).toBe('1');
+      await expect(page.locator('.site-training-layer')).not.toHaveAttribute('inert');
+    }
+    app.assertNoRuntimeErrors();
+  });
+}
+
 for (const route of [ROUTE_BY_ID.landing, ROUTE_BY_ID.login, ROUTE_BY_ID.dashboard, ROUTE_BY_ID.badgesRewards]) {
   test(`${route.id} loads only the everyday font and defers the share UI`, async ({ page, app }) => {
     const requests = [];
@@ -106,6 +147,7 @@ for (const route of [ROUTE_BY_ID.landing, ROUTE_BY_ID.login, ROUTE_BY_ID.dashboa
     expect(requests.some((url) => /\/InterLatinUI(?:-[\w-]+)?\.woff2/.test(url))).toBe(true);
     expect(requests.filter((url) => /\/InterVariable(?:-[\w-]+)?\.woff2/.test(url))).toEqual([]);
     expect(requests.filter((url) => /\/share-composer(?!-loader)(?:-[\w-]+)?\.(?:js|css)(?:\?|$)/.test(url))).toEqual([]);
+    expect(requests.filter((url) => /\/site-training-(?:ui(?:-[\w-]+)?\.js|coachmark\.mjs|[^/]+\.css)(?:\?|$)/.test(url))).toEqual([]);
     await expect(page.locator('#shareComposerDialog')).toHaveCount(0);
     const bodyTrigger = page.locator('.share-entry-button').first();
     let triggerBefore = null;

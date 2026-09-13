@@ -5,6 +5,7 @@ import { runInNewContext } from 'node:vm';
 import { htmlAssetReferences, staticModuleReferences } from '../../scripts/measure-frontend-bundles.mjs';
 import { communityPreviewMessage, renderInitialPreviewFeedback } from './preview-feedback.mjs';
 import { verifyHeroBytes } from '../../scripts/verify-hero-artwork.mjs';
+import { checkFrontendPerformance } from '../../scripts/check-frontend-performance.mjs';
 
 test('bundle audit counts entry scripts, bootstrap, CSS and module preloads', () => {
   assert.deepEqual(htmlAssetReferences('<script src="./theme-bootstrap.js"></script><script type="module" src="./assets/page-Abc123.js"></script><link rel="modulepreload" href="./assets/shared-Def456.js"><link rel="stylesheet" href="./assets/app-123abc.css"><link rel="icon" href="/favicon.png">'),
@@ -83,4 +84,30 @@ test('responsive artwork preserves pinned bytes, dimensions, budgets and origina
   }
   assert.equal((html.match(/width="1536" height="1024" loading="lazy"/g) || []).length, 2);
   assert.equal((html.match(/<source type="image\/webp"/g) || []).length, 2);
+});
+
+test('training presentation and its stylesheet belong to a deferred graph', () => {
+  const runtime = readFileSync(new URL('./site-training-runtime.mjs', import.meta.url), 'utf8');
+  const loader = readFileSync(new URL('./site-training-ui-loader.mjs', import.meta.url), 'utf8');
+  const entry = readFileSync(new URL('./site-training-ui.js', import.meta.url), 'utf8');
+  assert.doesNotMatch(runtime, /from ['"]\.\/site-training-coachmark\.mjs/);
+  assert.match(loader, /import\('\.\/site-training-ui\.js'\)/);
+  assert.match(entry, /import '\.\.\/assets\/site-training\.css';/);
+});
+
+test('interim graph budgets prevent regressions without reporting incomplete JS targets as achieved', () => {
+  const budgets = { maximumSingleJsChunkGzip: 100, routes: {
+    main: { maximumJsGzip: 100, targetJsGzip: 60, maximumCssGzip: 30, maximumInitialRequests: 2 },
+  } };
+  const measured = { routes: { main: { js: { gzip: 80 }, css: { gzip: 20 }, requestCount: 2, assets: ['assets/main-Abcd.js'] } }, assets: [] };
+  assert.deepEqual(checkFrontendPerformance(measured, budgets), {
+    pass: true, targetsMet: false, violations: [], remainingTargets: ['main: JS 80 still exceeds completion target 60'],
+  });
+  assert.equal(checkFrontendPerformance(measured, budgets, { requireTargets: true }).pass, false);
+  measured.routes.main.assets.push('assets/share-composer-A1234567.js');
+  measured.routes.main.js.gzip = 101;
+  measured.routes.main.css.gzip = 31;
+  measured.routes.main.requestCount = 3;
+  measured.assets.push({ path: 'assets/lazy-A1234567.js', gzip: 101 });
+  assert.equal(checkFrontendPerformance(measured, budgets).violations.length, 5);
 });

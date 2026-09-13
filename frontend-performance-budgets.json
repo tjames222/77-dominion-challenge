@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "baselineSha": "1ff3ee7feb60baf0953258b7ac63a43d25991f8d",
+  "buildPolicy": "canonical mock-only develop with Dominion Night enabled",
+  "status": "interim regression ceilings; FOU-1501 completion targets remain unmet",
+  "maximumSingleJsChunkGzip": 140000,
+  "routes": {
+    "main": { "baselineJsGzip": 140131, "maximumJsGzip": 140131, "targetJsGzip": 84078, "maximumCssGzip": 38434, "maximumInitialRequests": 7 },
+    "login": { "baselineJsGzip": 142286, "maximumJsGzip": 142286, "targetJsGzip": 85371, "maximumCssGzip": 35624, "maximumInitialRequests": 7 },
+    "dashboard": { "baselineJsGzip": 157232, "maximumJsGzip": 157232, "targetJsGzip": 117924, "maximumCssGzip": 35624, "maximumInitialRequests": 7 },
+    "badgesRewards": { "baselineJsGzip": 146842, "maximumJsGzip": 146842, "targetJsGzip": 110131, "maximumCssGzip": 38947, "maximumInitialRequests": 7 },
+    "community": { "baselineJsGzip": 165250, "maximumJsGzip": 165250, "targetJsGzip": 123937, "maximumCssGzip": 43838, "maximumInitialRequests": 8 },
+    "profilePage": { "baselineJsGzip": 146490, "maximumJsGzip": 146490, "targetJsGzip": 109867, "maximumCssGzip": 35624, "maximumInitialRequests": 6 },
+    "bibleReading": { "baselineJsGzip": 145357, "maximumJsGzip": 145357, "targetJsGzip": 109017, "maximumCssGzip": 35624, "maximumInitialRequests": 6 }
+  }
+}
