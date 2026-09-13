@@ -125,6 +125,12 @@ export default defineConfig({
       use: { ...devices['iPhone 13'], browserName: 'webkit', viewport: { width: 390, height: 844 } },
     },
     {
+      name: 'webkit-badge-gallery-mobile',
+      testMatch: /badge-gallery\.spec\.mjs/,
+      metadata: { breakpoint: 'mobile', theme: 'dark', colorScheme: 'dark' },
+      use: { ...devices['iPhone 13'], browserName: 'webkit', viewport: { width: 390, height: 844 } },
+    },
+    {
       name: 'webkit-share-composer-mobile',
       testMatch: /share-composer-routes\.spec\.mjs/,
       metadata: { breakpoint: 'mobile', theme: 'dark', colorScheme: 'dark' },
@@ -139,6 +145,12 @@ export default defineConfig({
     {
       name: 'webkit-menu-layers-mobile',
       testMatch: /menu-layers\.spec\.mjs/,
+      metadata: { breakpoint: 'mobile', theme: 'dark', colorScheme: 'dark' },
+      use: { ...devices['iPhone 13'], browserName: 'webkit', viewport: { width: 390, height: 844 } },
+    },
+    {
+      name: 'webkit-early-access-mobile',
+      testMatch: /early-access\.spec\.mjs/,
       metadata: { breakpoint: 'mobile', theme: 'dark', colorScheme: 'dark' },
       use: { ...devices['iPhone 13'], browserName: 'webkit', viewport: { width: 390, height: 844 } },
     },

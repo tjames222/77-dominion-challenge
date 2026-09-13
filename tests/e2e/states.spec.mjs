@@ -77,7 +77,7 @@ test('unlocked challenge progression has a deterministic visual contract', async
   await expect(resetReward).toContainText('Available');
   await expect(resetReward.getByRole('button', { name: 'Start challenge' })).toBeVisible();
   for (const badge of BASE_BADGES) {
-    await expect(page.locator(`[data-badge-key="${badge.key}"]`)).toContainText(badge.name);
+    await expect(page.locator(`[data-badge-key="${badge.key}"]`)).toHaveAttribute('aria-label', new RegExp(`View ${badge.name} badge details`));
   }
   await expectStableScreenshot(page, app, 'state-rewards-unlocked.png');
 });
@@ -90,7 +90,7 @@ test('selected Badges tab has a deterministic visual and accessibility contract'
   await expect(badgesTab).toHaveAttribute('aria-selected', 'true');
   await expect(page.getByRole('tabpanel', { name: 'Badges' })).toBeVisible();
   for (const badge of BASE_BADGES) {
-    await expect(page.locator(`[data-badge-key="${badge.key}"]`)).toContainText(badge.name);
+    await expect(page.locator(`[data-badge-key="${badge.key}"]`)).toHaveAttribute('aria-label', new RegExp(`View ${badge.name} badge details`));
   }
   await expectStableScreenshot(page, app, 'state-badges-selected.png', { fullPage: false });
 

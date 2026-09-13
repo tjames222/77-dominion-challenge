@@ -37,6 +37,7 @@
     "test:production-billing-guards": "node --test scripts/verify-production-billing-guards.test.mjs",
     "test:production-canary-entitlement-operator": "node --test scripts/manage-production-canary-entitlement.test.mjs",
     "test:production-canary-entitlement-sql": "node --test scripts/manage-production-canary-entitlement.sql.test.mjs",
+    "test:early-access-sql": "node --test scripts/early-access-request.sql.test.mjs",
     "test:production-canary-restart": "node --test scripts/production-canary-restart-proof.test.mjs scripts/prepare-production-canary-restart-proof.test.mjs scripts/restart-production-canary.test.mjs scripts/run-approved-production-restart.test.mjs scripts/production-canary-restart-workflow.test.mjs",
     "test:production-canary-restart-sql": "node --test scripts/restart-production-canary.sql.test.mjs",
     "test:cloudflare-pages-policy": "node --test scripts/configure-cloudflare-pages-policy.test.mjs scripts/configure-production-custom-domain.test.mjs",

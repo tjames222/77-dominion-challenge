@@ -27,8 +27,26 @@
         <div class="membership-hero-actions">
           <a class="primary cta-button" data-membership-cta href="./register.html?returnTo=./billing.html" hidden>Sign up now</a>
           <a class="primary cta-button" id="membershipEarlyAccessLogin" href="./login.html">Log in to early access</a>
-          <span id="membershipHeroActionNote">We’ll open account creation and billing after the first invited group is running smoothly.</span>
+          <a class="secondary-button" data-early-access-cta href="#early-access">Get Early Access</a>
+          <span id="membershipHeroActionNote">Request an invitation below. No payment is needed during early access.</span>
         </div>
+      </section>
+
+      <section class="early-access-section" id="early-access" data-section-surface="plain" aria-labelledby="earlyAccessHeading">
+        <p class="eyebrow">Join the first group</p>
+        <h2 id="earlyAccessHeading">Get Early Access</h2>
+        <p>Tell us how to contact you about early access. This is a request, not an account, invitation, or subscription. We’ll contact you when a place is available.</p>
+        <form class="early-access-form" id="earlyAccessForm" method="post" hidden>
+          <label for="earlyAccessName">Name<input id="earlyAccessName" name="name" autocomplete="name" maxlength="120" required /></label>
+          <label for="earlyAccessEmail">Email<input id="earlyAccessEmail" name="email" type="email" inputmode="email" autocomplete="email" maxlength="254" required /></label>
+          <label class="early-access-honeypot" aria-hidden="true">Leave this blank<input name="website" autocomplete="off" tabindex="-1" /></label>
+          <p class="section-copy">We’ll use these details to review your request and contact you about access. See our <a href="./privacy.html">Privacy Policy</a>.</p>
+          <button class="primary cta-button" type="submit">Request early access</button>
+        </form>
+        <p class="early-access-status" id="earlyAccessStatus" role="status" tabindex="-1"></p>
+        <p class="early-access-error" id="earlyAccessError" role="alert"></p>
+        <button class="secondary-button" id="earlyAccessRetry" type="button" hidden>Try loading the form again</button>
+        <noscript><p>Please enable JavaScript to submit the request form.</p></noscript>
       </section>
 
       <section class="membership-includes reveal" data-section-surface="accent" aria-label="Membership includes">
@@ -100,5 +118,6 @@
 
     <script type="module" src="./src/static/menu.js"></script>
     <script type="module" src="./src/static/membership.js"></script>
+    <script type="module" src="./src/static/early-access.js"></script>
   </body>
 </html>
