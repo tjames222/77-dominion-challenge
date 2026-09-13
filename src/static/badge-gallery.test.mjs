@@ -64,6 +64,8 @@ describe('earned badge gallery contract', () => {
 
   it('exposes only safe typed workout, streak and action evidence', () => {
     assert.equal(badgeEvidenceSummary({ schemaVersion: 1, kind: 'workout', workout: 'one', difficulty: 'hard' }), 'Completing Workout One at Hard difficulty.');
+    assert.equal(badgeEvidenceSummary({ schemaVersion: 1, kind: 'workout', workout: 'two', difficulty: 'medium' }), 'Completing Workout Two at Medium difficulty.');
+    assert.equal(badgeEvidenceSummary({ schemaVersion: 1, kind: 'workout', workout: 'one', difficulty: 'extreme' }), 'Completing Workout One at Extreme difficulty.');
     assert.equal(badgeEvidenceSummary({ schemaVersion: 1, kind: 'workout', workout: 'someone-else', difficulty: 'hard' }), '');
     assert.equal(badgeEvidenceSummary({ schemaVersion: 1, kind: 'workout', workout: 'constructor', difficulty: 'toString' }), '');
     assert.equal(badgeEvidenceSummary({ schemaVersion: 1, kind: 'perfect_streak', qualifyingValue: 7 }), 'Reaching a 7-day perfect streak.');

@@ -24,7 +24,7 @@ export function badgeEvidenceSummary(evidence) {
       ? `Completing ${evidence.completedCount} of the seven Daily Actions in your qualifying check-in.` : '';
     case 'workout': {
       const workout = new Map([['one', 'Workout One'], ['two', 'Workout Two']]).get(evidence.workout);
-      const difficulty = new Map([['easy', 'Easy'], ['moderate', 'Moderate'], ['hard', 'Hard']]).get(evidence.difficulty);
+      const difficulty = new Map([['easy', 'Easy'], ['medium', 'Medium'], ['hard', 'Hard'], ['extreme', 'Extreme']]).get(evidence.difficulty);
       return workout && difficulty ? `Completing ${workout} at ${difficulty} difficulty.` : '';
     }
     case 'share': return value ? `Sharing your progress ${value === 1 ? 'once' : `${value} times`}.` : '';

@@ -17,7 +17,7 @@ existing award metadata. Version1 has `schemaVersion: 1` and a `kind`:
   `challenge_completion`: positive integer `qualifyingValue`.
 - `daily_standards`: integer `completedCount` from1 through7.
 - `workout`: `workout` (`one`/`two`) and explicit `difficulty`
-  (`easy`/`moderate`/`hard`).
+  (`easy`/`medium`/`hard`/`extreme`).
 
 Only these fields become friendly earning text. Raw source/user/record IDs,
 arbitrary metadata, unrecognized kinds/versions and free-form summaries are never
