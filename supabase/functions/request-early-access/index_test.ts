@@ -84,6 +84,99 @@ Deno.test("signed-in intake verifies the token and binds only the verified match
   }]);
 });
 
+Deno.test("actual SDK separates the user token from the service RPC context", async () => {
+  // No network: execute the real createClient/requireUser/createAdminClient path
+  // and mirror only PostgREST's effective role/uid mapping in the fetch stub.
+  const encode = (value: unknown) =>
+    btoa(JSON.stringify(value))
+      .replaceAll("+", "-").replaceAll("/", "_").replaceAll("=", "");
+  const token = (claims: Record<string, unknown>) =>
+    `${encode({ alg: "HS256", typ: "JWT" })}.${
+      encode(claims)
+    }.fixture-signature`;
+  const userId = "10000000-0000-4000-8000-000000000001";
+  const serviceToken = token({ role: "service_role", iss: "supabase" });
+  const userToken = token({ role: "authenticated", sub: userId });
+  const anonToken = token({ role: "anon" });
+  const originalFetch = globalThis.fetch;
+  const calls: Array<{ path: string; role: string; uid: string | null }> = [];
+  globalThis.fetch = async (input, init) => {
+    const req = new Request(input, init);
+    const url = new URL(req.url);
+    const bearer = req.headers.get("authorization")?.replace(/^Bearer /, "");
+    const claims = bearer === serviceToken
+      ? { role: "service_role", sub: null }
+      : bearer === userToken
+      ? { role: "authenticated", sub: userId }
+      : { role: "unknown", sub: null };
+    calls.push({ path: url.pathname, role: claims.role, uid: claims.sub });
+    if (url.pathname === "/auth/v1/user") {
+      assertEquals(bearer, userToken);
+      assertEquals(req.headers.get("apikey"), anonToken);
+      return new Response(
+        JSON.stringify({
+          id: userId,
+          email: "sam@example.com",
+          email_confirmed_at: "2026-01-01T00:00:00Z",
+          is_anonymous: false,
+        }),
+        { headers: { "Content-Type": "application/json" } },
+      );
+    }
+    assertEquals(
+      url.pathname,
+      "/rest/v1/rpc/submit_early_access_request_service",
+    );
+    assertEquals(bearer, serviceToken);
+    assertEquals(req.headers.get("apikey"), serviceToken);
+    assertEquals(claims, { role: "service_role", sub: null });
+    const body = await req.json();
+    assertEquals(body.p_email, "sam@example.com");
+    assertEquals(
+      body.p_user_id,
+      calls.some((call) => call.path === "/auth/v1/user") ? userId : null,
+    );
+    return new Response('{"received":true}', {
+      headers: { "Content-Type": "application/json" },
+    });
+  };
+  try {
+    const handle = createHandler({
+      env: (name: string) =>
+        ({
+          PUBLIC_SITE_URL: origin,
+          SUPABASE_URL: "https://project.supabase.co",
+          SUPABASE_ANON_KEY: anonToken,
+          SUPABASE_SERVICE_ROLE_KEY: serviceToken,
+        })[name],
+    });
+    const anonymous = await handle(request());
+    assertEquals(anonymous.status, 200);
+    assertEquals(await responseJson(anonymous), { received: true });
+    const signedIn = await handle(request(payload, {
+      Authorization: `Bearer ${userToken}`,
+    }));
+    assertEquals(signedIn.status, 200);
+    assertEquals(await responseJson(signedIn), { received: true });
+    assertEquals(signedIn.headers.get("cache-control"), "private, no-store");
+    assertEquals(calls, [
+      {
+        path: "/rest/v1/rpc/submit_early_access_request_service",
+        role: "service_role",
+        uid: null,
+      },
+      { path: "/auth/v1/user", role: "authenticated", uid: userId },
+      {
+        path: "/rest/v1/rpc/submit_early_access_request_service",
+        role: "service_role",
+        uid: null,
+      },
+    ]);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 Deno.test("invalid or unverified signed-in identity never falls back to anonymous intake", async () => {
   for (
     const options of [
