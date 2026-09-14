@@ -70,6 +70,19 @@ export const PRODUCTION_ROUTES = Object.freeze([
     surfaces: ['navigation', 'actions', 'error'],
   },
   {
+    id: 'accountSecurity',
+    path: '/account-security.html',
+    htmlEntry: 'account-security.html',
+    title: 'Account Security | Dominion',
+    access: 'authenticated',
+    // Auth-only setup intentionally has no member-data/share header, including
+    // while an enrolled session is still completing its AAL1 challenge.
+    sharedHeaderActions: false,
+    defaultState: 'member',
+    ready: '#securityCard[aria-busy="false"]',
+    surfaces: ['forms', 'actions', 'loading', 'error'],
+  },
+  {
     id: 'billing',
     path: '/billing.html',
     htmlEntry: 'billing.html',

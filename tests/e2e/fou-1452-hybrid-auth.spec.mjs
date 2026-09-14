@@ -72,6 +72,86 @@ async function expectAccountACommunityState(page) {
   await expect(page.locator('#journalTimeline')).toContainText(ACCOUNT_A_JOURNAL);
 }
 
+test('menu logout scrubs the private journal synchronously and owns one confirmed navigation', async ({ context, page }) => {
+  await installFou1452SupabaseAuthStub(context);
+  await register(page, ACCOUNT_A);
+  await activatePreviewMembership(page);
+  await seedAccountACommunityState(page);
+  await page.goto('/private-journal.html');
+  await expect(page.locator('#journalTimeline')).toContainText(ACCOUNT_A_JOURNAL);
+  await page.locator('#journalNote').fill('Synchronous scrub must clear this unsaved private draft');
+  // The real SDK awaits its subscribers before signOut resolves. Hold only a
+  // test subscriber: production observers must still scrub synchronously and
+  // must never call another Auth method while this notification is pending.
+  await page.evaluate(async () => {
+    const { supabase } = await import('/src/static/api.js');
+    const notification = new Promise(resolve => { window.releaseLogoutNotification = resolve; });
+    supabase.auth.onAuthStateChange(async event => {
+      if (event !== 'SIGNED_OUT') return;
+      window.logoutNotificationObserved = true;
+      await notification;
+    });
+  });
+  const navigations = [];
+  page.on('request', request => {
+    if (request.isNavigationRequest() && request.frame() === page.mainFrame()) navigations.push(new URL(request.url()).pathname);
+  });
+  await page.getByRole('button', { name: 'Open menu' }).click();
+  await page.getByRole('button', { name: 'Log Out' }).click();
+  await expect.poll(() => page.evaluate(() => window.logoutNotificationObserved)).toBe(true);
+  await expect(page.locator('#journalTimeline')).not.toContainText(ACCOUNT_A_JOURNAL);
+  await expect(page.locator('#journalNote')).toHaveValue('');
+  await expect(page).toHaveURL(/\/private-journal\.html$/);
+  expect(navigations).toEqual([]);
+  await page.evaluate(() => window.releaseLogoutNotification());
+  await expect(page).toHaveURL(/\/index\.html$/);
+  expect(navigations).toEqual(['/index.html']);
+  expect(await page.evaluate(() => localStorage.getItem('sb-127-auth-token'))).toBeNull();
+});
+
+test('failed private-journal menu logout stays retryable without navigating or claiming provider signout', async ({ context, page }) => {
+  await installFou1452SupabaseAuthStub(context);
+  await register(page, ACCOUNT_A);
+  await activatePreviewMembership(page);
+  await seedAccountACommunityState(page);
+  await page.goto('/private-journal.html');
+  await expect(page.locator('#journalTimeline')).toContainText(ACCOUNT_A_JOURNAL);
+  const endpoint = '**/__fou_1452_supabase__/auth/v1/logout*';
+  const outage = route => route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ code: 'unexpected_failure', message: 'SYNTHETIC_PRIVATE_LOGOUT_RESPONSE' }) });
+  await context.route(endpoint, outage);
+  await page.getByRole('button', { name: 'Open menu' }).click();
+  await page.getByRole('button', { name: 'Log Out' }).click();
+  await expect(page.locator('.global-menu-logout-feedback')).toHaveText('Sign out could not be confirmed. Retry signing out before leaving this device.');
+  await expect(page.getByRole('button', { name: 'Log Out' })).toBeEnabled();
+  await expect(page).toHaveURL(/\/private-journal\.html$/);
+  expect(await page.evaluate(() => Boolean(JSON.parse(localStorage.getItem('sb-127-auth-token') || 'null')?.access_token))).toBe(true);
+  await expect(page.locator('body')).not.toContainText('SYNTHETIC_PRIVATE_LOGOUT_RESPONSE');
+  await context.unroute(endpoint, outage);
+  await page.getByRole('button', { name: 'Log Out' }).click();
+  await expect(page).toHaveURL(/\/index\.html$/);
+  expect(await page.evaluate(() => localStorage.getItem('sb-127-auth-token'))).toBeNull();
+});
+
+test('cross-tab plain signout still scrubs the private journal and redirects to Login', async ({ context, page }) => {
+  await installFou1452SupabaseAuthStub(context);
+  await register(page, ACCOUNT_A);
+  await activatePreviewMembership(page);
+  await seedAccountACommunityState(page);
+  await page.goto('/private-journal.html');
+  await expect(page.locator('#journalTimeline')).toContainText(ACCOUNT_A_JOURNAL);
+  const other = await context.newPage();
+  await other.goto('/support.html');
+  await expect(other.locator('.global-menu-logout')).toBeAttached();
+  await other.evaluate(async () => {
+    const { clearAuthSession } = await import('/src/static/api.js');
+    await clearAuthSession();
+  });
+  await expect(page).toHaveURL(/\/login\.html\?returnTo=.%2Fprivate-journal.html$/);
+  await expect(page.locator('body')).not.toContainText(ACCOUNT_A_JOURNAL);
+  expect(await page.evaluate(() => localStorage.getItem('sb-127-auth-token'))).toBeNull();
+  await other.close();
+});
+
 test('hybrid dev Auth preserves clean-URL header actions and first-challenge training', async ({
   context,
   page,

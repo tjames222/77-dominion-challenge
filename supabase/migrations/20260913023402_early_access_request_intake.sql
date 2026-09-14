@@ -35,6 +35,31 @@ grant select, delete on private.early_access_intake_attempts to service_role;
 grant insert (attempted_at) on private.early_access_intake_attempts to service_role;
 create index early_access_intake_attempts_time_idx on private.early_access_intake_attempts (attempted_at);
 
+-- Auth is provider-owned: service_role does not have direct SELECT on its rows.
+-- This private helper discloses only a boolean to the trusted server client.
+-- A service request has no applicant auth.uid(); the Edge handler verifies the
+-- incoming user token separately and supplies that verified UUID/email pair.
+create function private.early_access_verified_identity_matches(p_user_id uuid, p_email text)
+returns boolean
+language sql
+stable
+security definer
+set search_path = ''
+as $$
+  select current_setting('role', true) = 'service_role'
+    and (select auth.uid()) is null
+    and p_user_id is not null and p_email is not null and exists (
+      select 1 from auth.users u where u.id = p_user_id
+        and lower(u.email) = p_email and u.email_confirmed_at is not null
+        and not coalesce(u.is_anonymous, false) and u.deleted_at is null
+        and (u.banned_until is null or u.banned_until <= statement_timestamp())
+    );
+$$;
+revoke all on function private.early_access_verified_identity_matches(uuid, text)
+  from public, anon, authenticated, service_role;
+grant execute on function private.early_access_verified_identity_matches(uuid, text)
+  to service_role;
+
 -- Only the server validates optional Auth identity and invokes this operation.
 -- INVOKER keeps the function from acquiring any privilege of its owner.
 create function public.submit_early_access_request_service(
@@ -61,11 +86,7 @@ begin
   then
     raise exception using errcode = '22023', message = 'Invalid early-access request.';
   end if;
-  if p_user_id is not null and not exists (
-    select 1 from auth.users where id = p_user_id
-      and lower(email) = v_email and email_confirmed_at is not null
-      and not coalesce(is_anonymous, false)
-  ) then
+  if p_user_id is not null and not private.early_access_verified_identity_matches(p_user_id, v_email) then
     raise exception using errcode = '42501', message = 'Verified account mismatch.';
   end if;
 
