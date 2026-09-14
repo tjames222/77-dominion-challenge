@@ -1,10 +1,26 @@
 import { adminReadError } from './admin-read-client.mjs';
 
-// Synthetic, in-memory read-only preview. The API selects this adapter only
+// Synthetic, in-memory preview: accounts/audit are read-only; early-access
+// denial changes only the temporary simulated request records in this adapter.
+// The API selects this adapter only
 // when mocks are explicitly enabled and Supabase authentication is disabled.
 export function createAdminPreview({ getUser, mode }) {
   let epoch = 0;
   const listeners = new Set();
+  let early = null;
+  const earlyStore = async () => {
+    const { createEarlyAccessPreviewStore } = await import('./admin-early-access-preview.mjs');
+    if (!early) early = createEarlyAccessPreviewStore({ error: adminReadError });
+    return early;
+  };
+  const syntheticActors = new Map();
+  const actorIdFor = (id) => {
+    if (/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id)) return id;
+    // Legacy local mock IDs are not database UUIDs. Give each one an in-memory
+    // synthetic UUID, keeping the real request contract strict and unchanged.
+    if (!syntheticActors.has(id)) syntheticActors.set(id, crypto.randomUUID());
+    return syntheticActors.get(id);
+  };
   const records = Array.from({ length: 28 }, (_, index) => ({
     id: `70000000-0000-4000-8000-${String(index + 1).padStart(12, '0')}`,
     name: `Preview Member ${index + 1}`, email: `member${index + 1}@example.invalid`,
@@ -21,16 +37,31 @@ export function createAdminPreview({ getUser, mode }) {
     action: 'roles.assign', permission: 'roles.manage', reasonCode: 'staff_access_review', beforeRole: 'member', afterRole: 'member',
     requestId: record.id, correlationId: record.id, environment: 'preview', occurredAt: record.createdAt,
     outcome: index % 3 ? 'success' : 'failure', errorCode: index % 3 ? null : 'revision_conflict' }));
-  const owner = async () => { const captured = epoch; const user = await getUser(); if (captured !== epoch) throw adminReadError('ADMIN_CHANGED'); if (!user?.authenticated || !user.userId) throw adminReadError('ADMIN_SIGNED_OUT'); return { actorId: user.userId, sessionIdentity: `preview:${user.userId}` }; };
+  const owner = async () => { const captured = epoch; const user = await getUser(); if (captured !== epoch) throw adminReadError('ADMIN_CHANGED'); if (!user?.authenticated || !user.userId) throw adminReadError('ADMIN_SIGNED_OUT'); const actorId = actorIdFor(user.userId); return { actorId, sessionIdentity: `preview:${actorId}`, mockUserId: user.userId }; };
   return { owner, invalidate() { epoch += 1; for (const listener of listeners) { try { listener(); } catch { /* Continue clearing other views. */ } } },
     subscribe(listener) { listeners.add(listener); return () => listeners.delete(listener); },
-    async read(name, args = {}, { expectedUserId = '' } = {}) {
+    async denyEarlyAccess(intent, { signal } = {}) {
+      const captured = epoch;
+      const { earlyAccessDenialArguments, normalizeEarlyAccessDenial } = await import('./admin-early-access-contract.mjs');
+      const store = await earlyStore();
+      const actor = await owner();
+      if (mode !== 'ready') throw adminReadError('ADMIN_DENIED');
+      if (captured !== epoch || signal?.aborted || actor.actorId !== intent.actorId || actor.sessionIdentity !== intent.sessionIdentity) throw adminReadError('ADMIN_CHANGED');
+      return normalizeEarlyAccessDenial(store.deny(earlyAccessDenialArguments(intent), actor.actorId), intent);
+    },
+    async read(name, args = {}, { expectedUserId = '', signal } = {}) {
+    const captured = epoch;
     const actor = await owner(); if (expectedUserId && actor.actorId !== expectedUserId) throw adminReadError('ADMIN_CHANGED');
     const base = { schemaVersion: 1, actorId: actor.actorId, observedAt: new Date().toISOString(), preview: true };
     if (name === 'get_site_admin_context') return { ...base, role: mode === 'member' ? 'member' : 'site_admin',
       adminReady: mode === 'ready', reason: mode === 'mfa' ? 'mfa_required' : null,
-      permissions: mode === 'ready' ? ['users.read', 'audit.read'] : [] };
+      permissions: mode === 'ready' ? ['users.read', 'audit.read', 'operations.read', 'operations.manage'] : [], stepUpRequired: false };
     if (mode !== 'ready') throw adminReadError('ADMIN_DENIED');
+    if (name.includes('early_access')) {
+      const store = await earlyStore(); const current = await owner();
+      if (captured !== epoch || signal?.aborted || current.actorId !== actor.actorId) throw adminReadError('ADMIN_CHANGED');
+      return store.read(name, args, actor.actorId);
+    }
     const isAudit = name.includes('audit');
     if (name === 'site_admin_get_user' || name === 'site_admin_get_audit_event') {
       const item = (isAudit ? auditRows : records).find((row) => row.id === (args.target_event_id || args.target_user_id));

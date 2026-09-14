@@ -597,7 +597,8 @@ function getAdminReadClient() {
       let value; try { value = JSON.parse(raw); } catch { throw adminReadError(); }
       if (!response.ok) {
         const code = response.status === 401 ? 'ADMIN_SIGNED_OUT' : response.status === 403 ? 'ADMIN_DENIED'
-          : response.status === 404 ? 'ADMIN_NOT_FOUND' : value?.message === 'admin_invalid_cursor' ? 'ADMIN_INVALID_CURSOR'
+          : response.status === 404 ? 'ADMIN_NOT_FOUND' : value?.message === 'admin_idempotency_conflict' ? 'ADMIN_IDEMPOTENCY_CONFLICT'
+            : value?.message === 'admin_invalid_cursor' ? 'ADMIN_INVALID_CURSOR'
             : value?.message === 'admin_invalid_input' ? 'ADMIN_INVALID_INPUT' : 'ADMIN_UNAVAILABLE';
         throw adminReadError(code);
       }
@@ -613,6 +614,10 @@ export const listSiteAdminUsers = (args, options = {}) => getAdminReadClient().r
 export const getSiteAdminUser = (id, options = {}) => getAdminReadClient().read('site_admin_get_user', { target_user_id: id }, options);
 export const listSiteAdminAudit = (args, options = {}) => getAdminReadClient().read('site_admin_list_audit', args, options);
 export const getSiteAdminAuditEvent = (id, options = {}) => getAdminReadClient().read('site_admin_get_audit_event', { target_event_id: id }, options);
+export const listSiteAdminEarlyAccess = (args, options = {}) => getAdminReadClient().read('site_admin_list_early_access_requests', args, options);
+export const getSiteAdminEarlyAccess = (id, options = {}) => getAdminReadClient().read('site_admin_get_early_access_request', { target_request_id: id }, options);
+export const listSiteAdminEarlyAccessHistory = (args, options = {}) => getAdminReadClient().read('site_admin_list_early_access_history', args, options);
+export const denySiteAdminEarlyAccess = (intent, options = {}) => getAdminReadClient().denyEarlyAccess(intent, options);
 export function subscribeToAdminInvalidation(listener) { adminInvalidationListeners.add(listener); return () => adminInvalidationListeners.delete(listener); }
 export function cancelAdminReads() { if (adminReadClient?.invalidate) adminReadClient.invalidate(); else notifyAdminInvalidation(); }
 if (typeof window !== 'undefined') {

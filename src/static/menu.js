@@ -57,10 +57,12 @@ async function refreshAdminMenuItem() {
     const user = await getLocalOrSessionUser();
     if (request !== adminMenuRequest || hydration !== menuHydrationRequest || !user?.authenticated || !user.userId) return;
     const owner = await getAdminSessionOwner();
-    if (request !== adminMenuRequest || hydration !== menuHydrationRequest || owner.actorId !== user.userId) return;
+    // Only the synthetic adapter maps legacy mock IDs to in-memory UUIDs;
+    // production owners expose the canonical actor ID alone.
+    if (request !== adminMenuRequest || hydration !== menuHydrationRequest || (owner.mockUserId || owner.actorId) !== user.userId) return;
     const context = await getSiteAdminContext({ expectedUserId: owner.actorId });
     if (request !== adminMenuRequest || hydration !== menuHydrationRequest || !context.adminReady
-      || !context.permissions.some((permission) => ['users.read', 'audit.read'].includes(permission))) return;
+      || !context.permissions.some((permission) => ['users.read', 'audit.read', 'operations.read'].includes(permission))) return;
     const nav = document.querySelector('.global-menu nav'); if (!nav) return;
     const link = document.createElement('a'); link.href = './admin.html';
     link.textContent = context.preview ? 'Admin (preview)' : 'Admin'; link.dataset.adminMenuItem = '';

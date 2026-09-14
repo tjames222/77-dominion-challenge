@@ -34,6 +34,21 @@ test('default preview member has no Admin link and cannot read records', async (
   await page.getByRole('button', { name: 'Open menu', exact: true }).click(); await expect(page.locator('[data-admin-menu-item]')).toHaveCount(0);
   await expect(page.locator('#adminUsersRows tr')).toHaveCount(0); app.assertNoRuntimeErrors();
 });
+test('early-access preview denial is deliberate, simulated and reset on reload', async ({ page, app }) => {
+  await app.open({ ...ROUTE_BY_ID.admin, path: '/admin.html?admin-preview=ready#early-access' });
+  await expect(page.locator('#adminPreview')).toBeVisible(); await expect(page.locator('#adminEarlyRows tr')).toHaveCount(25);
+  await page.getByRole('button', { name: 'Open menu', exact: true }).click();
+  await expect(page.locator('[data-admin-menu-item]')).toHaveText('Admin (preview)');
+  await page.keyboard.press('Escape');
+  const request = page.locator('[data-early-request="88000000-0000-4000-8000-000000000026"] button');
+  await request.click(); await page.locator('#earlyAccessReviewDeny').click();
+  await expect(page.locator('#earlyAccessDenyConfirmation')).toBeVisible(); await expect(page.locator('#earlyAccessConfirmDeny')).toBeDisabled();
+  await page.locator('#earlyAccessDenyReason').selectOption('early_access_review'); await page.locator('#earlyAccessDenyAcknowledgement').check();
+  await page.locator('#earlyAccessConfirmDeny').click(); await expect(page.locator('#earlyAccessRequestStatus')).toHaveText('denied');
+  await expect(page.locator('#earlyAccessHistoryRows')).toContainText('9007199254740993');
+  await page.reload(); await request.click(); await expect(page.locator('#earlyAccessRequestStatus')).toHaveText('pending');
+  await expect(page.locator('#earlyAccessDenyConfirmation')).toBeHidden(); app.assertNoRuntimeErrors();
+});
 test('preview account storage changes clear filters, rows, detail and Admin link', async ({ page, app }) => {
   await app.open({ ...ROUTE_BY_ID.admin, path: '/admin.html?admin-preview=ready' }); await expect(page.locator('#adminUsersRows tr')).toHaveCount(25);
   await page.locator('#adminUsersRows button').first().click(); await expect(page.locator('#adminDetailBody')).toContainText('member28@example.invalid');

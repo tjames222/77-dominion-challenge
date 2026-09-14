@@ -108,6 +108,7 @@ export default defineConfig({
         /mfa-live-auth\.spec\.mjs/,
         /admin-live\.spec\.mjs/,
         /daily-action-bootstrap-live\.spec\.mjs/,
+        /admin-early-access-live\.spec\.mjs/,
       ],
       metadata: {
         breakpoint: 'desktop',

@@ -17,7 +17,7 @@
   <body>
     <main class="admin-shell">
       <header class="topbar"><a class="back-link" href="./dashboard.html">Dashboard</a></header>
-      <section class="admin-heading" data-section-surface="plain" aria-labelledby="adminTitle"><p class="eyebrow">Dominion</p><h1 id="adminTitle">Administration</h1><p>Read-only account records and administrative audit history.</p></section>
+      <section class="admin-heading" data-section-surface="plain" aria-labelledby="adminTitle"><p class="eyebrow">Dominion</p><h1 id="adminTitle">Administration</h1><p>Account records, audit history, and early-access request review.</p></section>
       <p class="admin-preview" id="adminPreview" hidden>Preview only · Synthetic records. This does not grant production admin access or change any account.</p>
       <section class="admin-gate" data-section-surface="accent" id="adminGate" aria-labelledby="adminGateTitle">
         <h2 id="adminGateTitle">Checking access</h2><p id="adminGateMessage" role="status">Verifying your account and session…</p>
@@ -28,6 +28,7 @@
         <nav class="admin-tabs" role="tablist" aria-label="Administration views">
           <button id="adminUsersTab" type="button" role="tab" aria-selected="true" aria-controls="adminUsersPanel" data-admin-tab="users">Users</button>
           <button id="adminAuditTab" type="button" role="tab" aria-selected="false" aria-controls="adminAuditPanel" tabindex="-1" data-admin-tab="audit">Audit</button>
+          <button id="adminEarlyTab" type="button" role="tab" aria-selected="false" aria-controls="adminEarlyPanel" tabindex="-1" data-admin-tab="early" hidden>Early Access</button>
         </nav>
         <p class="admin-status" id="adminStatus" role="status" aria-live="polite"></p>
         <section id="adminUsersPanel" role="tabpanel" aria-labelledby="adminUsersTab" data-admin-panel="users">
@@ -49,8 +50,18 @@
           </form>
           <div class="admin-table-wrap" tabindex="0" aria-label="Audit records"><table class="admin-table"><caption>Administrative audit · Dates shown in UTC</caption><thead><tr><th scope="col">Recorded</th><th scope="col">Action</th><th scope="col">Outcome</th><th scope="col">Target user</th><th scope="col">Details</th></tr></thead><tbody id="adminAuditRows"></tbody></table></div>
         </section>
+        <section id="adminEarlyPanel" role="tabpanel" aria-labelledby="adminEarlyTab" data-admin-panel="early" hidden>
+          <form id="adminEarlyFilters" class="admin-filters" autocomplete="off">
+            <label class="admin-search">Applicant prefix (name or email)<input name="search" type="search" maxlength="80" placeholder="Starts with…" autocomplete="off" /></label>
+            <label>Request status<select name="status"><option value="all">All statuses</option><option value="pending">Pending</option><option value="approved">Approved</option><option value="invited">Invited</option><option value="accepted">Accepted</option><option value="denied">Denied</option><option value="expired">Expired</option><option value="revoked">Revoked</option></select></label>
+            <label>Request sort<select name="sort"><option value="newest">Newest first</option><option value="oldest">Oldest first</option></select></label>
+            <button type="submit">Apply filters</button>
+          </form>
+          <div class="admin-table-wrap" tabindex="0" aria-label="Early-access request records"><table class="admin-table"><caption>Early-access requests · Dates shown in UTC</caption><thead><tr><th scope="col">Applicant</th><th scope="col">Status</th><th scope="col">Account match</th><th scope="col">Requested</th><th scope="col">Review</th></tr></thead><tbody id="adminEarlyRows"></tbody></table></div>
+          <p class="admin-footnote">Review pending requests individually. Only denial is available; approvals, invitations, email delivery, and access provisioning are not enabled.</p>
+        </section>
         <div class="admin-pagination" aria-label="Record pages"><button id="adminFirstPage" type="button" disabled>First page</button><button id="adminPreviousPage" type="button" disabled>Previous</button><span id="adminPageLabel">Page 1</span><button id="adminNextPage" type="button" disabled>Next</button><button id="adminRefresh" type="button">Refresh</button></div>
-        <p class="admin-footnote">Account changes, testing grants, and metrics are not available in this read-only view. Stored progress and subscription snapshots are not live access or completion decisions.</p>
+        <p class="admin-footnote">Account changes, testing grants, and metrics are not available here. Users and Audit remain read-only. Stored progress and subscription snapshots are not live access or completion decisions.</p>
       </section>
     </main>
     <dialog id="adminDetail" class="admin-detail" aria-labelledby="adminDetailTitle"><div class="admin-detail-header"><h2 id="adminDetailTitle">Record details</h2><button id="adminDetailClose" type="button" aria-label="Close record details">Close</button></div><div id="adminDetailBody"></div></dialog>

@@ -6,10 +6,11 @@ const encode = (value) => Buffer.from(JSON.stringify(value)).toString('base64url
 const json = (route, value, status = 200) => route.fulfill({ status, contentType: 'application/json', headers: { 'Cache-Control': 'private, no-store' }, body: JSON.stringify(value) });
 // Local synthetic HTTP authorization fixture around the real installed SDK.
 // Database authority and privacy are tested separately against exact SQL.
-export async function installAdminStub(context, { role = 'site_admin', aal = 'aal2' } = {}) {
+export async function installAdminStub(context, { role = 'site_admin', aal = 'aal2', permissions: initialPermissions = ['users.read', 'audit.read'], stepUpRequired = false } = {}) {
   const tokens = new Map(); const requests = []; let sequence = 0; let canonicalRole = role;
-  let hold = null; let fail = false; let corrupt = false;
-  let permissions = ['users.read', 'audit.read'];
+  let hold = null; let holdNames = null; let fail = false; let corrupt = false; let denialMode = '';
+  let permissions = [...initialPermissions]; let recentMfaRequired = stepUpRequired;
+  const provider = createAdminPreview({ mode: 'ready', getUser: async () => ({ authenticated: true, userId: A }) });
   const user = (id) => ({ id, aud: 'authenticated', role: 'authenticated', email: `${id === A ? 'admin' : 'member'}@example.test`, email_confirmed_at: '2026-01-01T00:00:00Z', user_metadata: { name: 'Synthetic Operator', site_admin: true, role: 'site_admin', crew_role: 'admin' }, factors: [{ id: F, factor_type: 'totp', status: 'verified', friendly_name: 'Authenticator' }] });
   function session(id = A, level = aal, sid = '11111111-1111-4111-8111-111111111111') {
     const now = Math.floor(Date.now() / 1000);
@@ -35,13 +36,30 @@ export async function installAdminStub(context, { role = 'site_admin', aal = 'aa
       const name = path.split('/').at(-1);
       if (!auth || body.target_expected_actor_id !== auth.id) return json(route, { message: 'admin_authentication_required' }, 401);
       const ready = canonicalRole === 'site_admin' && auth.id === A && auth.aal === 'aal2';
-      if (name === 'get_site_admin_context') return json(route, { schemaVersion: 1, actorId: auth.id, role: canonicalRole === 'site_admin' && auth.id === A ? 'site_admin' : 'member', adminReady: ready, reason: canonicalRole === 'site_admin' && auth.id === A && auth.aal !== 'aal2' ? 'mfa_required' : null, permissions: ready ? permissions : [] });
-      if (!ready || !permissions.includes(name.includes('audit') ? 'audit.read' : 'users.read')) return json(route, { message: 'admin_permission_or_step_up_required' }, 403);
-      const held = hold;
+      if (name === 'get_site_admin_context') {
+        const value = { schemaVersion: 1, actorId: auth.id, role: canonicalRole === 'site_admin' && auth.id === A ? 'site_admin' : 'member', adminReady: ready, reason: canonicalRole === 'site_admin' && auth.id === A && auth.aal !== 'aal2' ? 'mfa_required' : null, permissions: ready ? permissions : [], stepUpRequired: recentMfaRequired };
+        if (holdNames?.includes(name) && hold) await hold;
+        return json(route, value);
+      }
+      const denial = name === 'site_admin_deny_early_access_request';
+      const capability = denial ? 'operations.manage' : name.includes('early_access') ? 'operations.read' : name.includes('audit') ? 'audit.read' : 'users.read';
+      if (!ready || !permissions.includes(capability) || (denial && recentMfaRequired)) return json(route, { message: 'admin_permission_or_step_up_required' }, 403);
+      const held = !holdNames || holdNames.includes(name) ? hold : null;
       if (held) await held;
       if (fail) return json(route, { message: 'PRIVATE RAW ERROR SENTINEL' }, 500);
-      const provider = createAdminPreview({ mode: 'ready', getUser: async () => ({ authenticated: true, userId: auth.id }) });
-      const result = await provider.read(name, body, { expectedUserId: auth.id }); delete result.preview;
+      if (denial) {
+        const mode = denialMode; denialMode = '';
+        if (mode === 'conflict') return json(route, { ok: false, errorCode: 'revision_conflict' });
+        if (mode === 'limit') return json(route, { ok: false, errorCode: 'rate_limited' });
+        if (mode === 'idempotency') return json(route, { message: 'admin_idempotency_conflict' }, 400);
+        const result = await provider.denyEarlyAccess({ actorId: auth.id, sessionIdentity: `preview:${auth.id}`,
+          requestId: body.target_request_id, revision: String(body.target_expected_revision), operationId: body.target_operation_id,
+          correlationId: body.target_correlation_id, reasonCode: 'early_access_review' });
+        if (mode === 'lost') return json(route, { message: 'PRIVATE RAW ERROR SENTINEL' }, 502);
+        if (mode === 'wrong-id') return json(route, { ...result, requestId: B });
+        return json(route, result);
+      }
+      const result = structuredClone(await provider.read(name, body, { expectedUserId: auth.id })); delete result.preview;
       if (held && result.items?.length) result.items[0].name = 'STALE PREVIOUS SESSION SNAPSHOT';
       if (corrupt) result.actorId = B;
       return json(route, result);
@@ -53,7 +71,11 @@ export async function installAdminStub(context, { role = 'site_admin', aal = 'aa
   });
   return { A, B, requests, firstSession, session,
     role(value) { canonicalRole = value; }, permissions(value) { permissions = value; }, fail(value = true) { fail = value; }, corrupt(value = true) { corrupt = value; },
-    hold() { let release; hold = new Promise((resolve) => { release = resolve; }); return () => { release(); hold = null; }; },
+    hold(names = null) { let release; holdNames = names; hold = new Promise((resolve) => { release = resolve; }); return () => { release(); hold = null; holdNames = null; }; },
+    stepUp(value) { recentMfaRequired = value; }, denialMode(value) { denialMode = value; },
+    denials() { return requests.filter((item) => item.path.endsWith('/site_admin_deny_early_access_request')); },
+    async seedEarlyHistory(id, count) { for (let n = 0; n < count; n += 1) await provider.denyEarlyAccess({ actorId: A, sessionIdentity: `preview:${A}`, requestId: id,
+      revision: '999', operationId: crypto.randomUUID(), correlationId: crypto.randomUUID(), reasonCode: 'early_access_review' }); },
     reads() { return requests.filter((item) => /site_admin_(list|get_user|get_audit)/.test(item.path)); },
   };
 }

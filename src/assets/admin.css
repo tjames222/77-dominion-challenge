@@ -39,6 +39,17 @@
 .admin-detail dl { display: grid; grid-template-columns: minmax(120px, 1fr) 2fr; gap: .75rem 1rem; line-height: 1.5; }
 .admin-detail dt { color: var(--text-muted); }
 .admin-detail dd { margin: 0; overflow-wrap: anywhere; }
+.admin-review { border: 1px solid var(--border); border-radius: 12px; padding: 1rem; margin: 1.5rem 0; background: var(--surface-elevated); }
+.admin-review p { line-height: 1.6; overflow-wrap: anywhere; }
+.admin-review label { display: grid; gap: .5rem; margin: 1rem 0; font-weight: 650; }
+.admin-review select { appearance: none; -webkit-appearance: none; box-sizing: border-box; width: 100%; min-height: 48px; padding: .75rem 2.25rem .75rem .75rem; border: 1px solid var(--border); border-radius: 10px; background-color: var(--input); color: var(--text); font: inherit; }
+.admin-review-reason { position: relative; }
+.admin-review-reason::after { content: ''; position: absolute; right: 1rem; bottom: 1.2rem; width: .4rem; height: .4rem; border-right: 2px solid var(--text); border-bottom: 2px solid var(--text); transform: rotate(45deg); pointer-events: none; }
+.admin-review .admin-review-acknowledgement { display: flex; align-items: flex-start; line-height: 1.5; }
+.admin-review-acknowledgement input { width: 1.4rem; height: 1.4rem; flex: 0 0 1.4rem; margin: .15rem 0 0; accent-color: var(--accent); }
+.admin-detail :is(input, select):focus-visible { outline: 3px solid var(--focus-ring); outline-offset: 3px; }
+.admin-detail button:disabled { opacity: .45; cursor: default; }
+#earlyAccessHistoryRows article { border-top: 1px solid var(--border); padding: .75rem 0; }
 @media (max-width: 1050px) { .admin-filters { grid-template-columns: repeat(2, minmax(0, 1fr)); } .admin-search { grid-column: 1 / -1; } }
 @media (max-width: 700px) {
   .admin-table-wrap { overflow: visible; }

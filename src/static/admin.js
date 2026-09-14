@@ -2,17 +2,24 @@ import {
   getAdminSessionOwner, getSiteAdminContext, listSiteAdminUsers, getSiteAdminUser,
   listSiteAdminAudit, getSiteAdminAuditEvent, subscribeToAdminInvalidation,
   cancelAdminReads, clearAuthSession,
+  listSiteAdminEarlyAccess, getSiteAdminEarlyAccess,
 } from './api.js';
 import { adminReadError } from './admin-read-client.mjs';
+import { normalizeEarlyAccessRequest } from './admin-early-access-contract.mjs';
+import { mountEarlyAccessDetail } from './admin-early-access-detail.mjs';
 import { mfaChallengeHref } from './mfa-navigation.mjs';
 
 const byId = (id) => document.getElementById(id);
 const workspace = byId('adminWorkspace');
 const dialog = byId('adminDetail');
 let epoch = 0; let queryEpoch = 0; let detailEpoch = 0;
-let owner = null; let permissions = []; let tab = 'users'; let loading = false;
+let owner = null; let permissions = []; let tab = location.hash === '#early-access' ? 'early' : 'users'; let loading = false;
 let cursors = [null]; let page = 0; let nextCursor = null; let detailOpener = null;
 let suspended = false; let checking = false;
+let listController = null; let detailController = null; let detailCleanup = null;
+const tabs = { users: { permission: 'users.read', prefix: 'adminUsers', list: listSiteAdminUsers, get: getSiteAdminUser },
+  audit: { permission: 'audit.read', prefix: 'adminAudit', list: listSiteAdminAudit, get: getSiteAdminAuditEvent },
+  early: { permission: 'operations.read', prefix: 'adminEarly', list: listSiteAdminEarlyAccess, get: getSiteAdminEarlyAccess } };
 const text = (value) => typeof value === 'string' || typeof value === 'number' ? String(value).slice(0, 2000) : 'Not recorded';
 const date = (value) => {
   if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}T/.test(value)) return 'Not recorded';
@@ -25,14 +32,16 @@ function element(tag, value, className) {
 }
 function closeDetail({ restore = true } = {}) {
   detailEpoch += 1;
+  detailController?.abort(); detailController = null; detailCleanup?.(); detailCleanup = null;
   if (dialog.open) dialog.close();
   byId('adminDetailBody').replaceChildren(); byId('adminDetailTitle').textContent = 'Record details';
-  if (restore && detailOpener) (detailOpener.isConnected ? detailOpener : byId(tab === 'users' ? 'adminUsersTab' : 'adminAuditTab')).focus();
+  if (restore && detailOpener) (detailOpener.isConnected ? detailOpener : byId(`${tabs[tab].prefix}Tab`)).focus();
   detailOpener = null;
 }
 function clearRows() {
+  listController?.abort(); listController = null;
   queryEpoch += 1; loading = false; nextCursor = null;
-  byId('adminUsersRows').replaceChildren(); byId('adminAuditRows').replaceChildren();
+  for (const value of Object.values(tabs)) byId(`${value.prefix}Rows`).replaceChildren();
   byId('adminStatus').textContent = ''; workspace.removeAttribute('aria-busy');
   closeDetail({ restore: false }); updatePagination();
 }
@@ -44,7 +53,7 @@ function gate(title, message, action = '') {
 }
 function scrub(reason = '') {
   epoch += 1; checking = false; owner = null; permissions = []; cursors = [null]; page = 0;
-  clearRows(); byId('adminUsersFilters').reset(); byId('adminAuditFilters').reset();
+  clearRows(); for (const value of Object.values(tabs)) byId(`${value.prefix}Filters`).reset();
   byId('adminPreview').hidden = true;
   gate('Access needs verification', reason === 'ADMIN_SIGNED_OUT' ? 'Log in to continue. Private records have been cleared.' : 'Private records have been cleared. Check access again to continue.', reason === 'ADMIN_SIGNED_OUT' ? 'adminLogin' : 'adminRetryAccess');
 }
@@ -72,26 +81,33 @@ function userStatus(item) {
 function cell(row, label, value) { const node = element('td'); node.dataset.label = label; node.append(value instanceof Node ? value : element('span', value)); row.append(node); }
 function renderRows(items) {
   if (!Array.isArray(items) || items.length > 50 || items.some((item) => !item || typeof item.id !== 'string')) throw adminReadError();
-  const body = byId(tab === 'users' ? 'adminUsersRows' : 'adminAuditRows');
+  const body = byId(`${tabs[tab].prefix}Rows`);
   const fragment = document.createDocumentFragment();
-  for (const item of items) {
+  for (const raw of items) {
+    const item = tab === 'early' ? normalizeEarlyAccessRequest(raw) : raw;
     const row = element('tr');
     if (tab === 'users') {
       const person = element('div'); person.append(element('strong', item.name || 'Unnamed member'), element('span', item.email, 'admin-secondary'));
       cell(row, 'Member', person); cell(row, 'Role', item.role === 'site_admin' ? 'Site admin' : 'Member');
       cell(row, 'Status', userStatus(item)); cell(row, 'Created', date(item.createdAt));
+    } else if (tab === 'early') {
+      row.dataset.earlyRequest = item.id;
+      const person = element('div'); person.append(element('strong', item.name), element('span', item.email, 'admin-secondary'));
+      cell(row, 'Applicant', person); cell(row, 'Status', item.status); row.lastElementChild.dataset.earlyStatus = '';
+      cell(row, 'Account match', item.account.status); cell(row, 'Requested', date(item.requestedAt));
     } else {
       cell(row, 'Recorded', date(item.occurredAt)); cell(row, 'Action', item.action); cell(row, 'Outcome', item.outcome); cell(row, 'Target user', item.targetUserId);
     }
     const button = element('button', 'View details'); button.type = 'button';
-    button.setAttribute('aria-label', tab === 'users' ? `View details for ${text(item.name || item.email)}` : `View audit event ${text(item.id)}`);
+    button.setAttribute('aria-label', tab === 'audit' ? `View audit event ${text(item.id)}` : `${tab === 'early' ? 'Review request' : 'View details'} for ${text(item.name || item.email)}`);
     const kind = tab; button.addEventListener('click', () => void openDetail(kind, item.id, button));
     cell(row, 'Details', button); fragment.append(row);
   }
   body.replaceChildren(fragment);
 }
 function listArgs() {
-  const data = new FormData(byId(tab === 'users' ? 'adminUsersFilters' : 'adminAuditFilters'));
+  const data = new FormData(byId(`${tabs[tab].prefix}Filters`));
+  if (tab === 'early') return { target_limit: 25, target_cursor: cursors[page], target_search: data.get('search').trim(), target_status: data.get('status'), target_sort: data.get('sort') };
   return tab === 'users' ? { target_limit: 25, target_cursor: cursors[page], target_search: data.get('search').trim(), target_role: data.get('role'), target_status: data.get('status'), target_sort: data.get('sort') }
     : { target_limit: 25, target_cursor: cursors[page], target_user_id: data.get('target').trim() || null, target_action: data.get('action'), target_outcome: data.get('outcome') };
 }
@@ -100,8 +116,9 @@ async function loadPage() {
   clearRows(); loading = true; workspace.setAttribute('aria-busy', 'true'); updatePagination();
   byId('adminStatus').textContent = 'Loading records…';
   const captured = epoch; const query = queryEpoch; const actorId = owner.actorId;
+  listController = new AbortController(); const signal = listController.signal;
   try {
-    const result = await (tab === 'users' ? listSiteAdminUsers : listSiteAdminAudit)(listArgs(), { expectedUserId: actorId });
+    const result = await tabs[tab].list(listArgs(), { expectedUserId: actorId, signal });
     if (captured !== epoch || query !== queryEpoch || suspended) return;
     renderRows(result.items);
     if (result.nextCursor !== null && (typeof result.nextCursor !== 'object' || Array.isArray(result.nextCursor))) throw adminReadError();
@@ -130,20 +147,27 @@ async function openDetail(kind, id, button) {
   if (!owner || suspended) return;
   closeDetail({ restore: false }); detailOpener = button;
   const captured = epoch; const detail = detailEpoch;
-  byId('adminDetailTitle').textContent = kind === 'users' ? 'Account details' : 'Audit event';
+  byId('adminDetailTitle').textContent = kind === 'users' ? 'Account details' : kind === 'early' ? 'Early-access request' : 'Audit event';
   byId('adminDetailBody').append(element('p', 'Loading record…')); dialog.showModal(); byId('adminDetailClose').focus();
+  detailController = new AbortController(); const signal = detailController.signal; const detailOwner = { ...owner };
   try {
-    const result = await (kind === 'users' ? getSiteAdminUser : getSiteAdminAuditEvent)(id, { expectedUserId: owner.actorId });
+    const result = await tabs[kind].get(id, { expectedUserId: owner.actorId, signal });
     if (captured !== epoch || detail !== detailEpoch || suspended) return;
     if (!result.item || result.item.id !== id) throw adminReadError();
-    byId('adminDetailBody').replaceChildren(); (kind === 'users' ? renderUser : renderAudit)(result.item);
+    byId('adminDetailBody').replaceChildren();
+    if (kind === 'early') detailCleanup = mountEarlyAccessDetail({ container: byId('adminDetailBody'), item: normalizeEarlyAccessRequest(result.item),
+      owner: detailOwner, permissions: [...permissions], isCurrent: () => captured === epoch && detail === detailEpoch && !suspended,
+      onError: showError, reload: () => void openDetail(kind, id, button), onDenied: (value) => {
+        for (const row of byId('adminEarlyRows').children) if (row.dataset.earlyRequest === value.requestId) row.querySelector('[data-early-status]').textContent = value.status;
+      } });
+    else (kind === 'users' ? renderUser : renderAudit)(result.item);
   } catch (error) {
     if (captured !== epoch || detail !== detailEpoch) return;
     closeDetail(); showError(error);
   }
 }
 function selectTab(next, { focus = false } = {}) {
-  if (!permissions.includes(next === 'users' ? 'users.read' : 'audit.read')) return;
+  if (!tabs[next] || !permissions.includes(tabs[next].permission)) return;
   tab = next; cursors = [null]; page = 0;
   for (const node of document.querySelectorAll('[data-admin-tab]')) { const active = node.dataset.adminTab === tab; node.setAttribute('aria-selected', String(active)); node.tabIndex = active ? 0 : -1; if (active && focus) node.focus(); }
   for (const node of document.querySelectorAll('[data-admin-panel]')) node.hidden = node.dataset.adminPanel !== tab;
@@ -165,11 +189,11 @@ async function verifyAccess() {
       return;
     }
     permissions = context.permissions;
-    if (!permissions.some((permission) => ['users.read', 'audit.read'].includes(permission))) throw adminReadError('ADMIN_DENIED');
+    if (!Object.values(tabs).some((value) => permissions.includes(value.permission))) throw adminReadError('ADMIN_DENIED');
     owner = actor;
-    byId('adminUsersTab').hidden = !permissions.includes('users.read'); byId('adminAuditTab').hidden = !permissions.includes('audit.read');
+    for (const value of Object.values(tabs)) byId(`${value.prefix}Tab`).hidden = !permissions.includes(value.permission);
     byId('adminGate').hidden = true; workspace.hidden = false; workspace.inert = false;
-    selectTab(permissions.includes(tab === 'users' ? 'users.read' : 'audit.read') ? tab : permissions.includes('users.read') ? 'users' : 'audit');
+    selectTab(permissions.includes(tabs[tab].permission) ? tab : Object.keys(tabs).find((name) => permissions.includes(tabs[name].permission)));
   } catch (error) {
     if (captured !== epoch || suspended) return;
     scrub(); gate('Access not verified', adminReadError(error?.code).message, error?.code === 'ADMIN_SIGNED_OUT' ? 'adminLogin' : 'adminRetryAccess');
@@ -183,9 +207,14 @@ byId('adminDetailClose').addEventListener('click', () => closeDetail());
 dialog.addEventListener('cancel', (event) => { event.preventDefault(); closeDetail(); });
 for (const node of document.querySelectorAll('[data-admin-tab]')) {
   node.addEventListener('click', () => selectTab(node.dataset.adminTab));
-  node.addEventListener('keydown', (event) => { if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return; event.preventDefault(); selectTab(event.key === 'Home' ? 'users' : event.key === 'End' ? 'audit' : tab === 'users' ? 'audit' : 'users', { focus: true }); });
+  node.addEventListener('keydown', (event) => {
+    if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return; event.preventDefault();
+    const allowed = Object.keys(tabs).filter((name) => permissions.includes(tabs[name].permission)); const index = allowed.indexOf(tab);
+    selectTab(event.key === 'Home' ? allowed[0] : event.key === 'End' ? allowed.at(-1)
+      : allowed[(index + (event.key === 'ArrowLeft' ? -1 : 1) + allowed.length) % allowed.length], { focus: true });
+  });
 }
-for (const id of ['adminUsersFilters', 'adminAuditFilters']) {
+for (const id of ['adminUsersFilters', 'adminAuditFilters', 'adminEarlyFilters']) {
   byId(id).addEventListener('submit', (event) => { event.preventDefault(); cursors = [null]; page = 0; void loadPage(); });
   byId(id).addEventListener('input', () => { clearRows(); cursors = [null]; page = 0; updatePagination(); byId('adminStatus').textContent = 'Filters changed. Apply filters to load records.'; });
 }
