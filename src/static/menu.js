@@ -23,6 +23,7 @@ import { hasSiteTrainingRoute } from './site-training-contract.mjs';
 import { loadMenuTrainingControllers } from './menu-training-loader.mjs';
 import { createSiteTrainingLoadRecovery, TRAINING_RELOAD_LABEL, TRAINING_RELOAD_MESSAGE } from './site-training-load-recovery.mjs';
 import { RELEASE_GATES } from './release-gates.mjs';
+import { isAdminMenuReadRoute } from './admin-menu-route.mjs';
 
 const topbar = document.querySelector('.topbar');
 const memberTabs = document.querySelector('[data-member-tabs]');
@@ -49,6 +50,7 @@ function removeAdminMenuItem() {
 }
 async function refreshAdminMenuItem() {
   removeAdminMenuItem();
+  if (!isAdminMenuReadRoute(window.location.pathname)) return;
   const request = adminMenuRequest; const hydration = menuHydrationRequest;
   try {
     // The shared menu must obey the existing login/MFA presentation gate before

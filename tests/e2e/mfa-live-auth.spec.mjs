@@ -1,6 +1,41 @@
 import { test, expect } from '@playwright/test';
 import { installMfaSupabaseStub } from './support/mfa-supabase-auth-stub.mjs';
 
+async function observeNavigationErrors(page, testInfo) {
+  // WebKit may report a JavaScript fetch diagnostic as Playwright pageerror
+  // without dispatching window.error/unhandledrejection. Keep all three and
+  // the initiating document in the artifact; do not filter any page errors.
+  const events = [];
+  const record = (kind, value = {}) => events.push({ time: Date.now(), kind, ...value });
+  page.on('pageerror', error => record('pageerror', { name: error.name, message: error.message, stack: error.stack }));
+  page.on('request', request => {
+    if (request.isNavigationRequest() || request.url().includes('get_site_admin_context')) record('request', { path: new URL(request.url()).pathname, method: request.method(), navigation: request.isNavigationRequest() });
+  });
+  page.on('requestfailed', request => {
+    if (request.url().includes('get_site_admin_context')) record('requestfailed', { path: new URL(request.url()).pathname, failure: request.failure()?.errorText });
+  });
+  page.on('response', response => {
+    if (response.url().includes('get_site_admin_context')) record('response', { path: new URL(response.url()).pathname, status: response.status() });
+  });
+  await page.exposeFunction('__recordAuthNavigation', value => record('window', value));
+  await page.addInitScript(() => {
+    const note = (event, extra = {}) => { void window.__recordAuthNavigation({ at: Date.now(), event, path: location.pathname, state: document.visibilityState, ...extra }).catch(() => {}); };
+    for (const event of ['beforeunload', 'pagehide', 'pageshow']) window.addEventListener(event, () => note(event));
+    window.addEventListener('error', event => note('error', { message: event.message, name: event.error?.name }));
+    window.addEventListener('unhandledrejection', event => note('unhandledrejection', { message: event.reason?.message, name: event.reason?.name }));
+    const nativeFetch = window.fetch;
+    window.fetch = function(input, init) {
+      if (String(input).includes('get_site_admin_context')) note('admin-fetch', { aborted: Boolean(init?.signal?.aborted) });
+      // Return the original promise, without catching application rejections.
+      return nativeFetch.call(this, input, init);
+    };
+  });
+  return {
+    events,
+    attach: async () => testInfo.attach('auth-navigation-events', { body: JSON.stringify(events, null, 2), contentType: 'application/json' }),
+  };
+}
+
 async function login(page, returnTo = '') {
   await page.goto(`/login.html${returnTo ? `?returnTo=${encodeURIComponent(returnTo)}` : ''}`);
   await page.getByLabel('Email', { exact: true }).fill('mfa.synthetic@example.test');
@@ -70,7 +105,8 @@ for (const enrolled of [false, true]) {
   });
 }
 
-test('shared menu reports logout outage without navigation or an unhandled rejection', async ({ context, page }) => {
+test('shared menu reports logout outage without navigation or an unhandled rejection', async ({ context, page }, testInfo) => {
+  const diagnostics = await observeNavigationErrors(page, testInfo);
   const auth = await installMfaSupabaseStub(context, { enrolled: false });
   const pageErrors = [];
   page.on('pageerror', error => pageErrors.push(error.message));
@@ -89,8 +125,41 @@ test('shared menu reports logout outage without navigation or an unhandled rejec
   await logout.click();
   await expect(page).toHaveURL(/\/index\.html$/);
   expect(await page.evaluate(() => localStorage.getItem('sb-127-auth-token'))).toBeNull();
+  await diagnostics.attach();
+  expect(diagnostics.events.some(event => event.event === 'admin-fetch' && event.path === '/support.html')).toBe(true);
+  expect(diagnostics.events.filter(event => event.event === 'admin-fetch' && event.path === '/login.html')).toEqual([]);
+  expect(diagnostics.events.filter(event => ['error', 'unhandledrejection'].includes(event.event))).toEqual([]);
   expect(pageErrors).toEqual([]);
 });
+
+for (const route of ['login', 'register', 'forgot-password', 'reset-password']) {
+  test(`authenticated ${route} entry omits Admin readiness on load, menu open, and refocus`, async ({ context, page }) => {
+    const auth = await installMfaSupabaseStub(context, { enrolled: false });
+    const pageErrors = [];
+    page.on('pageerror', error => pageErrors.push(error.message));
+    await login(page, './support.html');
+    await expect(page).toHaveURL(/\/support\.html$/);
+    await page.waitForLoadState('networkidle');
+    const adminRequests = () => auth.requests.filter(request => request.path === '/rest/v1/rpc/get_site_admin_context');
+    // A real SDK-authenticated member still asks for canonical readiness on
+    // Support. Route admission is not a global disable or a role fallback.
+    expect(adminRequests().some(request => request.aal === 'aal1')).toBe(true);
+    const before = adminRequests().length;
+    await page.goto(`/${route}.html`);
+    await expect(page).toHaveURL(new RegExp(`/${route}\\.html$`));
+    await page.waitForLoadState('networkidle');
+    await page.getByRole('button', { name: 'Open menu', exact: true }).click();
+    await expect(page.getByRole('button', { name: 'Log Out', exact: true })).toBeVisible();
+    await page.evaluate(() => {
+      window.dispatchEvent(new Event('focus'));
+      document.dispatchEvent(new Event('visibilitychange'));
+    });
+    await page.waitForLoadState('networkidle');
+    expect(adminRequests().slice(before)).toEqual([]);
+    await expect(page.locator('[data-admin-menu-item]')).toHaveCount(0);
+    expect(pageErrors).toEqual([]);
+  });
+}
 
 for (const outage of [false, true]) {
   test(`shared menu cancels pending Admin readiness without an unhandled rejection during ${outage ? 'failed' : 'successful'} logout`, async ({ context, page }) => {
