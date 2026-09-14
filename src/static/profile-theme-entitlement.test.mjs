@@ -45,5 +45,5 @@ test('shared route hydration clears authorization before verification, on failur
   assert.ok(state.match(/setThemeEntitlements\(\[\]\)/g)?.length >= 2);
   assert.doesNotMatch(state, /localStorage|sessionStorage/);
   assert.match(menu, /hydrateThemeEntitlementState\(\)/);
-  assert.match(menu, /clearThemeEntitlementState\(\);[\s\S]*clearAuthSession\(\)/);
+  assert.match(menu, /clearThemeEntitlementState\(\);[\s\S]*clearAuthSession\(\{ redirectToLanding: true \}\)/);
 });

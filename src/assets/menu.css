@@ -571,7 +571,8 @@ body:not(.challenge-finished) .dashboard-shell > :is(.topbar, .member-tabs) + .d
   color: var(--accent-strong);
   background: var(--surface);
 }
-.global-menu-page-training-feedback {
+.global-menu-page-training-feedback,
+.global-menu-logout-feedback {
   margin: 2px 4px 0;
   color: color-mix(in srgb, var(--danger) 78%, var(--text));
   font-size: .78rem;

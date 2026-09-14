@@ -47,57 +47,10 @@ bash "$repository_root/scripts/reset-local-database.sh"
 createdb --maintenance-db="$database_url" --template=template0 "$temp_database"
 temp_database_created=1
 
-# Canonical schema.sql references Supabase-owned auth and storage objects. The
-# isolated database only needs these minimal dependency shapes because the
-# comparison below is restricted to public/private application objects.
-psql "$temp_database_url" --set=ON_ERROR_STOP=1 --quiet <<'SQL'
-create schema extensions;
-create extension pgcrypto with schema extensions;
-
-create schema auth;
-create table auth.users (
-  id uuid primary key,
-  email text,
-  raw_user_meta_data jsonb not null default '{}'::jsonb
-);
-create function auth.uid()
-returns uuid
-language sql
-stable
-as $$
-  select nullif(current_setting('request.jwt.claim.sub', true), '')::uuid;
-$$;
-create function auth.jwt()
-returns jsonb
-language sql
-stable
-as $$
-  select coalesce(nullif(current_setting('request.jwt.claims', true), ''), '{}')::jsonb;
-$$;
-
-create schema storage;
-create table storage.buckets (
-  id text primary key,
-  name text not null,
-  public boolean not null default false,
-  file_size_limit bigint,
-  allowed_mime_types text[]
-);
-create table storage.objects (
-  id uuid primary key default gen_random_uuid(),
-  bucket_id text,
-  name text not null,
-  owner uuid
-);
-alter table storage.objects enable row level security;
-create function storage.foldername(name text)
-returns text[]
-language sql
-immutable
-as $$
-  select string_to_array(name, '/');
-$$;
-SQL
+# Load only the reviewed provider dependency shapes into this disposable DB.
+# The application snapshot and its full comparison below remain unchanged.
+psql "$temp_database_url" --set=ON_ERROR_STOP=1 --quiet \
+  --file=scripts/fixtures/schema-drift-provider.sql
 
 PGOPTIONS="-c search_path=public,extensions" \
   psql "$temp_database_url" \
