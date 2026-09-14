@@ -167,12 +167,6 @@ select is(
   1,
   'the permanent Sharing badge is awarded once'
 );
-select is(
-  (select entry_date from public.user_badges where user_id = '30000000-0000-4000-8000-000000000003' and badge_key = 'sharing'),
-  (select (recorded_at at time zone 'UTC')::date from public.sharing_reward_evidence where user_id='30000000-0000-4000-8000-000000000003' order by recorded_at,id limit 1),
-  'the Sharing badge retains the verified event date without imposing a daily badge cap'
-);
-
 insert into sharing_test_state (key, payload)
 select
   'copy-retry',
@@ -197,6 +191,14 @@ select is(
 );
 
 reset role;
+
+-- Trusted evidence is inspected only by the fixture owner; the authenticated
+-- completion/retry calls above must not acquire direct access to this table.
+select is(
+  (select entry_date from public.user_badges where user_id = '30000000-0000-4000-8000-000000000003' and badge_key = 'sharing'),
+  (select (recorded_at at time zone 'UTC')::date from public.sharing_reward_evidence where user_id='30000000-0000-4000-8000-000000000003' order by recorded_at,id limit 1),
+  'the Sharing badge retains the verified event date without imposing a daily badge cap'
+);
 
 insert into public.crew_invite_attributions (
   id,

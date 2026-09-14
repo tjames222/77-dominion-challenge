@@ -31,6 +31,11 @@ select ok(
   'anonymous recipients can resolve an opaque public token'
 );
 
+-- Fixture Check-Ins obey the same actor and completed-action contract as a
+-- submitted member Check-In; the downstream reward triggers remain enabled.
+set local "request.jwt.claim.sub" = '10000000-0000-4000-8000-000000000001';
+set local "request.jwt.claims" = '{"sub":"10000000-0000-4000-8000-000000000001","role":"authenticated","email":"alice@example.test"}';
+
 insert into public.challenge_entries (
   user_id,
   entry_date,
@@ -52,6 +57,7 @@ insert into public.check_ins (
   challenge_day,
   status,
   completed_count,
+  completed,
   points_awarded,
   created_at
 ) values (
@@ -61,6 +67,7 @@ insert into public.check_ins (
   10,
   'partial',
   3,
+  array['bible', 'workoutOne', 'walk'],
   3,
   '2026-07-10 12:00:00+00'
 ) on conflict (user_id, entry_date) do nothing;

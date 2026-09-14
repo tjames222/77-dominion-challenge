@@ -299,6 +299,13 @@ select ok(
   'membership delivery stores consent context but no member content'
 );
 
+-- This synthetic challenge begins 31 days ago, so both the day-2 Check-In and
+-- the previous-week recap fixture belong to the same canonical instance.
+set local "request.jwt.claim.sub" = '10000000-0000-4000-8000-000000000001';
+set local "request.jwt.claims" = '{"sub":"10000000-0000-4000-8000-000000000001","role":"authenticated"}';
+update public.profiles set challenge_start_date = current_date - 31
+where user_id = '10000000-0000-4000-8000-000000000001';
+
 insert into public.challenge_entries (
   user_id,
   entry_date,
@@ -580,6 +587,7 @@ select is(
   'the claim contract returns the private source reference to the worker'
 );
 
+set local "request.jwt.claim.sub" = '';
 set local "request.jwt.claims" = '{"role":"service_role"}';
 
 select is(
@@ -808,6 +816,11 @@ select ok(
 
 delete from private.outbound_deliveries;
 
+-- Return from worker context to the actual Check-In actor while constructing
+-- the recap's trusted source row, then restore worker context below.
+set local "request.jwt.claim.sub" = '10000000-0000-4000-8000-000000000001';
+set local "request.jwt.claims" = '{"sub":"10000000-0000-4000-8000-000000000001","role":"authenticated"}';
+
 insert into public.challenge_entries (
   user_id,
   entry_date,
@@ -835,12 +848,16 @@ insert into public.check_ins (
   'd1000000-0000-4000-8000-000000000003',
   '10000000-0000-4000-8000-000000000001',
   date_trunc('week', now() at time zone 'UTC')::date - 6,
-  70,
+  (date_trunc('week', now() at time zone 'UTC')::date - 6)
+    - (select challenge_start_date from public.profiles where user_id = '10000000-0000-4000-8000-000000000001') + 1,
   'partial',
   2,
   array['bible', 'walk'],
   '{}'::jsonb
 );
+
+set local "request.jwt.claim.sub" = '';
+set local "request.jwt.claims" = '{"role":"service_role"}';
 
 delete from private.outbound_deliveries
 where event_type <> 'leaderboard_recap';
