@@ -255,8 +255,8 @@ test('the registered pgTAP foundation executes all 30 structural assertions', as
 });
 
 test('canonical schema-drift Auth dependencies replay the foundation without fabricating readiness', async () => {
-  const script = await readFile(new URL('./check-schema-drift.sh', import.meta.url), 'utf8');
-  const authDependencies = script.match(/create schema auth;[\s\S]*?(?=create schema storage;)/)?.[0];
+  const providerFixture = await readFile(new URL('./fixtures/schema-drift-provider.sql', import.meta.url), 'utf8');
+  const authDependencies = providerFixture.match(/create schema auth;[\s\S]*?(?=create schema storage;)/)?.[0];
   assert.ok(authDependencies, 'the canonical fixture must retain its Auth dependency section');
   query(`drop schema private cascade;drop schema auth cascade;drop schema public cascade;create schema public;
     ${authDependencies}grant usage on schema public,auth to authenticated;begin;${migration}commit;
