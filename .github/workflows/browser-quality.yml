@@ -1,109 +1,73 @@
 name: Browser quality gate
 
+# Temporary review branch only. Never merge this workflow into develop/main.
+# Its job name intentionally cannot satisfy the protected full-matrix check.
 on:
-  pull_request:
   workflow_dispatch:
-    inputs:
-      generate_visual_baselines:
-        description: Generate reviewable Linux screenshot baselines instead of comparing them
-        required: false
-        type: boolean
-        default: false
 
 permissions:
   contents: read
 
-concurrency:
-  group: browser-quality-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
-
 jobs:
-  browser-quality:
-    name: Routes, accessibility, and visuals
+  admin-review:
+    name: Review-only Admin visual baselines
     runs-on: ubuntu-latest
-    # Run 35497182062 reached the final desktop visual projects at the old
-    # 45-minute cap. Keep all 1,152 tests and preflight matrices, with bounded
-    # headroom for the remaining themes and artifact upload on standard runners.
-    timeout-minutes: 60
+    timeout-minutes: 20
     env:
       CI: true
       E2E_STRICT_THEME_BOOTSTRAP: ${{ vars.E2E_STRICT_THEME_BOOTSTRAP || 'false' }}
-
     steps:
-      - name: Checkout
+      - name: Checkout exact review source
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-
       - name: Install pnpm
         uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
         with:
           version: 10.17.1
-
       - name: Setup Node
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 22
           cache: pnpm
-
-      - name: Install dependencies
+      - name: Install frozen dependencies
         run: pnpm install --frozen-lockfile
-
-      - name: Install Chromium and WebKit
+      - name: Install existing browser versions
         run: pnpm exec playwright install --with-deps chromium webkit
-
-      - name: Unit tests
-        run: pnpm test
-
-      - name: Production build
-        run: pnpm build
-
-      - name: Hybrid dev authentication regression
-        run: pnpm test:e2e:auth
-
-      - name: MFA production-mode authentication regression
-        run: pnpm test:e2e:mfa
-
-      - name: Verify production-built admin read boundaries
-        run: pnpm test:e2e:admin
-
-      - name: Verify focused production-built Daily Action reads
-        run: pnpm test:e2e:daily-bootstrap
-
-      - name: Check committed visual baselines
-        id: visual-baselines
-        shell: bash
+      # This branch only captures review images. Full unit/database/browser
+      # checks run against the real candidate and its unchanged protected workflow.
+      - name: Verify exactly nine fresh Admin captures
         run: |
-          if find tests/e2e/__snapshots__ -type f -name '*.png' -print -quit 2>/dev/null | grep -q .; then
-            echo "present=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "present=false" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Browser quality gate
-        if: (github.event_name != 'workflow_dispatch' || !inputs.generate_visual_baselines) && steps.visual-baselines.outputs.present == 'true'
-        run: pnpm test:e2e
-
-      - name: Generate reviewable Linux visual baselines
-        if: (github.event_name == 'workflow_dispatch' && inputs.generate_visual_baselines) || steps.visual-baselines.outputs.present != 'true'
-        run: pnpm test:e2e:update
-
-      - name: Upload generated visual baselines
-        if: (github.event_name == 'workflow_dispatch' && inputs.generate_visual_baselines) || steps.visual-baselines.outputs.present != 'true'
+          node --input-type=module <<'NODE'
+          import assert from 'node:assert/strict';
+          import { execFileSync } from 'node:child_process';
+          import { existsSync } from 'node:fs';
+          const args = ['test', 'tests/e2e/visual-routes.spec.mjs', '--grep=admin visual contract$', '--project=visual-*'];
+          const report = JSON.parse(execFileSync(process.execPath, ['node_modules/@playwright/test/cli.js', ...args, '--list', '--reporter=json'], { encoding: 'utf8' }));
+          const tests = [];
+          const visit = suite => { for (const spec of suite.specs || []) for (const test of spec.tests || []) tests.push({ title: spec.title, project: test.projectId }); for (const child of suite.suites || []) visit(child); };
+          visit(report);
+          assert.deepEqual(report.errors, []);
+          assert.equal(tests.length, 9);
+          const projects = ['desktop', 'mobile', 'tablet'].flatMap(size => ['dark', 'dominion-night', 'light'].map(theme => 'visual-' + size + '-' + theme));
+          assert.deepEqual(tests.map(test => test.project).sort(), projects.sort());
+          for (const test of tests) {
+            assert.equal(test.title, 'admin visual contract');
+            assert.equal(existsSync('tests/e2e/__snapshots__/visual-routes.spec.mjs/' + test.project + '/admin.png'), false, 'Refuse stale committed Admin PNGs');
+          }
+          execFileSync(process.execPath, ['node_modules/@playwright/test/cli.js', ...args, '--update-snapshots=all'], { stdio: 'inherit' });
+          for (const project of projects) assert.ok(existsSync('tests/e2e/__snapshots__/visual-routes.spec.mjs/' + project + '/admin.png'));
+          NODE
+      - name: Upload review-only Admin images
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: browser-visual-baselines-${{ github.sha }}
-          path: tests/e2e/__snapshots__/
+          name: admin-visual-review-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: tests/e2e/__snapshots__/visual-routes.spec.mjs/**/admin.png
           if-no-files-found: error
-          retention-days: 14
-
-      - name: Require committed baselines after bootstrap
-        if: github.event_name == 'pull_request' && steps.visual-baselines.outputs.present != 'true'
-        run: echo "Linux baselines were generated as an artifact. Review and commit them so the next run performs visual comparisons."
-
-      - name: Upload browser diagnostics
+          retention-days: 3
+      - name: Upload diagnostic report
         if: failure()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: browser-quality-${{ github.run_attempt }}
+          name: admin-visual-review-diagnostics-${{ github.run_id }}-${{ github.run_attempt }}
           path: playwright-report/
           if-no-files-found: ignore
           retention-days: 3
