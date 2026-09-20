@@ -66,7 +66,7 @@ import { PREVIEW_BADGE_STATE_KEY, normalizePreviewBadgeState, recordPreviewBadge
 import { evaluateBadgeEvent } from './badge-evaluation.mjs';
 import { claimPreviewRewardCelebrations, acknowledgePreviewRewardCelebrations } from './reward-celebration-preview.mjs';
 import { normalizeJournalEntry, sortJournalEntries } from './journal-entry.mjs';
-import { assertJournalDateAllowed, isJournalDateKey } from './journal-date-picker.mjs';
+import { assertJournalDateAllowed, isJournalDateKey } from './journal-date-contract.mjs';
 import {
   canonicalProfilePhotoUrl,
   commitProfileUpdateWithCompareAndSwap,

@@ -90,7 +90,10 @@ export default defineConfig(({ mode }) => {
               // Account Security intentionally imports shared API/theme code
               // without the menu entry. Keep that entry's dependency set so a
               // shared import cannot execute menu listeners or hydration.
-              { name: 'menu', test: isSharedMenuModule, priority: 20, entriesAware: true },
+              // Fold the small dialog subgroup into its neighboring menu shell
+              // without changing Security's shared dependency set. The actual
+              // graph test enforces that isolation; this size is not a guard.
+              { name: 'menu', test: isSharedMenuModule, priority: 20, entriesAware: true, entriesAwareMergeThreshold: 30000 },
               // The optional controllers and catalog share one failure/reload
               // boundary. The higher-priority menu owns their common helpers;
               // dynamic imports (including the coachmark UI) stay separate.

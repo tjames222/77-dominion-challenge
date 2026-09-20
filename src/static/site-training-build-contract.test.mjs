@@ -55,6 +55,7 @@ test('shared menu grouping includes only its existing shell and leaves feature m
   const [shell, controllers] = config({ mode: 'production' }).build.rollupOptions.output.codeSplitting.groups;
   assert.equal(shell.test, isSharedMenuModule);
   assert.equal(shell.entriesAware, true);
+  assert.equal(shell.entriesAwareMergeThreshold, 30000);
   assert.ok(shell.priority > controllers.priority);
   assert.equal(controllers.test.test('/project/src/static/menu-training-controllers.mjs'), true);
   assert.equal(controllers.test.test('/project/src/static/site-training-ui.js'), false);
@@ -91,7 +92,8 @@ test('actual production graph keeps MFA free of menu side effects and training s
   const security = graph('account-security.html');
   const securityModules = security.filter(asset => asset.type === 'chunk').flatMap(asset => Object.keys(asset.modules));
   assert.ok(securityModules.some(id => id.endsWith('/src/static/api.js')));
-  for (const name of ['menu.js', 'shared-header-actions.js', 'menu-training-controllers.mjs', 'site-training-ui.js']) {
+  assert.ok(securityModules.some(id => id.endsWith('/src/static/journal-date-contract.mjs')));
+  for (const name of ['menu.js', 'shared-header-actions.js', 'menu-training-controllers.mjs', 'site-training-ui.js', 'journal-date-picker.mjs', 'dialog.mjs']) {
     assert.ok(!securityModules.some(id => id.endsWith(`/src/static/${name}`)), `MFA must not execute ${name}`);
   }
   const securityCss = security.filter(asset => asset.fileName.endsWith('.css')).map(asset => String(asset.source)).join('');
@@ -101,6 +103,7 @@ test('actual production graph keeps MFA free of menu side effects and training s
   for (const entry of ['index.html', 'login.html', 'dashboard.html', 'badges-rewards.html', 'community.html', 'profile.html', 'bible-reading.html']) {
     const modules = graph(entry).filter(asset => asset.type === 'chunk').flatMap(asset => Object.keys(asset.modules));
     assert.ok(modules.some(id => id.endsWith('/src/static/menu.js')), `${entry} keeps working navigation`);
+    assert.ok(!modules.some(id => id.endsWith('/src/static/journal-date-picker.mjs')), `${entry} does not load journal calendar UI`);
     assert.ok(!modules.some(id => /\/(?:menu-training-controllers|site-training-ui|site-training-coachmark)\.(?:js|mjs)$/.test(id)), `${entry} keeps training optional`);
   }
 });
