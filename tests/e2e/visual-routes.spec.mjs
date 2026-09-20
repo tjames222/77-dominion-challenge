@@ -33,6 +33,18 @@ test.describe('all-route visual matrix', () => {
       const theme = testInfo.project.metadata.theme;
       await app.open(route, { theme });
       await expectNoHorizontalOverflow(page);
+      if (route.id === 'admin') {
+        // Root overflow can remain clipped while a negative header margin
+        // enlarges the body's full-page capture beyond the configured viewport.
+        const viewportWidth = page.viewportSize().width;
+        const bounds = await page.evaluate(() => {
+          const header = document.querySelector('.admin-shell > .topbar').getBoundingClientRect();
+          return { bodyWidth: document.body.scrollWidth, left: header.left, right: header.right };
+        });
+        expect(bounds.bodyWidth, 'Admin body must fit the configured viewport').toBeLessThanOrEqual(viewportWidth);
+        expect(bounds.left, 'Admin header must not extend past the left edge').toBeGreaterThanOrEqual(0);
+        expect(bounds.right, 'Admin header must not extend past the right edge').toBeLessThanOrEqual(viewportWidth);
+      }
       await expectStableScreenshot(page, app, route.id + '.png');
       app.assertNoRuntimeErrors();
     });
