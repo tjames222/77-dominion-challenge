@@ -89,6 +89,7 @@ describe('shared sticky menu', () => {
         const getSiteAdminContext = async () => ({ adminReady: false, permissions: [] });
         const clearThemeEntitlementState = () => {};
         const hydrateThemeEntitlementState = async () => ({});
+        const authEntryTransition = { capture: () => null, isCurrent: () => false, subscribe() {}, suspend() {}, restore() {} };
         const initThemeState = () => {};
         const initThemeAssets = () => {};
         const SOLO_TRAINING_LAUNCH_EVENT = 'dominion:solo-training-launch-requested';

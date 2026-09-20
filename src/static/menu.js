@@ -24,6 +24,7 @@ import { loadMenuTrainingControllers } from './menu-training-loader.mjs';
 import { createSiteTrainingLoadRecovery, TRAINING_RELOAD_LABEL, TRAINING_RELOAD_MESSAGE } from './site-training-load-recovery.mjs';
 import { RELEASE_GATES } from './release-gates.mjs';
 import { isAdminMenuReadRoute } from './admin-menu-route.mjs';
+import { authEntryTransition } from './auth-entry-transition.mjs';
 
 const topbar = document.querySelector('.topbar');
 const memberTabs = document.querySelector('[data-member-tabs]');
@@ -44,6 +45,16 @@ let menuButtonPlaceholder = null;
 let menuBackgroundObserver = null;
 const menuBackgroundState = new Map();
 let adminMenuRequest = 0;
+async function hydrateMenuTheme(options = {}, signal = authEntryTransition.capture()) {
+  if (!authEntryTransition.isCurrent(signal)) return;
+  try {
+    const { error } = await hydrateThemeEntitlementState({ ...options, signal });
+    if (error && !signal.aborted) console.warn('Unable to verify theme reward ownership', error);
+  } catch (error) {
+    if (!signal.aborted) console.warn('Unable to verify theme reward ownership', error);
+  }
+}
+authEntryTransition.subscribe(paused => { if (!paused) void hydrateMenuTheme(); });
 function removeAdminMenuItem() {
   adminMenuRequest += 1;
   document.querySelector('[data-admin-menu-item]')?.remove();
@@ -610,9 +621,7 @@ async function buildMenu() {
 
 initThemeState();
 initThemeAssets();
-hydrateThemeEntitlementState().then(({ error }) => {
-  if (error) console.warn('Unable to verify theme reward ownership', error);
-});
+void hydrateMenuTheme();
 initScrollResponsiveTopbar();
 initTopbarStickyOffset();
 buildMenu();
@@ -632,12 +641,11 @@ subscribeToAuthStateChanges(({ event, user }) => {
     closeMenu();
   }
 
+  const themeSignal = authEntryTransition.capture();
   window.setTimeout(() => {
     void buildMenu();
     if (ownerChanged || event === 'USER_UPDATED') {
-      void hydrateThemeEntitlementState({ expectedUserId: nextOwner }).then(({ error }) => {
-        if (error) console.warn('Unable to verify theme reward ownership', error);
-      });
+      void hydrateMenuTheme({ expectedUserId: nextOwner }, themeSignal);
     }
   }, 0);
 });
@@ -652,11 +660,12 @@ window.addEventListener('storage', (event) => {
     currentMenuOwner = '';
     clearThemeEntitlementState();
     closeMenu();
+    const themeSignal = authEntryTransition.capture();
     void buildMenu().then(async () => {
+      if (!authEntryTransition.isCurrent(themeSignal)) return;
       const user = await getLocalOrSessionUser();
       if (!user?.authenticated || !user.userId) return;
-      const result = await hydrateThemeEntitlementState({ expectedUserId: user.userId });
-      if (result.error) console.warn('Unable to verify theme reward ownership', result.error);
+      await hydrateMenuTheme({ expectedUserId: user.userId }, themeSignal);
     });
     return;
   }
@@ -713,13 +722,17 @@ window.addEventListener('focus', () => {
 });
 
 window.addEventListener('pagehide', () => {
+  authEntryTransition.suspend();
   menuHydrationRequest += 1;
   destroyTrainingControllers();
   closeMenu();
 });
 
 window.addEventListener('pageshow', (event) => {
-  if (event.persisted) void buildMenu();
+  if (event.persisted) {
+    authEntryTransition.restore();
+    void buildMenu();
+  }
 });
 
 document.addEventListener('visibilitychange', () => {

@@ -26,6 +26,9 @@ async function observeNavigationErrors(page, testInfo) {
     const nativeFetch = window.fetch;
     window.fetch = function(input, init) {
       if (String(input).includes('get_site_admin_context')) note('admin-fetch', { aborted: Boolean(init?.signal?.aborted) });
+      if (/\/(get_reward_catalog|get_theme_preference|set_theme_preference)(?:\?|$)/.test(String(input))) {
+        note('theme-fetch', { endpoint: new URL(String(input), location.href).pathname, aborted: Boolean(init?.signal?.aborted) });
+      }
       // Return the original promise, without catching application rejections.
       return nativeFetch.call(this, input, init);
     };
@@ -128,6 +131,8 @@ test('shared menu reports logout outage without navigation or an unhandled rejec
   await diagnostics.attach();
   expect(diagnostics.events.some(event => event.event === 'admin-fetch' && event.path === '/support.html')).toBe(true);
   expect(diagnostics.events.filter(event => event.event === 'admin-fetch' && event.path === '/login.html')).toEqual([]);
+  expect(diagnostics.events.filter(event => event.event === 'theme-fetch' && event.path === '/login.html')).toEqual([]);
+  expect(diagnostics.events.some(event => event.event === 'theme-fetch' && event.path === '/support.html')).toBe(true);
   expect(diagnostics.events.filter(event => ['error', 'unhandledrejection'].includes(event.event))).toEqual([]);
   expect(pageErrors).toEqual([]);
 });
@@ -145,6 +150,8 @@ for (const route of ['login', 'register', 'forgot-password', 'reset-password']) 
     // Support. Route admission is not a global disable or a role fallback.
     expect(adminRequests().some(request => request.aal === 'aal1')).toBe(true);
     const before = adminRequests().length;
+    const themeRequests = () => auth.requests.filter(request => ['/rest/v1/rpc/get_reward_catalog', '/rest/v1/rpc/get_theme_preference'].includes(request.path));
+    const themesBefore = themeRequests().length;
     await page.goto(`/${route}.html`);
     await expect(page).toHaveURL(new RegExp(`/${route}\\.html$`));
     await page.waitForLoadState('networkidle');
@@ -156,10 +163,53 @@ for (const route of ['login', 'register', 'forgot-password', 'reset-password']) 
     });
     await page.waitForLoadState('networkidle');
     expect(adminRequests().slice(before)).toEqual([]);
+    expect(themeRequests().length).toBeGreaterThan(themesBefore, 'Authenticated same-route theme hydration is preserved.');
     await expect(page.locator('[data-admin-menu-item]')).toHaveCount(0);
     expect(pageErrors).toEqual([]);
   });
 }
+
+test('delayed Login profile validation pauses optional theme work and failure resumes a retryable same-document session', async ({ context, page }, testInfo) => {
+  const diagnostics = await observeNavigationErrors(page, testInfo);
+  const auth = await installMfaSupabaseStub(context, { enrolled: false });
+  const pageErrors = []; page.on('pageerror', error => pageErrors.push(error.message));
+  let release; const gate = new Promise(resolve => { release = resolve; });
+  let first = true;
+  await page.route('**/__mfa_fixture__/rest/v1/profiles*', async route => {
+    if (!first) return route.fallback();
+    first = false;
+    await gate;
+    // The SDK retries transient 503 reads. A non-transient validation failure
+    // makes this attempt actually return to its form instead of auto-succeeding.
+    return route.fulfill({ status: 403, contentType: 'application/json', body: JSON.stringify({ code: '42501', message: 'Synthetic profile validation unavailable' }) });
+  });
+  page.on('dialog', dialog => dialog.dismiss());
+  try {
+    const profile = page.waitForRequest('**/__mfa_fixture__/rest/v1/profiles*');
+    await login(page, './support.html');
+    await profile;
+    await expect(page.getByRole('button', { name: 'Working...', exact: true })).toBeDisabled();
+    await page.getByRole('button', { name: 'Open menu', exact: true }).click();
+    await expect(page.getByRole('button', { name: 'Log Out', exact: true })).toBeVisible();
+    await page.evaluate(() => { window.dispatchEvent(new Event('focus')); document.dispatchEvent(new Event('visibilitychange')); });
+    expect(auth.requests.filter(request => /\/(get_reward_catalog|get_theme_preference)$/.test(request.path))).toEqual([]);
+    expect(auth.requests.filter(request => request.path === '/auth/v1/user').length).toBeGreaterThanOrEqual(4);
+    await page.getByRole('button', { name: 'Close menu', exact: true }).click();
+    const resumedTheme = page.waitForResponse('**/__mfa_fixture__/rest/v1/rpc/get_theme_preference');
+    release();
+    await expect(page.getByRole('button', { name: 'Go to dashboard', exact: true })).toBeEnabled();
+    await resumedTheme;
+    await page.waitForLoadState('networkidle');
+    expect(auth.requests.some(request => request.path === '/rest/v1/rpc/get_theme_preference')).toBe(true);
+    const beforeRetry = diagnostics.events.filter(event => event.event === 'theme-fetch' && event.path === '/login.html').length;
+    await page.getByRole('button', { name: 'Go to dashboard', exact: true }).click();
+    await expect(page).toHaveURL(/\/support\.html$/);
+    await page.waitForLoadState('networkidle');
+    expect(diagnostics.events.filter(event => event.event === 'theme-fetch' && event.path === '/login.html')).toHaveLength(beforeRetry);
+    expect(diagnostics.events.filter(event => ['error', 'unhandledrejection'].includes(event.event))).toEqual([]);
+    expect(pageErrors).toEqual([]);
+  } finally { release(); await diagnostics.attach(); }
+});
 
 for (const outage of [false, true]) {
   test(`shared menu cancels pending Admin readiness without an unhandled rejection during ${outage ? 'failed' : 'successful'} logout`, async ({ context, page }) => {

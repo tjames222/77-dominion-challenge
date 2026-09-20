@@ -808,7 +808,8 @@ const normalizeThemePreference = (preference = {}) => ({
   updatedAt: preference.updatedAt ?? preference.updated_at ?? null,
 });
 
-export async function getThemePreference({ expectedUserId = '' } = {}) {
+export async function getThemePreference({ expectedUserId = '', signal } = {}) {
+  signal?.throwIfAborted();
   if (isLocalDemoMode()) {
     const actorId = requireMockRewardActor(expectedUserId);
     const preference = normalizeThemePreference(readJson(MOCK_THEME_PREFERENCES_KEY, {})[actorId]);
@@ -818,15 +819,20 @@ export async function getThemePreference({ expectedUserId = '' } = {}) {
 
   const client = requireSupabase();
   const actor = await requireUser(expectedUserId);
-  const { data, error } = await client.rpc('get_theme_preference', {
+  signal?.throwIfAborted();
+  const request = client.rpc('get_theme_preference', {
     target_expected_actor_id: actor.id,
   });
+  const { data, error } = await (signal ? request.abortSignal(signal) : request);
+  signal?.throwIfAborted();
   await requireUser(actor.id);
+  signal?.throwIfAborted();
   if (error) throw error;
   return normalizeThemePreference(data);
 }
 
-export async function setThemePreference(themeKey, { expectedUserId = '' } = {}) {
+export async function setThemePreference(themeKey, { expectedUserId = '', signal } = {}) {
+  signal?.throwIfAborted();
   const normalizedThemeKey = String(themeKey || '').trim().toLowerCase();
   if (!['dark', 'light', 'dominion-night', 'dominion-platinum'].includes(normalizedThemeKey)) {
     throw new Error('The requested theme is unavailable.');
@@ -834,6 +840,7 @@ export async function setThemePreference(themeKey, { expectedUserId = '' } = {})
 
   if (isLocalDemoMode()) {
     await requireHybridPreviewUser(expectedUserId);
+    signal?.throwIfAborted();
     const actorId = requireMockRewardActor(expectedUserId);
     const preferences = readJson(MOCK_THEME_PREFERENCES_KEY, {});
     const preference = {
@@ -849,11 +856,15 @@ export async function setThemePreference(themeKey, { expectedUserId = '' } = {})
 
   const client = requireSupabase();
   const actor = await requireUser(expectedUserId);
-  const { data, error } = await client.rpc('set_theme_preference', {
+  signal?.throwIfAborted();
+  const request = client.rpc('set_theme_preference', {
     target_theme_key: normalizedThemeKey,
     target_expected_actor_id: actor.id,
   });
+  const { data, error } = await (signal ? request.abortSignal(signal) : request);
+  signal?.throwIfAborted();
   await requireUser(actor.id);
+  signal?.throwIfAborted();
   if (error) throw error;
   return normalizeThemePreference(data);
 }
@@ -1856,7 +1867,8 @@ export async function getChallengeProgression() {
   return normalizeChallengeProgression(data || {});
 }
 
-export async function getRewardCatalog({ limit = 50, cursor = null, expectedUserId = '' } = {}) {
+export async function getRewardCatalog({ limit = 50, cursor = null, expectedUserId = '', signal } = {}) {
+  signal?.throwIfAborted();
   if (isLocalDemoMode()) {
     const actorId = requireMockRewardActor(expectedUserId);
     const result = getMockRewardCatalog();
@@ -1866,13 +1878,17 @@ export async function getRewardCatalog({ limit = 50, cursor = null, expectedUser
 
   const client = requireSupabase();
   const actor = await requireUser(expectedUserId);
-  const { data, error } = await client.rpc('get_reward_catalog', {
+  signal?.throwIfAborted();
+  const request = client.rpc('get_reward_catalog', {
     target_page_size: limit,
     target_after_sort_order: cursor?.sortOrder ?? null,
     target_after_reward_key: cursor?.key || null,
     target_expected_actor_id: actor.id,
   });
+  const { data, error } = await (signal ? request.abortSignal(signal) : request);
+  signal?.throwIfAborted();
   await requireUser(actor.id);
+  signal?.throwIfAborted();
   if (error) throw error;
   return normalizeRewardCatalog(data || {});
 }
