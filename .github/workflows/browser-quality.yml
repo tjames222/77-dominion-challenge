@@ -1,109 +1,87 @@
 name: Browser quality gate
 
+# Temporary diagnostic branch only. Never merge into develop/main.
+# This distinct job cannot satisfy the protected full-matrix check.
 on:
-  pull_request:
   workflow_dispatch:
-    inputs:
-      generate_visual_baselines:
-        description: Generate reviewable Linux screenshot baselines instead of comparing them
-        required: false
-        type: boolean
-        default: false
 
 permissions:
   contents: read
 
-concurrency:
-  group: browser-quality-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
-
 jobs:
-  browser-quality:
-    name: Routes, accessibility, and visuals
+  preview-badge-lock-review:
+    name: Review-only preview badge cross-tab lock
     runs-on: ubuntu-latest
-    # Run 35497182062 reached the final desktop visual projects at the old
-    # 45-minute cap. Keep all 1,152 tests and preflight matrices, with bounded
-    # headroom for the remaining themes and artifact upload on standard runners.
-    timeout-minutes: 60
+    timeout-minutes: 20
     env:
       CI: true
       E2E_STRICT_THEME_BOOTSTRAP: ${{ vars.E2E_STRICT_THEME_BOOTSTRAP || 'false' }}
-
     steps:
-      - name: Checkout
+      - name: Checkout exact diagnostic source
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-
+        with:
+          fetch-depth: 2
       - name: Install pnpm
         uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
         with:
           version: 10.17.1
-
       - name: Setup Node
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 22
           cache: pnpm
-
-      - name: Install dependencies
+      - name: Install frozen dependencies
         run: pnpm install --frozen-lockfile
-
-      - name: Install Chromium and WebKit
-        run: pnpm exec playwright install --with-deps chromium webkit
-
-      - name: Unit tests
-        run: pnpm test
-
-      - name: Production build
-        run: pnpm build
-
-      - name: Hybrid dev authentication regression
-        run: pnpm test:e2e:auth
-
-      - name: MFA production-mode authentication regression
-        run: pnpm test:e2e:mfa
-
-      - name: Verify production-built admin read boundaries
-        run: pnpm test:e2e:admin
-
-      - name: Verify focused production-built Daily Action reads
-        run: pnpm test:e2e:daily-bootstrap
-
-      - name: Check committed visual baselines
-        id: visual-baselines
-        shell: bash
+      - name: Install existing WebKit version
+        run: pnpm exec playwright install --with-deps webkit
+      - name: Verify one hundred exact-source first-attempt repetitions
         run: |
-          if find tests/e2e/__snapshots__ -type f -name '*.png' -print -quit 2>/dev/null | grep -q .; then
-            echo "present=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "present=false" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Browser quality gate
-        if: (github.event_name != 'workflow_dispatch' || !inputs.generate_visual_baselines) && steps.visual-baselines.outputs.present == 'true'
-        run: pnpm test:e2e
-
-      - name: Generate reviewable Linux visual baselines
-        if: (github.event_name == 'workflow_dispatch' && inputs.generate_visual_baselines) || steps.visual-baselines.outputs.present != 'true'
-        run: pnpm test:e2e:update
-
-      - name: Upload generated visual baselines
-        if: (github.event_name == 'workflow_dispatch' && inputs.generate_visual_baselines) || steps.visual-baselines.outputs.present != 'true'
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        with:
-          name: browser-visual-baselines-${{ github.sha }}
-          path: tests/e2e/__snapshots__/
-          if-no-files-found: error
-          retention-days: 14
-
-      - name: Require committed baselines after bootstrap
-        if: github.event_name == 'pull_request' && steps.visual-baselines.outputs.present != 'true'
-        run: echo "Linux baselines were generated as an artifact. Review and commit them so the next run performs visual comparisons."
-
-      - name: Upload browser diagnostics
+          node --input-type=module <<'NODE'
+          import assert from 'node:assert/strict';
+          import { execFileSync } from 'node:child_process';
+          import { readFileSync } from 'node:fs';
+          const base = '02f5322d0d7557ec21648e7400d662043dc39716';
+          const changed = execFileSync('git', ['diff', '--name-only', base, 'HEAD'], { encoding: 'utf8' }).trim().split('\n');
+          assert.deepEqual(changed, ['.github/workflows/browser-quality.yml'], 'Only this diagnostic workflow may differ from exact W02');
+          const title = 'two tabs cannot claim the same unseen badge batch and an account switch cannot acknowledge it';
+          const args = ['test', 'tests/e2e/deterministic-badges.spec.mjs', `--grep=${title}$`, '--project=webkit-badges-mobile', '--repeat-each=100', '--retries=0', '--workers=2', '--update-snapshots=none'];
+          const cli = 'node_modules/@playwright/test/cli.js';
+          const rows = report => {
+            const tests = [];
+            const visit = suite => {
+              for (const spec of suite.specs || []) for (const test of spec.tests || []) tests.push({ title: spec.title, ...test });
+              for (const child of suite.suites || []) visit(child);
+            };
+            visit(report);
+            assert.deepEqual(report.errors, []);
+            assert.equal(tests.length, 100);
+            for (const test of tests) {
+              assert.equal(test.title, title);
+              assert.equal(test.projectId, 'webkit-badges-mobile');
+            }
+            return tests;
+          };
+          rows(JSON.parse(execFileSync(process.execPath, [cli, ...args, '--list', '--reporter=json'], { encoding: 'utf8' })));
+          console.log(`Verified 100 unchanged WebKit badge claim cases from ${base}; retries=0, workers=2.`);
+          const reportPath = 'test-results/preview-badge-lock-results.json';
+          execFileSync(process.execPath, [cli, ...args, '--reporter=github,html,json'], {
+            stdio: 'inherit',
+            env: { ...process.env, PLAYWRIGHT_JSON_OUTPUT_NAME: reportPath },
+          });
+          for (const test of rows(JSON.parse(readFileSync(reportPath, 'utf8')))) {
+            assert.equal(test.status, 'expected');
+            assert.equal(test.expectedStatus, 'passed');
+            assert.equal(test.results.length, 1, 'Every repetition must pass on its first and only attempt');
+            assert.equal(test.results[0].status, 'passed');
+          }
+          NODE
+      - name: Upload failure-only preview badge diagnostics
         if: failure()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: browser-quality-${{ github.run_attempt }}
-          path: playwright-report/
+          name: preview-badge-lock-review-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            playwright-report/
+            test-results/
           if-no-files-found: ignore
           retention-days: 3
