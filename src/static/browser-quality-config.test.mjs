@@ -50,6 +50,62 @@ const buildAssetVerifier = readFileSync(
   'utf8',
 );
 
+const workflowJob = (id) => {
+  const job = workflow.split(new RegExp(`^  ${id}:\\n`, 'm'))[1];
+  assert.ok(job, `Missing workflow job ${id}`);
+  return job.split(/^  [\w-]+:\n/m)[0];
+};
+
+test('two standard-runner shards preserve preliminary checks and the full main matrix', () => {
+  const preflight = workflowJob('preflight');
+  for (const command of ['pnpm test', 'pnpm build', 'pnpm test:e2e:auth', 'pnpm test:e2e:mfa', 'pnpm test:e2e:admin', 'pnpm test:e2e:daily-bootstrap']) {
+    assert.ok(preflight.includes(`run: ${command}\n`), `Missing preliminary ${command}`);
+  }
+  const shards = workflowJob('browser-shards');
+  assert.match(shards, /needs: preflight/);
+  assert.match(shards, /fail-fast: false/);
+  assert.match(shards, /shard: \[1, 2\]/);
+  for (const command of ['pnpm test:e2e', 'pnpm test:e2e:update']) {
+    assert.ok(shards.includes(`run: ${command} --shard=\${{ matrix.shard }}/2 --reporter=github,html,json\n`));
+  }
+  assert.doesNotMatch(shards, /--grep|--project|--workers|--retries|--timeout|continue-on-error/);
+  assert.equal((workflow.match(/runs-on: ubuntu-latest/g) || []).length, 3);
+  assert.equal((workflow.match(/timeout-minutes: 60/g) || []).length, 3);
+  assert.match(playwrightConfig, /workers: process\.env\.CI \? 2 : undefined/);
+  assert.match(playwrightConfig, /retries: process\.env\.CI \? 1 : 0/);
+  assert.match(playwrightConfig, /timeout: 45_000/);
+});
+
+test('the unchanged required check is an always-run fail-closed aggregate', () => {
+  const aggregate = workflowJob('browser-quality');
+  assert.equal((workflow.match(/name: Routes, accessibility, and visuals/g) || []).length, 1);
+  assert.match(aggregate, /needs: \[preflight, browser-shards\]\n\s+if: always\(\)/);
+  assert.match(aggregate, /BROWSER_NEEDS: \$\{\{ toJSON\(needs\) \}\}[\s\S]*?run: node scripts\/browser-shard-artifacts\.mjs needs/);
+  assert.doesNotMatch(workflow, /continue-on-error|merge-multiple/);
+  assert.ok(aggregate.indexOf('browser-shard-artifacts.mjs needs') < aggregate.indexOf('- name: Download shard 1'));
+  assert.ok(aggregate.indexOf('browser-shard-artifacts.mjs needs') < aggregate.indexOf('run: pnpm install --frozen-lockfile'));
+  assert.ok(aggregate.indexOf('run: pnpm install --frozen-lockfile') < aggregate.indexOf('browser-shard-artifacts.mjs merge'));
+  assert.ok(aggregate.indexOf('browser-shard-artifacts.mjs merge') < aggregate.indexOf('- name: Upload generated visual baselines'));
+  assert.match(aggregate, /- name: Upload generated visual baselines\n\s+if: needs\.preflight\.outputs\.generate == 'true'/);
+});
+
+test('zero-baseline pull requests fail after complete review evidence rather than passing without comparison', () => {
+  assert.match(workflowJob('browser-quality'), /- name: Require committed baselines after bootstrap\n\s+if: github\.event_name == 'pull_request' && needs\.preflight\.outputs\.present != 'true'[\s\S]*?exit 1/);
+});
+
+test('artifact transport separates exact-run shards and opts in only bounded hidden evidence', () => {
+  const preflight = workflowJob('preflight');
+  const shards = workflowJob('browser-shards');
+  const aggregate = workflowJob('browser-quality');
+  assert.match(preflight, /name: browser-plan-\$\{\{ github\.sha \}\}-\$\{\{ github\.run_id \}\}-\$\{\{ github\.run_attempt \}\}/);
+  assert.match(shards, /name: browser-shard-\$\{\{ matrix\.shard \}\}-\$\{\{ github\.sha \}\}-\$\{\{ github\.run_id \}\}-\$\{\{ github\.run_attempt \}\}/);
+  assert.match(shards, /name: browser-quality-shard-\$\{\{ matrix\.shard \}\}-\$\{\{ github\.sha \}\}-\$\{\{ github\.run_id \}\}-\$\{\{ github\.run_attempt \}\}/);
+  for (const index of [1, 2]) assert.ok(aggregate.includes(`path: .browser-quality/received/shard-${index}/`));
+  assert.equal((workflow.match(/include-hidden-files: true/g) || []).length, 3);
+  assert.match(shards, /- name: Upload shard staging evidence[\s\S]*?retention-days: 3/);
+  assert.match(preflight, /- name: Upload exact-run test plan[\s\S]*?retention-days: 3/);
+});
+
 test('manual baseline generation forcibly rewrites every screenshot', () => {
   assert.equal(
     packageJson.scripts['test:e2e:update'],
