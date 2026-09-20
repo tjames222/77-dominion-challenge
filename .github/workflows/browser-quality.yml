@@ -9,8 +9,8 @@ permissions:
   contents: read
 
 jobs:
-  preview-badge-lock-review:
-    name: Review-only preview badge cross-tab lock
+  preview-badge-observation-review:
+    name: Review-only preview badge lock observations
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
@@ -20,7 +20,7 @@ jobs:
       - name: Checkout exact diagnostic source
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
-          fetch-depth: 2
+          fetch-depth: 3
       - name: Install pnpm
         uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
         with:
@@ -34,7 +34,7 @@ jobs:
         run: pnpm install --frozen-lockfile
       - name: Install existing WebKit version
         run: pnpm exec playwright install --with-deps webkit
-      - name: Verify one hundred exact-source first-attempt repetitions
+      - name: Observe one hundred unchanged first-attempt badge tests
         run: |
           node --input-type=module <<'NODE'
           import assert from 'node:assert/strict';
@@ -42,9 +42,14 @@ jobs:
           import { readFileSync } from 'node:fs';
           const base = '02f5322d0d7557ec21648e7400d662043dc39716';
           const changed = execFileSync('git', ['diff', '--name-only', base, 'HEAD'], { encoding: 'utf8' }).trim().split('\n');
-          assert.deepEqual(changed, ['.github/workflows/browser-quality.yml'], 'Only this diagnostic workflow may differ from exact W02');
+          assert.deepEqual(changed, [
+            '.diagnostics/preview-badge-observer.config.mjs',
+            '.diagnostics/preview-badge-observer.js',
+            '.diagnostics/preview-badge-observer.spec.mjs',
+            '.github/workflows/browser-quality.yml',
+          ], 'Only observational diagnostic files may differ from exact W02; app, original tests, fixtures and config must be unchanged');
           const title = 'two tabs cannot claim the same unseen badge batch and an account switch cannot acknowledge it';
-          const args = ['test', 'tests/e2e/deterministic-badges.spec.mjs', `--grep=${title}$`, '--project=webkit-badges-mobile', '--repeat-each=100', '--retries=0', '--workers=2', '--update-snapshots=none'];
+          const args = ['test', '--config=.diagnostics/preview-badge-observer.config.mjs', `--grep=${title}$`, '--project=webkit-badges-mobile', '--repeat-each=100', '--retries=0', '--workers=2', '--update-snapshots=none'];
           const cli = 'node_modules/@playwright/test/cli.js';
           const rows = report => {
             const tests = [];
@@ -62,8 +67,8 @@ jobs:
             return tests;
           };
           rows(JSON.parse(execFileSync(process.execPath, [cli, ...args, '--list', '--reporter=json'], { encoding: 'utf8' })));
-          console.log(`Verified 100 unchanged WebKit badge claim cases from ${base}; retries=0, workers=2.`);
-          const reportPath = 'test-results/preview-badge-lock-results.json';
+          console.log(`Verified 100 unchanged WebKit badge claim bodies from ${base}; observational hooks only, retries=0, workers=2. Instrumentation may affect scheduling; no failure is not disproof.`);
+          const reportPath = 'test-results/preview-badge-observation-results.json';
           execFileSync(process.execPath, [cli, ...args, '--reporter=github,html,json'], {
             stdio: 'inherit',
             env: { ...process.env, PLAYWRIGHT_JSON_OUTPUT_NAME: reportPath },
@@ -75,11 +80,11 @@ jobs:
             assert.equal(test.results[0].status, 'passed');
           }
           NODE
-      - name: Upload failure-only preview badge diagnostics
+      - name: Upload failure-only bounded badge observations
         if: failure()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: preview-badge-lock-review-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          name: preview-badge-observation-review-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
             playwright-report/
             test-results/
