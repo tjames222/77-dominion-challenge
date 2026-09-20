@@ -1,5 +1,7 @@
 import { test, expect, HARNESS, RUNTIME, deferred, openHarness, signInMock, stateFor, startCheckIn, finishOperation } from './support/preview-badge-browser-support.mjs';
 import { fixtureFor, FIXED_NOW, FIXED_USER_ID } from './support/fixtures.mjs';
+import { randomUUID } from 'node:crypto';
+import { DEFAULT_OWNERSHIP_REWARD_DEFINITIONS } from '../../src/static/reward-catalog.mjs';
 
 test('compiled public and Security entries do not fetch the optional preview runtime or ship the harness', async ({ page, traffic }) => {
   const runtime = []; page.on('request', request => { if (RUNTIME.test(request.url())) runtime.push(request.url()); });
@@ -121,4 +123,113 @@ test('compiled Dashboard preserves canonical celebration copy, presentation and 
     return Boolean(state[owner]?.['dominion:badgeState:v1']?.awards?.find(award => award.key === 'iron_standard')?.celebrationSeenAt);
   }, FIXED_USER_ID)).toBe(true);
   await page.reload(); await expect(page.locator('#badgeCelebration')).toBeHidden();
+});
+
+// These cases exercise the real compiled preview API through the existing
+// test-only harness. Ownership is seeded explicitly; zero points must not
+// erase an earned snapshot or silently manufacture new owned rewards.
+const PREVIEW_REWARD = DEFAULT_OWNERSHIP_REWARD_DEFINITIONS.find(item => item.key === 'dominion_night_theme');
+const PREVIEW_REWARD_OWNED_AT = '2026-02-10T18:00:00.000Z';
+async function seedOwnedPreviewReward(page, owner) {
+  const ownedAt = PREVIEW_REWARD_OWNED_AT;
+  await page.evaluate(({ owner, reward, ownedAt }) => {
+    const write = (key, value) => window.__previewBadgeTest.writePreviewUserValue(localStorage, owner, key, value);
+    write('dominion:gameStats', { totalPoints: 0, challengePoints: 0, dailyStandardsPoints: 0 });
+    write('dominion:mockSharingReward', null);
+    write('dominion:mockChallengeThresholdsVersion', 4);
+    write('dominion:mockChallengeStates', []);
+    write('dominion:mockRewardEntitlements', [{ key: reward.key, ownedAt, celebrationSeenAt: null,
+      celebrationSourceType: 'point_threshold', celebrationMilestonePoints: reward.pointsRequired }]);
+    write('dominion:rewardCelebrationLeases', {});
+  }, { owner, reward: PREVIEW_REWARD, ownedAt });
+  return ownedAt;
+}
+async function previewRewardState(page, owner) {
+  return page.evaluate(owner => {
+    const peek = key => window.__previewBadgeTest.peekPreviewUserValue(localStorage, owner, key, null);
+    return { ownership: peek('dominion:mockRewardEntitlements'), leases: peek('dominion:rewardCelebrationLeases') };
+  }, owner);
+}
+async function claimPreviewReward(page, owner, claimToken, startAt = 0) {
+  return page.evaluate(async ({ owner, claimToken, startAt }) => {
+    if (startAt > Date.now()) await new Promise(resolve => setTimeout(resolve, startAt - Date.now()));
+    return window.__previewBadgeTest.api.claimRewardCelebrations({ expectedUserId: owner, claimToken });
+  }, { owner, claimToken, startAt });
+}
+async function ackPreviewReward(page, owner, claimToken) {
+  return page.evaluate(({ owner, claimToken, key }) => window.__previewBadgeTest.api.acknowledgeRewardCelebrations({
+    expectedUserId: owner, claimToken, rewardKeys: [key],
+  }), { owner, claimToken, key: PREVIEW_REWARD.key });
+}
+
+test('reward preview: same-actor tabs exclusively claim an owned unseen reward with distinct UUID tokens', async ({ page, context, traffic }) => {
+  await openHarness(page); const owner = await signInMock(page);
+  const other = await context.newPage(); await openHarness(other);
+  // Native scheduling and real storage, not a substituted claim/reducer or
+  // synthetic stale getItem response. Each Playwright repeat has a fresh
+  // context: never reset an already-claimed canonical store between rounds.
+  // A passing run is coverage evidence, not a proof of cross-process atomicity.
+  const ownedAt = await seedOwnedPreviewReward(page, owner);
+  await expect.poll(async () => (await previewRewardState(other, owner)).ownership?.[0]?.ownedAt).toBe(ownedAt);
+  await expect.poll(async () => (await previewRewardState(other, owner)).leases).toEqual({});
+  const tokens = [randomUUID(), randomUUID()];
+  const startAt = Date.now() + 100;
+  const claims = await Promise.all([
+    claimPreviewReward(page, owner, tokens[0], startAt),
+    claimPreviewReward(other, owner, tokens[1], startAt),
+  ]);
+  const winners = claims.filter(result => result.claimedUnlocks.length);
+  if (winners.length !== 1) {
+    await test.info().attach('reward-claim-race.json', { contentType: 'application/json', body: JSON.stringify({
+      tokens, claims, state: [await previewRewardState(page, owner), await previewRewardState(other, owner)],
+    }, null, 2) });
+  }
+  expect(winners, 'exactly one claim holder').toHaveLength(1);
+  expect(winners[0].claimedUnlocks.map(reward => reward.key)).toEqual([PREVIEW_REWARD.key]);
+  expect(winners[0].claimedUnlocks[0].ownedAt).toBe(ownedAt);
+  expect(winners[0].claimedUnlocks[0].celebrationSeenAt).toBeNull();
+  expect((await previewRewardState(page, owner)).ownership[0].ownedAt).toBe(ownedAt);
+  expect(traffic.provider).toEqual([]); await other.close();
+});
+
+test('reward preview: wrong-token acknowledgment cannot dismiss and confirmed acknowledgment is idempotent', async ({ page, traffic }) => {
+  await openHarness(page); const owner = await signInMock(page);
+  const ownedAt = await seedOwnedPreviewReward(page, owner);
+  const token = randomUUID(); const claimed = await claimPreviewReward(page, owner, token);
+  expect(claimed.claimedUnlocks.map(reward => reward.key)).toEqual([PREVIEW_REWARD.key]);
+  expect(await ackPreviewReward(page, owner, randomUUID())).toEqual({ acknowledgedKeys: [] });
+  expect((await previewRewardState(page, owner)).ownership[0]).toMatchObject({ ownedAt, celebrationSeenAt: null });
+  expect(await ackPreviewReward(page, owner, token)).toEqual({ acknowledgedKeys: [PREVIEW_REWARD.key] });
+  const confirmed = await previewRewardState(page, owner);
+  expect(confirmed.ownership[0].ownedAt).toBe(ownedAt);
+  expect(confirmed.ownership[0].celebrationSeenAt).toBeTruthy();
+  expect(await ackPreviewReward(page, owner, token)).toEqual({ acknowledgedKeys: [PREVIEW_REWARD.key] });
+  expect(await previewRewardState(page, owner)).toEqual(confirmed);
+  expect((await claimPreviewReward(page, owner, randomUUID())).claimedUnlocks).toEqual([]);
+  expect(traffic.provider).toEqual([]);
+});
+
+for (const operation of ['claim', 'acknowledge']) test(`reward preview: a pending ${operation} rejects an account switch without mutating the original ownership`, async ({ page, traffic }) => {
+  await openHarness(page); const owner = await signInMock(page);
+  await seedOwnedPreviewReward(page, owner);
+  const token = randomUUID();
+  if (operation === 'acknowledge') await claimPreviewReward(page, owner, token);
+  const before = await previewRewardState(page, owner);
+  const result = await page.evaluate(async ({ owner, token, operation, key }) => {
+    const api = window.__previewBadgeTest.api;
+    const pending = operation === 'claim'
+      ? api.claimRewardCelebrations({ expectedUserId: owner, claimToken: token })
+      : api.acknowledgeRewardCelebrations({ expectedUserId: owner, claimToken: token, rewardKeys: [key] });
+    // Preserve the real first-await ordering. This changes the actor before
+    // canonical preview ownership is read, without mocking the operation.
+    const nextOwner = api.saveLocalMockUser({ name: 'Other Preview Member', email: 'bravo.rewards@example.test' }).userId;
+    try { return { nextOwner, value: await pending }; }
+    catch (error) { return { nextOwner, error: error.message }; }
+  }, { owner, token, operation, key: PREVIEW_REWARD.key });
+  expect(result.nextOwner).not.toBe(owner);
+  expect(result.error).toBe('The signed-in account changed. Try again.');
+  expect(await previewRewardState(page, owner)).toEqual(before);
+  expect((await claimPreviewReward(page, result.nextOwner, randomUUID())).claimedUnlocks).toEqual([]);
+  expect(await previewRewardState(page, owner)).toEqual(before);
+  expect(traffic.provider).toEqual([]);
 });
