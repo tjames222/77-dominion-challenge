@@ -31,6 +31,8 @@ test('Dashboard consumes durable awards in catalog order and acknowledges only p
   const owner=await page.evaluate(()=>localStorage.getItem('dominion:mockUserId'));
   expect(earned.map(r=>r.key)).toEqual(['iron_standard']);
   expect(earned[0].celebrationSeenAt).toBeNull();
+  const beforePresentation=(await deliveryRowsFor(page,owner,'badge')).find(r=>r.itemId===earned[0].awardId);
+  expect(!beforePresentation||beforePresentation.seenAt===null,'the canonical award is not acknowledged before presentation').toBe(true);
   await page.locator('#rewardToast [data-dismiss-celebration]').click();
   await expect(page.locator('#badgeCelebration')).toBeVisible();
   await expect(page.locator('#badgeCelebrationTitle')).toHaveText('Seven for Seven');
