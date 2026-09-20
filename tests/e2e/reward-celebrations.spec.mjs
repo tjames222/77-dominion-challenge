@@ -3,7 +3,8 @@ import { ROUTE_BY_ID } from './support/routes.mjs';
 import { DEFAULT_OWNERSHIP_REWARD_DEFINITIONS } from '../../src/static/reward-catalog.mjs';
 import { DEFAULT_CHALLENGE_DEFINITIONS } from '../../src/static/challenge-progression.mjs';
 import { analyzeAccessibility, assertNoBlockingAxeViolations } from './support/quality-gates.mjs';
-import { FIXED_NOW } from './support/fixtures.mjs';
+import { FIXED_NOW, FIXED_USER_ID } from './support/fixtures.mjs';
+import { deliveryRowsFor } from './support/preview-badge-browser-support.mjs';
 
 const themes = ['light', 'dark', 'dominion-night', 'dominion-platinum'];
 async function seedRewards(page, app, { unseen = ['dominion_night_theme'], missing = [], theme = 'dark', points = 1200 } = {}) {
@@ -27,7 +28,20 @@ async function seedRewards(page, app, { unseen = ['dominion_night_theme'], missi
   });
 }
 const stage = (page) => page.locator('#permanentRewardCelebration');
-const ownedRecords = (page) => page.evaluate(() => JSON.parse(localStorage.getItem('dominion:mockRewardEntitlements') || '[]'));
+const ownedRecords = async (page) => {
+  // Observe the original fixture owner even after the account-switch test.
+  // Ownership remains in its source records; delivery truth is the native
+  // ledger, including explicit null (never a truthy-only legacy fallback).
+  const ownership = await page.evaluate(owner => {
+    const records = JSON.parse(localStorage.getItem('dominion:previewUserStateByOwner') || '{}');
+    return records[owner]?.['dominion:mockRewardEntitlements']
+      || JSON.parse(localStorage.getItem('dominion:mockRewardEntitlements') || '[]');
+  }, FIXED_USER_ID);
+  const receipts = new Map((await deliveryRowsFor(page, FIXED_USER_ID, 'reward')).map(row => [row.itemId, row]));
+  return ownership.map(record => receipts.has(record.key)
+    ? { ...record, celebrationSeenAt: receipts.get(record.key).seenAt }
+    : record);
+};
 
 for (const theme of themes) {
   for (const width of [390, 1440]) {

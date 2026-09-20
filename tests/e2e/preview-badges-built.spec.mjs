@@ -4,7 +4,9 @@ import { randomUUID } from 'node:crypto';
 import { DEFAULT_OWNERSHIP_REWARD_DEFINITIONS } from '../../src/static/reward-catalog.mjs';
 
 test('compiled public and Security entries do not fetch the optional preview runtime or ship the harness', async ({ page, traffic }) => {
-  const runtime = []; page.on('request', request => { if (RUNTIME.test(request.url())) runtime.push(request.url()); });
+  const optionalRuntime = /\/assets\/(?:badge-preview-state|preview-delivery-ledger)-[^/]+\.js(?:\?.*)?$/;
+  const runtime = []; page.on('request', request => { if (optionalRuntime.test(request.url())) runtime.push(request.url()); });
+  await page.route(optionalRuntime, route => route.abort());
   for (const route of ['/index.html', '/account-security.html', '/login.html']) {
     await page.goto(route, { waitUntil: 'networkidle' });
     expect(await page.evaluate(() => '__previewBadgeTest' in window)).toBe(false);
