@@ -60,7 +60,7 @@ import {
   shouldCreateSupabaseClient,
   shouldUseSupabaseAuthentication,
 } from './preview-auth-runtime.mjs';
-import { normalizeEarnedBadges } from './badges-rewards.mjs';
+import { normalizeEarnedBadges } from './badge-data-contract.mjs';
 import { PREVIEW_BADGE_STATE_KEY, normalizePreviewBadgeState, recordPreviewBadgeEvent,
   claimPreviewBadgeCelebrations, acknowledgePreviewBadgeCelebrations, previewBadgeCollection } from './badge-preview-state.mjs';
 import { evaluateBadgeEvent } from './badge-evaluation.mjs';

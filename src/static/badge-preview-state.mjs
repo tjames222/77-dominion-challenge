@@ -1,5 +1,5 @@
 import { BADGE_CATALOG, appVisitBadgeFacts, badgeCatalogOrder, checkInBadgeFacts, evaluateBadgeEvent } from './badge-evaluation.mjs';
-import { badgeAwardIdentity } from './badges-rewards.mjs';
+import { badgeAwardIdentity } from './badge-data-contract.mjs';
 
 export const PREVIEW_BADGE_STATE_KEY = 'dominion:badgeState:v1';
 export function normalizePreviewBadgeState(value, legacy=[]) {

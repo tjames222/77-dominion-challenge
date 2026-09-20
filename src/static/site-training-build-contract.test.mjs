@@ -93,7 +93,7 @@ test('actual production graph keeps MFA free of menu side effects and training s
   const securityModules = security.filter(asset => asset.type === 'chunk').flatMap(asset => Object.keys(asset.modules));
   assert.ok(securityModules.some(id => id.endsWith('/src/static/api.js')));
   assert.ok(securityModules.some(id => id.endsWith('/src/static/journal-date-contract.mjs')));
-  for (const name of ['menu.js', 'shared-header-actions.js', 'menu-training-controllers.mjs', 'site-training-ui.js', 'journal-date-picker.mjs', 'dialog.mjs']) {
+  for (const name of ['menu.js', 'shared-header-actions.js', 'menu-training-controllers.mjs', 'site-training-ui.js', 'journal-date-picker.mjs', 'dialog.mjs', 'badges-rewards.mjs']) {
     assert.ok(!securityModules.some(id => id.endsWith(`/src/static/${name}`)), `MFA must not execute ${name}`);
   }
   const securityCss = security.filter(asset => asset.fileName.endsWith('.css')).map(asset => String(asset.source)).join('');
@@ -103,6 +103,7 @@ test('actual production graph keeps MFA free of menu side effects and training s
   for (const entry of ['index.html', 'login.html', 'dashboard.html', 'badges-rewards.html', 'community.html', 'profile.html', 'bible-reading.html']) {
     const modules = graph(entry).filter(asset => asset.type === 'chunk').flatMap(asset => Object.keys(asset.modules));
     assert.ok(modules.some(id => id.endsWith('/src/static/menu.js')), `${entry} keeps working navigation`);
+    assert.equal(modules.some(id => id.endsWith('/src/static/badges-rewards.mjs')), entry === 'badges-rewards.html', `${entry} loads reward presentation only when needed`);
     assert.ok(!modules.some(id => id.endsWith('/src/static/journal-date-picker.mjs')), `${entry} does not load journal calendar UI`);
     assert.ok(!modules.some(id => /\/(?:menu-training-controllers|site-training-ui|site-training-coachmark)\.(?:js|mjs)$/.test(id)), `${entry} keeps training optional`);
   }
