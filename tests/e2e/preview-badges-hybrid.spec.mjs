@@ -1,4 +1,4 @@
-import { test, expect, deferred, openHarness, stateFor, startCheckIn, finishOperation } from './support/preview-badge-browser-support.mjs';
+import { test, expect, deferred, openHarness, stateFor, deliveryRowsFor, holdDeliveryStore, releaseDeliveryStore, startCheckIn, finishOperation } from './support/preview-badge-browser-support.mjs';
 import { installFou1452SupabaseAuthStub } from './support/fou-1452-supabase-auth-stub.mjs';
 
 const A = { email: 'alpha.badge-hybrid@example.test', password: 'Synthetic-Badge-Password1!' };
@@ -34,12 +34,22 @@ test('real SDK preview counts every canonical user check without live database c
   const collection = await page.evaluate(owner => window.__previewBadgeTest.api.getBadgeCollection({ expectedUserId: owner }), owner);
   expect(collection.items.length).toBeGreaterThan(20);
   const read = auth.requests.slice(marker).map(({ method, endpoint }) => method + ' ' + endpoint);
-  expect(read).toEqual(['GET /user', 'GET /user', 'GET /user', 'GET /user', 'GET /user']);
+  // History is one snapshot with capture, post-import and post-snapshot
+  // verification. It does not open the delivery database or reread history.
+  expect(read).toEqual(['GET /user', 'GET /user', 'GET /user']);
   marker = auth.requests.length;
   await page.evaluate(owner => window.__previewBadgeTest.api.claimBadgeCelebrations({ expectedUserId: owner, claimToken: 'claim' }), owner);
-  const cachedModule = auth.requests.slice(marker).map(({ method, endpoint }) => method + ' ' + endpoint);
-  expect(cachedModule).toEqual(locked); // no user/result cache after the native import is cached
-  await testInfo.attach('canonical-auth-traffic', { contentType: 'application/json', body: JSON.stringify({ locked, collection: read, cachedModule }) });
+  const coldDelivery = auth.requests.slice(marker).map(({ method, endpoint }) => method + ' ' + endpoint);
+  // Preserve capture, badge import and lock fences, then verify after the
+  // delivery import, database open and transaction commit. A warm module or
+  // connection is not permission to skip canonical identity verification.
+  const deliveryChecks = ['GET /user', 'GET /user', 'GET /user', 'GET /user', 'GET /user', 'GET /user'];
+  expect(coldDelivery).toEqual(deliveryChecks);
+  marker = auth.requests.length;
+  await page.evaluate(owner => window.__previewBadgeTest.api.claimBadgeCelebrations({ expectedUserId: owner, claimToken: 'claim' }), owner);
+  const warmDelivery = auth.requests.slice(marker).map(({ method, endpoint }) => method + ' ' + endpoint);
+  expect(warmDelivery).toEqual(deliveryChecks);
+  await testInfo.attach('canonical-auth-traffic', { contentType: 'application/json', body: JSON.stringify({ locked, collection: read, coldDelivery, warmDelivery }) });
 });
 
 for (const sameActor of [false, true]) test(`real SDK ${sameActor ? 'same-actor replacement session' : 'actor switch'} during import cannot commit`, async ({ page, context }) => {
@@ -92,7 +102,8 @@ test('collection rejects a registered replacement session while verifying its ea
   const entered = deferred(); const release = deferred(); let reads = 0;
   await page.route(/\/__fou_1452_supabase__\/auth\/v1\/user$/, async route => {
     reads += 1;
-    if (reads === 5) { entered.resolve(); await release.promise; }
+    // Hold the final canonical verification of the single historical snapshot.
+    if (reads === 3) { entered.resolve(); await release.promise; }
     await route.fallback();
   });
   await page.evaluate(owner => {
@@ -116,6 +127,29 @@ test('collection rejects a registered replacement session while verifying its ea
   }, { account: A, owner });
   release.resolve();
   expect((await finishOperation(page)).error).toBe('The signed-in account changed. Try again.');
-  expect(reads).toBe(5);
+  expect(reads).toBe(3);
   expect((await stateFor(page, owner)).awards).toEqual([]);
+});
+
+for (const sameActor of [false, true]) test(`real SDK ${sameActor ? 'replacement session' : 'actor switch'} during a queued native delivery transaction cannot commit`, async ({ page, context }) => {
+  await installFou1452SupabaseAuthStub(context);
+  await openHarness(page); const owner = await register(page);
+  await startCheckIn(page, owner); expect((await finishOperation(page)).ok).toBe(true);
+  const ids = (await stateFor(page, owner)).awards.map(award => award.awardId);
+  expect(await page.evaluate(({ owner, ids }) => window.__previewBadgeTest.api.acknowledgeBadgeCelebrations({
+    expectedUserId: owner, claimToken: 'never-claimed', awardIds: ids,
+  }).then(() => 'unexpected success', error => error.message), { owner, ids })).toBe('Badge acknowledgment is still pending.');
+  const before = await deliveryRowsFor(page, owner, 'badge');
+  expect(before.length).toBeGreaterThan(0);
+  await holdDeliveryStore(page);
+  try {
+    await page.evaluate(owner => {
+      window.pendingDeliveryOperation = window.__previewBadgeTest.api.claimBadgeCelebrations({ expectedUserId: owner, claimToken: 'queued-native-claim' })
+        .then(value => ({ value }), error => ({ error: error.message }));
+    }, owner);
+    await expect.poll(() => page.evaluate(() => window.queuedDeliveryTransactions)).toBe(1);
+    await replaceSession(page, sameActor);
+  } finally { await releaseDeliveryStore(page); }
+  expect(await page.evaluate(() => window.pendingDeliveryOperation)).toEqual({ error: 'The signed-in account changed. Try again.' });
+  expect(await deliveryRowsFor(page, owner, 'badge')).toEqual(before);
 });
