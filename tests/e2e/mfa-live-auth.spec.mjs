@@ -1,5 +1,6 @@
 import { test, expect } from '@playwright/test';
 import { installMfaSupabaseStub } from './support/mfa-supabase-auth-stub.mjs';
+import { expectNoProfileTestControls } from './support/profile-test-controls.mjs';
 
 async function observeNavigationErrors(page, testInfo) {
   // WebKit may report a JavaScript fetch diagnostic as Playwright pageerror
@@ -56,6 +57,19 @@ async function verify(page) {
   await page.getByRole('button', { name: 'Verify code', exact: true }).click();
   await expect(page.locator('#securitySuccess')).toBeVisible();
 }
+
+test('production-built Profile contains no testing controls or local testing writes', async ({ context, page }) => {
+  await installMfaSupabaseStub(context, { enrolled: false });
+  const errors = []; page.on('pageerror', error => errors.push(error.message));
+  await login(page, './support.html');
+  await expect(page).toHaveURL(/\/support\.html$/);
+  const fixture = { enabled: true, anchorDate: '2026-02-01', day: 77 };
+  await page.evaluate(value => localStorage.setItem('dominion:previewChallengeSimulation', JSON.stringify(value)), fixture);
+  await page.goto('/profile.html', { waitUntil: 'networkidle' });
+  await expectNoProfileTestControls(page);
+  expect(await page.evaluate(() => JSON.parse(localStorage.getItem('dominion:previewChallengeSimulation')))).toEqual(fixture);
+  expect(errors).toEqual([]);
+});
 
 test('Account Security challenge has no menu hydration or private reads on load and refocus', async ({ context, page }) => {
   const auth = await installMfaSupabaseStub(context);

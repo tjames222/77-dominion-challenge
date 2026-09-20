@@ -148,7 +148,6 @@
   .leaderboard-card,
   .billing-offer-flagship,
   .membership-hero,
-  .profile-preview-tools,
   .featured-card
 ) {
   border-color: color-mix(in srgb, #dce7f5 36%, var(--border));

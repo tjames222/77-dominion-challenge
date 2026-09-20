@@ -175,12 +175,25 @@ committed. Full Supabase/Auth-schema migration, pgTAP and advisor validation mus
 run in the existing free CI/local stack before release. The minimal fixture is
 not evidence that a hosted migration or hosted role grant has happened.
 
-FOU-1502 remains incomplete: admin route/navigation/dashboard, remaining user
+FOU-1502 remains incomplete: the overview dashboard, remaining user
 summary fields and metrics/operations reads, Auth Admin CRUD and session
 revocation orchestration, separate testing grants and effective test clock,
-safe simulated side effects, Profile test-toggle removal, two-account full-stack
+safe simulated side effects, two-account full-stack
 and browser coverage, and the explicit first-admin activation are follow-up
 work. Existing owner testing grants are not broadened or renewed.
+
+The candidate already includes the authorized Admin route/navigation and its
+bounded read console; those are partial delivery, not the complete dashboard
+and mutation workflow described by FOU-1502.
+
+Profile no longer includes the user-controlled 77-day simulation switch or
+reset control in production, preview, or local mode. Its simulation state
+imports, rendering, change handlers, and storage writes are removed as well.
+Existing local simulator domain helpers remain for synthetic automated fixtures;
+they are not a replacement user interface or a production testing grant. This
+removal does not implement admin testing grants or an effective server test
+clock, and does not change production challenge dates, earned progress, MFA,
+or Profile theme/account controls.
 
 ## Sources
 

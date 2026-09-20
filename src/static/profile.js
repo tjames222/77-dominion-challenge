@@ -26,18 +26,6 @@ import {
 } from './account-lifecycle.mjs';
 import { prepareProfilePhoto } from './profile-photo.mjs';
 import {
-  PREVIEW_CHALLENGE_STORAGE_KEY,
-  isPreviewChallengeComplete,
-  normalizePreviewChallengeState,
-  previewChallengeDay,
-  setPreviewChallengeEnabled,
-} from './preview-challenge.mjs';
-import {
-  PREVIEW_USER_STATE_STORAGE_KEY,
-  readPreviewUserValue,
-  writePreviewUserValue,
-} from './preview-user-state.mjs';
-import {
   clearThemeEntitlementState,
   hydrateThemeEntitlementState,
 } from './theme-entitlement-state';
@@ -50,12 +38,6 @@ import {
 import { RELEASE_GATES } from './release-gates.mjs';
 
 const save = (key, value) => localStorage.setItem(key, JSON.stringify(value));
-const localDateKey = () => {
-  const parts = new Intl.DateTimeFormat('en', { year: 'numeric', month: '2-digit', day: '2-digit' })
-    .formatToParts(new Date());
-  const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
-  return `${values.year}-${values.month}-${values.day}`;
-};
 const localPreviewMode = isLocalDemoMode();
 const themeOptions = [...document.querySelectorAll('[data-theme-mode]')];
 const themeSelectionStatus = document.getElementById('themeSelectionStatus');
@@ -251,10 +233,6 @@ const profilePhotoHint = document.getElementById('profilePhotoHint');
 const profileNameInput = document.getElementById('profileNameInput');
 const profileEmailInput = document.getElementById('profileEmailInput');
 const profileFeedback = document.getElementById('profileFeedback');
-const profilePreviewTools = document.getElementById('profilePreviewTools');
-const profilePreviewChallengeSwitch = document.getElementById('profilePreviewChallengeSwitch');
-const profilePreviewStatus = document.getElementById('profilePreviewStatus');
-const resetPreviewChallengeButton = document.getElementById('resetPreviewChallengeButton');
 const requestDataExportButton = document.getElementById('requestDataExportButton');
 const requestAccountDeletionButton = document.getElementById('requestAccountDeletionButton');
 const dataExportRequestStatus = document.getElementById('dataExportRequestStatus');
@@ -285,54 +263,12 @@ let selectedPreviewUrl = '';
 let photoPreparationSequence = 0;
 let profilePhotoAvailable = localPreviewMode;
 let integrationCrews = [];
-let currentPreviewOwnerId = '';
 let observedProfileOwner = '';
 let hydratedProfileOwner = '';
 let profileOwnerEpoch = 0;
 let profileHydrationRequestId = 0;
 const EMPTY_PHOTO_FILENAME = 'No new photo selected';
 const PROFILE_PHOTO_HINT = 'JPG, PNG, WebP, HEIC or HEIF · 5 MB input max · cropped to a square thumbnail up to 256×256 and 150 KB';
-let previewChallengeState = normalizePreviewChallengeState({}, localDateKey());
-
-function renderPreviewChallengeTools() {
-  if (!profilePreviewTools) return;
-  profilePreviewTools.hidden = !localPreviewMode;
-  if (!localPreviewMode) return;
-
-  const day = previewChallengeDay(previewChallengeState);
-  const complete = isPreviewChallengeComplete(previewChallengeState);
-  if (profilePreviewChallengeSwitch) profilePreviewChallengeSwitch.checked = previewChallengeState.enabled;
-  if (profilePreviewChallengeSwitch) profilePreviewChallengeSwitch.disabled = !currentPreviewOwnerId;
-  if (resetPreviewChallengeButton) resetPreviewChallengeButton.disabled = true;
-  if (profilePreviewStatus) {
-    profilePreviewStatus.textContent = complete
-      ? 'Preview run complete: all 77 challenge days are posted. A new full run requires clearing this account’s saved progress and rewards together; reset is currently unavailable.'
-      : previewChallengeState.enabled
-        ? `Next preview check-in: Day ${day} of 77.`
-        : day > 1
-          ? `77-day test mode is paused before Day ${day} of 77.`
-          : 'Turn on the switch to begin with Day 1 of 77.';
-  }
-}
-
-function loadCurrentPreviewChallengeState() {
-  previewChallengeState = currentPreviewOwnerId
-    ? normalizePreviewChallengeState(
-        readPreviewUserValue(
-          localStorage,
-          currentPreviewOwnerId,
-          PREVIEW_CHALLENGE_STORAGE_KEY,
-          {},
-        ),
-        localDateKey(),
-      )
-    : normalizePreviewChallengeState({}, localDateKey());
-}
-
-function saveCurrentPreviewValue(key, value) {
-  if (!currentPreviewOwnerId) throw new Error('The preview account is still loading.');
-  return writePreviewUserValue(localStorage, currentPreviewOwnerId, key, value);
-}
 
 const captureProfileOwner = () => hydratedProfileOwner
   && hydratedProfileOwner === observedProfileOwner
@@ -353,8 +289,6 @@ function invalidateProfileOwner(nextOwner = '') {
   clearThemeEntitlementState();
   themePreferenceSaving = false;
   themeOptions.forEach((option) => option.removeAttribute('aria-busy'));
-  currentPreviewOwnerId = '';
-  previewChallengeState = normalizePreviewChallengeState({}, localDateKey());
   selectedPhotoFile = null;
   selectedPreparedPhoto = null;
   if (profilePhotoInput) profilePhotoInput.value = '';
@@ -397,7 +331,6 @@ function invalidateProfileOwner(nextOwner = '') {
   renderThemeOptions(null, { error: true });
   renderAccountLifecycleRequests([]);
   setAccountRequestFeedback('Loading account request status...');
-  renderPreviewChallengeTools();
   profileForm?.querySelectorAll('input, button').forEach((control) => { control.disabled = true; });
   integrationConsentForm?.querySelectorAll('input, button').forEach((control) => { control.disabled = true; });
   if (integrationConsentCrew) integrationConsentCrew.disabled = true;
@@ -790,9 +723,6 @@ async function hydrateProfile(expectedOwnerId = observedProfileOwner) {
       || (observedProfileOwner && observedProfileOwner !== user.userId)) return false;
     observedProfileOwner ||= user.userId;
     hydratedProfileOwner = user.userId;
-    currentPreviewOwnerId = user.userId;
-    loadCurrentPreviewChallengeState();
-    renderPreviewChallengeTools();
     renderProfile(user);
     updateBillingSummary(billing);
     enableHydratedProfileForm();
@@ -959,18 +889,6 @@ profileForm?.addEventListener('submit', async (event) => {
   }
 });
 
-profilePreviewChallengeSwitch?.addEventListener('change', () => {
-  const owner = captureProfileOwner();
-  if (!localPreviewMode || !owner || owner.userId !== currentPreviewOwnerId) return;
-  previewChallengeState = setPreviewChallengeEnabled(
-    previewChallengeState,
-    profilePreviewChallengeSwitch.checked,
-    localDateKey(),
-  );
-  saveCurrentPreviewValue(PREVIEW_CHALLENGE_STORAGE_KEY, previewChallengeState);
-  renderPreviewChallengeTools();
-});
-
 integrationConsentCrew?.addEventListener('change', () => {
   loadSelectedIntegrationConsent();
 });
@@ -1034,13 +952,9 @@ window.addEventListener('storage', (event) => {
       .catch(() => redirectToLogin('./profile.html'));
     return;
   }
-  if (!localPreviewMode || ![PREVIEW_CHALLENGE_STORAGE_KEY, PREVIEW_USER_STATE_STORAGE_KEY].includes(event.key)) return;
-  loadCurrentPreviewChallengeState();
-  renderPreviewChallengeTools();
 });
 
 renderOpenBillingShell();
-renderPreviewChallengeTools();
 async function hydratePage(expectedOwnerId = observedProfileOwner) {
   const authenticated = await hydrateProfile(expectedOwnerId);
   const owner = captureProfileOwner();

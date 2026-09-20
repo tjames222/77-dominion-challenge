@@ -1,5 +1,6 @@
 import { expect, test } from '@playwright/test';
 import { installFou1452SupabaseAuthStub } from './support/fou-1452-supabase-auth-stub.mjs';
+import { expectNoProfileTestControls } from './support/profile-test-controls.mjs';
 
 const ACCOUNT_A = {
   name: 'Alpha Member',
@@ -71,6 +72,24 @@ async function expectAccountACommunityState(page) {
   await page.goto('/private-journal.html');
   await expect(page.locator('#journalTimeline')).toContainText(ACCOUNT_A_JOURNAL);
 }
+
+test('hybrid preview Profile contains no testing controls or local testing writes', async ({ context, page }) => {
+  await installFou1452SupabaseAuthStub(context);
+  const errors = []; page.on('pageerror', error => errors.push(error.message));
+  await register(page, ACCOUNT_A);
+  const fixture = { enabled: true, anchorDate: '2026-02-01', day: 14 };
+  await page.evaluate(async value => {
+    const { writePreviewUserValue } = await import('/src/static/preview-user-state.mjs');
+    writePreviewUserValue(localStorage, localStorage.getItem('dominion:previewAuthOwnerId'), 'dominion:previewChallengeSimulation', value);
+  }, fixture);
+  await page.goto('/profile.html', { waitUntil: 'networkidle' });
+  await expectNoProfileTestControls(page);
+  expect(await page.evaluate(async () => {
+    const { peekPreviewUserValue } = await import('/src/static/preview-user-state.mjs');
+    return peekPreviewUserValue(localStorage, localStorage.getItem('dominion:previewAuthOwnerId'), 'dominion:previewChallengeSimulation', null);
+  })).toEqual(fixture);
+  expect(errors).toEqual([]);
+});
 
 test('hybrid readiness fixture validates the registered token and exact actor without granting admin access', async ({ context, page }) => {
   const auth = await installFou1452SupabaseAuthStub(context);

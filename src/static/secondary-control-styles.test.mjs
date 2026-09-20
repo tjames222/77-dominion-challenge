@@ -133,7 +133,7 @@ describe('shared branded secondary controls', () => {
     assert.match(invite, /class="secondary" id="leaveInviteLink"/);
     assert.match(community, /class="secondary crew-training-launch"/);
     assert.match(groupSettings, /class="secondary destructive"/);
-    assert.match(profile, /class="secondary" id="resetPreviewChallengeButton"/);
+    assert.match(profile, /class="secondary" href="\.\/account-security\.html"/);
     assert.match(shareComposer, /'button', 'secondary', 'Copy share link'/);
   });
 });

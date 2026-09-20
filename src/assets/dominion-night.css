@@ -195,7 +195,6 @@
 :root[data-theme="dominion-night"] .challenge-vault-card,
 :root[data-theme="dominion-night"] .billing-offer-flagship,
 :root[data-theme="dominion-night"] .membership-hero,
-:root[data-theme="dominion-night"] .profile-preview-tools,
 :root[data-theme="dominion-night"] .featured-card {
   background:
     radial-gradient(circle at 0 0, color-mix(in srgb, var(--accent) 16%, transparent), transparent 42%),
