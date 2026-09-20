@@ -68,6 +68,9 @@ jobs:
       - name: Verify focused production-built Daily Action reads
         run: pnpm test:e2e:daily-bootstrap
 
+      - name: Verify optional preview badge ownership boundaries
+        run: pnpm test:e2e:preview-badges
+
       - name: Verify complete two-shard inventory
         id: plan
         env:

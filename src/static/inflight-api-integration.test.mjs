@@ -86,7 +86,7 @@ test('the real synchronous API observer forwards immutable sessions without call
   const start = api.indexOf('supabase?.auth.onAuthStateChange((event, session) => {');
   assert.ok(start >= 0);
   const callback = api.slice(start, api.indexOf('\n});', start) + 4);
-  runInNewContext(callback, { inflightActorReads: scope, authSessionIdentity,
+  runInNewContext(callback, { inflightActorReads: scope, authSessionIdentity, previewBadgeEpoch: 0, previewBadgeObservedSession: undefined,
     supabase: { auth: new Proxy({ onAuthStateChange: (fn) => { observer = fn; } }, {
       get(target, name) { if (!(name in target)) throw new Error(`Auth method ${String(name)} must not run inside the observer`); return target[name]; },
     }) },

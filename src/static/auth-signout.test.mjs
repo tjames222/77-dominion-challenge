@@ -12,7 +12,7 @@ const redirect = source.slice(source.indexOf('export function redirectToLogin(')
 function authFunctions(client, storage, window = { location: {} }, cancelled = []) {
   window.addEventListener ||= () => {};
   return new Function('usesSupabaseAuthentication', 'supabase', 'isHybridAuthPreview', 'localStorage', 'MOCK_USER_ID_KEY', 'window', 'cancelAdminReads', 'inflightActorReads',
-    `let logoutNavigationPending = false;${body};${redirect};return { clear: clearAuthSession, redirect: redirectToLogin };`)(
+    `let logoutNavigationPending = false; let previewBadgeEpoch = 0;${body};${redirect};return { clear: clearAuthSession, redirect: redirectToLogin };`)(
     () => true, client, () => false, storage, 'dominion:mockUserId', window,
     () => cancelled.push('admin'), { invalidate() {} },
   );

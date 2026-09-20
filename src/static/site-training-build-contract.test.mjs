@@ -90,6 +90,16 @@ test('actual production graph keeps MFA free of menu side effects and training s
     return [...visited].map(path => assets.get(path)).filter(Boolean);
   }
   const security = graph('account-security.html');
+  for (const entry of Object.values(PRODUCTION_ENTRYPOINTS)) {
+    const modules = graph(entry).filter(asset => asset.type === 'chunk').flatMap(asset => Object.keys(asset.modules));
+    for (const name of ['badge-catalog.v1.json', 'badge-evaluation.mjs', 'badge-preview-state.mjs']) {
+      assert.ok(!modules.some(id => id.endsWith(`/${name}`)), `${entry} keeps preview badge evaluation optional`);
+    }
+  }
+  for (const asset of artifact.output) {
+    assert.doesNotMatch(asset.type === 'chunk' ? asset.code : String(asset.source), /__previewBadgeTest|Local test harness only/);
+    if (asset.type === 'chunk') assert.ok(!Object.keys(asset.modules).some(id => id.includes('/tests/e2e/')));
+  }
   const securityModules = security.filter(asset => asset.type === 'chunk').flatMap(asset => Object.keys(asset.modules));
   assert.ok(securityModules.some(id => id.endsWith('/src/static/api.js')));
   assert.ok(securityModules.some(id => id.endsWith('/src/static/journal-date-contract.mjs')));

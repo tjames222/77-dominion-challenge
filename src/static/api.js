@@ -60,10 +60,8 @@ import {
   shouldCreateSupabaseClient,
   shouldUseSupabaseAuthentication,
 } from './preview-auth-runtime.mjs';
-import { normalizeEarnedBadges } from './badge-data-contract.mjs';
-import { PREVIEW_BADGE_STATE_KEY, normalizePreviewBadgeState, recordPreviewBadgeEvent,
-  claimPreviewBadgeCelebrations, acknowledgePreviewBadgeCelebrations, previewBadgeCollection } from './badge-preview-state.mjs';
-import { evaluateBadgeEvent } from './badge-evaluation.mjs';
+import { normalizeEarnedBadges, PREVIEW_BADGE_STATE_KEY } from './badge-data-contract.mjs';
+import { createPreviewBadgeBoundary } from './preview-badge-boundary.mjs';
 import { claimPreviewRewardCelebrations, acknowledgePreviewRewardCelebrations } from './reward-celebration-preview.mjs';
 import { normalizeJournalEntry, sortJournalEntries } from './journal-entry.mjs';
 import { assertJournalDateAllowed, isJournalDateKey } from './journal-date-contract.mjs';
@@ -226,6 +224,8 @@ export function getMfaAuthAdapter() {
   return mfaAdapter;
 }
 const inflightActorReads = createInflightActorReads();
+let previewBadgeEpoch = 0;
+let previewBadgeObservedSession;
 async function invalidateReadsAroundMutation(operation, query = '') {
   inflightActorReads.invalidate(query);
   try {
@@ -238,8 +238,14 @@ async function invalidateReadsAroundMutation(operation, query = '') {
 // schedules rehydration. No Supabase method is called from this callback.
 supabase?.auth.onAuthStateChange((event, session) => {
   inflightActorReads.observeAuth(event, session?.user?.id || '', authSessionIdentity(session));
+  const identity = authSessionIdentity(session);
+  if (['SIGNED_OUT', 'TOKEN_REFRESHED', 'USER_UPDATED', 'PASSWORD_RECOVERY', 'MFA_CHALLENGE_VERIFIED'].includes(event)
+    || (previewBadgeObservedSession !== undefined && identity !== previewBadgeObservedSession)) previewBadgeEpoch += 1;
+  previewBadgeObservedSession = identity;
 });
 globalThis.window?.addEventListener('storage', (event) => {
+  if (!event.key || ['dominion:user', 'dominion:mockUserId', PREVIEW_AUTH_OWNER_STORAGE_KEY].includes(event.key)
+    || /^sb-.+-auth-token/.test(event.key)) previewBadgeEpoch += 1;
   if (!event.key || event.key.startsWith('dominion:') || /^sb-.+-auth-token/.test(event.key)) {
     inflightActorReads.invalidate();
   }
@@ -671,6 +677,7 @@ export async function clearAuthSession({ redirectToLanding = false } = {}) {
   try {
     cancelAdminReads();
     inflightActorReads.invalidate();
+    previewBadgeEpoch += 1;
     if (usesSupabaseAuthentication()) {
       try {
         const result = await supabase.auth.signOut();
@@ -705,6 +712,7 @@ export async function clearAuthSession({ redirectToLanding = false } = {}) {
 
 export function saveLocalMockUser(user) {
   if (!isLocalDemoMode()) throw new Error('Preview login is unavailable outside local demo mode.');
+  previewBadgeEpoch += 1;
   cancelAdminReads();
   inflightActorReads.invalidate();
   const nextUser = {
@@ -1779,7 +1787,7 @@ export async function completeSharingReward(completionToken, { expectedUserId = 
       throw new Error('The signed-in account changed. Try again.');
     }
     const actorId = requireMockRewardActor(expectedUserId);
-    return withPreviewBadgeState(actorId, (state) => {
+    return withPreviewBadgeState(actorId, (state, { evaluateBadgeEvent }) => {
       const existing = readMockUserValue(MOCK_SHARING_REWARD_KEY, null, actorId);
       if (existing) return { granted: false, alreadyGranted: true, ...existing };
       const grantedAt = new Date().toISOString();
@@ -3350,15 +3358,36 @@ export async function getCommunityFeed() {
   return data.map(mapFeedItem);
 }
 
-async function withPreviewBadgeState(expectedUserId, operation) {
+async function capturePreviewBadgeOwner(expectedUserId) {
+  const epoch = previewBadgeEpoch;
+  const liveAuth = usesSupabaseAuthentication();
+  const before = liveAuth ? await getAuthSession() : null;
   const user = await getLocalOrSessionUser();
-  if (!expectedUserId || !user?.authenticated || user.userId !== expectedUserId) throw new Error('The signed-in account changed. Try again.');
-  if (!globalThis.navigator?.locks?.request) throw new Error('This preview browser cannot safely synchronize badge history.');
-  return navigator.locks.request(`dominion:badges:${expectedUserId}`, async () => {
-    const current = await getLocalOrSessionUser();
-    if (!current?.authenticated || current.userId !== expectedUserId) throw new Error('The signed-in account changed. Try again.');
-    const state = normalizePreviewBadgeState(readMockUserValue(PREVIEW_BADGE_STATE_KEY, null, expectedUserId), readMockUserValue('dominion:badges', [], expectedUserId));
-    const result = operation(state);
+  // The initial presentation gate precedes getUser. Recheck assurance after
+  // that canonical await, then bind the exact immutable session and bearer.
+  const needsMfa = liveAuth && await sessionRequiresMfa(supabase.auth);
+  const after = liveAuth ? await getAuthSession() : null;
+  const identity = liveAuth ? authSessionIdentity(before) : `preview:${user?.userId || ''}`;
+  if (!expectedUserId || !user?.authenticated || user.userId !== expectedUserId || epoch !== previewBadgeEpoch
+    || needsMfa || (liveAuth && (!identity || identity !== authSessionIdentity(after)
+      || before?.access_token !== after?.access_token))) throw new Error('The signed-in account changed. Try again.');
+  return { actorId: user.userId, sessionIdentity: identity, token: liveAuth ? after.access_token : '', epoch };
+}
+
+let previewBadgeBoundary;
+function getPreviewBadgeBoundary() {
+  if (!previewBadgeBoundary) previewBadgeBoundary = createPreviewBadgeBoundary({
+    captureOwner: capturePreviewBadgeOwner,
+    requestLock: globalThis.navigator?.locks?.request
+      ? (key, work) => navigator.locks.request(key, work) : null,
+  });
+  return previewBadgeBoundary;
+}
+
+async function withPreviewBadgeState(expectedUserId, operation) {
+  return getPreviewBadgeBoundary().run(expectedUserId, (runtime) => {
+    const state = runtime.normalizePreviewBadgeState(readMockUserValue(PREVIEW_BADGE_STATE_KEY, null, expectedUserId), readMockUserValue('dominion:badges', [], expectedUserId));
+    const result = operation(state, runtime);
     writeMockUserValue(PREVIEW_BADGE_STATE_KEY, state, expectedUserId);
     writeMockUserValue('dominion:badges', state.awards, expectedUserId);
     return result;
@@ -3367,7 +3396,7 @@ async function withPreviewBadgeState(expectedUserId, operation) {
 
 export async function recordPreviewCheckInBadges(entry, { expectedUserId = '' } = {}) {
   if (!isLocalDemoMode()) throw new Error('Preview badge events cannot be submitted to production.');
-  return withPreviewBadgeState(expectedUserId, (state) => {
+  return withPreviewBadgeState(expectedUserId, (state, { recordPreviewBadgeEvent }) => {
     recordPreviewBadgeEvent(state, { source: 'check_in', sourceId: `preview-check-in:${entry.date}`,
       occurredAt: entry.createdAt || new Date().toISOString(), localDate: entry.date, challengeDay: entry.day,
       completed: entry.completed, workoutDifficultySelections: entry.workoutDifficultySelections || {} });
@@ -3376,7 +3405,7 @@ export async function recordPreviewCheckInBadges(entry, { expectedUserId = '' } 
 }
 
 export async function claimBadgeCelebrations({ expectedUserId = '', claimToken = crypto.randomUUID() } = {}) {
-  if (isLocalDemoMode()) return withPreviewBadgeState(expectedUserId, (state) => ({ claimToken,
+  if (isLocalDemoMode()) return withPreviewBadgeState(expectedUserId, (state, { claimPreviewBadgeCelebrations }) => ({ claimToken,
     badges: claimPreviewBadgeCelebrations(state, claimToken).map(mapBadge) }));
   const client = requireSupabase();
   const user = await requireUser(expectedUserId);
@@ -3391,7 +3420,7 @@ export async function acknowledgeBadgeCelebrations({ expectedUserId = '', claimT
     if (!Array.isArray(ids) || awardIds.some((id) => !ids.includes(id))) throw new Error('Badge acknowledgment is still pending.');
     return ids;
   };
-  if (isLocalDemoMode()) return verify(await withPreviewBadgeState(expectedUserId, (state) => acknowledgePreviewBadgeCelebrations(state, claimToken, awardIds)));
+  if (isLocalDemoMode()) return verify(await withPreviewBadgeState(expectedUserId, (state, { acknowledgePreviewBadgeCelebrations }) => acknowledgePreviewBadgeCelebrations(state, claimToken, awardIds)));
   const client = requireSupabase();
   const user = await requireUser(expectedUserId);
   const { data, error } = await client.rpc('acknowledge_badge_celebrations', {
@@ -3403,7 +3432,7 @@ export async function acknowledgeBadgeCelebrations({ expectedUserId = '', claimT
 }
 
 export async function recordAppVisit({ expectedUserId = '' } = {}) {
-  if (isLocalDemoMode()) return withPreviewBadgeState(expectedUserId, (state) => {
+  if (isLocalDemoMode()) return withPreviewBadgeState(expectedUserId, (state, { recordPreviewBadgeEvent }) => {
     const activation = readMockChallengeActivation();
     const occurredAt = new Date().toISOString();
     const date = dateKeyForTimeZone(new Date(occurredAt), activation.timeZone || browserTimeZone());
@@ -3464,14 +3493,18 @@ export async function getBadgeCollection({ expectedUserId = '' } = {}) {
     await requireHybridPreviewUser(expectedUserId);
     actorId = requireMockRewardActor(expectedUserId);
   } else actorId = (await requireUser(expectedUserId)).id;
-  const earnedBadges = await getEarnedBadges({ expectedUserId: actorId });
   if (isLocalDemoMode()) {
-    requireMockRewardActor(actorId);
-    const activation = readMockChallengeActivation();
-    const state = normalizePreviewBadgeState(readMockUserValue(PREVIEW_BADGE_STATE_KEY, null, actorId), earnedBadges);
-    const today = dateKeyForTimeZone(new Date(), activation.timeZone || browserTimeZone());
-    return { ...previewBadgeCollection(state, activation, today), earnedBadges };
+    return getPreviewBadgeBoundary().run(actorId, async ({ normalizePreviewBadgeState, previewBadgeCollection }, verifyOwner) => {
+      const earnedBadges = await getEarnedBadges({ expectedUserId: actorId });
+      await verifyOwner();
+      requireMockRewardActor(actorId);
+      const activation = readMockChallengeActivation();
+      const state = normalizePreviewBadgeState(readMockUserValue(PREVIEW_BADGE_STATE_KEY, null, actorId), earnedBadges);
+      const today = dateKeyForTimeZone(new Date(), activation.timeZone || browserTimeZone());
+      return { ...previewBadgeCollection(state, activation, today), earnedBadges };
+    }, { lock: false });
   }
+  const earnedBadges = await getEarnedBadges({ expectedUserId: actorId });
   const client = requireSupabase();
   const user = await requireUser(actorId);
   const { data, error } = await client.rpc('get_badge_collection', { target_expected_actor_id: user.id });

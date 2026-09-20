@@ -1,7 +1,8 @@
 import { BADGE_CATALOG, appVisitBadgeFacts, badgeCatalogOrder, checkInBadgeFacts, evaluateBadgeEvent } from './badge-evaluation.mjs';
 import { badgeAwardIdentity } from './badge-data-contract.mjs';
 
-export const PREVIEW_BADGE_STATE_KEY = 'dominion:badgeState:v1';
+export { PREVIEW_BADGE_STATE_KEY } from './badge-data-contract.mjs';
+export { evaluateBadgeEvent } from './badge-evaluation.mjs';
 export function normalizePreviewBadgeState(value, legacy=[]) {
   const isAward = (row) => row && typeof row === 'object' && typeof (row.key || row.badge_key) === 'string';
   const isEvent = (row) => row && typeof row === 'object' && typeof row.localDate === 'string' && typeof row.sourceId === 'string';

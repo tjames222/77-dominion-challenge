@@ -58,7 +58,7 @@ const workflowJob = (id) => {
 
 test('two standard-runner shards preserve preliminary checks and the full main matrix', () => {
   const preflight = workflowJob('preflight');
-  for (const command of ['pnpm test', 'pnpm build', 'pnpm test:e2e:auth', 'pnpm test:e2e:mfa', 'pnpm test:e2e:admin', 'pnpm test:e2e:daily-bootstrap']) {
+  for (const command of ['pnpm test', 'pnpm build', 'pnpm test:e2e:auth', 'pnpm test:e2e:mfa', 'pnpm test:e2e:admin', 'pnpm test:e2e:daily-bootstrap', 'pnpm test:e2e:preview-badges']) {
     assert.ok(preflight.includes(`run: ${command}\n`), `Missing preliminary ${command}`);
   }
   const shards = workflowJob('browser-shards');
@@ -140,6 +140,24 @@ test('Daily Action bootstrap gates use production wiring with only synthetic loc
   assert.match(dailyBootstrapConfig, /VITE_SUPABASE_URL: `\$\{baseURL\}\/__daily_fixture__`/);
   assert.match(dailyBootstrapConfig, /const baseURL = `http:\/\/127\.0\.0\.1:\$\{port\}`/);
   assert.doesNotMatch(dailyBootstrapConfig, /supabase\.co|SUPABASE_ACCESS_TOKEN|SERVICE_ROLE_KEY|CLOUDFLARE_API_TOKEN/);
+});
+
+test('optional preview badge tests are a required isolated compiled and hybrid browser gate', () => {
+  const config = readFileSync(new URL('../../playwright.preview-badges.config.mjs', import.meta.url), 'utf8');
+  const buildConfig = readFileSync(new URL('../../tests/e2e/support/preview-badge-vite.config.mjs', import.meta.url), 'utf8');
+  assert.equal(packageJson.scripts['test:e2e:preview-badges'], 'playwright test --config=playwright.preview-badges.config.mjs');
+  assert.match(workflow, /run: pnpm test:e2e:daily-bootstrap\n\n\s+- name: Verify optional preview badge ownership boundaries\n\s+run: pnpm test:e2e:preview-badges/);
+  assert.ok(playwrightConfig.includes('/preview-badges-(?:built|hybrid)\\.spec\\.mjs/'));
+  assert.match(config, /retries: 0/);
+  assert.match(config, /vite build --config tests\/e2e\/support\/preview-badge-vite\.config\.mjs/);
+  assert.match(config, /VITE_ENABLE_MOCKS: 'true', VITE_ENABLE_PRODUCTION_CONNECTIONS: 'false'/);
+  assert.match(config, /VITE_ENABLE_SUPABASE_AUTH_IN_MOCKS: 'false', VITE_ENABLE_E2E_FIXTURES: 'false'/);
+  assert.match(config, /VITE_SUPABASE_URL: `\$\{hybridURL\}\/__fou_1452_supabase__`/);
+  assert.match(config, /outputFolder: 'playwright-report'/);
+  assert.doesNotMatch(config, /supabase\.co|SUPABASE_ACCESS_TOKEN|SERVICE_ROLE_KEY|CLOUDFLARE_API_TOKEN/);
+  assert.match(buildConfig, /\.\.\.PRODUCTION_ENTRYPOINTS/);
+  assert.match(buildConfig, /previewBadgeTest: 'tests\/e2e\/fixtures\/preview-badges\.html'/);
+  assert.doesNotMatch(buildConfig, /codeSplitting|modulePreload|\.css|define:/);
 });
 
 test('browser diagnostics are short-lived and uploaded only when the gate fails', () => {
