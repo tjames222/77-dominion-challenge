@@ -1,4 +1,5 @@
-.admin-shell { width: min(100% - 2rem, 1180px); margin: 0 auto; padding: max(1rem, env(safe-area-inset-top)) 0 3rem; }
+/* Match the shared topbar's negative margins to this shell's 1rem gutters. */
+.admin-shell { --shell-pad: 1rem; width: min(100% - 2rem, 1180px); margin: 0 auto; padding: max(1rem, env(safe-area-inset-top)) 0 3rem; }
 .admin-shell [hidden], .admin-detail [hidden] { display: none !important; }
 .admin-heading { margin: 1.5rem 0; }
 .admin-heading h1 { margin: .25rem 0 .75rem; font-size: clamp(2rem, 5vw, 3rem); line-height: 1.15; }
