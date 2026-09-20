@@ -40,6 +40,7 @@ export function createAdminPreview({ getUser, mode }) {
   const owner = async () => { const captured = epoch; const user = await getUser(); if (captured !== epoch) throw adminReadError('ADMIN_CHANGED'); if (!user?.authenticated || !user.userId) throw adminReadError('ADMIN_SIGNED_OUT'); const actorId = actorIdFor(user.userId); return { actorId, sessionIdentity: `preview:${actorId}`, mockUserId: user.userId }; };
   return { owner, invalidate() { epoch += 1; for (const listener of listeners) { try { listener(); } catch { /* Continue clearing other views. */ } } },
     subscribe(listener) { listeners.add(listener); return () => listeners.delete(listener); },
+    async assignRole() { throw adminReadError('ADMIN_DENIED'); },
     async denyEarlyAccess(intent, { signal } = {}) {
       const captured = epoch;
       const { earlyAccessDenialArguments, normalizeEarlyAccessDenial } = await import('./admin-early-access-contract.mjs');

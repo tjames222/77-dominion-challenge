@@ -596,7 +596,8 @@ function getAdminReadClient() {
       if (raw.length > 262144) throw adminReadError();
       let value; try { value = JSON.parse(raw); } catch { throw adminReadError(); }
       if (!response.ok) {
-        const code = response.status === 401 ? 'ADMIN_SIGNED_OUT' : response.status === 403 ? 'ADMIN_DENIED'
+        const code = name === 'site_admin_assign_role' && response.status === 403 && value?.message === 'admin_final_recovery_path' ? 'ADMIN_RECOVERY_PROTECTED'
+          : response.status === 401 ? 'ADMIN_SIGNED_OUT' : response.status === 403 ? 'ADMIN_DENIED'
           : response.status === 404 ? 'ADMIN_NOT_FOUND' : value?.message === 'admin_idempotency_conflict' ? 'ADMIN_IDEMPOTENCY_CONFLICT'
             : value?.message === 'admin_invalid_cursor' ? 'ADMIN_INVALID_CURSOR'
             : value?.message === 'admin_invalid_input' ? 'ADMIN_INVALID_INPUT' : 'ADMIN_UNAVAILABLE';
@@ -618,6 +619,7 @@ export const listSiteAdminEarlyAccess = (args, options = {}) => getAdminReadClie
 export const getSiteAdminEarlyAccess = (id, options = {}) => getAdminReadClient().read('site_admin_get_early_access_request', { target_request_id: id }, options);
 export const listSiteAdminEarlyAccessHistory = (args, options = {}) => getAdminReadClient().read('site_admin_list_early_access_history', args, options);
 export const denySiteAdminEarlyAccess = (intent, options = {}) => getAdminReadClient().denyEarlyAccess(intent, options);
+export const assignSiteAdminRole = (intent, options = {}) => getAdminReadClient().assignRole(intent, options);
 export function subscribeToAdminInvalidation(listener) { adminInvalidationListeners.add(listener); return () => adminInvalidationListeners.delete(listener); }
 export function cancelAdminReads() { if (adminReadClient?.invalidate) adminReadClient.invalidate(); else notifyAdminInvalidation(); }
 if (typeof window !== 'undefined') {
