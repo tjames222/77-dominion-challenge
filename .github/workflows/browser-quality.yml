@@ -1,237 +1,93 @@
 name: Browser quality gate
 
+# Temporary review branch only. Never merge this workflow into develop/main.
+# This distinct job cannot satisfy the protected full-matrix check.
 on:
-  pull_request:
   workflow_dispatch:
-    inputs:
-      generate_visual_baselines:
-        description: Generate reviewable Linux screenshot baselines instead of comparing them
-        required: false
-        type: boolean
-        default: false
 
 permissions:
   contents: read
 
-concurrency:
-  group: browser-quality-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
-
 jobs:
-  preflight:
-    name: Browser preflight
+  workout-geometry-review:
+    name: Review-only Workout geometry
     runs-on: ubuntu-latest
-    timeout-minutes: 60
-    outputs:
-      generate: ${{ steps.plan.outputs.generate }}
-      present: ${{ steps.plan.outputs.present }}
+    timeout-minutes: 20
     env:
       CI: true
       E2E_STRICT_THEME_BOOTSTRAP: ${{ vars.E2E_STRICT_THEME_BOOTSTRAP || 'false' }}
-
     steps:
-      - name: Checkout
+      - name: Checkout exact review source
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-
       - name: Install pnpm
         uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
         with:
           version: 10.17.1
-
       - name: Setup Node
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 22
           cache: pnpm
-
-      - name: Install dependencies
+      - name: Install frozen dependencies
         run: pnpm install --frozen-lockfile
-
-      - name: Install Chromium and WebKit
+      - name: Install existing browser versions
         run: pnpm exec playwright install --with-deps chromium webkit
-
-      - name: Unit tests
-        run: pnpm test
-
-      - name: Production build
-        run: pnpm build
-
-      - name: Hybrid dev authentication regression
-        run: pnpm test:e2e:auth
-
-      - name: MFA production-mode authentication regression
-        run: pnpm test:e2e:mfa
-
-      - name: Verify production-built admin read boundaries
-        run: pnpm test:e2e:admin
-
-      - name: Verify focused production-built Daily Action reads
-        run: pnpm test:e2e:daily-bootstrap
-
-      - name: Verify optional preview badge ownership boundaries
-        run: pnpm test:e2e:preview-badges
-
-      - name: Verify complete two-shard inventory
-        id: plan
-        env:
-          BROWSER_REQUEST_GENERATION: ${{ github.event_name == 'workflow_dispatch' && inputs.generate_visual_baselines }}
-        run: node scripts/browser-shard-artifacts.mjs plan
-
-      - name: Upload exact-run test plan
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        with:
-          name: browser-plan-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
-          path: .browser-quality/plan.json
-          include-hidden-files: true
-          if-no-files-found: error
-          retention-days: 3
-
-      - name: Upload browser diagnostics
-        if: failure()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        with:
-          name: browser-quality-preflight-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
-          path: playwright-report/
-          if-no-files-found: ignore
-          retention-days: 3
-
-  browser-shards:
-    name: Browser matrix shard ${{ matrix.shard }}/2
-    needs: preflight
-    runs-on: ubuntu-latest
-    timeout-minutes: 60
-    strategy:
-      fail-fast: false
-      matrix:
-        shard: [1, 2]
-    env:
-      CI: true
-      E2E_STRICT_THEME_BOOTSTRAP: ${{ vars.E2E_STRICT_THEME_BOOTSTRAP || 'false' }}
-      PLAYWRIGHT_JSON_OUTPUT_NAME: .browser-quality/result.json
-    steps:
-      - name: Checkout
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-
-      - name: Install pnpm
-        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
-        with:
-          version: 10.17.1
-
-      - name: Setup Node
-        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
-        with:
-          node-version: 22
-          cache: pnpm
-
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
-
-      - name: Install Chromium and WebKit
-        run: pnpm exec playwright install --with-deps chromium webkit
-
-      - name: Download exact-run test plan
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
-        with:
-          name: browser-plan-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
-          path: .browser-quality/
-
-      - name: Prepare isolated shard baseline output
-        run: node scripts/browser-shard-artifacts.mjs prepare ${{ matrix.shard }}
-
-      - name: Browser quality gate
-        if: needs.preflight.outputs.generate == 'false'
-        run: pnpm test:e2e --shard=${{ matrix.shard }}/2 --reporter=github,html,json
-
-      - name: Generate reviewable Linux visual baselines
-        if: needs.preflight.outputs.generate == 'true'
-        run: pnpm test:e2e:update --shard=${{ matrix.shard }}/2 --reporter=github,html,json
-
-      - name: Validate and stage this complete shard
-        run: node scripts/browser-shard-artifacts.mjs pack ${{ matrix.shard }}
-
-      # These short-lived per-shard artifacts are NOT adoption artifacts.
-      # Successful comparison runs contain only a manifest, never duplicate PNGs.
-      - name: Upload shard staging evidence
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        with:
-          name: browser-shard-${{ matrix.shard }}-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
-          path: .browser-quality/shard-${{ matrix.shard }}/
-          include-hidden-files: true
-          if-no-files-found: error
-          retention-days: 3
-
-      - name: Upload browser diagnostics
-        if: failure()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        with:
-          name: browser-quality-shard-${{ matrix.shard }}-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
-          path: playwright-report/
-          if-no-files-found: ignore
-          retention-days: 3
-
-  browser-quality:
-    # Branch protection continues to require this single, non-matrix check.
-    name: Routes, accessibility, and visuals
-    needs: [preflight, browser-shards]
-    if: always()
-    runs-on: ubuntu-latest
-    timeout-minutes: 60
-    steps:
-      - name: Checkout
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-
-      - name: Setup Node
-        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
-        with:
-          node-version: 22
-
-      - name: Require every prerequisite to succeed
-        env:
-          BROWSER_NEEDS: ${{ toJSON(needs) }}
-        run: node scripts/browser-shard-artifacts.mjs needs
-
-      - name: Install pnpm
-        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
-        with:
-          version: 10.17.1
-
-      - name: Install pinned artifact decoder
-        run: pnpm install --frozen-lockfile
-
-      - name: Download exact-run test plan
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
-        with:
-          name: browser-plan-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
-          path: .browser-quality/
-
-      # Keep the trees separate until hashes, pixels and test coverage agree.
-      - name: Download shard 1
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
-        with:
-          name: browser-shard-1-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
-          path: .browser-quality/received/shard-1/
-
-      - name: Download shard 2
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
-        with:
-          name: browser-shard-2-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
-          path: .browser-quality/received/shard-2/
-
-      - name: Verify full matrix and conflict-free baseline union
-        run: node scripts/browser-shard-artifacts.mjs merge
-
-      - name: Upload generated visual baselines
-        if: needs.preflight.outputs.generate == 'true'
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        with:
-          name: browser-visual-baselines-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
-          path: .browser-quality/verified/
-          include-hidden-files: true
-          if-no-files-found: error
-          retention-days: 14
-
-      - name: Require committed baselines after bootstrap
-        if: github.event_name == 'pull_request' && needs.preflight.outputs.present != 'true'
+      - name: Verify ten strict repetitions against the unchanged baseline
         run: |
-          echo "Linux baselines were generated as verified review evidence, not compared. Review and commit the snapshots before merging."
-          exit 1
+          node --input-type=module <<'NODE'
+          import assert from 'node:assert/strict';
+          import { createHash } from 'node:crypto';
+          import { execFileSync } from 'node:child_process';
+          import { readFileSync } from 'node:fs';
+          const baseline = 'tests/e2e/__snapshots__/visual-routes.spec.mjs/visual-desktop-dominion-night/workoutTwo.png';
+          const expectedHash = '8d2b27fd988455fb7632d7f36d0b7c4e93f1dd95906936fd7a21ee8528d8f59a';
+          const digest = bytes => createHash('sha256').update(bytes).digest('hex');
+          const before = readFileSync(baseline);
+          assert.equal(digest(before), expectedHash, 'Require the original reviewed baseline');
+          assert.equal(before.readUInt32BE(16), 1440);
+          assert.equal(before.readUInt32BE(20), 1062);
+          const args = ['test', 'tests/e2e/visual-routes.spec.mjs', '--grep=workoutTwo visual contract$', '--project=visual-desktop-dominion-night', '--repeat-each=10', '--update-snapshots=none'];
+          const cli = 'node_modules/@playwright/test/cli.js';
+          const rows = report => {
+            const tests = [];
+            const visit = suite => {
+              for (const spec of suite.specs || []) for (const test of spec.tests || []) tests.push({ title: spec.title, ...test });
+              for (const child of suite.suites || []) visit(child);
+            };
+            visit(report);
+            assert.deepEqual(report.errors, []);
+            assert.equal(tests.length, 10);
+            for (const test of tests) {
+              assert.equal(test.title, 'workoutTwo visual contract');
+              assert.equal(test.projectId, 'visual-desktop-dominion-night');
+            }
+            return tests;
+          };
+          rows(JSON.parse(execFileSync(process.execPath, [cli, ...args, '--list', '--reporter=json'], { encoding: 'utf8' })));
+          console.log('Verified exactly ten strict desktop Dominion Night Workout #2 repetitions.');
+          const reportPath = 'test-results/workout-geometry-results.json';
+          try {
+            execFileSync(process.execPath, [cli, ...args, '--reporter=github,html,json'], {
+              stdio: 'inherit',
+              env: { ...process.env, PLAYWRIGHT_JSON_OUTPUT_NAME: reportPath },
+            });
+            for (const test of rows(JSON.parse(readFileSync(reportPath, 'utf8')))) {
+              assert.equal(test.status, 'expected', 'A flaky retry is diagnostic failure, not stable geometry');
+              assert.equal(test.expectedStatus, 'passed');
+              assert.equal(test.results.length, 1, 'Require ten first-attempt passes');
+              assert.equal(test.results[0].status, 'passed');
+            }
+          } finally {
+            assert.equal(digest(readFileSync(baseline)), expectedHash, 'The strict probe must not update its baseline');
+          }
+          NODE
+      - name: Upload failure-only geometry diagnostics
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: workout-geometry-review-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            playwright-report/
+            test-results/
+          if-no-files-found: ignore
+          retention-days: 3
