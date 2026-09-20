@@ -61,11 +61,16 @@ async function verify(page) {
 test('production-built Profile contains no testing controls or local testing writes', async ({ context, page }) => {
   await installMfaSupabaseStub(context, { enrolled: false });
   const errors = []; page.on('pageerror', error => errors.push(error.message));
-  await login(page, './support.html');
-  await expect(page).toHaveURL(/\/support\.html$/);
   const fixture = { enabled: true, anchorDate: '2026-02-01', day: 77 };
-  await page.evaluate(value => localStorage.setItem('dominion:previewChallengeSimulation', JSON.stringify(value)), fixture);
-  await page.goto('/profile.html', { waitUntil: 'networkidle' });
+  // Seed only the destination's synthetic legacy state before its controller
+  // starts. This test owns Profile behavior, not an unrelated hard navigation
+  // that interrupts Support's startup immediately after Login continues there.
+  await context.addInitScript(value => {
+    if (location.pathname === '/profile.html') localStorage.setItem('dominion:previewChallengeSimulation', JSON.stringify(value));
+  }, fixture);
+  await login(page, './profile.html');
+  await expect(page).toHaveURL(/\/profile\.html$/);
+  await page.waitForLoadState('networkidle');
   await expectNoProfileTestControls(page);
   expect(await page.evaluate(() => JSON.parse(localStorage.getItem('dominion:previewChallengeSimulation')))).toEqual(fixture);
   expect(errors).toEqual([]);
