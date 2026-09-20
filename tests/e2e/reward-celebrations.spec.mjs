@@ -104,6 +104,29 @@ test('unknown reward links fail safely without any automatic action', async ({ p
   await expect(page.locator('#rewardsList')).toBeVisible(); app.assertNoRuntimeErrors();
 });
 
+for (const [query, opensDetail] of [
+  ['reward=dominion%5Fnight%5Ftheme', true],
+  ['reward=dominion_night_theme&reward=does_not_exist', true],
+  ['reward=does_not_exist&reward=dominion_night_theme', false],
+  ['reward=%3Cscript%3E&reward=dominion_night_theme', false],
+  ['reward=__proto__', false],
+  ['reward=constructor', false],
+]) {
+  test(`reward deep link preserves exact first decoded key: ${query}`, async ({ page, app }) => {
+    await seedRewards(page, app, { unseen: [] });
+    await page.goto(`/badges-rewards.html?${query}#rewards`); await app.stable();
+    const detail = page.getByRole('dialog', { name: 'Dominion Night', exact: true });
+    if (opensDetail) {
+      await expect(detail).toBeVisible();
+      await expect(detail.getByRole('button', { name: /Claim|Download|Start/ })).toHaveCount(0);
+      await page.keyboard.press('Escape');
+      await expect(page.locator('[data-reward-key="dominion_night_theme"] [data-view-reward]')).toBeFocused();
+    } else await expect(page.locator('#rewardDetailDialog')).not.toBeVisible();
+    await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
+    app.assertNoRuntimeErrors();
+  });
+}
+
 for (const reward of DEFAULT_OWNERSHIP_REWARD_DEFINITIONS) {
   test(`${reward.rewardType} ${reward.key}: exact artwork/icon, title, description and no automatic fulfillment`, async ({ page, app }) => {
     await seedRewards(page, app, { unseen: [reward.key] }); await page.goto(ROUTE_BY_ID.dashboard.path);

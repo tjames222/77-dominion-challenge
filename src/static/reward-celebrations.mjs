@@ -8,9 +8,7 @@ export function rewardCelebrationHref(key = '') {
   return `./badges-rewards.html${safeKey(key) ? `?reward=${encodeURIComponent(key)}` : ''}#rewards`;
 }
 
-export function rewardKeyFromLocation(location) {
-  try { return safeKey(new URL(location.href).searchParams.get('reward')); } catch { return ''; }
-}
+export { rewardKeyFromLocation } from './reward-link-contract.mjs';
 
 export function normalizeRewardCelebration(reward = {}) {
   if (!safeKey(reward.key) || reward.stateModel !== 'ownership' || reward.status !== 'owned') return null;
