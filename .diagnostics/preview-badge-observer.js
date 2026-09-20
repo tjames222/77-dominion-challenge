@@ -6,6 +6,10 @@
   let sequence = 0;
   let recorderErrors = 0;
   let nextLockId = 0;
+  // WebKit can collect an unreferenced JS LockManager wrapper and its expando
+  // request hook. Keep the exact installed manager reachable from report().
+  let installedLockManager;
+  let installedRequestHook;
   const held = new Map();
   const observedKeys = new Set([
     'dominion:badgeState:v1', 'dominion:badges', 'dominion:previewUserStateByOwner',
@@ -60,6 +64,12 @@
       capacity: CAPACITY, totalRecorded: sequence, overwritten: Math.max(sequence - size, 0), recorderErrors,
       // Init-script ordering may mean the captured clock is already fixture-fixed.
       capturedClockIsNotGuaranteedNative: true,
+      lockHook: safely(() => ({
+        installed: Boolean(installedLockManager && installedRequestHook),
+        sameManager: navigator.locks === installedLockManager,
+        retainedManagerHookIntact: installedLockManager?.request === installedRequestHook,
+        currentManagerHookIntact: navigator.locks?.request === installedRequestHook,
+      })),
       events: Array.from({ length: size }, (_, index) => ring[(next - size + index + CAPACITY) % CAPACITY]),
       final: safely(snapshot),
     }),
@@ -93,9 +103,10 @@
     if (event.storageArea !== storage || (event.key !== null && !observedKeys.has(event.key))) return;
     record('storage-event', { key: event.key, oldValue: digest(event.key, event.oldValue), newValue: digest(event.key, event.newValue), snapshot: snapshot() });
   }));
-  if (!navigator.locks?.request) { record('locks-unavailable'); return; }
-  const rawRequest = navigator.locks.request;
-  navigator.locks.request = function (name, optionsOrCallback, maybeCallback) {
+  installedLockManager = navigator.locks;
+  if (!installedLockManager?.request) { record('locks-unavailable'); return; }
+  const rawRequest = installedLockManager.request;
+  installedRequestHook = function (name, optionsOrCallback, maybeCallback) {
     const callback = typeof optionsOrCallback === 'function' ? optionsOrCallback : maybeCallback;
     if (typeof callback !== 'function') return Reflect.apply(rawRequest, this, arguments);
     const id = ++nextLockId;
@@ -124,5 +135,6 @@
     args[typeof optionsOrCallback === 'function' ? 1 : 2] = observed;
     return Reflect.apply(rawRequest, this, args);
   };
+  installedLockManager.request = installedRequestHook;
   record('observer-installed', { snapshot: safely(snapshot) });
 })();
