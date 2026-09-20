@@ -92,6 +92,7 @@ test('actual production graph keeps MFA free of menu side effects and training s
   const security = graph('account-security.html');
   for (const entry of Object.values(PRODUCTION_ENTRYPOINTS)) {
     const modules = graph(entry).filter(asset => asset.type === 'chunk').flatMap(asset => Object.keys(asset.modules));
+    assert.equal(modules.filter(id => id.endsWith('/src/static/auth-runtime-core.mjs')).length, 1, `${entry} loads exactly one shared Auth runtime`);
     assert.equal(modules.some(id => id.endsWith('/src/static/reward-link-contract.mjs')), entry === 'badges-rewards.html', `${entry} loads the pure reward-link parser only when needed`);
     for (const name of ['reward-celebrations.mjs', 'celebration-delivery-token.mjs']) {
       assert.equal(modules.some(id => id.endsWith(`/src/static/${name}`)), entry === 'dashboard.html', `${entry} keeps reward delivery/recovery owned by Dashboard`);

@@ -134,16 +134,17 @@ describe('dev authentication runtime', () => {
   });
 
   test('keeps application tables mocked and gates redirect overrides to hybrid signup', async () => {
-    const [api, auth, envExample] = await Promise.all([
+    const [api, runtime, auth, envExample] = await Promise.all([
       read('./api.js'),
+      read('./auth-runtime-core.mjs'),
       read('./auth.js'),
       read('../../.env.example'),
     ]);
-    assert.match(api, /const ALLOW_SUPABASE_CLIENT = shouldCreateSupabaseClient\(\{/);
-    assert.match(api, /productionBuild: import\.meta\.env\.PROD/);
-    assert.match(api, /productionConnectionsEnabled: ENABLE_PRODUCTION_CONNECTIONS/);
-    assert.match(api, /export const supabase = ALLOW_SUPABASE_CLIENT/);
-    assert.doesNotMatch(api, /isSupabaseConfigured\(\) && \(!ENABLE_MOCKS/);
+    assert.match(runtime, /const ALLOW_SUPABASE_CLIENT = shouldCreateSupabaseClient\(\{/);
+    assert.match(runtime, /productionBuild: import\.meta\.env\.PROD/);
+    assert.match(runtime, /productionConnectionsEnabled: ENABLE_PRODUCTION_CONNECTIONS/);
+    assert.match(runtime, /export const supabase = ALLOW_SUPABASE_CLIENT/);
+    assert.doesNotMatch(api + runtime, /isSupabaseConfigured\(\) && \(!ENABLE_MOCKS/);
     assert.match(api, /data\.session\?\.access_token && hasSupabaseAuth\(\)/g);
     assert.match(api, /!isHybridAuthPreview\(\) \|\| typeof window === 'undefined'/);
     assert.match(auth, /if \(hasSupabaseAuthentication\(\)\)/);
@@ -156,8 +157,9 @@ describe('dev authentication runtime', () => {
 
   test('keeps reward fulfillment fixtures inside the local browser E2E boundary', async () => {
     const api = await read('./api.js');
+    const runtime = await read('./auth-runtime-core.mjs');
     assert.match(
-      api,
+      runtime,
       /const ENABLE_E2E_FIXTURES = Boolean\([\s\S]*?import\.meta\.env\.DEV[\s\S]*?ENABLE_MOCKS[\s\S]*?VITE_ENABLE_E2E_FIXTURES/,
     );
     assert.match(

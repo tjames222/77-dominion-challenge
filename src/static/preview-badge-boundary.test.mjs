@@ -83,6 +83,7 @@ test('concurrent committed events, claim leases and acknowledgments remain seria
 });
 
 const api = readFileSync(new URL('./api.js', import.meta.url), 'utf8');
+const authRuntime = readFileSync(new URL('./auth-runtime-core.mjs', import.meta.url), 'utf8');
 const captureSource = api.slice(api.indexOf('async function capturePreviewBadgeOwner('), api.indexOf('\nlet previewBadgeBoundary;'));
 function ownerFixture(liveAuth) {
   const context = { previewBadgeEpoch: 0, usesSupabaseAuthentication: () => liveAuth,
@@ -112,9 +113,9 @@ test('actual hybrid owner capture rechecks assurance and exact bearer after cano
     await assert.rejects(f.capture('A'), /account changed/); assert.equal(f.checks, 1); assert.equal(f.assuranceReads, 1);
   }
 });
-test('API owns identity invalidation, never invalidates for ordinary cross-tab badge writes', () => {
-  const start = api.indexOf("globalThis.window?.addEventListener('storage'");
-  const source = api.slice(start, api.indexOf('\n});', start) + 4); let listener;
+test('shared runtime owns identity invalidation, never invalidates for ordinary cross-tab badge writes', () => {
+  const start = authRuntime.indexOf("globalThis.window?.addEventListener('storage'");
+  const source = authRuntime.slice(start, authRuntime.indexOf('\n});', start) + 4); let listener;
   const context = { previewBadgeEpoch: 0, PREVIEW_AUTH_OWNER_STORAGE_KEY: 'dominion:previewAuthOwnerId',
     inflightActorReads: { invalidate() {} }, window: { addEventListener: (_event, fn) => { listener = fn; } } };
   runInNewContext(source, context);
@@ -122,8 +123,9 @@ test('API owns identity invalidation, never invalidates for ordinary cross-tab b
   listener({ key: 'dominion:user' }); listener({ key: 'sb-127-auth-token' }); listener({ key: null }); assert.equal(context.previewBadgeEpoch, 3);
   for (const name of ['clearAuthSession', 'saveLocalMockUser']) {
     const source = api.slice(api.indexOf(`export ${name === 'clearAuthSession' ? 'async ' : ''}function ${name}`));
-    assert.match(source.slice(0, source.indexOf('\n}')), /previewBadgeEpoch \+= 1/);
+    assert.match(source.slice(0, source.indexOf('\n}')), /invalidatePreviewBadgeOwner\(\)/);
   }
+  assert.match(authRuntime, /function invalidatePreviewBadgeOwner\(\) \{ previewBadgeEpoch \+= 1; \}/);
 });
 
 test('actual collection cannot rebind an older earned snapshot after an actor/session round trip', async () => {
