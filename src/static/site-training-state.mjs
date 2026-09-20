@@ -1,4 +1,4 @@
-import { SITE_TRAINING_SCHEMA_VERSION } from './site-training-registry.mjs';
+import { SITE_TRAINING_SCHEMA_VERSION } from './site-training-contract.mjs';
 
 export const SITE_TRAINING_STATUSES = Object.freeze([
   'not_started',

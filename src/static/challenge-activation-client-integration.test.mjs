@@ -52,7 +52,7 @@ describe('challenge activation client integration', () => {
     assert.match(page, /function refreshAfterChallengeActivationEvent\(event\)[\s\S]*interactiveReady = false;[\s\S]*void hydrate\(\)/);
     assert.match(page, /if \(saving\) \{[\s\S]*activationRefreshPending = true;[\s\S]*return;/);
     assert.equal((page.match(/activationRefreshPending = true;[\s\S]*?getDailyStandardDraft\(entryDate,/g) || []).length, 2);
-    assert.match(page, /const activation = await getChallengeActivation\(\{ expectedUserId: dashboardOwner \}\);[\s\S]*readLocalDraft\([\s\S]*activation,/);
+    assert.match(page, /const activation = await getChallengeActivation\(\{ expectedUserId: snapshotOwner \}\);[\s\S]*readLocalDraft\([\s\S]*activation,/);
   });
 
   test('applies an event timezone before resetting and rehydrating Dashboard date state', async () => {

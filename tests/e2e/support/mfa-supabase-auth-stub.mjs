@@ -52,6 +52,9 @@ export async function installMfaSupabaseStub(context, { enrolled = true, appAcce
     if (path === '/rest/v1/profiles') return json(route, { user_id: A, name: 'Synthetic Member', email: user().email, avatar_url: '', time_zone: 'UTC' });
     if (path === '/rest/v1/entitlements') return json(route, appAccess ? [{ entitlement_key: 'membership_active', status: 'active', ends_at: null }] : []);
     if (path === '/rest/v1/rpc/get_theme_preference' || path === '/rest/v1/rpc/set_theme_preference') return json(route, { theme_key: 'dark' });
+    if (path === '/rest/v1/rpc/get_site_admin_context') return json(route, {
+      schemaVersion: 1, actorId: A, role: 'member', adminReady: false, permissions: [],
+    });
     if (path.startsWith('/rest/') || path.startsWith('/functions/')) return json(route, []);
     return json(route, { code: 'unexpected_fixture_endpoint', message: 'Unhandled synthetic endpoint' }, 500);
   });

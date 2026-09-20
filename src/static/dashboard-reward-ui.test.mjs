@@ -45,7 +45,8 @@ describe('dashboard reward presentation', () => {
     assert.match(dashboardHtml, /class="member-tab" href="\.\/badges-rewards\.html">[\s\S]*?class="member-tab-label">Rewards/);
     assert.doesNotMatch(dashboardHtml, /id="gameSummaryCard"/);
     assert.doesNotMatch(dashboardJs, /badgeShelf\.innerHTML|renderGameSummary/);
-    assert.match(dashboardJs, /earnedBadges = \(await refreshGameSummary\(previousBadgeKeys, submissionOwner\)\)/);
+    assert.match(dashboardJs, /earnedBadges = await collectPendingBadgeCelebrations\(submissionOwner\)/);
+    assert.doesNotMatch(dashboardJs, /previousBadgeKeys/);
     assert.match(dashboardJs, /queueCheckInCelebrations\(\{[\s\S]*?earnedBadges/);
   });
 });

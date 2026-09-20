@@ -1,4 +1,5 @@
 import { initReveal } from './reveal';
+import { authEntryTransition } from './auth-entry-transition.mjs';
 import { mfaChallengeHref } from './mfa-navigation.mjs';
 import { buildInviteAuthHref, isInviteReturnPath } from './invite-flow.mjs';
 import {
@@ -80,6 +81,12 @@ if (form) {
     const name = nameInput ? nameInput.value.trim() : 'Member';
     const email = emailInput.value.trim();
     const password = passwordInput?.value || '';
+    const resumeOptionalHydration = authEntryTransition.begin();
+    let navigationCommitted = false;
+    const continueTo = (href) => {
+      window.location.href = href;
+      navigationCommitted = true;
+    };
 
     if (submitButton) {
       submitButton.disabled = true;
@@ -99,18 +106,18 @@ if (form) {
 
         if (result.mfaRequired) {
           if (passwordInput) passwordInput.value = '';
-          window.location.href = mfaChallengeHref(returnTo, window.location.origin);
+          continueTo(mfaChallengeHref(returnTo, window.location.origin));
           return;
         }
 
         saveLocalUserFromSession(result.session, name);
         if (returnTo && returnTo !== './dashboard.html') {
-          window.location.href = returnTo;
+          continueTo(returnTo);
           return;
         }
 
         const billing = await getBillingState();
-        window.location.href = billing.appAccess ? './dashboard.html' : './billing.html';
+        continueTo(billing.appAccess ? './dashboard.html' : './billing.html');
         return;
       }
 
@@ -123,10 +130,11 @@ if (form) {
         name,
         email,
       });
-      window.location.href = returnTo || './dashboard.html';
+      continueTo(returnTo || './dashboard.html');
     } catch (error) {
       window.alert(error?.message || 'Unable to authenticate right now.');
     } finally {
+      if (!navigationCommitted) resumeOptionalHydration();
       if (submitButton) {
         submitButton.disabled = false;
         submitButton.textContent = originalLabel;

@@ -1,6 +1,10 @@
 import { initReveal } from './reveal';
 import { acquireDialogLayer } from './dialog.mjs';
 import {
+  acknowledgeBadgeCelebrations,
+  acknowledgeRewardCelebrations,
+  claimBadgeCelebrations,
+  claimRewardCelebrations,
   claimChallengeUnlocks,
   getBillingState,
   getChallengeActivation,
@@ -13,10 +17,15 @@ import {
   mutateDailyStandardDraft,
   postCheckIn,
   recordAppVisit,
+  recordPreviewCheckInBadges,
   redirectToLogin,
   setDailyStandardWorkoutDifficulty,
   subscribeToAuthStateChanges,
 } from './api';
+import { badgeCatalogOrder, badgeCelebrationReason } from './badge-evaluation.mjs';
+import { createBadgeCelebrationRecovery } from './badge-celebrations.mjs';
+import { createRewardCelebrationRecovery } from './reward-celebrations.mjs';
+import { presentPermanentRewardCelebration } from './reward-celebration-view.js';
 import { DIFFICULTY_OPTIONS, calculateCheckInScore, normalizeWorkoutDifficulty } from './scoring.mjs';
 import { dailyStandardRoute } from './daily-standard-routes.mjs';
 import {
@@ -45,7 +54,6 @@ import {
   writePreviewUserValue,
 } from './preview-user-state.mjs';
 import {
-  compareBadgesNewestFirst,
   completedTodayLabel,
   normalizeBadgeTier,
   selectLatestAccountabilityPosts,
@@ -130,97 +138,8 @@ const COMPLETION_HERO = {
   title: 'Congratulations, you did it!',
   lead: 'You reached the 77-day finish line. Your next point-unlocked challenge is ready below.',
 };
-const demoBadgeDefinitions = {
-  faithful_start: { key: 'faithful_start', name: 'Faithful Start', tier: 'bronze', icon: 'shield' },
-  honest_partial: { key: 'honest_partial', name: 'Honest Check-In', tier: 'bronze', icon: 'check' },
-  first_sweat: { key: 'first_sweat', name: 'Easy Workout', tier: 'bronze', icon: 'spark' },
-  steady_grind: { key: 'steady_grind', name: 'Medium Workout', tier: 'bronze', icon: 'flame' },
-  hard_path: { key: 'hard_path', name: 'Hard Workout', tier: 'silver', icon: 'run' },
-  extreme_fire: { key: 'extreme_fire', name: 'Extreme Workout', tier: 'gold', icon: 'flame' },
-  iron_standard: { key: 'iron_standard', name: 'Seven for Seven', tier: 'silver', icon: 'dumbbell' },
-  seven_day_start: { key: 'seven_day_start', name: 'Seven Days Complete', tier: 'bronze', icon: 'calendar' },
-  two_week_guard: { key: 'two_week_guard', name: 'Two Weeks Complete', tier: 'silver', icon: 'shield' },
-  three_week_wall: { key: 'three_week_wall', name: 'Three Weeks Complete', tier: 'silver', icon: 'target' },
-  third_way: { key: 'third_way', name: 'One-Third Complete', tier: 'gold', icon: 'flag' },
-  deep_roots: { key: 'deep_roots', name: 'Day 33', tier: 'silver', icon: 'mountain' },
-  halfway_fire: { key: 'halfway_fire', name: 'Halfway', tier: 'gold', icon: 'spark' },
-  fifty_faithful: { key: 'fifty_faithful', name: 'Day 50', tier: 'silver', icon: 'star' },
-  sixty_strong: { key: 'sixty_strong', name: 'Day 60', tier: 'gold', icon: 'dumbbell' },
-  final_watch: { key: 'final_watch', name: 'Final Week', tier: 'gold', icon: 'eye' },
-  streak_flame: { key: 'streak_flame', name: '3-Day Perfect Streak', tier: 'silver', icon: 'flame' },
-  seven_sealed: { key: 'seven_sealed', name: '7-Day Perfect Streak', tier: 'gold', icon: 'repeat' },
-  full_streak_14: { key: 'full_streak_14', name: '14-Day Perfect Streak', tier: 'silver', icon: 'shield' },
-  full_streak_21: { key: 'full_streak_21', name: '21-Day Perfect Streak', tier: 'silver', icon: 'target' },
-  full_streak_28: { key: 'full_streak_28', name: '28-Day Perfect Streak', tier: 'silver', icon: 'dumbbell' },
-  full_streak_35: { key: 'full_streak_35', name: '35-Day Perfect Streak', tier: 'gold', icon: 'flame' },
-  full_streak_42: { key: 'full_streak_42', name: '42-Day Perfect Streak', tier: 'gold', icon: 'eye' },
-  full_streak_49: { key: 'full_streak_49', name: '49-Day Perfect Streak', tier: 'gold', icon: 'repeat' },
-  full_streak_56: { key: 'full_streak_56', name: '56-Day Perfect Streak', tier: 'gold', icon: 'mountain' },
-  full_streak_63: { key: 'full_streak_63', name: '63-Day Perfect Streak', tier: 'gold', icon: 'star' },
-  full_streak_70: { key: 'full_streak_70', name: '70-Day Perfect Streak', tier: 'gold', icon: 'flag' },
-  morning_watch: { key: 'morning_watch', name: '3-Day App Streak', tier: 'bronze', icon: 'eye' },
-  watchman_week: { key: 'watchman_week', name: '7-Day App Streak', tier: 'silver', icon: 'eye' },
-  day_77_finisher: { key: 'day_77_finisher', name: '77 Days Complete', tier: 'gold', icon: 'crown' },
-};
-const milestoneBadges = {
-  7: 'seven_day_start',
-  14: 'two_week_guard',
-  21: 'three_week_wall',
-  26: 'third_way',
-  33: 'deep_roots',
-  39: 'halfway_fire',
-  50: 'fifty_faithful',
-  60: 'sixty_strong',
-  70: 'final_watch',
-  77: 'day_77_finisher',
-};
-const fullStreakBadges = {
-  7: 'seven_sealed',
-  14: 'full_streak_14',
-  21: 'full_streak_21',
-  28: 'full_streak_28',
-  35: 'full_streak_35',
-  42: 'full_streak_42',
-  49: 'full_streak_49',
-  56: 'full_streak_56',
-  63: 'full_streak_63',
-  70: 'full_streak_70',
-};
-const specialCelebrationBadges = new Set(['third_way', 'halfway_fire']);
-const finaleBadgeKey = 'day_77_finisher';
-const badgePriority = [
-  'day_77_finisher',
-  'halfway_fire',
-  'third_way',
-  'final_watch',
-  'sixty_strong',
-  'fifty_faithful',
-  'deep_roots',
-  'three_week_wall',
-  'two_week_guard',
-  'seven_day_start',
-  'full_streak_70',
-  'full_streak_63',
-  'full_streak_56',
-  'full_streak_49',
-  'full_streak_42',
-  'full_streak_35',
-  'full_streak_28',
-  'full_streak_21',
-  'full_streak_14',
-  'seven_sealed',
-  'streak_flame',
-  'watchman_week',
-  'morning_watch',
-  'extreme_fire',
-  'hard_path',
-  'steady_grind',
-  'first_sweat',
-  'iron_standard',
-  'honest_partial',
-  'faithful_start',
-];
-const badgePriorityRank = new Map(badgePriority.map((key, index) => [key, index]));
+const specialCelebrationBadges = new Set();
+const finaleBadgeKey = 'original_77_completed';
 const BROWSER_TIME_ZONE = Intl.DateTimeFormat().resolvedOptions().timeZone;
 let userTimeZone = BROWSER_TIME_ZONE;
 const calendarTodayKey = () => dateKeyForTimeZone(new Date(), userTimeZone);
@@ -258,15 +177,14 @@ const badgeIconClass = (badge) => {
   const icon = String(badge?.icon || '').replace(/[^a-z-]/g, '');
   return ['shield', 'check', 'spark', 'flame', 'dumbbell', 'run', 'repeat', 'eye', 'crown', 'calendar', 'target', 'flag', 'mountain', 'star', 'share'].includes(icon) ? `icon-${icon}` : 'icon-shield';
 };
-const badgeRank = (badge) => badgePriorityRank.get(badge?.key) ?? 999;
 const oneBadgeForDisplay = (earnedBadges = []) => earnedBadges
   .filter(Boolean)
   .slice()
-  .sort((left, right) => badgeRank(left) - badgeRank(right) || String(right.earnedAt || '').localeCompare(String(left.earnedAt || '')))
+  .sort(badgeCatalogOrder)
   .slice(0, 1);
 const badgesForCelebration = (earnedBadges = []) => [...earnedBadges]
   .filter(Boolean)
-  .sort((left, right) => badgeRank(left) - badgeRank(right) || compareBadgesNewestFirst(left, right));
+  .sort(badgeCatalogOrder);
 const calculateLocalPoints = (entry, status) => {
   return calculateCheckInScore({
     completed: entry.completed,
@@ -285,60 +203,6 @@ const badgeEarnedDisplay = (badge) => {
   if (Number.isNaN(date.getTime())) return { dateTime: '', label: 'Recently earned' };
   return { dateTime, label: `Earned ${badgeDateFormatter.format(date)}` };
 };
-const badgeExistsForDate = (date) => badges.some((badge) => badgeEarnedDate(badge) === date);
-const workoutBadgeCandidates = (entry) => {
-  const candidates = [];
-  if ((entry.completed || []).includes('workoutOne')) candidates.push(workoutDifficulty.one || 'medium');
-  if ((entry.completed || []).includes('workoutTwo')) candidates.push(workoutDifficulty.two || 'medium');
-  if (candidates.includes('extreme')) return ['extreme_fire'];
-  if (candidates.includes('hard')) return ['hard_path'];
-  if (candidates.includes('medium')) return ['steady_grind'];
-  if (candidates.includes('easy')) return ['first_sweat'];
-  return [];
-};
-function badgeCandidatesForEntry(entry, status, nextFullStreak = 0, challengeDay = currentDay()) {
-  const day = challengeDay;
-  const candidates = [];
-
-  if (status === 'complete') {
-    Object.entries(milestoneBadges)
-      .sort(([left], [right]) => Number(right) - Number(left))
-      .forEach(([threshold, key]) => {
-        if (day >= Number(threshold)) candidates.push(key);
-      });
-    Object.entries(fullStreakBadges)
-      .sort(([left], [right]) => Number(right) - Number(left))
-      .forEach(([threshold, key]) => {
-        if (nextFullStreak >= Number(threshold)) candidates.push(key);
-      });
-    if (nextFullStreak >= 3) candidates.push('streak_flame');
-    if ((gameStats.currentAppStreak || 0) >= 7) candidates.push('watchman_week');
-    if ((gameStats.currentAppStreak || 0) >= 3) candidates.push('morning_watch');
-    candidates.push(...workoutBadgeCandidates(entry), 'iron_standard');
-  } else if (status === 'partial') {
-    candidates.push('honest_partial');
-  }
-
-  candidates.push('faithful_start');
-  return candidates;
-}
-function awardLocalBadges(entry, status, nextFullStreak = 0, challengeDay = currentDay()) {
-  if (badgeExistsForDate(entry.date)) return [];
-  const existing = new Set(badges.map((badge) => badge.key));
-  const key = badgeCandidatesForEntry(entry, status, nextFullStreak, challengeDay)
-    .find((candidate) => !existing.has(candidate) && demoBadgeDefinitions[candidate]);
-
-  if (!key) return [];
-
-  const badge = {
-    ...demoBadgeDefinitions[key],
-    earnedAt: new Date().toISOString(),
-    entryDate: entry.date,
-    metadata: { entryDate: entry.date, challengeDay },
-  };
-  badges.unshift(badge);
-  return [badge];
-}
 const challengeIconClass = (challenge) => {
   const icon = String(challenge?.icon || '').replace(/[^a-z-]/g, '');
   return ['repeat', 'spark', 'dumbbell', 'flame', 'book', 'target', 'shield', 'check'].includes(icon)
@@ -584,11 +448,7 @@ function showBadgeCelebration(badge) {
 
   if (title) title.textContent = badge.name || 'Badge Earned';
   if (eyebrow) eyebrow.textContent = `${tierLabel} Badge Earned`;
-  if (copy) {
-    if (isFinale) copy.textContent = 'You completed all 77 days. Dominion finished strong.';
-    else if (isSpecial) copy.textContent = `You reached a milestone and earned a ${tier} badge.`;
-    else copy.textContent = `You earned a ${tier} badge. Keep showing up each day.`;
-  }
+  if (copy) copy.textContent = badgeCelebrationReason(badge);
   if (icon) {
     icon.className = `badge-medal-icon app-icon ${badgeIconClass(badge)}`;
   }
@@ -658,20 +518,15 @@ function showChallengeUnlockCelebration(challenges = []) {
     },
   };
 }
-function queueChallengeUnlockCelebration(challenges = [], delay = 0, owner = captureMutationOwner()) {
+function queueChallengeUnlockCelebration(challenges = [], owner = captureMutationOwner()) {
   if (!challenges.length || !isCurrentMutationOwner(owner)) return;
   const challengeKey = challenges.map((challenge) => challenge.key || challenge.id || challenge.title).sort().join(':');
-  const enqueue = () => {
-    if (!isCurrentMutationOwner(owner)) return;
-    enqueueCelebrationItems({
-      id: `challenge:${challengeKey}`,
-      kind: 'challenge',
-      challenges,
-      durationMs: BADGE_REVEAL_DURATION_MS,
-    });
-  };
-  if (delay > 0) window.setTimeout(enqueue, delay);
-  else enqueue();
+  enqueueCelebrationItems({
+    id: `challenge:${challengeKey}`,
+    kind: 'challenge',
+    challenges,
+    durationMs: BADGE_REVEAL_DURATION_MS,
+  });
 }
 let startDate = '';
 let challengeActivation = createChallengeActivationState('loading');
@@ -729,10 +584,34 @@ const restoreCelebrationFocus = () => {
     }
   }, 0);
 };
+const badgeCelebrationRecovery = createBadgeCelebrationRecovery({
+  claim: claimBadgeCelebrations,
+  acknowledge: acknowledgeBadgeCelebrations,
+  storage: localStorage,
+  sessionStorage,
+  isCurrentOwner: (owner) => isCurrentMutationOwner(owner),
+});
+const permanentRewardRecovery = createRewardCelebrationRecovery({
+  claim: claimRewardCelebrations,
+  acknowledge: acknowledgeRewardCelebrations,
+  storage: localStorage,
+  sessionStorage,
+  isCurrentOwner: (owner) => isCurrentMutationOwner(owner),
+});
 const presentCelebrationItem = (item) => {
   if (item.kind === 'reward') return showRewardToast(item.reward);
-  if (item.kind === 'badge') return showBadgeCelebration(item.badge);
+  if (item.kind === 'badge') {
+    const controller = showBadgeCelebration(item.badge);
+    return { ...controller, cleanup(reason) {
+      controller.cleanup?.(reason);
+      void badgeCelebrationRecovery.complete(item.badge, reason);
+    } };
+  }
   if (item.kind === 'challenge') return showChallengeUnlockCelebration(item.challenges);
+  if (item.kind === 'permanentReward') return presentPermanentRewardCelebration(item, {
+    dismiss: (reason) => celebrationSequence.dismissCurrent(reason),
+    complete: (reward, reason) => permanentRewardRecovery.complete(reward, reason),
+  });
   return {};
 };
 const celebrationSequence = createCelebrationQueue({
@@ -758,7 +637,7 @@ function queueCheckInCelebrations({ id, points = 0, earnedBadges = [], status = 
   }];
   badgesForCelebration(earnedBadges).forEach((badge) => {
     items.push({
-      id: `badge:${badge.key || badge.name || 'earned'}:${badge.earnedAt || badgeEarnedDate(badge) || 'unknown'}`,
+      id: `badge:${badge.awardId || `${badge.key}:${badge.scopeKey || 'lifetime'}`}`,
       kind: 'badge',
       badge,
       durationMs: BADGE_REVEAL_DURATION_MS,
@@ -768,7 +647,6 @@ function queueCheckInCelebrations({ id, points = 0, earnedBadges = [], status = 
 }
 async function refreshChallengeProgression({
   claimCelebrations = false,
-  celebrationDelay = 0,
   owner = captureMutationOwner(),
 } = {}) {
   if (!claimCelebrations) return [];
@@ -776,7 +654,7 @@ async function refreshChallengeProgression({
   try {
     const result = await claimChallengeUnlocks({ expectedUserId: owner.userId });
     if (!isCurrentMutationOwner(owner)) return [];
-    queueChallengeUnlockCelebration(result.claimedUnlocks, celebrationDelay, owner);
+    queueChallengeUnlockCelebration(result.claimedUnlocks, owner);
     return result.claimedUnlocks;
   } catch (error) {
     console.warn('Unable to claim challenge unlock celebrations', error);
@@ -1546,6 +1424,7 @@ async function handleDashboardAuthOwnerChange(nextUser, { force = false } = {}) 
       return;
     }
     await hydrateDashboardFromApi(nextOwner);
+    await recoverPendingCelebrations();
   } catch (error) {
     if (observedAuthOwner !== nextOwner) return;
     console.warn('Unable to rehydrate the dashboard after an account change', error);
@@ -1555,29 +1434,75 @@ async function handleDashboardAuthOwnerChange(nextUser, { force = false } = {}) 
   }
 }
 
-async function refreshGameSummary(previousBadgeKeys = new Set(), owner = captureMutationOwner()) {
+async function refreshGameSummary(owner = captureMutationOwner()) {
   if (!hasSupabaseAuth() || !owner) return [];
   const summary = await getGameSummary();
   if (!isCurrentMutationOwner(owner)) return [];
   gameStats = preserveBestStreaks(summary.gameStats, gameStats);
   badges = summary.badges || [];
-  return badges.filter((badge) => !previousBadgeKeys.has(badge.key));
+  return badges;
+}
+
+async function collectPendingBadgeCelebrations(owner = captureMutationOwner()) {
+  if (!owner || !isCurrentMutationOwner(owner)) return [];
+  try {
+    return await badgeCelebrationRecovery.collect(owner);
+  } catch {
+    // Committed awards remain unseen/leased for recovery; never infer awards
+    // from the capped dashboard summary or turn a posted check-in into failure.
+    return [];
+  }
+}
+
+function queuePendingBadgeCelebrations(earnedBadges) {
+  enqueueCelebrationItems(badgesForCelebration(earnedBadges).map((badge) => ({
+    id: `badge:${badge.awardId}`, kind: 'badge', badge, durationMs: BADGE_REVEAL_DURATION_MS,
+  })));
+}
+
+async function queuePermanentRewardAndChallengeCelebrations(owner, { recovery = false } = {}) {
+  if (!isCurrentMutationOwner(owner)) return;
+  const rewards = await permanentRewardRecovery.collect(owner, { recovery });
+  if (!isCurrentMutationOwner(owner)) return;
+  enqueueCelebrationItems(rewards);
+  // The challenge stage is appended only after reward delivery resolves. A
+  // failed reward lookup returns no items and cannot block challenge recovery.
+  if (canParticipateInChallenge()) await refreshChallengeProgression({ claimCelebrations: true, owner });
+}
+
+const pendingCelebrationRecoveries = new Map();
+function recoverPendingCelebrations() {
+  const owner = captureMutationOwner();
+  if (!owner || checkInSubmissionPending || document.hidden || navigator.onLine === false) return Promise.resolve();
+  const key = `${owner.userId}:${owner.epoch}`;
+  if (pendingCelebrationRecoveries.has(key)) return pendingCelebrationRecoveries.get(key);
+  const operation = (async () => {
+    const pendingBadges = await collectPendingBadgeCelebrations(owner);
+    if (!isCurrentMutationOwner(owner)) return;
+    queuePendingBadgeCelebrations(pendingBadges);
+    await queuePermanentRewardAndChallengeCelebrations(owner, { recovery: true });
+  })().finally(() => pendingCelebrationRecoveries.delete(key));
+  pendingCelebrationRecoveries.set(key, operation);
+  return operation;
 }
 
 function startDashboardForegroundRefresh() {
   const refreshIfVisible = () => {
-    if (document.hidden || !hasSupabaseAuth()) return;
-    void hydrateDashboardFromApi(observedAuthOwner);
+    if (document.hidden || navigator.onLine === false || checkInSubmissionPending || (!hasSupabaseAuth() && !localDemoMode)) return;
+    void hydrateDashboardFromApi(observedAuthOwner).then(() => recoverPendingCelebrations());
   };
   window.addEventListener('focus', refreshIfVisible);
   document.addEventListener('visibilitychange', refreshIfVisible);
+  // Recover remote-device grants while the page stays open and renew active
+  // delivery leases without polling hidden/offline pages.
+  const timer = window.setInterval(refreshIfVisible, 60_000);
+  window.addEventListener('pagehide', () => window.clearInterval(timer), { once: true });
 }
 
 async function recordDailyAppVisit() {
-  if (!hasSupabaseAuth() || !canParticipateInChallenge()) return;
+  if ((!hasSupabaseAuth() && !localDemoMode) || !canParticipateInChallenge()) return;
   const owner = captureMutationOwner();
   if (!owner) return;
-  const previousBadgeKeys = new Set(badges.map((badge) => badge.key));
   try {
     const visit = await recordAppVisit({ expectedUserId: owner.userId });
     if (!isCurrentMutationOwner(owner)) return;
@@ -1589,16 +1514,12 @@ async function recordDailyAppVisit() {
         bestAppStreak: visit.bestAppStreak,
       }, gameStats);
     }
-    await refreshGameSummary(previousBadgeKeys, owner);
+    if (hasSupabaseAuth()) await refreshGameSummary(owner);
     if (!isCurrentMutationOwner(owner)) return;
     render();
   } catch (error) {
     if (!isCurrentMutationOwner(owner)) return;
     console.warn('Unable to record daily app visit', error);
-  } finally {
-    if (isCurrentMutationOwner(owner) && canParticipateInChallenge()) {
-      await refreshChallengeProgression({ claimCelebrations: true, celebrationDelay: 450 });
-    }
   }
 }
 
@@ -1658,7 +1579,7 @@ window.addEventListener('online', () => {
   challengeStartFlow?.setOnline(true);
   setDashboardActivationStatus('Connection restored. Refreshing challenge activation…');
   render();
-  if (observedAuthOwner) void hydrateDashboardFromApi(observedAuthOwner);
+  if (observedAuthOwner) void hydrateDashboardFromApi(observedAuthOwner).then(() => recoverPendingCelebrations());
 });
 
 if (rewardBackdrop && rewardToast) {
@@ -1811,8 +1732,9 @@ window.addEventListener('storage', (event) => {
     'dominion:mockChallengeActivation',
     'dominion:mockChallengeStates',
     'dominion:mockChallengeThresholdsVersion',
+    'dominion:mockRewardEntitlements',
   ].includes(event.key)) {
-    void hydrateDashboardFromApi(observedAuthOwner);
+    void hydrateDashboardFromApi(observedAuthOwner).then(() => recoverPendingCelebrations());
     return;
   } else return;
 });
@@ -1865,7 +1787,6 @@ if (checkInButton) checkInButton.addEventListener('click', async () => {
   if (!canStartCheckInSubmission(lastCheckInSubmissionAt, submissionStartedAt, CHECK_IN_SUBMISSION_COOLDOWN_MS)) return;
   lastCheckInSubmissionAt = submissionStartedAt;
   let status = entry.completed.length === standards.length ? 'complete' : 'partial';
-  const previousBadgeKeys = new Set(badges.map((badge) => badge.key));
   let feedItem = {
     id: `local:${entry.date}:${submissionStartedAt}`,
     date: entry.date,
@@ -1918,8 +1839,8 @@ if (checkInButton) checkInButton.addEventListener('click', async () => {
       };
       markCheckInSubmitted(entry.date, submissionDay);
       setCheckInNotice(entry.date, 'Today’s check-in is posted. Come back tomorrow for the next challenge day.');
-      earnedBadges = (await refreshGameSummary(previousBadgeKeys, submissionOwner))
-        .filter((badge) => badgeEarnedDate(badge) === entry.date);
+      await refreshGameSummary(submissionOwner);
+      earnedBadges = await collectPendingBadgeCelebrations(submissionOwner);
     } else {
       if (!markCheckInSubmitted(entry.date, submissionDay)) throw createCheckInAlreadyCompleteError();
       submissionCommitted = true;
@@ -1938,7 +1859,10 @@ if (checkInButton) checkInButton.addEventListener('click', async () => {
       gameStats.challengePoints = (gameStats.challengePoints || 0) + points;
       gameStats.dailyStandardsPoints = (gameStats.dailyStandardsPoints || 0) + points;
       feedItem.pointsAwarded = points;
-      earnedBadges = awardLocalBadges(entry, status, nextStreak, submissionDay);
+      badges = await recordPreviewCheckInBadges({ ...entry, day: submissionDay,
+        createdAt: feedItem.createdAt, workoutDifficultySelections: selectedWorkoutDifficulty },
+      { expectedUserId: submissionOwner.userId });
+      earnedBadges = await collectPendingBadgeCelebrations(submissionOwner);
       if (simulatedPreviewPost) advanceCommittedPreviewPost(entry, submissionDay);
     }
 
@@ -1957,10 +1881,7 @@ if (checkInButton) checkInButton.addEventListener('click', async () => {
       earnedBadges,
       status,
     });
-    await refreshChallengeProgression({
-      claimCelebrations: true,
-      celebrationDelay: 0,
-    });
+    await queuePermanentRewardAndChallengeCelebrations(submissionOwner);
   } catch (error) {
     if (!isCurrentMutationOwner(submissionOwner)) return;
     console.warn('Unable to sync check-in', error);
@@ -2006,6 +1927,10 @@ async function bootDashboard() {
       void handleDashboardAuthOwnerChange(user);
     });
     window.addEventListener('pagehide', unsubscribeAuth, { once: true });
+    window.addEventListener('pagehide', () => invalidateDashboardOwner(''), { once: true });
+    window.addEventListener('pagehide', () => badgeCelebrationRecovery.release(), { once: true });
+    window.addEventListener('pagehide', () => permanentRewardRecovery.release(), { once: true });
+    window.addEventListener('pageshow', (event) => { if (event.persisted) window.location.reload(); });
 
     const billing = await getBillingState();
     if (!billing.authenticated) {
@@ -2021,10 +1946,8 @@ async function bootDashboard() {
   render();
   await hydrateDashboardFromApi(observedAuthOwner);
   render();
-  if (hasSupabaseAuth()) await recordDailyAppVisit();
-  else if (canParticipateInChallenge()) {
-    await refreshChallengeProgression({ claimCelebrations: true, celebrationDelay: 450 });
-  }
+  if (hasSupabaseAuth() || localDemoMode) await recordDailyAppVisit();
+  await recoverPendingCelebrations();
   startCountdownCard();
   startDashboardForegroundRefresh();
   requestAnimationFrame(() => initReveal());

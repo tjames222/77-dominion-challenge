@@ -101,8 +101,25 @@ jobs:
         run: pnpm run test:early-access-sql
       - name: Execute archived canary restart SQL in isolated PostgreSQL
         run: pnpm run test:production-canary-restart-sql
+      - name: Verify deterministic badge SQL and concurrent celebration claims
+        run: pnpm run test:deterministic-badges-sql
+      - name: Verify permanent reward delivery and acknowledgement boundaries
+        run: pnpm run test:reward-celebration-sql
+      - name: Verify site-admin authorization and recovery boundaries
+        run: pnpm run test:site-admin-foundation-sql
+      - name: Verify bounded site-admin account and audit reads
+        run: pnpm run test:site-admin-reads-sql
+      - name: Verify early-access review and denial boundaries
+        timeout-minutes: 5
+        run: pnpm run test:early-access-admin-sql
+      - name: Verify focused Daily Action SQL and canonical date boundaries
+        run: pnpm run test:daily-bootstrap-sql
       - name: Rebuild from the migration chain
         run: pnpm run supabase:reset
+      - name: Check local database security and performance advisors
+        run: supabase db advisors --local --type all --level info --fail-on error
+      - name: Lint canonical application SQL
+        run: supabase db lint --local --schema public,private --level warning --fail-on error
       - name: Prove migration SQL and history roll back together
         run: pnpm run test:migration-atomicity
       - name: Rehearse the production baseline reconciliation

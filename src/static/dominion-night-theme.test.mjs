@@ -154,12 +154,19 @@ test('theme-aware images use the extensible marker and approved Dark fallback', 
   assert.match(assetModule, /getAssetVariants\(theme\.id\)/);
   assert.doesNotMatch(assetModule, /theme\s*===\s*['"]dark['"]/);
 
-  for (const file of ['index.html', 'dashboard.html', 'science.html']) {
+  for (const file of ['dashboard.html', 'science.html']) {
     const html = await readFile(resolve(repoRoot, file), 'utf8');
     assert.match(html, /data-theme-asset/);
     assert.match(html, /data-theme-src-dark=/);
     assert.match(html, /data-theme-src-light=/);
   }
+  const landing = await readFile(resolve(repoRoot, 'index.html'), 'utf8');
+  const productCss = await readFile(resolve(repoRoot, 'src/assets/product.css'), 'utf8');
+  assert.match(landing, /<picture class="hero-artwork hero-artwork-dark">/);
+  assert.match(landing, /<picture class="hero-artwork hero-artwork-light">/);
+  assert.match(productCss, /:root\[data-theme="light"\] \.hero-artwork-dark\s*\{\s*display: none;/);
+  assert.match(productCss, /:root\[data-theme="light"\] \.hero-artwork-light\s*\{\s*display: block;/);
+  assert.doesNotMatch(productCss, /:root\[data-theme="dominion-(?:night|platinum)"\] \.hero-artwork-light/);
 });
 
 test('high-risk states include reduced-motion and forced-color protection', () => {

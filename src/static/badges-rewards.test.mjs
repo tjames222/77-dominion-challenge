@@ -239,8 +239,10 @@ describe('Badges & Rewards route integration', () => {
     assert.match(functionSource, /pagination did not advance/);
   });
 
-  it('claims one-time unlocks and keeps Start actions on the rewards page', () => {
-    assert.match(pageSource, /claimRewardEntitlementUnlocks\(\{ expectedUserId \}\)/);
+  it('leaves permanent celebration acknowledgement to Dashboard and keeps explicit Start actions', () => {
+    assert.doesNotMatch(pageSource, /claimRewardEntitlementUnlocks/);
+    assert.match(pageSource, /rewardKeyFromLocation\(window.location\)/);
+    assert.match(pageSource, /await openRewardDetail\(deepLinkKey, trigger\)/);
     assert.match(pageSource, /claimChallengeUnlocks\(\{ expectedUserId \}\)/);
     assert.match(rewardCardSource, /data-start-reward/);
     assert.match(pageSource, /await startChallenge\(pendingRewardKey, \{ expectedUserId \}\)/);

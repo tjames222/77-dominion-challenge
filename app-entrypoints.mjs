@@ -6,6 +6,7 @@ export const PRODUCTION_ENTRYPOINTS = Object.freeze({
   forgotPassword: 'forgot-password.html',
   resetPassword: 'reset-password.html',
   accountSecurity: 'account-security.html',
+  admin: 'admin.html',
   invite: 'invite.html',
   billing: 'billing.html',
   dashboard: 'dashboard.html',

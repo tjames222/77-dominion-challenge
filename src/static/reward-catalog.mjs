@@ -173,6 +173,8 @@ export function normalizeReward(reward = {}) {
     completedAt: reward.completedAt || reward.completed_at || null,
     ownedAt: reward.ownedAt || reward.owned_at || null,
     celebrationSeenAt: reward.celebrationSeenAt || reward.celebration_seen_at || null,
+    celebrationSourceType: reward.celebrationSourceType || '',
+    celebrationMilestonePoints: reward.celebrationMilestonePoints ?? null,
   };
 }
 
@@ -261,6 +263,8 @@ const normalizeOwnershipRecords = (records = []) => {
       key,
       ownedAt: record.ownedAt || record.owned_at || null,
       celebrationSeenAt: record.celebrationSeenAt || record.celebration_seen_at || null,
+      celebrationSourceType: record.celebrationSourceType || '',
+      celebrationMilestonePoints: record.celebrationMilestonePoints ?? null,
     });
   }
   return recordsByKey;
@@ -292,6 +296,8 @@ export function buildMockRewardCatalog({
         key,
         ownedAt: timestamp,
         celebrationSeenAt: null,
+        celebrationSourceType: 'point_threshold',
+        celebrationMilestonePoints: definition.pointsRequired,
       });
     }
   }
@@ -307,6 +313,8 @@ export function buildMockRewardCatalog({
       currentPoints,
       ownedAt: ownership?.ownedAt || null,
       celebrationSeenAt: ownership?.celebrationSeenAt || null,
+      celebrationSourceType: ownership?.celebrationSourceType || '',
+      celebrationMilestonePoints: ownership?.celebrationMilestonePoints ?? null,
     });
   });
   const items = [...ownershipItems, ...challengeCatalog.items]

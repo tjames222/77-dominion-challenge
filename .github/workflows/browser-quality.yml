@@ -21,7 +21,10 @@ jobs:
   browser-quality:
     name: Routes, accessibility, and visuals
     runs-on: ubuntu-latest
-    timeout-minutes: 35
+    # Run 35497182062 reached the final desktop visual projects at the old
+    # 45-minute cap. Keep all 1,152 tests and preflight matrices, with bounded
+    # headroom for the remaining themes and artifact upload on standard runners.
+    timeout-minutes: 60
     env:
       CI: true
       E2E_STRICT_THEME_BOOTSTRAP: ${{ vars.E2E_STRICT_THEME_BOOTSTRAP || 'false' }}
@@ -58,6 +61,12 @@ jobs:
 
       - name: MFA production-mode authentication regression
         run: pnpm test:e2e:mfa
+
+      - name: Verify production-built admin read boundaries
+        run: pnpm test:e2e:admin
+
+      - name: Verify focused production-built Daily Action reads
+        run: pnpm test:e2e:daily-bootstrap
 
       - name: Check committed visual baselines
         id: visual-baselines

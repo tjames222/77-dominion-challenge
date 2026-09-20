@@ -21,7 +21,8 @@ test('theme choices reconcile with an authenticated server preference on every r
   assert.match(hydration, /setThemeEntitlements[\s\S]*setTheme\(preferredTheme\)/);
   assert.match(profile, /const selectedTheme = setTheme\(themeId\)[\s\S]*await setThemePreference\(themeId, \{ expectedUserId: owner\.userId \}\)/);
   assert.match(profile, /setTheme\(previousTheme\)/);
-  assert.match(menu, /hydrateThemeEntitlementState\(\)/);
+  assert.match(menu, /void hydrateMenuTheme\(\)/);
+  assert.match(menu, /hydrateThemeEntitlementState\(\{ \.\.\.options, signal \}\)/);
 });
 
 test('logout clears the browser preference while mock server preferences stay user-scoped', async () => {

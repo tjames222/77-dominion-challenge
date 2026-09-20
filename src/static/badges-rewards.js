@@ -2,11 +2,10 @@ import { initReveal } from './reveal';
 import {
   claimRewardOffer,
   claimChallengeUnlocks,
-  claimRewardEntitlementUnlocks,
   downloadRewardAsset,
   getAllRewardCatalog,
   getBillingState,
-  getEarnedBadges,
+  getBadgeCollection,
   getLeaderboardPrestige,
   getLocalOrSessionUser,
   getRewardFulfillment,
@@ -22,7 +21,8 @@ import {
   rewardViewModel,
 } from './badges-rewards.mjs';
 import { renderGameProgress } from './game-progress.mjs';
-import { createBadgeGallery } from './badge-gallery.mjs';
+import { createBadgeCollection } from './badge-collection.mjs';
+import { rewardKeyFromLocation } from './reward-celebrations.mjs';
 import {
   buildFulfillmentDialogModel,
 } from './reward-fulfillment.mjs';
@@ -38,7 +38,7 @@ const LEADERBOARD_PRESTIGE_WINDOW = 'week';
 const rewardNextPanel = $('rewardNextPanel');
 const rewardsList = $('rewardsList');
 const badgesGallery = $('badgesGallery');
-const badgeGallery = badgesGallery ? createBadgeGallery(badgesGallery) : null;
+const badgeGallery = badgesGallery ? createBadgeCollection(badgesGallery) : null;
 const errorPanel = $('badgesRewardsError');
 const retryButton = $('badgesRewardsRetry');
 const tabs = Array.from(document.querySelectorAll('.badges-rewards-tab'));
@@ -49,6 +49,7 @@ const rewardDetailActions = $('rewardDetailActions');
 const rewardDetailFeedback = $('rewardDetailFeedback');
 let catalog = null;
 let earnedBadges = [];
+let badgeCollection = null;
 let pendingRewardKey = '';
 let loadRequestId = 0;
 let leaderboardPositions = {
@@ -164,7 +165,7 @@ function renderPage() {
     ? `${model.unlockedCount} of ${model.rewards.length} unlocked`
     : 'No rewards yet';
 
-  badgeGallery?.render(model.badges);
+  badgeGallery?.render({ collection: badgeCollection, awards: model.badges });
   const badgeSummary = $('badgesGallerySummary');
   if (badgeSummary) badgeSummary.textContent = model.badges.length
     ? `${model.badges.length} earned`
@@ -280,6 +281,7 @@ function dismissAndScrubRewardDetail({ restoreFocus = false } = {}) {
 function scrubAccountBoundPage() {
   catalog = null;
   earnedBadges = [];
+  badgeCollection = null;
   pendingRewardKey = '';
   dismissAndScrubRewardDetail();
   rewardsList?.replaceChildren();
@@ -482,7 +484,7 @@ async function loadBadgesAndRewards({ claimUnlocks = true } = {}) {
   setLoading();
   try {
     const [badgesResult, catalogResult, prestigeResult] = await Promise.allSettled([
-      getEarnedBadges({ expectedUserId }),
+      getBadgeCollection({ expectedUserId }),
       getAllRewardCatalog({ expectedUserId }),
       getLeaderboardPrestige({
         crewId: localStorage.getItem(ACTIVE_CREW_STORAGE_KEY),
@@ -493,7 +495,8 @@ async function loadBadgesAndRewards({ claimUnlocks = true } = {}) {
     if (badgesResult.status === 'rejected') throw badgesResult.reason;
     if (catalogResult.status === 'rejected') throw catalogResult.reason;
     if (requestId !== loadRequestId || pageActorId !== expectedUserId) return;
-    earnedBadges = badgesResult.value;
+    badgeCollection = badgesResult.value;
+    earnedBadges = badgeCollection.earnedBadges;
     catalog = catalogResult.value;
     if (prestigeResult.status === 'fulfilled') {
       leaderboardPositions = prestigeResult.value;
@@ -514,15 +517,13 @@ async function loadBadgesAndRewards({ claimUnlocks = true } = {}) {
     if (feedback) feedback.textContent = '';
     if (!claimUnlocks) return;
 
-    const [ownershipClaim, challengeClaim] = await Promise.allSettled([
-      claimRewardEntitlementUnlocks({ expectedUserId }),
+    // Viewing a collection is not a presentation acknowledgement. Permanent
+    // rewards remain unseen until their queued celebration is dismissed.
+    const [challengeClaim] = await Promise.allSettled([
       claimChallengeUnlocks({ expectedUserId }),
     ]);
     if (requestId !== loadRequestId || pageActorId !== expectedUserId) return;
     const unlocks = [];
-    if (ownershipClaim.status === 'fulfilled') {
-      unlocks.push(...ownershipClaim.value.claimedUnlocks);
-    }
     if (challengeClaim.status === 'fulfilled') {
       unlocks.push(...challengeClaim.value.claimedUnlocks);
     }
@@ -592,6 +593,7 @@ window.addEventListener('storage', (event) => {
   }
   if ([
     'dominion:badges',
+    'dominion:badgeState:v1',
     'dominion:gameStats',
     'dominion:mockChallengeStates',
     'dominion:mockRewardEntitlements',
@@ -643,7 +645,18 @@ async function bootBadgesAndRewards() {
     if (!user?.authenticated || user.userId !== pageActorId) invalidatePageActor(user);
   });
 
-  await loadBadgesAndRewards();
+  const deepLinkKey = rewardKeyFromLocation(window.location);
+  await loadBadgesAndRewards({ claimUnlocks: !deepLinkKey });
+  if (deepLinkKey && !actorInvalidated) {
+    activateTab(tabs.find((tab) => tab.dataset.tab === 'rewards-panel'));
+    const trigger = [...(rewardsList?.querySelectorAll('[data-view-reward]') || [])]
+      .find((button) => button.dataset.viewReward === deepLinkKey);
+    if (trigger) {
+      trigger.closest('[data-reward-key]')?.scrollIntoView({ block: 'center' });
+      trigger.focus({ preventScroll: true });
+      await openRewardDetail(deepLinkKey, trigger);
+    }
+  }
   requestAnimationFrame(() => initReveal());
 }
 

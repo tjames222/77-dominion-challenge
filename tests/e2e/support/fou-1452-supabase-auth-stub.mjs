@@ -1,5 +1,6 @@
 const AUTH_API_VERSION = '2024-01-01';
 const AUTH_FIXTURE_PATH = '/__fou_1452_supabase__/auth/v1';
+const ADMIN_CONTEXT_FIXTURE_PATH = '/__fou_1452_supabase__/rest/v1/rpc/get_site_admin_context';
 
 function uuidFor(sequence) {
   return `00000000-0000-4000-8000-${String(sequence).padStart(12, '0')}`;
@@ -99,6 +100,26 @@ export async function installFou1452SupabaseAuthStub(context) {
     expires_at: Math.floor(Date.now() / 1000) + 3600,
     refresh_token: stored.refreshToken,
     user: publicUser(stored.user),
+  });
+
+  // Hybrid previews use real Auth, so the shared menu asks for canonical admin
+  // readiness. This fixture grants no admin capability and covers only that
+  // one RPC; all other application APIs remain outside this Auth fixture.
+  await context.route(`**${ADMIN_CONTEXT_FIXTURE_PATH}`, async (route) => {
+    const request = route.request();
+    requests.push({ endpoint: '/rpc/get_site_admin_context', method: request.method(), url: request.url() });
+    const reply = (body, status = 200) => route.fulfill({ status, contentType: 'application/json',
+      headers: { 'Cache-Control': 'private, no-store', Pragma: 'no-cache' }, body: JSON.stringify(body) });
+    if (request.method() !== 'POST') return reply({ code: 'PGRST101', message: 'Invalid fixture RPC method.' }, 405);
+    const token = /^Bearer ([^\s]+)$/i.exec(request.headers().authorization || '')?.[1];
+    const stored = token ? sessionsByAccessToken.get(token) : null;
+    if (!stored?.active) return reply({ code: 'PT401', message: 'admin_authentication_required' }, 401);
+    let body;
+    try { body = request.postDataJSON(); } catch { return reply({ code: '22023', message: 'admin_invalid_input' }, 400); }
+    if (!body || typeof body !== 'object' || Array.isArray(body) || Object.keys(body).length !== 1
+      || typeof body.target_expected_actor_id !== 'string') return reply({ code: '22023', message: 'admin_invalid_input' }, 400);
+    if (body.target_expected_actor_id !== stored.user.id) return reply({ code: 'PT401', message: 'admin_authentication_required' }, 401);
+    return reply({ schemaVersion: 1, actorId: stored.user.id, role: 'member', adminReady: false });
   });
 
   await context.route(`**${AUTH_FIXTURE_PATH}/**`, async (route) => {

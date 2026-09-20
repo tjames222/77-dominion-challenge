@@ -345,14 +345,15 @@ on conflict (idempotency_key) do update set
 insert into public.user_badges (
   user_id,
   badge_key,
+  scope_key,
   earned_at,
   entry_date,
   metadata
 )
 values
-  ('10000000-0000-4000-8000-000000000001', 'faithful_start', '2026-07-01 12:00:00+00', '2026-07-01', '{"fixture":true}'),
-  ('20000000-0000-4000-8000-000000000002', 'honest_partial', '2026-07-02 12:00:00+00', '2026-07-02', '{"fixture":true}')
-on conflict (user_id, badge_key) do update set
+  ('10000000-0000-4000-8000-000000000001', 'faithful_start', 'lifetime', '2026-07-01 12:00:00+00', '2026-07-01', '{"fixture":true}'),
+  ('20000000-0000-4000-8000-000000000002', 'honest_partial', 'lifetime', '2026-07-02 12:00:00+00', '2026-07-02', '{"fixture":true}')
+on conflict (user_id, badge_key, scope_key) do update set
   earned_at = excluded.earned_at,
   entry_date = excluded.entry_date,
   metadata = excluded.metadata;

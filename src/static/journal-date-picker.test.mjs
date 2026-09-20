@@ -18,8 +18,15 @@ import {
   JOURNAL_CARD_TITLE,
   JOURNAL_FIELD_DEFINITIONS,
 } from './journal-fields.mjs';
+import * as dateContract from './journal-date-contract.mjs';
 
 describe('journal date contract', () => {
+  test('picker re-exports the same pure validators and constants used by the API', () => {
+    assert.equal(isJournalDateKey, dateContract.isJournalDateKey);
+    assert.equal(assertJournalDateAllowed, dateContract.assertJournalDateAllowed);
+    assert.equal(JOURNAL_FUTURE_DATE_CODE, dateContract.JOURNAL_FUTURE_DATE_CODE);
+    assert.equal(JOURNAL_FUTURE_DATE_MESSAGE, dateContract.JOURNAL_FUTURE_DATE_MESSAGE);
+  });
   test('validates real calendar dates without silently changing them', () => {
     assert.equal(isJournalDateKey('2028-02-29'), true);
     assert.equal(isJournalDateKey('2027-02-29'), false);

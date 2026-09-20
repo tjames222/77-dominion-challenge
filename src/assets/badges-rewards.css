@@ -523,6 +523,53 @@
 .badge-detail-date,
 .badge-detail-legacy { color: var(--text-muted); }
 
+.badge-collection,
+.badge-series { display: grid; gap: 24px; min-width: 0; }
+.badge-collection { gap: clamp(32px, 5vw, 48px); }
+.badge-series > h3 { margin: 0; color: var(--text); font-size: clamp(1.1rem, 3vw, 1.5rem); }
+.badge-collection-empty { margin: 0; color: var(--text-muted); line-height: 1.6; }
+.badge-requirements-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 280px), 1fr));
+  gap: 14px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.badge-requirement-card {
+  display: grid;
+  grid-template-columns: 40px minmax(0, 1fr);
+  align-items: start;
+  gap: 14px;
+  padding: 20px;
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  color: var(--text);
+  background: var(--surface);
+}
+.badge-requirement-symbol {
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  color: var(--text-muted);
+  background: var(--surface-elevated);
+}
+.badge-requirement-copy { display: grid; gap: 8px; min-width: 0; }
+.badge-requirement-copy :is(h4, p) { margin: 0; overflow-wrap: anywhere; }
+.badge-requirement-copy h4 { color: var(--text); font-size: 1rem; line-height: 1.3; }
+.badge-requirement-copy p { color: var(--text-muted); font-size: .87rem; line-height: 1.6; }
+.badge-requirement-status { color: var(--text-muted); font-size: .7rem; font-weight: 800; letter-spacing: .04em; }
+.badge-requirement-progress { height: 7px; overflow: hidden; border: 1px solid var(--border); border-radius: 999px; background: var(--surface-elevated); }
+.badge-requirement-progress > span { display: block; height: 100%; background: var(--accent-strong); }
+.badge-requirement-progress-label { color: var(--text-muted); font-size: .75rem; line-height: 1.5; }
+@media (forced-colors: active) {
+  .badge-requirement-card, .badge-requirement-symbol, .badge-requirement-progress { border-color: CanvasText; }
+  .badge-requirement-progress > span { background: Highlight; }
+}
+
 @media (min-width: 768px) {
   .badges-gallery { grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); }
 }
@@ -858,5 +905,16 @@
   .reward-next-progress > span,
   .reward-row-progress > span {
     transition: none;
+  }
+}
+
+@media (max-width: 460px) {
+  .badges-rewards-shell .game-level-progress-heading {
+    /* Both the placeholder and the actual points label use two stable rows. */
+    display: grid;
+  }
+
+  .badges-rewards-shell .game-momentum-message {
+    min-height: 2.9em;
   }
 }

@@ -13891,3 +13891,10 @@ revoke execute on function public.grant_sharing_reward_after_invite_redemption()
 \ir migrations/20260813193158_trusted_profile_photo_upload_pipeline.sql
 \ir migrations/20260824204444_enforce_journal_entry_dates.sql
 \ir migrations/20260913023402_early_access_request_intake.sql
+\ir migrations/20260913033347_deterministic_badge_pipeline.sql
+\ir migrations/20260913035046_durable_reward_celebrations.sql
+\ir migrations/20260913062841_site_admin_foundation.sql
+\ir migrations/20260913065057_site_admin_read_apis.sql
+\ir migrations/20260913072708_scoped_member_badge_pagination.sql
+\ir migrations/20260913075846_focused_daily_action_bootstrap.sql
+\ir migrations/20260913082358_early_access_admin_review.sql

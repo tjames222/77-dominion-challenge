@@ -9,11 +9,12 @@ const body = source.slice(source.indexOf('export async function clearAuthSession
   .replace('export async function', 'async function');
 const redirect = source.slice(source.indexOf('export function redirectToLogin('), source.indexOf('export function sanitizeReturnTo('))
   .replace('export function', 'function');
-function authFunctions(client, storage, window = { location: {} }) {
+function authFunctions(client, storage, window = { location: {} }, cancelled = []) {
   window.addEventListener ||= () => {};
-  return new Function('usesSupabaseAuthentication', 'supabase', 'isHybridAuthPreview', 'localStorage', 'MOCK_USER_ID_KEY', 'window',
+  return new Function('usesSupabaseAuthentication', 'supabase', 'isHybridAuthPreview', 'localStorage', 'MOCK_USER_ID_KEY', 'window', 'cancelAdminReads', 'inflightActorReads',
     `let logoutNavigationPending = false;${body};${redirect};return { clear: clearAuthSession, redirect: redirectToLogin };`)(
     () => true, client, () => false, storage, 'dominion:mockUserId', window,
+    () => cancelled.push('admin'), { invalidate() {} },
   );
 }
 
@@ -40,12 +41,15 @@ test('actual SDK provider outage preserves the session, rejects safely, and perm
   });
   try {
     assert.ok((await client.auth.getSession()).data.session);
-    const { clear } = authFunctions(client, storage);
+    const cancelled = [];
+    const { clear } = authFunctions(client, storage, undefined, cancelled);
     await assert.rejects(clear(), { message: MESSAGE });
+    assert.deepEqual(cancelled, ['admin']);
     assert.ok((await client.auth.getSession()).data.session, 'No false claim that the provider revoked the session');
     assert.equal(values.get('dominion:user'), 'synthetic identity');
     outage = false;
     await clear();
+    assert.deepEqual(cancelled, ['admin', 'admin']);
     assert.equal((await client.auth.getSession()).data.session, null);
     assert.equal(values.has('dominion:user'), false);
     assert.equal(values.has('dominion:theme'), false);

@@ -1,4 +1,4 @@
-import { createSiteTrainingCoachmark } from './site-training-coachmark.mjs';
+import { loadSiteTrainingUi } from './site-training-ui-loader.mjs';
 import {
   SITE_TRAINING_REGISTRY,
   siteTrainingPageForRoute,
@@ -40,7 +40,9 @@ export function createSiteTrainingRuntime({
   capabilities = {},
   api = null,
   document: ownerDocument = globalThis.document,
-  coachmarkFactory = createSiteTrainingCoachmark,
+  coachmarkFactory = null,
+  loadCoachmark = loadSiteTrainingUi,
+  beforeOpen = null,
   onStateChange = null,
   onTransition = async () => {},
 } = {}) {
@@ -59,6 +61,7 @@ export function createSiteTrainingRuntime({
   let destroyed = false;
   let pendingMutation = null;
   let coachmark = null;
+  let presentationGeneration = 0;
   let activeScope = 'page';
   let replayIndex = null;
   let resolvedApiPromise = null;
@@ -233,6 +236,7 @@ export function createSiteTrainingRuntime({
   };
 
   const ensureCoachmark = () => {
+    if (!coachmarkFactory) throw new Error('Load the training interface before opening it.');
     coachmark ||= coachmarkFactory({
       document: ownerDocument,
       onAction: (action) => replayIndex === null
@@ -240,6 +244,30 @@ export function createSiteTrainingRuntime({
         : performReplayAction(action),
     });
     return coachmark;
+  };
+
+  const assertPresentation = (capturedActorId, capturedGeneration, capturedPresentation) => {
+    assertCurrent(capturedActorId, capturedGeneration);
+    if (capturedPresentation !== presentationGeneration) {
+      const error = new Error('The training opening was cancelled. Try again when ready.');
+      error.code = 'SITE_TRAINING_OPEN_CANCELLED';
+      throw error;
+    }
+  };
+
+  const prepareCoachmark = async (capturedActorId, capturedGeneration, capturedPresentation) => {
+    const factory = coachmarkFactory || (await loadCoachmark()).createSiteTrainingCoachmark;
+    assertPresentation(capturedActorId, capturedGeneration, capturedPresentation);
+    coachmarkFactory ||= factory;
+  };
+
+  const openCoachmark = ({ trigger, replay }) => {
+    // Close a menu that was reopened while the UI chunk or mutation was pending,
+    // before creating a body layer or acquiring shared modal ownership.
+    const resolvedTrigger = typeof beforeOpen === 'function'
+      ? beforeOpen({ control: trigger, page }) || trigger
+      : trigger;
+    ensureCoachmark().open({ trigger: resolvedTrigger, replay });
   };
 
   const hydrate = async () => {
@@ -291,12 +319,14 @@ export function createSiteTrainingRuntime({
     const current = requireReadyState(trainingState, actorId, page);
     const capturedActorId = actorId;
     const capturedGeneration = generation;
+    const capturedPresentation = presentationGeneration;
     const mutation = {};
     pendingMutation = mutation;
     notifyStateChange();
     try {
+      await prepareCoachmark(capturedActorId, capturedGeneration, capturedPresentation);
       const service = await resolveApi();
-      assertCurrent(capturedActorId, capturedGeneration);
+      assertPresentation(capturedActorId, capturedGeneration, capturedPresentation);
       let result;
       try {
         result = await service.claimSiteTraining({
@@ -335,7 +365,8 @@ export function createSiteTrainingRuntime({
       if (result.page.status === 'completed' && normalizedScope === 'overall') {
         return result;
       }
-      ensureCoachmark().open({ trigger, replay: false });
+      if (capturedPresentation !== presentationGeneration) return result;
+      openCoachmark({ trigger, replay: false });
       renderLiveState();
       return result;
     } finally {
@@ -355,12 +386,14 @@ export function createSiteTrainingRuntime({
     }
     const capturedActorId = actorId;
     const capturedGeneration = generation;
+    const capturedPresentation = presentationGeneration;
     const mutation = {};
     pendingMutation = mutation;
     notifyStateChange();
     try {
+      await prepareCoachmark(capturedActorId, capturedGeneration, capturedPresentation);
       const service = await resolveApi();
-      assertCurrent(capturedActorId, capturedGeneration);
+      assertPresentation(capturedActorId, capturedGeneration, capturedPresentation);
       let result;
       try {
         result = await service.transitionSiteTraining({
@@ -400,8 +433,10 @@ export function createSiteTrainingRuntime({
       trainingState = result;
       activeScope = 'page';
       replayIndex = null;
-      ensureCoachmark().open({ trigger, replay: false });
-      renderLiveState();
+      if (capturedPresentation === presentationGeneration) {
+        openCoachmark({ trigger, replay: false });
+        renderLiveState();
+      }
       notifyStateChange();
       await notifyTransition(result);
       return result;
@@ -432,10 +467,14 @@ export function createSiteTrainingRuntime({
       });
     },
     hydrate,
+    prepare() { return prepareCoachmark(actorId, generation, presentationGeneration); },
     start(options = {}) { return claim('start', options); },
     resume(options = {}) { return claim('resume', options); },
-    open({ scope = 'page', trigger = ownerDocument?.activeElement } = {}) {
+    async open({ scope = 'page', trigger = ownerDocument?.activeElement } = {}) {
       if (!page) throw new Error('Page training is not published for this page.');
+      const captured = [actorId, generation, presentationGeneration];
+      await prepareCoachmark(...captured);
+      assertPresentation(...captured);
       const normalizedScope = scope === 'overall' ? 'overall' : 'page';
       const current = requireReadyState(trainingState, actorId, page);
       if (current.page.status !== 'in_progress') {
@@ -451,7 +490,7 @@ export function createSiteTrainingRuntime({
       }
       activeScope = normalizedScope;
       replayIndex = null;
-      ensureCoachmark().open({ trigger, replay: false });
+      openCoachmark({ trigger, replay: false });
       renderLiveState();
       notifyStateChange();
       return controller.snapshot;
@@ -471,19 +510,23 @@ export function createSiteTrainingRuntime({
       return performTransition('finish');
     },
     restart,
-    replay({ trigger = ownerDocument?.activeElement } = {}) {
+    async replay({ trigger = ownerDocument?.activeElement } = {}) {
+      const captured = [actorId, generation, presentationGeneration];
+      await prepareCoachmark(...captured);
+      assertPresentation(...captured);
       const current = requireReadyState(trainingState, actorId, page);
       if (!page || current.page.status !== 'completed') {
         throw new Error('Complete this page training before replaying it.');
       }
       activeScope = 'page';
       replayIndex = 0;
-      ensureCoachmark().open({ trigger, replay: true });
+      openCoachmark({ trigger, replay: true });
       renderIndex(replayIndex, { replay: true });
       notifyStateChange();
       return controller.snapshot;
     },
     dismiss({ restoreFocus = true } = {}) {
+      presentationGeneration += 1;
       replayIndex = null;
       const closed = coachmark?.close({ restoreFocus }) || false;
       notifyStateChange();
