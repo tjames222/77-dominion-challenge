@@ -97,7 +97,7 @@ test('actual production graph keeps MFA free of menu side effects and training s
     for (const name of ['reward-celebrations.mjs', 'celebration-delivery-token.mjs']) {
       assert.equal(modules.some(id => id.endsWith(`/src/static/${name}`)), entry === 'dashboard.html', `${entry} keeps reward delivery/recovery owned by Dashboard`);
     }
-    for (const name of ['badge-catalog.v1.json', 'badge-evaluation.mjs', 'badge-preview-state.mjs']) {
+    for (const name of ['badge-catalog.v1.json', 'badge-evaluation.mjs', 'badge-preview-state.mjs', 'preview-delivery-ledger.mjs']) {
       assert.ok(!modules.some(id => id.endsWith(`/${name}`)), `${entry} keeps preview badge evaluation optional`);
     }
   }

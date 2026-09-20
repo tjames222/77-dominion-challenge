@@ -129,10 +129,12 @@ test('shared runtime owns identity invalidation, never invalidates for ordinary 
 });
 
 test('actual collection cannot rebind an older earned snapshot after an actor/session round trip', async () => {
-  const source = api.slice(api.indexOf('export async function getBadgeCollection('), api.indexOf('\nasync function queryLeaderboard(')).replaceAll('export ', '');
+  const source = api.slice(api.indexOf('export async function getBadgeCollection('), api.indexOf('\nasync function queryLeaderboard(')).replaceAll('export ', '')
+    + api.slice(api.indexOf('async function readPreviewBadgeHistory('), api.indexOf('\nfunction previewRewardFulfillment('))
+    + api.slice(api.indexOf('function assertPreviewDeliveryOwner('), api.indexOf('\nasync function withPreviewDelivery('));
   for (const replacement of ['actor', 'session-round-trip']) {
     let currentOwner = { actorId: 'A', sessionIdentity: 'A:old', token: 'old', epoch: 0 };
-    let actorChecks = 0; let collectionReads = 0;
+    let actorChecks = 0; let collectionReads = 0; let snapshots = 0;
     const state = { schemaVersion: 1, awards: [{ key: 'faithful_start', name: 'Old-session award' }], checkIns: [], visits: [] };
     const boundary = createPreviewBadgeBoundary({
       captureOwner: async () => currentOwner,
@@ -142,22 +144,28 @@ test('actual collection cannot rebind an older earned snapshot after an actor/se
       }),
     });
     const context = {
-      isLocalDemoMode: () => true, requireHybridPreviewUser: async () => {},
+      isLocalDemoMode: () => true, usesSupabaseAuthentication: () => false,
+      get previewBadgeEpoch() { return currentOwner.epoch; },
       requireMockRewardActor: () => {
         actorChecks += 1;
-        if (actorChecks === 3) queueMicrotask(() => {
+        return currentOwner.actorId;
+      },
+      getPreviewBadgeBoundary: () => boundary, PREVIEW_BADGE_STATE_KEY: 'dominion:badgeState:v1',
+      readMockUserValue: key => {
+        if (key === 'dominion:badges') return [];
+        snapshots += 1;
+        queueMicrotask(() => {
           currentOwner = { actorId: replacement === 'actor' ? 'B' : 'A', sessionIdentity: replacement === 'actor' ? 'B:new' : 'A:new', token: 'new', epoch: 2 };
           state.awards = [];
         });
-        return 'A';
-      },
-      getPreviewBadgeBoundary: () => boundary, PREVIEW_BADGE_STATE_KEY: 'dominion:badgeState:v1',
-      readMockUserValue: () => state, mapBadge: value => ({ ...value }), normalizeEarnedBadges: value => value,
+        return state;
+      }, mapBadge: value => ({ ...value }), normalizeEarnedBadges: value => value,
       readMockChallengeActivation: () => ({ timeZone: 'UTC' }), dateKeyForTimeZone: () => '2026-02-14',
     };
     runInNewContext(source + '\nglobalThis.collection = getBadgeCollection;', context);
     await assert.rejects(context.collection({ expectedUserId: 'A' }), /account changed/);
-    assert.equal(actorChecks, 3, 'replacement runs immediately after the final earned-read actor check');
+    assert.equal(snapshots, 1, 'only one owner-bound award snapshot is read before the queued replacement');
+    assert.ok(actorChecks >= 2);
     assert.equal(collectionReads, 0, 'no collection facts read or mixed-session payload published');
   }
 });

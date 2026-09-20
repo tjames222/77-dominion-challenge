@@ -21,12 +21,12 @@ export function createPreviewBadgeBoundary({ captureOwner, requestLock,
       await verify(owner);
       // An async reader must recheck this original owner after its own awaits;
       // it must never start a fresh boundary around an older private snapshot.
-      if (!lock) return operation(runtime, () => verify(owner));
+      if (!lock) return operation(runtime, () => verify(owner), owner);
       return requestLock(`dominion:badges:${expectedUserId}`, async () => {
         await verify(owner);
         // Private reads, the existing synchronous reducer and its writes stay
         // together in this unchanged per-actor critical section.
-        return operation(runtime);
+        return operation(runtime, () => verify(owner), owner);
       });
     },
   };
