@@ -109,6 +109,7 @@ export default defineConfig({
         /admin-live\.spec\.mjs/,
         /daily-action-bootstrap-live\.spec\.mjs/,
         /admin-early-access-live\.spec\.mjs/,
+        /admin-roles-live\.spec\.mjs/,
       ],
       metadata: {
         breakpoint: 'desktop',

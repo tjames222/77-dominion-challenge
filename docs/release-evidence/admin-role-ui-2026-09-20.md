@@ -4,7 +4,8 @@ Base: `38378d1`. Branch: `epic/next-admin-role-controls-2026-09-20`.
 No push, merge, hosted access/role assignment, migration or deployment occurred.
 The frozen current release was not edited. This is one bounded FOU-1502 slice.
 
-Final local unit suite: **957/957 passed**. Synthetic production-built Admin suite:
+Final local unit suite after discovery-isolation follow-up: **960/960 passed**.
+Synthetic production-built Admin suite:
 **140/140 passed** (62 role-control cases and 78 existing Admin cases).
 Existing production-built MFA suite: **44/44 passed**. Early browser runs exposed
 incorrect test assertions for native option disabled state, the existing “Site
@@ -18,6 +19,14 @@ Synthetic screenshots remain outside the commit at
 `/tmp/77dc-admin-role-{admin-live-chromium|admin-live-webkit}-{light|dark|dominion-night|dominion-platinum|uncertain|uncertain-actions|receipt}.png`.
 The uncertain/receipt pair is produced by the exact-retry test; the phone dialog
 is scrollable, with a second uncertainty capture showing the retry actions.
+
+The role browser suite is explicitly excluded from the main mock-server
+configuration, alongside the two existing production-only Admin suites. Actual
+Playwright discovery remains **1,152 tests in 38 files** for the main configuration
+and **140 tests in 3 files** for the production-built Admin configuration.
+Three static configuration regressions verify the isolation for every main
+project and the Admin build/server flags; the focused config/role/read/early-access/
+build-graph run passed **50/50**. All prior exclusions remain unchanged.
 
 Independent review found and verified fixes for a list refresh incorrectly tied
 to a closed dialog, original-owner checks around read-only refresh, and an older
