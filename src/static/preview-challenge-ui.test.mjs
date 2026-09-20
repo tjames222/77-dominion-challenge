@@ -9,21 +9,22 @@ const dashboardJs = readFileSync(new URL('./dashboard.js', import.meta.url), 'ut
 const dailyStandardPageJs = readFileSync(new URL('./daily-standard-page.js', import.meta.url), 'utf8');
 
 describe('preview challenge controls', () => {
-  it('keeps the Profile switch hidden by default and gates it on local preview mode', () => {
-    assert.match(profileHtml, /id=["']profilePreviewTools["'][^>]*hidden/);
-    assert.match(profileHtml, /id=["']profilePreviewChallengeSwitch["'][^>]*role=["']switch["']/);
-    assert.match(profileJs, /profilePreviewTools\.hidden = !localPreviewMode/);
+  it('contains no Profile testing controls in production, preview, or local mode', () => {
+    // The shared document and controller have no controls to reveal in any
+    // environment; hiding a production-only switch is not sufficient.
+    for (const source of [profileHtml, profileJs]) {
+      assert.doesNotMatch(source, /profilePreview|resetPreviewChallenge|77-day test mode|Advance after every preview/i);
+    }
+    assert.match(profileHtml, /href="\.\/account-security\.html">Account security/);
+    assert.match(profileHtml, /id="profileChallengeStatus"/);
   });
 
-  it('disables partial preview resets until progress and rewards can be cleared together', () => {
-    assert.match(
-      profileHtml,
-      /id=["']resetPreviewChallengeButton["'][^>]*aria-label=["'][^"']*saved progress and rewards together\.[^"']*["'][^>]*disabled/,
-    );
-    assert.match(profileHtml, /title=["']A new full run must clear this preview account’s saved progress and rewards together\.["']/);
-    assert.match(profileJs, /resetPreviewChallengeButton\.disabled = true/);
-    assert.doesNotMatch(profileJs, /resetPreviewChallengeButton\?\.addEventListener\('click'/);
-    assert.doesNotMatch(profileJs, /Reset to test another full run/);
+  it('has no Profile handler, importer, or storage writer for simulated testing state', () => {
+    assert.doesNotMatch(profileJs, /preview-challenge\.mjs|preview-user-state\.mjs/);
+    assert.doesNotMatch(profileJs, /PREVIEW_CHALLENGE|PREVIEW_USER_STATE|previewChallenge|setPreviewChallengeEnabled|writePreviewUserValue/);
+    assert.doesNotMatch(profileJs, /dominion:previewChallengeSimulation|dominion:previewCheckInDates/);
+    assert.match(profileJs, /captureProfileOwner/);
+    assert.match(profileJs, /hydrateThemeEntitlementState/);
   });
 
   it('shares simulated action state across the Dashboard and dedicated Daily Standard pages', () => {
@@ -52,10 +53,11 @@ describe('preview challenge controls', () => {
     assert.doesNotMatch(celebrationBlock, /simulatedPreviewPost|suppressCelebration/);
     assert.match(celebrationBlock, /status === 'complete'\) launchConfetti\(\)/);
     assert.match(celebrationBlock, /queueCheckInCelebrations\(/);
-    assert.match(celebrationBlock, /refreshChallengeProgression\(/);
+    assert.match(celebrationBlock, /queuePermanentRewardAndChallengeCelebrations\(submissionOwner\)/);
     assert.match(dashboardJs, /item\.kind === 'reward'\) return showRewardToast\(item\.reward\)/);
-    assert.match(dashboardJs, /item\.kind === 'badge'\) return showBadgeCelebration\(item\.badge\)/);
-    assert.match(dashboardJs, /queueChallengeUnlockCelebration\(result\.claimedUnlocks, celebrationDelay, owner\)/);
+    assert.match(dashboardJs, /item\.kind === 'badge'[\s\S]*?const controller = showBadgeCelebration\(item\.badge\)/);
+    assert.match(dashboardJs, /acknowledgeBadgeCelebrations/);
+    assert.match(dashboardJs, /queueChallengeUnlockCelebration\(result\.claimedUnlocks, owner\)/);
     assert.match(dashboardJs, /claimChallengeUnlocks\(\{ expectedUserId: owner\.userId \}\)/);
   });
 });

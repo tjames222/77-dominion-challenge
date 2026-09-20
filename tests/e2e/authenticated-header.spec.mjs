@@ -25,8 +25,8 @@ async function logInAsPreviewAccount(page, user, { logOutFirst = true } = {}) {
 test('authenticated header allowlist covers every eligible production route', () => {
   const expectedEntries = authenticatedHeaderRoutes.map((route) => route.htmlEntry).sort();
   expect([...AUTHENTICATED_HEADER_ROUTES].sort()).toEqual(expectedEntries);
-  expect(PRODUCTION_ROUTES.filter((route) => route.sharedHeaderActions === false).map((route) => route.htmlEntry))
-    .toEqual(['account-security.html']);
+  expect(PRODUCTION_ROUTES.filter((route) => route.sharedHeaderActions === false).map((route) => route.htmlEntry).sort())
+    .toEqual(['account-security.html', 'admin.html']);
 });
 
 async function installHeaderHeightProbe(page) {
@@ -449,6 +449,7 @@ test('a fresh activation cannot claim another account’s ambiguous legacy previ
   await app.stable();
   const reloaded = await page.evaluate(async () => {
     const { readPreviewUserValue } = await import('/src/static/preview-user-state.mjs');
+    const { PREVIEW_BADGE_STATE_KEY } = await import('/src/static/badge-preview-state.mjs');
     const user = JSON.parse(localStorage.getItem('dominion:user') || '{}');
     const identityMap = JSON.parse(localStorage.getItem('dominion:mockUserIdsByIdentity') || '{}');
     const userId = identityMap[String(user.email || '').trim().toLowerCase()] || '';
@@ -461,13 +462,20 @@ test('a fresh activation cannot claim another account’s ambiguous legacy previ
       ),
       activationLegacyOwner: localStorage.getItem('dominion:mockChallengeActivationLegacyOwner'),
       previewLegacyOwner: localStorage.getItem('dominion:previewUserStateLegacyOwner'),
+      visitDates: readPreviewUserValue(localStorage, userId, PREVIEW_BADGE_STATE_KEY, { visits: [] }).visits.map((visit) => visit.localDate),
+      today: new Date().toISOString().slice(0, 10),
+      legacyStats: JSON.parse(localStorage.getItem('dominion:gameStats') || '{}'),
     };
   });
   expect(reloaded).toMatchObject({
-    stats: { totalPoints: 0, currentAppStreak: 0 },
+    // This account has now made its own first visit. The unrelated legacy
+    // nine-day streak and 77 points must remain unclaimed.
+    stats: { totalPoints: 0, currentAppStreak: 1 },
     activationLegacyOwner: null,
     previewLegacyOwner: null,
+    legacyStats: { totalPoints: 77, currentAppStreak: 9 },
   });
+  expect(reloaded.visitDates).toEqual([reloaded.today]);
 });
 
 test('authenticated header clears stale controls and composer state across account changes and actual logout', async ({ page, app }) => {

@@ -106,6 +106,9 @@ export default defineConfig({
         /fou-1452-hybrid-auth\.spec\.mjs/,
         /local-production-stack\.spec\.mjs/,
         /mfa-live-auth\.spec\.mjs/,
+        /admin-live\.spec\.mjs/,
+        /daily-action-bootstrap-live\.spec\.mjs/,
+        /admin-early-access-live\.spec\.mjs/,
       ],
       metadata: {
         breakpoint: 'desktop',
@@ -126,7 +129,28 @@ export default defineConfig({
     },
     {
       name: 'webkit-badge-gallery-mobile',
-      testMatch: /badge-gallery\.spec\.mjs/,
+      testMatch: /badge-(?:gallery|collection)\.spec\.mjs/,
+      metadata: { breakpoint: 'mobile', theme: 'dark', colorScheme: 'dark' },
+      use: { ...devices['iPhone 13'], browserName: 'webkit', viewport: { width: 390, height: 844 } },
+    },
+    {
+      name: 'webkit-admin-mobile',
+      testMatch: /admin-preview\.spec\.mjs/,
+      metadata: { breakpoint: 'mobile', theme: 'dark', colorScheme: 'dark' },
+      use: { ...devices['iPhone 13'], browserName: 'webkit', viewport: { width: 390, height: 844 } },
+    },
+    {
+      name: 'webkit-member-badges-mobile',
+      testMatch: /(?:scoped-member-badges|member-progress-profile)\.spec\.mjs/,
+      // Existing visual baselines are Chromium/Linux; retain all functional
+      // privacy/recovery coverage here without creating macOS snapshots.
+      grepInvert: /on-brand/,
+      metadata: { breakpoint: 'mobile', theme: 'dark', colorScheme: 'dark' },
+      use: { ...devices['iPhone 13'], browserName: 'webkit', viewport: { width: 390, height: 844 } },
+    },
+    {
+      name: 'webkit-frontend-performance-mobile',
+      testMatch: /frontend-performance\.spec\.mjs/,
       metadata: { breakpoint: 'mobile', theme: 'dark', colorScheme: 'dark' },
       use: { ...devices['iPhone 13'], browserName: 'webkit', viewport: { width: 390, height: 844 } },
     },
@@ -137,8 +161,14 @@ export default defineConfig({
       use: { ...devices['iPhone 13'], browserName: 'webkit', viewport: { width: 390, height: 844 } },
     },
     {
+      name: 'webkit-badges-mobile',
+      testMatch: /deterministic-badges\.spec\.mjs/,
+      metadata: { breakpoint: 'mobile', theme: 'dark', colorScheme: 'dark' },
+      use: { ...devices['iPhone 13'], browserName: 'webkit', viewport: { width: 390, height: 844 } },
+    },
+    {
       name: 'webkit-training-mobile',
-      testMatch: /(?:site-training-visibility|solo-first-run-training)\.spec\.mjs/,
+      testMatch: /(?:site-training-visibility|solo-first-run-training|menu-training-loading)\.spec\.mjs/,
       metadata: { breakpoint: 'mobile', theme: 'dark', colorScheme: 'dark' },
       use: { ...devices['iPhone 13'], browserName: 'webkit', viewport: { width: 390, height: 844 } },
     },
@@ -151,6 +181,12 @@ export default defineConfig({
     {
       name: 'webkit-early-access-mobile',
       testMatch: /early-access\.spec\.mjs/,
+      metadata: { breakpoint: 'mobile', theme: 'dark', colorScheme: 'dark' },
+      use: { ...devices['iPhone 13'], browserName: 'webkit', viewport: { width: 390, height: 844 } },
+    },
+    {
+      name: 'webkit-reward-celebrations-mobile',
+      testMatch: /reward-celebrations(?:-failure)?\.spec\.mjs/,
       metadata: { breakpoint: 'mobile', theme: 'dark', colorScheme: 'dark' },
       use: { ...devices['iPhone 13'], browserName: 'webkit', viewport: { width: 390, height: 844 } },
     },

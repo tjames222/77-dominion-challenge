@@ -7,11 +7,16 @@ import {
   MEMBER_PROGRESS_BADGE_PAGE_SIZE,
   MEMBER_PROGRESS_REVALIDATION_COOLDOWN_MS,
   MEMBER_PROGRESS_UNAVAILABLE,
+  MEMBER_BADGE_CURSOR_RESTART,
+  MEMBER_BADGE_CURSOR_RESTART_CODE,
   createMemberProgressRevalidationGate,
   createMemberProgressRequestGate,
   memberProgressRoleLabel,
   mergeMemberProgressBadgePage,
   mockLifetimeLevel,
+  mapMemberProgressRpcError,
+  normalizeMemberProgressCursor,
+  paginateMemberProgressBadges,
   normalizeMemberProgressBadge,
   normalizeMemberProgressProfile,
 } from './member-progress-profile.mjs';
@@ -48,6 +53,76 @@ function profile(overrides = {}) {
 }
 
 describe('member progress presentation contract', () => {
+  test('scoped awards retain UUID identity without private scope or provenance', () => {
+    const firstId = 'a1510000-0000-4000-8000-000000000001';
+    const secondId = 'a1510000-0000-4000-8000-000000000002';
+    const first = { ...profile().badges[0], awardId: firstId, scopeKey: 'lifetime', metadata: { secret: true } };
+    const second = { ...first, awardId: secondId, scopeKey: 'original77:2026-01-01' };
+    const merged = mergeMemberProgressBadgePage(profile({ badges: [first] }), profile({
+      badges: [first, second], hasMore: false, nextCursor: null,
+    }));
+    assert.deepEqual(merged.badges.map(badge => badge.awardId), [firstId, secondId]);
+    assert.deepEqual(Object.keys(merged.badges[0]).sort(), ['awardId', 'description', 'earnedAt', 'icon', 'key', 'name', 'tier']);
+    assert.deepEqual(mergeMemberProgressBadgePage(merged, merged).badges, merged.badges);
+  });
+
+  test('cursor preserves database microseconds and rejects malformed UUIDs', () => {
+    const cursor = { earnedAt: '2026-09-13T07:00:00.123456+00:00', badgeKey: 'seven_sealed', awardId: 'a1510000-0000-4000-8000-000000000001' };
+    assert.deepEqual(normalizeMemberProgressCursor(cursor), cursor);
+    assert.deepEqual(normalizeMemberProgressProfile(profile({ nextCursor: cursor })).nextCursor, cursor);
+    assert.equal(normalizeMemberProgressCursor({ ...cursor, awardId: 'not-an-id' }), null);
+    assert.equal(normalizeMemberProgressCursor({ ...cursor, earnedAt: null }), null);
+    assert.equal(normalizeMemberProgressCursor({ ...cursor, badgeKey: '' }), null);
+    assert.equal(normalizeMemberProgressCursor({ ...cursor, badgeKey: 42 }), null);
+    assert.equal(normalizeMemberProgressCursor({ ...cursor, awardId: [cursor.awardId] }), null);
+  });
+
+  test('preview follows UUID ties, permits unique legacy cursors, and restarts ambiguous or stale cursors', () => {
+    const badges = [3, 1, 2].map(n => ({ ...profile().badges[0], awardId: `a1510000-0000-4000-8000-00000000000${n}` }));
+    const first = paginateMemberProgressBadges(badges, null, 1);
+    const second = paginateMemberProgressBadges(badges, first.nextCursor, 1);
+    const third = paginateMemberProgressBadges(badges, second.nextCursor, 1);
+    assert.deepEqual([first, second, third].flatMap(p => p.badges.map(b => b.awardId)), [...badges].map(b => b.awardId).sort());
+    assert.equal(third.hasMore, false);
+    assert.equal(third.nextCursor, null);
+    const { awardId, ...legacy } = first.nextCursor;
+    assert.throws(() => paginateMemberProgressBadges(badges, legacy, 1), { code: MEMBER_BADGE_CURSOR_RESTART_CODE });
+    assert.throws(() => paginateMemberProgressBadges(badges.slice(0, 1), first.nextCursor, 1), { code: MEMBER_BADGE_CURSOR_RESTART_CODE });
+    assert.equal(paginateMemberProgressBadges([badges[1]], legacy, 1).badges.length, 0);
+  });
+
+  test('real API body forwards stable cursors and maps only the fixed server restart signal after actor verification', async () => {
+    const start = apiJs.indexOf('export async function getCrewMemberProgressProfile');
+    const end = apiJs.indexOf('export async function getOrCreateCrewInvite', start);
+    const source = apiJs.slice(start, end).replace('export async function', 'async function');
+    const cursor = { earnedAt: '2026-09-13T07:00:00.123456+00:00', badgeKey: 'seven_sealed', awardId: 'a1510000-0000-4000-8000-000000000001' };
+    const calls = [];
+    let response = { data: profile({ nextCursor: cursor }) };
+    const dependencies = {
+      MEMBER_PROGRESS_BADGE_PAGE_SIZE, MEMBER_PROGRESS_UNAVAILABLE, normalizeMemberProgressCursor,
+      normalizeMemberProgressProfile, mapMemberProgressRpcError,
+      isLocalDemoMode: () => false,
+      requireSupabase: () => ({ rpc: async (name, args) => { calls.push({ name, args }); return response; } }),
+      requireUser: async id => { calls.push(id); return { id: 'actor-a' }; },
+      canonicalProfilePhotoUrl: () => '', SUPABASE_ORIGIN: '', PROFILE_PHOTO_BUCKET: '',
+    };
+    const api = new Function(...Object.keys(dependencies), `${source}; return getCrewMemberProgressProfile;`)(...Object.values(dependencies));
+    const result = await api({ crewId: 'crew-a', userId: 'member-b', expectedUserId: 'actor-a', cursor, limit: 99 });
+    assert.deepEqual(result.nextCursor, cursor);
+    assert.deepEqual(calls, ['actor-a', {
+      name: 'get_crew_member_progress_profile', args: {
+        target_crew_id: 'crew-a', target_user_id: 'member-b', target_badge_cursor_earned_at: cursor.earnedAt,
+        target_badge_cursor_key: cursor.badgeKey, target_badge_limit: 24, target_badge_cursor_award_id: cursor.awardId,
+      },
+    }, 'actor-a']);
+    response = { error: { code: '22023', details: 'member_badge_cursor_restart_required', message: 'private SQL diagnostic' } };
+    await assert.rejects(api({ crewId: 'crew-a', userId: 'member-b' }), {
+      code: MEMBER_BADGE_CURSOR_RESTART_CODE, message: MEMBER_BADGE_CURSOR_RESTART,
+    });
+    const other = { code: '22023', details: 'other' };
+    assert.equal(mapMemberProgressRpcError(other), other);
+    assert.equal(calls.at(-1), 'actor-a');
+  });
   test('normalizes only minimum presentation fields and strips raw metadata', () => {
     const normalized = normalizeMemberProgressProfile({
       ...profile(),

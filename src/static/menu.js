@@ -2,6 +2,9 @@ import {
   clearAuthSession,
   getLocalOrSessionUser,
   subscribeToAuthStateChanges,
+  getSiteAdminContext,
+  getAdminSessionOwner,
+  subscribeToAdminInvalidation,
 } from './api';
 import {
   clearThemeEntitlementState,
@@ -11,14 +14,17 @@ import { initThemeState } from './theme-state';
 import { initThemeAssets } from './theme-assets';
 import { createAuthenticatedHeaderActions } from './shared-header-actions.js';
 import { shouldShowAuthenticatedHeaderActions } from './shared-header-state.mjs';
-import { closeShareComposer } from './share-composer.js';
+import { closeShareComposer } from './share-composer-loader.js';
 import {
   SOLO_TRAINING_LAUNCH_EVENT,
   SOLO_TRAINING_LAUNCH_STORAGE_KEY,
-  createSoloFirstRunTraining,
-} from './solo-first-run-training.mjs';
-import { createPageTrainingControls } from './page-training-controls.mjs';
+} from './challenge-start-flow.mjs';
+import { hasSiteTrainingRoute } from './site-training-contract.mjs';
+import { loadMenuTrainingControllers } from './menu-training-loader.mjs';
+import { createSiteTrainingLoadRecovery, TRAINING_RELOAD_LABEL, TRAINING_RELOAD_MESSAGE } from './site-training-load-recovery.mjs';
 import { RELEASE_GATES } from './release-gates.mjs';
+import { isAdminMenuReadRoute } from './admin-menu-route.mjs';
+import { authEntryTransition } from './auth-entry-transition.mjs';
 
 const topbar = document.querySelector('.topbar');
 const memberTabs = document.querySelector('[data-member-tabs]');
@@ -34,9 +40,50 @@ let menuHydrationRequest = 0;
 let globalMenuListenersBound = false;
 let soloFirstRunTraining = null;
 let pageTrainingControls = null;
+let trainingLoadRecovery = null;
 let menuButtonPlaceholder = null;
 let menuBackgroundObserver = null;
 const menuBackgroundState = new Map();
+let adminMenuRequest = 0;
+async function hydrateMenuTheme(options = {}, signal = authEntryTransition.capture()) {
+  if (!authEntryTransition.isCurrent(signal)) return;
+  try {
+    const { error } = await hydrateThemeEntitlementState({ ...options, signal });
+    if (error && !signal.aborted) console.warn('Unable to verify theme reward ownership', error);
+  } catch (error) {
+    if (!signal.aborted) console.warn('Unable to verify theme reward ownership', error);
+  }
+}
+authEntryTransition.subscribe(paused => { if (!paused) void hydrateMenuTheme(); });
+function removeAdminMenuItem() {
+  adminMenuRequest += 1;
+  document.querySelector('[data-admin-menu-item]')?.remove();
+}
+async function refreshAdminMenuItem() {
+  removeAdminMenuItem();
+  if (!isAdminMenuReadRoute(window.location.pathname)) return;
+  const request = adminMenuRequest; const hydration = menuHydrationRequest;
+  try {
+    // The shared menu must obey the existing login/MFA presentation gate before
+    // making even a readiness RPC. The direct Admin route handles its own
+    // explicit AAL1 readiness/challenge screen separately.
+    const user = await getLocalOrSessionUser();
+    if (request !== adminMenuRequest || hydration !== menuHydrationRequest || !user?.authenticated || !user.userId) return;
+    const owner = await getAdminSessionOwner();
+    // Only the synthetic adapter maps legacy mock IDs to in-memory UUIDs;
+    // production owners expose the canonical actor ID alone.
+    if (request !== adminMenuRequest || hydration !== menuHydrationRequest || (owner.mockUserId || owner.actorId) !== user.userId) return;
+    const context = await getSiteAdminContext({ expectedUserId: owner.actorId });
+    if (request !== adminMenuRequest || hydration !== menuHydrationRequest || !context.adminReady
+      || !context.permissions.some((permission) => ['users.read', 'audit.read', 'operations.read'].includes(permission))) return;
+    const nav = document.querySelector('.global-menu nav'); if (!nav) return;
+    const link = document.createElement('a'); link.href = './admin.html';
+    link.textContent = context.preview ? 'Admin (preview)' : 'Admin'; link.dataset.adminMenuItem = '';
+    link.addEventListener('click', closeMenu); nav.append(link);
+  } catch { if (request === adminMenuRequest) removeAdminMenuItem(); }
+}
+subscribeToAdminInvalidation(removeAdminMenuItem);
+window.addEventListener('pagehide', removeAdminMenuItem);
 
 const loggedInLinks = [
   ['Dashboard', './dashboard.html'],
@@ -184,6 +231,8 @@ function closeMenu() {
 }
 
 function destroyTrainingControllers() {
+  trainingLoadRecovery?.destroy();
+  trainingLoadRecovery = null;
   soloFirstRunTraining?.destroy();
   soloFirstRunTraining = null;
   pageTrainingControls?.destroy();
@@ -207,6 +256,7 @@ function refreshTrainingControllers({ hideWhileLoading = true } = {}) {
 function openMenu() {
   void refreshTrainingControllers();
   liftMenuButton(document.querySelector('.global-menu-button'));
+  void refreshAdminMenuItem();
   document.body.classList.add('menu-open');
   // Preserve a currently occupied desktop scrollbar gutter, but do not add a
   // new gutter to pages/browsers that had none before opening the drawer.
@@ -368,8 +418,8 @@ async function buildMenu() {
     <div class="global-menu-header">
       <div>
         <p class="eyebrow">Dominion</p>
-        <h2>${profileLabel}</h2>
-        <span>${profileSubtext}</span>
+        <h2 data-menu-profile-label></h2>
+        <span data-menu-profile-subtext></span>
       </div>
       <button class="global-menu-close" type="button" aria-label="Close menu">×</button>
     </div>
@@ -387,9 +437,12 @@ async function buildMenu() {
     ${isLoggedIn ? `
       <section class="global-menu-training-section" aria-label="Training" hidden>
         <p class="eyebrow">Training</p>
+        <p class="global-menu-training-load-status" role="status" hidden></p>
+        <button class="global-menu-training-load-recovery" type="button" hidden></button>
         <div class="global-menu-full-training" aria-label="Full-site Solo training">
           <span>Full-site Solo walkthrough</span>
           <button class="global-menu-training" type="button" hidden>Start Training</button>
+          <p class="global-menu-full-training-feedback" role="alert" aria-live="assertive" hidden></p>
         </div>
         <div class="global-menu-page-training" role="group" aria-label="This page" hidden>
           <span>This page</span>
@@ -406,6 +459,9 @@ async function buildMenu() {
   if (menuHadFocus && document.body.classList.contains('menu-open')) {
     focusWithoutScroll(menu.querySelector('.global-menu-links a'));
   }
+  // Names and email addresses are text, never markup—even on an admin page.
+  menu.querySelector('[data-menu-profile-label]').textContent = profileLabel;
+  menu.querySelector('[data-menu-profile-subtext]').textContent = profileSubtext;
 
   const trailingActions = topbar.querySelector('.topbar-trailing-actions');
   if (!document.body.classList.contains('menu-open')) (trailingActions || topbar).appendChild(button);
@@ -471,7 +527,42 @@ async function buildMenu() {
     sharedHeaderActions.destroy();
     sharedHeaderActions = null;
   }
-  if (isLoggedIn && nextOwner) {
+  // The regular navigation is already interactive before this optional graph
+  // loads. Public pages and visitors never download member training modules.
+  currentMenuOwner = nextOwner;
+  // Admin readiness is independent of the optional training graph. Start its
+  // existing actor-fenced refresh even if the import is delayed or fails.
+  void refreshAdminMenuItem();
+  if (isLoggedIn && nextOwner && hasSiteTrainingRoute(window.location?.pathname || '')) {
+    const section = menu.querySelector('.global-menu-training-section');
+    const loadStatus = menu.querySelector('.global-menu-training-load-status');
+    const recoveryButton = menu.querySelector('.global-menu-training-load-recovery');
+    section.hidden = false;
+    loadStatus.hidden = false;
+    loadStatus.textContent = 'Loading training…';
+    let controllers;
+    try {
+      controllers = await loadMenuTrainingControllers();
+    } catch (error) {
+      if (requestId !== menuHydrationRequest || currentMenuOwner !== nextOwner) return;
+      trainingLoadRecovery ||= createSiteTrainingLoadRecovery({ id: 'menu-training-load-recovery' });
+      trainingLoadRecovery.record(error);
+      loadStatus.textContent = TRAINING_RELOAD_MESSAGE;
+      recoveryButton.textContent = TRAINING_RELOAD_LABEL;
+      recoveryButton.hidden = false;
+      recoveryButton.addEventListener('click', () => {
+        const trigger = closeMenuForTraining();
+        trainingLoadRecovery?.open(trigger);
+      });
+      return;
+    }
+    // Auth/focus rehydration, logout, and pagehide can happen during import.
+    // Old continuations may cache public code but must not create actor-owned
+    // controllers, make reads, attach controls, or auto-open a walkthrough.
+    if (requestId !== menuHydrationRequest || currentMenuOwner !== nextOwner) return;
+    loadStatus.hidden = true;
+    section.hidden = true;
+    const { createPageTrainingControls, createSoloFirstRunTraining } = controllers;
     let pageTrainingRefresh = null;
     if (!pageTrainingControls) {
       const nextPageTraining = createPageTrainingControls({
@@ -497,16 +588,21 @@ async function buildMenu() {
       if (nextTraining.available) {
         soloFirstRunTraining = nextTraining;
         currentTrainingOwner = nextOwner;
-        void Promise.resolve(pageTrainingRefresh)
-          .then(() => soloFirstRunTraining?.refresh());
+        const training = soloFirstRunTraining;
+        void Promise.resolve(pageTrainingRefresh).then(() => {
+          if (training === soloFirstRunTraining && currentMenuOwner === nextOwner) return training.refresh();
+        });
       } else {
         nextTraining.destroy();
       }
     } else {
-      void Promise.resolve(pageTrainingRefresh).then(() => soloFirstRunTraining?.refresh({
-        autoOpen: false,
-        consumeHandoff: false,
-      }));
+      const training = soloFirstRunTraining;
+      void Promise.resolve(pageTrainingRefresh).then(() => {
+        if (training === soloFirstRunTraining && currentMenuOwner === nextOwner) return training.refresh({
+          autoOpen: false,
+          consumeHandoff: false,
+        });
+      });
     }
     pageTrainingControls?.attachControls({
       section: menu.querySelector('.global-menu-training-section'),
@@ -515,23 +611,23 @@ async function buildMenu() {
       restart: menu.querySelector('.global-menu-page-training-restart'),
       feedback: menu.querySelector('.global-menu-page-training-feedback'),
     });
-    soloFirstRunTraining?.attachControl(menu.querySelector('.global-menu-training'));
+    soloFirstRunTraining?.attachControl(menu.querySelector('.global-menu-training'), {
+      feedback: menu.querySelector('.global-menu-full-training-feedback'),
+    });
   } else {
     destroyTrainingControllers();
   }
-  currentMenuOwner = nextOwner;
 }
 
 initThemeState();
 initThemeAssets();
-hydrateThemeEntitlementState().then(({ error }) => {
-  if (error) console.warn('Unable to verify theme reward ownership', error);
-});
+void hydrateMenuTheme();
 initScrollResponsiveTopbar();
 initTopbarStickyOffset();
 buildMenu();
 
 subscribeToAuthStateChanges(({ event, user }) => {
+  removeAdminMenuItem();
   const nextOwner = user?.authenticated ? String(user?.userId || user?.email || '') : '';
   const ownerChanged = event === 'SIGNED_OUT' || nextOwner !== currentMenuOwner;
   menuHydrationRequest += 1;
@@ -545,12 +641,11 @@ subscribeToAuthStateChanges(({ event, user }) => {
     closeMenu();
   }
 
+  const themeSignal = authEntryTransition.capture();
   window.setTimeout(() => {
     void buildMenu();
     if (ownerChanged || event === 'USER_UPDATED') {
-      void hydrateThemeEntitlementState({ expectedUserId: nextOwner }).then(({ error }) => {
-        if (error) console.warn('Unable to verify theme reward ownership', error);
-      });
+      void hydrateMenuTheme({ expectedUserId: nextOwner }, themeSignal);
     }
   }, 0);
 });
@@ -565,11 +660,12 @@ window.addEventListener('storage', (event) => {
     currentMenuOwner = '';
     clearThemeEntitlementState();
     closeMenu();
+    const themeSignal = authEntryTransition.capture();
     void buildMenu().then(async () => {
+      if (!authEntryTransition.isCurrent(themeSignal)) return;
       const user = await getLocalOrSessionUser();
       if (!user?.authenticated || !user.userId) return;
-      const result = await hydrateThemeEntitlementState({ expectedUserId: user.userId });
-      if (result.error) console.warn('Unable to verify theme reward ownership', result.error);
+      await hydrateMenuTheme({ expectedUserId: user.userId }, themeSignal);
     });
     return;
   }
@@ -625,7 +721,19 @@ window.addEventListener('focus', () => {
   void buildMenu();
 });
 
-window.addEventListener('pagehide', closeMenu);
+window.addEventListener('pagehide', () => {
+  authEntryTransition.suspend();
+  menuHydrationRequest += 1;
+  destroyTrainingControllers();
+  closeMenu();
+});
+
+window.addEventListener('pageshow', (event) => {
+  if (event.persisted) {
+    authEntryTransition.restore();
+    void buildMenu();
+  }
+});
 
 document.addEventListener('visibilitychange', () => {
   if (!document.hidden) void buildMenu();

@@ -1,11 +1,12 @@
 import {
   getBillingState,
   getChallengeActivation,
+  getDailyActionBootstrap,
   getDailyStandardDraft,
-  getDashboard,
   getLocalOrSessionUser,
   hasSupabaseAuth,
   isLocalDemoMode,
+  invalidateDailyActionBootstrap,
   mutateDailyStandardDraft,
   redirectToLogin,
   setDailyStandardWorkoutDifficulty,
@@ -68,6 +69,42 @@ let activationRefreshPending = false;
 let observedAuthOwner = '';
 let hydratedAuthOwner = '';
 let authOwnerEpoch = 0;
+let observedAuthSession = '';
+let loadRetryButton = null;
+let unsubscribeDailyAuth = null;
+let dailyAuthReview = 0;
+
+function observeDailyAuth() {
+  unsubscribeDailyAuth?.();
+  observedAuthSession = '';
+  unsubscribeDailyAuth = subscribeToAuthStateChanges(({ event, user, sessionIdentity }) => {
+    const review = ++dailyAuthReview;
+    const nextSession = String(sessionIdentity || '');
+    const sessionChanged = Boolean(observedAuthSession && observedAuthSession !== nextSession);
+    observedAuthSession = nextSession;
+    const nextOwner = String(user?.userId || '');
+    if (!nextOwner || nextOwner !== observedAuthOwner || sessionChanged || event === 'USER_UPDATED') {
+      void handleDailyStandardAuthOwnerChange(user, { force: sessionChanged || event === 'USER_UPDATED' });
+      return;
+    }
+    if (!['SIGNED_IN', 'TOKEN_REFRESHED', 'MFA_CHALLENGE_VERIFIED'].includes(event)) return;
+    const ownerEpoch = authOwnerEpoch;
+    // Never call or await Auth inside its synchronous notification callback.
+    // A normal same-session refresh keeps its current UI and pending data read;
+    // a required MFA challenge clears them before redirecting.
+    setTimeout(() => {
+      const current = () => review === dailyAuthReview && ownerEpoch === authOwnerEpoch
+        && nextOwner === observedAuthOwner && nextSession === observedAuthSession;
+      if (!current()) return;
+      void getLocalOrSessionUser().then((verifiedUser) => {
+        if (!current()) return;
+        if (verifiedUser?.userId !== nextOwner) void handleDailyStandardAuthOwnerChange(verifiedUser, { force: true });
+      }).catch(() => {
+        if (current()) void handleDailyStandardAuthOwnerChange(null, { force: true });
+      });
+    }, 0);
+  });
+}
 
 const hasHydratedAuthOwner = () => Boolean(
   hydratedAuthOwner && hydratedAuthOwner === observedAuthOwner,
@@ -446,6 +483,7 @@ function render() {
   }
   if (handoff) handoff.hidden = draft.completed.length !== 7;
   root.setAttribute('aria-busy', String(loading || saving));
+  if (loadRetryButton) loadRetryButton.hidden = !errorMessage || interactiveReady || loading || saving;
   syncPhysicalContent();
 }
 
@@ -513,33 +551,25 @@ async function hydrate(expectedOwnerId = observedAuthOwner) {
     let nextDate = entryDate;
     let nextDraft;
     let nextActivation;
-    let dashboardOwner;
+    let snapshotOwner;
     if (hasSupabaseAuth()) {
-      const dashboard = await getDashboard();
-      dashboardOwner = String(dashboard?.profile?.userId || '');
-      if (!dashboardOwner) throw new Error('We couldn’t verify the account for this Daily Action.');
-      if ((requestedOwner && requestedOwner !== dashboardOwner)
-        || (observedAuthOwner && observedAuthOwner !== dashboardOwner)) return;
-      nextActivation = dashboard?.activation || createChallengeActivationState('error');
-      const timeZone = nextActivation.timeZone || dashboard?.profile?.timeZone || browserTimeZone;
-      nextDate = dateKeyForTimeZone(new Date(), timeZone);
-      nextDraft = nextActivation.canMutateDailyStandards
-        ? await getDailyStandardDraft(nextDate, { expectedUserId: dashboardOwner })
-        : normalizeDailyStandardDraft({
-            entry_date: nextDate,
-            locked: true,
-            lock_reason: nextActivation.status === 'scheduled'
-              ? 'challenge_scheduled'
-              : 'challenge_not_active',
-            activation_status: nextActivation.status,
-          });
+      const snapshot = await getDailyActionBootstrap({ expectedUserId: requestedOwner, timeZone: browserTimeZone });
+      snapshotOwner = snapshot.actorId;
+      if (requestId !== hydrationRequestId || observedAuthOwner !== snapshotOwner) return;
+      if (!snapshot.appAccess) {
+        window.location.href = './billing.html?intent=subscription';
+        return;
+      }
+      nextActivation = snapshot.activation;
+      nextDate = snapshot.entryDate;
+      nextDraft = snapshot.draft;
     } else {
       const currentUser = await getLocalOrSessionUser();
-      dashboardOwner = String(currentUser?.userId || '');
-      if (!dashboardOwner) throw new Error('You need to log in again.');
-      if ((requestedOwner && requestedOwner !== dashboardOwner)
-        || (observedAuthOwner && observedAuthOwner !== dashboardOwner)) return;
-      const activation = await getChallengeActivation({ expectedUserId: dashboardOwner });
+      snapshotOwner = String(currentUser?.userId || '');
+      if (!snapshotOwner) throw new Error('You need to log in again.');
+      if ((requestedOwner && requestedOwner !== snapshotOwner)
+        || (observedAuthOwner && observedAuthOwner !== snapshotOwner)) return;
+      const activation = await getChallengeActivation({ expectedUserId: snapshotOwner });
       const localState = readLocalDraft(
         activation,
         currentUser,
@@ -550,15 +580,16 @@ async function hydrate(expectedOwnerId = observedAuthOwner) {
     }
     if (requestId !== hydrationRequestId
       || saving
-      || (observedAuthOwner && observedAuthOwner !== dashboardOwner)) return;
-    observedAuthOwner ||= dashboardOwner;
-    hydratedAuthOwner = dashboardOwner;
+      || (observedAuthOwner && observedAuthOwner !== snapshotOwner)) return;
+    observedAuthOwner ||= snapshotOwner;
+    hydratedAuthOwner = snapshotOwner;
     challengeActivation = nextActivation;
     entryDate = nextDate;
     draft = nextDraft;
     interactiveReady = true;
   } catch (error) {
     if (requestId !== hydrationRequestId) return;
+    if (error?.code === 'DAILY_ACTION_SIGNED_OUT') { redirectToLogin(); return; }
     hydratedAuthOwner = '';
     entryDate = dateKeyForTimeZone(new Date(), browserTimeZone);
     draft = normalizeDailyStandardDraft({ entry_date: entryDate });
@@ -576,6 +607,7 @@ async function hydrate(expectedOwnerId = observedAuthOwner) {
 }
 
 function invalidateDailyStandardOwner(nextOwner = '') {
+  invalidateDailyActionBootstrap();
   authOwnerEpoch += 1;
   hydrationRequestId += 1;
   observedAuthOwner = String(nextOwner || '');
@@ -598,25 +630,31 @@ async function handleDailyStandardAuthOwnerChange(nextUser, { force = false } = 
   const nextOwner = String(nextUser?.userId || '');
   if (!force && nextOwner && nextOwner === observedAuthOwner) return;
   invalidateDailyStandardOwner(nextOwner);
+  const ownerEpoch = authOwnerEpoch;
   if (!nextOwner) {
     redirectToLogin();
     return;
   }
 
   try {
-    const billing = await getBillingState();
-    if (observedAuthOwner !== nextOwner) return;
-    if (!billing.authenticated) {
+    // A SIGNED_IN notification can carry an enrolled AAL1 session. Resolve the
+    // existing MFA presentation gate outside the synchronous Auth callback.
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    if (ownerEpoch !== authOwnerEpoch || observedAuthOwner !== nextOwner) return;
+    const verifiedUser = await getLocalOrSessionUser();
+    if (ownerEpoch !== authOwnerEpoch || observedAuthOwner !== nextOwner) return;
+    if (verifiedUser?.userId !== nextOwner) {
       redirectToLogin();
       return;
     }
-    if (!billing.appAccess) {
-      window.location.href = './billing.html?intent=subscription';
-      return;
+    if (!hasSupabaseAuth()) {
+      const billing = await getBillingState();
+      if (ownerEpoch !== authOwnerEpoch || observedAuthOwner !== nextOwner) return;
+      if (!billing.appAccess) { window.location.href = './billing.html?intent=subscription'; return; }
     }
     await hydrate(nextOwner);
   } catch (error) {
-    if (observedAuthOwner !== nextOwner) return;
+    if (ownerEpoch !== authOwnerEpoch || observedAuthOwner !== nextOwner) return;
     loading = false;
     challengeActivation = createChallengeActivationState('error');
     errorMessage = error?.message || 'Unable to reload this action after the account changed.';
@@ -678,6 +716,7 @@ async function toggleCompletion() {
 }
 
 function refreshAfterChallengeActivationEvent(event) {
+  invalidateDailyActionBootstrap();
   const nextActivation = event.detail?.activation;
   challengeActivation = nextActivation?.contractValid && nextActivation.readState === 'ready'
     ? nextActivation
@@ -703,24 +742,37 @@ async function boot() {
     return;
   }
   invalidateDailyStandardOwner(currentUser.userId);
-  const unsubscribeAuth = subscribeToAuthStateChanges(({ user }) => {
-    void handleDailyStandardAuthOwnerChange(user);
+  observeDailyAuth();
+  window.addEventListener('pagehide', () => {
+    unsubscribeDailyAuth?.();
+    unsubscribeDailyAuth = null;
+    invalidateDailyStandardOwner('');
   });
-  window.addEventListener('pagehide', unsubscribeAuth, { once: true });
+  window.addEventListener('pageshow', (event) => {
+    if (!event.persisted) return;
+    observeDailyAuth();
+    void getLocalOrSessionUser().then((user) => handleDailyStandardAuthOwnerChange(user, { force: true }))
+      .catch(() => redirectToLogin());
+  });
 
-  const billing = await getBillingState();
-  if (!billing.authenticated) {
-    redirectToLogin();
-    return;
+  if (!hasSupabaseAuth()) {
+    const billing = await getBillingState();
+    if (!billing.authenticated) { redirectToLogin(); return; }
+    if (!billing.appAccess) { window.location.href = './billing.html?intent=subscription'; return; }
   }
-  if (!billing.appAccess) {
-    window.location.href = './billing.html?intent=subscription';
-    return;
-  }
+  loadRetryButton = document.createElement('button');
+  loadRetryButton.id = 'actionLoadRetry';
+  loadRetryButton.type = 'button';
+  loadRetryButton.className = 'action-secondary-button';
+  loadRetryButton.textContent = 'Try loading again';
+  loadRetryButton.hidden = true;
+  loadRetryButton.addEventListener('click', () => { void hydrate(observedAuthOwner); });
+  document.getElementById('actionPageStatus')?.after(loadRetryButton);
   document.getElementById('actionCompletionToggle')?.addEventListener('click', toggleCompletion);
   window.addEventListener('dominion:challenge-start-date-updated', refreshAfterChallengeActivationEvent);
   window.addEventListener('focus', () => { if (!document.hidden) hydrate(); });
   document.addEventListener('visibilitychange', () => { if (!document.hidden) hydrate(); });
+  window.addEventListener('online', () => { if (!document.hidden) hydrate(); });
   window.addEventListener('storage', (event) => {
     if (event.key === 'dominion:user' && localDemoMode) {
       invalidateDailyStandardOwner('');

@@ -15,6 +15,8 @@ const playwrightConfig = readFileSync(
   'utf8',
 );
 const mfaPlaywrightConfig = readFileSync(new URL('../../playwright.mfa.config.mjs', import.meta.url), 'utf8');
+const dailyBootstrapConfig = readFileSync(new URL('../../playwright.daily-bootstrap.config.mjs', import.meta.url), 'utf8');
+const ciWorkflow = readFileSync(new URL('../../.github/workflows/ci.yml', import.meta.url), 'utf8');
 const deployWorkflow = readFileSync(
   new URL('../../.github/workflows/deploy.yml', import.meta.url),
   'utf8',
@@ -27,6 +29,7 @@ const stylesCss = readFileSync(
   new URL('../assets/styles.css', import.meta.url),
   'utf8',
 );
+const fontFacesCss = readFileSync(new URL('../assets/fonts/inter-fonts.css', import.meta.url), 'utf8');
 const shareComposerCss = readFileSync(
   new URL('../assets/share-composer.css', import.meta.url),
   'utf8',
@@ -60,6 +63,8 @@ test('manual baseline generation forcibly rewrites every screenshot', () => {
 
 test('required browser CI includes production-mode MFA with only a local synthetic provider', () => {
   assert.equal(packageJson.scripts['test:e2e:mfa'], 'playwright test --config=playwright.mfa.config.mjs');
+  assert.equal(packageJson.scripts['test:e2e:admin'], 'playwright test --config=playwright.admin.config.mjs');
+  assert.match(workflow, /- name: Verify production-built admin read boundaries\n\s+run: pnpm test:e2e:admin/);
   assert.match(workflow, /- name: Hybrid dev authentication regression\n\s+run: pnpm test:e2e:auth\n\n\s+- name: MFA production-mode authentication regression\n\s+run: pnpm test:e2e:mfa/);
   assert.match(playwrightConfig, /\/mfa-live-auth\\\.spec\\\.mjs\//);
   assert.match(mfaPlaywrightConfig, /VITE_ENABLE_MOCKS: 'false', VITE_ENABLE_PRODUCTION_CONNECTIONS: 'true'/);
@@ -67,6 +72,18 @@ test('required browser CI includes production-mode MFA with only a local synthet
   assert.match(mfaPlaywrightConfig, /const baseURL = `http:\/\/127\.0\.0\.1:\$\{port\}`/);
   assert.doesNotMatch(mfaPlaywrightConfig, /supabase\.co|SUPABASE_ACCESS_TOKEN|SERVICE_ROLE_KEY|CLOUDFLARE_API_TOKEN/);
   assert.match(mfaPlaywrightConfig, /outputFolder: 'playwright-report'/);
+});
+
+test('Daily Action bootstrap gates use production wiring with only synthetic local data', () => {
+  assert.equal(packageJson.scripts['test:e2e:daily-bootstrap'], 'playwright test --config=playwright.daily-bootstrap.config.mjs');
+  assert.equal(packageJson.scripts['test:daily-bootstrap-sql'], 'node --test scripts/daily-action-bootstrap.sql.test.mjs');
+  assert.match(workflow, /- name: Verify focused production-built Daily Action reads\n\s+run: pnpm test:e2e:daily-bootstrap/);
+  assert.match(ciWorkflow, /- name: Verify focused Daily Action SQL and canonical date boundaries\n\s+run: pnpm run test:daily-bootstrap-sql/);
+  assert.match(playwrightConfig, /\/daily-action-bootstrap-live\\\.spec\\\.mjs\//);
+  assert.match(dailyBootstrapConfig, /VITE_ENABLE_MOCKS: 'false', VITE_ENABLE_PRODUCTION_CONNECTIONS: 'true'/);
+  assert.match(dailyBootstrapConfig, /VITE_SUPABASE_URL: `\$\{baseURL\}\/__daily_fixture__`/);
+  assert.match(dailyBootstrapConfig, /const baseURL = `http:\/\/127\.0\.0\.1:\$\{port\}`/);
+  assert.doesNotMatch(dailyBootstrapConfig, /supabase\.co|SUPABASE_ACCESS_TOKEN|SERVICE_ROLE_KEY|CLOUDFLARE_API_TOKEN/);
 });
 
 test('browser diagnostics are short-lived and uploaded only when the gate fails', () => {
@@ -104,9 +121,10 @@ test('review baselines and release frontend artifacts keep their dedicated reten
 });
 
 test('production bundles the pinned Inter variable font as the brand family', () => {
+  assert.match(stylesCss, /@import '\.\/fonts\/inter-fonts\.css';/);
   assert.match(
-    stylesCss,
-    /@font-face \{[\s\S]*?font-family: "Inter";[\s\S]*?fonts\/InterVariable\.woff2[\s\S]*?font-weight: 100 900;[\s\S]*?font-display: swap;/,
+    fontFacesCss,
+    /@font-face \{[\s\S]*?font-family: "Inter";[\s\S]*?InterVariable\.woff2[\s\S]*?font-weight: 100 900;[\s\S]*?font-display: swap;/,
   );
   assert.match(
     stylesCss,
@@ -123,6 +141,31 @@ test('production bundles the pinned Inter variable font as the brand family', ()
   );
   assert.match(buildAssetVerifier, /fonts\/Inter-LICENSE\.txt/);
   assert.match(buildAssetVerifier, /InterVariable-/);
+});
+
+test('the everyday font stays under 100 KB without removing extended-language coverage', () => {
+  const font = readFileSync(new URL('../assets/fonts/InterLatinUI.woff2', import.meta.url));
+  const metadata = JSON.parse(readFileSync(new URL('../assets/fonts/inter-subset.json', import.meta.url), 'utf8'));
+  assert.ok(font.length <= 100_000);
+  assert.equal(font.length, metadata.subsetBytes);
+  assert.equal(createHash('sha256').update(font).digest('hex'), metadata.subsetSha256);
+  assert.equal(metadata.subsetGlyphCodepoints + metadata.extendedGlyphCodepoints, 2852);
+  const faces = [...fontFacesCss.matchAll(/unicode-range: ([^;]+);/g)].map((match) => {
+    const points = new Set();
+    for (const range of match[1].split(',')) {
+      const [start, end = start] = range.replace('U+', '').split('-').map((hex) => Number.parseInt(hex, 16));
+      for (let codepoint = start; codepoint <= end; codepoint += 1) points.add(codepoint);
+    }
+    return points;
+  });
+  assert.equal(faces.length, 2);
+  assert.equal(faces[0].size, metadata.extendedGlyphCodepoints);
+  assert.equal(faces[1].size, metadata.subsetGlyphCodepoints);
+  assert.ok([...faces[1]].every((codepoint) => !faces[0].has(codepoint)));
+  for (const codepoint of [0x41, 0xe9, 0x2014, 0x2192, 0x2605, 0x2713]) assert.ok(faces[1].has(codepoint));
+  for (const codepoint of [0x100, 0x391, 0x410]) assert.ok(faces[0].has(codepoint));
+  assert.ok(faces.every((face) => !face.has(0x1f680)), 'Unsupported emoji must not request either font.');
+  assert.match(buildAssetVerifier, /uiFontStats\.size > 100_000/);
 });
 
 test('visual comparisons wait for the production brand font without replacing it', () => {

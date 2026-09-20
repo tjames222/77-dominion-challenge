@@ -1,6 +1,7 @@
 import { canonicalHtmlRoutePath } from './route-path.mjs';
+import { SITE_TRAINING_SCHEMA_VERSION } from './site-training-contract.mjs';
 
-export const SITE_TRAINING_SCHEMA_VERSION = 1;
+export { SITE_TRAINING_SCHEMA_VERSION };
 export const SITE_TRAINING_CATALOG_VERSION = 3;
 
 const IDENTIFIER_PATTERN = /^[a-z][a-z0-9]*(?:[-_][a-z0-9]+)*$/;

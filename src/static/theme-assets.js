@@ -2,13 +2,6 @@ import { getActiveTheme, getThemeDefinition } from './theme-state';
 
 const THEME_ASSET_SELECTOR = '[data-theme-asset]';
 
-function preloadSource(source) {
-  if (!source) return;
-  const image = new Image();
-  image.decoding = 'async';
-  image.src = source;
-}
-
 function sourceForVariant(image, variant) {
   return image.getAttribute(`data-theme-src-${variant}`);
 }
@@ -34,13 +27,6 @@ export function syncThemeAssets() {
 
   document.querySelectorAll(THEME_ASSET_SELECTOR).forEach((image) => {
     updateImage(image, theme);
-    const sources = new Set();
-    window.DominionThemeRuntime.themes
-      .filter((candidate) => candidate.availability.enabled)
-      .flatMap((candidate) => window.DominionThemeRuntime.getAssetVariants(candidate.id))
-      .forEach((variant) => sources.add(sourceForVariant(image, variant)));
-    sources.delete(image.getAttribute('src'));
-    sources.forEach(preloadSource);
   });
 }
 

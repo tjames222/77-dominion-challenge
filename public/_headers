@@ -6,8 +6,37 @@
   X-Content-Type-Options: nosniff
   X-Frame-Options: DENY
 
+# Vite content hashes are deploy-independent; unchanged assets survive reloads.
+/assets/*
+  Cache-Control: public, max-age=31536000, immutable
+
+# Root-level HTML, clean routes and stable deploy pointers (including the theme
+# bootstrap) must revalidate. This single-segment rule does not match /assets/*.
+/
+  Cache-Control: no-cache
+
+/:page
+  Cache-Control: no-cache
+
+# Stable-name copied files have bounded browser freshness and an ETag fallback.
+/images/*
+  Cache-Control: public, max-age=3600, must-revalidate
+
+/fonts/*
+  Cache-Control: public, max-age=3600, must-revalidate
+
 /invite.html
   Referrer-Policy: no-referrer
+
+/admin.html
+  Cache-Control: private, no-store
+  Referrer-Policy: no-referrer
+  X-Robots-Tag: noindex, nofollow, noarchive
+
+/admin
+  Cache-Control: private, no-store
+  Referrer-Policy: no-referrer
+  X-Robots-Tag: noindex, nofollow, noarchive
 
 /invite
   Referrer-Policy: no-referrer

@@ -49,7 +49,7 @@ describe('authenticated mutation owner binding', () => {
     }
     assert.match(dashboard, /postCheckIn\([\s\S]*expectedUserId: submissionOwner\.userId/);
     assert.match(dashboard, /recordAppVisit\(\{ expectedUserId: owner\.userId \}\)/);
-    assert.match(actionPage, /getDailyStandardDraft\(nextDate, \{ expectedUserId: dashboardOwner \}\)/);
+    assert.match(actionPage, /getDailyActionBootstrap\(\{ expectedUserId: requestedOwner, timeZone: browserTimeZone \}\)/);
     assert.match(header, /recordAppVisit\(\{ expectedUserId \}\)/);
   });
 

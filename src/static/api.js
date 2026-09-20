@@ -1,7 +1,11 @@
 import { createClient } from '@supabase/supabase-js';
 import { authSessionIdentity, createSupabaseMfaAdapter, sessionRequiresMfa } from './mfa-auth.mjs';
+import { createAdminReadClient, adminReadError } from './admin-read-client.mjs';
+import { createDailyActionBootstrapClient } from './daily-action-bootstrap.mjs';
+import { createAdminPreview } from './admin-preview.mjs';
 import { createMfaSessionGuard } from './mfa-session-guard.mjs';
 import { assertEarlyAccessActor, normalizeEarlyAccessRequest, postEarlyAccessRequest } from './early-access-request.mjs';
+import { createInflightActorReads } from './inflight-actor-reads.mjs';
 import {
   DEFAULT_CHALLENGE_DEFINITIONS,
   acknowledgeChallengeRecord,
@@ -57,8 +61,12 @@ import {
   shouldUseSupabaseAuthentication,
 } from './preview-auth-runtime.mjs';
 import { normalizeEarnedBadges } from './badges-rewards.mjs';
+import { PREVIEW_BADGE_STATE_KEY, normalizePreviewBadgeState, recordPreviewBadgeEvent,
+  claimPreviewBadgeCelebrations, acknowledgePreviewBadgeCelebrations, previewBadgeCollection } from './badge-preview-state.mjs';
+import { evaluateBadgeEvent } from './badge-evaluation.mjs';
+import { claimPreviewRewardCelebrations, acknowledgePreviewRewardCelebrations } from './reward-celebration-preview.mjs';
 import { normalizeJournalEntry, sortJournalEntries } from './journal-entry.mjs';
-import { assertJournalDateAllowed, isJournalDateKey } from './journal-date-picker.mjs';
+import { assertJournalDateAllowed, isJournalDateKey } from './journal-date-contract.mjs';
 import {
   canonicalProfilePhotoUrl,
   commitProfileUpdateWithCompareAndSwap,
@@ -87,6 +95,7 @@ import {
   claimMockRewardEntitlementUnlocks,
   challengeProgressionToRewardCatalog,
   normalizeRewardCatalog,
+  normalizeReward,
 } from './reward-catalog.mjs';
 import { assertSingleCrew, newCrewLifecycleRequestId } from './crew-experience.mjs';
 import {
@@ -106,8 +115,12 @@ import {
 import {
   MEMBER_PROGRESS_BADGE_PAGE_SIZE,
   MEMBER_PROGRESS_UNAVAILABLE,
+  mapMemberProgressRpcError,
   mockLifetimeLevel,
+  normalizeMemberProgressAwardId,
+  normalizeMemberProgressCursor,
   normalizeMemberProgressProfile,
+  paginateMemberProgressBadges,
 } from './member-progress-profile.mjs';
 import {
   applySiteTrainingTransition,
@@ -212,6 +225,32 @@ export function getMfaAuthAdapter() {
   if (!usesSupabaseAuthentication() || !mfaAdapter) throw new Error('Live account security is unavailable in this preview.');
   return mfaAdapter;
 }
+const inflightActorReads = createInflightActorReads();
+async function invalidateReadsAroundMutation(operation, query = '') {
+  inflightActorReads.invalidate(query);
+  try {
+    return await operation();
+  } finally {
+    inflightActorReads.invalidate(query);
+  }
+}
+// A separate synchronous observer fences requests before any UI auth callback
+// schedules rehydration. No Supabase method is called from this callback.
+supabase?.auth.onAuthStateChange((event, session) => {
+  inflightActorReads.observeAuth(event, session?.user?.id || '', authSessionIdentity(session));
+});
+globalThis.window?.addEventListener('storage', (event) => {
+  if (!event.key || event.key.startsWith('dominion:') || /^sb-.+-auth-token/.test(event.key)) {
+    inflightActorReads.invalidate();
+  }
+});
+for (const event of ['online', 'offline', 'dominion:challenge-activation-updated',
+  'dominion:challenge-start-date-updated']) {
+  globalThis.window?.addEventListener(event, () => inflightActorReads.invalidate());
+}
+globalThis.document?.addEventListener('visibilitychange', () => {
+  if (!document.hidden) inflightActorReads.invalidate();
+});
 export function isLocalDemoMode() {
   if (typeof window === 'undefined') return false;
   return ENABLE_MOCKS || (import.meta.env.DEV && ['localhost', '127.0.0.1', '::1'].includes(window.location.hostname));
@@ -529,6 +568,65 @@ export function subscribeToAuthStateChanges(listener) {
   return () => data?.subscription?.unsubscribe?.();
 }
 
+let adminReadClient = null;
+const adminInvalidationListeners = new Set();
+const notifyAdminInvalidation = (reason = '') => { for (const listener of adminInvalidationListeners) { try { listener(reason); } catch { /* Clear every subscribed view. */ } } };
+function getAdminReadClient() {
+  if (adminReadClient) return adminReadClient;
+  // URL/local metadata alone cannot activate this branch in a production build.
+  if (ENABLE_MOCKS && !usesSupabaseAuthentication()) {
+    const selected = new URLSearchParams(globalThis.location?.search || '').get('admin-preview');
+    adminReadClient = createAdminPreview({ getUser: getLocalOrSessionUser, mode: ['ready', 'mfa'].includes(selected) ? selected : 'member' });
+    adminReadClient.subscribe(notifyAdminInvalidation);
+    return adminReadClient;
+  }
+  if (!usesSupabaseAuthentication()) throw adminReadError('ADMIN_SIGNED_OUT');
+  adminReadClient = createAdminReadClient({
+    getSession: getAuthSession,
+    getUser: async () => { const { data, error } = await supabase.auth.getUser(); if (error) throw adminReadError('ADMIN_SIGNED_OUT'); return data?.user; },
+    sessionIdentity: authSessionIdentity,
+    subscribe: subscribeToAuthStateChanges,
+    request: async (name, args, { token, signal }) => {
+      const response = await fetch(`${SUPABASE_URL}/rest/v1/rpc/${name}`, {
+        method: 'POST', credentials: 'omit', cache: 'no-store', redirect: 'error', signal,
+        headers: { apikey: SUPABASE_KEY, Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify(args),
+      });
+      const raw = await response.text();
+      if (raw.length > 262144) throw adminReadError();
+      let value; try { value = JSON.parse(raw); } catch { throw adminReadError(); }
+      if (!response.ok) {
+        const code = response.status === 401 ? 'ADMIN_SIGNED_OUT' : response.status === 403 ? 'ADMIN_DENIED'
+          : response.status === 404 ? 'ADMIN_NOT_FOUND' : value?.message === 'admin_idempotency_conflict' ? 'ADMIN_IDEMPOTENCY_CONFLICT'
+            : value?.message === 'admin_invalid_cursor' ? 'ADMIN_INVALID_CURSOR'
+            : value?.message === 'admin_invalid_input' ? 'ADMIN_INVALID_INPUT' : 'ADMIN_UNAVAILABLE';
+        throw adminReadError(code);
+      }
+      return value;
+    },
+  });
+  adminReadClient.subscribe(notifyAdminInvalidation);
+  return adminReadClient;
+}
+export const getAdminSessionOwner = () => getAdminReadClient().owner();
+export const getSiteAdminContext = (options = {}) => getAdminReadClient().read('get_site_admin_context', {}, options);
+export const listSiteAdminUsers = (args, options = {}) => getAdminReadClient().read('site_admin_list_users', args, options);
+export const getSiteAdminUser = (id, options = {}) => getAdminReadClient().read('site_admin_get_user', { target_user_id: id }, options);
+export const listSiteAdminAudit = (args, options = {}) => getAdminReadClient().read('site_admin_list_audit', args, options);
+export const getSiteAdminAuditEvent = (id, options = {}) => getAdminReadClient().read('site_admin_get_audit_event', { target_event_id: id }, options);
+export const listSiteAdminEarlyAccess = (args, options = {}) => getAdminReadClient().read('site_admin_list_early_access_requests', args, options);
+export const getSiteAdminEarlyAccess = (id, options = {}) => getAdminReadClient().read('site_admin_get_early_access_request', { target_request_id: id }, options);
+export const listSiteAdminEarlyAccessHistory = (args, options = {}) => getAdminReadClient().read('site_admin_list_early_access_history', args, options);
+export const denySiteAdminEarlyAccess = (intent, options = {}) => getAdminReadClient().denyEarlyAccess(intent, options);
+export function subscribeToAdminInvalidation(listener) { adminInvalidationListeners.add(listener); return () => adminInvalidationListeners.delete(listener); }
+export function cancelAdminReads() { if (adminReadClient?.invalidate) adminReadClient.invalidate(); else notifyAdminInvalidation(); }
+if (typeof window !== 'undefined') {
+  window.addEventListener('pagehide', cancelAdminReads);
+  window.addEventListener('storage', (event) => {
+    if (event.key === null || [supabaseAuthStorageKey, 'dominion:user', MOCK_USER_ID_KEY, MOCK_USER_IDS_BY_IDENTITY_KEY].includes(event.key)) cancelAdminReads();
+  });
+}
+
 export function getCurrentAppPath() {
   if (typeof window === 'undefined') return './dashboard.html';
   const path = window.location.pathname.split('/').pop() || 'dashboard.html';
@@ -569,6 +667,8 @@ export function sanitizeReturnTo(returnTo, fallback = './dashboard.html') {
 export async function clearAuthSession({ redirectToLanding = false } = {}) {
   if (redirectToLanding) logoutNavigationPending = true;
   try {
+    cancelAdminReads();
+    inflightActorReads.invalidate();
     if (usesSupabaseAuthentication()) {
       try {
         const result = await supabase.auth.signOut();
@@ -603,6 +703,8 @@ export async function clearAuthSession({ redirectToLanding = false } = {}) {
 
 export function saveLocalMockUser(user) {
   if (!isLocalDemoMode()) throw new Error('Preview login is unavailable outside local demo mode.');
+  cancelAdminReads();
+  inflightActorReads.invalidate();
   const nextUser = {
     name: String(user?.name || '').trim() || 'Member',
     email: String(user?.email || '').trim(),
@@ -706,7 +808,8 @@ const normalizeThemePreference = (preference = {}) => ({
   updatedAt: preference.updatedAt ?? preference.updated_at ?? null,
 });
 
-export async function getThemePreference({ expectedUserId = '' } = {}) {
+export async function getThemePreference({ expectedUserId = '', signal } = {}) {
+  signal?.throwIfAborted();
   if (isLocalDemoMode()) {
     const actorId = requireMockRewardActor(expectedUserId);
     const preference = normalizeThemePreference(readJson(MOCK_THEME_PREFERENCES_KEY, {})[actorId]);
@@ -716,15 +819,20 @@ export async function getThemePreference({ expectedUserId = '' } = {}) {
 
   const client = requireSupabase();
   const actor = await requireUser(expectedUserId);
-  const { data, error } = await client.rpc('get_theme_preference', {
+  signal?.throwIfAborted();
+  const request = client.rpc('get_theme_preference', {
     target_expected_actor_id: actor.id,
   });
+  const { data, error } = await (signal ? request.abortSignal(signal) : request);
+  signal?.throwIfAborted();
   await requireUser(actor.id);
+  signal?.throwIfAborted();
   if (error) throw error;
   return normalizeThemePreference(data);
 }
 
-export async function setThemePreference(themeKey, { expectedUserId = '' } = {}) {
+export async function setThemePreference(themeKey, { expectedUserId = '', signal } = {}) {
+  signal?.throwIfAborted();
   const normalizedThemeKey = String(themeKey || '').trim().toLowerCase();
   if (!['dark', 'light', 'dominion-night', 'dominion-platinum'].includes(normalizedThemeKey)) {
     throw new Error('The requested theme is unavailable.');
@@ -732,6 +840,7 @@ export async function setThemePreference(themeKey, { expectedUserId = '' } = {})
 
   if (isLocalDemoMode()) {
     await requireHybridPreviewUser(expectedUserId);
+    signal?.throwIfAborted();
     const actorId = requireMockRewardActor(expectedUserId);
     const preferences = readJson(MOCK_THEME_PREFERENCES_KEY, {});
     const preference = {
@@ -747,11 +856,15 @@ export async function setThemePreference(themeKey, { expectedUserId = '' } = {})
 
   const client = requireSupabase();
   const actor = await requireUser(expectedUserId);
-  const { data, error } = await client.rpc('set_theme_preference', {
+  signal?.throwIfAborted();
+  const request = client.rpc('set_theme_preference', {
     target_theme_key: normalizedThemeKey,
     target_expected_actor_id: actor.id,
   });
+  const { data, error } = await (signal ? request.abortSignal(signal) : request);
+  signal?.throwIfAborted();
   await requireUser(actor.id);
+  signal?.throwIfAborted();
   if (error) throw error;
   return normalizeThemePreference(data);
 }
@@ -996,8 +1109,10 @@ const mapCrew = (item) => {
 };
 
 const mapBadge = (badge) => {
-  const definition = badge.badge_definitions || badge;
+  const definition = badge?.metadata?.awardDefinition || badge?.badge_definitions || badge;
   return badge ? {
+    awardId: badge.id || badge.awardId || null,
+    scopeKey: badge.scope_key || badge.scopeKey || 'lifetime',
     key: badge.badge_key || badge.key,
     name: definition?.name || badge.name || 'Badge',
     description: definition?.description || badge.description || '',
@@ -1010,7 +1125,9 @@ const mapBadge = (badge) => {
     requirement: definition?.requirement || badge.requirement || badge.metadata?.requirement || definition?.description || '',
     earningEvidence: badge.earningEvidence || badge.earning_evidence || badge.metadata?.earningEvidence || null,
     legacy: badge.legacy === true || badge.metadata?.legacy === true,
-    retired: definition?.retired === true || badge.retired === true || badge.metadata?.retired === true,
+    retired: badge.badge_definitions?.retired === true || definition?.retired === true || badge.retired === true || badge.metadata?.retired === true,
+    displayOrder: definition?.displayOrder ?? definition?.sort_order ?? badge.displayOrder ?? 10000,
+    celebrationSeenAt: badge.celebration_seen_at || badge.celebrationSeenAt || null,
   } : null;
 };
 
@@ -1659,32 +1776,24 @@ export async function completeSharingReward(completionToken, { expectedUserId = 
     if (expectedUserId && getMockUserId() !== expectedUserId) {
       throw new Error('The signed-in account changed. Try again.');
     }
-    const existing = readMockUserValue(MOCK_SHARING_REWARD_KEY, null);
-    if (existing) return { granted: false, alreadyGranted: true, ...existing };
-
-    const grantedAt = new Date().toISOString();
-    const stats = readMockUserValue('dominion:gameStats', {});
-    writeMockUserValue('dominion:gameStats', {
-      ...stats,
-      totalPoints: Number(stats.totalPoints ?? stats.challengePoints ?? 0) + 14,
-      challengePoints: Number(stats.challengePoints ?? stats.totalPoints ?? 0) + 14,
+    const actorId = requireMockRewardActor(expectedUserId);
+    return withPreviewBadgeState(actorId, (state) => {
+      const existing = readMockUserValue(MOCK_SHARING_REWARD_KEY, null, actorId);
+      if (existing) return { granted: false, alreadyGranted: true, ...existing };
+      const grantedAt = new Date().toISOString();
+      const stats = readMockUserValue('dominion:gameStats', {}, actorId);
+      writeMockUserValue('dominion:gameStats', {
+        ...stats,
+        totalPoints: Number(stats.totalPoints ?? stats.challengePoints ?? 0) + 14,
+        challengePoints: Number(stats.challengePoints ?? stats.totalPoints ?? 0) + 14,
+      }, actorId);
+      const awards = evaluateBadgeEvent({ source: 'share', sourceId: 'preview-sharing',
+        localDate: grantedAt.slice(0, 10), occurredAt: grantedAt, verified_share: 1 }, state.awards);
+      state.awards.push(...awards.map((award) => ({ ...award, awardId: 'preview:sharing:lifetime' })));
+      const grant = { points: 14, badgeKey: 'sharing', grantedAt };
+      writeMockUserValue(MOCK_SHARING_REWARD_KEY, grant, actorId);
+      return { granted: true, alreadyGranted: false, ...grant };
     });
-    const badges = readMockUserValue('dominion:badges', []);
-    if (!badges.some((badge) => (badge.badge_key || badge.key) === 'sharing')) {
-      badges.unshift({
-        key: 'sharing',
-        name: 'Share the Challenge',
-        description: 'Shared the challenge or brought another person into a private group.',
-        category: 'community',
-        tier: 'bronze',
-        icon: 'share',
-        earnedAt: grantedAt,
-      });
-      writeMockUserValue('dominion:badges', badges);
-    }
-    const grant = { points: 14, badgeKey: 'sharing', grantedAt };
-    writeMockUserValue(MOCK_SHARING_REWARD_KEY, grant);
-    return { granted: true, alreadyGranted: false, ...grant };
   }
 
   const client = requireSupabase();
@@ -1758,7 +1867,8 @@ export async function getChallengeProgression() {
   return normalizeChallengeProgression(data || {});
 }
 
-export async function getRewardCatalog({ limit = 50, cursor = null, expectedUserId = '' } = {}) {
+export async function getRewardCatalog({ limit = 50, cursor = null, expectedUserId = '', signal } = {}) {
+  signal?.throwIfAborted();
   if (isLocalDemoMode()) {
     const actorId = requireMockRewardActor(expectedUserId);
     const result = getMockRewardCatalog();
@@ -1768,13 +1878,17 @@ export async function getRewardCatalog({ limit = 50, cursor = null, expectedUser
 
   const client = requireSupabase();
   const actor = await requireUser(expectedUserId);
-  const { data, error } = await client.rpc('get_reward_catalog', {
+  signal?.throwIfAborted();
+  const request = client.rpc('get_reward_catalog', {
     target_page_size: limit,
     target_after_sort_order: cursor?.sortOrder ?? null,
     target_after_reward_key: cursor?.key || null,
     target_expected_actor_id: actor.id,
   });
+  const { data, error } = await (signal ? request.abortSignal(signal) : request);
+  signal?.throwIfAborted();
   await requireUser(actor.id);
+  signal?.throwIfAborted();
   if (error) throw error;
   return normalizeRewardCatalog(data || {});
 }
@@ -1819,6 +1933,59 @@ export async function getAllRewardCatalog({ pageSize = 100, expectedUserId = '' 
       nextCursor: null,
     },
   });
+}
+
+const MOCK_REWARD_CELEBRATION_LEASES_KEY = 'dominion:rewardCelebrationLeases';
+
+export async function claimRewardCelebrations({ expectedUserId = '', claimToken } = {}) {
+  if (isLocalDemoMode()) {
+    if (globalThis.navigator?.onLine === false) throw new Error('Reward delivery will retry when you are back online.');
+    await requireHybridPreviewUser(expectedUserId);
+    const actorId = requireMockRewardActor(expectedUserId);
+    const result = claimPreviewRewardCelebrations({
+      catalog: getMockRewardCatalog(),
+      leases: readMockUserValue(MOCK_REWARD_CELEBRATION_LEASES_KEY, {}),
+      claimToken,
+    });
+    writeMockUserValue(MOCK_REWARD_CELEBRATION_LEASES_KEY, result.leases);
+    await requireHybridPreviewUser(actorId);
+    requireMockRewardActor(actorId);
+    return { claimedUnlocks: result.claimedUnlocks, claimToken, leaseSeconds: 900 };
+  }
+  const client = requireSupabase();
+  const actor = await requireUser(expectedUserId);
+  const { data, error } = await client.rpc('claim_reward_celebrations', {
+    target_expected_actor_id: actor.id, target_claim_token: claimToken,
+  });
+  await requireUser(actor.id);
+  if (error) throw error;
+  return { ...data, claimedUnlocks: (data?.claimedUnlocks || []).map(normalizeReward) };
+}
+
+export async function acknowledgeRewardCelebrations({ expectedUserId = '', claimToken, rewardKeys = [] } = {}) {
+  if (isLocalDemoMode()) {
+    if (globalThis.navigator?.onLine === false) throw new Error('Reward acknowledgement will retry when you are back online.');
+    await requireHybridPreviewUser(expectedUserId);
+    const actorId = requireMockRewardActor(expectedUserId);
+    const result = acknowledgePreviewRewardCelebrations({
+      ownershipRecords: readMockUserValue(MOCK_REWARD_ENTITLEMENTS_KEY, []),
+      leases: readMockUserValue(MOCK_REWARD_CELEBRATION_LEASES_KEY, {}),
+      claimToken, rewardKeys,
+    });
+    writeMockUserValue(MOCK_REWARD_ENTITLEMENTS_KEY, result.ownershipRecords);
+    writeMockUserValue(MOCK_REWARD_CELEBRATION_LEASES_KEY, result.leases);
+    await requireHybridPreviewUser(actorId);
+    requireMockRewardActor(actorId);
+    return { acknowledgedKeys: result.acknowledgedKeys };
+  }
+  const client = requireSupabase();
+  const actor = await requireUser(expectedUserId);
+  const { data, error } = await client.rpc('acknowledge_reward_celebrations', {
+    target_expected_actor_id: actor.id, target_claim_token: claimToken, target_reward_keys: rewardKeys,
+  });
+  await requireUser(actor.id);
+  if (error) throw error;
+  return data || { acknowledgedKeys: [] };
 }
 
 export async function claimRewardEntitlementUnlocks({ expectedUserId = '' } = {}) {
@@ -2108,7 +2275,7 @@ export async function getDashboard() {
       .maybeSingle(),
     client
       .from('user_badges')
-      .select('badge_key, earned_at, entry_date, metadata, badge_definitions(name, description, category, tier, icon)')
+      .select('id, scope_key, badge_key, earned_at, entry_date, metadata, badge_definitions(name, description, category, tier, icon, requirement, retired, sort_order)')
       .eq('user_id', user.id)
       .order('earned_at', { ascending: false })
       .limit(12),
@@ -2265,6 +2432,7 @@ function readMockChallengeActivation() {
 }
 
 function writeMockChallengeActivation(activation) {
+  inflightActorReads.invalidate();
   const normalized = normalizeChallengeActivationMutation(activation);
   const storedStates = readJson(MOCK_CHALLENGE_ACTIVATION_KEY, {});
   const states = storedStates && typeof storedStates === 'object' && !Array.isArray(storedStates)
@@ -2292,21 +2460,24 @@ const requireCapturedActivationActor = (expectedUserId) => {
 
 export async function getChallengeActivation({ expectedUserId } = {}) {
   const capturedActorId = requireCapturedActivationActor(expectedUserId);
-  if (isLocalDemoMode()) {
-    await requireHybridPreviewUser(capturedActorId);
-    if (getMockUserId() !== capturedActorId) {
-      throw new Error('The signed-in account changed. Try again.');
+  return inflightActorReads.run({ actorId: capturedActorId, query: 'get_challenge_activation', version: 1 }, async () => {
+    if (isLocalDemoMode()) {
+      await requireHybridPreviewUser(capturedActorId);
+      if (getMockUserId() !== capturedActorId) {
+        throw new Error('The signed-in account changed. Try again.');
+      }
+      return readMockChallengeActivation();
     }
-    return readMockChallengeActivation();
-  }
 
-  const client = requireSupabase();
-  const user = await requireUser(capturedActorId);
-  const { data, error } = await client.rpc('get_challenge_activation', {
-    target_expected_actor_id: user.id,
+    const client = requireSupabase();
+    const user = await requireUser(capturedActorId);
+    const { data, error } = await client.rpc('get_challenge_activation', {
+      target_expected_actor_id: user.id,
+    });
+    await requireUser(capturedActorId);
+    if (error) return challengeActivationReadError(error);
+    return normalizeChallengeActivation(data);
   });
-  if (error) return challengeActivationReadError(error);
-  return normalizeChallengeActivation(data);
 }
 
 export async function activateSoloChallenge({
@@ -2339,12 +2510,12 @@ export async function activateSoloChallenge({
 
   const client = requireSupabase();
   const user = await requireUser(capturedActorId);
-  const { data, error } = await client.rpc('activate_solo_challenge', {
+  const { data, error } = await invalidateReadsAroundMutation(() => client.rpc('activate_solo_challenge', {
     target_start_date: startDate,
     target_time_zone: timeZone,
     target_request_id: requestId,
     target_expected_actor_id: user.id,
-  });
+  }));
   if (error) throw error;
   return normalizeChallengeActivationMutation(data);
 }
@@ -2392,12 +2563,12 @@ export async function activateGroupChallenge({
 
   const client = requireSupabase();
   const user = await requireUser(capturedActorId);
-  const { data, error } = await client.rpc('activate_group_challenge', {
+  const { data, error } = await invalidateReadsAroundMutation(() => client.rpc('activate_group_challenge', {
     target_crew_id: crewId,
     target_time_zone: timeZone,
     target_request_id: requestId,
     target_expected_actor_id: user.id,
-  });
+  }));
   if (error) throw error;
   return normalizeChallengeActivationMutation(data);
 }
@@ -2438,13 +2609,13 @@ export async function updateChallengeStartDate({
 
   const client = requireSupabase();
   const user = await requireUser(capturedActorId);
-  const { data, error } = await client.rpc('set_challenge_start_date', {
+  const { data, error } = await invalidateReadsAroundMutation(() => client.rpc('set_challenge_start_date', {
     target_start_date: startDate,
     target_time_zone: timeZone,
     target_request_id: requestId,
     target_expected_revision: expectedRevision,
     target_expected_actor_id: user.id,
-  });
+  }));
   if (error) throw error;
   return normalizeChallengeActivationMutation(data);
 }
@@ -2827,6 +2998,7 @@ function applyMockOverallSiteTrainingTransition(state, program, action, actorId,
 }
 
 function runMockSiteTrainingOperation(operation, actorId) {
+  inflightActorReads.invalidate('get_site_training_state');
   if (getMockUserId() !== actorId) throw new Error('The signed-in account changed. Try again.');
   const signature = JSON.stringify({
     scope: operation.scope,
@@ -2929,28 +3101,32 @@ export async function getSiteTrainingState({ page, program = null, expectedUserI
   const actorId = requireCapturedSiteTrainingActor(expectedUserId);
   requireSiteTrainingPage(page);
   if (program) requireSiteTrainingProgram(program, 'overall');
-  if (isLocalDemoMode()) {
-    await requireHybridPreviewUser(actorId);
-    if (getMockUserId() !== actorId) throw new Error('The signed-in account changed. Try again.');
-    return mockSiteTrainingSnapshot(
-      page,
-      program,
-      actorId,
-      readMockSiteTrainingStore(actorId, { readOnly: true }),
-    );
-  }
+  return inflightActorReads.run({ actorId, query: 'get_site_training_state', version: 1,
+    args: [page.id, page.contentVersion, program?.id || null, program?.version || null] }, async () => {
+    if (isLocalDemoMode()) {
+      await requireHybridPreviewUser(actorId);
+      if (getMockUserId() !== actorId) throw new Error('The signed-in account changed. Try again.');
+      return mockSiteTrainingSnapshot(
+        page,
+        program,
+        actorId,
+        readMockSiteTrainingStore(actorId, { readOnly: true }),
+      );
+    }
 
-  const client = requireSupabase();
-  const user = await requireUser(actorId);
-  const { data, error } = await client.rpc('get_site_training_state', {
-    target_page_id: page.id,
-    target_page_content_version: page.contentVersion,
-    target_program_id: program?.id || null,
-    target_program_version: program?.version || null,
-    target_expected_actor_id: user.id,
+    const client = requireSupabase();
+    const user = await requireUser(actorId);
+    const { data, error } = await client.rpc('get_site_training_state', {
+      target_page_id: page.id,
+      target_page_content_version: page.contentVersion,
+      target_program_id: program?.id || null,
+      target_program_version: program?.version || null,
+      target_expected_actor_id: user.id,
+    });
+    await requireUser(actorId);
+    if (error) return siteTrainingReadError(error);
+    return normalizeSiteTrainingState(data, { expectedPage: page, expectedProgram: program });
   });
-  if (error) return siteTrainingReadError(error);
-  return normalizeSiteTrainingState(data, { expectedPage: page, expectedProgram: program });
 }
 
 export async function claimSiteTraining({
@@ -2976,10 +3152,10 @@ export async function claimSiteTraining({
   }
   const client = requireSupabase();
   const user = await requireUser(actorId);
-  const { data, error } = await client.rpc(
+  const { data, error } = await invalidateReadsAroundMutation(() => client.rpc(
     'claim_site_training',
     siteTrainingRpcParameters(operation, user.id),
-  );
+  ), 'get_site_training_state');
   if (error) throw error;
   return normalizeSiteTrainingResult(data, page, operation.program, operation);
 }
@@ -3010,12 +3186,36 @@ export async function transitionSiteTraining({
   }
   const client = requireSupabase();
   const user = await requireUser(actorId);
-  const { data, error } = await client.rpc(
+  const { data, error } = await invalidateReadsAroundMutation(() => client.rpc(
     'transition_site_training',
     siteTrainingRpcParameters(operation, user.id),
-  );
+  ), 'get_site_training_state');
   if (error) throw error;
   return normalizeSiteTrainingResult(data, page, operation.program, operation);
+}
+
+let dailyActionBootstrapClient = null;
+export function invalidateDailyActionBootstrap() { dailyActionBootstrapClient?.invalidate(); }
+export async function getDailyActionBootstrap({ expectedUserId, timeZone = browserTimeZone(), entryDate = null } = {}) {
+  if (!dailyActionBootstrapClient) {
+    const client = requireSupabase();
+    dailyActionBootstrapClient = createDailyActionBootstrapClient({
+      getSession: getAuthSession, getUser: requireUser, sessionIdentity: authSessionIdentity,
+      requiresMfa: () => sessionRequiresMfa(client.auth), subscribe: subscribeToAuthStateChanges,
+      request: async (args, signal) => {
+        const { data, error } = await client.rpc('get_daily_action_bootstrap', args).abortSignal(signal);
+        if (error) throw error;
+        return data;
+      },
+    });
+  }
+  return dailyActionBootstrapClient.read({ expectedUserId, timeZone, entryDate });
+}
+if (typeof window !== 'undefined') {
+  window.addEventListener('pagehide', invalidateDailyActionBootstrap);
+  window.addEventListener('storage', (event) => {
+    if (event.key === null || event.key === supabaseAuthStorageKey) invalidateDailyActionBootstrap();
+  });
 }
 
 const rpcDraft = async (name, parameters, { expectedUserId = '', mutation = false } = {}) => {
@@ -3026,11 +3226,14 @@ const rpcDraft = async (name, parameters, { expectedUserId = '', mutation = fals
     const rpcParameters = mutation
       ? { ...parameters, target_expected_actor_id: user.id }
       : parameters;
+    if (mutation) invalidateDailyActionBootstrap();
     const { data, error } = await client.rpc(name, rpcParameters);
     if (error) throw error;
     return normalizeDailyStandardDraft(data, parameters.target_entry_date);
   } catch (error) {
     throw naturalizeDailyActionError(error);
+  } finally {
+    if (mutation) invalidateDailyActionBootstrap();
   }
 };
 
@@ -3145,7 +3348,73 @@ export async function getCommunityFeed() {
   return data.map(mapFeedItem);
 }
 
+async function withPreviewBadgeState(expectedUserId, operation) {
+  const user = await getLocalOrSessionUser();
+  if (!expectedUserId || !user?.authenticated || user.userId !== expectedUserId) throw new Error('The signed-in account changed. Try again.');
+  if (!globalThis.navigator?.locks?.request) throw new Error('This preview browser cannot safely synchronize badge history.');
+  return navigator.locks.request(`dominion:badges:${expectedUserId}`, async () => {
+    const current = await getLocalOrSessionUser();
+    if (!current?.authenticated || current.userId !== expectedUserId) throw new Error('The signed-in account changed. Try again.');
+    const state = normalizePreviewBadgeState(readMockUserValue(PREVIEW_BADGE_STATE_KEY, null, expectedUserId), readMockUserValue('dominion:badges', [], expectedUserId));
+    const result = operation(state);
+    writeMockUserValue(PREVIEW_BADGE_STATE_KEY, state, expectedUserId);
+    writeMockUserValue('dominion:badges', state.awards, expectedUserId);
+    return result;
+  });
+}
+
+export async function recordPreviewCheckInBadges(entry, { expectedUserId = '' } = {}) {
+  if (!isLocalDemoMode()) throw new Error('Preview badge events cannot be submitted to production.');
+  return withPreviewBadgeState(expectedUserId, (state) => {
+    recordPreviewBadgeEvent(state, { source: 'check_in', sourceId: `preview-check-in:${entry.date}`,
+      occurredAt: entry.createdAt || new Date().toISOString(), localDate: entry.date, challengeDay: entry.day,
+      completed: entry.completed, workoutDifficultySelections: entry.workoutDifficultySelections || {} });
+    return state.awards.map(mapBadge);
+  });
+}
+
+export async function claimBadgeCelebrations({ expectedUserId = '', claimToken = crypto.randomUUID() } = {}) {
+  if (isLocalDemoMode()) return withPreviewBadgeState(expectedUserId, (state) => ({ claimToken,
+    badges: claimPreviewBadgeCelebrations(state, claimToken).map(mapBadge) }));
+  const client = requireSupabase();
+  const user = await requireUser(expectedUserId);
+  const { data, error } = await client.rpc('claim_badge_celebrations', { target_expected_actor_id: user.id, target_claim_token: claimToken });
+  if (error) throw error;
+  await requireUser(user.id);
+  return { claimToken, badges: (Array.isArray(data) ? data : []).map(mapBadge).filter(Boolean) };
+}
+
+export async function acknowledgeBadgeCelebrations({ expectedUserId = '', claimToken, awardIds = [] } = {}) {
+  const verify = (ids) => {
+    if (!Array.isArray(ids) || awardIds.some((id) => !ids.includes(id))) throw new Error('Badge acknowledgment is still pending.');
+    return ids;
+  };
+  if (isLocalDemoMode()) return verify(await withPreviewBadgeState(expectedUserId, (state) => acknowledgePreviewBadgeCelebrations(state, claimToken, awardIds)));
+  const client = requireSupabase();
+  const user = await requireUser(expectedUserId);
+  const { data, error } = await client.rpc('acknowledge_badge_celebrations', {
+    target_expected_actor_id: user.id, target_claim_token: claimToken, target_award_ids: awardIds,
+  });
+  if (error) throw error;
+  await requireUser(user.id);
+  return verify(data);
+}
+
 export async function recordAppVisit({ expectedUserId = '' } = {}) {
+  if (isLocalDemoMode()) return withPreviewBadgeState(expectedUserId, (state) => {
+    const activation = readMockChallengeActivation();
+    const occurredAt = new Date().toISOString();
+    const date = dateKeyForTimeZone(new Date(occurredAt), activation.timeZone || browserTimeZone());
+    const newBadges = recordPreviewBadgeEvent(state, { source: 'app_visit', sourceId: `preview-app-visit:${date}`, localDate: date, occurredAt });
+    const stats = readMockUserValue('dominion:gameStats', {}, expectedUserId);
+    const yesterday = new Date(Date.parse(`${date}T00:00:00Z`) - 86400000).toISOString().slice(0, 10);
+    const streak = stats.lastSeenDate === date ? Math.max(stats.currentAppStreak || 0, 1)
+      : stats.lastSeenDate === yesterday ? Math.max(stats.currentAppStreak || 0, 0) + 1 : 1;
+    const nextStats = { ...stats, currentAppStreak: streak, bestAppStreak: Math.max(stats.bestAppStreak || 0, streak), lastSeenDate: date };
+    writeMockUserValue('dominion:gameStats', nextStats, expectedUserId);
+    return { totalPoints: nextStats.totalPoints || 0, currentAppStreak: streak,
+      bestAppStreak: nextStats.bestAppStreak, newBadges };
+  });
   const client = requireSupabase();
   const user = await requireUser(expectedUserId);
   const { data, error } = await client.rpc('record_app_visit', {
@@ -3172,7 +3441,7 @@ export async function getGameSummary() {
       .maybeSingle(),
     client
       .from('user_badges')
-      .select('badge_key, earned_at, entry_date, metadata, badge_definitions(name, description, category, tier, icon)')
+      .select('id, scope_key, badge_key, earned_at, entry_date, metadata, badge_definitions(name, description, category, tier, icon, requirement, retired, sort_order)')
       .eq('user_id', user.id)
       .order('earned_at', { ascending: false })
       .limit(12),
@@ -3187,10 +3456,36 @@ export async function getGameSummary() {
   };
 }
 
+export async function getBadgeCollection({ expectedUserId = '' } = {}) {
+  let actorId;
+  if (isLocalDemoMode()) {
+    await requireHybridPreviewUser(expectedUserId);
+    actorId = requireMockRewardActor(expectedUserId);
+  } else actorId = (await requireUser(expectedUserId)).id;
+  const earnedBadges = await getEarnedBadges({ expectedUserId: actorId });
+  if (isLocalDemoMode()) {
+    requireMockRewardActor(actorId);
+    const activation = readMockChallengeActivation();
+    const state = normalizePreviewBadgeState(readMockUserValue(PREVIEW_BADGE_STATE_KEY, null, actorId), earnedBadges);
+    const today = dateKeyForTimeZone(new Date(), activation.timeZone || browserTimeZone());
+    return { ...previewBadgeCollection(state, activation, today), earnedBadges };
+  }
+  const client = requireSupabase();
+  const user = await requireUser(actorId);
+  const { data, error } = await client.rpc('get_badge_collection', { target_expected_actor_id: user.id });
+  if (error) throw error;
+  await requireUser(user.id);
+  if (data?.catalogVersion !== 1 || !Array.isArray(data?.items)) throw new Error('Badge catalog is temporarily unavailable.');
+  return { ...data, earnedBadges };
+}
+
 export async function getEarnedBadges({ pageSize = 100, expectedUserId = '' } = {}) {
   if (isLocalDemoMode()) {
+    await requireHybridPreviewUser(expectedUserId);
     const actorId = requireMockRewardActor(expectedUserId);
-    const badges = normalizeEarnedBadges(readMockUserValue('dominion:badges', []).map(mapBadge).filter(Boolean));
+    const state = readMockUserValue(PREVIEW_BADGE_STATE_KEY, null, actorId);
+    const raw = state?.schemaVersion === 1 ? state.awards : readMockUserValue('dominion:badges', [], actorId);
+    const badges = normalizeEarnedBadges((Array.isArray(raw) ? raw : []).map(mapBadge).filter(Boolean));
     requireMockRewardActor(actorId);
     return badges;
   }
@@ -3204,10 +3499,11 @@ export async function getEarnedBadges({ pageSize = 100, expectedUserId = '' } = 
   while (true) {
     const { data, error } = await client
       .from('user_badges')
-      .select('badge_key, earned_at, entry_date, metadata, badge_definitions(name, description, category, tier, icon)')
+      .select('id, scope_key, badge_key, earned_at, entry_date, metadata, badge_definitions(name, description, category, tier, icon, requirement, retired, sort_order)')
       .eq('user_id', user.id)
       .order('earned_at', { ascending: false })
       .order('badge_key', { ascending: true })
+      .order('scope_key', { ascending: true })
       .range(offset, offset + normalizedPageSize - 1);
     if (error) throw error;
 
@@ -3340,11 +3636,14 @@ function ensureMockCrews() {
     }));
   });
 
-  saveMockCrewMembers(members);
+  // Canonicalizing a read is not a membership mutation and must not invalidate
+  // the activation read that is currently using this same snapshot.
+  saveMockCrewMembers(members, { invalidateReads: false });
   return { crews, members };
 }
 
-function saveMockCrewMembers(members) {
+function saveMockCrewMembers(members, { invalidateReads = true } = {}) {
+  if (invalidateReads) inflightActorReads.invalidate();
   writeJson(
     MOCK_CREW_MEMBERS_KEY,
     prepareMockCrewMembersForStorage(members, getMockUserId()),
@@ -3500,11 +3799,17 @@ function getMockLeaderboard({ crewId = null, window = 'week' } = {}) {
     .map((row, index) => ({ ...row, rank: index + 1 }));
 }
 
-function mockBadgeIsAfterCursor(badge, cursor) {
-  if (!cursor) return true;
-  const earnedAt = String(badge.earnedAt || '');
-  if (earnedAt < cursor.earnedAt) return true;
-  return earnedAt === cursor.earnedAt && String(badge.key || '') > cursor.badgeKey;
+// Preview awards historically used opaque IDs. Give those records tab-local
+// UUIDs for this read-only API; a reload starts a new first-page cursor.
+const mockMemberBadgeIds = new Map();
+function mockMemberBadgeIdentity(memberId, badge) {
+  const existing = normalizeMemberProgressAwardId(badge.awardId);
+  if (existing) return existing;
+  const key = JSON.stringify([memberId, badge.awardId || [badge.key, badge.scopeKey]]);
+  if (!mockMemberBadgeIds.has(key)) {
+    mockMemberBadgeIds.set(key, `ffffffff-ffff-4000-8000-${(mockMemberBadgeIds.size + 1).toString(16).padStart(12, '0')}`);
+  }
+  return mockMemberBadgeIds.get(key);
 }
 
 function getMockCrewMemberProgressProfile({ crewId, userId, cursor, limit }) {
@@ -3523,14 +3828,7 @@ function getMockCrewMemberProgressProfile({ crewId, userId, cursor, limit }) {
   const badges = [...fixture.badges]
     .map(mapBadge)
     .filter(Boolean)
-    .sort((left, right) => (
-      String(right.earnedAt || '').localeCompare(String(left.earnedAt || ''))
-      || String(left.key || '').localeCompare(String(right.key || ''))
-    ));
-  const pageCandidates = badges.filter((badge) => mockBadgeIsAfterCursor(badge, cursor));
-  const page = pageCandidates.slice(0, limit);
-  const hasMore = pageCandidates.length > limit;
-  const finalBadge = page.at(-1);
+    .map((badge) => ({ ...badge, awardId: mockMemberBadgeIdentity(target.userId, badge) }));
 
   return normalizeMemberProgressProfile({
     memberId: target.userId,
@@ -3538,12 +3836,7 @@ function getMockCrewMemberProgressProfile({ crewId, userId, cursor, limit }) {
     avatarUrl: target.avatarUrl || '',
     role: target.role,
     level: mockLifetimeLevel(fixture.lifetimePoints),
-    badgeCount: badges.length,
-    badges: page,
-    hasMore,
-    nextCursor: hasMore && finalBadge
-      ? { earnedAt: finalBadge.earnedAt, badgeKey: finalBadge.key }
-      : null,
+    ...paginateMemberProgressBadges(badges, cursor, limit),
   }, { expectedMemberId: userId });
 }
 
@@ -3855,7 +4148,7 @@ export async function createCrewAndActivateGroup({
 
   const client = requireSupabase();
   const user = await requireUser(capturedActorId);
-  const { data, error } = await client.rpc('create_crew_and_activate_group', {
+  const { data, error } = await invalidateReadsAroundMutation(() => client.rpc('create_crew_and_activate_group', {
     target_crew_request_id: crewRequestId,
     target_activation_request_id: activationRequestId,
     target_name: name,
@@ -3863,7 +4156,7 @@ export async function createCrewAndActivateGroup({
     target_challenge_start_date: challengeStartDate,
     target_time_zone: timeZone,
     target_expected_actor_id: user.id,
-  });
+  }));
   if (error) throw error;
   return normalizeCreatedGroupStart(data);
 }
@@ -4061,10 +4354,10 @@ export async function deleteCrew({ crewId, requestId = newCrewLifecycleRequestId
 
   const client = requireSupabase();
   await requireUser();
-  const { data, error } = await client.rpc('delete_crew', {
+  const { data, error } = await invalidateReadsAroundMutation(() => client.rpc('delete_crew', {
     target_crew_id: crewId,
     target_request_id: requestId,
-  });
+  }));
   if (error) throw error;
   return data;
 }
@@ -4087,10 +4380,10 @@ export async function leaveCrew({ crewId, requestId = newCrewLifecycleRequestId(
 
   const client = requireSupabase();
   await requireUser();
-  const { data, error } = await client.rpc('leave_crew', {
+  const { data, error } = await invalidateReadsAroundMutation(() => client.rpc('leave_crew', {
     target_crew_id: crewId,
     target_request_id: requestId,
-  });
+  }));
   if (error) throw error;
   return data;
 }
@@ -4144,15 +4437,7 @@ export async function getCrewMemberProgressProfile({
     Math.max(Math.floor(Number(limit) || MEMBER_PROGRESS_BADGE_PAGE_SIZE), 1),
     24,
   );
-  const normalizedCursor = cursor
-    && Number.isFinite(Date.parse(cursor.earnedAt))
-    && typeof cursor.badgeKey === 'string'
-    && cursor.badgeKey.trim()
-    ? {
-        earnedAt: new Date(cursor.earnedAt).toISOString(),
-        badgeKey: cursor.badgeKey.trim().slice(0, 120),
-      }
-    : null;
+  const normalizedCursor = normalizeMemberProgressCursor(cursor);
   if (!crewId || !userId || (cursor && !normalizedCursor)) {
     throw new Error(MEMBER_PROGRESS_UNAVAILABLE);
   }
@@ -4184,9 +4469,10 @@ export async function getCrewMemberProgressProfile({
     target_badge_cursor_earned_at: normalizedCursor?.earnedAt || null,
     target_badge_cursor_key: normalizedCursor?.badgeKey || null,
     target_badge_limit: normalizedLimit,
+    target_badge_cursor_award_id: normalizedCursor?.awardId || null,
   });
-  if (error) throw error;
   await requireUser(actor.id);
+  if (error) throw mapMemberProgressRpcError(error);
   const profile = normalizeMemberProgressProfile(data, { expectedMemberId: userId });
   return {
     ...profile,
@@ -4529,9 +4815,9 @@ export async function confirmCrewInvite(continuationToken, { expectedUserId = ''
 
   const client = requireSupabase();
   await requireUser(expectedUserId);
-  const { data, error } = await client.rpc('confirm_crew_invite', {
+  const { data, error } = await invalidateReadsAroundMutation(() => client.rpc('confirm_crew_invite', {
     continuation_token: continuationToken,
-  });
+  }));
   if (error) throw error;
   return data || { status: 'invalid' };
 }

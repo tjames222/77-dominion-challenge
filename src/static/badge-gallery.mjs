@@ -1,5 +1,5 @@
 import { createDialog } from './dialog.mjs';
-import { iconClass, normalizeEarnedBadges, validBadgeTimestamp } from './badges-rewards.mjs';
+import { badgeAwardIdentity, iconClass, normalizeEarnedBadges, validBadgeTimestamp } from './badges-rewards.mjs';
 
 const sentence = (value, limit = 1200) => typeof value === 'string' ? value.trim().slice(0, limit) : '';
 const positiveInteger = (value, maximum = 10000) => Number.isInteger(value) && value > 0 && value <= maximum ? value : null;
@@ -40,6 +40,7 @@ export function badgeGalleryModel(records = []) {
     const earnedLabel = dateLabel(badge.earnedAt);
     return {
       key: badge.key,
+      recordKey: badgeAwardIdentity(badge),
       name,
       description: sentence(badge.description),
       requirement: sentence(badge.requirement) || 'The original requirement is unavailable for this legacy badge.',
@@ -119,32 +120,33 @@ export function createBadgeGallery(container) {
   }
 
   const onClick = (event) => {
-    const button = event.target.closest('[data-badge-key]');
-    if (button && container.contains(button)) open(button.dataset.badgeKey, button);
+    const button = event.target.closest('[data-badge-record-key]');
+    if (button && container.contains(button)) open(button.dataset.badgeRecordKey, button);
   };
   container.addEventListener('click', onClick);
 
   return {
     render(rawRecords) {
       const model = badgeGalleryModel(rawRecords);
-      records = new Map(model.map((badge) => [badge.key, badge]));
+      records = new Map(model.map((badge) => [badge.recordKey, badge]));
       if (selectedKey && !records.has(selectedKey)) clearDialog();
       for (const [key, button] of buttons) {
         if (!records.has(key)) { button.remove(); buttons.delete(key); }
       }
       container.querySelectorAll('[data-badge-placeholder]').forEach((node) => node.remove());
       model.forEach((badge, index) => {
-        let button = buttons.get(badge.key);
+        let button = buttons.get(badge.recordKey);
         if (!button) {
           button = element(document, 'button', 'badge-gallery-tile');
           button.type = 'button';
           button.dataset.badgeKey = badge.key;
+          button.dataset.badgeRecordKey = badge.recordKey;
           button.setAttribute('aria-haspopup', 'dialog');
-          buttons.set(badge.key, button);
+          buttons.set(badge.recordKey, button);
         }
         button.dataset.badgeTier = badge.tier;
         button.setAttribute('aria-label', badge.accessibleName);
-        button.setAttribute('aria-expanded', String(selectedKey === badge.key));
+        button.setAttribute('aria-expanded', String(selectedKey === badge.recordKey));
         const medallion = element(document, 'span', 'badge-medallion');
         medallion.setAttribute('aria-hidden', 'true');
         medallion.append(element(document, 'span', `app-icon ${badge.iconClass}`));

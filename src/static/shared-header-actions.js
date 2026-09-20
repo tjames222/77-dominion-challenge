@@ -14,7 +14,7 @@ import {
   normalizePreviewChallengeState,
 } from './preview-challenge.mjs';
 import { readPreviewUserValue, writePreviewUserValue } from './preview-user-state.mjs';
-import { initShareComposer } from './share-composer.js';
+import { initShareComposer } from './share-composer-loader.js';
 import {
   STREAK_METRIC_DEFINITIONS,
   buildStreakSummary,

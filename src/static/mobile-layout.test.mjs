@@ -20,7 +20,7 @@ describe('static phone layout contract', () => {
       const viewport = html.match(/<meta name="viewport" content="([^"]+)"/i)?.[1] || '';
       assert.match(viewport, /width=device-width/);
       assert.match(viewport, /initial-scale=1/);
-      if (route === 'account-security.html') {
+      if (['account-security.html', 'admin.html'].includes(route)) {
         // Security setup must support zoom while reading/copying a setup key.
         assert.doesNotMatch(viewport, /maximum-scale=1|user-scalable=no/);
       } else {

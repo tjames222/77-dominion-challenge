@@ -30,10 +30,11 @@ test('all routes hydrate authoritative theme ownership and clear it on logout', 
   const menu = await read('src/static/menu.js');
   const hydration = await read('src/static/theme-entitlement-state.js');
 
-  assert.match(menu, /hydrateThemeEntitlementState\(\)/);
+  assert.match(menu, /void hydrateMenuTheme\(\)/);
+  assert.match(menu, /hydrateThemeEntitlementState\(\{ \.\.\.options, signal \}\)/);
   assert.match(menu, /clearThemeEntitlementState\(\)[\s\S]*clearAuthSession\(\{ redirectToLanding: true \}\)/);
   assert.match(hydration, /getLocalOrSessionUser\(\)/);
-  assert.match(hydration, /getRewardCatalog\(\{ limit: 100, expectedUserId: initialActorId \}\)/);
+  assert.match(hydration, /getRewardCatalog\(\{ limit: 100, expectedUserId: initialActorId, signal \}\)/);
   assert.match(hydration, /const registry = getThemeRegistry\(\)[\s\S]*deriveAuthorizedThemeIds\(catalog, registry\)/);
   assert.match(hydration, /setThemeEntitlements\(\[\]\)/);
   assert.match(hydration, /finishProtectedThemeHydration\(\)/);

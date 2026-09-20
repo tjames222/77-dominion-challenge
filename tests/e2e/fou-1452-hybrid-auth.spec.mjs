@@ -1,5 +1,6 @@
 import { expect, test } from '@playwright/test';
 import { installFou1452SupabaseAuthStub } from './support/fou-1452-supabase-auth-stub.mjs';
+import { expectNoProfileTestControls } from './support/profile-test-controls.mjs';
 
 const ACCOUNT_A = {
   name: 'Alpha Member',
@@ -71,6 +72,77 @@ async function expectAccountACommunityState(page) {
   await page.goto('/private-journal.html');
   await expect(page.locator('#journalTimeline')).toContainText(ACCOUNT_A_JOURNAL);
 }
+
+test('hybrid preview Profile contains no testing controls or local testing writes', async ({ context, page }) => {
+  await installFou1452SupabaseAuthStub(context);
+  const errors = []; page.on('pageerror', error => errors.push(error.message));
+  await register(page, ACCOUNT_A);
+  const fixture = { enabled: true, anchorDate: '2026-02-01', day: 14 };
+  await page.evaluate(async value => {
+    const { writePreviewUserValue } = await import('/src/static/preview-user-state.mjs');
+    writePreviewUserValue(localStorage, localStorage.getItem('dominion:previewAuthOwnerId'), 'dominion:previewChallengeSimulation', value);
+  }, fixture);
+  await page.goto('/profile.html', { waitUntil: 'networkidle' });
+  await expectNoProfileTestControls(page);
+  expect(await page.evaluate(async () => {
+    const { peekPreviewUserValue } = await import('/src/static/preview-user-state.mjs');
+    return peekPreviewUserValue(localStorage, localStorage.getItem('dominion:previewAuthOwnerId'), 'dominion:previewChallengeSimulation', null);
+  })).toEqual(fixture);
+  expect(errors).toEqual([]);
+});
+
+test('hybrid readiness fixture validates the registered token and exact actor without granting admin access', async ({ context, page }) => {
+  const auth = await installFou1452SupabaseAuthStub(context);
+  const pageErrors = [];
+  page.on('pageerror', error => pageErrors.push(error.message));
+  await register(page, ACCOUNT_A);
+  const result = await page.evaluate(async () => {
+    const api = await import('/src/static/api.js');
+    const { data: { session } } = await api.supabase.auth.getSession();
+    const actorId = session.user.id;
+    const token = session.access_token;
+    const call = async ({ authorization = `Bearer ${token}`, body = JSON.stringify({ target_expected_actor_id: actorId }), method = 'POST' } = {}) => {
+      const response = await fetch('/__fou_1452_supabase__/rest/v1/rpc/get_site_admin_context', {
+        method, headers: { 'Content-Type': 'application/json', ...(authorization === null ? {} : { Authorization: authorization }) },
+        ...(method === 'POST' ? { body } : {}),
+      });
+      return { status: response.status, body: await response.json() };
+    };
+    const normalized = await api.getSiteAdminContext({ expectedUserId: actorId });
+    const valid = await call();
+    // Create a second synthetic server-side session without changing the page's
+    // SDK identity, then test both actor substitution and revoked-token reuse.
+    const otherResponse = await fetch('/__fou_1452_supabase__/auth/v1/signup', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: 'other-readiness-fixture@example.test', password: 'Synthetic-Only-Password!' }),
+    });
+    const other = await otherResponse.json();
+    const wrongActiveActor = await call({ authorization: `Bearer ${other.access_token}` });
+    await fetch('/__fou_1452_supabase__/auth/v1/logout', { method: 'POST', headers: { Authorization: `Bearer ${other.access_token}` } });
+    const revoked = await call({ authorization: `Bearer ${other.access_token}`, body: JSON.stringify({ target_expected_actor_id: other.user.id }) });
+    const denied = await Promise.all([
+      call({ authorization: null }), call({ authorization: token }), call({ authorization: `Basic ${token}` }),
+      call({ authorization: 'Bearer unrecognized-fixture-token' }), call({ authorization: `Bearer ${token}.tampered` }),
+      call({ body: JSON.stringify({ target_expected_actor_id: 'malformed-actor' }) }),
+      call({ body: JSON.stringify({ target_expected_actor_id: '99999999-9999-4999-8999-999999999999' }) }),
+    ]);
+    const malformed = await Promise.all([
+      call({ body: '{' }), call({ body: 'null' }), call({ body: '[]' }),
+      call({ body: '{}' }), call({ body: JSON.stringify({ target_expected_actor_id: null }) }),
+      call({ body: JSON.stringify({ target_expected_actor_id: actorId, role: 'site_admin' }) }),
+    ]);
+    const wrongMethod = await call({ method: 'GET' });
+    return { actorId, normalized, valid, denied: [...denied, wrongActiveActor, revoked], malformed, wrongMethod };
+  });
+  expect(result.valid).toEqual({ status: 200, body: { schemaVersion: 1, actorId: result.actorId, role: 'member', adminReady: false } });
+  expect(result.normalized).toEqual({ schemaVersion: 1, actorId: result.actorId, role: 'member', adminReady: false, reason: null, permissions: [] });
+  for (const response of result.denied) expect(response).toEqual({ status: 401, body: { code: 'PT401', message: 'admin_authentication_required' } });
+  for (const response of result.malformed) expect(response).toEqual({ status: 400, body: { code: '22023', message: 'admin_invalid_input' } });
+  expect(result.wrongMethod).toEqual({ status: 405, body: { code: 'PGRST101', message: 'Invalid fixture RPC method.' } });
+  expect(auth.count('/rpc/get_site_admin_context', 'POST')).toBeGreaterThan(0);
+  await expect(page.locator('[data-admin-menu-item]')).toHaveCount(0);
+  expect(pageErrors).toEqual([]);
+});
 
 test('menu logout scrubs the private journal synchronously and owns one confirmed navigation', async ({ context, page }) => {
   await installFou1452SupabaseAuthStub(context);

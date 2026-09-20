@@ -84,8 +84,12 @@ describe('shared sticky menu', () => {
         const clearAuthSession = async () => {};
         const getLocalOrSessionUser = async () => null;
         const subscribeToAuthStateChanges = () => () => {};
+        const subscribeToAdminInvalidation = () => () => {};
+        const getAdminSessionOwner = async () => { throw new Error('Signed out fixture'); };
+        const getSiteAdminContext = async () => ({ adminReady: false, permissions: [] });
         const clearThemeEntitlementState = () => {};
         const hydrateThemeEntitlementState = async () => ({});
+        const authEntryTransition = { capture: () => null, isCurrent: () => false, subscribe() {}, suspend() {}, restore() {} };
         const initThemeState = () => {};
         const initThemeAssets = () => {};
         const SOLO_TRAINING_LAUNCH_EVENT = 'dominion:solo-training-launch-requested';

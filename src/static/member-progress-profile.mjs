@@ -3,6 +3,39 @@ import { calculateLevelProgress } from './point-economy.mjs';
 export const MEMBER_PROGRESS_BADGE_PAGE_SIZE = 12;
 export const MEMBER_PROGRESS_REVALIDATION_COOLDOWN_MS = 2_000;
 export const MEMBER_PROGRESS_UNAVAILABLE = 'Member progress is no longer available.';
+export const MEMBER_BADGE_CURSOR_RESTART = 'Badge history changed. Reload badges to start from the first page.';
+export const MEMBER_BADGE_CURSOR_RESTART_CODE = 'MEMBER_BADGE_CURSOR_RESTART_REQUIRED';
+
+export function normalizeMemberProgressAwardId(value) {
+  if (typeof value !== 'string') return '';
+  const id = value.toLowerCase();
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(id) ? id : '';
+}
+
+export function memberBadgeCursorRestartError() {
+  return Object.assign(new Error(MEMBER_BADGE_CURSOR_RESTART), { code: MEMBER_BADGE_CURSOR_RESTART_CODE });
+}
+
+export function mapMemberProgressRpcError(error) {
+  return error?.code === '22023' && error?.details === 'member_badge_cursor_restart_required'
+    ? memberBadgeCursorRestartError()
+    : error;
+}
+
+export function normalizeMemberProgressCursor(cursor) {
+  if (!cursor) return null;
+  const earnedAt = cursor.earnedAt ?? cursor.earned_at;
+  const badgeKey = cursor.badgeKey ?? cursor.badge_key;
+  const rawId = cursor.awardId ?? cursor.award_id;
+  const awardId = normalizeMemberProgressAwardId(rawId);
+  if (typeof earnedAt !== 'string' || typeof badgeKey !== 'string'
+    || !Number.isFinite(Date.parse(earnedAt)) || earnedAt.length > 40
+    || !badgeKey || badgeKey.length > 120 || /[\u0000-\u001f\u007f]/.test(badgeKey)
+    || (rawId != null && !awardId)) return null;
+  // Preserve Postgres microseconds. Date.toISOString() truncates them and would
+  // turn a valid stable cursor into a different (or missing) award boundary.
+  return { earnedAt, badgeKey, ...(awardId ? { awardId } : {}) };
+}
 
 const safeText = (value, fallback = '', maxLength = 500) => {
   const normalized = String(value ?? '')
@@ -31,8 +64,10 @@ export function normalizeMemberProgressBadge(rawBadge = {}) {
   const rawIcon = safeText(rawBadge.icon, 'shield', 40).toLowerCase();
   const icon = /^[a-z0-9_-]+$/.test(rawIcon) ? rawIcon : 'shield';
   const earnedAt = safeText(rawBadge.earnedAt ?? rawBadge.earned_at, '', 40);
+  const awardId = normalizeMemberProgressAwardId(rawBadge.awardId ?? rawBadge.id);
 
   return {
+    ...(awardId ? { awardId } : {}),
     key,
     name: safeText(rawBadge.name, 'Badge', 120),
     description: safeText(rawBadge.description, '', 500),
@@ -49,14 +84,8 @@ export function normalizeMemberProgressProfile(rawProfile = {}, { expectedMember
   }
 
   const cursor = rawProfile.nextCursor ?? rawProfile.next_cursor;
-  const earnedAt = safeText(cursor?.earnedAt ?? cursor?.earned_at, '', 40);
-  const badgeKey = safeText(cursor?.badgeKey ?? cursor?.badge_key, '', 120);
   const hasMore = Boolean(rawProfile.hasMore ?? rawProfile.has_more);
-  const nextCursor = hasMore
-    && Number.isFinite(Date.parse(earnedAt))
-    && badgeKey
-    ? { earnedAt: new Date(earnedAt).toISOString(), badgeKey }
-    : null;
+  const nextCursor = hasMore ? normalizeMemberProgressCursor(cursor) : null;
   const badges = Array.isArray(rawProfile.badges)
     ? rawProfile.badges.map(normalizeMemberProgressBadge).filter(Boolean)
     : [];
@@ -88,8 +117,11 @@ export function mergeMemberProgressBadgePage(currentProfile, nextPage) {
   const badges = [];
   const seen = new Set();
   [...current.badges, ...next.badges].forEach((badge) => {
-    if (seen.has(badge.key)) return;
-    seen.add(badge.key);
+    // Old unscoped responses had one row per key. New responses carry the
+    // award UUID, so repeat awards remain distinct even at identical times.
+    const identity = badge.awardId ? `award:${badge.awardId}` : `legacy:${badge.key}`;
+    if (seen.has(identity)) return;
+    seen.add(identity);
     badges.push(badge);
   });
 
@@ -103,6 +135,34 @@ export function mergeMemberProgressBadgePage(currentProfile, nextPage) {
     badges,
     hasMore: next.hasMore,
     nextCursor: next.nextCursor,
+  };
+}
+
+// Preview-only paging mirrors the server's time/key/UUID ordering and its
+// fail-closed handling of legacy cursors. No badge ownership is changed here.
+export function paginateMemberProgressBadges(rawBadges, cursor, limit) {
+  const compare = (a, b) => (a > b ? 1 : a < b ? -1 : 0);
+  const badges = rawBadges.map(normalizeMemberProgressBadge).filter(Boolean).sort((a, b) => (
+    compare(b.earnedAt, a.earnedAt) || compare(a.key, b.key) || compare(a.awardId, b.awardId)
+  ));
+  let afterIndex = -1;
+  if (cursor) {
+    const matches = badges.filter((badge) => badge.earnedAt === new Date(cursor.earnedAt).toISOString()
+      && badge.key === cursor.badgeKey && (!cursor.awardId || badge.awardId === cursor.awardId));
+    if (matches.length !== 1) throw memberBadgeCursorRestartError();
+    afterIndex = badges.indexOf(matches[0]);
+  }
+  const candidates = badges.slice(afterIndex + 1);
+  const page = candidates.slice(0, limit);
+  const hasMore = candidates.length > limit;
+  const last = page.at(-1);
+  return {
+    badgeCount: badges.length,
+    badges: page,
+    hasMore,
+    nextCursor: hasMore && last ? {
+      earnedAt: last.earnedAt, badgeKey: last.key, ...(last.awardId ? { awardId: last.awardId } : {}),
+    } : null,
   };
 }
 
