@@ -22,7 +22,7 @@ import {
   setDailyStandardWorkoutDifficulty,
   subscribeToAuthStateChanges,
 } from './api';
-import { badgeCatalogOrder, badgeCelebrationReason } from './badge-evaluation.mjs';
+import { badgeCatalogOrder, badgeCelebrationReason } from './badge-data-contract.mjs';
 import { createBadgeCelebrationRecovery } from './badge-celebrations.mjs';
 import { createRewardCelebrationRecovery } from './reward-celebrations.mjs';
 import { presentPermanentRewardCelebration } from './reward-celebration-view.js';

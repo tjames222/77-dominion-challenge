@@ -3,7 +3,7 @@ const port = Number(process.env.E2E_ADMIN_PORT || 4452);
 const baseURL = `http://127.0.0.1:${port}`;
 const output = `/tmp/77dc-admin-live-e2e-dist-${port}`;
 export default defineConfig({
-  testDir: './tests/e2e', testMatch: /admin-(?:live|early-access-live)\.spec\.mjs/, outputDir: './test-results/admin-live',
+  testDir: './tests/e2e', testMatch: /admin-(?:live|early-access-live|roles-live)\.spec\.mjs/, outputDir: './test-results/admin-live',
   fullyParallel: true, forbidOnly: Boolean(process.env.CI), retries: 0, workers: 2,
   timeout: 45_000, expect: { timeout: 10_000 }, reporter: [['list']],
   use: { baseURL, locale: 'en-US', timezoneId: 'UTC', serviceWorkers: 'block', trace: 'retain-on-failure', screenshot: 'only-on-failure' },

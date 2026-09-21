@@ -1,5 +1,6 @@
 import { test, expect } from './support/app-test.mjs';
 import { ROUTE_BY_ID } from './support/routes.mjs';
+import { deliveryRowsFor } from './support/preview-badge-browser-support.mjs';
 
 async function badgeState(page) {
   return page.evaluate(async()=>{
@@ -27,14 +28,17 @@ test('Dashboard consumes durable awards in catalog order and acknowledges only p
   await expect(page.locator('#rewardToast')).toBeVisible();
   const state=await badgeState(page);
   const earned=state.awards.filter(r=>r.legacy===false);
+  const owner=await page.evaluate(()=>localStorage.getItem('dominion:mockUserId'));
   expect(earned.map(r=>r.key)).toEqual(['iron_standard']);
   expect(earned[0].celebrationSeenAt).toBeNull();
+  const beforePresentation=(await deliveryRowsFor(page,owner,'badge')).find(r=>r.itemId===earned[0].awardId);
+  expect(!beforePresentation||beforePresentation.seenAt===null,'the canonical award is not acknowledged before presentation').toBe(true);
   await page.locator('#rewardToast [data-dismiss-celebration]').click();
   await expect(page.locator('#badgeCelebration')).toBeVisible();
   await expect(page.locator('#badgeCelebrationTitle')).toHaveText('Seven for Seven');
   await expect(page.locator('#badgeCelebrationCopy')).toHaveText('You posted 7 of the seven Daily Actions.');
   await page.keyboard.press('Escape');
-  await expect.poll(async()=>Boolean((await badgeState(page)).awards.find(r=>r.key==='iron_standard').celebrationSeenAt)).toBe(true);
+  await expect.poll(async()=>Boolean((await deliveryRowsFor(page,owner,'badge')).find(r=>r.itemId===earned[0].awardId)?.seenAt)).toBe(true);
   await page.reload();
   await expect(page.locator('#badgeCelebration')).toBeHidden();
 });

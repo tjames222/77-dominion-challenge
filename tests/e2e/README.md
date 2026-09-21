@@ -39,14 +39,40 @@ Normal pull-request runs compare screenshots and never rewrite their expected
 images once Linux baselines are committed. The first branch run, when no
 baseline PNG exists yet, generates the Ubuntu set and uploads it without
 pretending a comparison occurred. Download the
-`browser-visual-baselines-<sha>` artifact, review its PNGs, and commit the
-approved `tests/e2e/__snapshots__` directory; the next run is the strict gate.
+`browser-visual-baselines-<sha>-<run>-<attempt>` artifact, review its PNGs under `snapshots/`
+and its `verification.json`, then copy the approved `snapshots/` contents into
+`tests/e2e/__snapshots__`; the next run is the strict gate. A pull request with
+no committed baselines fails until those reviewed images are committed.
 Generate intentionally changed baselines later by manually running **Browser
 quality gate** with **Generate visual baselines** enabled. That generation path
 uses Playwright's explicit `all` update mode, so every expected PNG is rewritten
 even when a rendered change falls within the normal screenshot comparison
 tolerance. The uploaded artifact is therefore a complete Linux baseline set,
 not a mixture of newly rendered and stale images.
+
+CI runs the unit/build and dedicated hybrid, MFA, Admin, and Daily Action gates
+once, then partitions the unchanged main matrix across two standard Ubuntu
+runners (two Playwright workers each, existing retries/timeouts). The required
+**Routes, accessibility, and visuals** check is a fail-closed aggregate: both
+shards and every preliminary gate must succeed. Failed, cancelled, or skipped
+dependencies cannot produce a green aggregate.
+
+The exact SHA/run/attempt plan records full discovery and both disjoint shard
+inventories. Each generation runner moves its committed PNG tree aside before
+running, so its output contains only fresh screenshots. Three-day
+`browser-shard-*` artifacts are staging evidence, **never adoption artifacts**.
+The aggregate verifies every expected test outcome, every staged PNG hash,
+the complete committed-path union, and byte equality for any duplicate path
+before publishing the 14-day combined artifact. Missing shards, traversal,
+symlinks, corrupt/truncated files, stale identities, or conflicting pixels fail
+closed. Normal successful comparison runs stage manifests only, not PNGs.
+PNG validation accepts bounded, non-interlaced RGB8/RGBA8 browser captures,
+checks every chunk CRC and exact inflated scanline length, then decodes with
+the already-pinned Playwright PNG decoder. All current committed PNGs are RGB8.
+If a screenshot is intentionally removed, remove its obsolete committed PNG
+in the same change; otherwise generation correctly rejects the missing path.
+Use **Re-run all jobs** after a failed attempt: the evidence intentionally binds
+to a single attempt and cannot reuse a successful preflight from an older one.
 
 For local iteration only, update baselines with:
 

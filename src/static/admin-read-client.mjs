@@ -11,7 +11,7 @@ export function adminReadError(code = 'ADMIN_UNAVAILABLE') {
     ADMIN_INVALID_INPUT: 'Check the filters and try again.',
     ADMIN_INVALID_CURSOR: 'This page has changed. Return to the first page.',
     ADMIN_NOT_FOUND: 'This record is no longer available.',
-    ADMIN_STEP_UP_REQUIRED: 'Verify your authenticator again before denying a request.',
+    ADMIN_STEP_UP_REQUIRED: 'Verify your authenticator again before confirming an administrative change.',
     ADMIN_IDEMPOTENCY_CONFLICT: 'This operation no longer matches the reviewed request. Reload the request before starting again.',
   };
   return Object.assign(new Error(messages[code] || messages.ADMIN_UNAVAILABLE), { code });
@@ -98,6 +98,14 @@ export function createAdminReadClient({ getSession, getUser, sessionIdentity, su
       const { runEarlyAccessDenial } = await import('./admin-early-access-write-client.mjs');
       assertEpoch(captured);
       return runEarlyAccessDenial(intent, { signal }, {
+        capture, assertCurrent, assertEpoch, changed, pending, request, adminReadError, normalizeAdminContext,
+      });
+    },
+    async assignRole(intent, { signal } = {}) {
+      const captured = epoch;
+      const { runRoleAssignment } = await import('./admin-role-write-client.mjs');
+      assertEpoch(captured);
+      return runRoleAssignment(intent, { signal }, {
         capture, assertCurrent, assertEpoch, changed, pending, request, adminReadError, normalizeAdminContext,
       });
     },

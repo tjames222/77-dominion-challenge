@@ -1,11 +1,27 @@
-import { createClient } from '@supabase/supabase-js';
-import { authSessionIdentity, createSupabaseMfaAdapter, sessionRequiresMfa } from './mfa-auth.mjs';
+import {
+  SUPABASE_URL,
+  SUPABASE_ORIGIN,
+  SUPABASE_KEY,
+  ENABLE_MOCKS,
+  ENABLE_E2E_FIXTURES,
+  supabaseAuthStorageKey,
+  supabase,
+  mfaAdapter,
+  cancelMfaOperations,
+  getMfaAuthAdapter,
+  inflightActorReads,
+  previewBadgeEpoch,
+  invalidatePreviewBadgeOwner,
+  invalidateReadsAroundMutation,
+  isLocalDemoMode,
+  usesSupabaseAuthentication,
+  isHybridAuthPreview,
+} from './auth-runtime-core.mjs';
+import { authSessionIdentity, sessionRequiresMfa } from './mfa-auth.mjs';
 import { createAdminReadClient, adminReadError } from './admin-read-client.mjs';
 import { createDailyActionBootstrapClient } from './daily-action-bootstrap.mjs';
 import { createAdminPreview } from './admin-preview.mjs';
-import { createMfaSessionGuard } from './mfa-session-guard.mjs';
 import { assertEarlyAccessActor, normalizeEarlyAccessRequest, postEarlyAccessRequest } from './early-access-request.mjs';
-import { createInflightActorReads } from './inflight-actor-reads.mjs';
 import {
   DEFAULT_CHALLENGE_DEFINITIONS,
   acknowledgeChallengeRecord,
@@ -57,13 +73,9 @@ import {
   clearPreviewAuthOwner,
   previewAuthUser,
   readPreviewAuthOwner,
-  shouldCreateSupabaseClient,
-  shouldUseSupabaseAuthentication,
 } from './preview-auth-runtime.mjs';
-import { normalizeEarnedBadges } from './badges-rewards.mjs';
-import { PREVIEW_BADGE_STATE_KEY, normalizePreviewBadgeState, recordPreviewBadgeEvent,
-  claimPreviewBadgeCelebrations, acknowledgePreviewBadgeCelebrations, previewBadgeCollection } from './badge-preview-state.mjs';
-import { evaluateBadgeEvent } from './badge-evaluation.mjs';
+import { normalizeEarnedBadges, PREVIEW_BADGE_STATE_KEY } from './badge-data-contract.mjs';
+import { createPreviewBadgeBoundary } from './preview-badge-boundary.mjs';
 import { claimPreviewRewardCelebrations, acknowledgePreviewRewardCelebrations } from './reward-celebration-preview.mjs';
 import { normalizeJournalEntry, sortJournalEntries } from './journal-entry.mjs';
 import { assertJournalDateAllowed, isJournalDateKey } from './journal-date-contract.mjs';
@@ -147,123 +159,12 @@ import {
   runReleaseGatedAction,
   runOptionalReleaseQuery,
 } from './release-gates.mjs';
+export { supabase, cancelMfaOperations, getMfaAuthAdapter, isLocalDemoMode };
 
-const SUPABASE_URL = (import.meta.env.VITE_SUPABASE_URL || '').replace(/\/$/, '');
-const SUPABASE_ORIGIN = (() => {
-  try {
-    return new URL(SUPABASE_URL).origin;
-  } catch {
-    return '';
-  }
-})();
-const SUPABASE_KEY =
-  import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY ||
-  import.meta.env.VITE_SUPABASE_ANON_KEY ||
-  '';
-const environmentFlagEnabled = (value) => (
-  String(value || '').trim().toLowerCase() === 'true'
-);
-const ENABLE_MOCKS = environmentFlagEnabled(import.meta.env.VITE_ENABLE_MOCKS);
-const ENABLE_PRODUCTION_CONNECTIONS = environmentFlagEnabled(
-  import.meta.env.VITE_ENABLE_PRODUCTION_CONNECTIONS,
-);
-const ENABLE_SUPABASE_AUTH_IN_MOCKS = environmentFlagEnabled(
-  import.meta.env.VITE_ENABLE_SUPABASE_AUTH_IN_MOCKS,
-);
-const ENABLE_E2E_FIXTURES = Boolean(
-  import.meta.env.DEV
-  && ENABLE_MOCKS
-  && environmentFlagEnabled(import.meta.env.VITE_ENABLE_E2E_FIXTURES)
-);
 const e2eRewardFixturesEnabled = () => (
   ENABLE_E2E_FIXTURES
   && globalThis.__DOMINION_E2E__?.enabled === true
 );
-const ENABLE_LOCAL_HYBRID_AUTH = Boolean(
-  import.meta.env.DEV && ENABLE_MOCKS && ENABLE_SUPABASE_AUTH_IN_MOCKS,
-);
-const isPlaceholder = (value) => !value || value.includes('YOUR_');
-const isSupabaseConfigured = () => !isPlaceholder(SUPABASE_URL) && !isPlaceholder(SUPABASE_KEY);
-const ALLOW_SUPABASE_CLIENT = shouldCreateSupabaseClient({
-  configured: isSupabaseConfigured(),
-  mocksEnabled: ENABLE_MOCKS,
-  productionBuild: import.meta.env.PROD,
-  productionConnectionsEnabled: ENABLE_PRODUCTION_CONNECTIONS,
-  localHybridEnabled: ENABLE_LOCAL_HYBRID_AUTH,
-});
-const supabaseAuthStorageKey = ALLOW_SUPABASE_CLIENT
-  ? `sb-${new URL(SUPABASE_URL).hostname.split('.')[0]}-auth-token`
-  : '';
-const browserAuthStorage = () => {
-  try { return globalThis.localStorage; } catch { return null; }
-};
-const mfaSessionGuard = ALLOW_SUPABASE_CLIENT ? createMfaSessionGuard({
-  supabaseUrl: SUPABASE_URL,
-  storageKey: supabaseAuthStorageKey,
-  storage: browserAuthStorage(),
-  fetch: globalThis.fetch,
-  locks: globalThis.navigator?.locks,
-  eventTarget: globalThis.window,
-}) : null;
-export const supabase = ALLOW_SUPABASE_CLIENT
-  ? createClient(SUPABASE_URL, SUPABASE_KEY, {
-      global: { fetch: mfaSessionGuard.fetch },
-      auth: {
-        // Keep the existing SDK storage key and one attributable session write.
-        // Do not configure a separate userStorage ahead of the guarded commit.
-        storageKey: supabaseAuthStorageKey,
-        storage: mfaSessionGuard.storage,
-        persistSession: true,
-        autoRefreshToken: true,
-        detectSessionInUrl: true,
-      },
-    })
-  : null;
-const mfaAdapter = supabase ? createSupabaseMfaAdapter(mfaSessionGuard.protectAuth(supabase.auth)) : null;
-export function cancelMfaOperations() { mfaSessionGuard?.cancelPending(); }
-export function getMfaAuthAdapter() {
-  if (!usesSupabaseAuthentication() || !mfaAdapter) throw new Error('Live account security is unavailable in this preview.');
-  return mfaAdapter;
-}
-const inflightActorReads = createInflightActorReads();
-async function invalidateReadsAroundMutation(operation, query = '') {
-  inflightActorReads.invalidate(query);
-  try {
-    return await operation();
-  } finally {
-    inflightActorReads.invalidate(query);
-  }
-}
-// A separate synchronous observer fences requests before any UI auth callback
-// schedules rehydration. No Supabase method is called from this callback.
-supabase?.auth.onAuthStateChange((event, session) => {
-  inflightActorReads.observeAuth(event, session?.user?.id || '', authSessionIdentity(session));
-});
-globalThis.window?.addEventListener('storage', (event) => {
-  if (!event.key || event.key.startsWith('dominion:') || /^sb-.+-auth-token/.test(event.key)) {
-    inflightActorReads.invalidate();
-  }
-});
-for (const event of ['online', 'offline', 'dominion:challenge-activation-updated',
-  'dominion:challenge-start-date-updated']) {
-  globalThis.window?.addEventListener(event, () => inflightActorReads.invalidate());
-}
-globalThis.document?.addEventListener('visibilitychange', () => {
-  if (!document.hidden) inflightActorReads.invalidate();
-});
-export function isLocalDemoMode() {
-  if (typeof window === 'undefined') return false;
-  return ENABLE_MOCKS || (import.meta.env.DEV && ['localhost', '127.0.0.1', '::1'].includes(window.location.hostname));
-}
-const usesSupabaseAuthentication = () => Boolean(supabase)
-  && shouldUseSupabaseAuthentication({
-    configured: true,
-    localDemo: isLocalDemoMode(),
-    mocksEnabled: ENABLE_MOCKS,
-    productionBuild: import.meta.env.PROD,
-    localHybridEnabled: ENABLE_LOCAL_HYBRID_AUTH,
-  });
-const isHybridAuthPreview = () => isLocalDemoMode() && usesSupabaseAuthentication();
 const MEMBERSHIP_ACCESS_KEY = 'membership_active';
 const MEMBERSHIP_PRODUCT_KEY = 'dominion_membership';
 const PROFILE_PHOTO_BUCKET = 'profile-photos';
@@ -596,7 +497,8 @@ function getAdminReadClient() {
       if (raw.length > 262144) throw adminReadError();
       let value; try { value = JSON.parse(raw); } catch { throw adminReadError(); }
       if (!response.ok) {
-        const code = response.status === 401 ? 'ADMIN_SIGNED_OUT' : response.status === 403 ? 'ADMIN_DENIED'
+        const code = name === 'site_admin_assign_role' && response.status === 403 && value?.message === 'admin_final_recovery_path' ? 'ADMIN_RECOVERY_PROTECTED'
+          : response.status === 401 ? 'ADMIN_SIGNED_OUT' : response.status === 403 ? 'ADMIN_DENIED'
           : response.status === 404 ? 'ADMIN_NOT_FOUND' : value?.message === 'admin_idempotency_conflict' ? 'ADMIN_IDEMPOTENCY_CONFLICT'
             : value?.message === 'admin_invalid_cursor' ? 'ADMIN_INVALID_CURSOR'
             : value?.message === 'admin_invalid_input' ? 'ADMIN_INVALID_INPUT' : 'ADMIN_UNAVAILABLE';
@@ -618,6 +520,7 @@ export const listSiteAdminEarlyAccess = (args, options = {}) => getAdminReadClie
 export const getSiteAdminEarlyAccess = (id, options = {}) => getAdminReadClient().read('site_admin_get_early_access_request', { target_request_id: id }, options);
 export const listSiteAdminEarlyAccessHistory = (args, options = {}) => getAdminReadClient().read('site_admin_list_early_access_history', args, options);
 export const denySiteAdminEarlyAccess = (intent, options = {}) => getAdminReadClient().denyEarlyAccess(intent, options);
+export const assignSiteAdminRole = (intent, options = {}) => getAdminReadClient().assignRole(intent, options);
 export function subscribeToAdminInvalidation(listener) { adminInvalidationListeners.add(listener); return () => adminInvalidationListeners.delete(listener); }
 export function cancelAdminReads() { if (adminReadClient?.invalidate) adminReadClient.invalidate(); else notifyAdminInvalidation(); }
 if (typeof window !== 'undefined') {
@@ -669,6 +572,7 @@ export async function clearAuthSession({ redirectToLanding = false } = {}) {
   try {
     cancelAdminReads();
     inflightActorReads.invalidate();
+    invalidatePreviewBadgeOwner();
     if (usesSupabaseAuthentication()) {
       try {
         const result = await supabase.auth.signOut();
@@ -703,6 +607,7 @@ export async function clearAuthSession({ redirectToLanding = false } = {}) {
 
 export function saveLocalMockUser(user) {
   if (!isLocalDemoMode()) throw new Error('Preview login is unavailable outside local demo mode.');
+  invalidatePreviewBadgeOwner();
   cancelAdminReads();
   inflightActorReads.invalidate();
   const nextUser = {
@@ -1129,6 +1034,13 @@ const mapBadge = (badge) => {
     displayOrder: definition?.displayOrder ?? definition?.sort_order ?? badge.displayOrder ?? 10000,
     celebrationSeenAt: badge.celebration_seen_at || badge.celebrationSeenAt || null,
   } : null;
+};
+
+const mapPresentationBadge = badge => {
+  const mapped = mapBadge(badge);
+  if (!mapped) return mapped;
+  const { celebrationSeenAt, ...presentation } = mapped;
+  return presentation;
 };
 
 const mapGameStats = (stats) => stats ? ({
@@ -1777,7 +1689,7 @@ export async function completeSharingReward(completionToken, { expectedUserId = 
       throw new Error('The signed-in account changed. Try again.');
     }
     const actorId = requireMockRewardActor(expectedUserId);
-    return withPreviewBadgeState(actorId, (state) => {
+    return withPreviewBadgeState(actorId, (state, { evaluateBadgeEvent }) => {
       const existing = readMockUserValue(MOCK_SHARING_REWARD_KEY, null, actorId);
       if (existing) return { granted: false, alreadyGranted: true, ...existing };
       const grantedAt = new Date().toISOString();
@@ -1848,13 +1760,14 @@ function getMockChallengeProgression() {
   return progression;
 }
 
-function getMockRewardCatalog() {
+function getMockRewardCatalog({ snapshot = false } = {}) {
+  const progression = getMockChallengeProgression();
   const result = buildMockRewardCatalog({
-    progression: getMockChallengeProgression(),
+    progression,
     ownershipRecords: readMockUserValue(MOCK_REWARD_ENTITLEMENTS_KEY, []),
   });
   writeMockUserValue(MOCK_REWARD_ENTITLEMENTS_KEY, result.ownershipRecords);
-  return result.catalog;
+  return snapshot ? { ...result, progression } : result.catalog;
 }
 
 export async function getChallengeProgression() {
@@ -1870,9 +1783,8 @@ export async function getChallengeProgression() {
 export async function getRewardCatalog({ limit = 50, cursor = null, expectedUserId = '', signal } = {}) {
   signal?.throwIfAborted();
   if (isLocalDemoMode()) {
-    const actorId = requireMockRewardActor(expectedUserId);
-    const result = getMockRewardCatalog();
-    requireMockRewardActor(actorId);
+    const result = await withPreviewRewardDelivery(expectedUserId, ({ catalog }) => catalog, [], signal);
+    signal?.throwIfAborted();
     return result;
   }
 
@@ -1940,17 +1852,11 @@ const MOCK_REWARD_CELEBRATION_LEASES_KEY = 'dominion:rewardCelebrationLeases';
 export async function claimRewardCelebrations({ expectedUserId = '', claimToken } = {}) {
   if (isLocalDemoMode()) {
     if (globalThis.navigator?.onLine === false) throw new Error('Reward delivery will retry when you are back online.');
-    await requireHybridPreviewUser(expectedUserId);
-    const actorId = requireMockRewardActor(expectedUserId);
-    const result = claimPreviewRewardCelebrations({
-      catalog: getMockRewardCatalog(),
-      leases: readMockUserValue(MOCK_REWARD_CELEBRATION_LEASES_KEY, {}),
-      claimToken,
+    return withPreviewRewardDelivery(expectedUserId, ({ catalog, leases, rows, module, now }) => {
+      const result = claimPreviewRewardCelebrations({ catalog, leases, claimToken, now });
+      module.saveRewardDelivery([], result.leases, rows);
+      return { claimedUnlocks: result.claimedUnlocks, claimToken, leaseSeconds: 900 };
     });
-    writeMockUserValue(MOCK_REWARD_CELEBRATION_LEASES_KEY, result.leases);
-    await requireHybridPreviewUser(actorId);
-    requireMockRewardActor(actorId);
-    return { claimedUnlocks: result.claimedUnlocks, claimToken, leaseSeconds: 900 };
   }
   const client = requireSupabase();
   const actor = await requireUser(expectedUserId);
@@ -1965,18 +1871,12 @@ export async function claimRewardCelebrations({ expectedUserId = '', claimToken 
 export async function acknowledgeRewardCelebrations({ expectedUserId = '', claimToken, rewardKeys = [] } = {}) {
   if (isLocalDemoMode()) {
     if (globalThis.navigator?.onLine === false) throw new Error('Reward acknowledgement will retry when you are back online.');
-    await requireHybridPreviewUser(expectedUserId);
-    const actorId = requireMockRewardActor(expectedUserId);
-    const result = acknowledgePreviewRewardCelebrations({
-      ownershipRecords: readMockUserValue(MOCK_REWARD_ENTITLEMENTS_KEY, []),
-      leases: readMockUserValue(MOCK_REWARD_CELEBRATION_LEASES_KEY, {}),
-      claimToken, rewardKeys,
-    });
-    writeMockUserValue(MOCK_REWARD_ENTITLEMENTS_KEY, result.ownershipRecords);
-    writeMockUserValue(MOCK_REWARD_CELEBRATION_LEASES_KEY, result.leases);
-    await requireHybridPreviewUser(actorId);
-    requireMockRewardActor(actorId);
-    return { acknowledgedKeys: result.acknowledgedKeys };
+    return withPreviewRewardDelivery(expectedUserId, ({ ownershipRecords, leases, rows, module, now }) => {
+      const result = acknowledgePreviewRewardCelebrations({ ownershipRecords, leases, claimToken, rewardKeys, now });
+      module.saveRewardDelivery(result.ownershipRecords, result.leases, rows);
+      const knownSeen = rewardKeys.filter(key => rows.get(key)?.seenAt);
+      return { acknowledgedKeys: [...new Set([...result.acknowledgedKeys, ...knownSeen])] };
+    }, rewardKeys);
   }
   const client = requireSupabase();
   const actor = await requireUser(expectedUserId);
@@ -1990,19 +1890,12 @@ export async function acknowledgeRewardCelebrations({ expectedUserId = '', claim
 
 export async function claimRewardEntitlementUnlocks({ expectedUserId = '' } = {}) {
   if (isLocalDemoMode()) {
-    await requireHybridPreviewUser(expectedUserId);
-    const actorId = requireMockRewardActor(expectedUserId);
-    const result = claimMockRewardEntitlementUnlocks({
-      progression: getMockChallengeProgression(),
-      ownershipRecords: readMockUserValue(MOCK_REWARD_ENTITLEMENTS_KEY, []),
+    return withPreviewRewardDelivery(expectedUserId, ({ progression, ownershipRecords, leases, rows, module, now }) => {
+      const result = claimMockRewardEntitlementUnlocks({ progression, ownershipRecords, now: new Date(now).toISOString() });
+      module.saveRewardDelivery(result.ownershipRecords, leases, rows);
+      module.overlayRewardDelivery(result.catalog, rows);
+      return { claimedUnlocks: result.claimedUnlocks, catalog: result.catalog };
     });
-    writeMockUserValue(MOCK_REWARD_ENTITLEMENTS_KEY, result.ownershipRecords);
-    await requireHybridPreviewUser(actorId);
-    requireMockRewardActor(actorId);
-    return {
-      claimedUnlocks: result.claimedUnlocks,
-      catalog: result.catalog,
-    };
   }
 
   const client = requireSupabase();
@@ -2020,16 +1913,12 @@ export async function claimRewardEntitlementUnlocks({ expectedUserId = '' } = {}
   };
 }
 
-function mockRewardFulfillment(rewardKey, { action = 'read' } = {}) {
-  const catalog = getMockRewardCatalog();
+function mockRewardFulfillment(rewardKey, { action = 'read', catalog, fixtureByReward = {} } = {}) {
   const reward = catalog.items.find((item) => item.key === rewardKey);
   if (!reward || !['partner_discount', 'merch_discount', 'digital_download'].includes(reward.rewardType)) {
     throw new Error('The requested reward fulfillment is unavailable.');
   }
   const owned = reward.status === 'owned';
-  const fixtureByReward = e2eRewardFixturesEnabled()
-    ? readMockUserValue(MOCK_REWARD_FULFILLMENTS_KEY, {})
-    : {};
   const fixture = fixtureByReward && typeof fixtureByReward === 'object'
     ? fixtureByReward[rewardKey]
     : null;
@@ -2093,7 +1982,7 @@ const requireMockRewardActor = (expectedUserId = '') => {
 export async function getRewardFulfillment(rewardKey, { expectedUserId = '' } = {}) {
   if (isLocalDemoMode()) {
     const actorId = requireMockRewardActor(expectedUserId);
-    const result = mockRewardFulfillment(rewardKey);
+    const result = await previewRewardFulfillment(actorId, rewardKey);
     requireMockRewardActor(actorId);
     return result;
   }
@@ -2111,7 +2000,7 @@ export async function getRewardFulfillment(rewardKey, { expectedUserId = '' } = 
 export async function claimRewardOffer(rewardKey, { expectedUserId = '' } = {}) {
   if (isLocalDemoMode()) {
     const actorId = requireMockRewardActor(expectedUserId);
-    const result = mockRewardFulfillment(rewardKey, { action: 'claim' });
+    const result = await previewRewardFulfillment(actorId, rewardKey, 'claim');
     requireMockRewardActor(actorId);
     return result;
   }
@@ -2129,7 +2018,7 @@ export async function claimRewardOffer(rewardKey, { expectedUserId = '' } = {}) 
 export async function downloadRewardAsset(rewardKey, { expectedUserId = '' } = {}) {
   if (isLocalDemoMode()) {
     const actorId = requireMockRewardActor(expectedUserId);
-    const result = mockRewardFulfillment(rewardKey, { action: 'download' });
+    const result = await previewRewardFulfillment(actorId, rewardKey, 'download');
     requireMockRewardActor(actorId);
     if (typeof result.pdfFixture === 'string' && result.pdfFixture.startsWith('%PDF-')) {
       return {
@@ -3348,24 +3237,122 @@ export async function getCommunityFeed() {
   return data.map(mapFeedItem);
 }
 
-async function withPreviewBadgeState(expectedUserId, operation) {
+async function capturePreviewBadgeOwner(expectedUserId) {
+  const epoch = previewBadgeEpoch;
+  const liveAuth = usesSupabaseAuthentication();
+  const before = liveAuth ? await getAuthSession() : null;
   const user = await getLocalOrSessionUser();
-  if (!expectedUserId || !user?.authenticated || user.userId !== expectedUserId) throw new Error('The signed-in account changed. Try again.');
-  if (!globalThis.navigator?.locks?.request) throw new Error('This preview browser cannot safely synchronize badge history.');
-  return navigator.locks.request(`dominion:badges:${expectedUserId}`, async () => {
-    const current = await getLocalOrSessionUser();
-    if (!current?.authenticated || current.userId !== expectedUserId) throw new Error('The signed-in account changed. Try again.');
-    const state = normalizePreviewBadgeState(readMockUserValue(PREVIEW_BADGE_STATE_KEY, null, expectedUserId), readMockUserValue('dominion:badges', [], expectedUserId));
-    const result = operation(state);
+  // The initial presentation gate precedes getUser. Recheck assurance after
+  // that canonical await, then bind the exact immutable session and bearer.
+  const needsMfa = liveAuth && await sessionRequiresMfa(supabase.auth);
+  const after = liveAuth ? await getAuthSession() : null;
+  const identity = liveAuth ? authSessionIdentity(before) : `preview:${user?.userId || ''}`;
+  if (!expectedUserId || !user?.authenticated || user.userId !== expectedUserId || epoch !== previewBadgeEpoch
+    || needsMfa || (liveAuth && (!identity || identity !== authSessionIdentity(after)
+      || before?.access_token !== after?.access_token))) throw new Error('The signed-in account changed. Try again.');
+  return { actorId: user.userId, sessionIdentity: identity, token: liveAuth ? after.access_token : '', epoch };
+}
+
+let previewBadgeBoundary;
+function getPreviewBadgeBoundary() {
+  if (!previewBadgeBoundary) previewBadgeBoundary = createPreviewBadgeBoundary({
+    captureOwner: capturePreviewBadgeOwner,
+    requestLock: globalThis.navigator?.locks?.request
+      ? (key, work) => navigator.locks.request(key, work) : null,
+  });
+  return previewBadgeBoundary;
+}
+
+async function withPreviewBadgeState(expectedUserId, operation) {
+  return getPreviewBadgeBoundary().run(expectedUserId, (runtime) => {
+    const state = runtime.normalizePreviewBadgeState(readMockUserValue(PREVIEW_BADGE_STATE_KEY, null, expectedUserId), readMockUserValue('dominion:badges', [], expectedUserId));
+    const result = operation(state, runtime);
     writeMockUserValue(PREVIEW_BADGE_STATE_KEY, state, expectedUserId);
     writeMockUserValue('dominion:badges', state.awards, expectedUserId);
     return result;
   });
 }
 
+function assertPreviewDeliveryOwner(owner) {
+  if (previewBadgeEpoch !== owner.epoch || requireMockRewardActor(owner.actorId) !== owner.actorId
+    || (usesSupabaseAuthentication() && readJson(supabaseAuthStorageKey, null)?.access_token !== owner.token)) {
+    throw new Error('The signed-in account changed. Try again.');
+  }
+}
+
+async function withPreviewDelivery(owner, verifyOwner, setup, signal) {
+  const assertCurrent = () => { signal?.throwIfAborted(); assertPreviewDeliveryOwner(owner); };
+  assertCurrent();
+  let module;
+  try { module = await import('./preview-delivery-ledger.mjs'); }
+  catch { throw new Error('Preview delivery is temporarily unavailable. Reload and try again.'); }
+  await verifyOwner();
+  assertCurrent();
+  return module.previewDeliveryLedger.transact({ ...setup(module), actorId: owner.actorId, assertCurrent, verifyOwner });
+}
+
+async function withPreviewRewardDelivery(expectedUserId, operation, receiptIds = [], signal, prepare = () => undefined) {
+  const actorId = requireMockRewardActor(expectedUserId);
+  const owner = Object.freeze({ ...await capturePreviewBadgeOwner(actorId) });
+  const verifyOwner = async () => {
+    const current = await capturePreviewBadgeOwner(actorId);
+    if (current.sessionIdentity !== owner.sessionIdentity || current.token !== owner.token || current.epoch !== owner.epoch) {
+      throw new Error('The signed-in account changed. Try again.');
+    }
+  };
+  return withPreviewDelivery(owner, verifyOwner, module => {
+    const { catalog, ownershipRecords, progression } = getMockRewardCatalog({ snapshot: true });
+    const context = prepare(actorId);
+    const seeds = module.rewardDeliverySeeds(catalog, readMockUserValue(MOCK_REWARD_CELEBRATION_LEASES_KEY, {}, actorId));
+    const admittedKeys = new Set(seeds.map(seed => seed.itemId));
+    return { kind: 'reward', seeds, receiptIds, reduce: (rows, now) => {
+      const leases = module.overlayRewardDelivery(catalog, rows);
+      for (const record of ownershipRecords) {
+        const row = rows.get(record.key);
+        if (row) record.celebrationSeenAt = row.seenAt;
+      }
+      return operation({ catalog, progression, ownershipRecords: ownershipRecords.filter(record => admittedKeys.has(record.key)),
+        leases, rows, module, now, context });
+    } };
+  }, signal);
+}
+
+async function readPreviewBadgeHistory(expectedUserId, operation) {
+  return getPreviewBadgeBoundary().run(expectedUserId, async (runtime, verifyOwner, owner) => {
+    assertPreviewDeliveryOwner(owner);
+    const source = readMockUserValue(PREVIEW_BADGE_STATE_KEY, null, expectedUserId);
+    const legacy = readMockUserValue('dominion:badges', [], expectedUserId);
+    const state = runtime.normalizePreviewBadgeState(source, legacy);
+    const raw = source?.schemaVersion === 1 ? source.awards : legacy;
+    const earnedBadges = normalizeEarnedBadges((Array.isArray(raw) ? raw : []).map(mapBadge).filter(Boolean));
+    await verifyOwner();
+    assertPreviewDeliveryOwner(owner);
+    return operation(state, runtime, earnedBadges);
+  }, { lock: false });
+}
+
+function previewRewardFulfillment(actorId, rewardKey, action = 'read') {
+  return withPreviewRewardDelivery(actorId, ({ catalog, context }) => mockRewardFulfillment(rewardKey, {
+    action, catalog, fixtureByReward: context,
+  }), [], undefined, ownerId => e2eRewardFixturesEnabled() ? readMockUserValue(MOCK_REWARD_FULFILLMENTS_KEY, {}, ownerId) : {});
+}
+
+async function withPreviewBadgeDelivery(expectedUserId, operation, { receiptIds = [] } = {}) {
+  return getPreviewBadgeBoundary().run(expectedUserId, (runtime, verifyOwner, owner) => withPreviewDelivery(owner, verifyOwner, module => {
+    const state = runtime.normalizePreviewBadgeState(readMockUserValue(PREVIEW_BADGE_STATE_KEY, null, expectedUserId),
+      readMockUserValue('dominion:badges', [], expectedUserId));
+    return { kind: 'badge', seeds: module.badgeDeliverySeeds(state.awards), receiptIds, reduce: (rows, now) => {
+      module.overlayBadgeDelivery(state.awards, rows);
+      const result = operation(state, runtime, now, rows);
+      module.saveBadgeDelivery(state.awards, rows);
+      return result;
+    } };
+  }));
+}
+
 export async function recordPreviewCheckInBadges(entry, { expectedUserId = '' } = {}) {
   if (!isLocalDemoMode()) throw new Error('Preview badge events cannot be submitted to production.');
-  return withPreviewBadgeState(expectedUserId, (state) => {
+  return withPreviewBadgeState(expectedUserId, (state, { recordPreviewBadgeEvent }) => {
     recordPreviewBadgeEvent(state, { source: 'check_in', sourceId: `preview-check-in:${entry.date}`,
       occurredAt: entry.createdAt || new Date().toISOString(), localDate: entry.date, challengeDay: entry.day,
       completed: entry.completed, workoutDifficultySelections: entry.workoutDifficultySelections || {} });
@@ -3374,8 +3361,8 @@ export async function recordPreviewCheckInBadges(entry, { expectedUserId = '' } 
 }
 
 export async function claimBadgeCelebrations({ expectedUserId = '', claimToken = crypto.randomUUID() } = {}) {
-  if (isLocalDemoMode()) return withPreviewBadgeState(expectedUserId, (state) => ({ claimToken,
-    badges: claimPreviewBadgeCelebrations(state, claimToken).map(mapBadge) }));
+  if (isLocalDemoMode()) return withPreviewBadgeDelivery(expectedUserId, (state, { claimPreviewBadgeCelebrations }, now) => ({ claimToken,
+    badges: claimPreviewBadgeCelebrations(state, claimToken, now).map(mapBadge) }));
   const client = requireSupabase();
   const user = await requireUser(expectedUserId);
   const { data, error } = await client.rpc('claim_badge_celebrations', { target_expected_actor_id: user.id, target_claim_token: claimToken });
@@ -3389,7 +3376,10 @@ export async function acknowledgeBadgeCelebrations({ expectedUserId = '', claimT
     if (!Array.isArray(ids) || awardIds.some((id) => !ids.includes(id))) throw new Error('Badge acknowledgment is still pending.');
     return ids;
   };
-  if (isLocalDemoMode()) return verify(await withPreviewBadgeState(expectedUserId, (state) => acknowledgePreviewBadgeCelebrations(state, claimToken, awardIds)));
+  if (isLocalDemoMode()) return verify(await withPreviewBadgeDelivery(expectedUserId, (state, { acknowledgePreviewBadgeCelebrations }, now, rows) => {
+    const acknowledged = acknowledgePreviewBadgeCelebrations(state, claimToken, awardIds, now);
+    return [...new Set([...acknowledged, ...awardIds.filter(id => rows.get(id)?.seenAt)])];
+  }, { receiptIds: awardIds }));
   const client = requireSupabase();
   const user = await requireUser(expectedUserId);
   const { data, error } = await client.rpc('acknowledge_badge_celebrations', {
@@ -3401,7 +3391,7 @@ export async function acknowledgeBadgeCelebrations({ expectedUserId = '', claimT
 }
 
 export async function recordAppVisit({ expectedUserId = '' } = {}) {
-  if (isLocalDemoMode()) return withPreviewBadgeState(expectedUserId, (state) => {
+  if (isLocalDemoMode()) return withPreviewBadgeState(expectedUserId, (state, { recordPreviewBadgeEvent }) => {
     const activation = readMockChallengeActivation();
     const occurredAt = new Date().toISOString();
     const date = dateKeyForTimeZone(new Date(occurredAt), activation.timeZone || browserTimeZone());
@@ -3459,17 +3449,16 @@ export async function getGameSummary() {
 export async function getBadgeCollection({ expectedUserId = '' } = {}) {
   let actorId;
   if (isLocalDemoMode()) {
-    await requireHybridPreviewUser(expectedUserId);
     actorId = requireMockRewardActor(expectedUserId);
   } else actorId = (await requireUser(expectedUserId)).id;
-  const earnedBadges = await getEarnedBadges({ expectedUserId: actorId });
   if (isLocalDemoMode()) {
-    requireMockRewardActor(actorId);
-    const activation = readMockChallengeActivation();
-    const state = normalizePreviewBadgeState(readMockUserValue(PREVIEW_BADGE_STATE_KEY, null, actorId), earnedBadges);
-    const today = dateKeyForTimeZone(new Date(), activation.timeZone || browserTimeZone());
-    return { ...previewBadgeCollection(state, activation, today), earnedBadges };
+    return readPreviewBadgeHistory(actorId, (state, { previewBadgeCollection }, earnedBadges) => {
+      const activation = readMockChallengeActivation();
+      const today = dateKeyForTimeZone(new Date(), activation.timeZone || browserTimeZone());
+      return { ...previewBadgeCollection(state, activation, today), earnedBadges };
+    });
   }
+  const earnedBadges = await getEarnedBadges({ expectedUserId: actorId });
   const client = requireSupabase();
   const user = await requireUser(actorId);
   const { data, error } = await client.rpc('get_badge_collection', { target_expected_actor_id: user.id });
@@ -3481,13 +3470,8 @@ export async function getBadgeCollection({ expectedUserId = '' } = {}) {
 
 export async function getEarnedBadges({ pageSize = 100, expectedUserId = '' } = {}) {
   if (isLocalDemoMode()) {
-    await requireHybridPreviewUser(expectedUserId);
     const actorId = requireMockRewardActor(expectedUserId);
-    const state = readMockUserValue(PREVIEW_BADGE_STATE_KEY, null, actorId);
-    const raw = state?.schemaVersion === 1 ? state.awards : readMockUserValue('dominion:badges', [], actorId);
-    const badges = normalizeEarnedBadges((Array.isArray(raw) ? raw : []).map(mapBadge).filter(Boolean));
-    requireMockRewardActor(actorId);
-    return badges;
+    return readPreviewBadgeHistory(actorId, (_state, _runtime, earnedBadges) => earnedBadges);
   }
 
   const client = requireSupabase();
@@ -3753,7 +3737,7 @@ function getMockMemberProgressFixture(member) {
       challengePoints: Number(stats.challengePoints ?? stats.totalPoints ?? 0),
       currentAppStreak: Number(stats.currentAppStreak || 0),
       latestChallengeDay: 14,
-      badges: readMockUserValue('dominion:badges', []).map(mapBadge).filter(Boolean),
+      badges: readMockUserValue('dominion:badges', []).map(mapPresentationBadge).filter(Boolean),
     };
   }
   return MOCK_MEMBER_PROGRESS_FIXTURES[member.userId] || {
@@ -3826,7 +3810,7 @@ function getMockCrewMemberProgressProfile({ crewId, userId, cursor, limit }) {
 
   const fixture = getMockMemberProgressFixture(target);
   const badges = [...fixture.badges]
-    .map(mapBadge)
+    .map(mapPresentationBadge)
     .filter(Boolean)
     .map((badge) => ({ ...badge, awardId: mockMemberBadgeIdentity(target.userId, badge) }));
 

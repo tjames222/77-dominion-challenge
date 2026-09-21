@@ -158,7 +158,7 @@ test('production owner never exposes a preview identity alias from user or sessi
 });
 test('production-built queue browser coverage stays in the existing required Admin CI suite', () => {
   const read = (path) => readFileSync(new URL(path, import.meta.url), 'utf8');
-  assert.match(read('../../playwright.admin.config.mjs'), /admin-\(\?:live\|early-access-live\)/);
+  assert.match(read('../../playwright.admin.config.mjs'), /admin-\(\?:live\|early-access-live\|roles-live\)/);
   assert.match(read('../../.github/workflows/browser-quality.yml'), /run: pnpm test:e2e:admin/);
   for (const path of ['./admin-preview.mjs', './admin-read-client.mjs']) {
     assert.doesNotMatch(read(path), /import [^;\n]+ from ['"]\.\/admin-early-access/);
