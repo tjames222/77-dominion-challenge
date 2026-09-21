@@ -1,237 +1,179 @@
-name: Browser quality gate
+# NEVER MERGE: diagnostic-only replacement on its isolated review branch.
+# This job is not a required check and does not replace either normal PR gate.
+name: Diagnostic Admin Users Linux captures - NEVER MERGE
 
 on:
-  pull_request:
   workflow_dispatch:
-    inputs:
-      generate_visual_baselines:
-        description: Generate reviewable Linux screenshot baselines instead of comparing them
-        required: false
-        type: boolean
-        default: false
 
 permissions:
   contents: read
 
 concurrency:
-  group: browser-quality-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  group: diagnostic-admin-users-linux-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
-  preflight:
-    name: Browser preflight
+  capture-users:
+    name: Diagnostic Users captures (not a required gate)
     runs-on: ubuntu-latest
-    timeout-minutes: 60
-    outputs:
-      generate: ${{ steps.plan.outputs.generate }}
-      present: ${{ steps.plan.outputs.present }}
+    timeout-minutes: 30
     env:
       CI: true
-      E2E_STRICT_THEME_BOOTSTRAP: ${{ vars.E2E_STRICT_THEME_BOOTSTRAP || 'false' }}
+      ADMIN_EVIDENCE_SOURCE_SHA: dcae150441d330d291b63d364b59a7d07cdf7620
+      ADMIN_EVIDENCE_SOURCE_TREE: 201b17cca0afc7fb0e2a08302f0ad1801f473c8c
+      PLAYWRIGHT_JSON_OUTPUT_NAME: .admin-users-review/result.json
 
     steps:
-      - name: Checkout
+      - name: Checkout exact reviewed application source
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-
-      - name: Install pnpm
-        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
         with:
-          version: 10.17.1
+          ref: dcae150441d330d291b63d364b59a7d07cdf7620
+          persist-credentials: false
 
-      - name: Setup Node
-        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
-        with:
-          node-version: 22
-          cache: pnpm
-
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
-
-      - name: Install Chromium and WebKit
-        run: pnpm exec playwright install --with-deps chromium webkit
-
-      - name: Unit tests
-        run: pnpm test
-
-      - name: Production build
-        run: pnpm build
-
-      - name: Hybrid dev authentication regression
-        run: pnpm test:e2e:auth
-
-      - name: MFA production-mode authentication regression
-        run: pnpm test:e2e:mfa
-
-      - name: Verify production-built admin read boundaries
-        run: pnpm test:e2e:admin
-
-      - name: Verify focused production-built Daily Action reads
-        run: pnpm test:e2e:daily-bootstrap
-
-      - name: Verify optional preview badge ownership boundaries
-        run: pnpm test:e2e:preview-badges
-
-      - name: Verify complete two-shard inventory
-        id: plan
-        env:
-          BROWSER_REQUEST_GENERATION: ${{ github.event_name == 'workflow_dispatch' && inputs.generate_visual_baselines }}
-        run: node scripts/browser-shard-artifacts.mjs plan
-
-      - name: Upload exact-run test plan
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        with:
-          name: browser-plan-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
-          path: .browser-quality/plan.json
-          include-hidden-files: true
-          if-no-files-found: error
-          retention-days: 3
-
-      - name: Upload browser diagnostics
-        if: failure()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        with:
-          name: browser-quality-preflight-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
-          path: playwright-report/
-          if-no-files-found: ignore
-          retention-days: 3
-
-  browser-shards:
-    name: Browser matrix shard ${{ matrix.shard }}/2
-    needs: preflight
-    runs-on: ubuntu-latest
-    timeout-minutes: 60
-    strategy:
-      fail-fast: false
-      matrix:
-        shard: [1, 2]
-    env:
-      CI: true
-      E2E_STRICT_THEME_BOOTSTRAP: ${{ vars.E2E_STRICT_THEME_BOOTSTRAP || 'false' }}
-      PLAYWRIGHT_JSON_OUTPUT_NAME: .browser-quality/result.json
-    steps:
-      - name: Checkout
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-
-      - name: Install pnpm
-        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
-        with:
-          version: 10.17.1
-
-      - name: Setup Node
-        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
-        with:
-          node-version: 22
-          cache: pnpm
-
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
-
-      - name: Install Chromium and WebKit
-        run: pnpm exec playwright install --with-deps chromium webkit
-
-      - name: Download exact-run test plan
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
-        with:
-          name: browser-plan-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
-          path: .browser-quality/
-
-      - name: Prepare isolated shard baseline output
-        run: node scripts/browser-shard-artifacts.mjs prepare ${{ matrix.shard }}
-
-      - name: Browser quality gate
-        if: needs.preflight.outputs.generate == 'false'
-        run: pnpm test:e2e --shard=${{ matrix.shard }}/2 --reporter=github,html,json
-
-      - name: Generate reviewable Linux visual baselines
-        if: needs.preflight.outputs.generate == 'true'
-        run: pnpm test:e2e:update --shard=${{ matrix.shard }}/2 --reporter=github,html,json
-
-      - name: Validate and stage this complete shard
-        run: node scripts/browser-shard-artifacts.mjs pack ${{ matrix.shard }}
-
-      # These short-lived per-shard artifacts are NOT adoption artifacts.
-      # Successful comparison runs contain only a manifest, never duplicate PNGs.
-      - name: Upload shard staging evidence
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        with:
-          name: browser-shard-${{ matrix.shard }}-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
-          path: .browser-quality/shard-${{ matrix.shard }}/
-          include-hidden-files: true
-          if-no-files-found: error
-          retention-days: 3
-
-      - name: Upload browser diagnostics
-        if: failure()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        with:
-          name: browser-quality-shard-${{ matrix.shard }}-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
-          path: playwright-report/
-          if-no-files-found: ignore
-          retention-days: 3
-
-  browser-quality:
-    # Branch protection continues to require this single, non-matrix check.
-    name: Routes, accessibility, and visuals
-    needs: [preflight, browser-shards]
-    if: always()
-    runs-on: ubuntu-latest
-    timeout-minutes: 60
-    steps:
-      - name: Checkout
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-
-      - name: Setup Node
-        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
-        with:
-          node-version: 22
-
-      - name: Require every prerequisite to succeed
-        env:
-          BROWSER_NEEDS: ${{ toJSON(needs) }}
-        run: node scripts/browser-shard-artifacts.mjs needs
-
-      - name: Install pnpm
-        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
-        with:
-          version: 10.17.1
-
-      - name: Install pinned artifact decoder
-        run: pnpm install --frozen-lockfile
-
-      - name: Download exact-run test plan
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
-        with:
-          name: browser-plan-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
-          path: .browser-quality/
-
-      # Keep the trees separate until hashes, pixels and test coverage agree.
-      - name: Download shard 1
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
-        with:
-          name: browser-shard-1-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
-          path: .browser-quality/received/shard-1/
-
-      - name: Download shard 2
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
-        with:
-          name: browser-shard-2-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
-          path: .browser-quality/received/shard-2/
-
-      - name: Verify full matrix and conflict-free baseline union
-        run: node scripts/browser-shard-artifacts.mjs merge
-
-      - name: Upload generated visual baselines
-        if: needs.preflight.outputs.generate == 'true'
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        with:
-          name: browser-visual-baselines-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
-          path: .browser-quality/verified/
-          include-hidden-files: true
-          if-no-files-found: error
-          retention-days: 14
-
-      - name: Require committed baselines after bootstrap
-        if: github.event_name == 'pull_request' && needs.preflight.outputs.present != 'true'
+      - name: Require isolated diagnostic ref and exact source tree
         run: |
-          echo "Linux baselines were generated as verified review evidence, not compared. Review and commit the snapshots before merging."
-          exit 1
+          test "$GITHUB_EVENT_NAME" = workflow_dispatch
+          test "$GITHUB_REF" = refs/heads/epic/admin-users-linux-evidence-2026-09-20
+          test "$(git rev-parse HEAD)" = "$ADMIN_EVIDENCE_SOURCE_SHA"
+          test "$(git rev-parse HEAD^{tree})" = "$ADMIN_EVIDENCE_SOURCE_TREE"
+          test -z "$(git status --porcelain --untracked-files=no)"
+
+      - name: Install pinned pnpm
+        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+        with:
+          version: 10.17.1
+
+      - name: Setup Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install unchanged frozen dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Install Chromium and WebKit
+        run: pnpm exec playwright install --with-deps chromium webkit
+
+      - name: Run the unchanged full Admin suite
+        # The committed config selects both engines, 2 workers and 0 retries.
+        # JSON supplements list output only; no tests, snapshots or tolerances change.
+        run: pnpm exec playwright test --config=playwright.admin.config.mjs --reporter=list,json
+
+      - name: Verify complete success and stage only synthetic Users captures
+        run: |
+          node --input-type=module <<'NODE'
+          import assert from 'node:assert/strict';
+          import { copyFileSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+          import { createHash } from 'node:crypto';
+          import { execFileSync } from 'node:child_process';
+          import { basename, join } from 'node:path';
+          import { createRequire } from 'node:module';
+          import { pngInventory } from './scripts/browser-shard-artifacts.mjs';
+
+          const command = (name, args) => execFileSync(name, args, { encoding: 'utf8' }).trim();
+          const sha256 = (file) => createHash('sha256').update(readFileSync(file)).digest('hex');
+          const sourceSha = process.env.ADMIN_EVIDENCE_SOURCE_SHA;
+          const sourceTree = process.env.ADMIN_EVIDENCE_SOURCE_TREE;
+          assert.equal(command('git', ['rev-parse', 'HEAD']), sourceSha);
+          assert.equal(command('git', ['rev-parse', 'HEAD^{tree}']), sourceTree);
+          assert.equal(command('git', ['status', '--porcelain', '--untracked-files=no']), '');
+          assert.equal(process.env.GITHUB_REF, 'refs/heads/epic/admin-users-linux-evidence-2026-09-20');
+          assert.match(process.env.GITHUB_SHA, /^[a-f0-9]{40}$/);
+          for (const name of ['GITHUB_RUN_ID', 'GITHUB_RUN_ATTEMPT']) assert.match(process.env[name], /^[1-9]\d*$/);
+
+          const report = JSON.parse(readFileSync('.admin-users-review/result.json', 'utf8'));
+          assert.deepEqual(report.errors, []);
+          assert.equal(report.stats.expected, 148);
+          for (const key of ['unexpected', 'skipped', 'flaky']) assert.equal(report.stats[key], 0);
+          assert.equal(report.config.workers, 2);
+          assert.equal(report.config.shard, null);
+          const projects = ['admin-live-chromium', 'admin-live-webkit'];
+          assert.deepEqual(report.config.projects.map((p) => p.name).sort(), projects);
+          for (const project of report.config.projects) {
+            assert.equal(project.retries, 0);
+            assert.equal(project.repeatEach, 1);
+            assert.equal(project.timeout, 45_000);
+          }
+          const outcomes = [];
+          function visit(suite) {
+            for (const spec of suite.specs || []) for (const test of spec.tests) {
+              assert.equal(spec.ok, true);
+              assert.equal(test.status, 'expected');
+              assert.equal(test.expectedStatus, 'passed');
+              assert.equal(test.results.length, 1);
+              assert.equal(test.results[0].status, 'passed');
+              assert.equal(test.results[0].retry, 0);
+              assert.deepEqual(test.results[0].errors, []);
+              outcomes.push({ id: `${test.projectId}:${spec.id}`, project: test.projectName, outcome: test.status });
+            }
+            for (const child of suite.suites || []) visit(child);
+          }
+          visit(report);
+          assert.equal(outcomes.length, 148);
+          assert.equal(new Set(outcomes.map((test) => test.id)).size, 148);
+          for (const project of projects) assert.equal(outcomes.filter((test) => test.project === project).length, 74);
+
+          const appHashes = {
+            'admin.html': 'faee7824f4598c9d03166427b4d0b39692b9ed85977d38faf25a369707cf406d',
+            'src/assets/admin.css': 'cd19cb2cde7c8f3408f32d5e89b2b94fa5c4e744ace27261ed7b1b3d7af04176',
+            'src/static/admin.js': '1d3f886fb634569a1a53930de86b778a8876c3b58e018577182640a8b4bd1c31',
+            'src/static/admin-user-presentation.mjs': '0d4129e4e0cdd9dcb6b0c4ba07366dbd8dba5b7b9282053ad6c5ac81aa2a3316',
+          };
+          for (const [file, hash] of Object.entries(appHashes)) assert.equal(sha256(file), hash, file);
+          const themes = ['light', 'dark', 'dominion-night', 'dominion-platinum'];
+          const widths = [390, 768, 1050, 1051, 1440];
+          const names = new Set([
+            ...themes.flatMap((theme) => [`${theme}-users.png`, `${theme}-user-expanded.png`]),
+            ...widths.map((width) => `long-user-${width}.png`),
+          ]);
+          const captures = [];
+          // Reuse the reviewed strict PNG parser/inventory: no symlinks,
+          // malformed PNGs, invalid CRCs or unbounded decompression accepted.
+          for (const png of pngInventory('test-results/admin-live')) {
+            if (!names.has(basename(png.path))) continue;
+            const match = png.path.match(/^[^/]+-(admin-live-(?:chromium|webkit))\/([^/]+)$/);
+            assert.ok(match, `Unexpected capture path: ${png.path}`);
+            captures.push({ source: png.path, path: `${match[1]}/${match[2]}`, bytes: png.bytes, sha256: png.sha256 });
+          }
+          const expected = projects.flatMap((project) => [...names].map((name) => `${project}/${name}`)).sort();
+          assert.equal(captures.length, 26);
+          assert.deepEqual(captures.map((png) => png.path).sort(), expected);
+          const staging = '.admin-users-review/staged';
+          mkdirSync(staging); // Existing output is rejected, never reused or overwritten.
+          for (const project of projects) mkdirSync(join(staging, 'screenshots', project), { recursive: true });
+          for (const png of captures) {
+            const target = join(staging, 'screenshots', png.path);
+            copyFileSync(join('test-results/admin-live', png.source), target);
+            assert.equal(sha256(target), png.sha256);
+          }
+          const require = createRequire(import.meta.url);
+          const testRequire = createRequire(require.resolve('@playwright/test'));
+          const playwrightPackage = JSON.parse(readFileSync(testRequire.resolve('playwright/package.json'), 'utf8'));
+          const manifest = {
+            version: 1,
+            purpose: 'Synthetic Linux Users captures for human review; not baselines or a required gate',
+            workflow: { sha: process.env.GITHUB_SHA, ref: process.env.GITHUB_REF, run: process.env.GITHUB_RUN_ID, attempt: process.env.GITHUB_RUN_ATTEMPT },
+            source: { sha: sourceSha, tree: sourceTree, appHashes, lockfileSha256: sha256('pnpm-lock.yaml'), adminConfigSha256: sha256('playwright.admin.config.mjs'), adminTestSha256: sha256('tests/e2e/admin-live.spec.mjs') },
+            runtime: { platform: process.platform, architecture: process.arch, node: process.version, pnpm: command('pnpm', ['--version']), playwright: playwrightPackage.version },
+            command: 'pnpm exec playwright test --config=playwright.admin.config.mjs --reporter=list,json',
+            result: { expected: 148, unexpected: 0, flaky: 0, skipped: 0, workers: 2, retries: 0, projects },
+            tests: outcomes.sort((a, b) => a.id.localeCompare(b.id)),
+            captures: captures.sort((a, b) => a.path.localeCompare(b.path)),
+          };
+          assert.equal(manifest.runtime.platform, 'linux');
+          assert.equal(manifest.runtime.pnpm, '10.17.1');
+          assert.equal(manifest.runtime.playwright, '1.61.1');
+          writeFileSync(join(staging, 'manifest.json'), `${JSON.stringify(manifest, null, 2)}\n`);
+          assert.deepEqual(JSON.parse(readFileSync(join(staging, 'manifest.json'), 'utf8')), manifest);
+          console.log('Verified 148 passed, zero retries/flaky/skipped, and exactly 26 Users PNGs. No baselines generated.');
+          NODE
+
+      - name: Retain exact-run synthetic Users capture evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: diagnostic-users-linux-${{ env.ADMIN_EVIDENCE_SOURCE_SHA }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: .admin-users-review/staged/
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 3
