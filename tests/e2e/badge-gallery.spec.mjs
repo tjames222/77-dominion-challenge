@@ -158,7 +158,7 @@ test('200 percent text, landscape and forced colors keep content and controls re
 });
 
 test('loading skeletons and retryable errors do not leave a stuck gallery', async ({ page, app }) => {
-  const gate = await deferApiFunction(page, 'getEarnedBadges');
+  const gate = await deferApiFunction(page, 'getBadgeCollection');
   await seedBadgeGallery(page, app);
   await page.goto('/badges-rewards');
   await gate.intercepted;
@@ -169,7 +169,7 @@ test('loading skeletons and retryable errors do not leave a stuck gallery', asyn
 });
 
 test('failed reads can be retried without awarding or fabricating badges', async ({ page, app }) => {
-  await injectApiFunctionFailureOnce(page, 'getEarnedBadges', 'Badge history temporarily unavailable');
+  await injectApiFunctionFailureOnce(page, 'getBadgeCollection', 'Badge history temporarily unavailable');
   await seedBadgeGallery(page, app);
   await page.goto('/badges-rewards');
   await expect(page.locator('#badgesRewardsError')).toBeVisible();
