@@ -57,6 +57,19 @@ memory. Changing filters clears old rows immediately; Apply filters makes a new
 authorized request. Page counts describe only the current page, never all users.
 An empty result is distinct from loading or failure. Failures clear old rows.
 
+The Users list presents the existing account payload in five columns: Member,
+Account, Crew, Stored snapshots, and Details. Account groups the site role/status
+with created, email-confirmed, and last-sign-in timestamps in UTC. Crew-local
+roles are labeled separately. Stored points and subscription status are explicitly
+historical; a keyboard-native disclosure reveals the returned progress counters,
+local last-seen date, period end/cancellation flag and each snapshot's recorded
+timestamp. Expanding it makes no request and performs no mutation. Missing records
+stay "Not recorded", zero counters stay zero, and unknown subscription states are
+not relabeled as active or expired. No effective-access/current-day/current-streak
+calculation is introduced. Users becomes labeled cards at tablet/mobile widths;
+Audit and Early Access retain their existing layout. All expanded data is removed
+with the existing row scrub on filters, refresh or authorization invalidation.
+
 Details render only fixed fields with DOM text nodes. Stored activation,
 progress and subscription values are labeled snapshots with recorded timestamps,
 not current effective access, current challenge day or completion. Auth deletion

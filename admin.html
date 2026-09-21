@@ -39,7 +39,8 @@
             <label>Sort<select name="sort"><option value="newest">Newest first</option><option value="oldest">Oldest first</option></select></label>
             <button type="submit">Apply filters</button>
           </form>
-          <div class="admin-table-wrap" tabindex="0" aria-label="Account records"><table class="admin-table"><caption>Account records · Dates shown in UTC</caption><thead><tr><th scope="col">Member</th><th scope="col">Role</th><th scope="col">Status</th><th scope="col">Created</th><th scope="col">Details</th></tr></thead><tbody id="adminUsersRows"></tbody></table></div>
+          <p class="admin-footnote" id="adminUsersSnapshotNote">Stored snapshots are historical records, not current streak, access, or completion decisions. Crew-local roles are separate from site roles.</p>
+          <div class="admin-table-wrap" tabindex="0" aria-label="Account records"><table class="admin-table" role="table" aria-describedby="adminUsersSnapshotNote"><caption>Account records · Timestamps shown in UTC; last-seen dates retain the member's local date</caption><thead role="rowgroup"><tr role="row"><th role="columnheader" scope="col">Member</th><th role="columnheader" scope="col">Account</th><th role="columnheader" scope="col">Crew</th><th role="columnheader" scope="col">Stored snapshots</th><th role="columnheader" scope="col">Details</th></tr></thead><tbody id="adminUsersRows" role="rowgroup"></tbody></table></div>
         </section>
         <section id="adminAuditPanel" role="tabpanel" aria-labelledby="adminAuditTab" data-admin-panel="audit" hidden>
           <form id="adminAuditFilters" class="admin-filters" autocomplete="off">
@@ -61,7 +62,7 @@
           <p class="admin-footnote">Review pending requests individually. Only denial is available; approvals, invitations, email delivery, and access provisioning are not enabled.</p>
         </section>
         <div class="admin-pagination" aria-label="Record pages"><button id="adminFirstPage" type="button" disabled>First page</button><button id="adminPreviousPage" type="button" disabled>Previous</button><span id="adminPageLabel">Page 1</span><button id="adminNextPage" type="button" disabled>Next</button><button id="adminRefresh" type="button">Refresh</button></div>
-        <p class="admin-footnote">Account changes, testing grants, and metrics are not available here. Users and Audit remain read-only. Stored progress and subscription snapshots are not live access or completion decisions.</p>
+        <p class="admin-footnote">Account details and Audit are read-only. Separately authorized role changes require explicit review and confirmation. Other account changes, testing grants, and metrics are not available here. Stored progress and subscription snapshots are not live access or completion decisions.</p>
       </section>
     </main>
     <dialog id="adminDetail" class="admin-detail" aria-labelledby="adminDetailTitle"><div class="admin-detail-header"><h2 id="adminDetailTitle">Record details</h2><button id="adminDetailClose" type="button" aria-label="Close record details">Close</button></div><div id="adminDetailBody"></div></dialog>
