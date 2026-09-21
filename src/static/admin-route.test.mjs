@@ -7,7 +7,7 @@ const read = (path) => readFileSync(new URL(path, import.meta.url), 'utf8');
 test('admin route is registered, no-JS safe and privately non-cacheable', () => {
   assert.equal(PRODUCTION_ENTRYPOINTS.admin, 'admin.html');
   const html = read('../../admin.html'); const headers = read('../../public/_headers');
-  assert.match(html, /id="adminWorkspace"[^>]*hidden inert/); assert.match(html, /<tbody id="adminUsersRows"><\/tbody>/);
+  assert.match(html, /id="adminWorkspace"[^>]*hidden inert/); assert.match(html, /<tbody id="adminUsersRows" role="rowgroup"><\/tbody>/);
   assert.match(html, /noindex, nofollow, noarchive/); assert.match(html, /<noscript>/);
   for (const path of ['/admin', '/admin.html']) {
     const rule = headers.split('\n\n').find((entry) => entry.startsWith(`${path}\n`));
