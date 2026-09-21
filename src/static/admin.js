@@ -8,6 +8,7 @@ import { adminReadError } from './admin-read-client.mjs';
 import { normalizeEarlyAccessRequest } from './admin-early-access-contract.mjs';
 import { mountEarlyAccessDetail } from './admin-early-access-detail.mjs';
 import { mountRoleDetail } from './admin-role-detail.mjs';
+import { adminUserListFacts } from './admin-user-presentation.mjs';
 import { mfaChallengeHref } from './mfa-navigation.mjs';
 
 const byId = (id) => document.getElementById(id);
@@ -80,6 +81,23 @@ function userStatus(item) {
   return values.join(' · ');
 }
 function cell(row, label, value) { const node = element('td'); node.dataset.label = label; node.append(value instanceof Node ? value : element('span', value)); row.append(node); }
+function userFacts(pairs) {
+  const list = element('dl', undefined, 'admin-user-facts');
+  for (const [label, value] of pairs) { const pair = element('div'); pair.append(element('dt', label), element('dd', value)); list.append(pair); }
+  return list;
+}
+function userSnapshots(facts, accountLabel) {
+  const content = element('div'); content.append(userFacts(facts.snapshotSummary));
+  const disclosure = element('details', undefined, 'admin-user-snapshots');
+  const summary = element('summary', 'View stored snapshots');
+  summary.setAttribute('aria-label', `View stored snapshots for ${accountLabel}`); disclosure.append(summary);
+  for (const snapshot of facts.snapshots) {
+    const section = element('section'); section.append(element('h2', snapshot.title));
+    section.append(snapshot.fields ? userFacts(snapshot.fields) : element('p', 'Not recorded'));
+    disclosure.append(section);
+  }
+  content.append(disclosure); return content;
+}
 function renderRows(items) {
   if (!Array.isArray(items) || items.length > 50 || items.some((item) => !item || typeof item.id !== 'string')) throw adminReadError();
   const body = byId(`${tabs[tab].prefix}Rows`);
@@ -88,9 +106,14 @@ function renderRows(items) {
     const item = tab === 'early' ? normalizeEarlyAccessRequest(raw) : raw;
     const row = element('tr');
     if (tab === 'users') {
+      // Explicit roles retain table relationships when Users becomes cards.
+      row.setAttribute('role', 'row');
+      const facts = adminUserListFacts(item);
       const person = element('div'); person.append(element('strong', item.name || 'Unnamed member'), element('span', item.email, 'admin-secondary'));
-      cell(row, 'Member', person); cell(row, 'Role', item.role === 'site_admin' ? 'Site admin' : 'Member');
-      cell(row, 'Status', userStatus(item)); cell(row, 'Created', date(item.createdAt));
+      const account = element('div'); account.append(element('p', userStatus(item), 'admin-user-status'), userFacts(facts.account));
+      cell(row, 'Member', person); cell(row, 'Account', account);
+      cell(row, 'Crew', facts.crew ? userFacts(facts.crew) : 'Not recorded');
+      cell(row, 'Stored snapshots', userSnapshots(facts, `${text(item.name || 'Unnamed member')} (${text(item.email)})`));
     } else if (tab === 'early') {
       row.dataset.earlyRequest = item.id;
       const person = element('div'); person.append(element('strong', item.name), element('span', item.email, 'admin-secondary'));
@@ -102,7 +125,9 @@ function renderRows(items) {
     const button = element('button', 'View details'); button.type = 'button';
     button.setAttribute('aria-label', tab === 'audit' ? `View audit event ${text(item.id)}` : `${tab === 'early' ? 'Review request' : 'View details'} for ${text(item.name || item.email)}`);
     const kind = tab; button.addEventListener('click', () => void openDetail(kind, item.id, button));
-    cell(row, 'Details', button); fragment.append(row);
+    cell(row, 'Details', button);
+    if (tab === 'users') for (const node of row.children) node.setAttribute('role', 'cell');
+    fragment.append(row);
   }
   body.replaceChildren(fragment);
 }

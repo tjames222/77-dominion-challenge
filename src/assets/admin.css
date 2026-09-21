@@ -30,6 +30,32 @@
 .admin-table td:first-child { min-width: 12rem; }
 .admin-table td:last-child { width: 1%; white-space: nowrap; }
 .admin-table td:last-child button { min-width: 8rem; white-space: nowrap; overflow-wrap: normal; word-break: normal; }
+#adminUsersPanel .admin-table { table-layout: fixed; }
+#adminUsersPanel th:first-child { width: 20%; }
+#adminUsersPanel th:nth-child(2) { width: 24%; }
+#adminUsersPanel th:nth-child(3) { width: 15%; }
+#adminUsersPanel th:last-child { width: 160px; }
+#adminUsersPanel .admin-user-status { margin: 0 0 .75rem; line-height: 1.5; }
+#adminUsersPanel .admin-user-facts { margin: 0; display: grid; gap: .65rem; line-height: 1.45; }
+#adminUsersPanel .admin-user-facts dt { font-size: .8rem; color: var(--text-muted); }
+#adminUsersPanel .admin-user-facts dd { margin: .15rem 0 0; }
+#adminUsersPanel .admin-user-snapshots { margin-top: .75rem; }
+#adminUsersPanel .admin-user-snapshots summary { min-height: 46px; box-sizing: border-box; padding: .65rem .25rem; color: var(--text); cursor: pointer; line-height: 1.5; }
+#adminUsersPanel .admin-user-snapshots summary:focus-visible { outline: 3px solid var(--focus-ring); outline-offset: 3px; border-radius: 4px; }
+#adminUsersPanel .admin-user-snapshots h2 { margin: .75rem 0; font-size: .95rem; line-height: 1.5; }
+#adminUsersPanel .admin-user-snapshots section + section { margin-top: 1.25rem; }
+@media (max-width: 1050px) {
+  #adminUsersPanel .admin-table-wrap { overflow: visible; }
+  #adminUsersPanel thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+  #adminUsersPanel .admin-table, #adminUsersPanel tbody, #adminUsersPanel tr, #adminUsersPanel td { display: block; width: auto; }
+  #adminUsersPanel caption { display: block; width: auto; }
+  #adminUsersPanel tr { padding: .75rem 1rem; border-top: 1px solid var(--border); }
+  #adminUsersPanel td { border: 0; padding: .5rem 0; min-width: 0 !important; }
+  #adminUsersPanel td::before { content: attr(data-label); display: block; color: var(--text-muted); font-size: .8rem; margin-bottom: .35rem; }
+  #adminUsersPanel td:last-child::before { display: none; }
+  #adminUsersPanel .admin-user-facts { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .75rem 1rem; }
+}
+@media (max-width: 420px) { #adminUsersPanel .admin-user-facts { grid-template-columns: 1fr; } }
 .admin-pagination { justify-content: flex-end; margin-top: 1rem; }
 .admin-pagination span { margin: 0 .25rem; font-size: .875rem; }
 .admin-footnote { font-size: .875rem; margin-top: 1.5rem; }
