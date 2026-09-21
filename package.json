@@ -18,6 +18,7 @@
     "test:e2e:mfa": "playwright test --config=playwright.mfa.config.mjs",
     "test:e2e:admin": "playwright test --config=playwright.admin.config.mjs",
     "test:e2e:daily-bootstrap": "playwright test --config=playwright.daily-bootstrap.config.mjs",
+    "test:e2e:preview-badges": "playwright test --config=playwright.preview-badges.config.mjs",
     "test:daily-bootstrap-sql": "node --test scripts/daily-action-bootstrap.sql.test.mjs",
     "test:e2e:local-production": "bash scripts/rehearse-local-production-stack.sh",
     "test:e2e:headed": "playwright test --headed --project=chromium-functional",

@@ -1,10 +1,13 @@
-# Read-only administration (FOU-1502, partial delivery)
+# Administrative read views (FOU-1502, partial delivery)
 
 `/admin` and `/admin.html` provide account summaries/details and the existing
 redacted administrative audit list/details. The page is not a membership or
 billing route: a canonical authorized admin needs no subscription entitlement.
-It exposes no account mutation, testing grant, role-assignment, password reset,
-export, impersonation, journal, message, or metrics controls.
+These read views expose no testing grant, password reset, export, impersonation,
+journal, message or metrics controls. The separate
+[reviewed role controls](site-admin-role-ui.md) and
+[early-access denial](early-access-admin-review.md) document the only available
+mutation boundaries; they are not inferred from read permissions.
 Member Share/Streak header controls are deliberately absent, including after
 refresh; administration does not need to hydrate those member-data surfaces.
 
@@ -83,8 +86,8 @@ labels, theme entitlements/layout and account-change clearing. Database grants,
 session checks, indexed queries and privacy sentinels remain covered by the
 separate exact-SQL foundation/read tests, not inferred from the browser stub.
 
-This does **not** complete all of FOU-1502. Remaining work includes separately
-reviewed admin mutation/recovery flows, testing-grant management and effective
+This does **not** complete all of FOU-1502. Remaining work includes broader
+admin mutation/recovery flows, testing-grant management and effective
 access, operational queues, canonical metrics/retention, broader Users fields,
 and final production/first-admin verification after manual MFA enrollment. No
 hosted role grant or database mutation is part of this UI change.

@@ -91,24 +91,4 @@ export function evaluateBadgeEvent(facts, earned = []) {
   }));
 }
 
-export const badgeCatalogOrder = (left, right) => {
-  const order = (badge) => BADGE_CATALOG.find((rule) => rule.key === badge.key)?.displayOrder ?? 10000;
-  return order(left) - order(right) || String(left.earnedAt || '').localeCompare(String(right.earnedAt || '')) || String(left.key).localeCompare(String(right.key));
-};
-
-export function badgeCelebrationReason(badge) {
-  const evidence = badge?.earningEvidence;
-  if (evidence?.schemaVersion !== 1) return badge?.requirement || 'An earned part of your badge collection.';
-  const count = evidence.qualifyingValue;
-  if (evidence.kind === 'workout' && ['one', 'two'].includes(evidence.workout) && difficulties.has(evidence.difficulty)) {
-    const label = evidence.difficulty[0].toUpperCase() + evidence.difficulty.slice(1);
-    return `You completed Workout ${evidence.workout === 'one' ? 'One' : 'Two'} at ${label} difficulty.`;
-  }
-  if (evidence.kind === 'daily_standards' && Number.isInteger(evidence.completedCount) && evidence.completedCount >= 1 && evidence.completedCount <= 7) return `You posted ${evidence.completedCount} of the seven Daily Actions.`;
-  if (!Number.isInteger(count) || count < 1) return badge?.requirement || 'An earned part of your badge collection.';
-  if (evidence.kind === 'check_in') return count === 1 ? 'You posted your first check-in.' : `You posted ${count} check-ins in your challenge.`;
-  if (evidence.kind === 'perfect_streak') return `You completed all seven Daily Actions for ${count} days in a row.`;
-  if (evidence.kind === 'app_streak') return `You visited the app for ${count} days in a row.`;
-  if (evidence.kind === 'share') return 'You completed a verified share.';
-  return badge?.requirement || 'An earned part of your badge collection.';
-}
+export { badgeCatalogOrder, badgeCelebrationReason } from './badge-data-contract.mjs';

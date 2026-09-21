@@ -7,6 +7,7 @@ import {
 import { adminReadError } from './admin-read-client.mjs';
 import { normalizeEarlyAccessRequest } from './admin-early-access-contract.mjs';
 import { mountEarlyAccessDetail } from './admin-early-access-detail.mjs';
+import { mountRoleDetail } from './admin-role-detail.mjs';
 import { mfaChallengeHref } from './mfa-navigation.mjs';
 
 const byId = (id) => document.getElementById(id);
@@ -127,18 +128,19 @@ async function loadPage() {
   } catch (error) { if (captured === epoch && query === queryEpoch) showError(error); }
   finally { if (captured === epoch && query === queryEpoch) { loading = false; workspace.removeAttribute('aria-busy'); updatePagination(); } }
 }
-function addSection(title, pairs) {
+function addSection(title, pairs, container = byId('adminDetailBody')) {
   const section = element('section'); section.append(element('h3', title)); const list = element('dl');
   for (const [label, value] of pairs) list.append(element('dt', label), element('dd', value));
-  section.append(list); byId('adminDetailBody').append(section);
+  section.append(list); container.append(section);
 }
-function renderUser(item) {
-  addSection('Account', [['User ID', item.id], ['Name', item.name], ['Email', item.email], ['Role', item.role], ['Status', userStatus(item)], ['Created', date(item.createdAt)], ['Email confirmed', date(item.emailConfirmedAt)], ['Last sign-in', date(item.lastSignInAt)], ['Suspended until', date(item.suspendedUntil)], ['Deleted', date(item.deletedAt)], ['Deletion request state', item.deletionRequestStatus]]);
-  if (item.crew) addSection('Crew (separate from site role)', [['ID', item.crew.id], ['Name', item.crew.name], ['Crew role', item.crew.role]]);
-  if (item.activationSnapshot) { const s = item.activationSnapshot; addSection('Stored activation snapshot', [['Stored status', s.storedStatus], ['Mode', s.mode], ['Start date', s.startDate], ['Review required', s.reviewRequired ? 'Yes' : 'No'], ['Recorded', date(s.recordedAt)]]); }
-  if (item.statsSnapshot) { const s = item.statsSnapshot; addSection('Stored progress snapshot', [['Total points', s.totalPoints], ['Stored app streak', s.storedAppStreak], ['Stored perfect-day streak', s.storedPerfectDayStreak], ['Last seen local date', s.lastSeenLocalDate], ['Recorded', date(s.recordedAt)]]); }
-  if (item.subscriptionSnapshot) { const s = item.subscriptionSnapshot; addSection('Stored subscription snapshot', [['Stored status', s.status], ['Current period end', date(s.currentPeriodEnd)], ['Cancel at period end', s.cancelAtPeriodEnd ? 'Yes' : 'No'], ['Recorded', date(s.recordedAt)]]); }
-  byId('adminDetailBody').append(element('p', 'Snapshots are historical stored values, not current effective access, challenge day, or completion decisions.', 'admin-footnote'));
+function renderUser(item, container = byId('adminDetailBody')) {
+  const section = (title, pairs) => addSection(title, pairs, container);
+  section('Account', [['User ID', item.id], ['Name', item.name], ['Email', item.email], ['Role', item.role], ['Role revision', item.roleRevision], ['Status', userStatus(item)], ['Created', date(item.createdAt)], ['Email confirmed', date(item.emailConfirmedAt)], ['Last sign-in', date(item.lastSignInAt)], ['Suspended until', date(item.suspendedUntil)], ['Deleted', date(item.deletedAt)], ['Deletion request state', item.deletionRequestStatus]]);
+  if (item.crew) section('Crew (separate from site role)', [['ID', item.crew.id], ['Name', item.crew.name], ['Crew role', item.crew.role]]);
+  if (item.activationSnapshot) { const s = item.activationSnapshot; section('Stored activation snapshot', [['Stored status', s.storedStatus], ['Mode', s.mode], ['Start date', s.startDate], ['Review required', s.reviewRequired ? 'Yes' : 'No'], ['Recorded', date(s.recordedAt)]]); }
+  if (item.statsSnapshot) { const s = item.statsSnapshot; section('Stored progress snapshot', [['Total points', s.totalPoints], ['Stored app streak', s.storedAppStreak], ['Stored perfect-day streak', s.storedPerfectDayStreak], ['Last seen local date', s.lastSeenLocalDate], ['Recorded', date(s.recordedAt)]]); }
+  if (item.subscriptionSnapshot) { const s = item.subscriptionSnapshot; section('Stored subscription snapshot', [['Stored status', s.status], ['Current period end', date(s.currentPeriodEnd)], ['Cancel at period end', s.cancelAtPeriodEnd ? 'Yes' : 'No'], ['Recorded', date(s.recordedAt)]]); }
+  container.append(element('p', 'Snapshots are historical stored values, not current effective access, challenge day, or completion decisions.', 'admin-footnote'));
 }
 function renderAudit(item) {
   addSection('Administrative event', [['Event ID', item.id], ['Recorded', date(item.occurredAt)], ['Actor ID', item.actorId], ['Target user ID', item.targetUserId], ['Action', item.action], ['Permission', item.permission], ['Outcome', item.outcome], ['Reason code', item.reasonCode], ['Before role', item.beforeRole], ['After role', item.afterRole], ['Request ID', item.requestId], ['Correlation ID', item.correlationId], ['Environment', item.environment], ['Error code', item.errorCode]]);
@@ -160,7 +162,42 @@ async function openDetail(kind, id, button) {
       onError: showError, reload: () => void openDetail(kind, id, button), onDenied: (value) => {
         for (const row of byId('adminEarlyRows').children) if (row.dataset.earlyRequest === value.requestId) row.querySelector('[data-early-status]').textContent = value.status;
       } });
-    else (kind === 'users' ? renderUser : renderAudit)(result.item);
+    else if (kind === 'users') {
+      const facts = element('div'); facts.id = 'adminUserFacts'; byId('adminDetailBody').append(facts); renderUser(result.item, facts);
+      detailCleanup = mountRoleDetail({ container: byId('adminDetailBody'), item: result.item, owner: detailOwner, permissions: [...permissions],
+        isCurrent: () => captured === epoch && detail === detailEpoch && !suspended,
+        onError: showError, reload: () => void openDetail(kind, id, button),
+        onFacts: (item) => { facts.replaceChildren(); renderUser(item, facts); },
+        onCommitted: () => {
+          // Drop old facts/list immediately. An idempotent receipt can describe
+          // an older successful operation; only new reads establish current role.
+          facts.replaceChildren(); byId('adminUsersRows').replaceChildren();
+          cursors = [null]; page = 0; nextCursor = null; updatePagination();
+          const query = ++queryEpoch; const controller = new AbortController(); listController?.abort(); listController = controller;
+          byId('adminStatus').textContent = 'Refreshing accounts after the confirmed role operation…';
+          const queryArgs = listArgs();
+          const assertListOwner = async () => {
+            const current = await getAdminSessionOwner();
+            if (current.actorId !== detailOwner.actorId || current.sessionIdentity !== detailOwner.sessionIdentity) throw adminReadError('ADMIN_CHANGED');
+          };
+          void (async () => {
+            await assertListOwner();
+            if (captured !== epoch || query !== queryEpoch || tab !== 'users' || suspended || controller.signal.aborted) return;
+            const value = await listSiteAdminUsers(queryArgs, { expectedUserId: detailOwner.actorId, signal: controller.signal });
+            await assertListOwner();
+            // This refresh belongs to the list query, not the originating
+            // dialog. Closing that dialog must not strand an empty busy list.
+            if (captured !== epoch || query !== queryEpoch || tab !== 'users' || suspended) return;
+            if (value.nextCursor !== null && (typeof value.nextCursor !== 'object' || Array.isArray(value.nextCursor))) throw adminReadError();
+            renderRows(value.items); nextCursor = value.nextCursor; updatePagination();
+            byId('adminStatus').textContent = 'Accounts refreshed after the role operation. Current filter membership may have changed.';
+          })().catch((error) => { if (captured === epoch && query === queryEpoch && !suspended) {
+            if (['ADMIN_CHANGED', 'ADMIN_DENIED', 'ADMIN_SIGNED_OUT'].includes(error?.code)) showError(error);
+            else byId('adminStatus').textContent = 'Role operation confirmed; the account list could not refresh. Use Refresh records to read it again.';
+          } });
+        },
+      });
+    } else renderAudit(result.item);
   } catch (error) {
     if (captured !== epoch || detail !== detailEpoch) return;
     closeDetail(); showError(error);

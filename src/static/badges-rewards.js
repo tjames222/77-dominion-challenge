@@ -22,7 +22,7 @@ import {
 } from './badges-rewards.mjs';
 import { renderGameProgress } from './game-progress.mjs';
 import { createBadgeCollection } from './badge-collection.mjs';
-import { rewardKeyFromLocation } from './reward-celebrations.mjs';
+import { rewardKeyFromLocation } from './reward-link-contract.mjs';
 import {
   buildFulfillmentDialogModel,
 } from './reward-fulfillment.mjs';

@@ -90,10 +90,25 @@ test('actual production graph keeps MFA free of menu side effects and training s
     return [...visited].map(path => assets.get(path)).filter(Boolean);
   }
   const security = graph('account-security.html');
+  for (const entry of Object.values(PRODUCTION_ENTRYPOINTS)) {
+    const modules = graph(entry).filter(asset => asset.type === 'chunk').flatMap(asset => Object.keys(asset.modules));
+    assert.equal(modules.filter(id => id.endsWith('/src/static/auth-runtime-core.mjs')).length, 1, `${entry} loads exactly one shared Auth runtime`);
+    assert.equal(modules.some(id => id.endsWith('/src/static/reward-link-contract.mjs')), entry === 'badges-rewards.html', `${entry} loads the pure reward-link parser only when needed`);
+    for (const name of ['reward-celebrations.mjs', 'celebration-delivery-token.mjs']) {
+      assert.equal(modules.some(id => id.endsWith(`/src/static/${name}`)), entry === 'dashboard.html', `${entry} keeps reward delivery/recovery owned by Dashboard`);
+    }
+    for (const name of ['badge-catalog.v1.json', 'badge-evaluation.mjs', 'badge-preview-state.mjs', 'preview-delivery-ledger.mjs']) {
+      assert.ok(!modules.some(id => id.endsWith(`/${name}`)), `${entry} keeps preview badge evaluation optional`);
+    }
+  }
+  for (const asset of artifact.output) {
+    assert.doesNotMatch(asset.type === 'chunk' ? asset.code : String(asset.source), /__previewBadgeTest|Local test harness only/);
+    if (asset.type === 'chunk') assert.ok(!Object.keys(asset.modules).some(id => id.includes('/tests/e2e/')));
+  }
   const securityModules = security.filter(asset => asset.type === 'chunk').flatMap(asset => Object.keys(asset.modules));
   assert.ok(securityModules.some(id => id.endsWith('/src/static/api.js')));
   assert.ok(securityModules.some(id => id.endsWith('/src/static/journal-date-contract.mjs')));
-  for (const name of ['menu.js', 'shared-header-actions.js', 'menu-training-controllers.mjs', 'site-training-ui.js', 'journal-date-picker.mjs', 'dialog.mjs']) {
+  for (const name of ['menu.js', 'shared-header-actions.js', 'menu-training-controllers.mjs', 'site-training-ui.js', 'journal-date-picker.mjs', 'dialog.mjs', 'badges-rewards.mjs', 'admin-role-detail.mjs', 'admin-role-contract.mjs', 'admin-role-write-client.mjs']) {
     assert.ok(!securityModules.some(id => id.endsWith(`/src/static/${name}`)), `MFA must not execute ${name}`);
   }
   const securityCss = security.filter(asset => asset.fileName.endsWith('.css')).map(asset => String(asset.source)).join('');
@@ -103,7 +118,9 @@ test('actual production graph keeps MFA free of menu side effects and training s
   for (const entry of ['index.html', 'login.html', 'dashboard.html', 'badges-rewards.html', 'community.html', 'profile.html', 'bible-reading.html']) {
     const modules = graph(entry).filter(asset => asset.type === 'chunk').flatMap(asset => Object.keys(asset.modules));
     assert.ok(modules.some(id => id.endsWith('/src/static/menu.js')), `${entry} keeps working navigation`);
+    assert.equal(modules.some(id => id.endsWith('/src/static/badges-rewards.mjs')), entry === 'badges-rewards.html', `${entry} loads reward presentation only when needed`);
     assert.ok(!modules.some(id => id.endsWith('/src/static/journal-date-picker.mjs')), `${entry} does not load journal calendar UI`);
     assert.ok(!modules.some(id => /\/(?:menu-training-controllers|site-training-ui|site-training-coachmark)\.(?:js|mjs)$/.test(id)), `${entry} keeps training optional`);
+    assert.ok(!modules.some(id => /\/admin-role-(?:detail|contract|write-client)\.mjs$/.test(id)), `${entry} does not load role review or mutation code`);
   }
 });

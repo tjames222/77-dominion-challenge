@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { describe, test } from 'node:test';
+import { runInNewContext } from 'node:vm';
 
 import {
   frontendEnvironmentErrors as rawFrontendEnvironmentErrors,
@@ -134,16 +135,17 @@ describe('dev authentication runtime', () => {
   });
 
   test('keeps application tables mocked and gates redirect overrides to hybrid signup', async () => {
-    const [api, auth, envExample] = await Promise.all([
+    const [api, runtime, auth, envExample] = await Promise.all([
       read('./api.js'),
+      read('./auth-runtime-core.mjs'),
       read('./auth.js'),
       read('../../.env.example'),
     ]);
-    assert.match(api, /const ALLOW_SUPABASE_CLIENT = shouldCreateSupabaseClient\(\{/);
-    assert.match(api, /productionBuild: import\.meta\.env\.PROD/);
-    assert.match(api, /productionConnectionsEnabled: ENABLE_PRODUCTION_CONNECTIONS/);
-    assert.match(api, /export const supabase = ALLOW_SUPABASE_CLIENT/);
-    assert.doesNotMatch(api, /isSupabaseConfigured\(\) && \(!ENABLE_MOCKS/);
+    assert.match(runtime, /const ALLOW_SUPABASE_CLIENT = shouldCreateSupabaseClient\(\{/);
+    assert.match(runtime, /productionBuild: import\.meta\.env\.PROD/);
+    assert.match(runtime, /productionConnectionsEnabled: ENABLE_PRODUCTION_CONNECTIONS/);
+    assert.match(runtime, /export const supabase = ALLOW_SUPABASE_CLIENT/);
+    assert.doesNotMatch(api + runtime, /isSupabaseConfigured\(\) && \(!ENABLE_MOCKS/);
     assert.match(api, /data\.session\?\.access_token && hasSupabaseAuth\(\)/g);
     assert.match(api, /!isHybridAuthPreview\(\) \|\| typeof window === 'undefined'/);
     assert.match(auth, /if \(hasSupabaseAuthentication\(\)\)/);
@@ -156,15 +158,56 @@ describe('dev authentication runtime', () => {
 
   test('keeps reward fulfillment fixtures inside the local browser E2E boundary', async () => {
     const api = await read('./api.js');
+    const runtime = await read('./auth-runtime-core.mjs');
     assert.match(
-      api,
+      runtime,
       /const ENABLE_E2E_FIXTURES = Boolean\([\s\S]*?import\.meta\.env\.DEV[\s\S]*?ENABLE_MOCKS[\s\S]*?VITE_ENABLE_E2E_FIXTURES/,
     );
     assert.match(
       api,
       /const e2eRewardFixturesEnabled = \(\) => \([\s\S]*?ENABLE_E2E_FIXTURES[\s\S]*?globalThis\.__DOMINION_E2E__\?\.enabled === true/,
     );
-    assert.match(api, /const fixtureByReward = e2eRewardFixturesEnabled\(\)/);
+    const start = api.indexOf('function previewRewardFulfillment(');
+    const end = api.indexOf('\nasync function withPreviewBadgeDelivery(', start);
+    assert.ok(start >= 0 && end > start, 'owner-bound fulfillment prepare helper exists');
+    const helper = api.slice(start, end);
+    for (const enabled of [false, true]) {
+      const fixture = { handbook: { read: { status: 'available' } } };
+      const phases = [];
+      let received;
+      const context = {
+        e2eRewardFixturesEnabled: () => enabled,
+        MOCK_REWARD_FULFILLMENTS_KEY: 'fixture-key',
+        readMockUserValue: (key, fallback, ownerId) => {
+          phases.push('fixture read');
+          assert.equal(key, 'fixture-key');
+          assert.equal(ownerId, 'original-owner');
+          assert.equal(Object.keys(fallback).length, 0);
+          return fixture;
+        },
+        withPreviewRewardDelivery: (ownerId, operation, receiptIds, signal, prepare) => {
+          assert.equal(ownerId, 'original-owner');
+          assert.equal(receiptIds.length, 0);
+          assert.equal(signal, undefined);
+          phases.push('prepare');
+          const prepared = prepare(ownerId);
+          phases.push('reduce');
+          return operation({ catalog: 'validated-catalog', context: prepared });
+        },
+        mockRewardFulfillment: (key, options) => {
+          assert.equal(key, 'handbook');
+          assert.equal(options.action, 'download');
+          assert.equal(options.catalog, 'validated-catalog');
+          received = options.fixtureByReward;
+          return 'fulfilled';
+        },
+      };
+      runInNewContext(helper + '\nglobalThis.fulfill = previewRewardFulfillment;', context);
+      assert.equal(context.fulfill('original-owner', 'handbook', 'download'), 'fulfilled');
+      assert.deepEqual(phases, enabled ? ['prepare', 'fixture read', 'reduce'] : ['prepare', 'reduce']);
+      if (enabled) assert.equal(received, fixture);
+      else assert.equal(Object.keys(received).length, 0, 'disabled E2E mode never reads or supplies fixtures');
+    }
   });
 });
 

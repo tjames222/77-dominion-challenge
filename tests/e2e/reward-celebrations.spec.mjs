@@ -3,7 +3,8 @@ import { ROUTE_BY_ID } from './support/routes.mjs';
 import { DEFAULT_OWNERSHIP_REWARD_DEFINITIONS } from '../../src/static/reward-catalog.mjs';
 import { DEFAULT_CHALLENGE_DEFINITIONS } from '../../src/static/challenge-progression.mjs';
 import { analyzeAccessibility, assertNoBlockingAxeViolations } from './support/quality-gates.mjs';
-import { FIXED_NOW } from './support/fixtures.mjs';
+import { FIXED_NOW, FIXED_USER_ID } from './support/fixtures.mjs';
+import { deliveryRowsFor } from './support/preview-badge-browser-support.mjs';
 
 const themes = ['light', 'dark', 'dominion-night', 'dominion-platinum'];
 async function seedRewards(page, app, { unseen = ['dominion_night_theme'], missing = [], theme = 'dark', points = 1200 } = {}) {
@@ -27,7 +28,20 @@ async function seedRewards(page, app, { unseen = ['dominion_night_theme'], missi
   });
 }
 const stage = (page) => page.locator('#permanentRewardCelebration');
-const ownedRecords = (page) => page.evaluate(() => JSON.parse(localStorage.getItem('dominion:mockRewardEntitlements') || '[]'));
+const ownedRecords = async (page) => {
+  // Observe the original fixture owner even after the account-switch test.
+  // Ownership remains in its source records; delivery truth is the native
+  // ledger, including explicit null (never a truthy-only legacy fallback).
+  const ownership = await page.evaluate(owner => {
+    const records = JSON.parse(localStorage.getItem('dominion:previewUserStateByOwner') || '{}');
+    return records[owner]?.['dominion:mockRewardEntitlements']
+      || JSON.parse(localStorage.getItem('dominion:mockRewardEntitlements') || '[]');
+  }, FIXED_USER_ID);
+  const receipts = new Map((await deliveryRowsFor(page, FIXED_USER_ID, 'reward')).map(row => [row.itemId, row]));
+  return ownership.map(record => receipts.has(record.key)
+    ? { ...record, celebrationSeenAt: receipts.get(record.key).seenAt }
+    : record);
+};
 
 for (const theme of themes) {
   for (const width of [390, 1440]) {
@@ -103,6 +117,29 @@ test('unknown reward links fail safely without any automatic action', async ({ p
   await expect(page.locator('#rewardDetailDialog')).not.toBeVisible();
   await expect(page.locator('#rewardsList')).toBeVisible(); app.assertNoRuntimeErrors();
 });
+
+for (const [query, opensDetail] of [
+  ['reward=dominion%5Fnight%5Ftheme', true],
+  ['reward=dominion_night_theme&reward=does_not_exist', true],
+  ['reward=does_not_exist&reward=dominion_night_theme', false],
+  ['reward=%3Cscript%3E&reward=dominion_night_theme', false],
+  ['reward=__proto__', false],
+  ['reward=constructor', false],
+]) {
+  test(`reward deep link preserves exact first decoded key: ${query}`, async ({ page, app }) => {
+    await seedRewards(page, app, { unseen: [] });
+    await page.goto(`/badges-rewards.html?${query}#rewards`); await app.stable();
+    const detail = page.getByRole('dialog', { name: 'Dominion Night', exact: true });
+    if (opensDetail) {
+      await expect(detail).toBeVisible();
+      await expect(detail.getByRole('button', { name: /Claim|Download|Start/ })).toHaveCount(0);
+      await page.keyboard.press('Escape');
+      await expect(page.locator('[data-reward-key="dominion_night_theme"] [data-view-reward]')).toBeFocused();
+    } else await expect(page.locator('#rewardDetailDialog')).not.toBeVisible();
+    await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
+    app.assertNoRuntimeErrors();
+  });
+}
 
 for (const reward of DEFAULT_OWNERSHIP_REWARD_DEFINITIONS) {
   test(`${reward.rewardType} ${reward.key}: exact artwork/icon, title, description and no automatic fulfillment`, async ({ page, app }) => {
