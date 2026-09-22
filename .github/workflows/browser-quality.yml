@@ -65,6 +65,9 @@ jobs:
       - name: Verify production-built admin read boundaries
         run: pnpm test:e2e:admin
 
+      - name: Verify production-built early-access feedback boundaries
+        run: pnpm test:e2e:feedback
+
       - name: Verify focused production-built Daily Action reads
         run: pnpm test:e2e:daily-bootstrap
 

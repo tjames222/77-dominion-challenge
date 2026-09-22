@@ -10,6 +10,15 @@ export function isSharedMenuModule(id) {
     || id === '\0vite/modulepreload-polyfill.js';
 }
 
+export function publicBuildSha(env) {
+  for (const key of ['VITE_BUILD_SHA', 'CF_PAGES_COMMIT_SHA', 'GITHUB_SHA']) {
+    if (env[key] === undefined || env[key] === '') continue;
+    if (typeof env[key] !== 'string' || !/^[a-f0-9]{40}$/.test(env[key])) throw new Error(`${key} must be a 40-character lowercase commit SHA.`);
+    return env[key];
+  }
+  return ''; // Feedback fails closed without verified release provenance.
+}
+
 export function resolveTrainingModulePreloads(filename, dependencies, { hostType }) {
   // WebKit retains a failed modulepreload across location.reload, even for a
   // no-store HTTP 503. Native import alone recovers in the new document. Omit
@@ -60,6 +69,7 @@ export default defineConfig(({ mode }) => {
   return {
     ...(isCloudflarePreview ? { envDir: false } : {}),
     base: './',
+    define: { __DOMINION_BUILD_SHA__: JSON.stringify(publicBuildSha({ ...env, ...process.env })) },
     plugins: [
       productionShareRoutePlugin(env),
       {
