@@ -2,7 +2,7 @@ import { createDialog } from './dialog.mjs';
 import { FEEDBACK_TYPES, FEEDBACK_IMPACTS, FEEDBACK_LIMITS, normalizeFeedbackContext,
   normalizeFeedbackOwner, createFeedbackIntent, normalizeFeedbackReceipt } from './feedback-contract.mjs';
 
-// Unmounted leaf. The caller must load feedback-dialog.css with the lazy UI,
+// The caller must load feedback-dialog.css with the lazy UI,
 // verify the canonical EA owner and provide an owner-bound submit adapter.
 // This controller never inspects Auth, page content, browser storage or network.
 export function createFeedbackDialog({ owner: suppliedOwner, context: suppliedContext,
@@ -12,6 +12,7 @@ export function createFeedbackDialog({ owner: suppliedOwner, context: suppliedCo
   if (typeof isCurrent !== 'function' || typeof submit !== 'function') throw new TypeError('Feedback requires owner and submission adapters.');
   if (!Number.isInteger(requestTimeoutMs) || requestTimeoutMs < 1 || requestTimeoutMs > 60000) throw new TypeError('Feedback requires a bounded request deadline.');
   let destroyed = false; let generation = 0; let state = 'editing'; let intent = null; let request = null;
+  let restoreScrollBehavior = () => {};
   const fields = {};
   const make = (tag, text = '') => { const node = ownerDocument.createElement(tag); node.textContent = text; return node; };
   const form = make('form'); form.className = 'feedback-form'; form.noValidate = true; form.autocomplete = 'off';
@@ -19,6 +20,7 @@ export function createFeedbackDialog({ owner: suppliedOwner, context: suppliedCo
     description: 'Tell us what happened or what could be better. We save your feedback before delivery to our team.',
     pattern: 'feedback', content: form,
     onClose({ reason }) {
+      restoreScrollBehavior();
       if (['destroy', 'replaced'].includes(reason)) {
         destroyed = true; generation += 1; request?.abort(); request = null;
         scrub();
@@ -64,10 +66,10 @@ export function createFeedbackDialog({ owner: suppliedOwner, context: suppliedCo
     intent = null; state = 'editing'; status.textContent = ''; send.textContent = 'Send feedback'; send.disabled = false; cancel.disabled = false;
   }
   function destroy() {
-    if (destroyed) { scrub(); dialog.elements.layer.remove(); return; }
+    if (destroyed) { restoreScrollBehavior(); scrub(); dialog.elements.layer.remove(); return; }
     destroyed = true; generation += 1; request?.abort(); request = null;
     // Never return focus to a now-ineligible feature trigger on owner teardown.
-    dialog.__closeForReplacement(); dialog.destroy(); scrub();
+    dialog.__closeForReplacement(); dialog.destroy(); restoreScrollBehavior(); scrub();
   }
   cancel.addEventListener('click', () => {
     if (!current()) { destroy(); return; }
@@ -132,12 +134,22 @@ export function createFeedbackDialog({ owner: suppliedOwner, context: suppliedCo
     }
   });
   return Object.freeze({
+    hasPendingIntent: () => !destroyed && Boolean(intent),
+    isAvailable: () => current(),
     open(trigger) {
       if (!current()) { destroy(); return false; }
       if (!dialog.isOpen) {
         const retrying = state === 'uncertain';
         if (!retrying) { scrub(); cancel.textContent = 'Cancel'; }
-        dialog.open(trigger);
+        // The shared modal restores document scroll before returning focus.
+        // Smooth scrolling would pass other controls under the fixed launcher
+        // after focus returns, making safe-overlap hiding discard that focus.
+        const rootStyle = ownerDocument.documentElement?.style;
+        if (rootStyle) {
+          const previous = rootStyle.scrollBehavior; rootStyle.scrollBehavior = 'auto';
+          restoreScrollBehavior = () => { rootStyle.scrollBehavior = previous; restoreScrollBehavior = () => {}; };
+        }
+        try { dialog.open(trigger); } catch (error) { restoreScrollBehavior(); throw error; }
         if (retrying) { showUncertain(); send.focus(); }
       }
       return true;

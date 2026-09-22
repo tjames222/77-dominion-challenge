@@ -7,12 +7,8 @@ export const FEEDBACK_TYPES = Object.freeze({
 export const FEEDBACK_IMPACTS = Object.freeze({
   blocking: 'Blocking', frustrating: 'Frustrating', minor: 'Minor', suggestion: 'Suggestion',
 });
-export const FEEDBACK_ROUTES = Object.freeze([
-  'dashboard.html', 'badges-rewards.html', 'bible-reading.html', 'morning-prayer.html',
-  'worship.html', 'evening-prayer.html', 'workout-one.html', 'intentional-walk.html',
-  'workout-two.html', 'community.html', 'group-settings.html', 'private-journal.html',
-  'billing.html', 'profile.html',
-]);
+import { FEEDBACK_ROUTES } from './feedback-route.mjs';
+export { FEEDBACK_ROUTES } from './feedback-route.mjs';
 export const FEEDBACK_LIMITS = Object.freeze({ description: 10000, expectedBehavior: 5000, viewport: 16384 });
 const themes = ['light', 'dark', 'dominion-night', 'dominion-platinum'];
 const browsers = ['chromium', 'firefox', 'safari', 'other', 'unknown'];

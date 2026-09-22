@@ -1,15 +1,21 @@
-# Early Access feedback frontend leaf
+# Early Access feedback frontend contract
 
-This is an unmounted, text-only component for FOU-1803. It does not authorize an
-account, query Early Access state, call an API, send email, create a Linear issue,
-or enable the floating widget. It is not ticket-completion evidence.
+The text-only component for FOU-1803 is connected to the candidate's lazy
+authenticated-page widget and owner-bound client. The component itself still
+does not authorize an account, perform Auth or network calls, send email, or
+create a Linear issue. This is local implementation evidence, not deployment or
+ticket-completion evidence. See [the runtime contract](early-access-feedback-runtime.md)
+for persistence, delivery, provider configuration and remaining release gates.
 
 ## Injection boundary
 
 `createFeedbackDialog({ owner, context, isCurrent, submit, onSaved, requestTimeoutMs, document })`
-returns `open(trigger)` and `destroy()`. The future lazy entry must load the
-feedback-only stylesheet alongside the existing shared dialog styles. No current
-entrypoint imports this component or its stylesheet.
+returns `open(trigger)`, `destroy()`, `hasPendingIntent()` and `isAvailable()`.
+`feedback-widget.mjs` imports the dialog and its scoped stylesheet lazily, after
+the menu coordinator has obtained fresh canonical Early Access context on an
+allowed authenticated route. The dialog and its CSS are absent from every
+initial entry closure; they are not mounted on Public/Auth/Security/Admin/Invite
+routes.
 
 The caller must verify canonical Early Access eligibility and capture the actor
 and immutable session identity before constructing it. `isCurrent(owner)` is a
@@ -17,7 +23,11 @@ synchronous lifecycle fence, not authorization. `submit(intent, { signal })` mus
 be an authenticated owner-bound server adapter that verifies the same actor,
 session, current EA entitlement and permitted origin, including after waits.
 No second Auth client, cached authorization, editable metadata flag or browser
-allowlist may supply that authority. A notification callback receives only a
+allowlist supplies that authority. `api.js` injects the existing singleton into
+`feedback-client.mjs`; that client pins the original actor/session/bearer across
+canonical Auth checks, waits, RPC dispatch and final publication. The browser
+uses `get_member_access_context` and `submit_early_access_feedback`, not service
+pricing or administrative RPCs. A notification callback receives only a
 validated saved receipt.
 
 Call `destroy()` synchronously on owner/session loss, sign-out, pagehide and
@@ -32,9 +42,10 @@ owner before mounting again. Drafts are deliberately not stored or logged.
 Input fields are `type`, `description`, optional `expectedBehavior`, `impact` and
 boolean `contactAllowed`. Category/impact labels exactly match the ticket.
 Description must contain a non-whitespace character, but its original string is
-preserved verbatim; the same is true of expected behavior. Proposed frontend
-caps are 10,000 and 5,000 UTF-16 code units. These must be aligned with the future
-server's UTF-8 body limit before integration. Unknown fields, attachments,
+preserved verbatim; the same is true of expected behavior. Browser and SQL
+validation share caps of 10,000 and 5,000 UTF-16 code units. The downstream
+renderers and transports independently enforce their bounded output/body sizes.
+Unknown fields, attachments,
 identity assertions, null/nonstring text, PostgreSQL-incompatible NUL and
 ill-formed Unicode surrogate sequences are rejected. Valid Unicode is not
 normalized or rewritten.
@@ -48,26 +59,35 @@ Context is limited to:
 - `browser`: chromium, firefox, safari, other or unknown;
 - `platform`: windows, macos, linux, android, ios, other or unknown.
 
-The caller supplies these already-coarsened values. This leaf does not read raw
-UA, location/referrer, DOM/form contents, cookies, storage, private content,
-tokens, user metadata or screenshots. Server-derived reporter/email/cohort and
+The dialog receives these already-coarsened values. `feedback-context.mjs`
+reduces the runtime user-agent string to fixed enums and discards the raw string;
+the widget captures only pathname, theme, viewport and validated build SHA.
+There is no DOM/form-content scanning, storage/referrer collection, private
+content, token, user-metadata or screenshot capture. Geometry-only placement
+checks do not add context fields. Server-derived reporter/email/cohort and
 timestamps are not accepted as client-authoritative context.
 
-Reviewed route proposal: dashboard, badges-rewards, bible-reading,
+The fixed route list is dashboard, badges-rewards, bible-reading,
 morning-prayer, worship, evening-prayer, workout-one, intentional-walk,
 workout-two, community, group-settings, private-journal, billing and profile,
 each with `.html`. This context allowlist is not a mount/eligibility decision.
-Public/Auth/Security/Admin/Invite routes are not admitted. A future context
-builder must canonicalize clean aliases and discard query/hash before calling
-this contract; full URLs, aliases and query/fragment-bearing strings fail closed
-here. Broader coverage requires explicit review.
+Public/Auth/Security/Admin/Invite routes are not admitted. `feedback-route.mjs`
+canonicalizes clean root-level extensionless/HTML aliases from
+`window.location.pathname`; query/hash never enter the context builder. The
+final context contract accepts only canonical names. Full URLs, nested paths,
+encoded paths and query/fragment-bearing strings fail closed. Broader coverage
+requires explicit review. `vite.config.mjs` supplies the build SHA only from
+validated build-environment values; an absent SHA keeps the widget hidden.
 
 ## Durable receipt and retry
 
 A frozen intent has exactly `{ operationId, input, context }`, with a UUID
 operation ID. The same object and exact payload are retained on uncertain retry.
-The injectable adapter must perform server idempotency keyed to the authenticated
-actor, operation ID and payload digest; a browser double-click lock is not enough.
+The integrated RPC performs server idempotency keyed to the authenticated actor,
+operation ID and exact input/context; a browser double-click lock is not enough.
+New submissions require current active Early Access. An exact previously
+dispatched operation may recover its existing receipt after Early Access ends,
+but cannot create a new row without server-side eligibility.
 
 Only this exact versioned receipt confirms the submission:
 
@@ -91,29 +111,46 @@ The uncertain state permits Close for now/Escape/backdrop and retains the exact
 draft and intent for reopening by the same owner on this page. The UI warns that
 leaving the page or signing out clears it. Late responses after the deadline
 cannot publish. Explicit pre-submit cancel is supported; forced
-owner/page/modal teardown always scrubs. No definite server rejection codes are
-invented in this standalone slice; a reviewed negative-outcome contract is an
-integration prerequisite if editing after such a result is desired.
+owner/page/modal teardown always scrubs. Errors use fixed safe messages, never
+raw provider text. The dialog does not guess that a failed or timed-out request
+was rolled back and unlock its immutable payload for editing.
 
 After a verified receipt the component clears the draft, announces saved status
 without claiming Linear/email delivery, and offers Close. Opening a new form
 afterward creates a new operation only when submitted. Callback failure cannot
 turn an already-verified receipt into an uncertain retry.
 
-## Verification and remaining integration gates
+## Widget placement and verification
+
+The square message-icon launcher has the accessible name “Send Feedback”. It
+uses safe-area offsets and mounted-page bottom space. It hides while a menu or
+dialog is active and when its geometry would overlap an interactive page
+control, including narrow controls; it returns when the obstruction is gone.
+Placement does not read text or field values. Editing/uncertain drafts survive
+benign same-session refresh, while owner/session loss synchronously scrubs them.
 
 Focused Node tests exercise the actual component and existing `createDialog`
 through a small DOM double: semantics/labels/focus containment, local validation,
 double-submit, exact immutable retry, wrong/malformed receipt, owner teardown,
 ignored abort, shared-modal replacement, new submission and narrowly scoped CSS.
-This does not claim native-browser geometry or assistive-technology acceptance.
-The test-only DOM helper is not imported by application code.
+The test-only DOM helper is not imported by application code. Compiled
+Chromium/WebKit tests cover the real SDK with synthetic transport: eligibility,
+all fourteen routes, malformed/MFA rejection, exact uncertain retries,
+same-session retention, replacement-session teardown, all four themes, native
+focus/keyboard behavior, axe checks and phone/desktop/tablet geometry. Consent
+checkbox and label bounds are checked separately from container bounds. Actual
+28-entry builds verify optional-module isolation, one Auth runtime, unchanged
+initial request counts and ordered initial CSS. This is not an actual
+screen-reader acceptance claim or a claim that existing performance budgets pass.
 
-Before mounting: align server request/receipt limits; integrate canonical EA
-authority and exact session fencing; approve the route policy; add the lazy menu
-lifecycle seam with all-theme/native Chromium/WebKit keyboard/geometry checks;
-prove no public/Auth/Security initial or runtime feature leakage in actual built
-graphs; and verify durable persistence plus real Linear/support delivery with
-safe independent retry. EA duration, beta grandfathering and sender selection
-remain owner decisions. Public signup, billing and provider configuration are
-unchanged by this leaf.
+## Remaining release gates
+
+The owner approved free Early Access until beta, indefinite $3.50 USD monthly
+beta-price eligibility including cancellation/return, and Resend's free tier.
+That policy approval does not provision an account or make the incomplete
+approval/invitation/acceptance flow available. Remaining gates include that flow
+and entitlement integration, Resend/Linear least-privilege configuration,
+approved worker scheduling, full schema/release checks and an authorized
+production canary verifying durable persistence and independent Linear/support
+delivery retry. Public signup and billing stay disabled. Neither this frontend
+contract nor the local synthetic tests assert that the candidate is deployed.

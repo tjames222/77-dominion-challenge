@@ -469,6 +469,50 @@ export function subscribeToAuthStateChanges(listener) {
   return () => data?.subscription?.unsubscribe?.();
 }
 
+let feedbackClient = null;
+let feedbackClientLoad = null;
+const feedbackInvalidationListeners = new Set();
+const notifyFeedbackInvalidation = () => { for (const listener of feedbackInvalidationListeners) { try { listener(); } catch { /* Scrub every subscribed view. */ } } };
+export function subscribeToFeedbackInvalidation(listener) { feedbackInvalidationListeners.add(listener); return () => feedbackInvalidationListeners.delete(listener); }
+export function cancelFeedbackRequests() { if (feedbackClient) feedbackClient.invalidate(); else notifyFeedbackInvalidation(); }
+export async function loadFeedbackClient() {
+  // Browser-local membership, URL parameters and preview state are not EA
+  // authority. Only the existing real Auth client can enable this feature.
+  if (!usesSupabaseAuthentication()) return null;
+  if (feedbackClient) return feedbackClient;
+  if (!feedbackClientLoad) feedbackClientLoad = import('./feedback-client.mjs').then(({ createFeedbackClient, feedbackClientError }) => {
+    feedbackClient = createFeedbackClient({
+      getSession: getAuthSession,
+      getUser: async token => { const { data, error } = await supabase.auth.getUser(token); if (error) throw feedbackClientError('FEEDBACK_SIGNED_OUT'); return data?.user; },
+      sessionIdentity: authSessionIdentity,
+      subscribe: subscribeToAuthStateChanges,
+      request: async (name, args, { token, signal }) => {
+        if (!['get_member_access_context', 'submit_early_access_feedback'].includes(name)) throw feedbackClientError();
+        const response = await fetch(`${SUPABASE_URL}/rest/v1/rpc/${name}`, {
+          method: 'POST', credentials: 'omit', cache: 'no-store', redirect: 'error', signal,
+          headers: { apikey: SUPABASE_KEY, Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }, body: JSON.stringify(args),
+        });
+        const reader = response.body?.getReader(); if (!reader) throw feedbackClientError();
+        const decoder = new TextDecoder(); let raw = ''; let bytes = 0;
+        try {
+          for (;;) {
+            const { done, value } = await reader.read(); if (done) break;
+            bytes += value.byteLength;
+            if (bytes > 262144 || signal.aborted) { await reader.cancel(); throw feedbackClientError(); }
+            raw += decoder.decode(value, { stream: true });
+          }
+          raw += decoder.decode();
+        } finally { reader.releaseLock(); }
+        let value; try { value = JSON.parse(raw); } catch { throw feedbackClientError(); }
+        if (!response.ok) throw { code: value?.code, message: value?.message }; // Adapter maps only fixed known codes.
+        return value;
+      },
+    });
+    feedbackClient.subscribe(notifyFeedbackInvalidation);
+    return feedbackClient;
+  }).catch(error => { feedbackClientLoad = null; throw error; });
+  return feedbackClientLoad;
+}
 let adminReadClient = null;
 const adminInvalidationListeners = new Set();
 const notifyAdminInvalidation = (reason = '') => { for (const listener of adminInvalidationListeners) { try { listener(reason); } catch { /* Clear every subscribed view. */ } } };
@@ -524,9 +568,11 @@ export const assignSiteAdminRole = (intent, options = {}) => getAdminReadClient(
 export function subscribeToAdminInvalidation(listener) { adminInvalidationListeners.add(listener); return () => adminInvalidationListeners.delete(listener); }
 export function cancelAdminReads() { if (adminReadClient?.invalidate) adminReadClient.invalidate(); else notifyAdminInvalidation(); }
 if (typeof window !== 'undefined') {
-  window.addEventListener('pagehide', cancelAdminReads);
+  window.addEventListener('pagehide', () => { cancelAdminReads(); cancelFeedbackRequests(); });
   window.addEventListener('storage', (event) => {
-    if (event.key === null || [supabaseAuthStorageKey, 'dominion:user', MOCK_USER_ID_KEY, MOCK_USER_IDS_BY_IDENTITY_KEY].includes(event.key)) cancelAdminReads();
+    if (event.key === null || [supabaseAuthStorageKey, 'dominion:user', MOCK_USER_ID_KEY, MOCK_USER_IDS_BY_IDENTITY_KEY].includes(event.key)) {
+      cancelAdminReads(); cancelFeedbackRequests();
+    }
   });
 }
 
@@ -571,6 +617,7 @@ export async function clearAuthSession({ redirectToLanding = false } = {}) {
   if (redirectToLanding) logoutNavigationPending = true;
   try {
     cancelAdminReads();
+    cancelFeedbackRequests();
     inflightActorReads.invalidate();
     invalidatePreviewBadgeOwner();
     if (usesSupabaseAuthentication()) {

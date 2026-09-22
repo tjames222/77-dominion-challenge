@@ -130,6 +130,19 @@ test('required browser CI includes production-mode MFA with only a local synthet
   assert.match(mfaPlaywrightConfig, /outputFolder: 'playwright-report'/);
 });
 
+test('early-access feedback is a required production-wired browser gate with isolated SQL checks', () => {
+  const config = readFileSync(new URL('../../playwright.feedback.config.mjs', import.meta.url), 'utf8');
+  assert.equal(packageJson.scripts['test:e2e:feedback'], 'playwright test --config=playwright.feedback.config.mjs');
+  assert.match(workflow, /- name: Verify production-built early-access feedback boundaries\n\s+run: pnpm test:e2e:feedback/);
+  assert.match(ciWorkflow, /run: pnpm run test:early-access-member-sql/);
+  assert.match(ciWorkflow, /run: pnpm run test:early-access-feedback-sql/);
+  assert.ok(playwrightConfig.includes('/feedback-live\\.spec\\.mjs/'));
+  assert.match(config, /VITE_ENABLE_MOCKS: 'false', VITE_ENABLE_PRODUCTION_CONNECTIONS: 'true'/);
+  assert.match(config, /const baseURL = `http:\/\/127\.0\.0\.1:\$\{port\}`/);
+  assert.match(config, /retries: 0/);
+  assert.doesNotMatch(config, /supabase\.co|SUPABASE_ACCESS_TOKEN|SERVICE_ROLE_KEY|LINEAR_FEEDBACK_API_KEY|RESEND_API_KEY/);
+});
+
 test('Daily Action bootstrap gates use production wiring with only synthetic local data', () => {
   assert.equal(packageJson.scripts['test:e2e:daily-bootstrap'], 'playwright test --config=playwright.daily-bootstrap.config.mjs');
   assert.equal(packageJson.scripts['test:daily-bootstrap-sql'], 'node --test scripts/daily-action-bootstrap.sql.test.mjs');

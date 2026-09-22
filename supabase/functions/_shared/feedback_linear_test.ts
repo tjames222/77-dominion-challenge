@@ -233,7 +233,7 @@ Deno.test("invalid job/configuration fails before any network call", async () =>
     { title: "\nheader injection" },
     { title: "x".repeat(161) },
     { description: " " },
-    { description: "x".repeat(20001) },
+    { description: "x".repeat(65537) },
     { priority: 8 as 0 },
     { labelIds: [] },
     { labelIds: [job.issueId, job.issueId] },
@@ -251,6 +251,31 @@ Deno.test("invalid job/configuration fails before any network call", async () =>
     assert(failed);
     assertEquals(state.calls.length, 0);
   }
+});
+
+Deno.test("expanded description bound admits ASCII but rejects oversized UTF-8 before network", async () => {
+  const { state, options } = provider();
+  assertEquals(
+    (await deliverFeedbackIssue(
+      { ...job, description: "x".repeat(65536) },
+      options,
+    )).state,
+    "delivered",
+  );
+  assertEquals(state.creates, 1);
+  const oversized = provider();
+  let caught: unknown;
+  try {
+    await deliverFeedbackIssue(
+      { ...job, description: "界".repeat(65536) },
+      oversized.options,
+    );
+  } catch (error) {
+    caught = error;
+  }
+  assert(caught instanceof TypeError);
+  assertEquals(oversized.state.calls.length, 0);
+  assertEquals(oversized.state.fences, 0);
 });
 
 Deno.test("oversized, invalid and unavailable provider responses remain safe", async () => {

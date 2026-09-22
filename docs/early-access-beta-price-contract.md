@@ -46,9 +46,12 @@ tax, discounts, subscription state, and Checkout behavior require separate revie
 
 ## Required before activation
 
-- Resolve early-access duration and grandfathering/cancellation/returner policy.
-  Implement durable canonical eligibility and an auditable operator workflow;
-  this helper deliberately does not decide those policies.
+- The owner approved free accepted access until explicit beta launch and
+  permanent qualification, including cancellation and return. The additive
+  authority migration records those facts (see `early-access-member-authority.md`).
+  Finish the audited invitation/acceptance and app-access integration before
+  treating that foundation as a working enrollment flow; this pure helper does
+  not grant access or decide launch timing.
 - Create and verify the approved Stripe product/price in the intended mode and
   configure their IDs server-side. No environment-variable names or secret
   requirements are added to current deployments by this isolated helper.

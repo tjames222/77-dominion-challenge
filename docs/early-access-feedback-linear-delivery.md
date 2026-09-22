@@ -1,13 +1,15 @@
-# Feedback Linear delivery adapter (not connected)
+# Feedback Linear delivery adapter (release candidate, not deployed)
 
 `supabase/functions/_shared/feedback_linear.ts` prepares the server-only Linear
-delivery part of FOU-1803. It is deliberately **not imported by a deployed Edge
-Function**. There is no database intake, worker schedule, credential, or live
-delivery implied by this module. The existing site and billing flags are unchanged.
+delivery part of FOU-1803. The candidate `process-early-access-feedback` worker
+now imports it after durable SQL intake and job leasing. Neither worker nor
+intake is deployed, and no production schedule, provider credential or live
+delivery is implied. See `early-access-feedback-runtime.md` for the integrated
+candidate and its remaining gates. The existing site and billing flags are unchanged.
 
 ## Authority and immutable input
 
-The future worker must load a committed, immutable feedback job after claiming a
+The worker must load a committed, immutable feedback job after claiming a
 bounded lease. Never pass browser input straight to this adapter. The job's
 `issueId` is a UUID v4 allocated and persisted once, separately from `feedbackId`.
 The title, escaped/rendered original feedback, severity priority and existing
@@ -37,6 +39,11 @@ The callback must honor its abort signal where possible; late replies cannot
 resume sending. Each network stage and the dispatch fence is bounded to ten
 seconds; responses are size-bounded and redirects rejected.
 
+Descriptions are limited to 65,536 characters so safe dynamic code fences can
+preserve maximum-length valid feedback without truncation. The complete serialized
+create request, including its receipt marker, is capped at 128 KiB UTF-8 before
+lookup or dispatch. Responses retain their independent 128 KiB limit.
+
 A failed/lost create reply triggers a lookup of the original UUID. If that
 cannot prove delivery, preserve the submission and mark the job uncertain.
 `reconcile` mode never invokes the dispatch fence or creates another issue.
@@ -53,15 +60,16 @@ provider delivery into failure of an already committed member submission.
 
 ## Remaining integration gates
 
-- Canonical active early-access authorization and an atomic private feedback
-  intake/outbox, with exact-retry handling, rate limits and account/session fences.
-- A verified existing label mapping including Early Access Feedback, a dedicated
-  server key and a read-only configuration preflight against the fixed project.
-- Branded text rendering that preserves original feedback without interpreting
-  user content as mentions/instructions; only allowlisted technical context.
-- A scheduled bounded worker, durable dispatch/reconciliation operations and
-  audited recovery, exercised against a synthetic provider and local real SQL.
-- The approved transactional sender and separate support-email delivery.
+- Complete the invitation/acceptance and app-access integration that establishes
+  actual early-access membership; focused private-authority/intake tests are
+  not a full enrollment or full-schema release proof.
+- The renderer uses the verified existing type labels and the created Early
+  Access Feedback label. Provision a dedicated server key and perform the
+  read-only configuration preflight against the fixed project before deployment.
+- Provision the approved free transactional sender and worker secrets, then
+  schedule the bounded worker. Local real-SQL and synthetic-provider tests cover
+  the candidate's durable dispatch and separate support-email delivery, not live
+  provider acceptance or inbox delivery. Audited operator redrive is not supplied.
 - One authorized end-to-end canary after review and deployment; this adapter's
   fixture tests alone do not complete FOU-1803.
 

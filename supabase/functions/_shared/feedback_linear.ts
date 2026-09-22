@@ -1,6 +1,8 @@
 // Server-only delivery adapter. The caller must load an immutable, persisted
 // feedback job; this is not an authenticated intake or a browser API.
 const ENDPOINT = "https://api.linear.app/graphql";
+export const FEEDBACK_LINEAR_MAX_DESCRIPTION = 65536;
+export const FEEDBACK_LINEAR_MAX_REQUEST_BYTES = 131072;
 export const FEEDBACK_LINEAR_TEAM = "f61599d3-1342-430f-855e-2d3bc574a94b";
 export const FEEDBACK_LINEAR_PROJECT = "d9c1d9b7-b35b-4da5-9a9e-be384e06bd2b";
 const UUID =
@@ -62,7 +64,8 @@ function validateJob(job: FeedbackLinearJob, options: Options) {
     typeof job.title !== "string" || job.title.trim().length === 0 ||
     job.title.length > 160 || /[\r\n\u0000]/.test(job.title) ||
     typeof job.description !== "string" || !job.description.trim() ||
-    job.description.length > 20000 || job.description.includes("\u0000") ||
+    job.description.length > FEEDBACK_LINEAR_MAX_DESCRIPTION ||
+    job.description.includes("\u0000") ||
     !Number.isInteger(job.priority) || job.priority < 0 || job.priority > 4 ||
     !Array.isArray(job.labelIds) || job.labelIds.length === 0 ||
     job.labelIds.length > 8 || job.labelIds.some((id) => !UUID.test(id)) ||
@@ -237,6 +240,23 @@ export async function deliverFeedbackIssue(
   job = { ...job, labelIds: [...job.labelIds] };
   options = { ...options };
   const marker = await deliveryMarker(job);
+  const createVariables = {
+    input: {
+      id: job.issueId,
+      teamId: FEEDBACK_LINEAR_TEAM,
+      projectId: FEEDBACK_LINEAR_PROJECT,
+      title: job.title,
+      description: `${job.description}\n\n${marker}`,
+      priority: job.priority,
+      labelIds: [...job.labelIds],
+      useDefaultTemplate: false,
+    },
+  };
+  if (
+    new TextEncoder().encode(
+      JSON.stringify({ query: createQuery, variables: createVariables }),
+    ).byteLength > FEEDBACK_LINEAR_MAX_REQUEST_BYTES
+  ) throw new TypeError("Invalid feedback delivery configuration.");
   const existing = await findIssue(job, options);
   if (existing === undefined) {
     return { state: "retryable", code: "lookup_unavailable" };
@@ -252,18 +272,7 @@ export async function deliverFeedbackIssue(
   if (owned !== true) {
     return { state: "retryable", code: "dispatch_not_owned" };
   }
-  const data = await graphql(createQuery, {
-    input: {
-      id: job.issueId,
-      teamId: FEEDBACK_LINEAR_TEAM,
-      projectId: FEEDBACK_LINEAR_PROJECT,
-      title: job.title,
-      description: `${job.description}\n\n${marker}`,
-      priority: job.priority,
-      labelIds: [...job.labelIds],
-      useDefaultTemplate: false,
-    },
-  }, options);
+  const data = await graphql(createQuery, createVariables, options);
   const created = record(data?.issueCreate);
   if (created?.success === true && created.issue) {
     return receipt(created.issue, job, marker);

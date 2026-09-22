@@ -44,6 +44,16 @@ test('invalid input preserves draft, focuses the failing field and never calls s
   assert.equal(ui.field('description').value, ' \n '); assert.equal(ui.document.activeElement, ui.field('description'));
   assert.equal(ui.field('description').getAttribute('aria-invalid'), 'true'); ui.controller.destroy();
 });
+test('feedback temporarily disables smooth scroll only through modal restore, including teardown and replacement', () => {
+  for (const reason of ['escape', 'destroy', 'replaced']) {
+    const ui = setup(); ui.document.documentElement.style = { scrollBehavior: 'smooth' };
+    ui.controller.open(ui.trigger); assert.equal(ui.document.documentElement.style.scrollBehavior, 'auto');
+    if (reason === 'escape') ui.document.keydown('Escape');
+    else if (reason === 'destroy') ui.controller.destroy();
+    else { const other = createDialog({ document: ui.document, title: 'Other' }); other.open(); other.destroy(); }
+    assert.equal(ui.document.documentElement.style.scrollBehavior, 'smooth'); ui.controller.destroy();
+  }
+});
 
 test('pending submission cannot double-submit, dismiss or clear text before exact durable receipt', async () => {
   const waiting = deferred(); const calls = []; const ui = setup({ submit: (intent, options) => { calls.push({ intent, options }); return waiting.promise; } });
