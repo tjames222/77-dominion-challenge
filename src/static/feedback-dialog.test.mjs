@@ -55,6 +55,28 @@ test('feedback temporarily disables smooth scroll only through modal restore, in
   }
 });
 
+test('deferred geometry/focus restoration is owner-bound and cannot interfere with a reopened dialog', () => {
+  for (const mode of ['normal', 'owner-loss', 'reopened', 'destroyed']) {
+    let restored = 0; const frames = [];
+    const ui = setup({ restoreTriggerGeometry: () => restored++ });
+    ui.document.documentElement.style = { scrollBehavior: 'smooth' };
+    ui.document.defaultView.requestAnimationFrame = callback => frames.push(callback);
+    const flush = () => { while (frames.length) frames.shift()(); };
+    ui.controller.open(ui.trigger); flush(); ui.document.keydown('Escape');
+    assert.equal(ui.document.documentElement.style.scrollBehavior, 'auto');
+    if (mode === 'owner-loss') { ui.changeOwner(); ui.document.body.focus(); }
+    if (mode === 'reopened') ui.controller.open(ui.trigger);
+    if (mode === 'destroyed') ui.controller.destroy();
+    flush();
+    assert.equal(restored, mode === 'normal' ? 1 : 0);
+    assert.equal(ui.document.documentElement.style.scrollBehavior, mode === 'reopened' ? 'auto' : 'smooth');
+    if (mode === 'normal') assert.equal(ui.document.activeElement, ui.trigger);
+    if (mode === 'owner-loss') assert.equal(ui.document.activeElement, ui.document.body);
+    if (mode === 'reopened') assert.equal(ui.document.activeElement, ui.field('type'));
+    ui.controller.destroy(); flush(); assert.equal(ui.document.documentElement.style.scrollBehavior, 'smooth');
+  }
+});
+
 test('pending submission cannot double-submit, dismiss or clear text before exact durable receipt', async () => {
   const waiting = deferred(); const calls = []; const ui = setup({ submit: (intent, options) => { calls.push({ intent, options }); return waiting.promise; } });
   ui.controller.open(ui.trigger); ui.fill(); const first = ui.form.dispatch('submit'); await ui.form.dispatch('submit');

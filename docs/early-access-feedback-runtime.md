@@ -78,8 +78,8 @@ Improvement taxonomy is reused. The Early Access Feedback label is
 Remaining release gates include verified Resend account/domain setup without
 altering incoming support forwarding, least-privilege key preflight, approved
 worker scheduling and secret provisioning, full schema/pgTAP/browser/release
-checks, invitation acceptance and frontend access-state integration, and an
-authorized end-to-end canary. The server membership consumers are now integrated
+checks, invitation acceptance, and an authorized end-to-end canary. The browser
+access-state reader and server membership consumers are now integrated
 by `20260927025530_integrate_early_access_membership.sql`; see
 `early-access-member-authority.md` for the preserved contracts and race tests.
 No migration resets or mutates production during local testing.
@@ -103,13 +103,19 @@ Focused tests are not a substitute for full schema replay, the production
 provider configuration, or actual deployment evidence.
 
 Local checkpoint results: 18 member-authority SQL cases, 23 feedback SQL cases
-(including 63 pgTAP security assertions), 305 Edge Function tests, 1,096 frontend
-unit tests and 26 native feedback cases pass. The native cases cover Chromium
+(including 63 pgTAP security assertions), 17 membership-consumer SQL cases
+(including 234 existing pgTAP assertions), 305 Edge Function tests, 1,116 frontend
+unit tests and 28 native feedback cases pass. The native cases cover Chromium
 desktop, WebKit phone, tablet sizing, all four themes, fourteen-route placement,
-owner/session changes, uncertain retries and private-context exclusion. Visual
+owner/session changes, uncertain retries, canonical EA billing/profile state
+without Stripe calls, and private-context exclusion. Visual
 review caught and fixed a consent-checkbox label overflow; explicit inner-form
 geometry assertions now protect it. Tests use synthetic local provider replies,
-not a live Linear or Resend account.
+not a live Linear or Resend account. Fourteen repeated WebKit focus/geometry and
+EA-state checks also pass. Dialog close restores geometry before returning
+focus, with owner/reopen/destroy guards for the deferred restoration.
+The existing MFA (44), Daily Actions (66), and Admin (148) native regression
+cases also pass against the updated self-only access fixture.
 
 A paired feedback-integration graph comparison leaves initial request counts
 and exact ordered CSS unchanged on all 28 entries in both main and develop

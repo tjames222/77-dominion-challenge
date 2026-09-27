@@ -75,7 +75,18 @@ export function mountFeedbackWidget({ client, owner, beforeOpen = () => {}, buil
           theme: ownerDocument.documentElement.getAttribute('data-theme'),
           width: ownerWindow.innerWidth, height: ownerWindow.innerHeight,
           buildSha, userAgent: ownerWindow.navigator.userAgent });
-        dialog = createFeedbackDialog({ ...binding, context, document: ownerDocument, onSaved: update });
+        dialog = createFeedbackDialog({ ...binding, context, document: ownerDocument, onSaved: update,
+          restoreTriggerGeometry() {
+            checkPlacement();
+            // Page hydration can change geometry while a dialog is open. If
+            // its old position now covers an action, use the reserved bottom
+            // space before returning focus; never unhide an overlapping button.
+            if (button.hasAttribute('data-obstructed') && Number.isFinite(ownerDocument.body.scrollHeight)) {
+              ownerWindow.scrollTo({ left: ownerWindow.scrollX, top: ownerDocument.body.scrollHeight, behavior: 'instant' });
+              checkPlacement();
+            }
+          },
+        });
       }
       dialog.open(button); update();
     } catch { /* Missing release/context information must never submit guessed data. */ }

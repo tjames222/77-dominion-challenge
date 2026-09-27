@@ -417,6 +417,10 @@ const lockedBillingState = () => ({
   billingEnabled: RELEASE_GATES.billingEnabled,
   appAccess: false,
   subscriptionActive: false,
+  earlyAccessActive: false,
+  legacyMembershipActive: false,
+  betaPriceEligible: false,
+  earlyAccessEndsAt: null,
   subscription: null,
   subscriptions: [],
   entitlements: [],
@@ -568,7 +572,7 @@ export const assignSiteAdminRole = (intent, options = {}) => getAdminReadClient(
 export function subscribeToAdminInvalidation(listener) { adminInvalidationListeners.add(listener); return () => adminInvalidationListeners.delete(listener); }
 export function cancelAdminReads() { if (adminReadClient?.invalidate) adminReadClient.invalidate(); else notifyAdminInvalidation(); }
 if (typeof window !== 'undefined') {
-  window.addEventListener('pagehide', () => { cancelAdminReads(); cancelFeedbackRequests(); });
+  window.addEventListener('pagehide', () => { invalidatePreviewBadgeOwner(); cancelAdminReads(); cancelFeedbackRequests(); });
   window.addEventListener('storage', (event) => {
     if (event.key === null || [supabaseAuthStorageKey, 'dominion:user', MOCK_USER_ID_KEY, MOCK_USER_IDS_BY_IDENTITY_KEY].includes(event.key)) {
       cancelAdminReads(); cancelFeedbackRequests();
@@ -1481,49 +1485,35 @@ export async function getBillingState() {
   }
   if (!supabase) return lockedBillingState();
 
-  const session = await getAuthSession();
-  if (!session?.user) {
-    return {
-      authenticated: false,
-      billingEnabled: RELEASE_GATES.billingEnabled,
-      appAccess: false,
-      subscriptionActive: false,
-      subscription: null,
-      subscriptions: [],
-      entitlements: [],
-    };
-  }
-
-  const client = requireSupabase();
-  const userId = session.user.id;
-  const [entitlementsResult, subscriptionsResult] = await Promise.all([
-    client
-      .from('entitlements')
-      .select('entitlement_key, status, starts_at, ends_at, source_type, source_id, metadata')
-      .eq('user_id', userId),
-    runOptionalReleaseQuery({
-      enabled: RELEASE_GATES.billingEnabled,
-      query: () => client
-        .from('subscriptions')
-        .select('id, product_key, status, cancel_at_period_end, current_period_start, current_period_end, canceled_at, created_at')
-        .eq('user_id', userId)
-        .order('created_at', { ascending: false }),
-    }),
-  ]);
-
-  if (entitlementsResult.error) throw entitlementsResult.error;
-  if (subscriptionsResult.error) throw subscriptionsResult.error;
-
-  const entitlements = (entitlementsResult.data || []).map(mapEntitlement);
-  const subscriptions = (subscriptionsResult.data || []).map(mapSubscription);
-  const subscriptionActive = hasActiveEntitlement(entitlements, MEMBERSHIP_ACCESS_KEY);
+  const expectedEpoch = previewBadgeEpoch;
+  const { readMemberBillingState, createMemberAccessTransport, memberAccessError } = await import('./member-access-reader.mjs');
+  const result = await readMemberBillingState({
+    getSession: getAuthSession,
+    getUser: async token => {
+      const { data, error } = await supabase.auth.getUser(token);
+      if (error) throw memberAccessError('MEMBER_ACCESS_SIGNED_OUT');
+      return data?.user;
+    },
+    requiresMfa: () => sessionRequiresMfa(supabase.auth),
+    sessionIdentity: authSessionIdentity,
+    getEpoch: () => previewBadgeEpoch,
+    request: createMemberAccessTransport({ url: SUPABASE_URL, key: SUPABASE_KEY }),
+  }, { billingEnabled: RELEASE_GATES.billingEnabled, expectedEpoch });
+  if (!result) return lockedBillingState();
+  const { context } = result;
+  const entitlements = result.entitlements.map(mapEntitlement);
+  const subscriptions = result.subscriptions.map(mapSubscription);
   const subscription = subscriptions.find((item) => item.productKey === MEMBERSHIP_PRODUCT_KEY) || null;
 
   return {
     authenticated: true,
     billingEnabled: RELEASE_GATES.billingEnabled,
-    appAccess: subscriptionActive,
-    subscriptionActive,
+    appAccess: context.appAccess,
+    subscriptionActive: context.paidSubscriptionActive,
+    earlyAccessActive: context.earlyAccessActive,
+    legacyMembershipActive: context.legacyMembershipActive,
+    betaPriceEligible: context.betaPriceEligible,
+    earlyAccessEndsAt: context.earlyAccessEndsAt,
     subscription,
     subscriptions,
     entitlements,

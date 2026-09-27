@@ -1,7 +1,6 @@
 import { createFeedbackIntent, normalizeFeedbackOwner, normalizeFeedbackReceipt } from './feedback-contract.mjs';
+import { normalizeMemberAccessContext as normalizeAccessContext } from './member-access-context.mjs';
 
-const ACCESS_KEYS = ['schemaVersion', 'actorId', 'asOf', 'appAccess', 'legacyMembershipActive',
-  'paidSubscriptionActive', 'earlyAccessActive', 'earlyAccessProgram', 'earlyAccessEndsAt', 'betaPriceEligible'];
 const messages = Object.freeze({
   FEEDBACK_UNAVAILABLE: 'Feedback is temporarily unavailable. Try again.',
   FEEDBACK_SIGNED_OUT: 'Log in again to send feedback.',
@@ -26,22 +25,8 @@ function safeError(error) {
 }
 const exact = (value, keys) => Boolean(value && [Object.prototype, null].includes(Object.getPrototypeOf(value))
   && Reflect.ownKeys(value).length === keys.length && keys.every(key => Object.hasOwn(value, key)));
-const uuid = /^[a-f0-9]{8}-[a-f0-9]{4}-[1-8][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i;
-const timestamp = value => typeof value === 'string' && value.length <= 40
-  && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?(?:Z|[+-]\d{2}:\d{2})$/.test(value)
-  && Number.isFinite(Date.parse(value));
-
 export function normalizeMemberAccessContext(value, actorId) {
-  if (!exact(value, ACCESS_KEYS) || value.schemaVersion !== 1 || value.actorId !== actorId
-    || typeof actorId !== 'string' || !uuid.test(actorId)
-    || !timestamp(value.asOf) || ['appAccess', 'legacyMembershipActive', 'paidSubscriptionActive', 'earlyAccessActive', 'betaPriceEligible']
-      .some(key => typeof value[key] !== 'boolean')
-    || value.earlyAccessProgram !== (value.earlyAccessActive ? 'early_access_v1' : null)
-    || !(value.earlyAccessEndsAt === null || timestamp(value.earlyAccessEndsAt))
-    || (!value.earlyAccessActive && value.earlyAccessEndsAt !== null)
-    || value.appAccess !== (value.legacyMembershipActive || value.earlyAccessActive)
-    || (value.paidSubscriptionActive && !value.legacyMembershipActive)) throw feedbackClientError();
-  return Object.freeze(Object.fromEntries(ACCESS_KEYS.map(key => [key, value[key]])));
+  try { return normalizeAccessContext(value, actorId); } catch { throw feedbackClientError(); }
 }
 
 // Inject the existing singleton's methods and a pinned-token JSON RPC transport.

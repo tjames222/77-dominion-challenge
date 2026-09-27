@@ -60,8 +60,9 @@ provider delivery into failure of an already committed member submission.
 
 ## Remaining integration gates
 
-- Complete the invitation/acceptance and app-access integration that establishes
-  actual early-access membership; focused private-authority/intake tests are
+- Complete the invitation/acceptance flow that establishes actual early-access
+  membership; the browser and SQL consumers now read canonical EA authority,
+  but focused private-authority/intake tests are
   not a full enrollment or full-schema release proof.
 - The renderer uses the verified existing type labels and the created Early
   Access Feedback label. Provision a dedicated server key and perform the

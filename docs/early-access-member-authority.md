@@ -9,8 +9,8 @@ configured with `beta_starts_at = NULL`. This does not launch beta or billing.
 No real user grant, testing entitlement, site role, invitation, or feedback row
 is created by this migration. This foundation did not change membership/RLS
 consumers; the additive consumer migration described below now integrates them.
-Approval, invitation acceptance, frontend access-state integration and Checkout
-remain separate required slices. Feedback intake and its worker are
+Approval, invitation acceptance and Checkout remain separate required slices.
+Frontend access-state integration is described below. Feedback intake and its worker are
 implemented separately in the release candidate described by
 `early-access-feedback-runtime.md`. Do not describe this authority foundation
 alone as a working early-access enrollment flow.
@@ -191,3 +191,27 @@ no seeded access, unrelated-product denial, account health, paid/legacy/EA
 separation, lifetime qualification, eight revoke/expiry races and 234 existing
 pgTAP assertions across five challenge/crew suites. CI additionally performs the
 full Supabase replay, advisors and canonical pgTAP/schema-drift gates.
+
+## Browser member-access integration
+
+Live `getBillingState` now reads the canonical self-only member context instead
+of treating a raw entitlement as both application access and a paid subscription.
+It keeps raw billing snapshots for display but skips the subscriptions request
+while billing is closed. Mock/develop paths remain separate and unchanged.
+Profile and Billing distinguish accepted EA from other member access, state
+that EA is free until beta, and show the retained USD $3.50/month rate only when
+the server reports the immutable qualification. No Stripe gate is opened.
+
+The lazy reader reuses the existing Auth singleton and owner epoch. It verifies
+the original bearer with Auth, requires the current MFA state, binds actor and
+immutable session, and rechecks owner/bearer/epoch around asynchronous work.
+A single bounded deadline covers Auth, MFA, details, context and final ownership
+verification. Account/session/assurance changes, pagehide, cancellation and
+malformed contracts cannot publish stale permissions. There is no new Auth
+listener, persisted permission cache, SDK instance or local eligibility source.
+
+Nineteen reader/contract tests cover owner changes, A-to-B-to-A, silent token
+replacement, MFA, deadline/cancellation, transport bounds and closed billing.
+Native Chromium and WebKit cases verify the free/retained-rate copy with no
+subscription or Stripe requests. These local synthetic tests do not grant any
+real account access or establish production invitation readiness.

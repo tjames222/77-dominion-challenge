@@ -66,13 +66,39 @@ for (const options of [{ active: false }, { malformed: true }, { aal: 'aal1' }])
   else { await expect(page.locator('.global-menu-button')).toBeVisible(); await expect.poll(() => auth.calls.length).toBeGreaterThan(0); }
   await expect(widget(page)).toHaveCount(0); expect(auth.writes()).toEqual([]);
 });
-test('public, login, Security, Admin and invite routes never load feedback or ask for member context', async ({ context, page }) => {
+test('public, login, Security, Admin and invite routes never load or submit feedback', async ({ context, page }) => {
   const auth = await installFeedbackStub(context); const requested = [];
   page.on('request', request => { if (optional.test(request.url())) requested.push(request.url()); });
   for (const route of ['/index.html', '/support.html', '/login.html', '/account-security.html', '/admin.html', '/invite.html']) {
     await page.goto(route); await page.waitForLoadState('networkidle'); await expect(widget(page)).toHaveCount(0);
   }
-  expect(requested).toEqual([]); expect(auth.calls).toEqual([]);
+  // Signed-in navigation may use the shared, read-only access RPC to choose
+  // its destination. It must not load feedback code or submit anything.
+  expect(requested).toEqual([]); expect(auth.writes()).toEqual([]);
+  for (const call of auth.calls) {
+    expect(call.name).toBe('get_member_access_context'); expect(call.method).toBe('POST');
+    expect(call.body).toEqual({ target_expected_actor_id: auth.A });
+  }
+});
+
+test('accepted EA has free access and retained beta pricing without Stripe requests or paid labels', async ({ context, page }, testInfo) => {
+  const auth = await installFeedbackStub(context);
+  await ready(page);
+  await expect(page.locator('#profileBillingTitle')).toHaveText('Early access active');
+  await expect(page.locator('#profileBillingCopy')).toContainText('free until beta begins');
+  await expect(page.locator('#profileBillingCopy')).toContainText('$3.50/month');
+  await expect(page.locator('#profileBillingCopy')).toContainText('cancel and return');
+  await page.locator('#profileBillingCopy').scrollIntoViewIfNeeded();
+  await page.screenshot({ path: testInfo.outputPath('early-access-profile.png') });
+  await page.goto('/billing.html');
+  await expect(page.locator('#billingStatusTitle')).toHaveText('This account has early access.');
+  await expect(page.locator('#billingStatusCopy')).toContainText('You do not have a paid subscription through early access.');
+  await expect(page.locator('#billingStatusCopy')).toContainText('$3.50/month');
+  await expect(page.locator('#subscriptionButton')).toBeHidden();
+  await expect(page.locator('#manageBillingButton')).toBeHidden();
+  await page.locator('#billingStatusCopy').scrollIntoViewIfNeeded();
+  await page.screenshot({ path: testInfo.outputPath('early-access-billing.png') });
+  expect(auth.requests.filter(request => /subscriptions|checkout|portal|cancel-membership/.test(request.path))).toEqual([]);
 });
 test('uncertain receipt retry retains one intent across close, focus refresh and later EA lapse', async ({ context, page }) => {
   const auth = await installFeedbackStub(context); auth.mode('lost'); await ready(page); await widget(page).click(); await fill(page);

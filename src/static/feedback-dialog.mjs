@@ -6,13 +6,14 @@ import { FEEDBACK_TYPES, FEEDBACK_IMPACTS, FEEDBACK_LIMITS, normalizeFeedbackCon
 // verify the canonical EA owner and provide an owner-bound submit adapter.
 // This controller never inspects Auth, page content, browser storage or network.
 export function createFeedbackDialog({ owner: suppliedOwner, context: suppliedContext,
-  isCurrent, submit, onSaved, requestTimeoutMs = 20000, document: ownerDocument = globalThis.document } = {}) {
+  isCurrent, submit, onSaved, restoreTriggerGeometry, requestTimeoutMs = 20000, document: ownerDocument = globalThis.document } = {}) {
   const owner = normalizeFeedbackOwner(suppliedOwner);
   const context = normalizeFeedbackContext(suppliedContext);
   if (typeof isCurrent !== 'function' || typeof submit !== 'function') throw new TypeError('Feedback requires owner and submission adapters.');
   if (!Number.isInteger(requestTimeoutMs) || requestTimeoutMs < 1 || requestTimeoutMs > 60000) throw new TypeError('Feedback requires a bounded request deadline.');
   let destroyed = false; let generation = 0; let state = 'editing'; let intent = null; let request = null;
   let restoreScrollBehavior = () => {};
+  let restoreRevision = 0; let returnPosition = null;
   const fields = {};
   const make = (tag, text = '') => { const node = ownerDocument.createElement(tag); node.textContent = text; return node; };
   const form = make('form'); form.className = 'feedback-form'; form.noValidate = true; form.autocomplete = 'off';
@@ -20,8 +21,8 @@ export function createFeedbackDialog({ owner: suppliedOwner, context: suppliedCo
     description: 'Tell us what happened or what could be better. We save your feedback before delivery to our team.',
     pattern: 'feedback', content: form,
     onClose({ reason }) {
-      restoreScrollBehavior();
       if (['destroy', 'replaced'].includes(reason)) {
+        restoreRevision += 1; returnPosition = null; restoreScrollBehavior();
         destroyed = true; generation += 1; request?.abort(); request = null;
         scrub();
         // Shared-dialog replacement closes, but does not remove, the old layer.
@@ -29,6 +30,27 @@ export function createFeedbackDialog({ owner: suppliedOwner, context: suppliedCo
         return;
       }
       if (state !== 'uncertain') scrub();
+      const position = returnPosition; returnPosition = null;
+      const revision = ++restoreRevision;
+      const view = ownerDocument.defaultView;
+      const activeRestore = () => !destroyed && revision === restoreRevision && !dialog.isOpen && current();
+      if (!position || !view?.requestAnimationFrame) { restoreScrollBehavior(); return; }
+      // WebKit can apply its focus/scroll restoration after the fixed body is
+      // released. Settle the original geometry before the launcher's overlap
+      // observer and return focus only while this exact owner is still current.
+      view.requestAnimationFrame(() => {
+        if (!activeRestore()) { if (revision === restoreRevision) restoreScrollBehavior(); return; }
+        view.scrollTo?.(position.x, position.y);
+        restoreTriggerGeometry?.();
+        view.requestAnimationFrame(() => {
+          if (!activeRestore()) { if (revision === restoreRevision) restoreScrollBehavior(); return; }
+          if (position.trigger?.focus && position.trigger.isConnected !== false
+            && view.getComputedStyle?.(position.trigger)?.visibility !== 'hidden') {
+            position.trigger?.focus?.({ preventScroll: true });
+          }
+          restoreScrollBehavior();
+        });
+      });
     },
   });
   const status = make('p'); status.className = 'feedback-status'; status.setAttribute('role', 'status'); status.setAttribute('aria-live', 'polite');
@@ -66,6 +88,7 @@ export function createFeedbackDialog({ owner: suppliedOwner, context: suppliedCo
     intent = null; state = 'editing'; status.textContent = ''; send.textContent = 'Send feedback'; send.disabled = false; cancel.disabled = false;
   }
   function destroy() {
+    restoreRevision += 1; returnPosition = null;
     if (destroyed) { restoreScrollBehavior(); scrub(); dialog.elements.layer.remove(); return; }
     destroyed = true; generation += 1; request?.abort(); request = null;
     // Never return focus to a now-ineligible feature trigger on owner teardown.
@@ -139,6 +162,10 @@ export function createFeedbackDialog({ owner: suppliedOwner, context: suppliedCo
     open(trigger) {
       if (!current()) { destroy(); return false; }
       if (!dialog.isOpen) {
+        restoreRevision += 1; restoreScrollBehavior();
+        const view = ownerDocument.defaultView;
+        returnPosition = { x: Number(view?.scrollX || 0), y: Number(view?.scrollY || 0),
+          trigger: trigger?.focus ? trigger : ownerDocument.activeElement };
         const retrying = state === 'uncertain';
         if (!retrying) { scrub(); cancel.textContent = 'Cancel'; }
         // The shared modal restores document scroll before returning focus.

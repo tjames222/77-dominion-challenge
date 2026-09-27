@@ -52,6 +52,13 @@ export async function installDailyBootstrapStub(context, { status = 'active', ap
     }
     if(path==='/rest/v1/rpc/get_daily_standard_draft')return json(route,payload().draft);
     if(path==='/rest/v1/entitlements')return json(route,appAccess?[{entitlement_key:'membership_active',status:'active',ends_at:null}]:[]);
+    if(path==='/rest/v1/rpc/get_member_access_context'){
+      if(args.target_expected_actor_id!==actorId)return json(route,{code:'PT401',message:'member_authentication_required'},401);
+      if(enrolled&&claims.aal!=='aal2')return json(route,{code:'PT403',message:'member_mfa_required'},403);
+      return json(route,{schemaVersion:1,actorId,asOf:new Date().toISOString(),appAccess,
+        legacyMembershipActive:appAccess,paidSubscriptionActive:false,earlyAccessActive:false,
+        earlyAccessProgram:null,earlyAccessEndsAt:null,betaPriceEligible:false});
+    }
     if(path==='/rest/v1/profiles')return json(route,{user_id:actorId,name:'Synthetic Daily Member',email:user(actorId).email,time_zone:'UTC'});
     if(path.startsWith('/rest/')||path.startsWith('/functions/'))return json(route,[]);
     return json(route,{message:'Unexpected synthetic endpoint'},500);

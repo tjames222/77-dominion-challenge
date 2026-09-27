@@ -91,6 +91,13 @@ export async function installAdminStub(context, { role = 'site_admin', aal = 'aa
       return json(route, result);
     }
     if (path === '/rest/v1/profiles') return json(route, { user_id: auth?.id, name: 'Synthetic Operator', time_zone: 'UTC' });
+    if (path === '/rest/v1/rpc/get_member_access_context') {
+      if (!auth || body.target_expected_actor_id !== auth.id) return json(route, { code: 'PT401', message: 'member_authentication_required' }, 401);
+      if (auth.aal !== 'aal2') return json(route, { code: 'PT403', message: 'member_mfa_required' }, 403);
+      return json(route, { schemaVersion: 1, actorId: auth.id, asOf: new Date().toISOString(), appAccess: false,
+        legacyMembershipActive: false, paidSubscriptionActive: false, earlyAccessActive: false,
+        earlyAccessProgram: null, earlyAccessEndsAt: null, betaPriceEligible: false });
+    }
     if (path === '/rest/v1/rpc/get_theme_preference') return json(route, { theme_key: 'dark' });
     if (path.startsWith('/rest/') || path.startsWith('/functions/')) return json(route, []);
     return json(route, {}, 404);
