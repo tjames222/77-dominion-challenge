@@ -115,6 +115,9 @@ jobs:
       - name: Verify early-access authority and permanent beta-price eligibility
         timeout-minutes: 5
         run: pnpm run test:early-access-member-sql
+      - name: Verify early-access membership consumers and revocation races
+        timeout-minutes: 5
+        run: pnpm run test:early-access-membership-sql
       - name: Verify durable early-access feedback and free email delivery limits
         timeout-minutes: 5
         run: pnpm run test:early-access-feedback-sql

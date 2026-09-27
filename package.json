@@ -52,6 +52,7 @@
     "test:site-admin-reads-sql": "node --test scripts/site-admin-reads.sql.test.mjs",
     "test:early-access-admin-sql": "node --test scripts/early-access-admin.sql.test.mjs",
     "test:early-access-member-sql": "node --test scripts/early-access-member-authority.sql.test.mjs",
+    "test:early-access-membership-sql": "node --test scripts/early-access-membership.sql.test.mjs",
     "test:early-access-feedback-sql": "node --test scripts/early-access-feedback.sql.test.mjs",
     "test:cloudflare-pages-policy": "node --test scripts/configure-cloudflare-pages-policy.test.mjs scripts/configure-production-custom-domain.test.mjs",
     "configure:cloudflare-pages-policy": "node scripts/configure-cloudflare-pages-policy.mjs",

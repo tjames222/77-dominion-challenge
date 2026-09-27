@@ -78,7 +78,10 @@ Improvement taxonomy is reused. The Early Access Feedback label is
 Remaining release gates include verified Resend account/domain setup without
 altering incoming support forwarding, least-privilege key preflight, approved
 worker scheduling and secret provisioning, full schema/pgTAP/browser/release
-checks, invitation/entitlement integration, and an authorized end-to-end canary.
+checks, invitation acceptance and frontend access-state integration, and an
+authorized end-to-end canary. The server membership consumers are now integrated
+by `20260927025530_integrate_early_access_membership.sql`; see
+`early-access-member-authority.md` for the preserved contracts and race tests.
 No migration resets or mutates production during local testing.
 
 ## Focused verification
@@ -89,6 +92,7 @@ owned container is removed afterward. They do not reset an existing local stack.
 
 ```sh
 pnpm run test:early-access-member-sql
+pnpm run test:early-access-membership-sql
 pnpm run test:early-access-feedback-sql
 pnpm run test:frontend
 pnpm run check:functions
@@ -113,4 +117,7 @@ modes. It is not a full pristine-base comparison: only API/menu sources were
 replaced with their prior versions. The existing performance checker remains
 red under unchanged legacy budgets, as already documented in
 `frontend-performance.md`; no threshold or visual baseline was relaxed. Full
-canonical schema replay and the complete release browser matrix remain pending.
+canonical schema replay and the complete release browser matrix passed for
+commit `21faa1f87763c13a7ab394e10f6921611aac9386` in PR #141. They must be rerun
+for the newer membership-consumer migration; the earlier green result is not
+evidence for a changed candidate or a production deployment.

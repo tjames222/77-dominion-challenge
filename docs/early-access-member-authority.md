@@ -7,9 +7,10 @@ including after subscription cancellation and return. `early_access_v1` starts
 configured with `beta_starts_at = NULL`. This does not launch beta or billing.
 
 No real user grant, testing entitlement, site role, invitation, or feedback row
-is created by this migration. No existing membership/RLS consumer is changed.
-Approval, invitation acceptance, the entitlement-consumer integration and
-Checkout remain separate required slices. Feedback intake and its worker are
+is created by this migration. This foundation did not change membership/RLS
+consumers; the additive consumer migration described below now integrates them.
+Approval, invitation acceptance, frontend access-state integration and Checkout
+remain separate required slices. Feedback intake and its worker are
 implemented separately in the release candidate described by
 `early-access-feedback-runtime.md`. Do not describe this authority foundation
 alone as a working early-access enrollment flow.
@@ -100,9 +101,10 @@ It returns exactly:
 }
 ```
 
-The booleans reflect the current owner. `legacyMembershipActive` calls the
-unchanged existing `has_active_entitlement` predicate, preserving its historical
-start-time behavior. `paidSubscriptionActive` additionally requires a current
+The booleans reflect the current owner. `legacyMembershipActive` uses the exact
+original entitlement predicate, preserving its historical start-time behavior.
+It deliberately does not call the now-EA-aware `has_active_entitlement` helper.
+`paidSubscriptionActive` additionally requires a current
 active `subscription`-sourced entitlement and nonempty source ID; it always
 implies legacy access but is not a provider invoice/payment receipt. Testing
 access is neither paid subscription nor early access. `appAccess` is legacy OR
@@ -152,11 +154,40 @@ Tests exercise real PostgreSQL constraints/triggers/ACL/RLS, accepted-only atomi
 facts, beta and legacy-time boundaries, cancellation/return, MFA/actor/session,
 origin, service-only identity, privacy, rollback and account deletion.
 
-Root integration must add the exact migration include and explicit test
-inventory, then run the full canonical schema/pgTAP/release gates. The Supabase
+The exact migration is included in the canonical schema and explicit CI test
+inventory. Full canonical schema/pgTAP/release gates remain required on every
+new release candidate. The Supabase
 advisor CLI is not connected to this deliberately socket-only isolated fixture;
 the focused suite asserts object grants/search paths/RLS directly. No hosted
 advisor or production SQL operation was performed. Current Supabase
 [function security guidance](https://supabase.com/docs/guides/database/functions)
 and [session invalidation guidance](https://supabase.com/docs/guides/auth/sessions)
 informed the empty-path, explicit-grant and live-session checks.
+
+## Membership consumer integration
+
+`20260927025530_integrate_early_access_membership.sql` adds accepted, active EA
+as an alternative only for `membership_active`. It replaces the exact current
+bodies of the shared RLS helper and eleven direct entitlement consumers:
+challenge reconciliation, definition synchronization, progression, celebration
+claim and start; reward catalog item; activation payload; crew issuer predicate,
+invite issuance and confirmation; and same-crew member progress. Existing RPC
+payloads, caller checks, legacy date predicates and function ACLs are retained.
+No unrelated product entitlement, subscription, invoice or person is created.
+
+The three existing entitlement-locking RPCs retain their billing-row locks and
+also lock the EA program followed by grants in deterministic user-ID order.
+They recheck EA with a fresh server clock after blocking waits. Member progress
+does this after its crew/membership waits too. No Auth row lock or global admin
+lifecycle lock is added. A revoke committed while waiting therefore wins; a
+beta boundary crossed during the wait cannot reuse the earlier statement time.
+
+`pnpm run test:early-access-membership-sql` uses a new labelled, cached-image,
+network-none/port-free/volume-free PostgreSQL fixture. It loads the canonical
+application snapshot with the reviewed provider table shapes, then the complete
+new migration; it is not a full provider-stack or historical-cutover replay.
+The 17 native cases cover the twelve consumers, exact pre/post ACL equality,
+no seeded access, unrelated-product denial, account health, paid/legacy/EA
+separation, lifetime qualification, eight revoke/expiry races and 234 existing
+pgTAP assertions across five challenge/crew suites. CI additionally performs the
+full Supabase replay, advisors and canonical pgTAP/schema-drift gates.
