@@ -15,6 +15,18 @@ async function ready(page) {
   await page.goto('/profile.html'); await expect(widget(page)).toHaveCount(1);
   await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight)); await expect(widget(page)).toBeVisible();
 }
+async function reachableBottom(page) {
+  await page.evaluate(() => document.fonts.ready.then(() => undefined));
+  // The fixture can finish page hydration after feedback becomes eligible.
+  // Model a user reaching the current bottom, not a smooth scroll to a stale
+  // document height. Do not require network-idle: member pages can refresh.
+  await expect.poll(async () => page.evaluate(async () => {
+    window.scrollTo({ top: document.body.scrollHeight, left: 0, behavior: 'instant' });
+    await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+    return Math.abs(document.documentElement.scrollHeight - (window.scrollY + window.innerHeight)) <= 1;
+  })).toBe(true);
+  await expect(widget(page)).toBeVisible();
+}
 async function fill(page) {
   await page.getByRole('combobox', { name: 'Feedback type', exact: true }).selectOption('bug');
   await page.getByLabel('What happened or what would you like to change?', { exact: false }).fill('  My explicit feedback\n');
@@ -131,9 +143,9 @@ test('same-user replacement session synchronously scrubs held submission and lat
 });
 test('all fourteen routes provide reachable bottom placement and hide rather than cover an action', async ({ context, page }) => {
   await installFeedbackStub(context, { memberPages: true });
-  for (const route of FEEDBACK_ROUTES) {
+  for (const route of FEEDBACK_ROUTES) await test.step(route, async () => {
     await page.goto(`/${route}`); await expect(widget(page)).toHaveCount(1);
-    await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight)); await expect(widget(page)).toBeVisible();
+    await reachableBottom(page);
     const box = await widget(page).boundingBox(); expect(box.y + box.height).toBeLessThanOrEqual(page.viewportSize().height + 1);
     await page.evaluate(rect => {
       const button = document.createElement('button'); button.id = 'synthetic-overlap-action'; button.textContent = 'Private synthetic action';
@@ -146,8 +158,9 @@ test('all fourteen routes provide reachable bottom placement and hide rather tha
       { top: `${rect.y + 8}px`, height: '16px' }), box);
     await expect(widget(page)).toBeHidden();
     await page.locator('#synthetic-overlap-action').click();
-    await page.evaluate(() => document.getElementById('synthetic-overlap-action').remove()); await expect(widget(page)).toBeVisible();
-  }
+    await page.evaluate(() => document.getElementById('synthetic-overlap-action').remove());
+    await reachableBottom(page);
+  });
 });
 for (const theme of ['light', 'dark', 'dominion-night', 'dominion-platinum']) test(`${theme} native dialog focus, accessible form and viewport bounds`, async ({ context, page }, testInfo) => {
   await installFeedbackStub(context); await ready(page);

@@ -140,6 +140,7 @@ test('early-access feedback is a required production-wired browser gate with iso
   assert.match(config, /VITE_ENABLE_MOCKS: 'false', VITE_ENABLE_PRODUCTION_CONNECTIONS: 'true'/);
   assert.match(config, /const baseURL = `http:\/\/127\.0\.0\.1:\$\{port\}`/);
   assert.match(config, /retries: 0/);
+  assert.match(config, /\['html', \{ outputFolder: 'playwright-report', open: 'never' \}\]/);
   assert.doesNotMatch(config, /supabase\.co|SUPABASE_ACCESS_TOKEN|SERVICE_ROLE_KEY|LINEAR_FEEDBACK_API_KEY|RESEND_API_KEY/);
 });
 
