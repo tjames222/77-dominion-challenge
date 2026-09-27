@@ -106,11 +106,43 @@ test('accepted EA has free access and retained beta pricing without Stripe reque
   await expect(page.locator('#billingStatusTitle')).toHaveText('This account has early access.');
   await expect(page.locator('#billingStatusCopy')).toContainText('You do not have a paid subscription through early access.');
   await expect(page.locator('#billingStatusCopy')).toContainText('$3.50/month');
-  await expect(page.locator('#subscriptionButton')).toBeHidden();
+  await expect(page.locator('#subscriptionCheckoutButton')).toHaveCount(1);
+  await expect(page.locator('#subscriptionCheckoutButton')).toBeHidden();
   await expect(page.locator('#manageBillingButton')).toBeHidden();
   await page.locator('#billingStatusCopy').scrollIntoViewIfNeeded();
   await page.screenshot({ path: testInfo.outputPath('early-access-billing.png') });
   expect(auth.requests.filter(request => /subscriptions|checkout|portal|cancel-membership/.test(request.path))).toEqual([]);
+});
+test('Billing restores an expired persisted session without requiring a manual reload', async ({ context, page }) => {
+  const auth = await installFeedbackStub(context);
+  const expired = structuredClone(auth.firstSession);
+  const parts = expired.access_token.split('.');
+  const claims = JSON.parse(Buffer.from(parts[1], 'base64url').toString());
+  expired.expires_at = claims.exp = Math.floor(Date.now() / 1000) - 60;
+  parts[1] = Buffer.from(JSON.stringify(claims)).toString('base64url');
+  expired.access_token = parts.join('.');
+  await context.addInitScript(value => localStorage.setItem('sb-127-auth-token', JSON.stringify(value)), expired);
+  let release; const held = new Promise(resolve => { release = resolve; }); let refreshes = 0;
+  await context.route(/\/__admin_fixture__\/auth\/v1\/token(?:\?|$)/, async route => {
+    refreshes += 1;
+    expect(route.request().postDataJSON().refresh_token).toBe(expired.refresh_token);
+    await held;
+    return route.fulfill({ contentType: 'application/json', body: JSON.stringify(auth.firstSession) });
+  });
+  // The reader import starts only after getBillingState captures its epoch.
+  // Keep Auth initialization pending until that original read is in flight.
+  const readerRequested = page.waitForResponse(response => /\/member-access-reader-[\w-]+\.js$/.test(response.url()));
+  const navigation = page.goto('/billing.html');
+  try {
+    await readerRequested;
+    await expect.poll(() => refreshes).toBe(1);
+  } finally { release(); }
+  await navigation;
+  await expect(page.locator('#billingStatusTitle')).toHaveText('This account has early access.');
+  await expect(page.locator('#billingDashboardLink')).toBeVisible();
+  expect(refreshes).toBe(1);
+  expect(auth.calls.some(call => call.name === 'get_member_access_context')).toBe(true);
+  expect(auth.writes()).toEqual([]);
 });
 test('uncertain receipt retry retains one intent across close, focus refresh and later EA lapse', async ({ context, page }) => {
   const auth = await installFeedbackStub(context); auth.mode('lost'); await ready(page); await widget(page).click(); await fill(page);

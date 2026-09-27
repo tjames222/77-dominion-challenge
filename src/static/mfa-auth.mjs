@@ -14,6 +14,34 @@ export function authSessionIdentity(session) {
   } catch { return ''; }
 }
 
+// Lifecycle evidence only, never permission or Auth authority. The existing
+// singleton observer can identify one ordinary refresh while a reader acquires
+// its first session. Later reads must still verify Auth, MFA and the exact JWT.
+export function createInitialSessionRefreshFence() {
+  let observedIdentity;
+  let refresh = null;
+  return Object.freeze({
+    observe(event, session, beforeEpoch, afterEpoch) {
+      const identity = authSessionIdentity(session);
+      const token = session?.access_token;
+      if (event === 'TOKEN_REFRESHED' && identity && typeof token === 'string' && token
+        && (observedIdentity === undefined || observedIdentity === identity)
+        && afterEpoch === beforeEpoch + 1) {
+        refresh = { beforeEpoch, afterEpoch, identity, token };
+      } else if (!(event === 'INITIAL_SESSION' && refresh?.identity === identity && refresh?.token === token)) {
+        refresh = null;
+      }
+      observedIdentity = identity;
+    },
+    permits(expectedEpoch, currentEpoch, session) {
+      return Boolean(refresh && refresh.beforeEpoch === expectedEpoch && refresh.afterEpoch === currentEpoch
+        && currentEpoch === expectedEpoch + 1
+        && (session === undefined || (authSessionIdentity(session) === refresh.identity
+          && session?.access_token === refresh.token)));
+    },
+  });
+}
+
 export function mfaError(code = 'MFA_UNAVAILABLE') {
   const messages = {
     MFA_UNAVAILABLE: 'Account security is temporarily unavailable. Please try again.',

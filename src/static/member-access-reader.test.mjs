@@ -1,7 +1,9 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
+import { createClient } from '@supabase/supabase-js';
 import { createMemberAccessTransport, readMemberBillingState } from './member-access-reader.mjs';
+import { authSessionIdentity, createInitialSessionRefreshFence, sessionRequiresMfa } from './mfa-auth.mjs';
 
 const A='11111111-1111-4111-8111-111111111111';
 const B='22222222-2222-4222-8222-222222222222';
@@ -29,6 +31,128 @@ function fixture(){
     invalidate:()=>epoch++,get session(){return session;}};
 }
 const remoteCalls=f=>f.calls.filter(row=>['access','entitlements','subscriptions'].includes(row.kind));
+const SID='33333333-3333-4333-8333-333333333333';
+const realSession=(actor=A,sid=SID,expiry=Math.floor(Date.now()/1000)+3600)=>({
+  access_token:`${Buffer.from(JSON.stringify({alg:'HS256',typ:'JWT'})).toString('base64url')}.${Buffer.from(JSON.stringify({sub:actor,session_id:sid,exp:expiry,aal:'aal1'})).toString('base64url')}.${Buffer.from('synthetic-signature').toString('base64url')}`,
+  refresh_token:'synthetic-refresh',expires_at:expiry,expires_in:3600,token_type:'bearer',
+  user:{id:actor,aud:'authenticated',factors:[]},
+});
+function refreshObserver(){
+  const fence=createInitialSessionRefreshFence();let epoch=0,observed;
+  return {
+    getEpoch:()=>epoch,
+    invalidate:()=>epoch++,
+    canStabilizeInitialSession:(expected,session)=>fence.permits(expected,epoch,session),
+    observe(event,session){
+      const identity=authSessionIdentity(session),before=epoch;
+      if(['SIGNED_OUT','TOKEN_REFRESHED','USER_UPDATED','PASSWORD_RECOVERY','MFA_CHALLENGE_VERIFIED'].includes(event)
+        ||(observed!==undefined&&identity!==observed))epoch++;
+      fence.observe(event,session,before,epoch);observed=identity;
+    },
+  };
+}
+
+for(const mode of ['during acquisition','during lazy import']){
+  test(`real SDK expired-session restoration stabilizes one initialization refresh ${mode}`,async()=>{
+    const observer=refreshObserver(),events=[],calls=[],refresh=deferred();
+    let stored=JSON.stringify(realSession(A,SID,Math.floor(Date.now()/1000)-60));
+    const renewed=realSession();
+    const client=createClient('https://synthetic.invalid','synthetic-public',{
+      auth:{storageKey:`synthetic-member-${mode}`,persistSession:true,autoRefreshToken:true,detectSessionInUrl:false,
+        storage:{getItem:()=>stored,setItem:(key,value)=>{stored=value;},removeItem:()=>{stored=null;}}},
+      global:{fetch:async url=>{
+        const path=new URL(url).pathname;calls.push(path);
+        if(path==='/auth/v1/token'){await refresh.promise;return new Response(JSON.stringify(renewed));}
+        if(path==='/auth/v1/user')return new Response(JSON.stringify(renewed.user));
+        assert.fail(`Unexpected synthetic request: ${path}`);
+      }},
+    });
+    const {data:{subscription}}=client.auth.onAuthStateChange((event,session)=>{
+      events.push(event);observer.observe(event,session);
+    });
+    const options={expectedEpoch:observer.getEpoch(),timeoutMs:2000};
+    const adapters={...observer,sessionIdentity:authSessionIdentity,
+      getSession:async()=>(await client.auth.getSession()).data.session,
+      getUser:async token=>(await client.auth.getUser(token)).data.user,
+      requiresMfa:()=>sessionRequiresMfa(client.auth),
+      request:async(kind,{token})=>{assert.equal(token,renewed.access_token);calls.push(kind);return kind==='access'?access():[];},
+    };
+    try{
+      let reading;
+      if(mode==='during acquisition')reading=readMemberBillingState(adapters,options);
+      await until(()=>calls.includes('/auth/v1/token'));refresh.resolve();
+      if(mode==='during lazy import'){
+        await client.auth.initialize();await until(()=>events.includes('INITIAL_SESSION'));
+        reading=readMemberBillingState(adapters,options);
+      }
+      assert.equal((await reading).context.appAccess,true);
+      assert.deepEqual(events,['TOKEN_REFRESHED','INITIAL_SESSION']);
+      assert.equal(observer.getEpoch(),1);
+      assert.equal(calls.filter(path=>path==='/auth/v1/token').length,1);
+      assert.deepEqual(calls.filter(path=>!path.startsWith('/')),['entitlements','access']);
+    }finally{refresh.resolve();subscription.unsubscribe();await client.auth.stopAutoRefresh();}
+  });
+}
+
+test('startup refresh evidence never adopts a replacement owner, lifecycle invalidation or multiple refreshes',async()=>{
+  for(const mode of ['actor','session','aba','signed-out','assurance','user-update','recovery','storage','pagehide','twice','silent-bearer']){
+    const observer=refreshObserver(),calls=[];let session=realSession(A,SID,100),acquisitions=0;
+    observer.observe('INITIAL_SESSION',session);
+    const expectedEpoch=observer.getEpoch();
+    const replace=(event,next)=>{session=next;observer.observe(event,session);};
+    const adapters={...observer,sessionIdentity:authSessionIdentity,
+      getSession:async()=>{
+        acquisitions++;
+        replace('TOKEN_REFRESHED',mode==='actor'?realSession(B):mode==='session'
+          ?realSession(A,'44444444-4444-4444-8444-444444444444'):realSession());
+        if(mode==='aba'){replace('SIGNED_IN',realSession(B));replace('SIGNED_IN',realSession());}
+        if(mode==='signed-out')replace('SIGNED_OUT',null);
+        if(mode==='assurance')replace('MFA_CHALLENGE_VERIFIED',session);
+        if(mode==='user-update')replace('USER_UPDATED',session);
+        if(mode==='recovery')replace('PASSWORD_RECOVERY',session);
+        if(mode==='storage'||mode==='pagehide')observer.invalidate();
+        if(mode==='twice')replace('TOKEN_REFRESHED',realSession());
+        if(mode==='silent-bearer')session={...session,access_token:`${session.access_token}-changed`};
+        return session;
+      },
+      getUser:async()=>{calls.push('user');return session?.user;},requiresMfa:async()=>false,
+      request:async kind=>{calls.push(kind);return kind==='access'?access():[];},
+    };
+    await assert.rejects(readMemberBillingState(adapters,{expectedEpoch}),{code:'MEMBER_ACCESS_CHANGED'},mode);
+    assert.equal(acquisitions,1);assert.deepEqual(calls,[]);
+  }
+});
+
+test('stabilized initial refresh still verifies MFA and rejects every later refresh',async()=>{
+  for(const mode of ['mfa','after-user','after-details','after-context']){
+    const observer=refreshObserver(),calls=[];let session=realSession(A,SID,100),acquisitions=0;
+    observer.observe('INITIAL_SESSION',session);
+    const refresh=()=>{session=realSession();observer.observe('TOKEN_REFRESHED',session);};
+    const result=readMemberBillingState({...observer,sessionIdentity:authSessionIdentity,
+      getSession:async()=>{if(++acquisitions===1)refresh();return session;},
+      getUser:async()=>{calls.push('user');if(mode==='after-user')refresh();return session.user;},
+      requiresMfa:async()=>mode==='mfa',
+      request:async kind=>{calls.push(kind);if((mode==='after-details'&&kind==='entitlements')||(mode==='after-context'&&kind==='access'))refresh();return kind==='access'?access():[];},
+    });
+    await assert.rejects(result,{code:mode==='mfa'?'MEMBER_ACCESS_MFA_REQUIRED':'MEMBER_ACCESS_CHANGED'});
+    if(['mfa','after-user'].includes(mode))assert.deepEqual(calls,['user']);
+  }
+});
+
+test('initial refresh stabilization stays inside the original deadline and cannot dispatch after cancellation',async()=>{
+  for(const mode of ['deadline','cancel']){
+    const observer=refreshObserver(),held=deferred(),calls=[],controller=new AbortController();
+    let session=realSession(A,SID,100);observer.observe('INITIAL_SESSION',session);
+    const result=readMemberBillingState({...observer,sessionIdentity:authSessionIdentity,
+      getSession:async()=>{session=realSession();observer.observe('TOKEN_REFRESHED',session);calls.push('session');return held.promise;},
+      getUser:async()=>{calls.push('user');return session.user;},requiresMfa:async()=>false,
+      request:async kind=>{calls.push(kind);return kind==='access'?access():[];},
+    },{signal:controller.signal,timeoutMs:mode==='deadline'?8:2000});
+    const rejected=assert.rejects(result);await until(()=>calls.length===1);
+    if(mode==='cancel')controller.abort();await rejected;
+    held.resolve(session);await tick();assert.deepEqual(calls,['session']);
+  }
+});
 
 test('canonical server authority is separate from raw billing details and all requests pin the original bearer',async()=>{
   const f=fixture();f.hooks.entitlements=()=>[{entitlement_key:'membership_active',status:'expired'}];
@@ -203,6 +327,8 @@ test('browser integration is lazy, reuses the Auth singleton and leaves mock pat
   const api=read('./api.js');const billing=api.slice(api.indexOf('export async function getBillingState()'),api.indexOf('async function invokeSupabaseAction'));
   assert.ok(billing.indexOf('isLocalDemoMode()')<billing.indexOf("import('./member-access-reader.mjs')"));
   assert.match(billing,/getUser\(token\)/);assert.match(billing,/getEpoch: \(\) => previewBadgeEpoch/);
+  assert.match(billing,/canStabilizeInitialSession,/);
+  assert.match(read('./auth-runtime-core.mjs'),/initialSessionRefreshFence\.observe\(event, session, beforeEpoch, previewBadgeEpoch\)/);
   assert.match(billing,/appAccess: context.appAccess/);assert.match(billing,/subscriptionActive: context.paidSubscriptionActive/);
   assert.match(api,/pagehide', \(\) => \{ invalidatePreviewBadgeOwner\(\)/);
   assert.doesNotMatch(read('./member-access-reader.mjs'),/createClient|onAuthStateChange|localStorage|sessionStorage|feedback-client|api\.js/);

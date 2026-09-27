@@ -209,9 +209,19 @@ A single bounded deadline covers Auth, MFA, details, context and final ownership
 verification. Account/session/assurance changes, pagehide, cancellation and
 malformed contracts cannot publish stale permissions. There is no new Auth
 listener, persisted permission cache, SDK instance or local eligibility source.
+Initial session acquisition tolerates exactly one ordinary refresh witnessed by
+that same synchronous observer, including a refresh during the lazy import.
+The acquired bearer must exactly match the refresh and retain any already-known
+immutable owner. A first provider refresh may establish the initial owner before
+`INITIAL_SESSION`; no access is inferred from that event. Auth, MFA and server
+authority are still freshly verified afterwards. Replacement owners, multiple
+refreshes, lifecycle invalidations and all post-acquisition refreshes still fail
+closed, under the original request deadline.
 
-Nineteen reader/contract tests cover owner changes, A-to-B-to-A, silent token
+Reader/contract tests cover owner changes, A-to-B-to-A, silent token
 replacement, MFA, deadline/cancellation, transport bounds and closed billing.
+Real installed-SDK tests restore an expired persisted session through
+`TOKEN_REFRESHED` then `INITIAL_SESSION`, both during acquisition and lazy load.
 Native Chromium and WebKit cases verify the free/retained-rate copy with no
 subscription or Stripe requests. These local synthetic tests do not grant any
 real account access or establish production invitation readiness.

@@ -2,7 +2,7 @@
 // or feature controllers: every consumer shares the same guarded client and
 // synchronous identity fences, including consumers reached through api.js.
 import { createClient } from '@supabase/supabase-js';
-import { authSessionIdentity, createSupabaseMfaAdapter } from './mfa-auth.mjs';
+import { authSessionIdentity, createInitialSessionRefreshFence, createSupabaseMfaAdapter } from './mfa-auth.mjs';
 import { createMfaSessionGuard } from './mfa-session-guard.mjs';
 import { createInflightActorReads } from './inflight-actor-reads.mjs';
 import {
@@ -87,6 +87,9 @@ export function getMfaAuthAdapter() {
 export const inflightActorReads = createInflightActorReads();
 export let previewBadgeEpoch = 0;
 let previewBadgeObservedSession;
+const initialSessionRefreshFence = createInitialSessionRefreshFence();
+export const canStabilizeInitialSession = (expectedEpoch, session) =>
+  initialSessionRefreshFence.permits(expectedEpoch, previewBadgeEpoch, session);
 export function invalidatePreviewBadgeOwner() { previewBadgeEpoch += 1; }
 export async function invalidateReadsAroundMutation(operation, query = '') {
   inflightActorReads.invalidate(query);
@@ -101,8 +104,10 @@ export async function invalidateReadsAroundMutation(operation, query = '') {
 supabase?.auth.onAuthStateChange((event, session) => {
   inflightActorReads.observeAuth(event, session?.user?.id || '', authSessionIdentity(session));
   const identity = authSessionIdentity(session);
+  const beforeEpoch = previewBadgeEpoch;
   if (['SIGNED_OUT', 'TOKEN_REFRESHED', 'USER_UPDATED', 'PASSWORD_RECOVERY', 'MFA_CHALLENGE_VERIFIED'].includes(event)
     || (previewBadgeObservedSession !== undefined && identity !== previewBadgeObservedSession)) previewBadgeEpoch += 1;
+  initialSessionRefreshFence.observe(event, session, beforeEpoch, previewBadgeEpoch);
   previewBadgeObservedSession = identity;
 });
 globalThis.window?.addEventListener('storage', (event) => {

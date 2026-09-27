@@ -11,6 +11,7 @@ import {
   getMfaAuthAdapter,
   inflightActorReads,
   previewBadgeEpoch,
+  canStabilizeInitialSession,
   invalidatePreviewBadgeOwner,
   invalidateReadsAroundMutation,
   isLocalDemoMode,
@@ -1497,6 +1498,7 @@ export async function getBillingState() {
     requiresMfa: () => sessionRequiresMfa(supabase.auth),
     sessionIdentity: authSessionIdentity,
     getEpoch: () => previewBadgeEpoch,
+    canStabilizeInitialSession,
     request: createMemberAccessTransport({ url: SUPABASE_URL, key: SUPABASE_KEY }),
   }, { billingEnabled: RELEASE_GATES.billingEnabled, expectedEpoch });
   if (!result) return lockedBillingState();

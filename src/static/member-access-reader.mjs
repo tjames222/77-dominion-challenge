@@ -20,18 +20,22 @@ function safeError(error) {
 // Reuse the document's existing Auth singleton and synchronous owner epoch.
 // Each invocation is a fresh read: no SDK, listener, storage or settled cache.
 export async function readMemberBillingState({ getSession, getUser, requiresMfa, sessionIdentity,
-  getEpoch, request } = {}, { billingEnabled = false, expectedEpoch, signal, timeoutMs = 20_000 } = {}) {
+  getEpoch, canStabilizeInitialSession, request } = {}, { billingEnabled = false, expectedEpoch, signal, timeoutMs = 20_000 } = {}) {
   if ([getSession, getUser, requiresMfa, sessionIdentity, getEpoch, request].some(fn => typeof fn !== 'function')
+    || (canStabilizeInitialSession !== undefined && typeof canStabilizeInitialSession !== 'function')
     || typeof billingEnabled !== 'boolean' || !Number.isInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 60_000
     || (signal !== undefined && (!signal || typeof signal.aborted !== 'boolean'
       || typeof signal.addEventListener !== 'function' || typeof signal.removeEventListener !== 'function'))) throw memberAccessError();
-  const epoch = expectedEpoch ?? getEpoch();
+  let epoch = expectedEpoch ?? getEpoch();
   const controller = new AbortController();
   let closed = false;
   let abortCode = 'MEMBER_ACCESS_CANCELLED';
+  const checkLifetime = () => {
+    if (closed || controller.signal.aborted) throw memberAccessError(abortCode);
+  };
   const check = () => {
     if (epoch !== getEpoch()) throw memberAccessError('MEMBER_ACCESS_CHANGED');
-    if (closed || controller.signal.aborted) throw memberAccessError(abortCode);
+    checkLifetime();
   };
   let rejectAbort;
   const aborted = new Promise((resolve, reject) => { rejectAbort = reject; });
@@ -49,8 +53,19 @@ export async function readMemberBillingState({ getSession, getUser, requiresMfa,
   try {
     if (signal?.aborted) callerAbort();
     const work = Promise.resolve().then(async () => {
+      checkLifetime();
+      if (epoch !== getEpoch() && canStabilizeInitialSession?.(epoch) !== true) check();
+      // Supabase may refresh an expired persisted session before getSession
+      // first resolves (or during the lazy import). Only the existing observer
+      // can attest to one initial or same-owner refresh. Stabilize once, before any Auth
+      // verification or private reads, inside this request's original deadline.
+      const session = await getSession();
+      checkLifetime();
+      if (epoch !== getEpoch()) {
+        if (canStabilizeInitialSession?.(epoch, session) !== true) check();
+        epoch = getEpoch();
+      }
       check();
-      const session = await wait(getSession);
       if (!session?.user) return null;
       const actorId = session.user.id;
       const identity = sessionIdentity(session);
