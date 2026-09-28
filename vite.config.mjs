@@ -5,9 +5,18 @@ import { isCloudflarePreviewEnvironment } from './scripts/normalize-cloudflare-f
 import { renderInitialPreviewFeedback } from './src/static/preview-feedback.mjs';
 
 export function isSharedMenuModule(id) {
-  return /\/src\/static\/menu\.js$/.test(id)
-    || /\/src\/assets\/(?:styles|product|dialog|menu|dominion-night|dominion-platinum)\.css$/.test(id)
-    || id === '\0vite/modulepreload-polyfill.js';
+  return /\/src\/static\/(?:menu\.js|reveal\.js|daily-standard-routes\.mjs|group-integration-launch\.mjs)$/.test(id)
+    || /\/src\/assets\/(?:styles|product|dialog|menu|dominion-night|dominion-platinum)\.css$/.test(id);
+}
+
+// Public entries need dynamic-import support before they may initialize Auth.
+// Do not put CSS in this group: that would load its styles on every caller.
+export function isPublicShellModule(id) {
+  return /^\0vite\/(?:modulepreload-polyfill|preload-helper)\.js$/.test(id);
+}
+
+export function isSharedAuthModule(id) {
+  return /\/src\/static\/(?:api|theme-state|theme-entitlement-state)\.js$/.test(id);
 }
 
 export function publicBuildSha(env) {
@@ -94,16 +103,16 @@ export default defineConfig(({ mode }) => {
         output: {
           codeSplitting: {
             groups: [
-              // Keep exactly the existing static menu graph together. Moving
-              // the controllers out must not turn its shared state/contract
-              // helpers into additional startup requests on every route.
-              // Account Security intentionally imports shared API/theme code
-              // without the menu entry. Keep that entry's dependency set so a
-              // shared import cannot execute menu listeners or hydration.
-              // Fold the small dialog subgroup into its neighboring menu shell
-              // without changing Security's shared dependency set. The actual
-              // graph test enforces that isolation; this size is not a guard.
-              { name: 'menu', test: isSharedMenuModule, priority: 20, entriesAware: true, entriesAwareMergeThreshold: 30000 },
+              // These are execution boundaries, not size-tuned subgroups:
+              // subgroup merging can pull Auth into a public capability parser
+              // or menu listeners into MFA. Higher-priority groups claim shared
+              // dependencies first; ordinary routes still use one Auth runtime.
+              { name: 'public-shell', test: isPublicShellModule, priority: 50 },
+              { name: 'auth-shared', test: isSharedAuthModule, priority: 40 },
+              // Pure navigation parsers share no Auth or page side effects.
+              { name: 'auth-navigation', test: /\/src\/static\/(?:invite-flow|mfa-navigation)\.mjs$/, priority: 30 },
+              { name: 'menu', test: isSharedMenuModule, priority: 20 },
+              { name: 'community-styles', test: /\/src\/assets\/(?:community|crew-invite)\.css$/, priority: 20 },
               // The optional controllers and catalog share one failure/reload
               // boundary. The higher-priority menu owns their common helpers;
               // dynamic imports (including the coachmark UI) stay separate.

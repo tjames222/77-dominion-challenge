@@ -84,6 +84,8 @@ jobs:
         run: pnpm run test:production-reconciliation
       - name: Test production Auth canary policy guard
         run: pnpm run test:production-auth-canary-policy
+      - name: Test Early Access provider and runtime provisioning boundaries
+        run: node --test scripts/configure-production-auth-email.test.mjs scripts/verify-early-access-runtime-config.test.mjs scripts/verify-production-feedback-provider.test.mjs scripts/configure-production-early-access-workers.test.mjs scripts/verify-production-early-access-workers.test.mjs scripts/send-approved-production-test-email.test.mjs
       - name: Test production billing gateway and disabled-handler guards
         run: pnpm run test:production-billing-guards
       - name: Test production canary entitlement operator
@@ -121,6 +123,12 @@ jobs:
       - name: Verify durable early-access feedback and free email delivery limits
         timeout-minutes: 5
         run: pnpm run test:early-access-feedback-sql
+      - name: Verify single-use invitations and native authority races
+        timeout-minutes: 5
+        run: pnpm run test:early-access-invitation-sql
+      - name: Verify closed native Auth setup and real invitation acceptance
+        timeout-minutes: 5
+        run: pnpm run test:early-access-native-auth
       - name: Verify focused Daily Action SQL and canonical date boundaries
         run: pnpm run test:daily-bootstrap-sql
       - name: Rebuild from the migration chain

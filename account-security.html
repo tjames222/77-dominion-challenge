@@ -8,10 +8,11 @@
     <meta name="referrer" content="no-referrer" />
     <script vite-ignore src="./theme-bootstrap.js" data-enable-dominion-night="false"></script>
     <title>Account Security | Dominion</title>
-    <link rel="stylesheet" href="./src/assets/styles.css" />
-    <link rel="stylesheet" href="./src/assets/product.css" />
-    <link rel="stylesheet" href="./src/assets/dominion-night.css" />
-    <link rel="stylesheet" href="./src/assets/dominion-platinum.css" />
+    <!-- Separate CSS module identities prevent menu chunk side effects here. -->
+    <link rel="stylesheet" href="./src/assets/styles.css?isolated-shell" />
+    <link rel="stylesheet" href="./src/assets/product.css?isolated-shell" />
+    <link rel="stylesheet" href="./src/assets/dominion-night.css?isolated-shell" />
+    <link rel="stylesheet" href="./src/assets/dominion-platinum.css?isolated-shell" />
     <link rel="stylesheet" href="./src/assets/account-security.css" />
   </head>
   <body>

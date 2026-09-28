@@ -21,7 +21,6 @@ import {
 import { authSessionIdentity, sessionRequiresMfa } from './mfa-auth.mjs';
 import { createAdminReadClient, adminReadError } from './admin-read-client.mjs';
 import { createDailyActionBootstrapClient } from './daily-action-bootstrap.mjs';
-import { createAdminPreview } from './admin-preview.mjs';
 import { assertEarlyAccessActor, normalizeEarlyAccessRequest, postEarlyAccessRequest } from './early-access-request.mjs';
 import {
   DEFAULT_CHALLENGE_DEFINITIONS,
@@ -44,7 +43,7 @@ import {
 } from './mock-identity.mjs';
 import { normalizeDailyStandardDraft } from './daily-standard-draft.mjs';
 import { naturalizeDailyActionError } from './customer-copy.mjs';
-import { revokeRecoverySessions } from './account-recovery-session.mjs';
+import { createPasswordRecoveryOwnerBridge } from './password-recovery-owner.mjs';
 import {
   buildMockChallengeActivation,
   buildMockLegacyChallengeActivation,
@@ -485,50 +484,66 @@ export async function loadFeedbackClient() {
   // authority. Only the existing real Auth client can enable this feature.
   if (!usesSupabaseAuthentication()) return null;
   if (feedbackClient) return feedbackClient;
-  if (!feedbackClientLoad) feedbackClientLoad = import('./feedback-client.mjs').then(({ createFeedbackClient, feedbackClientError }) => {
+  if (!feedbackClientLoad) feedbackClientLoad = Promise.all([
+    import('./feedback-client.mjs'), import('./member-authority-transport.mjs'),
+  ]).then(([{ createFeedbackClient, feedbackClientError }, { createFeedbackRpcTransport }]) => {
     feedbackClient = createFeedbackClient({
       getSession: getAuthSession,
       getUser: async token => { const { data, error } = await supabase.auth.getUser(token); if (error) throw feedbackClientError('FEEDBACK_SIGNED_OUT'); return data?.user; },
       sessionIdentity: authSessionIdentity,
       subscribe: subscribeToAuthStateChanges,
-      request: async (name, args, { token, signal }) => {
-        if (!['get_member_access_context', 'submit_early_access_feedback'].includes(name)) throw feedbackClientError();
-        const response = await fetch(`${SUPABASE_URL}/rest/v1/rpc/${name}`, {
-          method: 'POST', credentials: 'omit', cache: 'no-store', redirect: 'error', signal,
-          headers: { apikey: SUPABASE_KEY, Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }, body: JSON.stringify(args),
-        });
-        const reader = response.body?.getReader(); if (!reader) throw feedbackClientError();
-        const decoder = new TextDecoder(); let raw = ''; let bytes = 0;
-        try {
-          for (;;) {
-            const { done, value } = await reader.read(); if (done) break;
-            bytes += value.byteLength;
-            if (bytes > 262144 || signal.aborted) { await reader.cancel(); throw feedbackClientError(); }
-            raw += decoder.decode(value, { stream: true });
-          }
-          raw += decoder.decode();
-        } finally { reader.releaseLock(); }
-        let value; try { value = JSON.parse(raw); } catch { throw feedbackClientError(); }
-        if (!response.ok) throw { code: value?.code, message: value?.message }; // Adapter maps only fixed known codes.
-        return value;
-      },
+      request: createFeedbackRpcTransport({ baseUrl: SUPABASE_URL, apiKey: SUPABASE_KEY, error: feedbackClientError, fetcher: fetch }),
     });
     feedbackClient.subscribe(notifyFeedbackInvalidation);
     return feedbackClient;
   }).catch(error => { feedbackClientLoad = null; throw error; });
   return feedbackClientLoad;
 }
+let invitationAcceptanceClient = null;
+let invitationAcceptanceClientLoad = null;
+const invitationInvalidationListeners = new Set();
+const notifyInvitationInvalidation = () => { for (const listener of invitationInvalidationListeners) { try { listener(); } catch { /* Scrub every invitation view. */ } } };
+export function subscribeToInvitationInvalidation(listener) { invitationInvalidationListeners.add(listener); return () => invitationInvalidationListeners.delete(listener); }
+export function cancelInvitationAcceptanceRequests() { if (invitationAcceptanceClient) invitationAcceptanceClient.invalidate(); else notifyInvitationInvalidation(); }
+export async function loadInvitationAcceptanceClient() {
+  if (!usesSupabaseAuthentication()) return null;
+  if (invitationAcceptanceClient) return invitationAcceptanceClient;
+  if (!invitationAcceptanceClientLoad) invitationAcceptanceClientLoad = Promise.all([
+    import('./early-access-invitation-client.mjs'), import('./member-authority-transport.mjs'),
+  ]).then(([{ createInvitationAcceptanceClient, invitationClientError }, { createInvitationRpcTransport }]) => {
+    invitationAcceptanceClient = createInvitationAcceptanceClient({
+      getSession: getAuthSession,
+      getUser: async token => { const { data, error } = await supabase.auth.getUser(token); if (error) throw invitationClientError('INVITATION_SIGNED_OUT'); return data?.user; },
+      sessionIdentity: authSessionIdentity,
+      subscribe: subscribeToAuthStateChanges,
+      request: createInvitationRpcTransport({ baseUrl: SUPABASE_URL, apiKey: SUPABASE_KEY, error: invitationClientError, fetcher: fetch }),
+    });
+    invitationAcceptanceClient.subscribe(notifyInvitationInvalidation);
+    return invitationAcceptanceClient;
+  }).catch(error => { invitationAcceptanceClientLoad = null; throw error; });
+  return invitationAcceptanceClientLoad;
+}
 let adminReadClient = null;
+let adminReadClientLoad = null;
+let adminClientEpoch = 0;
 const adminInvalidationListeners = new Set();
 const notifyAdminInvalidation = (reason = '') => { for (const listener of adminInvalidationListeners) { try { listener(reason); } catch { /* Clear every subscribed view. */ } } };
-function getAdminReadClient() {
+async function getAdminReadClient() {
   if (adminReadClient) return adminReadClient;
   // URL/local metadata alone cannot activate this branch in a production build.
   if (ENABLE_MOCKS && !usesSupabaseAuthentication()) {
-    const selected = new URLSearchParams(globalThis.location?.search || '').get('admin-preview');
-    adminReadClient = createAdminPreview({ getUser: getLocalOrSessionUser, mode: ['ready', 'mfa'].includes(selected) ? selected : 'member' });
-    adminReadClient.subscribe(notifyAdminInvalidation);
-    return adminReadClient;
+    if (!adminReadClientLoad) {
+      const captured = adminClientEpoch;
+      adminReadClientLoad = import('./admin-preview.mjs').then(({ createAdminPreview }) => {
+        if (captured !== adminClientEpoch) throw adminReadError('ADMIN_CHANGED');
+        const selected = new URLSearchParams(globalThis.location?.search || '').get('admin-preview');
+        const client = createAdminPreview({ getUser: getLocalOrSessionUser, mode: ['ready', 'mfa'].includes(selected) ? selected : 'member' });
+        client.subscribe(notifyAdminInvalidation);
+        adminReadClient = client;
+        return client;
+      }).catch(error => { adminReadClientLoad = null; throw error; });
+    }
+    return adminReadClientLoad;
   }
   if (!usesSupabaseAuthentication()) throw adminReadError('ADMIN_SIGNED_OUT');
   adminReadClient = createAdminReadClient({
@@ -537,7 +552,8 @@ function getAdminReadClient() {
     sessionIdentity: authSessionIdentity,
     subscribe: subscribeToAuthStateChanges,
     request: async (name, args, { token, signal }) => {
-      const response = await fetch(`${SUPABASE_URL}/rest/v1/rpc/${name}`, {
+      const invitation = name === 'admin-early-access-invitation';
+      const response = await fetch(`${SUPABASE_URL}/${invitation ? 'functions/v1' : 'rest/v1/rpc'}/${name}`, {
         method: 'POST', credentials: 'omit', cache: 'no-store', redirect: 'error', signal,
         headers: { apikey: SUPABASE_KEY, Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
         body: JSON.stringify(args),
@@ -546,7 +562,8 @@ function getAdminReadClient() {
       if (raw.length > 262144) throw adminReadError();
       let value; try { value = JSON.parse(raw); } catch { throw adminReadError(); }
       if (!response.ok) {
-        const code = name === 'site_admin_assign_role' && response.status === 403 && value?.message === 'admin_final_recovery_path' ? 'ADMIN_RECOVERY_PROTECTED'
+        const code = invitation && response.status === 409 ? 'ADMIN_IDEMPOTENCY_CONFLICT'
+          : name === 'site_admin_assign_role' && response.status === 403 && value?.message === 'admin_final_recovery_path' ? 'ADMIN_RECOVERY_PROTECTED'
           : response.status === 401 ? 'ADMIN_SIGNED_OUT' : response.status === 403 ? 'ADMIN_DENIED'
           : response.status === 404 ? 'ADMIN_NOT_FOUND' : value?.message === 'admin_idempotency_conflict' ? 'ADMIN_IDEMPOTENCY_CONFLICT'
             : value?.message === 'admin_invalid_cursor' ? 'ADMIN_INVALID_CURSOR'
@@ -559,24 +576,25 @@ function getAdminReadClient() {
   adminReadClient.subscribe(notifyAdminInvalidation);
   return adminReadClient;
 }
-export const getAdminSessionOwner = () => getAdminReadClient().owner();
-export const getSiteAdminContext = (options = {}) => getAdminReadClient().read('get_site_admin_context', {}, options);
-export const listSiteAdminUsers = (args, options = {}) => getAdminReadClient().read('site_admin_list_users', args, options);
-export const getSiteAdminUser = (id, options = {}) => getAdminReadClient().read('site_admin_get_user', { target_user_id: id }, options);
-export const listSiteAdminAudit = (args, options = {}) => getAdminReadClient().read('site_admin_list_audit', args, options);
-export const getSiteAdminAuditEvent = (id, options = {}) => getAdminReadClient().read('site_admin_get_audit_event', { target_event_id: id }, options);
-export const listSiteAdminEarlyAccess = (args, options = {}) => getAdminReadClient().read('site_admin_list_early_access_requests', args, options);
-export const getSiteAdminEarlyAccess = (id, options = {}) => getAdminReadClient().read('site_admin_get_early_access_request', { target_request_id: id }, options);
-export const listSiteAdminEarlyAccessHistory = (args, options = {}) => getAdminReadClient().read('site_admin_list_early_access_history', args, options);
-export const denySiteAdminEarlyAccess = (intent, options = {}) => getAdminReadClient().denyEarlyAccess(intent, options);
-export const assignSiteAdminRole = (intent, options = {}) => getAdminReadClient().assignRole(intent, options);
+export const getAdminSessionOwner = async () => (await getAdminReadClient()).owner();
+export const getSiteAdminContext = async (options = {}) => (await getAdminReadClient()).read('get_site_admin_context', {}, options);
+export const listSiteAdminUsers = async (args, options = {}) => (await getAdminReadClient()).read('site_admin_list_users', args, options);
+export const getSiteAdminUser = async (id, options = {}) => (await getAdminReadClient()).read('site_admin_get_user', { target_user_id: id }, options);
+export const listSiteAdminAudit = async (args, options = {}) => (await getAdminReadClient()).read('site_admin_list_audit', args, options);
+export const getSiteAdminAuditEvent = async (id, options = {}) => (await getAdminReadClient()).read('site_admin_get_audit_event', { target_event_id: id }, options);
+export const listSiteAdminEarlyAccess = async (args, options = {}) => (await getAdminReadClient()).read('site_admin_list_early_access_requests', args, options);
+export const getSiteAdminEarlyAccess = async (id, options = {}) => (await getAdminReadClient()).read('site_admin_get_early_access_request', { target_request_id: id }, options);
+export const listSiteAdminEarlyAccessHistory = async (args, options = {}) => (await getAdminReadClient()).read('site_admin_list_early_access_history', args, options);
+export const denySiteAdminEarlyAccess = async (intent, options = {}) => (await getAdminReadClient()).denyEarlyAccess(intent, options);
+export const manageSiteAdminEarlyAccessInvitation = async (intent, options = {}) => (await getAdminReadClient()).manageEarlyAccessInvitation(intent, options);
+export const assignSiteAdminRole = async (intent, options = {}) => (await getAdminReadClient()).assignRole(intent, options);
 export function subscribeToAdminInvalidation(listener) { adminInvalidationListeners.add(listener); return () => adminInvalidationListeners.delete(listener); }
-export function cancelAdminReads() { if (adminReadClient?.invalidate) adminReadClient.invalidate(); else notifyAdminInvalidation(); }
+export function cancelAdminReads() { adminClientEpoch += 1; if (adminReadClient?.invalidate) adminReadClient.invalidate(); else notifyAdminInvalidation(); }
 if (typeof window !== 'undefined') {
-  window.addEventListener('pagehide', () => { invalidatePreviewBadgeOwner(); cancelAdminReads(); cancelFeedbackRequests(); });
+  window.addEventListener('pagehide', () => { invalidatePreviewBadgeOwner(); cancelAdminReads(); cancelFeedbackRequests(); cancelInvitationAcceptanceRequests(); });
   window.addEventListener('storage', (event) => {
     if (event.key === null || [supabaseAuthStorageKey, 'dominion:user', MOCK_USER_ID_KEY, MOCK_USER_IDS_BY_IDENTITY_KEY].includes(event.key)) {
-      cancelAdminReads(); cancelFeedbackRequests();
+      cancelAdminReads(); cancelFeedbackRequests(); cancelInvitationAcceptanceRequests();
     }
   });
 }
@@ -624,6 +642,7 @@ export async function clearAuthSession({ redirectToLanding = false } = {}) {
     cancelAdminReads();
     cancelFeedbackRequests();
     inflightActorReads.invalidate();
+    cancelInvitationAcceptanceRequests();
     invalidatePreviewBadgeOwner();
     if (usesSupabaseAuthentication()) {
       try {
@@ -898,32 +917,33 @@ export async function requestPasswordRecovery(email) {
   return { requested: true, preview: false };
 }
 
-export async function completePasswordRecovery(password) {
-  const value = String(password || '');
-  if (!value) throw new TypeError('Enter a new password.');
-
-  const client = requireSupabaseAuthentication();
-  const { data, error } = await client.auth.updateUser({ password: value });
-  if (error) throw error;
-
-  // A successful password update is final. Revoke the recovery session so a
-  // refreshed or replayed browser page cannot make another account mutation.
-  // Supabase's default sign-out scope is global. If that network request fails,
-  // the fallback must still confirm that this browser's recovery session ended.
-  const revocation = await revokeRecoverySessions(client.auth);
-  if (revocation.scope === 'local') {
-    console.warn(
-      'Password changed and the local recovery session ended, but global session revocation could not be confirmed.',
-      revocation.globalError,
-    );
-  }
-  clearLocalAuthenticatedIdentity();
-  if (typeof localStorage !== 'undefined') {
-    localStorage.removeItem('dominion:user');
-    localStorage.removeItem(MOCK_USER_ID_KEY);
-  }
-
-  return { user: data.user, completed: true, sessionsRevoked: revocation.scope };
+// Only event capture is eager. Password mutation code stays reset-route-only.
+const passwordRecoveryOwnerBridge = usesSupabaseAuthentication()
+  ? createPasswordRecoveryOwnerBridge({ auth: supabase.auth, sessionIdentity: authSessionIdentity, authStorageKey: supabaseAuthStorageKey })
+  : null;
+let passwordRecoveryController = null;
+let passwordRecoveryControllerLoad = null;
+export async function loadPasswordRecoveryController() {
+  requireSupabaseAuthentication();
+  if (!passwordRecoveryControllerLoad) passwordRecoveryControllerLoad = import('./account-recovery-session.mjs').then(({ createPasswordRecoveryController }) => {
+    passwordRecoveryController = createPasswordRecoveryController({
+      auth: { onAuthStateChange: listener => passwordRecoveryOwnerBridge.connect(listener),
+        getSession: () => supabase.auth.getSession(), getUser: token => supabase.auth.getUser(token),
+        mfa: { getAuthenticatorAssuranceLevel: token => supabase.auth.mfa.getAuthenticatorAssuranceLevel(token) } },
+      sessionIdentity: authSessionIdentity, supabaseUrl: SUPABASE_URL, apiKey: SUPABASE_KEY, authStorageKey: supabaseAuthStorageKey,
+    });
+  });
+  await passwordRecoveryControllerLoad;
+}
+export const getPasswordRecoveryState = () => passwordRecoveryController?.getState() || null;
+export const subscribeToPasswordRecoveryState = listener => passwordRecoveryController?.subscribe(listener) || (() => {});
+export async function verifyPasswordRecoverySession() {
+  await loadPasswordRecoveryController();
+  return passwordRecoveryController.verify();
+}
+export async function completePasswordRecovery(password, owner) {
+  await loadPasswordRecoveryController();
+  return passwordRecoveryController.complete(owner, password);
 }
 
 const ACCOUNT_REQUEST_COLUMNS = [

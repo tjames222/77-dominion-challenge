@@ -1,3 +1,5 @@
+import { canReviewEarlyAccessInvitation } from './admin-early-access-contract.mjs';
+
 // In-memory synthetic data only. Production selects the HTTP adapter instead.
 export function createEarlyAccessPreviewStore({ error = (code) => Object.assign(new Error('Synthetic early-access records are unavailable.'), { code }) } = {}) {
   const requests = Array.from({ length: 29 }, (_, index) => ({
@@ -40,6 +42,27 @@ export function createEarlyAccessPreviewStore({ error = (code) => Object.assign(
       history.push({ id: String(9007199254740993n + BigInt(history.length)), actorId, requestId: args.target_request_id,
         action: 'early_access.deny', permission: 'operations.manage', reasonCode: 'early_access_review', beforeStatus,
         afterStatus: found?.status || null, operationId: args.target_operation_id, correlationId: args.target_correlation_id,
+        environment: 'preview', occurredAt: new Date().toISOString(), outcome: errorCode ? 'failure' : 'success', errorCode });
+      operations.set(key, { signature, result }); return structuredClone(result);
+    },
+    invitation(args, actorId) {
+      const key = `${actorId}:${args.operationId}`; const signature = JSON.stringify(args);
+      const prior = operations.get(key);
+      if (prior) { if (prior.signature !== signature) throw error('ADMIN_IDEMPOTENCY_CONFLICT'); return structuredClone(prior.result); }
+      const found = requests.find((value) => value.id === args.requestId);
+      const errorCode = !found ? 'target_unavailable' : found.revision !== args.expectedRevision ? 'revision_conflict'
+        : !canReviewEarlyAccessInvitation(args.action, found.status) ? 'invalid_state'
+          : args.action !== 'revoke' && found.account.status === 'unconfirmed' ? 'account_recovery_required' : null;
+      const beforeStatus = found?.status || null;
+      const result = errorCode ? { ok: false, errorCode } : { ok: true, requestId: found.id,
+        status: args.action === 'revoke' ? 'revoked' : 'approved', revision: String(BigInt(found.revision) + 1n) };
+      if (!errorCode) {
+        found.status = result.status; found.revision = result.revision; found.updatedAt = new Date().toISOString();
+        if (args.action !== 'revoke') { found.invitationSentAt = null; found.invitationExpiresAt = new Date(Date.now() + 7 * 86400000).toISOString(); }
+      }
+      history.push({ id: String(9007199254740993n + BigInt(history.length)), actorId, requestId: args.requestId,
+        action: `early_access.${args.action}`, permission: 'operations.manage', reasonCode: 'early_access_review', beforeStatus,
+        afterStatus: found?.status || null, operationId: args.operationId, correlationId: args.correlationId,
         environment: 'preview', occurredAt: new Date().toISOString(), outcome: errorCode ? 'failure' : 'success', errorCode });
       operations.set(key, { signature, result }); return structuredClone(result);
     },

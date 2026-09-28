@@ -17,10 +17,14 @@ export const PRODUCTION_RECOVERY_REDIRECT_URLS = Object.freeze(
 );
 export const PRODUCTION_RECOVERY_REDIRECT_ALLOW_LIST =
   PRODUCTION_RECOVERY_REDIRECT_URLS.join(",");
+export const PRODUCTION_RECOVERY_TTL_SECONDS = 3600;
 
 export const CLOSED_AUTH_CONFIG_PATCH = Object.freeze({
   disable_signup: true,
   external_anonymous_users_enabled: false,
+  mailer_autoconfirm: false,
+  mailer_allow_unverified_email_sign_ins: false,
+  mailer_otp_exp: PRODUCTION_RECOVERY_TTL_SECONDS,
   site_url: PRODUCTION_SITE_URL,
   uri_allow_list: PRODUCTION_RECOVERY_REDIRECT_ALLOW_LIST,
 });
@@ -142,6 +146,15 @@ export function productionAuthCanaryErrors(config) {
     errors.push(
       "Supabase Auth external_anonymous_users_enabled must be false",
     );
+  }
+  if (config.mailer_autoconfirm !== false) {
+    errors.push("Supabase Auth email confirmation must be enabled");
+  }
+  if (config.mailer_allow_unverified_email_sign_ins !== false) {
+    errors.push("Supabase Auth unverified email sign-ins must be disabled");
+  }
+  if (config.mailer_otp_exp !== PRODUCTION_RECOVERY_TTL_SECONDS) {
+    errors.push("Supabase Auth email recovery lifetime must be exactly 3600 seconds");
   }
   if (config.site_url !== PRODUCTION_SITE_URL) {
     errors.push("Supabase Auth site_url must be the reviewed production origin");

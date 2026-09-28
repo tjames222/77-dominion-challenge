@@ -54,6 +54,8 @@
     "test:early-access-member-sql": "node --test scripts/early-access-member-authority.sql.test.mjs",
     "test:early-access-membership-sql": "node --test scripts/early-access-membership.sql.test.mjs",
     "test:early-access-feedback-sql": "node --test scripts/early-access-feedback.sql.test.mjs",
+    "test:early-access-invitation-sql": "node --test scripts/early-access-invitation.sql.test.mjs",
+    "test:early-access-native-auth": "node --experimental-strip-types --test scripts/early-access-native-fixture.test.mjs scripts/early-access-native-auth.integration.test.mjs",
     "test:cloudflare-pages-policy": "node --test scripts/configure-cloudflare-pages-policy.test.mjs scripts/configure-production-custom-domain.test.mjs",
     "configure:cloudflare-pages-policy": "node scripts/configure-cloudflare-pages-policy.mjs",
     "capture:production-backup": "bash scripts/run-production-operator-clean.sh --operation capture --",

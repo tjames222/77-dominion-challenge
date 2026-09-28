@@ -7,9 +7,11 @@ async function ready(page) { await page.goto('/admin.html#early-access'); await 
 async function detail(page) { await page.locator(`[data-early-request="${requestId}"] button`).click(); await expect(page.locator('#earlyAccessRequestStatus')).toHaveText('pending'); }
 async function review(page) { await detail(page); await page.locator('#earlyAccessReviewDeny').click(); await expect(page.locator('#earlyAccessDenyConfirmation')).toBeVisible(); }
 async function confirm(page) { await page.locator('#earlyAccessDenyReason').selectOption('early_access_review'); await page.locator('#earlyAccessDenyAcknowledgement').check(); await page.locator('#earlyAccessConfirmDeny').click(); }
+async function reviewInvitation(page, action = 'Approve') { await page.locator(`#earlyAccessReview${action}`).click(); await expect(page.locator('#earlyAccessInvitationConfirmation')).toBeVisible(); }
+async function confirmInvitation(page) { await page.locator('#earlyAccessInvitationReason').selectOption('early_access_review'); await page.locator('#earlyAccessInvitationAcknowledgement').check(); await page.locator('#earlyAccessConfirmInvitation').click(); }
 async function noStoredPayload(page) {
   const storage = await page.evaluate(() => ({ local: { ...localStorage }, session: { ...sessionStorage } }));
-  expect(JSON.stringify(storage)).not.toMatch(/Preview Applicant|applicant\d+@example.invalid|early_access_review|target_operation_id|target_correlation_id/);
+  expect(JSON.stringify(storage)).not.toMatch(/Preview Applicant|applicant\d+@example.invalid|early_access_review|target_operation_id|target_correlation_id|expectedRevision|operationId|correlationId/);
 }
 async function replaceSessions(page, values) {
   await page.evaluate(async (sessions) => {
@@ -37,6 +39,8 @@ test('operations-only reader can inspect requests but cannot see or perform deni
   const auth = await installAdminStub(context, { permissions: ['operations.read'] }); await ready(page); await detail(page);
   await expect(page.locator('#adminUsersTab')).toBeHidden(); await expect(page.locator('#adminAuditTab')).toBeHidden();
   await expect(page.locator('#earlyAccessReviewDeny')).toBeHidden(); expect(auth.denials()).toHaveLength(0);
+  for (const action of ['Approve', 'Resend', 'Revoke']) await expect(page.locator(`#earlyAccessReview${action}`)).toBeHidden();
+  expect(auth.invitations()).toHaveLength(0);
   await expect(page.locator('#earlyAccessScope')).toContainText('does not revoke'); await expect(page.locator('#earlyAccessHistoryStatus')).toContainText('No administrative events');
 });
 test('a standard admin reader gets no early-access records without operations.read', async ({ page, context }) => {
@@ -168,4 +172,83 @@ for (const theme of ['light', 'dark', 'dominion-night', 'dominion-platinum']) te
   expect(await page.locator('#adminDetail').evaluate((value) => value.scrollWidth <= value.clientWidth + 1)).toBe(true);
   await page.keyboard.press('Enter'); await expect(page.locator('#earlyAccessDenyConfirmation')).toBeHidden();
   await page.keyboard.press('Escape'); await expect(page.locator('#adminDetail')).not.toBeVisible(); expect(auth.denials()).toHaveLength(0); await noStoredPayload(page);
+});
+test('approval explicitly queues email without claiming delivery, acceptance or access', async ({ page, context }) => {
+  const auth = await installAdminStub(context, { permissions }); await ready(page); await detail(page);
+  await expect(page.locator('#earlyAccessReviewResend')).toBeHidden(); await expect(page.locator('#earlyAccessReviewRevoke')).toBeHidden();
+  await reviewInvitation(page); await expect(page.locator('#earlyAccessConfirmInvitation')).toBeDisabled();
+  expect(auth.invitations()).toHaveLength(0); await confirmInvitation(page);
+  await expect(page.locator('#earlyAccessRequestStatus')).toHaveText('approved');
+  await expect(page.locator('#earlyAccessReviewStatus')).toContainText('email queued');
+  await expect(page.locator('#earlyAccessReviewStatus')).toContainText('does not grant app access');
+  await expect(page.locator('#earlyAccessHistoryRows')).toContainText('Approved · email queued');
+  expect(auth.invitations()).toHaveLength(1); const sent = auth.invitations()[0];
+  expect(sent.method).toBe('POST'); expect(sent.actor).toBe(auth.A); expect(sent.aal).toBe('aal2');
+  expect(Object.keys(sent.body).sort()).toEqual(['action', 'correlationId', 'expectedActorId', 'expectedRevision', 'operationId', 'requestId']);
+  expect(sent.body).toMatchObject({ action: 'approve', expectedActorId: auth.A, expectedRevision: '0', requestId });
+  expect(auth.denials()).toHaveLength(0);
+  await page.locator('#earlyAccessReload').click();
+  await expect(page.locator('#earlyAccessRequestStatus')).toHaveText('approved');
+  await expect(page.locator('#adminDetailBody')).toContainText('Not recorded');
+  await expect(page.locator('#earlyAccessReviewApprove')).toBeHidden(); await expect(page.locator('#earlyAccessReviewDeny')).toBeHidden();
+  await noStoredPayload(page);
+});
+test('resend and revoke each need a fresh explicit review of the current revision', async ({ page, context }) => {
+  const auth = await installAdminStub(context, { permissions }); await ready(page); await detail(page);
+  await reviewInvitation(page); await confirmInvitation(page); await expect(page.locator('#earlyAccessRequestStatus')).toHaveText('approved');
+  await page.locator('#earlyAccessReload').click(); await reviewInvitation(page, 'Resend');
+  await expect(page.locator('#earlyAccessInvitationConfirmation')).toContainText('invalidates the previous invitation');
+  await confirmInvitation(page); await expect(page.locator('#earlyAccessRequestRevision')).toHaveText('2');
+  await page.locator('#earlyAccessReload').click(); await reviewInvitation(page, 'Revoke'); await confirmInvitation(page);
+  await expect(page.locator('#earlyAccessRequestStatus')).toHaveText('revoked');
+  await expect(page.locator('#earlyAccessReviewStatus')).toContainText('Existing account access was not changed');
+  expect(auth.invitations().map((entry) => [entry.body.action, entry.body.expectedRevision])).toEqual([['approve', '0'], ['resend', '1'], ['revoke', '2']]);
+  expect(new Set(auth.invitations().map((entry) => entry.body.operationId)).size).toBe(3);
+  await expect(page.locator('#earlyAccessHistoryRows article')).toHaveCount(3); await noStoredPayload(page);
+});
+test('invitation MFA readiness is checked both before review and immediately before sending', async ({ page, context }) => {
+  const auth = await installAdminStub(context, { permissions, stepUpRequired: true }); await ready(page); await detail(page);
+  await page.locator('#earlyAccessReviewApprove').click(); await expect(page.locator('#earlyAccessStepUp')).toBeVisible();
+  await expect(page.locator('#earlyAccessInvitationConfirmation')).toBeHidden(); expect(auth.invitations()).toHaveLength(0);
+  auth.stepUp(false); await reviewInvitation(page); auth.stepUp(true); await confirmInvitation(page);
+  await expect(page.locator('#earlyAccessStepUp')).toBeVisible(); expect(auth.invitations()).toHaveLength(0);
+  auth.stepUp(false); await page.goto('/admin.html#early-access'); await expect(page.locator('#adminEarlyRows tr')).toHaveCount(25);
+  expect(auth.invitations()).toHaveLength(0); await noStoredPayload(page);
+});
+for (const mode of ['lost', 'wrong-id', 'rate_limited']) test(`invitation ${mode} only retries the original reviewed operation explicitly`, async ({ page, context }) => {
+  const auth = await installAdminStub(context, { permissions }); await ready(page); await detail(page); await reviewInvitation(page);
+  auth.invitationMode(mode); await confirmInvitation(page);
+  await expect(page.locator('#earlyAccessConfirmInvitation')).toHaveText('Retry same approval');
+  await expect(page.locator('#earlyAccessRequestStatus')).toHaveText('pending');
+  expect(await page.content()).not.toContain('PRIVATE RAW ERROR');
+  const original = structuredClone(auth.invitations()[0].body); await page.locator('#earlyAccessConfirmInvitation').click();
+  await expect(page.locator('#earlyAccessRequestStatus')).toHaveText('approved');
+  expect(auth.invitations()).toHaveLength(2); expect(auth.invitations()[1].body).toEqual(original);
+  await expect(page.locator('#earlyAccessHistoryRows article')).toHaveCount(1); await noStoredPayload(page);
+});
+for (const mode of ['revision_conflict', 'account_recovery_required', 'idempotency']) test(`invitation ${mode} requires reloading without replay`, async ({ page, context }) => {
+  const auth = await installAdminStub(context, { permissions }); await ready(page); await detail(page); await reviewInvitation(page);
+  auth.invitationMode(mode); await confirmInvitation(page);
+  await expect(page.locator('#earlyAccessInvitationConfirmation')).toBeHidden(); await expect(page.locator('#earlyAccessReload')).toBeVisible();
+  expect(auth.invitations()).toHaveLength(1); expect(await page.content()).not.toContain('PRIVATE RAW ERROR');
+  if (mode === 'account_recovery_required') await expect(page.locator('#earlyAccessReviewStatus')).toContainText('separate recovery review');
+  await page.locator('#earlyAccessReload').click(); await expect(page.locator('#earlyAccessRequestStatus')).toHaveText('pending');
+  expect(auth.invitations()).toHaveLength(1); await noStoredPayload(page);
+});
+for (const phase of ['context', 'result']) test(`invitation unnotified bearer replacement during ${phase} cannot publish or reuse old authority`, async ({ page, context }) => {
+  const auth = await installAdminStub(context, { permissions }); await ready(page); await detail(page); await reviewInvitation(page);
+  const name = phase === 'context' ? 'get_site_admin_context' : 'admin-early-access-invitation';
+  const before = auth.requests.filter((entry) => entry.path.endsWith(`/${name}`)).length; const release = auth.hold([name]);
+  await confirmInvitation(page); await expect.poll(() => auth.requests.filter((entry) => entry.path.endsWith(`/${name}`)).length).toBe(before + 1);
+  await page.evaluate((session) => localStorage.setItem('sb-127-auth-token', JSON.stringify(session)), auth.session(auth.A, 'aal1'));
+  release(); await expect(page.locator('#adminWorkspace')).toBeHidden(); await expect(page.locator('#adminDetailBody')).toBeEmpty();
+  expect(auth.invitations()).toHaveLength(phase === 'context' ? 0 : 1); await noStoredPayload(page);
+});
+test('closing an in-flight invitation decision scrubs its intent and cannot replay on reopening', async ({ page, context }) => {
+  const auth = await installAdminStub(context, { permissions }); await ready(page); await detail(page); await reviewInvitation(page);
+  const release = auth.hold(['admin-early-access-invitation']); await confirmInvitation(page); await expect.poll(() => auth.invitations().length).toBe(1);
+  await page.locator('#adminDetailClose').click(); release(); await expect(page.locator('#adminDetailBody')).toBeEmpty();
+  await page.evaluate(() => window.dispatchEvent(new PageTransitionEvent('pagehide', { persisted: true })));
+  await expect(page.locator('#adminWorkspace')).toBeHidden(); await page.evaluate(() => window.dispatchEvent(new PageTransitionEvent('pageshow', { persisted: true })));
+  await expect(page.locator('#adminEarlyRows tr')).toHaveCount(25); expect(auth.invitations()).toHaveLength(1); await noStoredPayload(page);
 });

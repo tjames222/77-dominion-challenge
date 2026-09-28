@@ -111,6 +111,7 @@ export default defineConfig({
         /daily-action-bootstrap-live\.spec\.mjs/,
         /admin-early-access-live\.spec\.mjs/,
         /admin-roles-live\.spec\.mjs/,
+        /early-access-invitation-live\.spec\.mjs/,
         /preview-badges-(?:built|hybrid)\.spec\.mjs/,
       ],
       metadata: {

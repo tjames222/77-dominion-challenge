@@ -16,6 +16,9 @@ describe('production Supabase Auth canary gate', () => {
     assert.deepEqual(productionAuthCanaryErrors({
       disable_signup: true,
       external_anonymous_users_enabled: false,
+      mailer_autoconfirm: false,
+      mailer_allow_unverified_email_sign_ins: false,
+      mailer_otp_exp: 3600,
       site_url: PRODUCTION_SITE_URL,
       uri_allow_list: PRODUCTION_RECOVERY_REDIRECT_ALLOW_LIST,
     }), []);
@@ -27,12 +30,18 @@ describe('production Supabase Auth canary gate', () => {
     }), [
       'Supabase Auth disable_signup must be true',
       'Supabase Auth external_anonymous_users_enabled must be false',
+      'Supabase Auth email confirmation must be enabled',
+      'Supabase Auth unverified email sign-ins must be disabled',
+      'Supabase Auth email recovery lifetime must be exactly 3600 seconds',
       'Supabase Auth site_url must be the reviewed production origin',
       'Supabase Auth uri_allow_list must contain exactly the three reviewed recovery redirects',
     ]);
     assert.deepEqual(productionAuthCanaryErrors({}), [
       'Supabase Auth disable_signup must be true',
       'Supabase Auth external_anonymous_users_enabled must be false',
+      'Supabase Auth email confirmation must be enabled',
+      'Supabase Auth unverified email sign-ins must be disabled',
+      'Supabase Auth email recovery lifetime must be exactly 3600 seconds',
       'Supabase Auth site_url must be the reviewed production origin',
       'Supabase Auth uri_allow_list must contain exactly the three reviewed recovery redirects',
     ]);
@@ -51,6 +60,9 @@ describe('production Supabase Auth canary gate', () => {
           json: async () => ({
             disable_signup: true,
             external_anonymous_users_enabled: false,
+            mailer_autoconfirm: false,
+            mailer_allow_unverified_email_sign_ins: false,
+            mailer_otp_exp: 3600,
             site_url: PRODUCTION_SITE_URL,
             uri_allow_list: PRODUCTION_RECOVERY_REDIRECT_ALLOW_LIST,
           }),

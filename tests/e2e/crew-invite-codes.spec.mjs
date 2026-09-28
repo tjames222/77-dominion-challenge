@@ -154,6 +154,26 @@ test('one issue action creates matching Link, Code, and locally decodable QR rep
   app.assertNoRuntimeErrors();
 });
 
+test('pagehide during the optional QR load cannot dispatch a late invitation', async ({ page, app }) => {
+  let loads = 0; let release;
+  const held = new Promise(resolve => { release = resolve; });
+  await page.route(/\/(?:qrcode|browser-[\w-]+)\.js(?:\?|$)/, async route => {
+    loads++; await held; await route.continue();
+  });
+  const dialog = await openInviteDialog(page, app);
+  expect(loads).toBe(0);
+  await dialog.getByRole('button', { name: 'Generate invitation' }).click();
+  await expect.poll(() => loads).toBeGreaterThan(0);
+  await page.evaluate(() => window.dispatchEvent(new PageTransitionEvent('pagehide', { persisted: true })));
+  await expect(dialog).toBeHidden();
+  release();
+  await page.getByRole('button', { name: 'Invite People' }).click();
+  await expect(dialog.getByRole('button', { name: 'Generate invitation' })).toBeEnabled();
+  expect(await page.evaluate(() => Object.keys(JSON.parse(localStorage.getItem('dominion:mockCrewInvites') || '{}')).length)).toBe(0);
+  await generateInvite(dialog); expect(loads).toBe(1);
+  app.assertNoRuntimeErrors();
+});
+
 test('share cancellation and lifecycle cancellation preserve the active invitation until explicit revocation', async ({ page, app }) => {
   await installShareHarness(page);
   const dialog = await openInviteDialog(page, app);

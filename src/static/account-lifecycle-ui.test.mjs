@@ -23,8 +23,8 @@ describe('FOU-761 account recovery and lifecycle UI', () => {
     assert.match(read('../../forgot-password.html'), /id="passwordRecoveryRequestForm"/);
     assert.match(read('../../reset-password.html'), /id="passwordResetForm"[\s\S]*?autocomplete="new-password"/);
     assert.match(api, /resetPasswordForEmail\(normalizedEmail, \{ redirectTo \}\)/);
-    assert.match(api, /updateUser\(\{ password: value \}\)/);
-    assert.match(api, /revokeRecoverySessions\(client\.auth\)/);
+    assert.match(api, /createPasswordRecoveryOwnerBridge\(\{ auth: supabase\.auth/);
+    assert.match(api, /passwordRecoveryController\.complete\(owner, password\)/);
     assert.match(recovery, /result\.sessionsRevoked === 'global'/);
     assert.match(recovery, /window\.history\.replaceState/);
     assert.match(recovery, /If an account uses that email/);

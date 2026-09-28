@@ -13901,3 +13901,5 @@ revoke execute on function public.grant_sharing_reward_after_invite_redemption()
 \ir migrations/20260922000204_early_access_member_authority.sql
 \ir migrations/20260922000815_early_access_feedback_outbox.sql
 \ir migrations/20260927025530_integrate_early_access_membership.sql
+\ir migrations/20260927225600_early_access_invitation_lifecycle.sql
+\ir migrations/20260927233055_early_access_account_bootstrap.sql

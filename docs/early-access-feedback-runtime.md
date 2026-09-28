@@ -1,9 +1,10 @@
 # Early-access feedback runtime — release candidate, not deployed
 
-This slice connects the reviewed feedback contracts to an owner-bound browser
+This runtime connects the reviewed feedback contracts to an owner-bound browser
 client, private SQL intake, durable Linear/email delivery records, and a bounded
-Edge worker. It does **not** complete the separate approval/invitation flow,
-enroll any real member, enable billing, launch beta, or establish provider keys.
+Edge worker. The separate approval/invitation flow is documented in
+`early-access-invitation-runtime.md`. Implementation or local testing does not
+enroll a real member, enable billing, launch beta, or prove provider delivery.
 FOU-1742 and FOU-1803 must remain In Progress until their full acceptance criteria
 and the production canary have been verified.
 
@@ -127,3 +128,20 @@ canonical schema replay and the complete release browser matrix passed for
 commit `21faa1f87763c13a7ab394e10f6921611aac9386` in PR #141. They must be rerun
 for the newer membership-consumer migration; the earlier green result is not
 evidence for a changed candidate or a production deployment.
+
+### September 27 invitation integration
+
+The current candidate also contains the separate invitation lifecycle and
+NEW-account setup flow described in `early-access-invitation-runtime.md` and
+`early-access-account-bootstrap.md`. Production provisioning now has explicit
+closed-Auth, dedicated Linear metadata, Resend SMTP credential, independent
+runtime-secret, service-only scheduler and unauthorized-worker smoke gates.
+Native SMTP setup authenticates without sending; provider email acceptance and
+inbox delivery remain separate evidence. The optional owner test email is
+manual, default-off, fixed-recipient and bound to one approved time window.
+
+New local verification includes 506 Edge tests, 75 native SQL cases across
+intake/invitations/bootstrap/scheduling, and unchanged canonical mock frontend
+performance budgets passing. These supersede the older local counts and
+performance result above, but do not supersede the requirement for current-head
+CI, full native Auth integration, hosted provider verification and release.

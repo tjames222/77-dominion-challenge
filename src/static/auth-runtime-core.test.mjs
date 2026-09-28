@@ -119,9 +119,11 @@ test('facade and direct core imports share exactly one guarded client, adapter a
     'window:storage', 'window:online', 'window:offline',
     'window:dominion:challenge-activation-updated', 'window:dominion:challenge-start-date-updated',
     'document:visibilitychange',
-    'window:pagehide', 'window:storage', 'window:pagehide', 'window:storage',
+    'window:pagehide', 'window:storage',
+    'auth:3', 'window:pagehide', 'window:storage',
+    'window:pagehide', 'window:storage',
   ]);
-  assert.equal(f.authObservers.length, 3, 'Guard, adapter, then the synchronous in-flight/preview observer.');
+  assert.equal(f.authObservers.length, 4, 'Guard, adapter, synchronous in-flight/preview observer, then the tiny recovery lifecycle bridge.');
   f.runtime.cancel();
   assert.equal(f.events.filter(value => value === 'createClient').length, 1);
 });

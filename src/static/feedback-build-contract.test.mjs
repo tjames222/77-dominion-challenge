@@ -22,7 +22,7 @@ for (const mocks of [false, true]) test(`feedback stays outside every initial gr
     while (pending.length) { const name = pending.pop(); if (visited.has(name)) continue; visited.add(name); const asset = assets.get(name); if (asset?.type === 'chunk') pending.push(...asset.imports); }
     const chunks = [...visited].map(name => assets.get(name)).filter(asset => asset?.type === 'chunk');
     const modules = chunks.flatMap(asset => Object.keys(asset.modules));
-    assert.equal(modules.filter(id => id.endsWith('/auth-runtime-core.mjs')).length, 1, `${entry} singleton`);
+    assert.equal(modules.filter(id => id.endsWith('/auth-runtime-core.mjs')).length, entry === 'early-access-invite.html' ? 0 : 1, `${entry} singleton (invitation defers Auth until fragment cleanup)`);
     for (const name of ['client', 'contract', 'context', 'dialog', 'widget']) assert.ok(!modules.some(id => id.endsWith(`/feedback-${name}.mjs`)), `${entry} excludes feedback-${name}`);
     for (const name of visited) if (name.endsWith('.css')) assert.doesNotMatch(String(assets.get(name)?.source), /\.feedback-(?:widget|form|actions)/, `${entry} excludes feedback styles`);
   }

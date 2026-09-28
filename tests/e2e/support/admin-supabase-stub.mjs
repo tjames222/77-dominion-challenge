@@ -8,7 +8,7 @@ const json = (route, value, status = 200) => route.fulfill({ status, contentType
 // Database authority and privacy are tested separately against exact SQL.
 export async function installAdminStub(context, { role = 'site_admin', aal = 'aal2', permissions: initialPermissions = ['users.read', 'audit.read'], stepUpRequired = false } = {}) {
   const tokens = new Map(); const requests = []; let sequence = 0; let canonicalRole = role;
-  let hold = null; let holdNames = null; let fail = false; let corrupt = false; let denialMode = ''; let roleMode = '';
+  let hold = null; let holdNames = null; let fail = false; let corrupt = false; let denialMode = ''; let roleMode = ''; let invitationMode = '';
   const roleTargets = new Map(); const roleOperations = new Map(); const roleEvents = [];
   let permissions = [...initialPermissions]; let recentMfaRequired = stepUpRequired;
   const provider = createAdminPreview({ mode: 'ready', getUser: async () => ({ authenticated: true, userId: A }) });
@@ -33,6 +33,20 @@ export async function installAdminStub(context, { role = 'site_admin', aal = 'aa
     if (path === '/auth/v1/logout') { tokens.delete((request.headers().authorization || '').replace(/^Bearer\s+/i, '')); return json(route, {}); }
     if (path.endsWith('/challenge')) return json(route, { id: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc', expires_at: Math.floor(Date.now() / 1000) + 120 });
     if (path.endsWith('/verify')) return json(route, session(auth.id, 'aal2'));
+    if (path === '/functions/v1/admin-early-access-invitation') {
+      if (!auth || body.expectedActorId !== auth.id) return json(route, { error: 'PRIVATE RAW ERROR' }, 401);
+      if (canonicalRole !== 'site_admin' || auth.id !== A || auth.aal !== 'aal2' || recentMfaRequired
+        || !permissions.includes('operations.read') || !permissions.includes('operations.manage')) return json(route, { error: 'PRIVATE RAW ERROR' }, 403);
+      if ((!holdNames || holdNames.includes('admin-early-access-invitation')) && hold) await hold;
+      const mode = invitationMode; invitationMode = '';
+      if (mode === 'idempotency') return json(route, { error: 'PRIVATE RAW ERROR' }, 409);
+      if (['invalid_input', 'revision_conflict', 'target_unavailable', 'invalid_state', 'rate_limited', 'account_unavailable', 'account_recovery_required', 'program_unavailable'].includes(mode)) return json(route, { ok: false, errorCode: mode });
+      const result = await provider.manageEarlyAccessInvitation({ action: body.action, actorId: auth.id, sessionIdentity: `preview:${auth.id}`,
+        requestId: body.requestId, revision: body.expectedRevision, operationId: body.operationId, correlationId: body.correlationId });
+      if (mode === 'lost') return json(route, { error: 'PRIVATE RAW ERROR' }, 503);
+      if (mode === 'wrong-id') return json(route, { ...result, requestId: B });
+      return json(route, result);
+    }
     if (path.includes('/rpc/') && path.includes('admin')) {
       const name = path.split('/').at(-1);
       if (!auth || body.target_expected_actor_id !== auth.id) return json(route, { message: 'admin_authentication_required' }, 401);
@@ -106,6 +120,8 @@ export async function installAdminStub(context, { role = 'site_admin', aal = 'aa
     role(value) { canonicalRole = value; }, permissions(value) { permissions = value; }, fail(value = true) { fail = value; }, corrupt(value = true) { corrupt = value; },
     hold(names = null) { let release; holdNames = names; hold = new Promise((resolve) => { release = resolve; }); return () => { release(); hold = null; holdNames = null; }; },
     stepUp(value) { recentMfaRequired = value; }, denialMode(value) { denialMode = value; },
+    invitationMode(value) { invitationMode = value; },
+    invitations() { return requests.filter((item) => item.path === '/functions/v1/admin-early-access-invitation'); },
     roleMode(value) { roleMode = value; }, roleTarget(id, value) { roleTargets.set(id, value); },
     assignments() { return requests.filter((item) => item.path.endsWith('/site_admin_assign_role')); }, roleEvents,
     denials() { return requests.filter((item) => item.path.endsWith('/site_admin_deny_early_access_request')); },
