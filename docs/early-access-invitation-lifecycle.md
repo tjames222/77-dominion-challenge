@@ -116,7 +116,7 @@ hash-as-token substitution are rejected. Raw tokens are never stored or returned
 Acceptance checks the current generation, fixed mailbox and pinned UUID, seven-day
 expiry, validated dispatch and unlaunched program. It atomically consumes the
 capability, marks the request accepted, inserts only the EA grant, and relies on
-the existing trigger for immutable lifetime USD350/month qualification. Audit and
+the existing trigger for immutable lifetime USD $3.50/month qualification. Audit and
 receipt share that transaction. The successful receipt is exactly
 `{ok:true,status:'accepted',actorId,program:'early_access_v1'}`. No app permissions
 are inferred from a browser flag, metadata, or delivery receipt.

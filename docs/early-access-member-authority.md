@@ -26,7 +26,7 @@ alone as a working early-access enrollment flow.
   acceptance; acceptance cannot be future-dated or at/after a configured beta
   boundary. Revocation is one-way with `revision + 1`; no public revoke is added.
 - `private.early_access_price_qualifications`: inserted by the grant's `AFTER
-  INSERT` trigger in the same transaction. Fixed USD 350/month/version-1 facts
+  INSERT` trigger in the same transaction. Fixed USD $3.50/month/version-1 facts
   are immutable on update and survive grant revocation, beta and subscription
   cancellation. Failure to insert the fact rolls back the grant. A foreign key
   binds the original accepted grant, program and Auth UUID.

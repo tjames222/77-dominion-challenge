@@ -22,7 +22,7 @@ import {
 // This suite never accepts a database URL or an existing container. PostgreSQL
 // has no network and stores its complete test cluster only in temporary memory.
 const container = `77dc-canary-sql-${randomUUID()}`;
-const image = "public.ecr.aws/supabase/postgres:17.6.1.143";
+const image = "public.ecr.aws/supabase/postgres:17.6.1.141";
 const releaseSha = "a".repeat(40);
 const otherReleaseSha = "b".repeat(40);
 const ownerId = "10000000-0000-4000-8000-000000000001";
@@ -95,9 +95,12 @@ before(async () => {
     insert into auth.users (id) values ('${ownerId}');
     insert into public.profiles (user_id) values ('${ownerId}');`;
 
+  const cached = docker(["image", "inspect", image, "--format", "{{.Id}}"]);
+  assert.equal(cached.status, 0, "Exact pinned fixture image must be prepared before tests; no implicit pull is permitted.");
+  const imageId = cached.stdout.trim(); assert.match(imageId, /^sha256:[0-9a-f]{64}$/);
   const started = docker([
-    "run", "--detach", "--name", container, "--network", "none", "--user", "postgres",
-    "--tmpfs", "/tmp:rw", "--entrypoint", "/bin/sh", image, "-c",
+    "run", "--detach", "--pull", "never", "--name", container, "--network", "none", "--user", "postgres",
+    "--tmpfs", "/tmp:rw", "--entrypoint", "/bin/sh", imageId, "-c",
     'initdb -D /tmp/canary-pgdata -A trust && exec postgres -D /tmp/canary-pgdata -k /tmp -h ""',
   ]);
   assert.equal(started.status, 0, started.error?.message ?? started.stderr);

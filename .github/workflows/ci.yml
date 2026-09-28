@@ -96,6 +96,14 @@ jobs:
         run: pnpm run test:database-manifest
       - name: Start local Supabase
         run: pnpm run supabase:start
+      - name: Verify exact isolated-fixture image cache preparation
+        run: node --test scripts/prepare-ci-fixture-images.test.mjs
+      - name: Cache verified exact-version fixture images without ECR downloads
+        timeout-minutes: 10
+        run: node scripts/prepare-ci-fixture-images.mjs
+      - name: Verify isolated fresh-key Vault backup reconstruction
+        timeout-minutes: 5
+        run: node --test scripts/free-backup-current-vault.sql.test.mjs
       - name: Execute production canary SQL in isolated PostgreSQL
         run: pnpm run test:production-canary-entitlement-sql
       - name: Execute early-access intake SQL in isolated PostgreSQL

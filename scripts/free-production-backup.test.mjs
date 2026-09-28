@@ -1,10 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { generateKeyPairSync } from 'node:crypto';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { classifyBackupFailure, classifyDockerFailure, classifyPgRestoreFailure, decryptBackup, encryptBackup, localRestoreRoles, parseInventory, recipientKey, restoreLocalArchiveWithRoleCompatibility, LOCAL_RESTORE_ROLE_SNAPSHOT_SQL, REMOTE_BACKUP_PREFLIGHT_SQL, REMOTE_BACKUP_ROLE_SQL } from './free-production-backup.mjs';
+import { classifyBackupFailure, classifyDockerFailure, classifyPgRestoreFailure, cleanupBackupResources, decryptBackup, encryptBackup, localRestoreRoles, parseInventory, recipientKey, restoreLocalArchiveWithRoleCompatibility, selectBackupMigrationCheckpoint, LOCAL_RESTORE_ROLE_SNAPSHOT_SQL, REMOTE_BACKUP_PREFLIGHT_SQL, REMOTE_BACKUP_ROLE_SQL } from './free-production-backup.mjs';
+import { CURRENT_BACKUP_MODE, LEGACY_BACKUP_MODE, currentBackupVaultProofSql, currentBackupLocalVaultRecoverySql,
+  requireCurrentBackupVaultProof, requireCurrentBackupLocalVaultRecovery, currentBackupVaultRecoveryManifest } from './free-backup-current-vault.mjs';
+import { verifyBackupManifest } from './verify-free-production-backup-evidence.mjs';
 
 const { publicKey, privateKey } = generateKeyPairSync('rsa', {
   modulusLength: 4096,
@@ -58,6 +61,7 @@ test('diagnostics emit only fixed codes, never private response or Docker text',
   assert.equal(classifyBackupFailure(Object.assign(new Error(secret), { diagnosticCode: secret })), 'unclassified');
   assert.equal(classifyBackupFailure(Object.assign(new Error(secret), { diagnosticCode: 'login-ttl-below-900' })), 'login-ttl-below-900');
   assert.equal(classifyBackupFailure(Object.assign(new Error(secret), { diagnosticCode: 'pooler-scram' })), 'pooler-scram');
+  assert.equal(classifyBackupFailure(Object.assign(new Error(secret), { diagnosticCode: 'current-vault-contract' })), 'current-vault-contract');
   assert.equal(classifyBackupFailure(new Error('Existing-project CLI state is invalid: the exact project pooler lookup returned HTTP 403')), 'credential-pooler-http-403');
   assert.equal(classifyBackupFailure(new Error('Existing-project CLI state is invalid: the exact project lookup request failed')), 'credential-project-network');
   assert.equal(classifyBackupFailure(new Error('Existing-project CLI state is invalid: the Management API project identity, region, health, or PostgreSQL contract does not match')), 'credential-project-contract');
@@ -256,7 +260,8 @@ test('runtime compatibility remains pinned to the owned local container before v
   assert(source.indexOf("stage('roles-restore')") < start);
   assert(end < source.indexOf("stage('encryption')"));
   assert.match(source, /const local = \(args, options = \{\}\) => command\('docker', \['exec',[\s\S]*restoreName, \.\.\.args\]/u);
-  assert.match(source, /finally \{\s+let cleanupFailed = false;\s+for \(const name of containers\) \{\s+try \{ await removeContainer\(name\); \}/u);
+  assert.match(source, /finally \{\s+await cleanupBackupResources\(/u);
+  assert.match(source, /for \(const name of containers\) \{\s+try \{ await removeContainer\(name\); \}/u);
   assert.match(inventory, /'kind','eventTriggers'/u);
   assert.match(inventory, /ORDER BY e\.evtname COLLATE "C"/u);
   assert.match(inventory, /'ownerSuper',owner_role\.rolsuper/u);
@@ -303,7 +308,7 @@ test('all remote capture commands share the credential deadline and stop the own
   assert.match(remote, /catch \(error\) \{[\s\S]*await removeContainer\(captureName\);[\s\S]*throw error;/u);
   assert.match(source, /'1800'\], \{ log, deadlineNs: credentialLifetime\.deadlineNs \}\)/u);
   const cleanup = source.slice(source.indexOf('let cleanupFailed = false;'));
-  assert(cleanup.indexOf('await removeContainer(name)') < cleanup.indexOf('await revokeProductionSupabaseDatabaseCredentials'));
+  assert(cleanup.indexOf('await removeContainer(name)') < cleanup.indexOf('await revokeCredentials()'));
   for (const diagnosticCode of ['credential-lifetime-expired', 'credential-operation-timeout', 'credential-operation-interrupted']) {
     assert.equal(classifyBackupFailure({ diagnosticCode, message: 'private fixture data' }), diagnosticCode);
   }
@@ -430,4 +435,160 @@ test('permission subtype matching cannot promote unknown first lines or imprecis
     assert.equal(classifyPgRestoreFailure(`pg_restore: error: could not execute query: ERROR: ${primary}`), 'pg-restore-permission-other');
   }
   assert.equal(classifyDockerFailure('pg_restore: error: unknown first restore failure\npg_restore: error: could not execute query: ERROR: permission denied for schema forged_target'), 'pg-restore-error');
+});
+
+test('legacy mode stays default and current mode pins the exact61 pre-release migration prefix', async () => {
+  const files = await readdir(new URL('../supabase/migrations/', import.meta.url));
+  const legacy = selectBackupMigrationCheckpoint(files);
+  assert.equal(legacy.length, 13);
+  assert.deepEqual(legacy, selectBackupMigrationCheckpoint(files, LEGACY_BACKUP_MODE));
+  const current = selectBackupMigrationCheckpoint(files, CURRENT_BACKUP_MODE);
+  assert.equal(current.length, 61); assert.equal(current.at(-1), '20260913082358');
+  assert(!current.includes('20260927025530'));
+  for (const names of [files.slice(0, 5), files.filter(name => !name.startsWith('20260707170000_')),
+    [...files, '20260707170000_duplicate.sql'], files.map(name => name.startsWith('20260707170000_') ? '20260707170001_other.sql' : name)]) {
+    assert.throws(() => selectBackupMigrationCheckpoint(names, CURRENT_BACKUP_MODE));
+  }
+  for (const mode of ['current', '', 'all', 'CURRENT-PRODUCTION-2026-09-27']) assert.throws(() => selectBackupMigrationCheckpoint(files, mode));
+});
+
+test('current inventory still rejects external data, unknown history and unbounded encrypted data', async () => {
+  const expected = selectBackupMigrationCheckpoint(await readdir(new URL('../supabase/migrations/', import.meta.url)), CURRENT_BACKUP_MODE);
+  const records = fixture(); records.find(r => r.kind === 'history').versions = expected;
+  records.find(r => r.schema === 'vault').count = 2;
+  assert.deepEqual(parseInventory(serialized(records), expected, CURRENT_BACKUP_MODE), records);
+  assert.throws(() => parseInventory(serialized(records), expected), /original root key/);
+  for (const mutate of [
+    values => { values.find(r => r.schema === 'vault').count = 1; },
+    values => { values.find(r => r.schema === 'vault').count = 3; },
+    values => { values.find(r => r.schema === 'pgsodium').count = 1; },
+    values => { values.find(r => r.schema === 'storage' && r.name === 'objects').count = 1; },
+    values => { values.find(r => r.schema === 'storage' && r.name === 's3_multipart_uploads').count = 1; },
+    values => { values.find(r => r.schema === 'storage' && r.name === 's3_multipart_uploads_parts').count = 1; },
+    values => { values.find(r => r.kind === 'boundary').foreignTables = 1; },
+    values => { values.find(r => r.kind === 'boundary').serverVersion = '170007'; },
+    values => { values.find(r => r.kind === 'history').versions.pop(); },
+    values => { values.find(r => r.kind === 'history').versions.push('20260927025530'); },
+  ]) {
+    const changed = structuredClone(records); mutate(changed);
+    assert.throws(() => parseInventory(serialized(changed), expected, CURRENT_BACKUP_MODE));
+  }
+  assert.throws(() => parseInventory(serialized(records.filter(r => r.schema !== 'vault')), expected, CURRENT_BACKUP_MODE));
+  assert.throws(() => parseInventory(serialized(records), ['1','2'], CURRENT_BACKUP_MODE));
+});
+
+const vaultWorker = 'SYNTHETIC_PRIVATE_WORKER_TEST_0123456789';
+test('source Vault proof is parameterized read-only, exactpair/cron restricted and ciphertext-inventory bound', () => {
+  const hash = 'b'.repeat(64);
+  const sql = currentBackupVaultProofSql(vaultWorker, hash);
+  assert.match(sql, /BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY/);
+  assert.match(sql, /current_setting\('transaction_read_only'\)='on'/);
+  assert.match(sql, /current_user='postgres'/);
+  assert.match(sql, /count\(\*\)=2 and count\(distinct name\)=2/);
+  assert.match(sql, /key_id is null/);
+  assert.match(sql, /not exists\(select 1 from pg_constraint where contype='f' and confrelid='vault.secrets'::regclass\)/);
+  assert.match(sql, /case name[\s\S]*else false end/);
+  assert.match(sql, /from vault\.secrets t\)=\$3/);
+  assert.match(sql, /count\(\*\)=1 and bool_and\(jobname='process-profile-photo-cleanup'/);
+  assert.match(sql, /command=convert_from\(decode\(\$4,'base64'\)/);
+  assert.match(sql, /\\bind '[A-Za-z0-9+/=]+' '[A-Za-z0-9+/=]+' '[a-f0-9]{64}' '[A-Za-z0-9+/=]+'/);
+  assert.match(sql, /ROLLBACK;\n$/);
+  assert.doesNotMatch(sql, /update_secret|create_secret|\b(?:INSERT|UPDATE|DELETE|DROP|ALTER|GRANT|COPY)\b|root\.key/i);
+  assert(!sql.includes(vaultWorker));
+});
+
+test('malformed worker/input values are rejected and metacommand characters stay bound data', () => {
+  for (const key of [undefined, '', 'a'.repeat(31), 'a'.repeat(4097), 'a'.repeat(32)+'\n', 'a'.repeat(32)+' ', 'a'.repeat(32)+'\0']) {
+    assert.throws(() => currentBackupVaultProofSql(key, 'a'.repeat(64)), /^Error: Current backup Vault contract failed\.$/);
+    assert.throws(() => currentBackupLocalVaultRecoverySql(key), /^Error: Current backup Vault contract failed\.$/);
+  }
+  for (const hash of [null, 'a'.repeat(63), 'A'.repeat(64), 'a'.repeat(64)+'\n']) assert.throws(() => currentBackupVaultProofSql(vaultWorker, hash));
+  const injection = vaultWorker+"';\\!whoami;`command`";
+  const sql = currentBackupVaultProofSql(injection,'a'.repeat(64));
+  assert(!sql.includes(injection)); assert(sql.includes(Buffer.from(injection).toString('base64')));
+});
+
+test('local Vault reconstruction refuses hosted runtime before exactname delete/recreate and never decrypts old values', () => {
+  const sql = currentBackupLocalVaultRecoverySql(vaultWorker);
+  for (const check of ["current_user<>'backup_restore_admin'", "current_database()<>'postgres'", 'inet_server_addr() IS NOT NULL',
+    "current_setting('unix_socket_directories')<>'/restore'", "current_setting('listen_addresses')<>''", "current_setting('cron.launch_active_jobs')<>'off'"]) {
+    assert(sql.includes(check)); assert(sql.indexOf(check) < sql.indexOf('DELETE FROM vault.secrets'));
+  }
+  assert(sql.indexOf('vault.create_secret') < sql.indexOf('vault.decrypted_secrets'));
+  assert.match(sql, /DELETE FROM vault.secrets s\n  WHERE s.name IN \('profile_photo_project_url','profile_photo_worker_secret'\)\n  RETURNING s.name,s.description/);
+  assert.match(sql, /vault\.create_secret\(case s\.name/);
+  assert.match(sql, /SELECT count\(\*\) FROM recreated\n\\bind/);
+  assert.match(sql, /EXISTS\(select 1 from pg_constraint where contype='f' and confrelid='vault.secrets'::regclass\)/);
+  assert.match(sql, /ROLLBACK;\n$/);
+  assert.doesNotMatch(sql, /\b(?:TRUNCATE|DROP|CREATE|ALTER|GRANT)\b|root\.key|http_post|update_secret/i);
+  assert(!sql.includes(vaultWorker));
+});
+
+test('Vault verification never accepts partial proof or reflects private output', () => {
+  requireCurrentBackupVaultProof('t'); requireCurrentBackupLocalVaultRecovery('2\nt');
+  for (const value of ['', 'f', 'true', 't\nprivate', '2\nf', null, { private: vaultWorker }]) {
+    assert.throws(() => requireCurrentBackupVaultProof(value), /^Error: Current backup Vault contract failed\.$/);
+    assert.throws(() => requireCurrentBackupLocalVaultRecovery(value), /^Error: Current backup Vault contract failed\.$/);
+  }
+});
+
+test('current Vault manifest is explicitly conditional and cannot claim standalone root-key recovery', () => {
+  const manifest = currentBackupVaultRecoveryManifest();
+  assert.deepEqual(manifest, { selfContained: false, source: 'protected-github-production-settings',
+    requiredSettings: ['VITE_SUPABASE_URL','PROFILE_PHOTO_WORKER_SECRET'],
+    secretNames: ['profile_photo_project_url','profile_photo_worker_secret'], originalCiphertextPreserved: true,
+    freshKeyReconstructionVerified: true, recoveryRequiresProtectedSettings: true });
+  assert(!JSON.stringify(manifest).includes(vaultWorker));
+});
+
+test('current integration keeps secret SQL in0600 tmpfs outside archive and reseeds only after exact restoration', async () => {
+  const source = await readFile(new URL('./free-production-backup.mjs', import.meta.url), 'utf8');
+  const proof = source.slice(source.indexOf("stage('current-vault-proof')"), source.indexOf("stage('roles-capture')"));
+  assert.match(proof, /path\.join\(runtime, 'current-vault-proof\.sql'\)/);
+  assert.match(proof, /flag: 'wx', mode: 0o600/);
+  assert.match(proof, /vault\.sha256/); assert.match(proof, /'-f', '-'\], undefined, proof/);
+  assert.match(proof, /await rm\(proof\)/);
+  const local = source.slice(source.indexOf("stage('local-vault-reconstruction')"), source.indexOf("console.log('Isolated restore reproduced"));
+  assert.match(local, /path\.join\(runtime, 'local-vault-reconstruction\.sql'\)/);
+  assert.match(local, /flag: 'wx', mode: 0o600/); assert.match(local, /await local\(psql, \{ input: recovery \}\)/);
+  assert.doesNotMatch(local, /remote\(/);
+  assert(source.indexOf('assert.equal(comparableInventory(restoredText)') < source.indexOf("stage('local-vault-reconstruction')"));
+  assert.match(source, /'tar', \['-cf', tarball, '-C', capture, 'roles.sql', 'database.dump', 'inventory.jsonl'\]/);
+  assert.match(source, /schemaVersion: backupMode === CURRENT_BACKUP_MODE \? 2 : 1/);
+  assert.match(source, /'dominion-free-current-production-backup\/v1' : 'dominion-free-production-backup\/v1'/);
+  const startup = await readFile(new URL('./free-backup-local-postgres.sh', import.meta.url), 'utf8');
+  assert.match(startup, /shared_preload_libraries=pgsodium,pg_cron,supabase_vault/);
+  assert.match(startup, /vault.getkey_script=\/restore\/getkey/);
+  assert.match(startup, /cron.launch_active_jobs=off/);
+});
+
+test('legacy cutover evidence verifier rejects the distinct conditional current-snapshot contract', () => {
+  assert.throws(() => verifyBackupManifest({ schemaVersion: 2, artifactContract: 'dominion-free-current-production-backup/v1',
+    vaultRecovery: currentBackupVaultRecoveryManifest() }, Buffer.from('fixture'), {
+    runId: '123', releaseCommit: 'a'.repeat(40), publicKey,
+  }), /does not prove the exact project, release, and restored checkpoint/);
+});
+
+test('workflow currentmode is explicitly selected and only then receives the existing protected worker key', async () => {
+  const workflow = await readFile(new URL('../.github/workflows/production-backup.yml', import.meta.url), 'utf8');
+  assert.match(workflow, /default: legacy-thirteen-migration-cutover/);
+  assert.match(workflow, /type: choice\n        options:\n          - legacy-thirteen-migration-cutover\n          - current-production-2026-09-27/);
+  assert.match(workflow, /PROFILE_PHOTO_WORKER_SECRET: \$\{\{ inputs\.backup_mode == 'current-production-2026-09-27' && secrets\.PROFILE_PHOTO_WORKER_SECRET \|\| '' \}\}/);
+  assert.match(workflow, /PROFILE_PHOTO_WORKER_SECRET="\$PROFILE_PHOTO_WORKER_SECRET"/);
+  assert.doesNotMatch(workflow, /root_key|VAULT_KEY|PGSODIUM_KEY/);
+});
+
+test('cleanup attempts every owned boundary and suppresses artifacts after any cleanup failure', async () => {
+  for (const failure of ['one', 'two', 'revoke', 'runtime', 'artifact']) {
+    const calls = [];
+    const operation = async name => { calls.push(name); if (name === failure) throw new Error(vaultWorker); };
+    await assert.rejects(cleanupBackupResources({ containers: ['one','two'], minted: true, success: failure !== 'artifact',
+      removeContainer: operation, revokeCredentials: () => operation('revoke'), removeRuntime: () => operation('runtime'),
+      removeArtifact: () => operation('artifact') }), error => error.message === 'Backup cleanup failed; no completed backup artifact will be published');
+    assert.deepEqual(calls, ['one','two','revoke','runtime','artifact']);
+  }
+  const calls = [];
+  await cleanupBackupResources({ containers: [], minted: false, success: true, removeContainer: () => assert.fail(),
+    revokeCredentials: () => assert.fail(), removeRuntime: async () => calls.push('runtime'), removeArtifact: () => assert.fail() });
+  assert.deepEqual(calls, ['runtime']);
 });

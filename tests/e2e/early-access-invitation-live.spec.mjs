@@ -144,5 +144,11 @@ for (const theme of ['light', 'dark', 'dominion-night', 'dominion-platinum']) te
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
   await page.screenshot({ path: `/tmp/77dc-invitation-${testInfo.project.name}-${theme}.png`, fullPage: true });
   await page.evaluate(() => { document.documentElement.style.fontSize = '200%'; });
+  // Body overflow clipping differs between WebKit platforms. Check the content
+  // boxes too so a clipped heading/control cannot make the viewport check pass.
+  const overflow = await page.locator('.auth-shell').evaluate(shell => [...shell.querySelectorAll('*')]
+    .filter(element => element.getClientRects().length && element.clientWidth > 0 && element.scrollWidth > element.clientWidth + 1)
+    .map(element => ({ tag: element.tagName, id: element.id, className: element.className, width: element.clientWidth, contentWidth: element.scrollWidth })));
+  expect(overflow).toEqual([]);
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
 });
