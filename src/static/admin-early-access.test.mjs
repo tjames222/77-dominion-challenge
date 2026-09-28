@@ -139,6 +139,14 @@ test('queue controls are no-JS safe, reason is fixed, and the UI never persists 
   assert.equal(href.searchParams.get('mode'), 'step-up');
   assert.doesNotMatch(detail, /mfaChallengeHref\('admin\.html[?#]/);
 });
+test('queue footnote distinguishes available invitation review from delivery and accepted access', () => {
+  const html = readFileSync(new URL('../../admin.html', import.meta.url), 'utf8');
+  const panel = html.match(/<section id="adminEarlyPanel"[\s\S]*?<\/section>/)?.[0];
+  assert.ok(panel);
+  const footnotes = [...panel.matchAll(/<p class="admin-footnote">([^<]*)<\/p>/g)];
+  assert.equal(footnotes.length, 1);
+  assert.equal(footnotes[0][1], 'Review requests individually. Authorized reviewers can approve and queue an invitation email, deny a pending request, or manage an existing invitation. Approval does not confirm email delivery or grant access; Early Access begins after a valid invitation is accepted.');
+});
 test('legacy preview identities stay in memory and support the same strict denial contract', async () => {
   let id = 'mock_user_e2e_77';
   const preview = createAdminPreview({ getUser: async () => ({ userId: id, authenticated: true }), mode: 'ready' });
