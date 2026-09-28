@@ -18,6 +18,31 @@ test.describe('production route smoke coverage', () => {
   }
 });
 
+test('earlyAccessInvite keeps a missing-capability visit read-only', async ({ page, app }) => {
+  const authorityRequests = [];
+  page.on('request', (request) => {
+    if (/\/(?:auth|rest|functions)\/v1\//.test(request.url())) authorityRequests.push(request.url());
+  });
+  await app.open(ROUTE_BY_ID.earlyAccessInvite);
+  await expect(page.locator('#earlyAccessInviteStatus')).toHaveText('Open the current invitation link from your email to continue.');
+  await expect(page.locator('#earlyAccessAcceptForm')).toBeHidden();
+  await expect(page.locator('#earlyAccessAcceptAcknowledgement')).toBeDisabled();
+  await expect(page.locator('#earlyAccessAccept')).toBeDisabled();
+  for (const selector of ['#earlyAccessReview', '#earlyAccessSignIn', '#earlyAccessMfa', '#earlyAccessContinue']) {
+    await expect(page.locator(selector)).toBeHidden();
+  }
+  await expect(page.locator('.shared-header-share, .shared-header-streak, .global-menu-button')).toHaveCount(0);
+  expect(await page.evaluate(() => ({
+    user: localStorage.getItem('dominion:user'),
+    invitation: sessionStorage.getItem('dominion:early-access-invitation:v1'),
+    fragment: location.hash,
+  }))).toEqual({ user: null, invitation: null, fragment: '' });
+  expect(authorityRequests).toEqual([]);
+  await page.getByRole('link', { name: 'contact support' }).click();
+  await expect(page).toHaveURL(/\/support\.html$/);
+  app.assertNoRuntimeErrors();
+});
+
 test.describe('authenticated route guards', () => {
   for (const route of AUTHENTICATED_ROUTES) {
     test(route.id + (route.guestGate === 'inline-admin' ? ' shows a private-data-free login gate' : ' sends a logged-out visitor to login'), async ({ page, app }) => {

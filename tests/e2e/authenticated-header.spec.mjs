@@ -26,7 +26,7 @@ test('authenticated header allowlist covers every eligible production route', ()
   const expectedEntries = authenticatedHeaderRoutes.map((route) => route.htmlEntry).sort();
   expect([...AUTHENTICATED_HEADER_ROUTES].sort()).toEqual(expectedEntries);
   expect(PRODUCTION_ROUTES.filter((route) => route.sharedHeaderActions === false).map((route) => route.htmlEntry).sort())
-    .toEqual(['account-security.html', 'admin.html']);
+    .toEqual(['account-security.html', 'admin.html', 'early-access-invite.html']);
 });
 
 async function installHeaderHeightProbe(page) {
