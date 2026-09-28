@@ -11,7 +11,13 @@ export async function installFeedbackStub(context, { active = true, malformed = 
   if (memberPages) await context.route(/\/__admin_fixture__\/rest\/v1\/(?:entitlements|rpc\/(?:get_daily_action_bootstrap|get_challenge_activation|get_daily_standard_draft|bootstrap_daily_standard_time_zone))(?:\?|$)/, async route => {
     const actor = tokens.get(route.request().headers().authorization?.replace(/^Bearer /, ''));
     if (!actor) return json(route, { code: 'PT401', message: 'member_authentication_required' }, 401);
-    const path = new URL(route.request().url()).pathname; const data = dailyBootstrapFixture({ actorId: actor, status: 'active', appAccess: true });
+    const path = new URL(route.request().url()).pathname;
+    // Keep the authenticated member-page fixture current. A stale canonical
+    // day causes the real controller to rehydrate repeatedly while scrolling.
+    const now = new Date();
+    const data = dailyBootstrapFixture({ actorId: actor, status: 'active', appAccess: true,
+      entryDate: now.toISOString().slice(0, 10), timeZone: 'UTC' });
+    data.asOf = now.toISOString();
     if (path.endsWith('/entitlements')) return json(route, [{ entitlement_key: 'membership_active', status: 'active', ends_at: null }]);
     if (path.endsWith('/get_challenge_activation')) return json(route, data.activation);
     if (path.endsWith('/get_daily_standard_draft')) return json(route, data.draft);

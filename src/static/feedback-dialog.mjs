@@ -36,8 +36,8 @@ export function createFeedbackDialog({ owner: suppliedOwner, context: suppliedCo
       const activeRestore = () => !destroyed && revision === restoreRevision && !dialog.isOpen && current();
       if (!position || !view?.requestAnimationFrame) { restoreScrollBehavior(); return; }
       // WebKit can apply its focus/scroll restoration after the fixed body is
-      // released. Settle the original geometry before the launcher's overlap
-      // observer and return focus only while this exact owner is still current.
+      // released. Settle the original geometry and return focus only while
+      // this exact owner is still current.
       view.requestAnimationFrame(() => {
         if (!activeRestore()) { if (revision === restoreRevision) restoreScrollBehavior(); return; }
         view.scrollTo?.(position.x, position.y);
@@ -184,8 +184,8 @@ export function createFeedbackDialog({ owner: suppliedOwner, context: suppliedCo
         const retrying = state === 'uncertain';
         if (!retrying) { scrub(); cancel.textContent = 'Cancel'; }
         // The shared modal restores document scroll before returning focus.
-        // Smooth scrolling would pass other controls under the fixed launcher
-        // after focus returns, making safe-overlap hiding discard that focus.
+        // Smooth scrolling would move the underlying page after focus returns
+        // to its persistent trigger instead of restoring the original position.
         const rootStyle = ownerDocument.documentElement?.style;
         if (rootStyle) {
           const previous = rootStyle.scrollBehavior; rootStyle.scrollBehavior = 'auto';

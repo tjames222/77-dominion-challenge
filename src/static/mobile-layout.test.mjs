@@ -51,7 +51,10 @@ describe('static phone layout contract', () => {
   test('uses one safe-area-aware navigation rhythm for block and grid page shells', () => {
     assert.match(menu, /--navigation-stack-gap:\s*clamp\(8px, 1\.6vw, 12px\)/);
     assert.match(menu, /--navigation-content-gap:\s*clamp\(20px, 3\.2vw, 32px\)/);
-    assert.match(menu, /min-height:\s*var\(--topbar-sticky-height\)/);
+    assert.match(menu, /--topbar-min-height:\s*calc\(72px \+ env\(safe-area-inset-top\)\)/);
+    assert.match(menu, /--topbar-sticky-height:\s*var\(--topbar-min-height\)/);
+    assert.match(menu, /min-height:\s*var\(--topbar-min-height\)/);
+    assert.doesNotMatch(menu, /min-height:\s*var\(--topbar-sticky-height\)/, 'Measured sticky offsets must not ratchet the intrinsic header height.');
     assert.match(menu, /margin-top:\s*calc\(-1 \* max\(var\(--shell-pad,[\s\S]*?env\(safe-area-inset-top\)\)\)/);
     assert.match(menu, /padding:\s*calc\(12px \+ env\(safe-area-inset-top\)\)/);
     assert.match(menu, /\.topbar \+ \.member-tabs[\s\S]*?var\(--navigation-stack-gap\)/);
