@@ -1,5 +1,12 @@
 import { initReveal } from './reveal';
 import { RELEASE_GATES } from './release-gates.mjs';
+import { SUPPORT_EMAIL } from '../shared/support-contact.mjs';
+
+const supportEmailLink = document.getElementById('supportEmailLink');
+if (supportEmailLink) {
+  supportEmailLink.href = `mailto:${SUPPORT_EMAIL}`;
+  supportEmailLink.textContent = SUPPORT_EMAIL;
+}
 
 function setText(id, value) {
   const element = document.getElementById(id);

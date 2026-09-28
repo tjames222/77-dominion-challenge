@@ -95,12 +95,12 @@ function renderStatus(state) {
     if (billingHeroStep) billingHeroStep.textContent = 'Invite-only early access';
     if (billingHeroTitle) {
       billingHeroTitle.textContent = state.appAccess
-        ? 'Your early access is active.'
+        ? state.earlyAccessActive ? 'Your early access is active.' : 'Your member access is active.'
         : 'Dominion is opening gradually.';
     }
     if (billingHeroLead) {
       billingHeroLead.textContent = state.appAccess
-        ? 'This invited account can use the dashboard, Daily Actions, private groups, journal, and other member tools.'
+        ? 'This account can use the dashboard, Daily Actions, private groups, journal, and other member tools.'
         : 'We are starting with a small invited group. Billing is not open yet.';
     }
     if (billingDashboardLink) {
@@ -114,18 +114,21 @@ function renderStatus(state) {
     }
     if (subscriptionStatusPill) {
       subscriptionStatusPill.textContent = state.appAccess
-        ? 'Early access active'
+        ? state.earlyAccessActive ? 'Early access active' : 'Member access active'
         : 'Invitation required';
     }
     if (billingStatusTitle) {
       billingStatusTitle.textContent = state.appAccess
-        ? 'This account has early access.'
+        ? state.earlyAccessActive ? 'This account has early access.' : 'This account has member access.'
         : 'This account does not have early access yet.';
     }
     if (billingStatusCopy) {
       billingStatusCopy.textContent = state.appAccess
-        ? 'You’re all set. This invited account is approved for early access.'
+        ? state.earlyAccessActive
+          ? 'Early access is free until beta begins. You do not have a paid subscription through early access.'
+          : 'Your member access is active. Billing is not open yet.'
         : 'If you were invited, make sure you logged in with the same email. Otherwise, check back when early access opens more broadly.';
+      if (state.betaPriceEligible) billingStatusCopy.textContent += ' Your account keeps the $3.50/month beta rate, including if you cancel and return.';
     }
     if (subscriptionButton) subscriptionButton.hidden = true;
     if (manageBillingButton) manageBillingButton.hidden = true;

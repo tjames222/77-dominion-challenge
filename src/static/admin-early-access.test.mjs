@@ -5,7 +5,8 @@ import { createAdminReadClient, normalizeAdminContext } from './admin-read-clien
 import { createAdminPreview } from './admin-preview.mjs';
 import { mfaChallengeHref } from './mfa-navigation.mjs';
 import { createEarlyAccessPreviewStore } from './admin-early-access-preview.mjs';
-import { createEarlyAccessDenialIntent, earlyAccessDenialArguments, normalizeEarlyAccessRequest, normalizeEarlyAccessHistory, normalizeEarlyAccessDenial } from './admin-early-access-contract.mjs';
+import { createEarlyAccessDenialIntent, earlyAccessDenialArguments, normalizeEarlyAccessRequest, normalizeEarlyAccessHistory, normalizeEarlyAccessDenial,
+  createEarlyAccessInvitationIntent, earlyAccessInvitationArguments, normalizeEarlyAccessInvitation, EARLY_ACCESS_INVITATION_FAILURES } from './admin-early-access-contract.mjs';
 const A = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'; const B = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
 const owner = { actorId: A, sessionIdentity: `${A}:first-session` };
 const store = createEarlyAccessPreviewStore();
@@ -23,6 +24,8 @@ function fixture() {
     request: async (name, args, options) => {
       requests.push({ name, args, options }); if (handle) return handle(name, args, options);
       if (name === 'get_site_admin_context') return context();
+      if (name === 'admin-early-access-invitation') return { ok: true, requestId: args.requestId,
+        status: args.action === 'revoke' ? 'revoked' : 'approved', revision: String(BigInt(args.expectedRevision) + 1n) };
       return { ok: true, requestId: args.target_request_id, status: 'denied', revision: String(BigInt(args.target_expected_revision) + 1n) };
     },
   });
@@ -163,4 +166,91 @@ test('production-built queue browser coverage stays in the existing required Adm
   for (const path of ['./admin-preview.mjs', './admin-read-client.mjs']) {
     assert.doesNotMatch(read(path), /import [^;\n]+ from ['"]\.\/admin-early-access/);
   }
+});
+for (const [action, states] of Object.entries({ approve: ['pending'], resend: ['approved', 'invited', 'expired'], revoke: ['approved', 'invited'] })) {
+  test(`${action} requires its exact lifecycle states and a PII-free frozen original intent`, () => {
+    for (const status of ['pending', 'approved', 'invited', 'accepted', 'denied', 'expired', 'revoked']) {
+      const request = { ...item, status, revision: '9007199254740993' };
+      if (!states.includes(status)) { assert.throws(() => createEarlyAccessInvitationIntent(action, request, owner)); continue; }
+      const intent = createEarlyAccessInvitationIntent(action, request, owner);
+      assert.ok(Object.isFrozen(intent)); request.revision = '9007199254740994';
+      assert.equal(intent.revision, '9007199254740993');
+      assert.doesNotMatch(JSON.stringify(intent), /applicant|name|email|token|reason/);
+      const args = earlyAccessInvitationArguments(intent);
+      assert.deepEqual(Object.keys(args).sort(), ['action', 'correlationId', 'expectedActorId', 'expectedRevision', 'operationId', 'requestId']);
+      assert.equal(args.expectedActorId, A); assert.equal(args.expectedRevision, '9007199254740993');
+      for (const change of [{ action: 'accept' }, { revision: 0 }, { sessionIdentity: '' }, { operationId: '' }]) assert.throws(() => earlyAccessInvitationArguments({ ...intent, ...change }));
+    }
+  });
+  test(`${action} uses fresh MFA/context and exactly the same Edge intent for an explicit retry`, async () => {
+    const f = fixture(); const intent = createEarlyAccessInvitationIntent(action, { ...item, status: states[0] }, owner);
+    await f.client.manageEarlyAccessInvitation(intent); await f.client.manageEarlyAccessInvitation(intent);
+    assert.deepEqual(f.requests.map((value) => value.name), ['get_site_admin_context', 'admin-early-access-invitation', 'get_site_admin_context', 'admin-early-access-invitation']);
+    assert.deepEqual(f.requests[1].args, earlyAccessInvitationArguments(intent));
+    assert.deepEqual(f.requests[1].args, f.requests[3].args); assert.equal(f.requests[1].options.token, owner.sessionIdentity);
+  });
+}
+test('invitation responses require exact owner, state and revision with only fixed safe failures', () => {
+  const intent = createEarlyAccessInvitationIntent('approve', item, owner);
+  for (const response of [{ ok: true }, { ok: true, requestId: B, status: 'approved', revision: '1' },
+    { ok: true, requestId: item.id, status: 'invited', revision: '1' }, { ok: true, requestId: item.id, status: 'accepted', revision: '1' },
+    { ok: true, requestId: item.id, status: 'approved', revision: 1 }, { ok: true, requestId: item.id, status: 'approved', revision: '2' },
+    { ok: false, errorCode: 'PRIVATE_RAW_ERROR' }]) assert.throws(() => normalizeEarlyAccessInvitation(response, intent));
+  for (const errorCode of EARLY_ACCESS_INVITATION_FAILURES) assert.deepEqual(normalizeEarlyAccessInvitation({ ok: false, errorCode, raw: 'secret' }, intent), { ok: false, errorCode });
+});
+test('invitation writes fail before Edge for denied capability, MFA, malformed readiness, and a prior session', async () => {
+  const intent = createEarlyAccessInvitationIntent('approve', item, owner);
+  for (const mode of ['reader', 'step-up', 'missing', 'changed']) {
+    const f = fixture(); f.mode(mode);
+    if (mode === 'missing') f.handle(() => { const value = f.context(); delete value.stepUpRequired; return value; });
+    if (mode === 'changed') f.change(A);
+    await assert.rejects(f.client.manageEarlyAccessInvitation(intent));
+    assert.equal(f.requests.filter((value) => value.name === 'admin-early-access-invitation').length, 0);
+  }
+});
+test('invitation lazy-load cannot replay an intent after an actor round trip', async () => {
+  const f = fixture(); const result = f.client.manageEarlyAccessInvitation(createEarlyAccessInvitationIntent('approve', item, owner));
+  f.change(B); f.change(A, owner.sessionIdentity);
+  await assert.rejects(result, { code: 'ADMIN_CHANGED' }); assert.equal(f.requests.length, 0);
+});
+for (const phase of ['context', 'result']) for (const replacement of ['actor-roundtrip', 'new-session', 'bearer', 'assurance', 'cancel']) {
+  test(`invitation ${replacement} at ${phase} fences the captured authority and delayed response`, async () => {
+    const f = fixture(); const held = deferred(); const controller = new AbortController();
+    const intent = createEarlyAccessInvitationIntent('approve', item, owner);
+    f.handle((name) => phase === 'context' || name === 'admin-early-access-invitation' ? held.promise : f.context());
+    const result = f.client.manageEarlyAccessInvitation(intent, { signal: controller.signal }); await turn();
+    if (replacement === 'actor-roundtrip') { f.change(B); f.change(A, owner.sessionIdentity); }
+    else if (replacement === 'new-session') f.change(A, `${A}:replacement`, 'SIGNED_IN', false);
+    else if (replacement === 'bearer') f.token('replaced-unnotified-bearer');
+    else if (replacement === 'assurance') f.change(A, owner.sessionIdentity, 'TOKEN_REFRESHED');
+    else controller.abort();
+    held.resolve(phase === 'context' ? f.context() : { ok: true, requestId: item.id, status: 'approved', revision: '1' });
+    await assert.rejects(result, { code: replacement === 'cancel' ? 'ADMIN_UNAVAILABLE' : 'ADMIN_CHANGED' });
+    assert.equal(f.requests.filter((value) => value.name === 'admin-early-access-invitation').length, phase === 'context' ? 0 : 1);
+  });
+}
+test('synthetic approval, resend and revoke queue only in-memory decisions and never fabricate delivery/acceptance', async () => {
+  const preview = createAdminPreview({ getUser: async () => ({ userId: A, authenticated: true }), mode: 'ready' });
+  const actor = await preview.owner();
+  let request = (await preview.read('site_admin_list_early_access_requests', { target_limit: 25, target_status: 'pending' })).items[0];
+  for (const action of ['approve', 'resend', 'revoke']) {
+    const intent = createEarlyAccessInvitationIntent(action, request, actor);
+    const result = await preview.manageEarlyAccessInvitation(intent);
+    assert.deepEqual(await preview.manageEarlyAccessInvitation(intent), result);
+    request = (await preview.read('site_admin_get_early_access_request', { target_request_id: request.id })).item;
+    assert.equal(request.status, action === 'revoke' ? 'revoked' : 'approved');
+    assert.equal(request.invitationSentAt, null); assert.equal(request.acceptedAt, null);
+  }
+  const history = (await preview.read('site_admin_list_early_access_history', { target_request_id: request.id, target_limit: 10 })).items;
+  assert.deepEqual(history.map((event) => normalizeEarlyAccessHistory(event, request.id).action), ['early_access.revoke', 'early_access.resend', 'early_access.approve']);
+});
+test('acceptance and expiry history are strictly distinguished from admin approval and delivery', () => {
+  const base = { id: '1', requestId: item.id, actorId: A, operationId: A, correlationId: B, environment: 'production', occurredAt: '2026-09-27T12:00:00Z', outcome: 'success', errorCode: null, beforeStatus: 'invited' };
+  const accepted = { ...base, action: 'early_access.accept', permission: 'early_access.accept', reasonCode: 'invitation_acceptance', afterStatus: 'accepted' };
+  const expired = { ...base, actorId: null, action: 'early_access.expire', permission: 'early_access.lifecycle', reasonCode: 'invitation_expiry', afterStatus: 'expired' };
+  assert.equal(normalizeEarlyAccessHistory(accepted, item.id).afterStatus, 'accepted');
+  assert.equal(normalizeEarlyAccessHistory(expired, item.id).actorId, null);
+  for (const change of [{ actorId: null }, { permission: 'operations.manage' }, { reasonCode: 'early_access_review' }, { beforeStatus: 'pending' }]) assert.throws(() => normalizeEarlyAccessHistory({ ...accepted, ...change }, item.id));
+  assert.throws(() => normalizeEarlyAccessHistory({ ...expired, actorId: A }, item.id));
+  assert.throws(() => normalizeEarlyAccessHistory({ ...expired, outcome: 'failure', errorCode: 'invalid_state', afterStatus: 'invited' }, item.id));
 });

@@ -72,11 +72,17 @@ before(async () => {
     create function auth.uid() returns uuid language sql stable as $$select nullif(coalesce(nullif(current_setting('request.jwt.claims',true),''),'{}')::jsonb->>'sub','')::uuid$$;
     insert into auth.users(id,email,email_confirmed_at) values ('${actorId}', 'sam@example.com', now()), ('${otherId}', 'other@example.com', now());
     alter table auth.users owner to supabase_auth_admin;
-    grant select,references on auth.users to ${migrationRole};`);
+    grant select,references on auth.users to ${migrationRole};
+    -- PostgreSQL requires UPDATE on at least one column for FOR KEY SHARE;
+    -- only the migration owner receives it, never the service/browser roles.
+    grant update(id) on auth.users to ${migrationRole};`);
   [authOwnership] = query("select json_build_array(relowner,relacl::text) from pg_class where oid='auth.users'::regclass;");
   [authSchemaOwnership] = query("select json_build_array(nspowner,nspacl::text) from pg_namespace where nspname='auth';");
   migration = await readFile(new URL('../supabase/migrations/20260913023402_early_access_request_intake.sql', import.meta.url), 'utf8');
-  query(`set role ${migrationRole};begin; ${migration} commit;`);
+  const invitationMigration = await readFile(new URL('../supabase/migrations/20260927225600_early_access_invitation_lifecycle.sql', import.meta.url), 'utf8');
+  const currentIdentityHelper = invitationMigration.match(/create or replace function private\.early_access_verified_identity_matches\([\s\S]*?\n\$\$;/)?.[0];
+  assert.ok(currentIdentityHelper, 'Current reviewed intake lock-order helper must be loaded, without unrelated invitation schema.');
+  query(`set role ${migrationRole};begin; ${migration} ${currentIdentityHelper} commit;`);
 });
 beforeEach(() => query('truncate private.early_access_requests, private.early_access_intake_attempts;'));
 after(() => {

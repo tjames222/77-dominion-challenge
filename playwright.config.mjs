@@ -107,9 +107,11 @@ export default defineConfig({
         /local-production-stack\.spec\.mjs/,
         /mfa-live-auth\.spec\.mjs/,
         /admin-live\.spec\.mjs/,
+        /feedback-live\.spec\.mjs/,
         /daily-action-bootstrap-live\.spec\.mjs/,
         /admin-early-access-live\.spec\.mjs/,
         /admin-roles-live\.spec\.mjs/,
+        /early-access-invitation-live\.spec\.mjs/,
         /preview-badges-(?:built|hybrid)\.spec\.mjs/,
       ],
       metadata: {

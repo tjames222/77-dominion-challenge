@@ -84,7 +84,19 @@ verify_jwt = false
 [functions.request-early-access]
 verify_jwt = false
 
+# Original admin JWT is also independently revalidated by the SQL writer.
+[functions.admin-early-access-invitation]
+verify_jwt = true
+
+# Dedicated service-worker secret; never callable with member authority alone.
+[functions.process-early-access-invitations]
+verify_jwt = false
+
 [functions.process-integration-outbox]
+verify_jwt = false
+
+# Service worker authenticated by its dedicated secret, never a member token.
+[functions.process-early-access-feedback]
 verify_jwt = false
 
 [functions.process-retired-community-deletions]

@@ -55,11 +55,18 @@ describe('crew invitation Link, Code, and QR interface', () => {
   test('renders and exports the QR locally without a hosted QR endpoint', () => {
     assert.equal(packageJson.dependencies.qrcode, '1.5.4');
     assert.equal(packageJson.devDependencies.jsqr, '1.4.0');
-    assert.match(dialog, /import QRCode from 'qrcode'/);
+    assert.doesNotMatch(dialog, /import QRCode from 'qrcode'/);
+    assert.match(dialog, /const \{ default: QRCode \} = await import\('qrcode'\)/);
     assert.match(dialog, /QRCode\.toCanvas/);
     assert.match(dialog, /dominion-crew-invite\.png/);
     assert.doesNotMatch(dialog, /https?:\/\//);
     assert.doesNotMatch(dialog, /fetch\(|XMLHttpRequest|\bImage\s*\(/);
+  });
+
+  test('loads optional QR only on generation and fences a late chunk before any write', () => {
+    const generateBody = dialog.slice(dialog.indexOf('async function generateInvitation()'));
+    assert.equal(dialog.indexOf("import('qrcode')") > dialog.indexOf('async function generateInvitation()'), true);
+    assert.match(generateBody, /await import\('qrcode'\);\s*if \(version !== requestVersion \|\| !dialog\.isOpen\) return;\s*await currentActor\(\);\s*if \(version !== requestVersion \|\| !dialog\.isOpen\) return;\s*const invite = await issueCrewInviteBundle/);
   });
 
   test('revalidates actor and crew authorization and clears credentials on close', () => {

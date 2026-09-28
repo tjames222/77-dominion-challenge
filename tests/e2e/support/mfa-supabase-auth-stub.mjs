@@ -51,6 +51,13 @@ export async function installMfaSupabaseStub(context, { enrolled = true, appAcce
     }
     if (path === '/rest/v1/profiles') return json(route, { user_id: A, name: 'Synthetic Member', email: user().email, avatar_url: '', time_zone: 'UTC' });
     if (path === '/rest/v1/entitlements') return json(route, appAccess ? [{ entitlement_key: 'membership_active', status: 'active', ends_at: null }] : []);
+    if (path === '/rest/v1/rpc/get_member_access_context') {
+      if (!auth || body.target_expected_actor_id !== A) return json(route, { code: 'PT401', message: 'member_authentication_required' }, 401);
+      if (factorVerified && auth.aal !== 'aal2') return json(route, { code: 'PT403', message: 'member_mfa_required' }, 403);
+      return json(route, { schemaVersion: 1, actorId: A, asOf: new Date().toISOString(), appAccess,
+        legacyMembershipActive: appAccess, paidSubscriptionActive: false, earlyAccessActive: false,
+        earlyAccessProgram: null, earlyAccessEndsAt: null, betaPriceEligible: false });
+    }
     if (path === '/rest/v1/rpc/get_theme_preference' || path === '/rest/v1/rpc/set_theme_preference') return json(route, { theme_key: 'dark' });
     if (path === '/rest/v1/rpc/get_site_admin_context') return json(route, {
       schemaVersion: 1, actorId: A, role: 'member', adminReady: false, permissions: [],

@@ -101,6 +101,14 @@ export function createAdminReadClient({ getSession, getUser, sessionIdentity, su
         capture, assertCurrent, assertEpoch, changed, pending, request, adminReadError, normalizeAdminContext,
       });
     },
+    async manageEarlyAccessInvitation(intent, { signal } = {}) {
+      const captured = epoch;
+      const { runEarlyAccessInvitation } = await import('./admin-early-access-invitation-client.mjs');
+      assertEpoch(captured);
+      return runEarlyAccessInvitation(intent, { signal }, {
+        capture, assertCurrent, assertEpoch, changed, pending, request, adminReadError, normalizeAdminContext,
+      });
+    },
     async assignRole(intent, { signal } = {}) {
       const captured = epoch;
       const { runRoleAssignment } = await import('./admin-role-write-client.mjs');

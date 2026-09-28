@@ -9,6 +9,10 @@ import { pipeline } from 'node:stream/promises';
 import { pathToFileURL } from 'node:url';
 import { prepareProductionSupabaseDatabaseCredentials, revokeProductionSupabaseDatabaseCredentials } from './prepare-existing-supabase-cli-state.mjs';
 import { remainingCredentialMilliseconds, runDeadlineProcess } from './production-database-credential-lifetime.mjs';
+import { CURRENT_BACKUP_MODE, LEGACY_BACKUP_MODE, currentBackupVaultProofSql, currentBackupLocalVaultRecoverySql,
+  requireCurrentBackupVaultProof, requireCurrentBackupLocalVaultRecovery, currentBackupVaultRecoveryManifest } from './free-backup-current-vault.mjs';
+import { CURRENT_PGNET_TABLES, currentBackupPgNetCaptureSql, currentBackupPgNetLocalReplaySql,
+  currentBackupPgNetSequence, currentBackupPgNetLocalSequenceSql, currentBackupPgNetManifest } from './free-backup-current-pgnet.mjs';
 
 export const PROJECT_REF = 'mimolwojppbtsbvtqwpo';
 export const POSTGRES_IMAGE = 'public.ecr.aws/supabase/postgres:17.6.1.141';
@@ -68,7 +72,29 @@ export async function decryptBackup(input, output, manifest, privatePem) {
   } finally { key.fill(0); }
 }
 
-export function parseInventory(text, expectedVersions) {
+export function selectBackupMigrationCheckpoint(filenames, mode = LEGACY_BACKUP_MODE) {
+  assert([LEGACY_BACKUP_MODE, CURRENT_BACKUP_MODE].includes(mode), 'Unknown backup mode');
+  assert(Array.isArray(filenames));
+  const versions = filenames.filter(name => typeof name === 'string' && name.endsWith('.sql')).sort().map(name => {
+    assert.match(name, /^[0-9]{14}_[a-z0-9_]+\.sql$/u, 'Invalid migration filename');
+    return name.split('_')[0];
+  });
+  assert.equal(new Set(versions).size, versions.length, 'Duplicate migration version');
+  const expected = versions.slice(0, mode === CURRENT_BACKUP_MODE ? 61 : 13);
+  assert.equal(expected.length, mode === CURRENT_BACKUP_MODE ? 61 : 13, 'Incomplete migration checkpoint');
+  if (mode === CURRENT_BACKUP_MODE) {
+    assert.equal(expected.at(-1), '20260913082358', 'Unexpected current migration checkpoint');
+    assert.equal(sha256(JSON.stringify(expected)), '579aa73501df0b4b746f9128869f2fa6ea8208b560a4cf179df2893574ad5cff', 'Current migration prefix changed');
+  }
+  return expected;
+}
+
+export function parseInventory(text, expectedVersions, mode = LEGACY_BACKUP_MODE) {
+  assert([LEGACY_BACKUP_MODE, CURRENT_BACKUP_MODE].includes(mode), 'Unknown backup mode');
+  if (mode === CURRENT_BACKUP_MODE) {
+    assert.equal(expectedVersions.length, 61, 'Incomplete current migration checkpoint');
+    assert.equal(sha256(JSON.stringify(expectedVersions)), '579aa73501df0b4b746f9128869f2fa6ea8208b560a4cf179df2893574ad5cff', 'Current migration checkpoint changed');
+  }
   const records = text.trim().split('\n').filter(Boolean).map((line) => JSON.parse(line));
   const tables = records.filter((r) => r.kind === 'table');
   const boundaries = records.filter((r) => r.kind === 'boundary');
@@ -88,11 +114,13 @@ export function parseInventory(text, expectedVersions) {
   }
   for (const [schema, name] of [['vault', 'secrets'], ['pgsodium', 'key']]) {
     const table = tables.find((r) => r.schema === schema && r.name === name);
-    if (table) assert.equal(table.count, 0, 'Encrypted Vault/pgsodium data requires the original root key');
+    if (mode === CURRENT_BACKUP_MODE && schema === 'vault') {
+      assert(table && table.count === 2, 'Current backup requires the exact regenerable Vault pair');
+    } else if (table) assert.equal(table.count, 0, 'Encrypted Vault/pgsodium data requires the original root key');
   }
   const histories = records.filter((r) => r.kind === 'history');
   assert.equal(histories.length, 1);
-  assert.deepEqual(histories[0].versions, expectedVersions, 'Backup is only approved for the exact 1–13 checkpoint');
+  assert.deepEqual(histories[0].versions, expectedVersions, 'Backup requires the exact selected migration checkpoint');
   const eventTriggerRecords = records.filter((r) => r.kind === 'eventTriggers');
   assert.equal(eventTriggerRecords.length, 1, 'Missing unique event-trigger inventory');
   assert(Array.isArray(eventTriggerRecords[0].entries));
@@ -182,6 +210,8 @@ function cleanEnvironment() {
 }
 
 const safeDiagnosticCodes = new Set([
+  'current-vault-contract',
+  'current-pgnet-contract',
   'login-response-shape', 'login-role-format', 'login-password-format',
   'login-ttl-format', 'login-ttl-below-300', 'login-ttl-below-900',
   'login-ttl-below-3600', 'login-ttl-above-7200',
@@ -364,7 +394,11 @@ export async function runBackup() {
   const publicPem = process.env.PRODUCTION_BACKUP_PUBLIC_KEY;
   recipientKey(publicPem);
   const repository = process.cwd();
-  const expectedVersions = (await readdir(path.join(repository, 'supabase/migrations'))).filter((f) => f.endsWith('.sql')).sort().slice(0, 13).map((f) => f.split('_')[0]);
+  const backupMode = process.env.BACKUP_MODE || LEGACY_BACKUP_MODE;
+  const expectedVersions = selectBackupMigrationCheckpoint(await readdir(path.join(repository, 'supabase/migrations')), backupMode);
+  // Validate the protected recovery input before any capture or credentials.
+  const localVaultSql = backupMode === CURRENT_BACKUP_MODE
+    ? currentBackupLocalVaultRecoverySql(process.env.PROFILE_PHOTO_WORKER_SECRET) : null;
   const runtime = await mkdtemp('/dev/shm/dominion-backup-');
   await chmod(runtime, 0o700);
   const log = path.join(runtime, 'private.log');
@@ -424,10 +458,10 @@ export async function runBackup() {
       // remote command below explicitly switches role after authentication.
       '-e', 'PGOPTIONS=-c default_transaction_read_only=on -c role=postgres',
     ];
-    const remote = async (args, output) => {
+    const remote = async (args, output, input) => {
       try {
         remainingCredentialMilliseconds(credentialLifetime, PROJECT_REF);
-        const result = await command('docker', ['exec', ...remoteEnv, captureName, ...args], { log, output, deadlineNs: credentialLifetime.deadlineNs });
+        const result = await command('docker', ['exec', ...(input ? ['-i'] : []), ...remoteEnv, captureName, ...args], { log, output, input, deadlineNs: credentialLifetime.deadlineNs });
         remainingCredentialMilliseconds(credentialLifetime, PROJECT_REF);
         return result;
       } catch (error) {
@@ -447,13 +481,33 @@ export async function runBackup() {
     stage('inventory-before');
     await remote(['psql', '-X', '-q', '-v', 'ON_ERROR_STOP=1', '-c', REMOTE_BACKUP_ROLE_SQL, '-f', inventorySql], before);
     const beforeText = await readFile(before, 'utf8');
-    const inventory = parseInventory(beforeText, expectedVersions);
+    const inventory = parseInventory(beforeText, expectedVersions, backupMode);
     const sourceBootstrapRole = inventory.find((r) => r.kind === 'boundary').bootstrapRole;
+    const pgNetSequence = backupMode === CURRENT_BACKUP_MODE ? currentBackupPgNetSequence(inventory) : null;
+    let pgNetSupplement = null;
+    if (backupMode === CURRENT_BACKUP_MODE) {
+      stage('current-vault-proof');
+      const vault = inventory.find(r => r.kind === 'table' && r.schema === 'vault' && r.name === 'secrets');
+      const proof = path.join(runtime, 'current-vault-proof.sql');
+      await writeFile(proof, currentBackupVaultProofSql(process.env.PROFILE_PHOTO_WORKER_SECRET, vault.sha256), { flag: 'wx', mode: 0o600 });
+      requireCurrentBackupVaultProof(await remote(['psql', '-X', '-q', '-At', '-v', 'ON_ERROR_STOP=1', '-c', REMOTE_BACKUP_ROLE_SQL, '-f', '-'], undefined, proof));
+      await rm(proof);
+    }
     console.log('Production checkpoint verified; capturing a read-only logical backup.');
     stage('roles-capture');
     await remote(['pg_dumpall', '--roles-only', '--no-role-passwords', '--role=postgres'], path.join(capture, 'roles.sql'));
     stage('database-dump');
     await remote(['pg_dump', '--format=custom', '--compress=0', '--lock-wait-timeout=15000', '--role=postgres'], path.join(capture, 'database.dump'));
+    if (backupMode === CURRENT_BACKUP_MODE) {
+      stage('current-pgnet-capture');
+      for (const table of CURRENT_PGNET_TABLES) {
+        await remote(['psql', '-X', '-q', '-v', 'ON_ERROR_STOP=1', '-c', REMOTE_BACKUP_ROLE_SQL,
+          '-c', currentBackupPgNetCaptureSql(table.name)], path.join(capture, table.file));
+      }
+      pgNetSupplement = currentBackupPgNetManifest(await Promise.all(CURRENT_PGNET_TABLES.map(async table => ({
+        file: table.file, bytes: await readFile(path.join(capture, table.file)),
+      }))), pgNetSequence);
+    }
     const after = path.join(runtime, 'after.jsonl');
     stage('inventory-after');
     await remote(['psql', '-X', '-q', '-v', 'ON_ERROR_STOP=1', '-c', REMOTE_BACKUP_ROLE_SQL, '-f', inventorySql], after);
@@ -462,12 +516,15 @@ export async function runBackup() {
     minted = false;
     await removeContainer(captureName);
     containers.splice(containers.indexOf(captureName), 1);
-    // The restore receives only backup bytes and reviewed local startup code.
-    // It has no network, credential mount, or access to the hosted endpoint.
+    // Restore receives backup bytes and reviewed startup code; current mode
+    // later feeds the existing worker key on stdin for local reconstruction.
+    // It has no network, database credential mount, or hosted endpoint access.
     const restoreName = `dominion-backup-restore-${randomBytes(12).toString('hex')}`;
     containers.push(restoreName);
     stage('local-init');
-    await command('docker', ['run', '--detach', '--name', restoreName, '--label', `com.dominion.backup-owner=${ownershipToken}`, '--pull', 'never', '--network', 'none', '--read-only', '--cap-drop', 'ALL', '--security-opt', 'no-new-privileges', '--log-driver', 'none', '--user', '100:101', '--tmpfs', '/restore:rw,exec,nosuid,nodev,uid=100,gid=101,mode=0700,size=512m', '--tmpfs', '/tmp:rw,nosuid,nodev,noexec,uid=100,gid=101,mode=0700,size=64m', '--mount', `type=bind,source=${path.join(repository, 'scripts/free-backup-local-postgres.sh')},target=/startup.sh,readonly`, '--entrypoint', 'bash', imageId, '/startup.sh'], { log });
+    await command('docker', ['run', '--detach', '--name', restoreName, '--label', `com.dominion.backup-owner=${ownershipToken}`, '--pull', 'never', '--network', 'none', '--read-only', '--cap-drop', 'ALL', '--security-opt', 'no-new-privileges', '--log-driver', 'none', '--user', '100:101', '--tmpfs', '/restore:rw,exec,nosuid,nodev,uid=100,gid=101,mode=0700,size=512m', '--tmpfs', '/tmp:rw,nosuid,nodev,noexec,uid=100,gid=101,mode=0700,size=64m',
+      ...(backupMode === CURRENT_BACKUP_MODE ? ['-e', 'DOMINION_BACKUP_CURRENT_PG_NET=1'] : []),
+      '--mount', `type=bind,source=${path.join(repository, 'scripts/free-backup-local-postgres.sh')},target=/startup.sh,readonly`, '--entrypoint', 'bash', imageId, '/startup.sh'], { log });
     const local = (args, options = {}) => command('docker', ['exec', ...(options.input ? ['-i'] : []), restoreName, ...args], { log, ...options });
     let ready = false;
     for (let attempt = 0; attempt < 60; attempt++) {
@@ -486,24 +543,47 @@ export async function runBackup() {
       localSql: (sql) => local([...psql, '-At', '-c', sql]),
       restoreArchive: () => local(['pg_restore', '--host=/restore', '--username=backup_restore_admin', '--dbname=postgres', '--single-transaction', '--exit-on-error'], { input: path.join(capture, 'database.dump') }),
     });
+    if (backupMode === CURRENT_BACKUP_MODE) {
+      stage('local-pgnet-replay');
+      assert.deepEqual(currentBackupPgNetManifest(await Promise.all(CURRENT_PGNET_TABLES.map(async table => ({
+        file: table.file, bytes: await readFile(path.join(capture, table.file)),
+      }))), pgNetSequence), pgNetSupplement, 'Captured pg_net supplement changed');
+      for (const table of CURRENT_PGNET_TABLES) {
+        await local([...psql, '-c', currentBackupPgNetLocalReplaySql(table.name)], { input: path.join(capture, table.file) });
+      }
+      const sequenceSql = path.join(runtime, 'local-pgnet-sequence.sql');
+      await writeFile(sequenceSql, currentBackupPgNetLocalSequenceSql(pgNetSequence), { flag: 'wx', mode: 0o600 });
+      await local(psql, { input: sequenceSql });
+      await rm(sequenceSql);
+    }
     const restored = path.join(runtime, 'restored.jsonl');
     stage('content-verify');
     await local(psql, { input: inventorySql, output: restored });
     const restoredText = await readFile(restored, 'utf8');
     assert.equal(comparableInventory(restoredText), comparableInventory(beforeText), 'Restored contents, sequences, or migration history differ');
+    if (backupMode === CURRENT_BACKUP_MODE) {
+      stage('local-vault-reconstruction');
+      const recovery = path.join(runtime, 'local-vault-reconstruction.sql');
+      await writeFile(recovery, localVaultSql, { flag: 'wx', mode: 0o600 });
+      requireCurrentBackupLocalVaultRecovery(await local(psql, { input: recovery }));
+      await rm(recovery);
+    }
     await removeContainer(restoreName);
     containers.splice(containers.indexOf(restoreName), 1);
     console.log('Isolated restore reproduced all captured table contents, sequences, and migration history.');
     const tarball = path.join(runtime, 'backup.tar');
-    await command('tar', ['-cf', tarball, '-C', capture, 'roles.sql', 'database.dump', 'inventory.jsonl'], { log });
+    await command('tar', ['-cf', tarball, '-C', capture, 'roles.sql', 'database.dump', 'inventory.jsonl',
+      ...(backupMode === CURRENT_BACKUP_MODE ? CURRENT_PGNET_TABLES.map(table => table.file) : [])], { log });
     stage('encryption');
     const encrypted = await encryptBackup(tarball, path.join(artifactDirectory, 'backup.enc'), publicPem);
     const manifest = {
-      schemaVersion: 1, artifactContract: 'dominion-free-production-backup/v1',
+      schemaVersion: backupMode === CURRENT_BACKUP_MODE ? 2 : 1,
+      artifactContract: backupMode === CURRENT_BACKUP_MODE ? 'dominion-free-current-production-backup/v1' : 'dominion-free-production-backup/v1',
       projectRef: PROJECT_REF, releaseCommit, runId: process.env.GITHUB_RUN_ID,
       runAttempt: Number(process.env.GITHUB_RUN_ATTEMPT), createdAt: new Date().toISOString(),
       postgresImage: POSTGRES_IMAGE, postgresImageId: imageId, ...encrypted,
       restoreVerified: true, storageObjects: 0, migrationVersions: expectedVersions,
+      ...(backupMode === CURRENT_BACKUP_MODE ? { backupMode, vaultRecovery: currentBackupVaultRecoveryManifest(), pgNetSupplement } : {}),
     };
     await writeFile(path.join(artifactDirectory, 'backup-manifest.json'), JSON.stringify(manifest, null, 2) + '\n', { flag: 'wx', mode: 0o600 });
     if (process.env.GITHUB_OUTPUT) await writeFile(process.env.GITHUB_OUTPUT, `artifact_directory=${artifactDirectory}\n`, { flag: 'a' });
@@ -511,19 +591,27 @@ export async function runBackup() {
   } catch (error) {
     fail(`Backup failed at stage ${phase} (${classifyBackupFailure(error)}); no private diagnostic text is emitted`);
   } finally {
-    let cleanupFailed = false;
-    for (const name of containers) {
-      try { await removeContainer(name); }
-      catch { cleanupFailed = true; }
-    }
-    if (minted) {
-      try { await revokeProductionSupabaseDatabaseCredentials({ accessToken: token, projectRef: PROJECT_REF }); }
-      catch { cleanupFailed = true; }
-    }
-    await rm(runtime, { recursive: true, force: true });
-    if (!success || cleanupFailed) await rm(artifactDirectory, { recursive: true, force: true });
-    if (cleanupFailed) fail('Backup cleanup failed; no completed backup artifact will be published');
+    await cleanupBackupResources({ containers, removeContainer, minted, success,
+      revokeCredentials: () => revokeProductionSupabaseDatabaseCredentials({ accessToken: token, projectRef: PROJECT_REF }),
+      removeRuntime: () => rm(runtime, { recursive: true, force: true }),
+      removeArtifact: () => rm(artifactDirectory, { recursive: true, force: true }),
+    });
   }
+}
+
+export async function cleanupBackupResources({ containers, removeContainer, minted, success, revokeCredentials, removeRuntime, removeArtifact }) {
+  let cleanupFailed = false;
+  for (const name of containers) {
+    try { await removeContainer(name); } catch { cleanupFailed = true; }
+  }
+  if (minted) {
+    try { await revokeCredentials(); } catch { cleanupFailed = true; }
+  }
+  try { await removeRuntime(); } catch { cleanupFailed = true; }
+  if (!success || cleanupFailed) {
+    try { await removeArtifact(); } catch { cleanupFailed = true; }
+  }
+  if (cleanupFailed) fail('Backup cleanup failed; no completed backup artifact will be published');
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

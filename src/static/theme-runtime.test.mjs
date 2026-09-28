@@ -231,7 +231,7 @@ test('every HTML entry blocks on the shared bootstrap before stylesheets', async
     assert.ok(themeMetaIndex < bootstrapIndex, `${file} must define theme-color before bootstrap`);
     assert.ok(bootstrapIndex < stylesheetIndex, `${file} must bootstrap before loading CSS`);
     assert.equal(html.match(/src="\.\/theme-bootstrap\.js"/g)?.length, 1, `${file} must bootstrap once`);
-    assert.equal(html.match(/href="\.\/src\/assets\/dominion-platinum\.css"/g)?.length, 1, `${file} must load Dominion Platinum once`);
+    assert.equal(html.match(/href="\.\/src\/assets\/dominion-platinum\.css(?:\?isolated-shell)?"/g)?.length, 1, `${file} must load Dominion Platinum once`);
     assert.doesNotMatch(html, /localStorage\.getItem\(['"]dominion:theme/);
   }
 

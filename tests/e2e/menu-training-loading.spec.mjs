@@ -9,7 +9,7 @@ import AxeBuilder from '@axe-core/playwright';
 
 const controllerRequest = /\/menu-training-controllers(?:-[\w-]+)?\.(?:mjs|js)(?:\?|$)/;
 
-for (const chunk of ['menu-training-controllers', 'site-training-ui']) {
+for (const chunk of ['menu-training-controllers entry', 'menu-training-controllers implementation', 'site-training-ui']) {
   test(`the full built ${chunk} graph recovers from a real HTTP503 after explicit reload`, async ({ page, app }) => {
     const artifact = await build({
       root: fileURLToPath(new URL('../..', import.meta.url)),
@@ -38,15 +38,37 @@ for (const chunk of ['menu-training-controllers', 'site-training-ui']) {
       && Object.keys(asset.modules).some((id) => /(?:site-training-registry|site-training-runtime|page-training-controls|solo-first-run-training|site-training-coachmark)\.(?:mjs|js)$/.test(id)));
     expect(trainingChunks.map((asset) => asset.name).sort())
       .toEqual(['menu-training-controllers', 'site-training-ui']);
-    const target = new RegExp(`/${chunk}-[\\w-]+\\.js$`);
+    // Rolldown may emit both a dynamic-entry facade and the shared controller
+    // implementation under the same chunk name. They are distinct requests,
+    // not a retry. Fail each boundary separately and count every concrete asset.
+    const controllerEntry = artifact.output.find((asset) => asset.type === 'chunk'
+      && asset.facadeModuleId?.endsWith('/src/static/menu-training-controllers.mjs'));
+    const controllerImplementation = trainingChunks.find((asset) => asset.name === 'menu-training-controllers');
+    const presentation = trainingChunks.find((asset) => asset.name === 'site-training-ui');
+    expect(controllerEntry).toBeTruthy();
+    const boundaries = {
+      'menu-training-controllers entry': controllerEntry,
+      'menu-training-controllers implementation': controllerImplementation,
+      'site-training-ui': presentation,
+    };
+    const target = `/${boundaries[chunk].fileName}`;
+    const optionalAsset = /\/(?:menu-training-controllers|site-training-ui)-[\w-]+\.js$/;
+    const optionalPaths = [...new Set(Object.values(boundaries).map((asset) => `/${asset.fileName}`))];
+    expect(artifact.output.filter((asset) => asset.type === 'chunk' && optionalAsset.test(`/${asset.fileName}`))
+      .map((asset) => `/${asset.fileName}`).sort()).toEqual([...optionalPaths].sort());
+    const expectedBeforeReload = Object.fromEntries(optionalPaths.map((path) => [path, 0]));
+    for (const boundary of Object.values(boundaries)) {
+      expectedBeforeReload[`/${boundary.fileName}`] = 1;
+      if (`/${boundary.fileName}` === target) break;
+    }
     let failing = true;
-    let attempts = 0;
+    const attempts = Object.fromEntries(optionalPaths.map((path) => [path, 0]));
     const server = createServer((request, response) => {
       const pathname = new URL(request.url, 'http://localhost').pathname;
       response.setHeader('Cache-Control', 'no-store');
-      if (target.test(pathname)) {
-        attempts += 1;
-        if (failing) { response.writeHead(503); response.end('Temporarily unavailable'); return; }
+      if (optionalAsset.test(pathname)) {
+        attempts[pathname] = (attempts[pathname] || 0) + 1;
+        if (pathname === target && failing) { response.writeHead(503); response.end('Temporarily unavailable'); return; }
       }
       if (!assets.has(pathname)) { response.writeHead(404); response.end(); return; }
       response.setHeader('Content-Type', pathname.endsWith('.html') ? 'text/html' : pathname.endsWith('.css') ? 'text/css' : pathname.endsWith('.js') ? 'text/javascript' : 'application/octet-stream');
@@ -60,14 +82,14 @@ for (const chunk of ['menu-training-controllers', 'site-training-ui']) {
       if (chunk === 'site-training-ui') await page.getByRole('button', { name: 'Start page training', exact: true }).click();
       const recovery = page.getByRole('button', { name: 'Reload to load training', exact: true });
       await expect(recovery).toBeVisible();
-      expect(attempts).toBe(1);
-      await expect(page.locator(`link[rel="modulepreload"][href*="${chunk}-"]`)).toHaveCount(0);
+      expect(attempts).toEqual(expectedBeforeReload);
+      await expect(page.locator('link[rel="modulepreload"][href*="menu-training-controllers-"], link[rel="modulepreload"][href*="site-training-ui-"]')).toHaveCount(0);
       failing = false;
       await recovery.click();
       await expect(page.getByRole('button', { name: 'Keep editing', exact: true })).toBeFocused();
       await page.getByRole('button', { name: 'Keep editing', exact: true }).click();
       await page.getByRole('button', { name: 'Open menu' }).click();
-      expect(attempts).toBe(1, 'Recovery must not imply a cached module rejection can be retried in-document.');
+      expect(attempts, 'Recovery must not imply a cached module rejection can be retried in-document.').toEqual(expectedBeforeReload);
       await recovery.click();
       await Promise.all([
         page.waitForEvent('framenavigated', { predicate: (frame) => frame === page.mainFrame() }),
@@ -77,7 +99,8 @@ for (const chunk of ['menu-training-controllers', 'site-training-ui']) {
       await page.getByRole('button', { name: 'Start page training', exact: true }).click();
       await expect(page.locator('.site-training-layer')).toBeVisible();
       await expect(page.locator('#siteTrainingTitle')).toBeFocused();
-      expect(attempts).toBe(2);
+      expect(attempts[target]).toBe(2);
+      expect(attempts).toEqual(Object.fromEntries(Object.entries(expectedBeforeReload).map(([path, count]) => [path, count + 1])));
       expect(await page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue('--site-training-styles-ready').trim())).toBe('1');
       app.assertNoRuntimeErrors([/Failed to load resource: the server responded with a status of 503/, /Failed to load resource: (?:The operation couldn’t be completed|Load failed)/]);
     } finally { await new Promise((resolve) => server.close(resolve)); }

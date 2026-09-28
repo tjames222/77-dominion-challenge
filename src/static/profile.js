@@ -540,13 +540,16 @@ function updateBillingSummary(state) {
       : 'Status: Early access needed';
     if (billingEyebrow) billingEyebrow.textContent = 'Early access';
     document.getElementById('profileBillingTitle').textContent = state.appAccess
-      ? 'Early access active'
+      ? state.earlyAccessActive ? 'Early access active' : 'Member access active'
       : 'Invitation required';
     document.getElementById('profileBillingCopy').textContent = state.appAccess
-      ? 'This invited account can use the full Dominion experience. Billing is not open during early access.'
+      ? state.earlyAccessActive
+        ? 'Early access is free until beta begins; it is not a paid subscription.'
+        : 'This account has member access. Billing is not open yet.'
       : 'This account is not in the invited group yet. If you were invited, make sure you used the same email.';
+    if (state.betaPriceEligible) document.getElementById('profileBillingCopy').textContent += ' Your account keeps the $3.50/month beta rate, including if you cancel and return.';
     document.getElementById('profileSubscriptionPill').textContent = state.appAccess
-      ? 'Early access active'
+      ? state.earlyAccessActive ? 'Early access active' : 'Member access active'
       : 'Invitation required';
     if (billingLink) billingLink.hidden = true;
     return;

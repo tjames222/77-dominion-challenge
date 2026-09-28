@@ -4,7 +4,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { posix } from 'node:path';
 import { build } from 'vite';
-import config, { isSharedMenuModule, resolveTrainingModulePreloads } from '../../vite.config.mjs';
+import config, { isSharedMenuModule, isPublicShellModule, isSharedAuthModule, resolveTrainingModulePreloads } from '../../vite.config.mjs';
 import { PRODUCTION_ENTRYPOINTS } from '../../app-entrypoints.mjs';
 import { htmlAssetReferences } from '../../scripts/measure-frontend-bundles.mjs';
 
@@ -30,21 +30,26 @@ test(`only the dynamically imported ${chunk} skips its redundant JavaScript prel
 
 test('shared menu grouping includes only its existing shell and leaves feature modules optional', () => {
   assert.equal(isSharedMenuModule('/project/src/static/menu.js'), true);
-  assert.equal(isSharedMenuModule('\0vite/modulepreload-polyfill.js'), true);
+  assert.equal(isSharedMenuModule('\0vite/modulepreload-polyfill.js'), false);
   for (const sheet of ['styles', 'product', 'menu', 'dominion-night', 'dominion-platinum']) {
     assert.equal(isSharedMenuModule(`/project/src/assets/${sheet}.css`), true);
     for (const entry of Object.values(PRODUCTION_ENTRYPOINTS)) {
       const html = readFileSync(new URL(`../../${entry}`, import.meta.url), 'utf8');
-      // MFA is deliberately menu-free. Entry-aware grouping below must not
-      // pull the menu's code/CSS into that entry via its shared API imports.
-      if (entry === 'account-security.html' && sheet === 'menu') {
+      // Menu-free entries use isolated CSS identities: Vite's normal CSS
+      // wrappers must not import the shared menu chunk for side effects.
+      if (['account-security.html', 'early-access-invite.html'].includes(entry) && sheet === 'menu') {
         assert.ok(!html.includes('/src/static/menu.js'));
         assert.ok(!html.includes('/src/assets/menu.css'));
-      } else assert.ok(html.includes(`/src/assets/${sheet}.css`), `${entry} already uses ${sheet}`);
+      } else {
+        assert.ok(html.includes(`/src/assets/${sheet}.css`), `${entry} already uses ${sheet}`);
+        if (['account-security.html', 'early-access-invite.html'].includes(entry)) {
+          assert.ok(html.includes(`/src/assets/${sheet}.css?isolated-shell`));
+          assert.equal(isSharedMenuModule(`/project/src/assets/${sheet}.css?isolated-shell`), false);
+        }
+      }
     }
   }
-  // Dialog styling belongs to the shared menu's existing modal controls,
-  // including the invitation page, which had omitted its direct stylesheet.
+  // Dialog styling belongs to the shared menu's existing modal controls.
   assert.equal(isSharedMenuModule('/project/src/assets/dialog.css'), true);
   for (const module of ['menu-training-controllers.mjs', 'site-training-registry.mjs', 'site-training-ui.js', 'community.js', 'dashboard.js']) {
     assert.equal(isSharedMenuModule(`/project/src/static/${module}`), false);
@@ -52,10 +57,26 @@ test('shared menu grouping includes only its existing shell and leaves feature m
   for (const sheet of ['site-training', 'community', 'share-composer']) {
     assert.equal(isSharedMenuModule(`/project/src/assets/${sheet}.css`), false);
   }
-  const [shell, controllers] = config({ mode: 'production' }).build.rollupOptions.output.codeSplitting.groups;
+  for (const module of ['reveal.js', 'daily-standard-routes.mjs', 'group-integration-launch.mjs']) {
+    assert.equal(isSharedMenuModule(`/project/src/static/${module}`), true);
+  }
+  const [publicShell, auth, navigation, shell, communityStyles, controllers] = config({ mode: 'production' }).build.rollupOptions.output.codeSplitting.groups;
+  assert.equal(publicShell.test, isPublicShellModule); assert.equal(auth.test, isSharedAuthModule);
+  assert.ok(publicShell.priority > auth.priority && auth.priority > shell.priority);
+  for (const id of ['\0vite/modulepreload-polyfill.js', '\0vite/preload-helper.js']) assert.equal(isPublicShellModule(id), true);
+  for (const id of ['/project/src/static/api.js', '/project/src/static/theme-state.js', '/project/src/static/theme-entitlement-state.js']) assert.equal(isSharedAuthModule(id), true);
+  assert.equal(isPublicShellModule('/project/src/static/api.js'), false);
+  assert.equal(isPublicShellModule('/project/src/assets/menu.css'), false);
+  assert.equal(isPublicShellModule('/project/src/assets/styles.css'), false);
+  assert.equal(isPublicShellModule('/project/src/assets/styles.css?isolated-shell'), false);
+  for (const name of ['invite-flow', 'mfa-navigation']) assert.equal(navigation.test.test(`/project/src/static/${name}.mjs`), true);
+  assert.equal(navigation.test.test('/project/src/static/auth.js'), false);
+  assert.equal(communityStyles.test.test('/project/src/assets/community.css'), true);
+  assert.equal(communityStyles.test.test('/project/src/assets/crew-invite.css'), true);
+  assert.equal(communityStyles.test.test('/project/src/static/community.js'), false);
+  assert.equal(isSharedAuthModule('/project/src/static/menu.js'), false);
   assert.equal(shell.test, isSharedMenuModule);
-  assert.equal(shell.entriesAware, true);
-  assert.equal(shell.entriesAwareMergeThreshold, 30000);
+  assert.equal(shell.entriesAwareMergeThreshold, undefined);
   assert.ok(shell.priority > controllers.priority);
   assert.equal(controllers.test.test('/project/src/static/menu-training-controllers.mjs'), true);
   assert.equal(controllers.test.test('/project/src/static/site-training-ui.js'), false);
@@ -90,9 +111,13 @@ test('actual production graph keeps MFA free of menu side effects and training s
     return [...visited].map(path => assets.get(path)).filter(Boolean);
   }
   const security = graph('account-security.html');
+  const invitationModules = graph('early-access-invite.html').filter(asset => asset.type === 'chunk').flatMap(asset => Object.keys(asset.modules));
+  for (const name of ['api.js', 'menu.js', 'auth-runtime-core.mjs', 'early-access-invitation-page.mjs', 'early-access-invitation-client.mjs']) {
+    assert.ok(!invitationModules.some(id => id.endsWith(`/src/static/${name}`)), `invitation strips its capability before loading ${name}`);
+  }
   for (const entry of Object.values(PRODUCTION_ENTRYPOINTS)) {
     const modules = graph(entry).filter(asset => asset.type === 'chunk').flatMap(asset => Object.keys(asset.modules));
-    assert.equal(modules.filter(id => id.endsWith('/src/static/auth-runtime-core.mjs')).length, 1, `${entry} loads exactly one shared Auth runtime`);
+    assert.equal(modules.filter(id => id.endsWith('/src/static/auth-runtime-core.mjs')).length, entry === 'early-access-invite.html' ? 0 : 1, `${entry} shared Auth runtime (invitation defers until fragment cleanup)`);
     assert.equal(modules.some(id => id.endsWith('/src/static/reward-link-contract.mjs')), entry === 'badges-rewards.html', `${entry} loads the pure reward-link parser only when needed`);
     for (const name of ['reward-celebrations.mjs', 'celebration-delivery-token.mjs']) {
       assert.equal(modules.some(id => id.endsWith(`/src/static/${name}`)), entry === 'dashboard.html', `${entry} keeps reward delivery/recovery owned by Dashboard`);
@@ -122,5 +147,7 @@ test('actual production graph keeps MFA free of menu side effects and training s
     assert.ok(!modules.some(id => id.endsWith('/src/static/journal-date-picker.mjs')), `${entry} does not load journal calendar UI`);
     assert.ok(!modules.some(id => /\/(?:menu-training-controllers|site-training-ui|site-training-coachmark)\.(?:js|mjs)$/.test(id)), `${entry} keeps training optional`);
     assert.ok(!modules.some(id => /\/admin-role-(?:detail|contract|write-client)\.mjs$/.test(id)), `${entry} does not load role review or mutation code`);
+    assert.ok(!modules.some(id => id.includes('/node_modules/qrcode/')), `${entry} keeps optional QR rendering out of its initial graph`);
+    assert.ok(!modules.some(id => id.endsWith('/src/static/admin-preview.mjs')), `${entry} keeps synthetic administration out of its initial graph`);
   }
 });

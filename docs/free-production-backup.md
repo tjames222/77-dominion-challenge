@@ -1,7 +1,8 @@
 # Free production backup
 
 The manual **Free production backup** workflow captures the existing project
-`mimolwojppbtsbvtqwpo` at the exact first thirteen migration checkpoint. It uses
+`mimolwojppbtsbvtqwpo`. Its default `legacy-thirteen-migration-cutover` mode is
+still restricted to the exact first thirteen migration checkpoint. It uses
 the repository's standard GitHub-hosted runner and makes no paid Supabase API
 request or project creation. Production backup and release share the same
 concurrency group.
@@ -54,8 +55,10 @@ earlier migration; inspect exact history and review the recovery path instead of
 assuming the whole chain rolled back or blindly retrying it.
 
 The backup is restored into a new `initdb` cluster in a network-disabled container
-with tmpfs data. It has no hosted credentials and its local admin role must be
-absent from the source. Cron execution is disabled. The restore must reproduce
+with tmpfs data. It has no hosted database credentials and its local admin role
+must be absent from the source. The current mode additionally feeds an existing
+worker credential on stdin for its local reconstruction test, described below;
+no database credential is passed or mounted. Cron execution is disabled. The restore must reproduce
 every non-system table's row count and SHA-256 content fingerprint, sequence
 state, large-object fingerprint, migration history, and event-trigger ownership,
 enabled state, tags, and function identity/ownership. These event-trigger records
@@ -97,3 +100,106 @@ It does not connect to a database. The archive contains `roles.sql`,
 `database.dump`, and `inventory.jsonl`. Any future hosted restore is a separately
 reviewed recovery action. A successful isolated restore does not create a hosted
 project or reset the existing one.
+
+## Current September 27 checkpoint
+
+Choose `current-production-2026-09-27` explicitly when dispatching the manual
+workflow to capture the current, pre-release database. This separate mode pins
+exactly 61 migration versions through `20260913082358` and a source-fixed SHA-256
+of that complete ordered prefix. It does not silently accept the candidate's
+five pending migrations, an arbitrary database history, or a different prefix.
+The old thirteen-migration default and compatibility-cutover evidence verifier
+are unchanged.
+
+### Preserving pg_net extension data
+
+PostgreSQL omits non-configuration extension-member contents from `pg_dump`,
+including when selecting those tables explicitly. The pinned production
+`pg_net` 0.20.3 has exactly three such relations: `net._http_response`,
+`net.http_request_queue`, and `net.http_request_queue_id_seq`. Current mode
+checks the exact version, extension membership/configuration, table column
+order/types/nullability, absence of user triggers, and sequence definition.
+Unknown non-configuration extension relations fail closed. See the
+[PostgreSQL extension configuration-table contract](https://www.postgresql.org/docs/17/extend-extensions.html#EXTEND-EXTENSIONS-CONFIG-TABLES).
+
+Two explicit read-only binary `COPY TO STDOUT` operations preserve every row
+in `pg-net-http-response.copy` and `pg-net-http-request-queue.copy`, inside the
+same private mode-0600 tmpfs capture directory. The sequence value and
+`is_called` flag come from the original validated inventory, without invoking
+`nextval`. Both binary files are included in the encrypted tar. The
+`pgNetSupplement` manifest records their exact names, byte lengths, SHA-256
+hashes, extension version, binary format, and lossless sequence state under
+`dominion-pg-net-binary-supplement/v1`. Neither HTTP bodies nor headers are
+printed, and there is no hosted `COPY FROM`, `setval`, or extension mutation.
+The original source-before/after and full restored-inventory equality checks
+are unchanged; no pg_net table, response, queued request, or sequence is ignored.
+
+Current-mode isolated startup additionally preloads pg_net (required for its
+native extension DDL), sets `max_worker_processes=0`, `pg_net.batch_size=0`,
+and directs its worker at the deliberately nonexistent
+`dominion_backup_disabled` database. Cron stays off, networking stays disabled,
+and no background worker can drain requests or expire responses. The legacy
+startup remains unchanged unless the exact current-mode flag is passed.
+Each binary replay refuses before writing unless the local admin/socket/
+no-listener/worker-disable settings, absent worker database, pinned metadata,
+and empty destination table all match. Replay is transactional; corrupt or
+truncated input cannot commit partial rows. The sequence uses psql17 bound
+parameters against the one fixed local sequence. Any failure prevents artifact
+publication and removes only the owned disposable runtime. Future recovery must
+preserve these no-worker/no-egress conditions until separately reviewed;
+restoring queued requests into an active worker could resend them.
+
+Native tests use the actual restricted startup script and the exact production
+psql `-c`/binary-stdin transport. They verify full equality for nonempty queues,
+expired responses, nulls, JSON, Unicode, newlines and bytea; both sequence states;
+metadata/runtime/role refusals; and rollback of damaged binary copies. The
+existing fresh-key Vault tests also run under this current-mode startup in CI.
+
+Current production contains exactly two regenerable Vault settings:
+`profile_photo_project_url` and `profile_photo_worker_secret`, used by the one
+`process-profile-photo-cleanup` Cron job. All other encrypted Vault data remains
+out of scope. A fixed, parameterized, repeatable-read **read-only** query verifies
+the exact names, null key IDs, exact known Cron command/schedule/owner, the fixed
+project URL, no foreign keys referencing `vault.secrets`, and equality to the existing protected GitHub production secret
+`PROFILE_PHOTO_WORKER_SECRET`. It returns only a boolean. The proof is bound to
+the exact ciphertext-table fingerprint in the captured inventory; before/after
+inventory equality still rejects source changes. It neither exports decrypted
+Vault values nor reads the project root key, changes source settings, or invokes
+any job. Unknown secrets, value mismatches, a different job, Storage blobs,
+multipart uploads, foreign tables, or pgsodium encrypted data fail closed.
+
+The archive preserves the **original encrypted Vault rows**, with unchanged
+owners and ACLs. After the original isolated restore and full fingerprint
+comparison succeeds, an additional disposable-only test captures the two names
+and descriptions, deletes exactly those two known rows, recreates their values
+using the protected settings, verifies them under the local fresh encryption
+key, and rolls the test transaction back. Its new UUIDs exist only inside that
+rolled-back rehearsal; the original ciphertext/IDs remain in the archive. The test requires
+`backup_restore_admin`, the `/restore` Unix socket, no listening address,
+disabled Cron execution, and no referring foreign keys before any mutation.
+The container is also network-none.
+It never runs against hosted Postgres. Parameter values are fed through psql's
+extended-protocol `\bind` on stdin, in mode-0600 tmpfs SQL files outside the
+archive directory; these files are removed on success and during failure
+cleanup. No worker credential is placed in argv, stdout, or the artifact
+manifest. The worker credential is not a Supabase root encryption key.
+
+This mode has a distinct manifest contract:
+`dominion-free-current-production-backup/v1`, `schemaVersion: 2`.
+Its `vaultRecovery` object expressly says `selfContained: false` and records
+that recovery depends on protected GitHub production settings
+`VITE_SUPABASE_URL` and `PROFILE_PHOTO_WORKER_SECRET`. Preserve access to those
+settings. It is **not a standalone Vault/root-key backup**: database dumps retain
+Vault ciphertext, while its encryption key lives outside the database.
+See [Supabase Vault encryption-key documentation](https://supabase.com/docs/guides/database/vault#encryption-key-location).
+The old compatibility-cutover verifier rejects this different contract.
+
+If the original root key is unavailable during a separately reviewed recovery,
+the two settings must be reconstructed from those protected inputs before Cron
+is enabled. The current general provisioning operator reads the decrypted view
+before updating, so it cannot be assumed to repair old ciphertext under a
+different key; Vault 0.3.1's `update_secret` itself also tries to decrypt the old
+value. The isolated recovery proof instead recreates the exact two name-addressed
+settings with explicit values without first decrypting their old ciphertext.
+Any actual hosted recovery—including a proposed secret recreation—is a separate
+reviewed action; this proof does not authorize or perform it.

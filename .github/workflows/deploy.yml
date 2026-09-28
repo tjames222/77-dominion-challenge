@@ -17,6 +17,11 @@ on:
         required: false
         default: ""
         type: string
+      send_test_email:
+        description: Send the single approved September 27 email-delivery test to the fixed owner mailbox (full release only).
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   actions: read
@@ -505,6 +510,13 @@ jobs:
       RETIRED_COMMUNITY_WORKER_SECRET: ${{ secrets.RETIRED_COMMUNITY_WORKER_SECRET }}
       RETIRED_COMMUNITY_DR_HMAC_SECRET: ${{ secrets.RETIRED_COMMUNITY_DR_HMAC_SECRET }}
       PROFILE_PHOTO_WORKER_SECRET: ${{ secrets.PROFILE_PHOTO_WORKER_SECRET }}
+      FEEDBACK_WORKER_SECRET: ${{ secrets.FEEDBACK_WORKER_SECRET }}
+      EARLY_ACCESS_INVITATION_WORKER_SECRET: ${{ secrets.EARLY_ACCESS_INVITATION_WORKER_SECRET }}
+      EARLY_ACCESS_INVITATION_KEY: ${{ secrets.EARLY_ACCESS_INVITATION_KEY }}
+      EARLY_ACCESS_INVITATION_KEY_VERSION: ${{ vars.EARLY_ACCESS_INVITATION_KEY_VERSION }}
+      TRANSACTIONAL_EMAIL_FROM: "Dominion <noreply@mail.77dominion.com>"
+      EARLY_ACCESS_NATIVE_BOOTSTRAP_ENABLED: "true"
+      EARLY_ACCESS_AUTH_RECOVERY_TTL_SECONDS: "3600"
       SLACK_CLIENT_ID: ${{ secrets.SLACK_CLIENT_ID }}
       SLACK_CLIENT_SECRET: ${{ secrets.SLACK_CLIENT_SECRET }}
       SLACK_SIGNING_SECRET: ${{ secrets.SLACK_SIGNING_SECRET }}
@@ -561,6 +573,24 @@ jobs:
             echo "::error::PUBLIC_SITE_URL must be an HTTPS production origin."
             exit 1
           fi
+      - name: Validate Early Access runtime and distinct credentials
+        env:
+          RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
+          LINEAR_FEEDBACK_API_KEY: ${{ secrets.LINEAR_FEEDBACK_API_KEY }}
+        run: node scripts/verify-early-access-runtime-config.mjs
+      - name: Verify dedicated feedback provider destination
+        env:
+          LINEAR_FEEDBACK_API_KEY: ${{ secrets.LINEAR_FEEDBACK_API_KEY }}
+        run: node scripts/verify-production-feedback-provider.mjs
+      - name: Configure verified native password-reset email
+        env:
+          RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
+        run: node scripts/configure-production-auth-email.mjs
+      - name: Send the single explicitly approved email-delivery test
+        if: inputs.send_test_email == true
+        env:
+          RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
+        run: node scripts/send-approved-production-test-email.mjs
       - name: Validate enabled billing configuration
         if: env.BILLING_ENABLED == 'true'
         shell: bash
@@ -1145,11 +1175,23 @@ jobs:
             --attestation-input "${RUNNER_TEMP}/production-canary-attestation/production-canary-attestation.json"
       - name: Synchronize Edge Function secrets
         shell: bash
+        env:
+          RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
+          LINEAR_FEEDBACK_API_KEY: ${{ secrets.LINEAR_FEEDBACK_API_KEY }}
         run: |
           function_secrets=(
             "BILLING_ENABLED=${BILLING_ENABLED}"
             "PUBLIC_SITE_URL=${PUBLIC_SITE_URL}"
             "PROFILE_PHOTO_WORKER_SECRET=${PROFILE_PHOTO_WORKER_SECRET}"
+            "RESEND_API_KEY=${RESEND_API_KEY}"
+            "LINEAR_FEEDBACK_API_KEY=${LINEAR_FEEDBACK_API_KEY}"
+            "TRANSACTIONAL_EMAIL_FROM=${TRANSACTIONAL_EMAIL_FROM}"
+            "FEEDBACK_WORKER_SECRET=${FEEDBACK_WORKER_SECRET}"
+            "EARLY_ACCESS_INVITATION_WORKER_SECRET=${EARLY_ACCESS_INVITATION_WORKER_SECRET}"
+            "EARLY_ACCESS_INVITATION_KEY=${EARLY_ACCESS_INVITATION_KEY}"
+            "EARLY_ACCESS_INVITATION_KEY_VERSION=${EARLY_ACCESS_INVITATION_KEY_VERSION}"
+            "EARLY_ACCESS_NATIVE_BOOTSTRAP_ENABLED=${EARLY_ACCESS_NATIVE_BOOTSTRAP_ENABLED}"
+            "EARLY_ACCESS_AUTH_RECOVERY_TTL_SECONDS=${EARLY_ACCESS_AUTH_RECOVERY_TTL_SECONDS}"
           )
           if [[ -n "${PUBLIC_SHARE_URL:-}" ]]; then
             function_secrets+=("PUBLIC_SHARE_URL=${PUBLIC_SHARE_URL}")
@@ -1207,12 +1249,19 @@ jobs:
           supabase functions deploy reward-download --project-ref "$SUPABASE_PROJECT_REF"
           supabase functions deploy retired-community-export --project-ref "$SUPABASE_PROJECT_REF"
           supabase functions deploy upload-profile-photo --project-ref "$SUPABASE_PROJECT_REF"
+          supabase functions deploy admin-early-access-invitation --project-ref "$SUPABASE_PROJECT_REF"
       - name: Deploy Stripe webhook
         run: supabase functions deploy stripe-webhook --project-ref "$SUPABASE_PROJECT_REF" --no-verify-jwt
       - name: Deploy public share renderer
         run: supabase functions deploy share-snapshot --project-ref "$SUPABASE_PROJECT_REF" --no-verify-jwt
       - name: Deploy public early-access request intake
         run: supabase functions deploy request-early-access --project-ref "$SUPABASE_PROJECT_REF" --no-verify-jwt
+      - name: Deploy secret-authenticated Early Access workers
+        run: |
+          supabase functions deploy process-early-access-feedback --project-ref "$SUPABASE_PROJECT_REF" --no-verify-jwt
+          supabase functions deploy process-early-access-invitations --project-ref "$SUPABASE_PROJECT_REF" --no-verify-jwt
+      - name: Configure and verify Early Access worker schedules
+        run: node scripts/configure-production-early-access-workers.mjs
       - name: Deploy integration delivery worker
         if: steps.function-secrets.outputs.integration_runtime_enabled == 'true'
         run: supabase functions deploy process-integration-outbox --project-ref "$SUPABASE_PROJECT_REF" --no-verify-jwt
@@ -1237,6 +1286,8 @@ jobs:
           node scripts/verify-production-billing-guards.mjs
 
           node scripts/verify-production-early-access.mjs
+
+          node scripts/verify-production-early-access-workers.mjs
 
           webhook_expected_status="400"
           if [[ "${BILLING_ENABLED}" == "false" ]]; then

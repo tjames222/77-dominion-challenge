@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#0e1116" />
+    <meta name="referrer" content="no-referrer" />
+    <meta name="robots" content="noindex, nofollow" />
+    <script vite-ignore src="./theme-bootstrap.js" data-enable-dominion-night="false"></script>
+    <title>Early Access Invitation | Dominion</title>
+    <!-- Separate CSS module identities prevent menu chunk side effects here. -->
+    <link rel="stylesheet" href="./src/assets/styles.css?isolated-shell" />
+    <link rel="stylesheet" href="./src/assets/product.css?isolated-shell" />
+    <link rel="stylesheet" href="./src/assets/dominion-night.css?isolated-shell" />
+    <link rel="stylesheet" href="./src/assets/dominion-platinum.css?isolated-shell" />
+    <link rel="stylesheet" href="./src/assets/early-access-invitation.css" />
+  </head>
+  <body>
+    <main class="app-shell auth-shell">
+      <header class="topbar"><a class="back-link" href="./index.html">‹ Dominion</a></header>
+      <section class="card auth-card" data-section-surface="accent">
+        <p class="eyebrow">Early Access</p>
+        <h1>Your invitation to Dominion</h1>
+        <p class="lead">Accept with the account that uses your invited email address.</p>
+        <p>Early Access is free until we explicitly begin beta. Accepting qualifies you for the $3.50 USD monthly beta price, including if you cancel and return later. No charge or subscription starts when you accept.</p>
+        <p id="earlyAccessInviteStatus" class="profile-feedback" role="status" aria-live="polite">Checking your invitation link…</p>
+        <form id="earlyAccessAcceptForm" hidden aria-describedby="earlyAccessInviteStatus" autocomplete="off">
+          <label class="invitation-acknowledgement"><input id="earlyAccessAcceptAcknowledgement" type="checkbox" required disabled /><span>I want to accept Early Access for my signed-in account.</span></label>
+          <button id="earlyAccessAccept" class="primary" type="submit" disabled>Accept Early Access</button>
+        </form>
+        <div class="auth-complete">
+          <button id="earlyAccessReview" class="primary" type="button" hidden>Review invitation again</button>
+          <a id="earlyAccessSignIn" class="primary" href="./login.html?returnTo=.%2Fearly-access-invite.html" hidden>Sign in to continue</a>
+          <a id="earlyAccessMfa" class="primary" href="./account-security.html" hidden>Verify authenticator</a>
+          <a id="earlyAccessContinue" class="primary" href="./dashboard.html" hidden>Continue to Dominion</a>
+        </div>
+        <p class="auth-note">New account? Finish the separate account-setup email before signing in, then reopen your original invitation. If you need help, <a href="./support.html">contact support</a>.</p>
+        <noscript><p>Enable JavaScript to securely review this invitation. Opening this page alone never grants access.</p></noscript>
+      </section>
+    </main>
+    <script type="module" src="./src/static/early-access-invitation-entry.mjs"></script>
+  </body>
+</html>

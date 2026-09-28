@@ -152,3 +152,13 @@ hydration and at first contentful paint. Dominion Night intentionally begins
 with the safe Dark fallback until account ownership is verified, so its gate
 asserts the final theme, dark browser color scheme, and absence of any later
 reversion.
+
+The isolated `early-access-invite.html` capability landing page is the explicit
+exception to entitlement hydration, not to route coverage. Its named route uses
+the empty guest fixture and `themePolicy: 'public-only'`: Light and Dark render
+normally, while Night/Platinum requests must remain Dark without loading Auth
+or member header controls. The contract pins this policy to that one HTML entry
+and its disabled Night bootstrap flag. It still participates in every viewport,
+theme request, first-paint, accessibility, and visual route test; its nine Linux
+`earlyAccessInvite.png` baselines must be generated and reviewed using the normal
+complete **Browser quality gate** generation workflow above.
