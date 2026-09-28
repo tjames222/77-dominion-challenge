@@ -70,6 +70,20 @@ export const PRODUCTION_ROUTES = Object.freeze([
     surfaces: ['navigation', 'actions', 'error'],
   },
   {
+    id: 'earlyAccessInvite',
+    path: '/early-access-invite.html',
+    htmlEntry: 'early-access-invite.html',
+    title: 'Early Access Invitation | Dominion',
+    access: 'public',
+    // A capability landing page never loads Auth or member data just to
+    // resolve an entitlement-gated theme. Those requests stay safely Dark.
+    themePolicy: 'public-only',
+    sharedHeaderActions: false,
+    defaultState: 'guest',
+    ready: '#earlyAccessInviteStatus',
+    surfaces: ['navigation', 'actions', 'error'],
+  },
+  {
     id: 'admin',
     path: '/admin.html',
     htmlEntry: 'admin.html',
@@ -300,8 +314,19 @@ export const ROUTE_BY_ID = Object.freeze(
 
 // Feature contracts add targeted assertions without fragmenting the shared runner.
 export const ROUTE_ASSERTION_EXTENSIONS = Object.freeze(
-  Object.fromEntries(PRODUCTION_ROUTES.map((route) => [route.id, []])),
+  Object.fromEntries(PRODUCTION_ROUTES.map((route) => [route.id,
+    route.id === 'earlyAccessInvite'
+      ? ['#earlyAccessInviteStatus', '.auth-note a[href="./support.html"]']
+      : [],
+  ])),
 );
+
+export function expectedRouteTheme(route, requestedTheme) {
+  return route.themePolicy === 'public-only'
+    && ['dominion-night', 'dominion-platinum'].includes(requestedTheme)
+    ? 'dark'
+    : requestedTheme;
+}
 
 export function assertValidRouteManifest() {
   const ids = new Set();
@@ -313,6 +338,9 @@ export function assertValidRouteManifest() {
     }
     if (ids.has(route.id)) throw new Error('Duplicate route id: ' + route.id);
     if (paths.has(route.path)) throw new Error('Duplicate route path: ' + route.path);
+    if (route.themePolicy !== undefined && route.themePolicy !== 'public-only') {
+      throw new Error('Unknown route theme policy for ' + route.id);
+    }
     if (!Object.prototype.hasOwnProperty.call(ROUTE_ASSERTION_EXTENSIONS, route.id)) {
       throw new Error('Missing assertion extension point for ' + route.id);
     }

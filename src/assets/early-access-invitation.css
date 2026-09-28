@@ -1,0 +1,25 @@
+.auth-card h1 {
+  /* Enlarged text must reflow even when a single word exceeds the card. */
+  overflow-wrap: anywhere;
+}
+.auth-card .invitation-acknowledgement {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 48px;
+  margin-block: 16px;
+  cursor: pointer;
+}
+.auth-card .invitation-acknowledgement input {
+  flex: 0 0 24px;
+  width: 24px;
+  height: 24px;
+  margin: 0;
+}
+.auth-card .auth-complete {
+  display: grid;
+  gap: 12px;
+}
+#earlyAccessInviteStatus {
+  overflow-wrap: anywhere;
+}

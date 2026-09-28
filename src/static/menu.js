@@ -5,6 +5,8 @@ import {
   getSiteAdminContext,
   getAdminSessionOwner,
   subscribeToAdminInvalidation,
+  loadFeedbackClient,
+  subscribeToFeedbackInvalidation,
 } from './api';
 import {
   clearThemeEntitlementState,
@@ -25,6 +27,7 @@ import { createSiteTrainingLoadRecovery, TRAINING_RELOAD_LABEL, TRAINING_RELOAD_
 import { RELEASE_GATES } from './release-gates.mjs';
 import { isAdminMenuReadRoute } from './admin-menu-route.mjs';
 import { authEntryTransition } from './auth-entry-transition.mjs';
+import { feedbackRoute } from './feedback-route.mjs';
 
 const topbar = document.querySelector('.topbar');
 const memberTabs = document.querySelector('[data-member-tabs]');
@@ -45,6 +48,37 @@ let menuButtonPlaceholder = null;
 let menuBackgroundObserver = null;
 const menuBackgroundState = new Map();
 let adminMenuRequest = 0;
+let feedbackWidget = null;
+let feedbackRequest = 0;
+let feedbackAbort = null;
+const feedbackBuildSha = typeof __DOMINION_BUILD_SHA__ === 'string' ? __DOMINION_BUILD_SHA__ : '';
+function clearFeedbackWidget() {
+  feedbackRequest += 1; feedbackAbort?.abort(); feedbackAbort = null;
+  feedbackWidget?.destroy(); feedbackWidget = null;
+}
+subscribeToFeedbackInvalidation(clearFeedbackWidget);
+async function refreshFeedbackWidget(user) {
+  if (!feedbackRoute(window.location.pathname) || !/^[a-f0-9]{40}$/.test(feedbackBuildSha)
+    || !user?.authenticated || !user.userId) { clearFeedbackWidget(); return; }
+  const request = ++feedbackRequest;
+  feedbackAbort?.abort(); const controller = new AbortController(); feedbackAbort = controller;
+  try {
+    const client = await loadFeedbackClient();
+    if (request !== feedbackRequest || controller.signal.aborted || !client) return;
+    const { owner, context } = await client.readAccess({ expectedUserId: user.userId, signal: controller.signal });
+    if (request !== feedbackRequest || controller.signal.aborted || !client.isCurrent(owner)) return;
+    if (feedbackWidget?.isCurrent() && feedbackWidget.owner.sessionIdentity === owner.sessionIdentity) {
+      feedbackWidget.setEligible(context.earlyAccessActive); return;
+    }
+    feedbackWidget?.destroy(); feedbackWidget = null;
+    if (!context.earlyAccessActive) return;
+    const { mountFeedbackWidget } = await import('./feedback-widget.mjs');
+    if (request !== feedbackRequest || controller.signal.aborted || !client.isCurrent(owner)) return;
+    feedbackWidget = mountFeedbackWidget({ client, owner, buildSha: feedbackBuildSha, beforeOpen: closeMenu });
+  } catch {
+    if (request === feedbackRequest && !controller.signal.aborted) feedbackWidget?.setEligible(false);
+  } finally { if (feedbackAbort === controller) feedbackAbort = null; }
+}
 async function hydrateMenuTheme(options = {}, signal = authEntryTransition.capture()) {
   if (!authEntryTransition.isCurrent(signal)) return;
   try {
@@ -474,6 +508,7 @@ async function buildMenu() {
     const feedback = menu.querySelector('.global-menu-logout-feedback');
     feedback.hidden = true;
     closeShareComposer('logout');
+    clearFeedbackWidget();
     destroyTrainingControllers();
     sharedHeaderActions?.destroy();
     sharedHeaderActions = null;
@@ -530,6 +565,7 @@ async function buildMenu() {
   // The regular navigation is already interactive before this optional graph
   // loads. Public pages and visitors never download member training modules.
   currentMenuOwner = nextOwner;
+  void refreshFeedbackWidget(user);
   // Admin readiness is independent of the optional training graph. Start its
   // existing actor-fenced refresh even if the import is delayed or fails.
   void refreshAdminMenuItem();
@@ -626,7 +662,9 @@ initScrollResponsiveTopbar();
 initTopbarStickyOffset();
 buildMenu();
 
-subscribeToAuthStateChanges(({ event, user }) => {
+subscribeToAuthStateChanges(({ event, user, sessionIdentity }) => {
+  if (['SIGNED_OUT', 'TOKEN_REFRESHED', 'USER_UPDATED', 'PASSWORD_RECOVERY', 'MFA_CHALLENGE_VERIFIED'].includes(event)
+    || (feedbackWidget && feedbackWidget.owner.sessionIdentity !== sessionIdentity)) clearFeedbackWidget();
   removeAdminMenuItem();
   const nextOwner = user?.authenticated ? String(user?.userId || user?.email || '') : '';
   const ownerChanged = event === 'SIGNED_OUT' || nextOwner !== currentMenuOwner;
@@ -722,6 +760,7 @@ window.addEventListener('focus', () => {
 });
 
 window.addEventListener('pagehide', () => {
+  clearFeedbackWidget();
   authEntryTransition.suspend();
   menuHydrationRequest += 1;
   destroyTrainingControllers();

@@ -1,6 +1,7 @@
 import { expect, test as base } from '@playwright/test';
 import { fileURLToPath } from 'node:url';
 import { fixtureFor, FIXED_NOW } from './fixtures.mjs';
+import { expectedRouteTheme, ROUTE_ASSERTION_EXTENSIONS } from './routes.mjs';
 
 const SCREENSHOT_STYLE = fileURLToPath(new URL('./screenshot.css', import.meta.url));
 const SCREENSHOT_STYLE_MARKER = 'data-dominion-e2e-screenshot-style';
@@ -208,16 +209,20 @@ export const test = base.extend({
       async open(route, options = {}) {
         const theme = options.theme || testInfo.project.metadata.theme || 'dark';
         const requestedState = options.state || route.defaultState;
-        const state = ['dominion-night', 'dominion-platinum'].includes(theme) && requestedState === 'guest'
+        const state = route.themePolicy !== 'public-only'
+          && ['dominion-night', 'dominion-platinum'].includes(theme) && requestedState === 'guest'
           ? 'member'
           : requestedState;
         await seedPage(page, state, theme);
         await page.goto(route.path, { waitUntil: options.waitUntil || 'networkidle' });
         await installScreenshotStyle(page);
         await expect(page.locator(route.ready).first()).toBeVisible();
+        for (const selector of ROUTE_ASSERTION_EXTENSIONS[route.id] || []) {
+          await expect(page.locator(selector)).toBeVisible();
+        }
         await expect(page).toHaveTitle(route.title);
         await waitForStablePage(page);
-        await expect(page.locator('html')).toHaveAttribute('data-theme', theme);
+        await expect(page.locator('html')).toHaveAttribute('data-theme', expectedRouteTheme(route, theme));
       },
       async stable() {
         await installScreenshotStyle(page);

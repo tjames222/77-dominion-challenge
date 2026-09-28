@@ -1,0 +1,30 @@
+.feedback-widget {
+  position: fixed;
+  right: max(1rem, env(safe-area-inset-right, 0px));
+  bottom: calc(1rem + env(safe-area-inset-bottom, 0px));
+  z-index: 35;
+  width: 3.5rem;
+  height: 3.5rem;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: .15rem;
+  padding: .25rem;
+  border: 1px solid var(--border);
+  border-radius: .75rem;
+  background: var(--surface-elevated);
+  color: var(--text);
+  box-shadow: 0 3px 14px rgb(0 0 0 / .18);
+  font: 700 .65rem/1.2 var(--font-sans, sans-serif);
+  cursor: pointer;
+}
+.feedback-widget:focus-visible { outline: 3px solid var(--focus-ring); outline-offset: 3px; }
+.feedback-widget svg { width: 1.4rem; height: 1.4rem; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.feedback-widget[data-obstructed] { visibility: hidden; pointer-events: none; }
+body[data-feedback-mounted]::after { content: ''; display: block; height: calc(4.5rem + env(safe-area-inset-bottom, 0px)); }
+.feedback-widget[hidden], body.menu-open .feedback-widget,
+body[data-dialog-open] .feedback-widget { visibility: hidden; pointer-events: none; }
+@media (prefers-reduced-motion: no-preference) {
+  .feedback-widget:hover { transform: translateY(-1px); }
+}

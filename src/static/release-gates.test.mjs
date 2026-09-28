@@ -120,7 +120,7 @@ describe('invite-only production release gates', () => {
     assert.equal(calls, 1);
   });
 
-  test('wraps signup and every billing mutation while preserving entitlement-only access', async () => {
+  test('wraps signup and every billing mutation while preserving canonical access without Stripe', async () => {
     const api = await read('./api.js');
     assert.match(
       api,
@@ -136,14 +136,15 @@ describe('invite-only production release gates', () => {
         new RegExp(`${functionName}\\([^)]*\\) \\{[\\s\\S]*?runReleaseGatedAction\\(\\{[\\s\\S]*?enabled: RELEASE_GATES\\.billingEnabled`),
       );
     }
-    assert.match(api, /const subscriptionActive = hasActiveEntitlement\(entitlements, MEMBERSHIP_ACCESS_KEY\)/);
+    const reader = await read('./member-access-reader.mjs');
     assert.match(
       api,
-      /runOptionalReleaseQuery\(\{\s*enabled: RELEASE_GATES\.billingEnabled,\s*query: \(\) => client\s*\.from\('subscriptions'\)/,
+      /readMemberBillingState\([\s\S]*?billingEnabled: RELEASE_GATES\.billingEnabled, expectedEpoch/,
     );
+    assert.match(reader, /billingEnabled \? request\('subscriptions', options\) : Promise.resolve\(\[\]\)/);
     assert.match(
       api,
-      /billingEnabled: RELEASE_GATES\.billingEnabled,\s*appAccess: subscriptionActive,/,
+      /billingEnabled: RELEASE_GATES\.billingEnabled,\s*appAccess: context.appAccess,\s*subscriptionActive: context.paidSubscriptionActive,/,
     );
   });
 

@@ -33,6 +33,9 @@ function exactResponse({
   json = async () => ({
     disable_signup: true,
     external_anonymous_users_enabled: false,
+    mailer_autoconfirm: false,
+    mailer_allow_unverified_email_sign_ins: false,
+    mailer_otp_exp: 3600,
     site_url: PRODUCTION_SITE_URL,
     uri_allow_list: PRODUCTION_RECOVERY_REDIRECT_ALLOW_LIST,
   }),
@@ -96,6 +99,9 @@ test("the closed policy requires exact booleans and production URLs", () => {
   assert.deepEqual(productionAuthCanaryErrors({}), [
     "Supabase Auth disable_signup must be true",
     "Supabase Auth external_anonymous_users_enabled must be false",
+    "Supabase Auth email confirmation must be enabled",
+    "Supabase Auth unverified email sign-ins must be disabled",
+    "Supabase Auth email recovery lifetime must be exactly 3600 seconds",
     "Supabase Auth site_url must be the reviewed production origin",
     "Supabase Auth uri_allow_list must contain exactly the three reviewed recovery redirects",
   ]);
@@ -107,6 +113,9 @@ test("the closed policy requires exact booleans and production URLs", () => {
     [
       "Supabase Auth disable_signup must be true",
       "Supabase Auth external_anonymous_users_enabled must be false",
+      "Supabase Auth email confirmation must be enabled",
+      "Supabase Auth unverified email sign-ins must be disabled",
+      "Supabase Auth email recovery lifetime must be exactly 3600 seconds",
       "Supabase Auth site_url must be the reviewed production origin",
       "Supabase Auth uri_allow_list must contain exactly the three reviewed recovery redirects",
     ],
@@ -115,6 +124,9 @@ test("the closed policy requires exact booleans and production URLs", () => {
     productionAuthCanaryErrors({
       disable_signup: true,
       external_anonymous_users_enabled: false,
+      mailer_autoconfirm: false,
+      mailer_allow_unverified_email_sign_ins: false,
+      mailer_otp_exp: 3600,
       site_url: PRODUCTION_SITE_URL,
       uri_allow_list: PRODUCTION_RECOVERY_REDIRECT_ALLOW_LIST,
       unrelated: "ignored",
@@ -154,6 +166,19 @@ test("the exact recovery allowlist accepts reordering but fails closed on broade
       ...CLOSED_AUTH_CONFIG_PATCH,
       uri_allow_list,
     }), ["Supabase Auth uri_allow_list must contain exactly the three reviewed recovery redirects"]);
+  }
+});
+
+test("native setup policy rejects unconfirmed sign-in and recovery TTL drift", () => {
+  for (const field of ["mailer_autoconfirm", "mailer_allow_unverified_email_sign_ins"]) {
+    for (const value of [undefined, null, true, "false", 0]) {
+      assert.equal(productionAuthCanaryErrors({ ...CLOSED_AUTH_CONFIG_PATCH, [field]: value }).length, 1);
+    }
+  }
+  for (const value of [undefined, null, "3600", 0, 60, 3599, 3601, 86400]) {
+    assert.deepEqual(productionAuthCanaryErrors({ ...CLOSED_AUTH_CONFIG_PATCH, mailer_otp_exp: value }), [
+      "Supabase Auth email recovery lifetime must be exactly 3600 seconds",
+    ]);
   }
 });
 
@@ -201,6 +226,9 @@ test("configuration PATCHes only the fixed fields and then GET-verifies", async 
   assert.deepEqual(JSON.parse(patchCall.request.body), {
     disable_signup: true,
     external_anonymous_users_enabled: false,
+    mailer_autoconfirm: false,
+    mailer_allow_unverified_email_sign_ins: false,
+    mailer_otp_exp: 3600,
     site_url: PRODUCTION_SITE_URL,
     uri_allow_list: PRODUCTION_RECOVERY_REDIRECT_ALLOW_LIST,
   });

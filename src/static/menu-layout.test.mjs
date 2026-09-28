@@ -85,6 +85,9 @@ describe('shared sticky menu', () => {
         const getLocalOrSessionUser = async () => null;
         const subscribeToAuthStateChanges = () => () => {};
         const subscribeToAdminInvalidation = () => () => {};
+        const subscribeToFeedbackInvalidation = () => () => {};
+        const loadFeedbackClient = async () => null;
+        const feedbackRoute = () => null;
         const getAdminSessionOwner = async () => { throw new Error('Signed out fixture'); };
         const getSiteAdminContext = async () => ({ adminReady: false, permissions: [] });
         const clearThemeEntitlementState = () => {};

@@ -1,10 +1,14 @@
 import {
   completePasswordRecovery,
   getAuthSession,
+  getPasswordRecoveryState,
   hasSupabaseAuthentication,
+  loadPasswordRecoveryController,
   requestPasswordRecovery,
-  subscribeToAuthStateChanges,
+  subscribeToPasswordRecoveryState,
+  verifyPasswordRecoverySession,
 } from './api';
+import { passwordRecoverySessionError } from './account-recovery-session.mjs';
 import {
   cleanPasswordRecoveryUrl,
   passwordRecoveryErrorFromLocation,
@@ -23,7 +27,8 @@ const resetSubmit = resetForm?.querySelector('button[type="submit"]');
 const resetComplete = document.getElementById('passwordResetComplete');
 let resetInFlight = false;
 let resetCompleted = false;
-let recoveryEventObserved = false;
+let recoveryOwner = null;
+let verificationQueued = false;
 
 function setFeedback(element, message, tone = '') {
   if (!element) return;
@@ -55,21 +60,41 @@ requestForm?.addEventListener('submit', async (event) => {
       'If an account uses that email, a password reset link is on its way. Check spam if it does not arrive.',
     );
     requestForm.reset();
-  } catch (error) {
-    console.warn('Unable to request password recovery', error);
+  } catch {
     setFeedback(requestFeedback, 'We could not send a reset link right now. Wait a moment and try again.', 'error');
   } finally {
     setFormBusy(requestForm, false, 'Sending...');
   }
 });
 
-async function setResetSessionReady(ready) {
+function setResetSessionReady(ready) {
   if (!resetForm || resetCompleted) return;
   resetForm.querySelectorAll('input').forEach((control) => { control.disabled = !ready; });
   if (resetSubmit) resetSubmit.disabled = !ready;
   if (ready) {
     setFeedback(resetFeedback, 'Choose a new password for this account.');
     resetPassword?.focus();
+  }
+}
+
+function observeRecoveryState(state) {
+  if (!resetForm || resetCompleted) return;
+  const previous = recoveryOwner;
+  recoveryOwner = state?.owner || null;
+  if (previous !== recoveryOwner || state?.phase === 'blocked') resetForm.reset();
+  setResetSessionReady(state?.phase === 'ready' && !resetInFlight);
+  if (state?.phase === 'blocked' || state?.phase === 'idle') {
+    setFeedback(resetFeedback, passwordRecoverySessionError(state?.code).message, 'error');
+  }
+  if (state?.phase === 'pending' && !verificationQueued) {
+    verificationQueued = true;
+    // Supabase waits for auth callbacks; never call its methods within one.
+    setTimeout(() => {
+      verificationQueued = false;
+      if (getPasswordRecoveryState()?.phase === 'pending') {
+        void verifyPasswordRecoverySession().catch(() => { /* State owns fixed feedback. */ });
+      }
+    }, 0);
   }
 }
 
@@ -82,40 +107,33 @@ async function hydrateResetSession() {
 
   if (!hasSupabaseAuthentication()) {
     setFeedback(resetFeedback, 'Password reset is unavailable in this local preview.', 'error');
-    await setResetSessionReady(false);
+    setResetSessionReady(false);
     return;
   }
 
-  const unsubscribe = subscribeToAuthStateChanges(({ event, user }) => {
-    if (resetCompleted) return;
-    if (event === 'PASSWORD_RECOVERY' && user?.authenticated) {
-      recoveryEventObserved = true;
-      void setResetSessionReady(true);
-    } else if (event === 'SIGNED_OUT') {
-      void setResetSessionReady(false);
-    }
-  });
-  window.addEventListener('pagehide', unsubscribe, { once: true });
-
-  try {
-    const session = await getAuthSession();
-    await setResetSessionReady(Boolean(session?.user) && recoveryEventObserved);
-    if ((!session?.user || !recoveryEventObserved) && !providerError) {
-      setFeedback(resetFeedback, 'Open the current reset link from your email to continue.', 'error');
-    }
-  } catch (error) {
-    console.warn('Unable to verify password recovery session', error);
-    setFeedback(resetFeedback, 'This reset link could not be verified. Request a new one.', 'error');
-    await setResetSessionReady(false);
-  } finally {
+  // URL cleanup must also finish when the lazy reset-only chunk fails to load.
+  // Only the singleton consumes native URL credentials; its stored session is
+  // never treated as recovery authorization by this initialization wait.
+  const initialized = getAuthSession().catch(() => null).then(() => {
     const cleanUrl = cleanPasswordRecoveryUrl(window.location);
     if (cleanUrl) window.history.replaceState({}, document.title, cleanUrl);
-  }
+  }).catch(() => { /* No credential or provider error enters UI/logs. */ });
+  try { await loadPasswordRecoveryController(); }
+  catch { setFeedback(resetFeedback, 'Password reset could not be loaded. Reload this page.', 'error'); return; }
+  const unsubscribe = subscribeToPasswordRecoveryState(observeRecoveryState);
+  window.addEventListener('pagehide', () => {
+    recoveryOwner = null;
+    resetForm.reset();
+    setResetSessionReady(false);
+    unsubscribe();
+  }, { once: true });
+  observeRecoveryState(getPasswordRecoveryState());
+  await initialized;
 }
 
 resetForm?.addEventListener('submit', async (event) => {
   event.preventDefault();
-  if (resetInFlight || resetCompleted) return;
+  if (resetInFlight || resetCompleted || !recoveryOwner || getPasswordRecoveryState()?.phase !== 'ready') return;
   const validation = validateNewPassword(resetPassword?.value, resetConfirmation?.value);
   if (validation) {
     setFeedback(resetFeedback, validation, 'error');
@@ -123,10 +141,12 @@ resetForm?.addEventListener('submit', async (event) => {
   }
 
   resetInFlight = true;
+  const submittedOwner = recoveryOwner;
   setFormBusy(resetForm, true, 'Saving...');
   setFeedback(resetFeedback, 'Saving your new password...');
   try {
-    const result = await completePasswordRecovery(resetPassword.value);
+    const result = await completePasswordRecovery(resetPassword.value, submittedOwner);
+    if (recoveryOwner !== submittedOwner) return;
     resetCompleted = true;
     resetForm.reset();
     resetForm.hidden = true;
@@ -134,15 +154,21 @@ resetForm?.addEventListener('submit', async (event) => {
     setFeedback(
       resetFeedback,
       result.sessionsRevoked === 'global'
-        ? 'Password changed. For security, all sessions were signed out.'
-        : 'Password changed and this browser was signed out. We couldn’t confirm sign-out on your other devices.',
+        ? 'Password changed. Sign-in sessions were revoked. Log in again with your new password.'
+        : result.sessionsRevoked === 'local'
+          ? 'Password changed. This recovery session was revoked, but other sessions could not be confirmed. Log in again.'
+          : 'Password changed, but session revocation could not be confirmed. Close this window and log in again; review your other signed-in devices.',
     );
   } catch (error) {
-    console.warn('Unable to complete password recovery', error);
-    setFeedback(resetFeedback, error?.message || 'Unable to change the password. Request a new link and try again.', 'error');
+    if (recoveryOwner === submittedOwner) {
+      setFeedback(resetFeedback, passwordRecoverySessionError(error?.code).message, 'error');
+    }
   } finally {
     resetInFlight = false;
-    if (!resetCompleted) setFormBusy(resetForm, false, 'Saving...');
+    if (!resetCompleted) {
+      setFormBusy(resetForm, false, 'Saving...');
+      setResetSessionReady(getPasswordRecoveryState()?.phase === 'ready');
+    }
   }
 });
 

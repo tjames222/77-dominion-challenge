@@ -27,8 +27,8 @@ select is((select form_version from private.early_access_requests where email = 
 select throws_ok($$select public.submit_early_access_request_service('', 'invalid', null)$$, '22023', null, 'invalid input is rejected by SQL');
 select ok((select count(*) >= 2 from private.early_access_intake_attempts), 'duplicates count toward the shared budget');
 
-select ok((select prosecdef and provolatile='s' and proconfig=array['search_path=""'] from pg_proc
-  where oid='private.early_access_verified_identity_matches(uuid,text)'::regprocedure), 'private identity helper is stable with fixed definer search path');
+select ok((select prosecdef and provolatile='v' and proconfig=array['search_path=""'] from pg_proc
+  where oid='private.early_access_verified_identity_matches(uuid,text)'::regprocedure), 'private identity helper can pin its Auth FK parent with fixed definer search path');
 select is(pg_get_function_result('private.early_access_verified_identity_matches(uuid,text)'::regprocedure), 'boolean', 'identity helper exposes only a boolean');
 select ok(has_function_privilege('service_role','private.early_access_verified_identity_matches(uuid,text)','execute'), 'trusted server can check verified identity');
 select ok(not has_function_privilege('anon','private.early_access_verified_identity_matches(uuid,text)','execute'), 'anonymous clients cannot probe identities');

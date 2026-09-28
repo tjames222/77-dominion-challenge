@@ -1,5 +1,3 @@
-import QRCode from 'qrcode';
-
 import {
   getActiveCrewInvite,
   getLocalOrSessionUser,
@@ -395,7 +393,13 @@ export function initCrewInviteDialog({
     dialog.setBusy(true, 'Generating one secure invitation…');
     setButtonBusyState(allActionButtons, true);
     try {
+      // Load optional QR rendering only after explicit generation intent, and
+      // before creating any invitation. Closing or replacing the owner while
+      // the chunk loads must not dispatch a late invitation write.
+      const { default: QRCode } = await import('qrcode');
+      if (version !== requestVersion || !dialog.isOpen) return;
       await currentActor();
+      if (version !== requestVersion || !dialog.isOpen) return;
       const invite = await issueCrewInviteBundle(currentCrew.id, { expectedUserId: actorId });
       await currentActor();
       issuedInvite = invite;

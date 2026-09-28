@@ -8,6 +8,7 @@ export const PRODUCTION_ENTRYPOINTS = Object.freeze({
   accountSecurity: 'account-security.html',
   admin: 'admin.html',
   invite: 'invite.html',
+  earlyAccessInvite: 'early-access-invite.html',
   billing: 'billing.html',
   dashboard: 'dashboard.html',
   badgesRewards: 'badges-rewards.html',

@@ -2,6 +2,15 @@ name: Free production backup
 
 on:
   workflow_dispatch:
+    inputs:
+      backup_mode:
+        description: Legacy cutover checkpoint or the reviewed current database with conditional protected-settings Vault recovery.
+        required: true
+        default: legacy-thirteen-migration-cutover
+        type: choice
+        options:
+          - legacy-thirteen-migration-cutover
+          - current-production-2026-09-27
 
 permissions:
   contents: read
@@ -42,6 +51,8 @@ jobs:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
           SUPABASE_PROJECT_REF: ${{ vars.SUPABASE_PROJECT_REF }}
           PRODUCTION_BACKUP_PUBLIC_KEY: ${{ vars.PRODUCTION_BACKUP_PUBLIC_KEY }}
+          BACKUP_MODE: ${{ inputs.backup_mode }}
+          PROFILE_PHOTO_WORKER_SECRET: ${{ inputs.backup_mode == 'current-production-2026-09-27' && secrets.PROFILE_PHOTO_WORKER_SECRET || '' }}
         shell: bash
         run: |
           set +x
@@ -55,6 +66,8 @@ jobs:
             SUPABASE_ACCESS_TOKEN="$SUPABASE_ACCESS_TOKEN" \
             SUPABASE_PROJECT_REF="$SUPABASE_PROJECT_REF" \
             PRODUCTION_BACKUP_PUBLIC_KEY="$PRODUCTION_BACKUP_PUBLIC_KEY" \
+            BACKUP_MODE="$BACKUP_MODE" \
+            PROFILE_PHOTO_WORKER_SECRET="$PROFILE_PHOTO_WORKER_SECRET" \
             node scripts/free-production-backup.mjs
       - name: Retain encrypted backup for seven days
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4

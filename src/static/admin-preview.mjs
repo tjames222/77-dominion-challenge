@@ -1,7 +1,7 @@
 import { adminReadError } from './admin-read-client.mjs';
 
 // Synthetic, in-memory preview: accounts/audit are read-only; early-access
-// denial changes only the temporary simulated request records in this adapter.
+// decisions change only the temporary simulated request records in this adapter.
 // The API selects this adapter only
 // when mocks are explicitly enabled and Supabase authentication is disabled.
 export function createAdminPreview({ getUser, mode }) {
@@ -49,6 +49,15 @@ export function createAdminPreview({ getUser, mode }) {
       if (mode !== 'ready') throw adminReadError('ADMIN_DENIED');
       if (captured !== epoch || signal?.aborted || actor.actorId !== intent.actorId || actor.sessionIdentity !== intent.sessionIdentity) throw adminReadError('ADMIN_CHANGED');
       return normalizeEarlyAccessDenial(store.deny(earlyAccessDenialArguments(intent), actor.actorId), intent);
+    },
+    async manageEarlyAccessInvitation(intent, { signal } = {}) {
+      const captured = epoch;
+      const { earlyAccessInvitationArguments, normalizeEarlyAccessInvitation } = await import('./admin-early-access-contract.mjs');
+      const store = await earlyStore();
+      const actor = await owner();
+      if (mode !== 'ready') throw adminReadError('ADMIN_DENIED');
+      if (captured !== epoch || signal?.aborted || actor.actorId !== intent.actorId || actor.sessionIdentity !== intent.sessionIdentity) throw adminReadError('ADMIN_CHANGED');
+      return normalizeEarlyAccessInvitation(store.invitation(earlyAccessInvitationArguments(intent), actor.actorId), intent);
     },
     async read(name, args = {}, { expectedUserId = '', signal } = {}) {
     const captured = epoch;

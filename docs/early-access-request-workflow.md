@@ -43,6 +43,11 @@ capability-gated review screen but no invitation/approval path.
   independently checked against a confirmed, non-anonymous, non-deleted,
   non-suspended Auth account. Neither metadata nor the service call's own UID
   can confer applicant identity. Missing/mismatched identities fail generically.
+  The invitation lifecycle migration preserves that boolean/ACL contract but
+  makes the helper VOLATILE so it pins the matching Auth row with KEY SHARE
+  before intake takes any advisory/request locks. This prevents the demonstrated
+  intake/request-FK, native user-deletion, admin-lifecycle three-way deadlock.
+  No Auth trigger or production Auth-table privilege is added.
 - An origin allowlist, honeypot, 2 KiB body limit, five-second body deadline, and
   atomic global limit of 20 accepted intake attempts/minute and 100/hour keep the
   free launch path bounded. Duplicates consume the same budget **before** lookup

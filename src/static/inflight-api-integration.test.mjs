@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
 import { runInNewContext } from 'node:vm';
 import { createInflightActorReads } from './inflight-actor-reads.mjs';
-import { authSessionIdentity } from './mfa-auth.mjs';
+import { authSessionIdentity, createInitialSessionRefreshFence } from './mfa-auth.mjs';
 
 const api = readFileSync(new URL('./api.js', import.meta.url), 'utf8');
 const runtime = readFileSync(new URL('./auth-runtime-core.mjs', import.meta.url), 'utf8');
@@ -65,7 +65,7 @@ test('training coalescing uses every server argument and retains expected-actor 
 });
 
 test('auth loss, cross-tab changes and mutation settlement invalidate without caching authorization', () => {
-  assert.match(api, /clearAuthSession\(\{ redirectToLanding = false \} = \{\}\) \{\s+if \(redirectToLanding\) logoutNavigationPending = true;\s+try \{\s+cancelAdminReads\(\);\s+inflightActorReads\.invalidate\(\)/);
+  assert.match(api, /clearAuthSession\(\{ redirectToLanding = false \} = \{\}\) \{\s+if \(redirectToLanding\) logoutNavigationPending = true;\s+try \{\s+cancelAdminReads\(\);\s+cancelFeedbackRequests\(\);\s+inflightActorReads\.invalidate\(\)/);
   assert.match(runtime, /inflightActorReads\.observeAuth\(event, session\?\.user\?\.id \|\| '', authSessionIdentity\(session\)\)/);
   assert.match(runtime, /addEventListener\('storage',[\s\S]*inflightActorReads\.invalidate\(\)/);
   assert.match(runtime, /finally \{\s+inflightActorReads\.invalidate\(query\)/);
@@ -88,6 +88,7 @@ test('the real synchronous API observer forwards immutable sessions without call
   assert.ok(start >= 0);
   const callback = runtime.slice(start, runtime.indexOf('\n});', start) + 4);
   runInNewContext(callback, { inflightActorReads: scope, authSessionIdentity, previewBadgeEpoch: 0, previewBadgeObservedSession: undefined,
+    initialSessionRefreshFence: createInitialSessionRefreshFence(),
     supabase: { auth: new Proxy({ onAuthStateChange: (fn) => { observer = fn; } }, {
       get(target, name) { if (!(name in target)) throw new Error(`Auth method ${String(name)} must not run inside the observer`); return target[name]; },
     }) },
