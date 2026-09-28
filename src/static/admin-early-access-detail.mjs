@@ -15,10 +15,15 @@ const messages = { invalid_input: 'The reviewed request could not be used. Reloa
   account_recovery_required: 'An existing unconfirmed account needs a separate recovery review. No invitation was queued or access granted.',
   program_unavailable: 'The early-access program is unavailable. No invitation was queued or access granted.' };
 const decisions = {
-  deny: { noun: 'denial', review: 'Review denial', confirm: 'Confirm denial', summary: 'This only denies this request; it does not send an email.', acknowledgement: 'I reviewed this request and want to deny it.' },
-  approve: { noun: 'approval', review: 'Review approval', confirm: 'Approve and queue email', summary: 'Approval queues an invitation email. It does not confirm delivery, accept the invitation, or grant app access.', acknowledgement: 'I reviewed this request and want to approve it and queue an invitation email.' },
+  deny: { tone: 'deny', noun: 'denial', review: 'Review denial', confirm: 'Confirm denial', summary: 'This only denies this request; it does not send an email.', acknowledgement: 'I reviewed this request and want to deny it.' },
+  approve: { tone: 'approve', noun: 'approval', review: 'Review approval', confirm: 'Approve and queue email', summary: 'Approval queues an invitation email. It does not confirm delivery, accept the invitation, or grant app access.', acknowledgement: 'I reviewed this request and want to approve it and queue an invitation email.' },
   resend: { noun: 'resend', review: 'Review resend', confirm: 'Queue replacement invitation', summary: 'This queues a new invitation and invalidates the previous invitation. It does not confirm delivery or grant app access.', acknowledgement: 'I reviewed this request and want to replace its invitation and queue a new email.' },
   revoke: { noun: 'revocation', review: 'Review revocation', confirm: 'Revoke invitation', summary: 'This revokes the pending invitation. It does not revoke an account or existing app access.', acknowledgement: 'I reviewed this request and want to revoke its invitation.' },
+};
+const styleDecisionButton = (control, decision) => {
+  if (decision.tone) control.dataset.earlyAccessDecision = decision.tone;
+  else delete control.dataset.earlyAccessDecision;
+  return control;
 };
 
 // Every private value and unfinished intent belongs to this one open dialog.
@@ -55,7 +60,7 @@ export function mountEarlyAccessDetail({ container, item, owner, permissions, is
   const review = node('section'); review.className = 'admin-review';
   review.append(node('h3', 'Review decision'));
   const reviewStatus = node('p', '', 'earlyAccessReviewStatus'); reviewStatus.setAttribute('role', 'status');
-  const starts = Object.fromEntries(Object.entries(decisions).map(([action, decision]) => [action, button(decision.review, `earlyAccessReview${action[0].toUpperCase()}${action.slice(1)}`)]));
+  const starts = Object.fromEntries(Object.entries(decisions).map(([action, decision]) => [action, styleDecisionButton(button(decision.review, `earlyAccessReview${action[0].toUpperCase()}${action.slice(1)}`), decision)]));
   const start = starts.deny;
   const resetStarts = (hide = false) => { for (const [action, control] of Object.entries(starts)) { control.disabled = false; control.hidden = hide || !permissions.includes('operations.manage') || (action === 'deny' ? item.status !== 'pending' : !canReviewEarlyAccessInvitation(action, item.status)); } };
   const disableStarts = (disabled) => { for (const control of Object.values(starts)) control.disabled = disabled; };
@@ -73,7 +78,7 @@ export function mountEarlyAccessDetail({ container, item, owner, permissions, is
   const acknowledgement = node('input', undefined, 'earlyAccessDenyAcknowledgement'); acknowledgement.type = 'checkbox'; acknowledgement.required = true;
   const acknowledgementText = node('span', decisions.deny.acknowledgement);
   acknowledgementLabel.append(acknowledgement, acknowledgementText);
-  const confirm = button('Confirm denial', 'earlyAccessConfirmDeny'); confirm.type = 'submit'; confirm.disabled = true;
+  const confirm = styleDecisionButton(button('Confirm denial', 'earlyAccessConfirmDeny'), decisions.deny); confirm.type = 'submit'; confirm.disabled = true;
   const cancel = button('Cancel review', 'earlyAccessCancelDeny');
   const actions = node('div'); actions.className = 'admin-actions'; actions.append(confirm, cancel);
   form.append(reasonLabel, acknowledgementLabel, actions);
@@ -91,7 +96,7 @@ export function mountEarlyAccessDetail({ container, item, owner, permissions, is
     form.id = `${prefix}Confirmation`; reason.id = `${prefix}Reason`; acknowledgement.id = `${prefix}Acknowledgement`;
     confirm.id = action === 'deny' ? 'earlyAccessConfirmDeny' : 'earlyAccessConfirmInvitation';
     cancel.id = action === 'deny' ? 'earlyAccessCancelDeny' : 'earlyAccessCancelInvitation';
-    confirmationTitle.textContent = `Confirm ${decision.noun}`; confirm.textContent = decision.confirm;
+    confirmationTitle.textContent = `Confirm ${decision.noun}`; confirm.textContent = decision.confirm; styleDecisionButton(confirm, decision);
     confirmationSummary.textContent = `Review ${decision.noun} for ${item.name} (${item.email}) at revision ${item.revision}. ${decision.summary}`;
     acknowledgementText.textContent = decision.acknowledgement;
     const captured = version; reviewStatus.textContent = 'Checking current permission and authenticator readiness…';

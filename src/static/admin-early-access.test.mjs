@@ -147,6 +147,20 @@ test('queue footnote distinguishes available invitation review from delivery and
   assert.equal(footnotes.length, 1);
   assert.equal(footnotes[0][1], 'Review requests individually. Authorized reviewers can approve and queue an invitation email, deny a pending request, or manage an existing invitation. Approval does not confirm email delivery or grant access; Early Access begins after a valid invitation is accepted.');
 });
+test('only approval and denial use semantic colors, including the reused confirmation control', () => {
+  const detail = readFileSync(new URL('./admin-early-access-detail.mjs', import.meta.url), 'utf8');
+  const css = readFileSync(new URL('../assets/admin.css', import.meta.url), 'utf8');
+  assert.match(detail, /deny: \{ tone: 'deny', noun: 'denial', review: 'Review denial', confirm: 'Confirm denial'/);
+  assert.match(detail, /approve: \{ tone: 'approve', noun: 'approval', review: 'Review approval', confirm: 'Approve and queue email'/);
+  for (const action of ['resend', 'revoke']) assert.doesNotMatch(detail.match(new RegExp(`${action}: \\{[^\\n]+`))?.[0] || '', /tone:/);
+  assert.match(detail, /styleDecisionButton\(button\(decision\.review,/);
+  assert.match(detail, /confirm\.textContent = decision\.confirm; styleDecisionButton\(confirm, decision\)/);
+  assert.match(detail, /else delete control\.dataset\.earlyAccessDecision/);
+  assert.match(css, /\[data-early-access-decision="approve"\] \{ --admin-decision-color: var\(--success\)/);
+  assert.match(css, /\[data-early-access-decision="deny"\] \{ --admin-decision-color: var\(--danger\)/);
+  assert.match(css, /\[data-early-access-decision\]:not\(:disabled\):hover/);
+  assert.match(css, /\[data-early-access-decision\]:disabled \{[^}]+color: var\(--button-disabled-text\); opacity: 1; cursor: not-allowed/);
+});
 test('legacy preview identities stay in memory and support the same strict denial contract', async () => {
   let id = 'mock_user_e2e_77';
   const preview = createAdminPreview({ getUser: async () => ({ userId: id, authenticated: true }), mode: 'ready' });

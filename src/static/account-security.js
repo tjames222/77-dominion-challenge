@@ -1,10 +1,12 @@
 import {
   cancelMfaOperations, clearAuthSession, ensureProfile, getAuthSession, getBillingState,
-  getLocalOrSessionUser, getMfaAuthAdapter, hasSupabaseAuth,
+  getLocalOrSessionUser, getMfaAuthAdapter, getSiteAdminContext, hasSupabaseAuth,
   hasSupabaseAuthentication, isLocalDemoMode, saveLocalUserFromSession,
   subscribeToAuthStateChanges,
 } from './api';
 import { mfaError } from './mfa-auth.mjs';
+// Keep this stateless helper local to the existing MFA entry chunk.
+import { finishAuthLanding } from './auth-landing.mjs?security-entry';
 import { mfaReturnTo } from './mfa-navigation.mjs';
 import { clearThemeEntitlementState, hydrateThemeEntitlementState } from './theme-entitlement-state';
 import { finishProtectedThemeHydration, initThemeState } from './theme-state';
@@ -287,27 +289,34 @@ ui.Continue.addEventListener('click', async () => {
     const state = await adapter.getState({ expectedUserId: actorId });
     assertCurrent(captured, actorId);
     if (!state.verified || state.requiresChallenge) throw mfaError('MFA_CHALLENGE_REQUIRED');
+    const confirmAssurance = async () => {
+      // Reconfirm native identity/assurance immediately before leaving Auth UI.
+      const confirmed = await adapter.getState({ expectedUserId: actorId });
+      assertCurrent(captured, actorId);
+      if (!confirmed.verified || confirmed.requiresChallenge) throw mfaError('MFA_CHALLENGE_REQUIRED');
+    };
     if (live) {
       const session = await getAuthSession();
       assertCurrent(captured, actorId);
       if (session?.user?.id !== actorId || !session?.access_token) throw mfaError('MFA_ACTOR_CHANGED');
       if (hasSupabaseAuth()) await ensureProfile({ expectedUserId: actorId });
       assertCurrent(captured, actorId);
-      saveLocalUserFromSession(session);
+      await finishAuthLanding({
+        session, returnTo, getAuthSession, getSiteAdminContext, getBillingState,
+        subscribeToAuthStateChanges, lifecycle: window,
+        assertCurrent: () => assertCurrent(captured, actorId),
+        beforeNavigate: confirmAssurance,
+        navigate(target) {
+          saveLocalUserFromSession(session);
+          window.location.assign(target);
+        },
+      });
+    } else {
+      await confirmAssurance();
+      window.location.assign(returnTo);
     }
-    let target = returnTo;
-    if (live && target === './dashboard.html') {
-      const billing = await getBillingState();
-      assertCurrent(captured, actorId);
-      if (!billing.appAccess) target = './billing.html';
-    }
-    // Reconfirm identity/assurance immediately before leaving the Auth-only UI.
-    const confirmed = await adapter.getState({ expectedUserId: actorId });
-    assertCurrent(captured, actorId);
-    if (!confirmed.verified || confirmed.requiresChallenge) throw mfaError('MFA_CHALLENGE_REQUIRED');
-    window.location.assign(target);
   } catch (error) {
-    if (captured === generation && !disposed) showFailure(error, { retry: true });
+    if (captured === generation && !disposed) showFailure(error?.code === 'AUTH_LANDING_CHANGED' ? mfaError('MFA_ACTOR_CHANGED') : error, { retry: true });
   } finally {
     if (captured === generation && !disposed) setBusy(false);
   }
