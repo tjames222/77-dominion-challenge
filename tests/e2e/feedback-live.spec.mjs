@@ -13,7 +13,7 @@ async function repeatSessionNotice(page, auth) {
 }
 async function ready(page) {
   await page.goto('/profile.html'); await expect(widget(page)).toHaveCount(1);
-  await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight)); await expect(widget(page)).toBeVisible();
+  await reachableBottom(page);
 }
 async function reachableBottom(page) {
   await page.evaluate(() => document.fonts.ready.then(() => undefined));
@@ -112,6 +112,34 @@ test('accepted EA has free access and retained beta pricing without Stripe reque
   await page.locator('#billingStatusCopy').scrollIntoViewIfNeeded();
   await page.screenshot({ path: testInfo.outputPath('early-access-billing.png') });
   expect(auth.requests.filter(request => /subscriptions|checkout|portal|cancel-membership/.test(request.path))).toEqual([]);
+});
+test('profile feedback reaches the current bottom when content arrives during the first scroll', async ({ context, page }) => {
+  const auth = await installFeedbackStub(context);
+  await context.addInitScript(() => {
+    function addLateContent() {
+      if (!window.scrollY || !document.querySelector('[data-feedback-widget]')) return;
+      window.removeEventListener('scroll', addLateContent);
+      // Model late page hydration after the first scroll target was measured.
+      // This normal-flow action occupies the old reserved bottom space; the
+      // real widget must remain obstructed there, then be reachable below it.
+      const section = document.createElement('section');
+      section.id = 'synthetic-late-profile-content'; section.style.height = '144px';
+      const action = document.createElement('button');
+      action.type = 'button'; action.textContent = 'Synthetic late profile action';
+      Object.assign(action.style, { display: 'block', width: '100%', height: '56px', margin: '0' });
+      section.append(action); document.body.append(section);
+    }
+    window.addEventListener('scroll', addLateContent);
+  });
+  await ready(page);
+  await expect(page.locator('#synthetic-late-profile-content')).toHaveCount(1);
+  await expect.poll(() => page.evaluate(() => Math.abs(document.documentElement.scrollHeight - (window.scrollY + window.innerHeight)))).toBeLessThanOrEqual(1);
+  await expect(widget(page)).toBeVisible();
+  await expect(widget(page)).not.toHaveAttribute('data-obstructed');
+  const trigger = await widget(page).boundingBox();
+  const action = await page.getByRole('button', { name: 'Synthetic late profile action', exact: true }).boundingBox();
+  expect(action.y + action.height).toBeLessThanOrEqual(trigger.y);
+  expect(auth.writes()).toEqual([]);
 });
 test('Billing restores an expired persisted session without requiring a manual reload', async ({ context, page }) => {
   const auth = await installFeedbackStub(context);
