@@ -1,0 +1,62 @@
+name: Diagnose production Early Access runtime settings
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: production-release
+  cancel-in-progress: false
+
+jobs:
+  authorize:
+    name: Authorize protected-main diagnostics
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Require protected main
+        shell: bash
+        run: |
+          if [[ "${GITHUB_REF}" != "refs/heads/main" ]]; then
+            echo "::error::Production diagnostics must be dispatched from the protected main branch."
+            exit 1
+          fi
+
+  diagnose:
+    name: Report fixed runtime validation labels
+    needs: authorize
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    environment: production
+    steps:
+      - name: Checkout the exact reviewed commit
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Setup Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+      - name: Diagnose runtime settings without revealing values
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_PROJECT_REF: ${{ vars.SUPABASE_PROJECT_REF }}
+          BILLING_ENABLED: "false"
+          INTEGRATION_WORKER_SECRET: ${{ secrets.INTEGRATION_WORKER_SECRET }}
+          INTEGRATION_OAUTH_STATE_SECRET: ${{ secrets.INTEGRATION_OAUTH_STATE_SECRET }}
+          RETIRED_COMMUNITY_WORKER_SECRET: ${{ secrets.RETIRED_COMMUNITY_WORKER_SECRET }}
+          RETIRED_COMMUNITY_DR_HMAC_SECRET: ${{ secrets.RETIRED_COMMUNITY_DR_HMAC_SECRET }}
+          PROFILE_PHOTO_WORKER_SECRET: ${{ secrets.PROFILE_PHOTO_WORKER_SECRET }}
+          FEEDBACK_WORKER_SECRET: ${{ secrets.FEEDBACK_WORKER_SECRET }}
+          EARLY_ACCESS_INVITATION_WORKER_SECRET: ${{ secrets.EARLY_ACCESS_INVITATION_WORKER_SECRET }}
+          EARLY_ACCESS_INVITATION_KEY: ${{ secrets.EARLY_ACCESS_INVITATION_KEY }}
+          EARLY_ACCESS_INVITATION_KEY_VERSION: ${{ vars.EARLY_ACCESS_INVITATION_KEY_VERSION }}
+          TRANSACTIONAL_EMAIL_FROM: "Dominion <noreply@mail.77dominion.com>"
+          EARLY_ACCESS_NATIVE_BOOTSTRAP_ENABLED: "true"
+          EARLY_ACCESS_AUTH_RECOVERY_TTL_SECONDS: "3600"
+          RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
+          LINEAR_FEEDBACK_API_KEY: ${{ secrets.LINEAR_FEEDBACK_API_KEY }}
+        run: node scripts/verify-early-access-runtime-config.mjs
