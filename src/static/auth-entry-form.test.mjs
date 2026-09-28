@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
 import { runInNewContext } from 'node:vm';
 import { createAuthEntryTransition } from './auth-entry-transition.mjs';
+import { finishAuthLanding } from './auth-landing.mjs';
 
 const source = readFileSync(new URL('./auth.js', import.meta.url), 'utf8')
   .replace(/^import[\s\S]*?from '[^']+';\n/gm, '');
@@ -15,19 +16,26 @@ for (const register of [false, true]) {
     if (register) fields.name = { value: 'Synthetic member' };
     const form = { querySelector: () => button, addEventListener: (event, callback) => { if (event === 'submit') submit = callback; } };
     const location = { search: '', origin: 'https://synthetic.example.test', href: '/login.html' };
+    const actorId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+    const session = { user: { id: actorId }, access_token: `synthetic.${Buffer.from(JSON.stringify({ sub: actorId, session_id: '11111111-1111-4111-8111-111111111111' })).toString('base64url')}.signature` };
+    let currentSession = null;
     const authenticate = async () => {
       assert.equal(entry.capture(), null, 'Pause precedes the SDK call and synchronous Auth notification.');
       attempt += 1;
       if (attempt === 1) throw new Error('Synthetic retryable failure');
       if (attempt === 2) return { session: null };
-      return { session: { access_token: 'synthetic-only' }, mfaRequired: false };
+      currentSession = session;
+      return { session, mfaRequired: false };
     };
     runInNewContext(source, {
-      authEntryTransition: entry, URLSearchParams,
+      authEntryTransition: entry, finishAuthLanding, URLSearchParams,
       document: { getElementById: id => id === 'authForm' ? form : fields[id] || null, querySelector: () => null },
-      window: { location, alert() {} },
+      window: { location, alert() {}, addEventListener() {}, removeEventListener() {} },
       RELEASE_GATES: { publicSignupEnabled: true }, initReveal() {},
-      hasSupabaseAuthentication: () => true, getAuthSession: async () => null,
+      hasSupabaseAuthentication: () => true, getAuthSession: async () => currentSession,
+      getSiteAdminContext: async () => { throw new Error('Explicit destination must not read admin context.'); },
+      getBillingState: async () => { throw new Error('Explicit destination must not read billing.'); },
+      subscribeToAuthStateChanges: () => () => {},
       sanitizeReturnTo: () => './support.html', isInviteReturnPath: () => false, isChallengeStartReturnPath: () => false,
       signInWithPassword: register ? () => { throw new Error('Unexpected login'); } : authenticate,
       signUpWithPassword: register ? authenticate : () => { throw new Error('Unexpected signup'); },

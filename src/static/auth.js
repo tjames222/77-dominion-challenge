@@ -1,5 +1,7 @@
 import { initReveal } from './reveal';
 import { authEntryTransition } from './auth-entry-transition.mjs';
+// A stateless entry-local copy avoids a new initial shared-chunk request.
+import { finishAuthLanding } from './auth-landing.mjs?auth-entry';
 import { mfaChallengeHref } from './mfa-navigation.mjs';
 import { buildInviteAuthHref, isInviteReturnPath } from './invite-flow.mjs';
 import {
@@ -10,6 +12,7 @@ import {
   getBillingState,
   getAuthSession,
   getMfaAuthAdapter,
+  getSiteAdminContext,
   hasSupabaseAuthentication,
   isLocalDemoMode,
   saveLocalMockUser,
@@ -17,6 +20,7 @@ import {
   sanitizeReturnTo,
   signInWithPassword,
   signUpWithPassword,
+  subscribeToAuthStateChanges,
 } from './api';
 import {
   PUBLIC_SIGNUP_CLOSED_MESSAGE,
@@ -110,14 +114,14 @@ if (form) {
           return;
         }
 
-        saveLocalUserFromSession(result.session, name);
-        if (returnTo && returnTo !== './dashboard.html') {
-          continueTo(returnTo);
-          return;
-        }
-
-        const billing = await getBillingState();
-        continueTo(billing.appAccess ? './dashboard.html' : './billing.html');
+        await finishAuthLanding({
+          session: result.session, returnTo, getAuthSession, getSiteAdminContext,
+          getBillingState, subscribeToAuthStateChanges, lifecycle: window,
+          navigate(target) {
+            saveLocalUserFromSession(result.session, name);
+            continueTo(target);
+          },
+        });
         return;
       }
 

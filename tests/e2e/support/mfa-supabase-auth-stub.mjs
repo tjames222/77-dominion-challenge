@@ -7,16 +7,18 @@ const S = '11111111-1111-4111-8111-111111111111';
 const json = (route, data, status = 200) => route.fulfill({ status, contentType: 'application/json', headers: { 'x-supabase-api-version': '2024-01-01' }, body: JSON.stringify(data) });
 const encode = (value) => Buffer.from(JSON.stringify(value)).toString('base64url');
 
-export async function installMfaSupabaseStub(context, { enrolled = true, appAccess = false } = {}) {
+export async function installMfaSupabaseStub(context, { enrolled = true, appAccess = false, siteAdmin = false, claimedAdmin = false } = {}) {
   const requests = [];
   const tokens = new Map();
   let sequence = 0;
   let verificationGate = null;
   let loseVerifyResponse = false;
   let logoutOutage = false;
+  let adminContextOutage = false;
+  let adminContextGate = null;
   let factorVerified = enrolled;
   let sessionId = S;
-  const user = () => ({ id: A, aud: 'authenticated', role: 'authenticated', email: 'mfa.synthetic@example.test', user_metadata: { name: 'Synthetic Member' }, factors: factorVerified ? [{ id: F, status: 'verified', factor_type: 'totp', friendly_name: 'My authenticator' }] : [] });
+  const user = () => ({ id: A, aud: 'authenticated', role: 'authenticated', email: 'mfa.synthetic@example.test', user_metadata: { name: 'Synthetic Member', ...(claimedAdmin ? { role: 'site_admin', is_admin: true } : {}) }, factors: factorVerified ? [{ id: F, status: 'verified', factor_type: 'totp', friendly_name: 'My authenticator' }] : [] });
   const session = (aal) => {
     const now = Math.floor(Date.now() / 1000);
     const access = `${encode({ alg: 'HS256', typ: 'JWT' })}.${encode({ sub: A, exp: now + 3600, iat: now, aal, session_id: sessionId, role: 'authenticated', amr: [{ method: aal === 'aal2' ? 'totp' : 'password', timestamp: now + ++sequence }] })}.synthetic-signature`;
@@ -59,9 +61,15 @@ export async function installMfaSupabaseStub(context, { enrolled = true, appAcce
         earlyAccessProgram: null, earlyAccessEndsAt: null, betaPriceEligible: false });
     }
     if (path === '/rest/v1/rpc/get_theme_preference' || path === '/rest/v1/rpc/set_theme_preference') return json(route, { theme_key: 'dark' });
-    if (path === '/rest/v1/rpc/get_site_admin_context') return json(route, {
-      schemaVersion: 1, actorId: A, role: 'member', adminReady: false, permissions: [],
-    });
+    if (path === '/rest/v1/rpc/get_site_admin_context') {
+      if (adminContextGate) await adminContextGate;
+      if (adminContextOutage) return json(route, { message: 'SYNTHETIC_PRIVATE_ADMIN_RESPONSE' }, 503);
+      if (!auth || body.target_expected_actor_id !== A) return json(route, { code: 'PT401' }, 401);
+      const ready = siteAdmin && factorVerified && auth.aal === 'aal2';
+      return json(route, { schemaVersion: 1, actorId: A, role: siteAdmin ? 'site_admin' : 'member',
+        adminReady: ready, reason: siteAdmin && !ready ? 'mfa_required' : null,
+        permissions: ready ? ['users.read', 'operations.read'] : [], stepUpRequired: false });
+    }
     if (path.startsWith('/rest/') || path.startsWith('/functions/')) return json(route, []);
     return json(route, { code: 'unexpected_fixture_endpoint', message: 'Unhandled synthetic endpoint' }, 500);
   });
@@ -70,6 +78,8 @@ export async function installMfaSupabaseStub(context, { enrolled = true, appAcce
     privateRequests: () => requests.filter((request) => request.path.startsWith('/rest/') || request.path.startsWith('/functions/')),
     loseNextVerificationResponse() { loseVerifyResponse = true; },
     setLogoutOutage(value = true) { logoutOutage = value; },
+    setAdminContextOutage(value = true) { adminContextOutage = value; },
+    holdAdminContext() { let release; adminContextGate = new Promise(resolve => { release = resolve; }); return () => { release(); adminContextGate = null; }; },
     rotateSession() { sessionId = '22222222-2222-4222-8222-222222222222'; },
     holdVerification() { let release; verificationGate = new Promise((resolve) => { release = resolve; }); return () => { release(); verificationGate = null; }; },
   };
