@@ -118,6 +118,15 @@ test('actual production graph keeps MFA free of menu side effects and training s
   for (const entry of Object.values(PRODUCTION_ENTRYPOINTS)) {
     const modules = graph(entry).filter(asset => asset.type === 'chunk').flatMap(asset => Object.keys(asset.modules));
     assert.equal(modules.filter(id => id.endsWith('/src/static/auth-runtime-core.mjs')).length, entry === 'early-access-invite.html' ? 0 : 1, `${entry} shared Auth runtime (invitation defers until fragment cleanup)`);
+    const landingModules = modules.filter(id => /\/src\/static\/auth-landing\.mjs(?:\?.*)?$/.test(id));
+    const landingEntry = ['login.html', 'register.html'].includes(entry) ? 'auth' : entry === 'account-security.html' ? 'security' : '';
+    assert.equal(landingModules.length, landingEntry ? 1 : 0, `${entry} owns only its entry-local post-auth helper`);
+    if (landingEntry) {
+      assert.ok(landingModules[0].endsWith(`/auth-landing.mjs?${landingEntry}-entry`));
+      const chunk = graph(entry).find(asset => asset.type === 'chunk' && landingModules[0] in asset.modules);
+      const controller = landingEntry === 'auth' ? 'auth.js' : 'account-security.js';
+      assert.ok(Object.keys(chunk.modules).some(id => id.endsWith(`/src/static/${controller}`)), `${entry} does not add a separate helper request`);
+    }
     assert.equal(modules.some(id => id.endsWith('/src/static/reward-link-contract.mjs')), entry === 'badges-rewards.html', `${entry} loads the pure reward-link parser only when needed`);
     for (const name of ['reward-celebrations.mjs', 'celebration-delivery-token.mjs']) {
       assert.equal(modules.some(id => id.endsWith(`/src/static/${name}`)), entry === 'dashboard.html', `${entry} keeps reward delivery/recovery owned by Dashboard`);

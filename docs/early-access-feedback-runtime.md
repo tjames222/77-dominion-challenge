@@ -1,4 +1,22 @@
-# Early-access feedback runtime — release candidate, not deployed
+# Early-access feedback runtime
+
+## Production checkpoint — September 28, 2026
+
+[Production release 36382374620](https://github.com/tjames222/77-dominion-challenge/actions/runs/36382374620)
+deployed this runtime from main `0211bd537de765078355076104da0ae9b9a807e2` to the
+existing Supabase and Cloudflare projects. Exact migration/function state,
+private queue permissions, scheduled worker health, and canonical public assets
+were verified. The dedicated Linear destination metadata check and Resend SMTP
+authentication passed. Resend accepted the one approved owner test email.
+
+A real Early Access feedback submission has not yet demonstrated Linear issue
+creation and support-email receipt. The ticket remains In Progress pending that
+authorized end-to-end check; a healthy worker or stored credential is not proof
+of downstream delivery. Billing and public signup remain disabled. The earlier
+candidate notes below describe implementation and test boundaries, not a claim
+that the runtime is still undeployed.
+
+## Runtime boundaries
 
 This runtime connects the reviewed feedback contracts to an owner-bound browser
 client, private SQL intake, durable Linear/email delivery records, and a bounded
@@ -76,10 +94,11 @@ Linear team `f61599d3-1342-430f-855e-2d3bc574a94b` and project
 Improvement taxonomy is reused. The Early Access Feedback label is
 `ffbc76e4-a42e-475d-b31d-963fe3100de5`.
 
-Remaining release gates include verified Resend account/domain setup without
-altering incoming support forwarding, least-privilege key preflight, approved
-worker scheduling and secret provisioning, full schema/pgTAP/browser/release
-checks, invitation acceptance, and an authorized end-to-end canary. The browser
+The September 28 release completed verified Resend account/domain setup without
+altering incoming support forwarding, key preflight, approved worker scheduling
+and secret provisioning, and schema/pgTAP/browser/release checks. Remaining live
+acceptance checks are invitation acceptance and the authorized end-to-end
+feedback canary, including downstream delivery confirmation. The browser
 access-state reader and server membership consumers are now integrated
 by `20260927025530_integrate_early_access_membership.sql`; see
 `early-access-member-authority.md` for the preserved contracts and race tests.

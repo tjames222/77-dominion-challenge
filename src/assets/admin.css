@@ -76,6 +76,12 @@
 .admin-review-acknowledgement input { width: 1.4rem; height: 1.4rem; flex: 0 0 1.4rem; margin: .15rem 0 0; accent-color: var(--accent); }
 .admin-detail :is(input, select):focus-visible { outline: 3px solid var(--focus-ring); outline-offset: 3px; }
 .admin-detail button:disabled { opacity: .45; cursor: default; }
+/* Keep decision colors local to approval/denial; their labels remain explicit. */
+.admin-detail button[data-early-access-decision="approve"] { --admin-decision-color: var(--success); }
+.admin-detail button[data-early-access-decision="deny"] { --admin-decision-color: var(--danger); }
+.admin-detail button[data-early-access-decision] { border-color: var(--admin-decision-color); background: color-mix(in srgb, var(--admin-decision-color) 55%, #000); color: #fff; font-weight: 650; }
+.admin-detail button[data-early-access-decision]:not(:disabled):hover { background: color-mix(in srgb, var(--admin-decision-color) 45%, #000); }
+.admin-detail button[data-early-access-decision]:disabled { border-color: var(--button-disabled-border); background: var(--button-disabled-background); color: var(--button-disabled-text); opacity: 1; cursor: not-allowed; }
 #earlyAccessHistoryRows article { border-top: 1px solid var(--border); padding: .75rem 0; }
 @media (max-width: 1050px) { .admin-filters { grid-template-columns: repeat(2, minmax(0, 1fr)); } .admin-search { grid-column: 1 / -1; } }
 @media (max-width: 700px) {

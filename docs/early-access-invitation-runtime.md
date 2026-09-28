@@ -1,9 +1,17 @@
 # Early Access invitation runtime
 
-This candidate is not a deployment receipt. Keep FOU-1742 open until the full
-new-account setup, acceptance, provider delivery, and release checks below pass.
-FOU-1803 also needs its production worker/provider verification; a stored key is
-not delivery evidence.
+The runtime was deployed on September 28, 2026 in
+[production release 36382374620](https://github.com/tjames222/77-dominion-challenge/actions/runs/36382374620),
+main `0211bd537de765078355076104da0ae9b9a807e2`. Exact hosted migration history,
+function configuration, worker health, and public artifact delivery were verified.
+Resend accepted the single approved test email. A separately authorized owner
+canary persisted one public request, which the owner approved through the normal
+admin UI; the invitation was provider-accepted on its first attempt at
+07:20:02 UTC. Inbox receipt and a real hosted invitation acceptance have not yet
+been confirmed. Keep FOU-1742 open until the
+remaining end-to-end acceptance evidence is recorded. FOU-1803 separately needs
+real feedback delivery to Linear and the support mailbox; metadata checks are
+not issue-creation or inbox-delivery evidence.
 
 ## Administrative action
 
@@ -98,8 +106,9 @@ UX verification item; the current setup email directs that case to support.
 
 The production Auth guard now requires signup and anonymous access disabled,
 email confirmation enabled, unverified-email sign-ins disabled, the exact three
-reset redirects and `mailer_otp_exp=3600`. These candidate policy changes are not
-proof that hosted configuration has already been updated or verified.
+reset redirects and `mailer_otp_exp=3600`. The September 28 production release
+verified these hosted settings by read-back. Future releases must pass the same
+guard; a local candidate or configuration file alone is not hosted-state proof.
 
 ## Required release evidence
 

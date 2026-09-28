@@ -319,6 +319,92 @@ test('enrolled login completes MFA before default billing routing', async ({ con
   expect(auth.privateRequests().every((request) => request.aal === 'aal2')).toBe(true);
 });
 
+for (const returnTo of ['', './dashboard.html']) {
+  test(`default admin login${returnTo ? ' with a canonical dashboard return' : ''} completes MFA then opens administration without billing`, async ({ context, page }) => {
+    const auth = await installMfaSupabaseStub(context, { siteAdmin: true });
+    await fakeDestination(context, '/admin.html');
+    await login(page, returnTo);
+    await expect(page.locator('#securityVerifyForm')).toBeVisible();
+    expect(auth.privateRequests()).toEqual([]);
+    await verify(page);
+    await page.getByRole('button', { name: 'Continue', exact: true }).click();
+    await expect(page).toHaveURL(/\/admin\.html$/);
+    const roleReads = auth.requests.filter(request => request.path === '/rest/v1/rpc/get_site_admin_context');
+    expect(roleReads).toHaveLength(1); expect(roleReads[0].aal).toBe('aal2');
+    expect(auth.requests.filter(request => request.path === '/rest/v1/entitlements')).toEqual([]);
+    expect(auth.requests.some(request => request.path.includes('site_admin_') && request.path !== '/rest/v1/rpc/get_site_admin_context')).toBe(false);
+  });
+}
+
+for (const returnTo of ['', '/dashboard']) {
+  test(`server-confirmed admin without ready MFA lands at the real admin gate${returnTo ? ' from a clean dashboard return' : ''}, never gains permissions from routing`, async ({ context, page }) => {
+    const auth = await installMfaSupabaseStub(context, { enrolled: false, siteAdmin: true });
+    await login(page, returnTo);
+    await expect(page).toHaveURL(/\/admin\.html$/);
+    await expect(page.getByRole('heading', { name: 'Authenticator verification required', exact: true })).toBeVisible();
+    await expect(page.getByRole('link', { name: 'Verify authenticator', exact: true })).toBeVisible();
+    await expect(page.locator('#adminWorkspace')).toBeHidden();
+    expect(auth.requests.some(request => request.path.includes('/site_admin_list_'))).toBe(false);
+  });
+}
+
+test('an admin’s explicit Early Access invitation continuation wins after MFA', async ({ context, page }) => {
+  const auth = await installMfaSupabaseStub(context, { siteAdmin: true });
+  await fakeDestination(context, '/early-access-invite.html');
+  await login(page, './early-access-invite.html');
+  await expect(page.locator('#securityVerifyForm')).toBeVisible(); await verify(page);
+  await page.getByRole('button', { name: 'Continue', exact: true }).click();
+  await expect(page).toHaveURL(/\/early-access-invite\.html$/);
+  expect(auth.requests.filter(request => request.path === '/rest/v1/rpc/get_site_admin_context')).toEqual([]);
+});
+
+test('an ordinary paid member still lands on dashboard despite admin-looking user metadata', async ({ context, page }) => {
+  const auth = await installMfaSupabaseStub(context, { enrolled: false, appAccess: true, claimedAdmin: true });
+  await fakeDestination(context, '/dashboard.html'); await login(page);
+  await expect(page).toHaveURL(/\/dashboard\.html$/);
+  expect(auth.requests.filter(request => request.path === '/rest/v1/rpc/get_site_admin_context')).toHaveLength(1);
+  expect(auth.requests.some(request => request.path === '/rest/v1/entitlements')).toBe(true);
+});
+
+test('default login role-read outage stays retryable without a billing fallback or provider details', async ({ context, page }) => {
+  const auth = await installMfaSupabaseStub(context, { enrolled: false, siteAdmin: true });
+  const alerts = []; page.on('dialog', async dialog => { alerts.push(dialog.message()); await dialog.dismiss(); });
+  auth.setAdminContextOutage(); await login(page);
+  await expect.poll(() => alerts).toEqual(['Unable to open your account right now. Please try again.']);
+  await expect(page).toHaveURL(/\/login\.html$/);
+  await expect(page.getByRole('button', { name: 'Go to dashboard', exact: true })).toBeEnabled();
+  expect(auth.requests.some(request => request.path === '/rest/v1/entitlements')).toBe(false);
+  auth.setAdminContextOutage(false); await fakeDestination(context, '/admin.html');
+  await page.getByRole('button', { name: 'Go to dashboard', exact: true }).click();
+  await expect(page).toHaveURL(/\/admin\.html$/);
+  expect(auth.requests.filter(request => request.path === '/rest/v1/rpc/get_site_admin_context')).toHaveLength(2);
+});
+
+for (const enrolled of [false, true]) {
+  test(`replacement session during ${enrolled ? 'post-MFA' : 'password'} admin lookup cannot navigate the old document`, async ({ context, page }) => {
+    const auth = await installMfaSupabaseStub(context, { enrolled, siteAdmin: true });
+    const alerts = []; page.on('dialog', async dialog => { alerts.push(dialog.message()); await dialog.dismiss(); });
+    const release = auth.holdAdminContext();
+    try {
+      await login(page);
+      if (enrolled) { await verify(page); await page.getByRole('button', { name: 'Continue', exact: true }).click(); }
+      await expect.poll(() => auth.requests.filter(request => request.path === '/rest/v1/rpc/get_site_admin_context').length).toBe(1);
+      auth.rotateSession();
+      const other = await context.newPage(); await fakeDestination(context, '/support.html');
+      await login(other, './support.html');
+      await expect(other).toHaveURL(enrolled ? /account-security\.html\?mode=challenge/ : /\/support\.html$/);
+      if (enrolled) await expect(page.getByRole('status')).toContainText('signed-in account changed');
+      else await expect.poll(() => alerts).toEqual(['The signed-in session changed. Log in again to continue.']);
+      release();
+      await expect(page).toHaveURL(enrolled ? /account-security\.html\?mode=challenge/ : /\/login\.html$/);
+      await page.waitForLoadState('networkidle');
+      await expect(page).not.toHaveURL(/\/admin\.html$/);
+      expect(auth.requests.some(request => request.path === '/rest/v1/entitlements')).toBe(false);
+      await other.close();
+    } finally { release(); }
+  });
+}
+
 test('live enrollment is user-initiated and clears setup data only after provider confirmation', async ({ context, page }) => {
   const auth = await installMfaSupabaseStub(context, { enrolled: false });
   await login(page, './account-security.html');
