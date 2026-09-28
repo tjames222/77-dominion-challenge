@@ -103,7 +103,12 @@ jobs:
         run: node scripts/prepare-ci-fixture-images.mjs
       - name: Verify isolated fresh-key Vault backup reconstruction
         timeout-minutes: 5
+        env:
+          DOMINION_BACKUP_FIXTURE_CURRENT_PG_NET: '1'
         run: node --test scripts/free-backup-current-vault.sql.test.mjs
+      - name: Verify exact pg_net extension data preservation
+        timeout-minutes: 5
+        run: node --test scripts/free-backup-current-pgnet.sql.test.mjs
       - name: Execute production canary SQL in isolated PostgreSQL
         run: pnpm run test:production-canary-entitlement-sql
       - name: Execute early-access intake SQL in isolated PostgreSQL

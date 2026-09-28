@@ -111,6 +111,50 @@ five pending migrations, an arbitrary database history, or a different prefix.
 The old thirteen-migration default and compatibility-cutover evidence verifier
 are unchanged.
 
+### Preserving pg_net extension data
+
+PostgreSQL omits non-configuration extension-member contents from `pg_dump`,
+including when selecting those tables explicitly. The pinned production
+`pg_net` 0.20.3 has exactly three such relations: `net._http_response`,
+`net.http_request_queue`, and `net.http_request_queue_id_seq`. Current mode
+checks the exact version, extension membership/configuration, table column
+order/types/nullability, absence of user triggers, and sequence definition.
+Unknown non-configuration extension relations fail closed. See the
+[PostgreSQL extension configuration-table contract](https://www.postgresql.org/docs/17/extend-extensions.html#EXTEND-EXTENSIONS-CONFIG-TABLES).
+
+Two explicit read-only binary `COPY TO STDOUT` operations preserve every row
+in `pg-net-http-response.copy` and `pg-net-http-request-queue.copy`, inside the
+same private mode-0600 tmpfs capture directory. The sequence value and
+`is_called` flag come from the original validated inventory, without invoking
+`nextval`. Both binary files are included in the encrypted tar. The
+`pgNetSupplement` manifest records their exact names, byte lengths, SHA-256
+hashes, extension version, binary format, and lossless sequence state under
+`dominion-pg-net-binary-supplement/v1`. Neither HTTP bodies nor headers are
+printed, and there is no hosted `COPY FROM`, `setval`, or extension mutation.
+The original source-before/after and full restored-inventory equality checks
+are unchanged; no pg_net table, response, queued request, or sequence is ignored.
+
+Current-mode isolated startup additionally preloads pg_net (required for its
+native extension DDL), sets `max_worker_processes=0`, `pg_net.batch_size=0`,
+and directs its worker at the deliberately nonexistent
+`dominion_backup_disabled` database. Cron stays off, networking stays disabled,
+and no background worker can drain requests or expire responses. The legacy
+startup remains unchanged unless the exact current-mode flag is passed.
+Each binary replay refuses before writing unless the local admin/socket/
+no-listener/worker-disable settings, absent worker database, pinned metadata,
+and empty destination table all match. Replay is transactional; corrupt or
+truncated input cannot commit partial rows. The sequence uses psql17 bound
+parameters against the one fixed local sequence. Any failure prevents artifact
+publication and removes only the owned disposable runtime. Future recovery must
+preserve these no-worker/no-egress conditions until separately reviewed;
+restoring queued requests into an active worker could resend them.
+
+Native tests use the actual restricted startup script and the exact production
+psql `-c`/binary-stdin transport. They verify full equality for nonempty queues,
+expired responses, nulls, JSON, Unicode, newlines and bytea; both sequence states;
+metadata/runtime/role refusals; and rollback of damaged binary copies. The
+existing fresh-key Vault tests also run under this current-mode startup in CI.
+
 Current production contains exactly two regenerable Vault settings:
 `profile_photo_project_url` and `profile_photo_worker_secret`, used by the one
 `process-profile-photo-cleanup` Cron job. All other encrypted Vault data remains

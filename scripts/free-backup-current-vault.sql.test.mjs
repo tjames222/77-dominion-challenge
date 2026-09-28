@@ -44,6 +44,7 @@ before(async () => {
       '--read-only', '--cap-drop', 'ALL', '--security-opt', 'no-new-privileges', '--log-driver', 'none',
       '--tmpfs', '/restore:rw,exec,nosuid,nodev,uid=100,gid=101,mode=0700,size=512m',
       '--tmpfs', '/tmp:rw,nosuid,nodev,noexec,uid=100,gid=101,mode=0700,size=64m',
+      ...(process.env.DOMINION_BACKUP_FIXTURE_CURRENT_PG_NET === '1' ? ['-e', 'DOMINION_BACKUP_CURRENT_PG_NET=1'] : []),
       '--entrypoint', 'bash', imageId, '-c', startup]);
     assert.equal(started.status, 0, 'Owned Vault fixture creation failed.'); const id = started.stdout.trim(); assert.match(id, /^[a-f0-9]{64}$/); containers.set(kind, id);
     let ready = false;

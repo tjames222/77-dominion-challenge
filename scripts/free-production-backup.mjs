@@ -11,6 +11,8 @@ import { prepareProductionSupabaseDatabaseCredentials, revokeProductionSupabaseD
 import { remainingCredentialMilliseconds, runDeadlineProcess } from './production-database-credential-lifetime.mjs';
 import { CURRENT_BACKUP_MODE, LEGACY_BACKUP_MODE, currentBackupVaultProofSql, currentBackupLocalVaultRecoverySql,
   requireCurrentBackupVaultProof, requireCurrentBackupLocalVaultRecovery, currentBackupVaultRecoveryManifest } from './free-backup-current-vault.mjs';
+import { CURRENT_PGNET_TABLES, currentBackupPgNetCaptureSql, currentBackupPgNetLocalReplaySql,
+  currentBackupPgNetSequence, currentBackupPgNetLocalSequenceSql, currentBackupPgNetManifest } from './free-backup-current-pgnet.mjs';
 
 export const PROJECT_REF = 'mimolwojppbtsbvtqwpo';
 export const POSTGRES_IMAGE = 'public.ecr.aws/supabase/postgres:17.6.1.141';
@@ -209,6 +211,7 @@ function cleanEnvironment() {
 
 const safeDiagnosticCodes = new Set([
   'current-vault-contract',
+  'current-pgnet-contract',
   'login-response-shape', 'login-role-format', 'login-password-format',
   'login-ttl-format', 'login-ttl-below-300', 'login-ttl-below-900',
   'login-ttl-below-3600', 'login-ttl-above-7200',
@@ -480,6 +483,8 @@ export async function runBackup() {
     const beforeText = await readFile(before, 'utf8');
     const inventory = parseInventory(beforeText, expectedVersions, backupMode);
     const sourceBootstrapRole = inventory.find((r) => r.kind === 'boundary').bootstrapRole;
+    const pgNetSequence = backupMode === CURRENT_BACKUP_MODE ? currentBackupPgNetSequence(inventory) : null;
+    let pgNetSupplement = null;
     if (backupMode === CURRENT_BACKUP_MODE) {
       stage('current-vault-proof');
       const vault = inventory.find(r => r.kind === 'table' && r.schema === 'vault' && r.name === 'secrets');
@@ -493,6 +498,16 @@ export async function runBackup() {
     await remote(['pg_dumpall', '--roles-only', '--no-role-passwords', '--role=postgres'], path.join(capture, 'roles.sql'));
     stage('database-dump');
     await remote(['pg_dump', '--format=custom', '--compress=0', '--lock-wait-timeout=15000', '--role=postgres'], path.join(capture, 'database.dump'));
+    if (backupMode === CURRENT_BACKUP_MODE) {
+      stage('current-pgnet-capture');
+      for (const table of CURRENT_PGNET_TABLES) {
+        await remote(['psql', '-X', '-q', '-v', 'ON_ERROR_STOP=1', '-c', REMOTE_BACKUP_ROLE_SQL,
+          '-c', currentBackupPgNetCaptureSql(table.name)], path.join(capture, table.file));
+      }
+      pgNetSupplement = currentBackupPgNetManifest(await Promise.all(CURRENT_PGNET_TABLES.map(async table => ({
+        file: table.file, bytes: await readFile(path.join(capture, table.file)),
+      }))), pgNetSequence);
+    }
     const after = path.join(runtime, 'after.jsonl');
     stage('inventory-after');
     await remote(['psql', '-X', '-q', '-v', 'ON_ERROR_STOP=1', '-c', REMOTE_BACKUP_ROLE_SQL, '-f', inventorySql], after);
@@ -507,7 +522,9 @@ export async function runBackup() {
     const restoreName = `dominion-backup-restore-${randomBytes(12).toString('hex')}`;
     containers.push(restoreName);
     stage('local-init');
-    await command('docker', ['run', '--detach', '--name', restoreName, '--label', `com.dominion.backup-owner=${ownershipToken}`, '--pull', 'never', '--network', 'none', '--read-only', '--cap-drop', 'ALL', '--security-opt', 'no-new-privileges', '--log-driver', 'none', '--user', '100:101', '--tmpfs', '/restore:rw,exec,nosuid,nodev,uid=100,gid=101,mode=0700,size=512m', '--tmpfs', '/tmp:rw,nosuid,nodev,noexec,uid=100,gid=101,mode=0700,size=64m', '--mount', `type=bind,source=${path.join(repository, 'scripts/free-backup-local-postgres.sh')},target=/startup.sh,readonly`, '--entrypoint', 'bash', imageId, '/startup.sh'], { log });
+    await command('docker', ['run', '--detach', '--name', restoreName, '--label', `com.dominion.backup-owner=${ownershipToken}`, '--pull', 'never', '--network', 'none', '--read-only', '--cap-drop', 'ALL', '--security-opt', 'no-new-privileges', '--log-driver', 'none', '--user', '100:101', '--tmpfs', '/restore:rw,exec,nosuid,nodev,uid=100,gid=101,mode=0700,size=512m', '--tmpfs', '/tmp:rw,nosuid,nodev,noexec,uid=100,gid=101,mode=0700,size=64m',
+      ...(backupMode === CURRENT_BACKUP_MODE ? ['-e', 'DOMINION_BACKUP_CURRENT_PG_NET=1'] : []),
+      '--mount', `type=bind,source=${path.join(repository, 'scripts/free-backup-local-postgres.sh')},target=/startup.sh,readonly`, '--entrypoint', 'bash', imageId, '/startup.sh'], { log });
     const local = (args, options = {}) => command('docker', ['exec', ...(options.input ? ['-i'] : []), restoreName, ...args], { log, ...options });
     let ready = false;
     for (let attempt = 0; attempt < 60; attempt++) {
@@ -526,6 +543,19 @@ export async function runBackup() {
       localSql: (sql) => local([...psql, '-At', '-c', sql]),
       restoreArchive: () => local(['pg_restore', '--host=/restore', '--username=backup_restore_admin', '--dbname=postgres', '--single-transaction', '--exit-on-error'], { input: path.join(capture, 'database.dump') }),
     });
+    if (backupMode === CURRENT_BACKUP_MODE) {
+      stage('local-pgnet-replay');
+      assert.deepEqual(currentBackupPgNetManifest(await Promise.all(CURRENT_PGNET_TABLES.map(async table => ({
+        file: table.file, bytes: await readFile(path.join(capture, table.file)),
+      }))), pgNetSequence), pgNetSupplement, 'Captured pg_net supplement changed');
+      for (const table of CURRENT_PGNET_TABLES) {
+        await local([...psql, '-c', currentBackupPgNetLocalReplaySql(table.name)], { input: path.join(capture, table.file) });
+      }
+      const sequenceSql = path.join(runtime, 'local-pgnet-sequence.sql');
+      await writeFile(sequenceSql, currentBackupPgNetLocalSequenceSql(pgNetSequence), { flag: 'wx', mode: 0o600 });
+      await local(psql, { input: sequenceSql });
+      await rm(sequenceSql);
+    }
     const restored = path.join(runtime, 'restored.jsonl');
     stage('content-verify');
     await local(psql, { input: inventorySql, output: restored });
@@ -542,7 +572,8 @@ export async function runBackup() {
     containers.splice(containers.indexOf(restoreName), 1);
     console.log('Isolated restore reproduced all captured table contents, sequences, and migration history.');
     const tarball = path.join(runtime, 'backup.tar');
-    await command('tar', ['-cf', tarball, '-C', capture, 'roles.sql', 'database.dump', 'inventory.jsonl'], { log });
+    await command('tar', ['-cf', tarball, '-C', capture, 'roles.sql', 'database.dump', 'inventory.jsonl',
+      ...(backupMode === CURRENT_BACKUP_MODE ? CURRENT_PGNET_TABLES.map(table => table.file) : [])], { log });
     stage('encryption');
     const encrypted = await encryptBackup(tarball, path.join(artifactDirectory, 'backup.enc'), publicPem);
     const manifest = {
@@ -552,7 +583,7 @@ export async function runBackup() {
       runAttempt: Number(process.env.GITHUB_RUN_ATTEMPT), createdAt: new Date().toISOString(),
       postgresImage: POSTGRES_IMAGE, postgresImageId: imageId, ...encrypted,
       restoreVerified: true, storageObjects: 0, migrationVersions: expectedVersions,
-      ...(backupMode === CURRENT_BACKUP_MODE ? { backupMode, vaultRecovery: currentBackupVaultRecoveryManifest() } : {}),
+      ...(backupMode === CURRENT_BACKUP_MODE ? { backupMode, vaultRecovery: currentBackupVaultRecoveryManifest(), pgNetSupplement } : {}),
     };
     await writeFile(path.join(artifactDirectory, 'backup-manifest.json'), JSON.stringify(manifest, null, 2) + '\n', { flag: 'wx', mode: 0o600 });
     if (process.env.GITHUB_OUTPUT) await writeFile(process.env.GITHUB_OUTPUT, `artifact_directory=${artifactDirectory}\n`, { flag: 'a' });

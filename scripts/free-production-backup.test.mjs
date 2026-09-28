@@ -553,7 +553,7 @@ test('current integration keeps secret SQL in0600 tmpfs outside archive and rese
   assert.match(local, /flag: 'wx', mode: 0o600/); assert.match(local, /await local\(psql, \{ input: recovery \}\)/);
   assert.doesNotMatch(local, /remote\(/);
   assert(source.indexOf('assert.equal(comparableInventory(restoredText)') < source.indexOf("stage('local-vault-reconstruction')"));
-  assert.match(source, /'tar', \['-cf', tarball, '-C', capture, 'roles.sql', 'database.dump', 'inventory.jsonl'\]/);
+  assert.match(source, /'tar', \['-cf', tarball, '-C', capture, 'roles.sql', 'database.dump', 'inventory.jsonl',\s*\.\.\.\(backupMode === CURRENT_BACKUP_MODE \? CURRENT_PGNET_TABLES.map\(table => table.file\) : \[\]\)\]/);
   assert.match(source, /schemaVersion: backupMode === CURRENT_BACKUP_MODE \? 2 : 1/);
   assert.match(source, /'dominion-free-current-production-backup\/v1' : 'dominion-free-production-backup\/v1'/);
   const startup = await readFile(new URL('./free-backup-local-postgres.sh', import.meta.url), 'utf8');
