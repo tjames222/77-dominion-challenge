@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
+import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import { diagnoseEarlyAccessRuntimeConfig, EARLY_ACCESS_RUNTIME_DIAGNOSTIC_LABELS, verifyEarlyAccessRuntimeConfig } from './verify-early-access-runtime-config.mjs';
@@ -167,4 +168,65 @@ test('CLI failure emits only the generic message and fixed failed labels, never 
     + `Failed checks: ${diagnoseEarlyAccessRuntimeConfig(value).join(', ')}\n`);
   assert.equal(result.stderr.includes(sentinel), false);
   assert.doesNotMatch(result.stderr, /\bat file:|cause|length|sha256|https?:\/\//);
+});
+
+const diagnosticWorkflow = () => readFileSync(new URL('../.github/workflows/diagnose-production-early-access.yml', import.meta.url), 'utf8');
+const jobBlock = (source, name) => source.match(new RegExp(`^  ${name}:\\n[\\s\\S]*?(?=^  [a-z][a-z-]*:\\n|$(?![\\s\\S]))`, 'm'))?.[0];
+test('diagnostic workflow is manual-only, read-only, and serialized with normal production releases', () => {
+  const workflow = diagnosticWorkflow();
+  assert.deepEqual([...workflow.matchAll(/^([a-z][a-z-]*):/gm)].map(match => match[1]), ['name', 'on', 'permissions', 'concurrency', 'jobs']);
+  assert.match(workflow, /^on:\n  workflow_dispatch:\n\npermissions:\n  contents: read\n\nconcurrency:\n  group: production-release\n  cancel-in-progress: false\n\njobs:/m);
+  assert.deepEqual([...workflow.slice(workflow.indexOf('\njobs:\n')).matchAll(/^  ([a-z][a-z-]*):/gm)].map(match => match[1]), ['authorize', 'diagnose']);
+  assert.doesNotMatch(workflow, /\b(inputs|pull_request|pull_request_target|schedule|push|workflow_call|continue-on-error):/);
+  assert.equal((workflow.match(/\bpermissions:/g) || []).length, 1);
+  assert.equal((workflow.match(/\benvironment:/g) || []).length, 1);
+});
+test('protected main is authorized before the production environment can expose any credential', () => {
+  const workflow = diagnosticWorkflow(); const authorize = jobBlock(workflow, 'authorize');
+  assert.equal(authorize, [
+    '  authorize:', '    name: Authorize protected-main diagnostics', '    runs-on: ubuntu-latest',
+    '    timeout-minutes: 2', '    steps:', '      - name: Require protected main', '        shell: bash', '        run: |',
+    '          if [[ "${GITHUB_REF}" != "refs/heads/main" ]]; then',
+    '            echo "::error::Production diagnostics must be dispatched from the protected main branch."',
+    '            exit 1', '          fi', '', '',
+  ].join('\n'));
+  const diagnose = jobBlock(workflow, 'diagnose');
+  assert.match(diagnose, /^  diagnose:\n    name: Report fixed runtime validation labels\n    needs: authorize\n    runs-on: ubuntu-latest\n    timeout-minutes: 5\n    environment: production\n    steps:/);
+  assert.doesNotMatch(authorize, /\b(env|environment|uses):|secrets\./);
+});
+test('diagnostic job has exactly pinned checkout and Node setup followed by the sole validator command', () => {
+  const workflow = diagnosticWorkflow(); const diagnose = jobBlock(workflow, 'diagnose');
+  assert.deepEqual([...diagnose.matchAll(/^      - name: (.*)$/gm)].map(match => match[1]), [
+    'Checkout the exact reviewed commit', 'Setup Node', 'Diagnose runtime settings without revealing values',
+  ]);
+  const beforeValidator = diagnose.split('      - name: Diagnose runtime settings without revealing values\n')[0];
+  assert.match(beforeValidator, /      - name: Checkout the exact reviewed commit\n        uses: actions\/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4\n        with:\n          ref: \$\{\{ github.sha \}\}\n          persist-credentials: false\n      - name: Setup Node\n        uses: actions\/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4\n        with:\n          node-version: 22\n$/);
+  assert.doesNotMatch(beforeValidator, /\benv:|secrets\.|cache:|run:/);
+  assert.deepEqual([...diagnose.matchAll(/^        run: (.*)$/gm)].map(match => match[1]), ['node scripts/verify-early-access-runtime-config.mjs']);
+  assert.equal((workflow.match(/^        uses:/gm) || []).length, 2);
+  assert.equal((workflow.match(/^        env:/gm) || []).length, 1);
+  assert.match(diagnose, /        run: node scripts\/verify-early-access-runtime-config\.mjs\n$/);
+  assert.doesNotMatch(workflow, /\b(curl|wget|gh|supabase|pnpm|npm|npx|wrangler)\s|upload-artifact|download-artifact|send-approved|configure-production|functions deploy|secrets set|db push|db reset|smtp/i);
+});
+test('only the final diagnostic step receives exactly the backend validator settings and collision authorities', () => {
+  const workflow = diagnosticWorkflow(); const diagnose = jobBlock(workflow, 'diagnose');
+  const envBlock = diagnose.match(/^        env:\n([\s\S]*?)^        run:/m)?.[1];
+  assert.ok(envBlock);
+  const entries = [...envBlock.matchAll(/^          ([A-Z_]+): (.*)$/gm)].map(match => [match[1], match[2]]);
+  assert.equal(entries.length, envBlock.trimEnd().split('\n').length);
+  const actual = Object.fromEntries(entries);
+  const comparedNames = [...Object.keys(config()), 'SUPABASE_ACCESS_TOKEN', 'PROFILE_PHOTO_WORKER_SECRET',
+    'INTEGRATION_WORKER_SECRET', 'RETIRED_COMMUNITY_WORKER_SECRET', 'RETIRED_COMMUNITY_DR_HMAC_SECRET', 'INTEGRATION_OAUTH_STATE_SECRET'];
+  assert.deepEqual(Object.keys(actual).sort(), comparedNames.sort());
+  assert.equal(new Set(entries.map(([key]) => key)).size, entries.length);
+  const release = readFileSync(new URL('../.github/workflows/deploy.yml', import.meta.url), 'utf8');
+  const backend = jobBlock(release, 'backend');
+  const backendJobEnv = backend.match(/^    env:\n([\s\S]*?)^    steps:/m)?.[1];
+  const backendGuardEnv = backend.match(/      - name: Validate Early Access runtime and distinct credentials\n        env:\n([\s\S]*?)        run: node scripts\/verify-early-access-runtime-config\.mjs/)[1];
+  const backendEnv = Object.fromEntries([
+    ...[...backendJobEnv.matchAll(/^      ([A-Z_]+): (.*)$/gm)].map(match => [match[1], match[2]]),
+    ...[...backendGuardEnv.matchAll(/^          ([A-Z_]+): (.*)$/gm)].map(match => [match[1], match[2]]),
+  ]);
+  for (const name of comparedNames) assert.equal(actual[name], backendEnv[name], `Runtime mapping differs: ${name}`);
+  assert.equal((workflow.match(/\bsecrets\./g) || []).length, entries.filter(([, value]) => value.startsWith('${{ secrets.')).length);
 });
