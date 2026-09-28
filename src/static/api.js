@@ -941,6 +941,14 @@ export async function verifyPasswordRecoverySession() {
   await loadPasswordRecoveryController();
   return passwordRecoveryController.verify();
 }
+export async function challengePasswordRecoveryMfa(owner, factorId) {
+  await loadPasswordRecoveryController();
+  return passwordRecoveryController.challengeMfa(owner, factorId);
+}
+export async function verifyPasswordRecoveryMfa(owner, code) {
+  await loadPasswordRecoveryController();
+  return passwordRecoveryController.verifyMfa(owner, code);
+}
 export async function completePasswordRecovery(password, owner) {
   await loadPasswordRecoveryController();
   return passwordRecoveryController.complete(owner, password);

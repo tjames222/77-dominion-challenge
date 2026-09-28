@@ -118,7 +118,7 @@ test('manual baseline generation forcibly rewrites every screenshot', () => {
 });
 
 test('required browser CI includes production-mode MFA with only a local synthetic provider', () => {
-  assert.equal(packageJson.scripts['test:e2e:mfa'], 'playwright test --config=playwright.mfa.config.mjs');
+  assert.equal(packageJson.scripts['test:e2e:mfa'], 'playwright test --config=playwright.mfa.config.mjs && playwright test --config=playwright.recovery.config.mjs');
   assert.equal(packageJson.scripts['test:e2e:admin'], 'playwright test --config=playwright.admin.config.mjs');
   assert.match(workflow, /- name: Verify production-built admin read boundaries\n\s+run: pnpm test:e2e:admin/);
   assert.match(workflow, /- name: Hybrid dev authentication regression\n\s+run: pnpm test:e2e:auth\n\n\s+- name: MFA production-mode authentication regression\n\s+run: pnpm test:e2e:mfa/);
@@ -128,6 +128,17 @@ test('required browser CI includes production-mode MFA with only a local synthet
   assert.match(mfaPlaywrightConfig, /const baseURL = `http:\/\/127\.0\.0\.1:\$\{port\}`/);
   assert.doesNotMatch(mfaPlaywrightConfig, /supabase\.co|SUPABASE_ACCESS_TOKEN|SERVICE_ROLE_KEY|CLOUDFLARE_API_TOKEN/);
   assert.match(mfaPlaywrightConfig, /outputFolder: 'playwright-report'/);
+});
+
+test('same-page recovery MFA is compiled with a root-only local native Auth fixture', () => {
+  const config = readFileSync(new URL('../../playwright.recovery.config.mjs', import.meta.url), 'utf8');
+  assert.ok(playwrightConfig.includes('/recovery-mfa\\.spec\\.mjs/'));
+  assert.match(config, /VITE_ENABLE_MOCKS: 'false', VITE_ENABLE_PRODUCTION_CONNECTIONS: 'true'/);
+  assert.match(config, /VITE_SUPABASE_URL: baseURL/);
+  assert.match(config, /const baseURL = `http:\/\/127\.0\.0\.1:\$\{port\}`/);
+  assert.match(config, /retries: 0/);
+  assert.match(config, /outputFolder: 'playwright-report'/);
+  assert.doesNotMatch(config, /supabase\.co|SUPABASE_ACCESS_TOKEN|SERVICE_ROLE_KEY|CLOUDFLARE_API_TOKEN/);
 });
 
 test('early-access feedback is a required production-wired browser gate with isolated SQL checks', () => {

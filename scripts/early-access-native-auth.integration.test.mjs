@@ -307,3 +307,110 @@ test('an existing unconfirmed mailbox with a precreated password is never adopte
   assert.ok(JSON.stringify(before) === JSON.stringify(after), 'Foreign native account must remain byte-for-byte unchanged.');
   assert.equal(query(`select to_jsonb(count(*)) from auth.users where id='${reservedUserId}';`)[0], 0);
 });
+
+test('native MFA recovery upgrades the same session without adopting its rotated token into the SDK', { timeout: 60000 }, async () => {
+  const email = `mfa-recovery-${randomUUID()}@example.invalid`;
+  const initialPassword = randomBytes(24).toString('base64url');
+  const newPassword = randomBytes(24).toString('base64url');
+  const user = data(await service.auth.admin.createUser({ email, password: initialPassword, email_confirm: true }), 'create MFA recovery fixture').user;
+  const enrollment = client();
+  data(await enrollment.auth.signInWithPassword({ email, password: initialPassword }), 'fixture enrollment sign-in');
+  const factor = data(await enrollment.auth.mfa.enroll({ factorType: 'totp', friendlyName: 'Recovery fixture authenticator' }), 'fixture recovery factor');
+  data(await enrollment.auth.mfa.challengeAndVerify({ factorId: factor.id, code: totp(factor.totp.secret) }), 'fixture initial MFA');
+  data(await enrollment.auth.signOut(), 'fixture enrollment sign-out');
+  const link = data(await service.auth.admin.generateLink({ type: 'recovery', email, options: { redirectTo: EARLY_ACCESS_AUTH_REDIRECT } }), 'fixture recovery link');
+  const { member, bridge, verified: anchor } = await consumeMailedRecovery(link.properties.action_link);
+  try {
+    const claims = tokenValue => JSON.parse(Buffer.from(tokenValue.split('.')[1], 'base64url'));
+    const before = claims(anchor.access_token);
+    assert.equal(before.sub, user.id); assert.equal(before.aal, 'aal1');
+    const send = async (path, bearer, body, method = 'POST') => {
+      const response = await request(`${NATIVE_FIXTURE_AUTH_ORIGIN}/auth/v1/${path}`, { method,
+        headers: { apikey: anonKey, Authorization: `Bearer ${bearer}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify(body), credentials: 'omit', cache: 'no-store', redirect: 'error' });
+      assert.equal(response.ok, true, `Fixture native ${method} returned HTTP ${response.status} (body withheld).`);
+      return response.status === 204 ? null : response.json();
+    };
+    const challenge = await send(`factors/${factor.id}/challenge`, anchor.access_token, { factorId: factor.id });
+    assert.equal(challenge.type, 'totp');
+    assert.match(challenge.id, /^[a-f0-9-]{36}$/); assert.ok(challenge.expires_at > Date.now() / 1000);
+    const elevated = await send(`factors/${factor.id}/verify`, anchor.access_token, { challenge_id: challenge.id, code: totp(factor.totp.secret) });
+    assert.ok(typeof elevated.access_token === 'string');
+    const after = claims(elevated.access_token);
+    assert.equal(after.sub, before.sub); assert.equal(after.session_id, before.session_id); assert.equal(after.aal, 'aal2');
+    assert.equal(data(await member.auth.getUser(elevated.access_token), 'derived owner verification').user.id, user.id);
+    assert.equal(data(await member.auth.mfa.getAuthenticatorAssuranceLevel(elevated.access_token), 'derived native assurance').currentLevel, 'aal2');
+    const unchanged = data(await member.auth.getSession(), 'unchanged recovery SDK session').session;
+    assert.ok(unchanged.access_token === anchor.access_token && unchanged.refresh_token === anchor.refresh_token,
+      'The native verification must not overwrite the recovery SDK session.');
+    assert.equal(query(`select to_jsonb(count(*)) from auth.sessions where id='${before.session_id}' and user_id='${user.id}' and aal='aal2';`)[0], 1);
+    assert.equal((await send('user', elevated.access_token, { password: newPassword }, 'PUT')).id, user.id);
+    await send('logout?scope=global', elevated.access_token, undefined);
+    assert.equal(query(`select to_jsonb(count(*)) from auth.sessions where id='${before.session_id}';`)[0], 0);
+    const fresh = client();
+    assert.equal(data(await fresh.auth.signInWithPassword({ email, password: newPassword }), 'new MFA recovery password sign-in').user.id, user.id);
+    assert.equal(data(await fresh.auth.mfa.getAuthenticatorAssuranceLevel(), 'fresh MFA recovery sign-in assurance').nextLevel, 'aal2');
+    data(await fresh.auth.mfa.challengeAndVerify({ factorId: factor.id, code: totp(factor.totp.secret) }), 'fresh existing authenticator verification');
+    assert.equal(data(await fresh.auth.mfa.getAuthenticatorAssuranceLevel(), 'fresh elevated sign-in assurance').currentLevel, 'aal2');
+    assert.ok((await client().auth.verifyOtp({ type: 'recovery', token_hash: new URL(link.properties.action_link).searchParams.get('token') })).error,
+      'The original native recovery link cannot be replayed after password completion.');
+  } finally { bridge.destroy(); }
+});
+
+test('recovery controller uses real native MFA, retries only a rejected code, and changes only the captured password', { timeout: 60000 }, async () => {
+  const email = `controller-mfa-${randomUUID()}@example.invalid`;
+  const password = randomBytes(24).toString('base64url');
+  const newPassword = randomBytes(24).toString('base64url');
+  const user = data(await service.auth.admin.createUser({ email, password, email_confirm: true }), 'create controller MFA fixture').user;
+  const enrollment = client();
+  data(await enrollment.auth.signInWithPassword({ email, password }), 'controller fixture enrollment sign-in');
+  const factor = data(await enrollment.auth.mfa.enroll({ factorType: 'totp', friendlyName: 'Existing authenticator' }), 'controller fixture factor');
+  data(await enrollment.auth.mfa.challengeAndVerify({ factorId: factor.id, code: totp(factor.totp.secret) }), 'controller initial MFA');
+  data(await enrollment.auth.signOut(), 'controller fixture enrollment sign-out');
+  const link = data(await service.auth.admin.generateLink({ type: 'recovery', email, options: { redirectTo: EARLY_ACCESS_AUTH_REDIRECT } }), 'controller fixture recovery link');
+  const { member, bridge, verified: anchor } = await consumeMailedRecovery(link.properties.action_link);
+  const events = [];
+  const controller = createPasswordRecoveryController({
+    auth: { onAuthStateChange: listener => bridge.connect(listener),
+      getSession: () => member.auth.getSession(), getUser: jwt => member.auth.getUser(jwt),
+      mfa: { getAuthenticatorAssuranceLevel: jwt => member.auth.mfa.getAuthenticatorAssuranceLevel(jwt) } },
+    sessionIdentity: authSessionIdentity, supabaseUrl: NATIVE_FIXTURE_AUTH_ORIGIN, apiKey: anonKey,
+    request: async (url, options) => {
+      const result = await request(url, options);
+      events.push({ path: new URL(url).pathname, method: options.method, status: result.status,
+        anchor: options.headers.Authorization === `Bearer ${anchor.access_token}` });
+      return result;
+    },
+  });
+  try {
+    const state = await controller.verify();
+    assert.equal(state.phase, 'mfa-required');
+    assert.deepEqual(state.factors, [{ id: factor.id, friendlyName: 'Existing authenticator' }]);
+    await controller.challengeMfa(state.owner, factor.id);
+    const correct = totp(factor.totp.secret);
+    await controller.verifyMfa(state.owner, correct === '000000' ? '000001' : '000000');
+    assert.equal(controller.getState().phase, 'mfa-required');
+    assert.equal(controller.getState().code, 'RECOVERY_MFA_REJECTED');
+    assert.equal(events.filter(event => event.path.endsWith('/verify') && event.status === 422).length, 1);
+    await controller.challengeMfa(state.owner, factor.id);
+    await controller.verifyMfa(state.owner, totp(factor.totp.secret));
+    assert.equal(controller.getState().phase, 'ready');
+    const unchanged = data(await member.auth.getSession(), 'controller unchanged SDK anchor').session;
+    assert.ok(unchanged.access_token === anchor.access_token && unchanged.refresh_token === anchor.refresh_token,
+      'Controller verification must leave SDK credentials unchanged.');
+    const result = await controller.complete(state.owner, newPassword);
+    assert.equal(result.completed, true); assert.equal(result.sessionsRevoked, 'global');
+    assert.equal(events.filter(event => event.path.endsWith('/challenge')).length, 2);
+    assert.equal(events.filter(event => event.path.endsWith('/verify')).length, 2);
+    assert.ok(events.filter(event => event.path.includes('/factors/')).every(event => event.anchor));
+    assert.equal(events.filter(event => event.method === 'PUT' && !event.anchor).length, 1);
+    assert.ok(events.filter(event => event.path.endsWith('/logout')).every(event => !event.anchor));
+    const sid = JSON.parse(Buffer.from(anchor.access_token.split('.')[1], 'base64url')).session_id;
+    assert.equal(query(`select to_jsonb(count(*)) from auth.sessions where id='${sid}';`)[0], 0);
+    const fresh = client();
+    assert.equal(data(await fresh.auth.signInWithPassword({ email, password: newPassword }), 'controller new password sign-in').user.id, user.id);
+    data(await fresh.auth.mfa.challengeAndVerify({ factorId: factor.id, code: totp(factor.totp.secret) }), 'controller existing factor sign-in');
+    assert.equal(data(await fresh.auth.mfa.getAuthenticatorAssuranceLevel(), 'controller sign-in assurance').currentLevel, 'aal2');
+    assert.ok((await client().auth.verifyOtp({ type: 'recovery', token_hash: new URL(link.properties.action_link).searchParams.get('token') })).error);
+  } finally { controller.destroy(); bridge.destroy(); }
+});

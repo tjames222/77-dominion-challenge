@@ -15,7 +15,7 @@
     "check:frontend": "pnpm run test:frontend && pnpm run test:cloudflare-pages-policy && pnpm run build",
     "test:e2e": "playwright test",
     "test:e2e:auth": "playwright test --config=playwright.fou-1452.config.mjs",
-    "test:e2e:mfa": "playwright test --config=playwright.mfa.config.mjs",
+    "test:e2e:mfa": "playwright test --config=playwright.mfa.config.mjs && playwright test --config=playwright.recovery.config.mjs",
     "test:e2e:admin": "playwright test --config=playwright.admin.config.mjs",
     "test:e2e:feedback": "playwright test --config=playwright.feedback.config.mjs",
     "test:e2e:daily-bootstrap": "playwright test --config=playwright.daily-bootstrap.config.mjs",
