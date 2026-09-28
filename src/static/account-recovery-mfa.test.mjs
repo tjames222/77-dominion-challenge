@@ -22,7 +22,7 @@ function fixture(options = {}) {
   const anchor = session(); const elevated = session({ aal: 'aal2' });
   let active = anchor; let observer; let time = TIME; let insideObserver = false;
   let factors = [{ id: FACTOR, factor_type: 'totp', status: 'verified', friendly_name: 'My authenticator' }];
-  const calls = []; const reads = []; const events = new Map();
+  const calls = []; const validationCalls = []; const reads = []; const events = new Map();
   const controller = createPasswordRecoveryController({
     sessionIdentity: authSessionIdentity, supabaseUrl: 'https://synthetic.invalid', apiKey: 'synthetic-publishable-key',
     deadlineMs: options.deadlineMs || 1000, now: () => time, authStorageKey: 'synthetic-storage',
@@ -30,14 +30,21 @@ function fixture(options = {}) {
     auth: {
       onAuthStateChange(callback) { observer = callback; return { data: { subscription: { unsubscribe() {} } } }; },
       async getSession() { assert.equal(insideObserver, false); reads.push(['session']); await options.readHook?.('session'); return { data: { session: active }, error: null }; },
-      async getUser(token) { assert.equal(insideObserver, false); reads.push(['user', token]); await options.readHook?.('user', token);
-        return { data: { user: { id: options.nativeUserId || ID, factors } }, error: options.userError || null }; },
-      mfa: { async getAuthenticatorAssuranceLevel(token) { assert.equal(insideObserver, false); reads.push(['aal', token]); await options.readHook?.('aal', token);
-        return { data: options.assurance || { currentLevel: token === elevated.access_token ? 'aal2' : 'aal1', nextLevel: factors.some(factor => factor.status === 'verified') ? 'aal2' : 'aal1' }, error: null }; },
+      getUser() { throw new Error('MUTABLE_SDK_GET_USER'); },
+      mfa: { getAuthenticatorAssuranceLevel() { throw new Error('MUTABLE_SDK_MFA_READ'); },
         challenge() { throw new Error('MUTABLE_SDK_CHALLENGE'); }, verify() { throw new Error('MUTABLE_SDK_VERIFY'); } },
       setSession() { throw new Error('MUTABLE_SDK_SET_SESSION'); },
     },
     async request(url, init) {
+      assert.equal(insideObserver, false);
+      if (init.method === 'GET') {
+        validationCalls.push({ url, init });
+        const token = init.headers.Authorization.slice(7);
+        reads.push(['user', token]); await options.readHook?.('user', token);
+        const response = await options.userResponse?.(token);
+        return response || Response.json({ id: options.nativeUserId || ID, factors });
+      }
+      // Mutation/challenge counts remain exact; validation reads are separate.
       calls.push({ url, init });
       const response = await options.request?.(url, init, { elevated, calls });
       if (response !== undefined) return response;
@@ -48,7 +55,7 @@ function fixture(options = {}) {
     },
   });
   const emit = (event, next = active) => { active = next; insideObserver = true; try { observer(event, next); } finally { insideObserver = false; } };
-  return { controller, calls, reads, events, anchor, elevated, emit, active: () => active,
+  return { controller, calls, validationCalls, reads, events, anchor, elevated, emit, active: () => active,
     factors: value => { factors = value; }, advance: value => { time += value; }, setSession: value => { active = value; },
     async required() { emit('PASSWORD_RECOVERY'); const state = await controller.verify(); assert.equal(state.phase, 'mfa-required'); return state.owner; },
     async challenged() { const owner = await this.required(); await controller.challengeMfa(owner, FACTOR); return owner; },
@@ -65,6 +72,14 @@ test('native MFA upgrade stays private and exact derived bearer alone owns passw
   assert.deepEqual(f.calls.map(call => new URL(call.url).pathname), [
     `/auth/v1/factors/${FACTOR}/challenge`, `/auth/v1/factors/${FACTOR}/verify`, '/auth/v1/user', '/auth/v1/logout',
   ]);
+  assert.equal(f.validationCalls.length, 6);
+  for (const [index, call] of f.validationCalls.entries()) {
+    assert.equal(call.url, 'https://synthetic.invalid/auth/v1/user'); assert.equal(call.init.method, 'GET');
+    assert.equal(call.init.headers.Authorization, `Bearer ${index < 4 ? f.anchor.access_token : f.elevated.access_token}`);
+    assert.equal(call.init.headers['X-Supabase-Api-Version'], '2024-01-01');
+    assert.equal(call.init.cache, 'no-store'); assert.equal(call.init.credentials, 'omit'); assert.equal(call.init.redirect, 'error');
+    assert.equal(Object.hasOwn(call.init, 'body'), false);
+  }
   for (const [index, call] of f.calls.entries()) {
     assert.equal(call.init.headers.Authorization, `Bearer ${index < 2 ? f.anchor.access_token : f.elevated.access_token}`);
     assert.equal(call.init.headers['X-Supabase-Api-Version'], '2024-01-01');
@@ -138,13 +153,37 @@ for (const at of ['challenge', 'verify', 'password']) test(`factor loss before $
   assert.equal(f.controller.getState().owner, null); f.controller.destroy();
 });
 
-test('phone-only or unverified factors remain blocked; no enrollment or replacement is attempted', async () => {
-  for (const factor of [{ factor_type: 'phone', status: 'verified' }, { factor_type: 'totp', status: 'unverified' }]) {
-    const f = fixture({ assurance: { currentLevel: 'aal1', nextLevel: 'aal2' } }); f.factors([{ id: FACTOR, ...factor }]);
+test('phone-only and WebAuthn-only verified factors remain blocked; no enrollment or replacement is attempted', async () => {
+  for (const factor_type of ['phone', 'webauthn', 'future-factor']) {
+    const f = fixture(); f.factors([{ id: FACTOR, factor_type, status: 'verified' }]);
     f.emit('PASSWORD_RECOVERY'); await assert.rejects(f.controller.verify(), { code: 'RECOVERY_MFA_UNSUPPORTED' });
     assert.equal(f.calls.length, 0); f.controller.destroy();
   }
 });
+
+test('unverified TOTP cannot hide an existing verified unsupported factor', async () => {
+  const f = fixture(); f.factors([
+    { id: FACTOR, factor_type: 'totp', status: 'unverified' },
+    { id: CHALLENGE, factor_type: 'phone', status: 'verified' },
+  ]);
+  f.emit('PASSWORD_RECOVERY'); await assert.rejects(f.controller.verify(), { code: 'RECOVERY_MFA_UNSUPPORTED' });
+  assert.equal(f.calls.length, 0); f.controller.destroy();
+});
+
+test('only unverified factors do not invent a native MFA requirement', async () => {
+  const f = fixture(); f.factors([{ id: FACTOR, factor_type: 'totp', status: 'unverified' }]);
+  f.emit('PASSWORD_RECOVERY'); const state = await f.controller.verify();
+  assert.equal(state.phase, 'ready'); assert.deepEqual(state.factors, []); assert.equal(f.calls.length, 0); f.controller.destroy();
+});
+
+for (const factors of [null, {}, Array(33).fill({}), [{ id: FACTOR, factor_type: 'totp', status: 'unknown' }],
+  [{ id: '../user', factor_type: 'phone', status: 'verified' }], [{ id: FACTOR, status: 'verified' }]]) {
+  test(`malformed native factor inventory cannot disable MFA (${JSON.stringify(factors).length} bytes)`, async () => {
+    const f = fixture({ userResponse: () => Response.json({ id: ID, factors }) });
+    f.emit('PASSWORD_RECOVERY'); await assert.rejects(f.controller.verify());
+    assert.equal(f.calls.length, 0); assert.equal(f.controller.getState().owner, null); f.controller.destroy();
+  });
+}
 
 test('expired challenge and expired derived token cannot dispatch verification/password', async () => {
   const f = fixture(); const owner = await f.challenged(); f.advance(121000);
@@ -206,9 +245,10 @@ for (const phase of ['challenge', 'verify', 'derived-check']) {
   });
 }
 
-test('a locally parsed AAL2 token cannot substitute for current native assurance validation', async () => {
-  const assurance = { currentLevel: 'aal1', nextLevel: 'aal2' };
-  const f = fixture({ assurance }); const owner = await f.challenged();
+test('a locally parsed AAL2 token cannot substitute for native validation of that exact derived bearer', async () => {
+  const f = fixture({ userResponse: token => token === f.elevated.access_token
+    ? Response.json({ code: 'session_not_found' }, { status: 403 }) : undefined });
+  const owner = await f.challenged();
   await assert.rejects(f.controller.verifyMfa(owner, '123456'));
   assert.equal(f.controller.getState().owner, null); assert.equal(f.calls.length, 2); f.controller.destroy();
 });
@@ -247,7 +287,7 @@ test('MFA reset UI never persists codes, changes SDK session, or replaces factor
   const ui = readFileSync(new URL('./password-recovery.js', import.meta.url), 'utf8');
   const html = readFileSync(new URL('../../reset-password.html', import.meta.url), 'utf8');
   const css = readFileSync(new URL('../assets/password-recovery.css', import.meta.url), 'utf8');
-  assert.doesNotMatch(source, /\.setSession\(|\.mfa\.(?:challenge|verify|enroll|unenroll)\(|localStorage|sessionStorage|console\./);
+  assert.doesNotMatch(source, /\.getUser\(|getAuthenticatorAssuranceLevel|\.setSession\(|\.mfa\.(?:challenge|verify|enroll|unenroll)\(|localStorage|sessionStorage|console\./);
   assert.doesNotMatch(ui, /localStorage|sessionStorage|console\./);
   assert.match(ui, /mfaCode\.value = ''/); assert.match(ui, /code = ''; mfaInFlight = false/);
   assert.match(html, /autocomplete="one-time-code"/); assert.match(html, /A reset link cannot remove MFA/);

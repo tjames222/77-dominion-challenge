@@ -10,9 +10,19 @@ the page receives only an opaque handle and fixed presentation state.
 Logout, another account/session, token changes, relevant storage events, or
 `pagehide` synchronously retire the handle. A failed native ownership check also
 retires it, including an A→B→A cache sequence. Outside Auth callbacks the
-controller checks the exact current session, `getUser(capturedJWT)`, and
-`getAuthenticatorAssuranceLevel(capturedJWT)`. The JWT overload fetches current
-native factors; the zero-argument cached-MFA result is not used.
+controller checks the exact current SDK session and makes a direct, bounded
+`GET /auth/v1/user` with the captured JWT. Only after that native endpoint accepts
+the bearer does the controller bind its `sub`, `session_id`, supported `aal`, and
+unexpired integer `exp` claims. Its next assurance level is derived from **all**
+fresh verified server factors, not cached user data or only TOTP factors.
+Malformed factor inventories fail closed; an omitted optional inventory means
+no factors, as in GoTrue's user response.
+
+Recovery deliberately does not call SDK `getUser` or either SDK MFA assurance
+overload. The installed SDK can clear its stored session when a pending user
+read returns `session_not_found`, even if another account replaced that session
+before the response. Direct native reads have no SDK/storage side effect, and
+the existing before/after-await owner checks still retire stale operations.
 
 The password request is a bounded `PUT /auth/v1/user` with the captured bearer
 (or the private same-session AAL2 bearer described below).
@@ -25,7 +35,10 @@ The controller does not clear SDK/local storage: there is no supported atomic
 conditional removal API that would safely exclude a replacement account. The
 completion UI instead requires explicit sign-in again and reports server-session
 revocation accurately. Supabase access JWTs can remain valid until expiration;
-logout revokes refresh sessions, not already-issued JWTs. Invitation acceptance
+logout revokes refresh sessions, not the signatures on already-issued JWTs.
+Native GoTrue `/user` additionally requires the JWT's session row to exist, so
+the Login page's native user check rejects a successfully revoked recovery
+session and leaves the explicit login form available. Invitation acceptance
 independently requires a current native session in SQL, so a revoked cached
 recovery bearer is not acceptance authority. The password response never grants
 membership, accepts an invitation, or starts billing.
@@ -52,9 +65,9 @@ private, single-attempt, and bounded by the native expiry (at most ten minutes).
 A locally initiated successful verification may return a new bearer. Its parsed
 claims are only binding checks, never authorization: the user and native session
 UUID must remain exact, `aal` must be `aal2`, and expiry must be finite, unexpired
-and no more than 24 hours away. Native `getUser(newJWT)` and explicit
-`getAuthenticatorAssuranceLevel(newJWT)` must then confirm the same actor, current
-AAL2 and the still-verified selected TOTP. The private bearer is used only for
+and no more than 24 hours away. A fresh, direct native `/user` read with that
+exact bearer must accept it and return the same actor and still-verified selected
+TOTP before its AAL2 claim is used. The private bearer is used only for
 fresh native validation, password update and owner-bound logout (global first,
 local fallback). Returned refresh
 credentials are ignored; neither bearer nor code is installed or persisted in
@@ -83,7 +96,8 @@ already-dispatched password request, subsequent logout still targets the capture
 private bearer and never clears the replacement SDK session.
 
 Contract references: installed `@supabase/auth-js`2.110.0 `GoTrueClient._challenge`,
-`_verify`, and JWT-overload `_getAuthenticatorAssuranceLevel`; the pinned GoTrue
+`_verify`, `_getUser` error cleanup, and JWT-overload `_getAuthenticatorAssuranceLevel`;
+the pinned GoTrue
 v2.196.0 native fixture; [official TOTP flow](https://supabase.com/docs/guides/auth/auth-mfa/totp),
 [challenge](https://supabase.com/docs/reference/javascript/auth-mfa-challenge) and
 [verify](https://supabase.com/docs/reference/javascript/auth-mfa-verify). The public
@@ -93,7 +107,9 @@ change was identified. No Auth configuration or schema change is part of this sl
 The tests cover eager capture before lazy loading, synchronous invalidation,
 silent owner changes, ABA, deadlines, unknown results, exact bearer revocation,
 and actual SDK recovery/login events against a mocked native transport. The MFA
-units additionally cover private token binding, incorrect-code retries, selected
+units additionally cover the installed-SDK pending-403/replacement-storage race,
+bounded native reads, malformed claims and all-factor inventories, private token
+binding, incorrect-code retries, selected
 factor loss, malformed/oversized/stalled responses, expiry and invalidation during
 each operation. Native fixture and compiled browser coverage are separate release
 checks. These are local test evidence, not a hosted deployment or delivery receipt.

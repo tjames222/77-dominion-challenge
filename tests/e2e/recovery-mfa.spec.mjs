@@ -48,6 +48,10 @@ test('existing authenticator unlocks same-page password recovery with private de
   expect(auth.requests.filter(r => r.path === '/auth/v1/logout').every(r => r.owner === 'derived')).toBe(true);
   await auth.assertAnchorUnchanged(page, expect);
   expect(errors).toEqual([]);
+  await page.getByRole('link', { name: 'Log in with your new password', exact: true }).click();
+  await page.waitForLoadState('networkidle');
+  await expect(page.getByRole('button', { name: 'Go to dashboard', exact: true })).toBeVisible();
+  await expect(page).toHaveURL(/\/login\.html(?:\?.*)?$/);
 });
 
 test('a rejected code is clearly retryable and uses a fresh challenge', async ({ context, page, baseURL }) => {

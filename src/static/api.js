@@ -928,8 +928,7 @@ export async function loadPasswordRecoveryController() {
   if (!passwordRecoveryControllerLoad) passwordRecoveryControllerLoad = import('./account-recovery-session.mjs').then(({ createPasswordRecoveryController }) => {
     passwordRecoveryController = createPasswordRecoveryController({
       auth: { onAuthStateChange: listener => passwordRecoveryOwnerBridge.connect(listener),
-        getSession: () => supabase.auth.getSession(), getUser: token => supabase.auth.getUser(token),
-        mfa: { getAuthenticatorAssuranceLevel: token => supabase.auth.mfa.getAuthenticatorAssuranceLevel(token) } },
+        getSession: () => supabase.auth.getSession() },
       sessionIdentity: authSessionIdentity, supabaseUrl: SUPABASE_URL, apiKey: SUPABASE_KEY, authStorageKey: supabaseAuthStorageKey,
     });
   });

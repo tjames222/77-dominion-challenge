@@ -9,7 +9,7 @@ import { createEarlyAccessInvitation, openEarlyAccessInvitation } from '../supab
 import { createEarlyAccessRecoveryMail, openEarlyAccessRecoveryMail, EARLY_ACCESS_AUTH_REDIRECT } from '../supabase/functions/_shared/early_access_recovery_mail.ts';
 import { createPasswordRecoveryController } from '../src/static/account-recovery-session.mjs';
 import { createPasswordRecoveryOwnerBridge } from '../src/static/password-recovery-owner.mjs';
-import { authSessionIdentity } from '../src/static/mfa-auth.mjs';
+import { authSessionIdentity, createSupabaseMfaAdapter } from '../src/static/mfa-auth.mjs';
 import { createInvitationAcceptanceClient } from '../src/static/early-access-invitation-client.mjs';
 import { createInvitationAcceptanceIntent } from '../src/static/early-access-invitation-contract.mjs';
 import { createInvitationRpcTransport } from '../src/static/member-authority-transport.mjs';
@@ -263,7 +263,7 @@ test('closed native Auth bootstraps a reserved account, confirms mailbox, resets
   assert.equal(verified.user.id, job.reservedUserId); assert.ok(verified.user.email_confirmed_at);
   const oldSessionId = JSON.parse(Buffer.from(verified.access_token.split('.')[1], 'base64url')).session_id;
   assert.equal(query(`select to_jsonb(count(*)) from auth.sessions where id='${oldSessionId}' and user_id='${job.reservedUserId}';`)[0], 1);
-  const recovery = createPasswordRecoveryController({ auth: { onAuthStateChange: listener => bridge.connect(listener), getSession: () => member.auth.getSession(), getUser: jwt => member.auth.getUser(jwt), mfa: { getAuthenticatorAssuranceLevel: jwt => member.auth.mfa.getAuthenticatorAssuranceLevel(jwt) } },
+  const recovery = createPasswordRecoveryController({ auth: { onAuthStateChange: listener => bridge.connect(listener), getSession: () => member.auth.getSession() },
     sessionIdentity: authSessionIdentity, supabaseUrl: NATIVE_FIXTURE_AUTH_ORIGIN, apiKey: anonKey, request });
   const state = await recovery.verify(); const password = randomBytes(24).toString('base64url');
   const completed = await recovery.complete(state.owner, password); assert.equal(completed.completed, true); assert.equal(completed.sessionsRevoked, 'global');
@@ -371,9 +371,7 @@ test('recovery controller uses real native MFA, retries only a rejected code, an
   const { member, bridge, verified: anchor } = await consumeMailedRecovery(link.properties.action_link);
   const events = [];
   const controller = createPasswordRecoveryController({
-    auth: { onAuthStateChange: listener => bridge.connect(listener),
-      getSession: () => member.auth.getSession(), getUser: jwt => member.auth.getUser(jwt),
-      mfa: { getAuthenticatorAssuranceLevel: jwt => member.auth.mfa.getAuthenticatorAssuranceLevel(jwt) } },
+    auth: { onAuthStateChange: listener => bridge.connect(listener), getSession: () => member.auth.getSession() },
     sessionIdentity: authSessionIdentity, supabaseUrl: NATIVE_FIXTURE_AUTH_ORIGIN, apiKey: anonKey,
     request: async (url, options) => {
       const result = await request(url, options);
@@ -407,6 +405,12 @@ test('recovery controller uses real native MFA, retries only a rejected code, an
     assert.ok(events.filter(event => event.path.endsWith('/logout')).every(event => !event.anchor));
     const sid = JSON.parse(Buffer.from(anchor.access_token.split('.')[1], 'base64url')).session_id;
     assert.equal(query(`select to_jsonb(count(*)) from auth.sessions where id='${sid}';`)[0], 0);
+    const revokedUser = await member.auth.getUser(anchor.access_token);
+    assert.equal(revokedUser.error?.name, 'AuthSessionMissingError');
+    assert.equal((await member.auth.mfa.getAuthenticatorAssuranceLevel(anchor.access_token)).error?.name, 'AuthSessionMissingError');
+    const loginAdapter = createSupabaseMfaAdapter(member.auth);
+    try { await assert.rejects(loginAdapter.getState({ expectedUserId: user.id }), { code: 'MFA_SIGNED_OUT' }); }
+    finally { loginAdapter.dispose(); }
     const fresh = client();
     assert.equal(data(await fresh.auth.signInWithPassword({ email, password: newPassword }), 'controller new password sign-in').user.id, user.id);
     data(await fresh.auth.mfa.challengeAndVerify({ factorId: factor.id, code: totp(factor.totp.secret) }), 'controller existing factor sign-in');

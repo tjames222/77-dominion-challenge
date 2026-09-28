@@ -48,7 +48,10 @@ export async function installRecoveryStub(context, { baseURL, enrolled = true, w
       if (body.code !== '654321') return json(route, { code: 'mfa_verification_failed', message: 'Synthetic rejected code' }, 422);
       return json(route, session('aal2', wrongActor ? B : A));
     }
-    if (path === '/auth/v1/logout') return json(route, {});
+    if (path === '/auth/v1/logout') {
+      for (const [token, owner] of tokens) if (owner.id === auth?.id) tokens.delete(token);
+      return json(route, {});
+    }
     if (path === '/rest/v1/profiles') return json(route, { user_id: auth?.id || A, name: 'Synthetic Member', time_zone: 'UTC', avatar_url: '' });
     if (path === '/rest/v1/rpc/get_theme_preference') return json(route, { theme_key: 'dark' });
     if (path.startsWith('/rest/') || path.startsWith('/functions/')) return json(route, []);

@@ -16,16 +16,14 @@ const session = (userId = id, sessionId = sid, extra = '') => ({ user: { id: use
 ].join('.') });
 const deferred = () => { let resolve; const promise = new Promise(done => { resolve = done; }); return { promise, resolve }; };
 function fixture(options = {}) {
-  let active = session(); let observer; let inCallback = false; let unsubscribed = false;
-  const calls = []; const nativeCalls = []; const events = new Map();
+  let active = options.session || session(); let observer; let inCallback = false; let unsubscribed = false;
+  const calls = []; const validationCalls = []; const nativeCalls = []; const events = new Map();
   const auth = {
     onAuthStateChange(callback) { observer = callback; return { data: { subscription: { unsubscribe() { unsubscribed = true; } } } }; },
     getSession: async () => { assert.equal(inCallback, false); nativeCalls.push(['session']);
       await options.sessionHook?.(); return { data: { session: active }, error: null }; },
-    getUser: async token => { assert.equal(inCallback, false); nativeCalls.push(['user', token]);
-      await options.userHook?.(); return { data: { user: { id: options.userId || id } }, error: options.userError || null }; },
-    mfa: { getAuthenticatorAssuranceLevel: async token => { assert.equal(inCallback, false); nativeCalls.push(['mfa', token]);
-      await options.mfaHook?.(); return { data: options.assurance || { currentLevel: 'aal1', nextLevel: 'aal1' }, error: null }; } },
+    getUser: () => { throw new Error('SDK_GET_USER_FORBIDDEN'); },
+    mfa: { getAuthenticatorAssuranceLevel: () => { throw new Error('SDK_MFA_READ_FORBIDDEN'); } },
     signOut: () => { throw new Error('SDK_SIGNOUT_FORBIDDEN'); }, updateUser: () => { throw new Error('SDK_UPDATE_FORBIDDEN'); },
   };
   const controller = createPasswordRecoveryController({ auth, sessionIdentity: authSessionIdentity,
@@ -33,13 +31,25 @@ function fixture(options = {}) {
     deadlineMs: options.deadlineMs || 100,
     eventTarget: { addEventListener: (name, callback) => events.set(name, callback), removeEventListener: name => events.delete(name) },
     request: async (url, init) => {
+      assert.equal(inCallback, false);
+      if (init.method === 'GET') {
+        validationCalls.push({ url, init }); nativeCalls.push(['user', init.headers.Authorization.slice(7)]);
+        await options.userHook?.();
+        if (options.userResponse) return options.userResponse();
+        if (options.userError) return Response.json({ code: 'session_not_found' }, { status: 403 });
+        const user = { id: options.userId || id, factors: options.factors || [] };
+        return new Response(new ReadableStream({ async start(stream) {
+          await options.bodyHook?.(); stream.enqueue(new TextEncoder().encode(JSON.stringify(user))); stream.close();
+        } }));
+      }
+      // Keep mutation counts separate from bounded native validation reads.
       calls.push({ url, init });
       if (options.request) return options.request(url, init);
       return init.method === 'PUT' ? Response.json({ id }) : new Response(null, { status: 204 });
     },
   });
   const emit = (event, next = active) => { active = next; inCallback = true; try { observer(event, next); } finally { inCallback = false; } };
-  return { controller, calls, nativeCalls, events, emit, active: () => active,
+  return { controller, calls, validationCalls, nativeCalls, events, emit, active: () => active,
     setSession: value => { active = value; }, unsubscribed: () => unsubscribed,
     async ready() { emit('PASSWORD_RECOVERY'); return (await controller.verify()).owner; } };
 }
@@ -54,7 +64,7 @@ test('ordinary sessions never become recovery authority; PASSWORD_RECOVERY creat
   f.controller.destroy();
 });
 
-test('exact native bearer owns getUser, current MFA, password PUT and global logout without SDK cache changes', async () => {
+test('exact native bearer owns native user/MFA validation, password PUT and global logout without SDK cache changes', async () => {
   const f = fixture(); const owner = await f.ready(); const token = f.active().access_token;
   const result = await f.controller.complete(owner, password);
   assert.deepEqual(result, { completed: true, owner, sessionsRevoked: 'global' });
@@ -62,8 +72,11 @@ test('exact native bearer owns getUser, current MFA, password PUT and global log
   assert.equal(f.calls.length, 2); assert.equal(f.calls[0].url, 'https://synthetic.invalid/auth/v1/user');
   assert.equal(f.calls[1].url, 'https://synthetic.invalid/auth/v1/logout?scope=global');
   assert.deepEqual(JSON.parse(f.calls[0].init.body), { password });
-  for (const { init } of f.calls) {
+  assert.equal(f.validationCalls.length, 2);
+  assert(f.validationCalls.every(call => call.url === 'https://synthetic.invalid/auth/v1/user' && call.init.method === 'GET' && !Object.hasOwn(call.init, 'body')));
+  for (const { init } of [...f.validationCalls, ...f.calls]) {
     assert.equal(init.headers.Authorization, `Bearer ${token}`); assert.equal(init.headers.apikey, 'synthetic-public-key');
+    assert.equal(init.headers['X-Supabase-Api-Version'], '2024-01-01');
     assert.equal(init.cache, 'no-store'); assert.equal(init.credentials, 'omit'); assert.equal(init.redirect, 'error');
   }
   for (const [kind, bearer] of f.nativeCalls) if (kind !== 'session') assert.equal(bearer, token);
@@ -85,7 +98,7 @@ for (const event of ['SIGNED_OUT', 'TOKEN_REFRESHED', 'USER_UPDATED', 'MFA_CHALL
   });
 }
 
-for (const hook of ['userHook', 'mfaHook', 'sessionHook']) {
+for (const hook of ['userHook', 'bodyHook', 'sessionHook']) {
   test(`replacement while awaiting ${hook} cannot dispatch a password request`, async () => {
     let armed = false; const gate = deferred(); const entered = deferred();
     const f = fixture({ [hook]: () => { if (armed) { entered.resolve(); return gate.promise; } } });
@@ -136,13 +149,14 @@ for (const field of ['id', 'session', 'token']) {
   });
 }
 
-test('current verified MFA is enforced, malformed assurance and wrong native actor fail closed', async () => {
-  for (const options of [{ assurance: { currentLevel: 'aal1', nextLevel: 'aal2' } }, { assurance: {} }, { userId: otherId }, { userError: { message: 'PRIVATE_AUTH_PAYLOAD' } }]) {
+test('current verified MFA is enforced, malformed native data and wrong native actor fail closed', async () => {
+  for (const options of [{ factors: [{ id: sid, factor_type: 'phone', status: 'verified' }] },
+    { userResponse: () => Response.json({ id, factors: null }) }, { userId: otherId }, { userError: { message: 'PRIVATE_AUTH_PAYLOAD' } }]) {
     const f = fixture(options); f.emit('PASSWORD_RECOVERY');
     await assert.rejects(f.controller.verify(), error => { assert.doesNotMatch(error.message, /PRIVATE/); return true; });
     assert.equal(f.calls.length, 0); f.controller.destroy();
   }
-  const verified = fixture({ assurance: { currentLevel: 'aal2', nextLevel: 'aal2' } });
+  const verified = fixture();
   const owner = await verified.ready(); await verified.controller.complete(owner, password); verified.controller.destroy();
 });
 
@@ -213,7 +227,7 @@ test('recovery UI/API never select an SDK mutation owner, log payloads, or claim
   const api = readFileSync(new URL('./api.js', import.meta.url), 'utf8');
   const area = api.slice(api.indexOf('const passwordRecoveryOwnerBridge ='), api.indexOf('const ACCOUNT_REQUEST_COLUMNS ='));
   assert.match(area, /passwordRecoveryController\.complete\(owner, password\)/);
-  assert.doesNotMatch(area, /updateUser|signOut|localStorage|clearLocalAuthenticatedIdentity|console\./);
+  assert.doesNotMatch(area, /getUser|getAuthenticatorAssuranceLevel|updateUser|signOut|localStorage|clearLocalAuthenticatedIdentity|console\./);
   const ui = readFileSync(new URL('./password-recovery.js', import.meta.url), 'utf8');
   assert.match(ui, /completePasswordRecovery\(resetPassword\.value, submittedOwner\)/);
   assert.match(ui, /recoveryOwner !== submittedOwner/); assert.match(ui, /setTimeout\(/);
@@ -253,8 +267,7 @@ test('actual SDK recovery event and native MFA checks cannot replace a newer SDK
     assert.equal((await client.auth.verifyOtp({ type: 'recovery', token_hash: 'synthetic-native-recovery' })).error, null);
     controller = createPasswordRecoveryController({ auth: {
       onAuthStateChange: listener => bridge.connect(listener),
-      getSession: () => client.auth.getSession(), getUser: token => client.auth.getUser(token),
-      mfa: { getAuthenticatorAssuranceLevel: token => client.auth.mfa.getAuthenticatorAssuranceLevel(token) },
+      getSession: () => client.auth.getSession(),
     }, sessionIdentity: authSessionIdentity,
     supabaseUrl: 'https://synthetic.invalid', apiKey: 'synthetic-public-key', request, deadlineMs: 1000 });
     assert.equal(controller.getState().phase, 'pending');
@@ -267,4 +280,74 @@ test('actual SDK recovery event and native MFA checks cannot replace a newer SDK
     assert.equal(calls.filter(call => call.method === 'PUT').length, 1);
     assert.equal(calls.filter(call => call.target.pathname.endsWith('/logout')).length, 1);
   } finally { controller?.destroy(); bridge.destroy(); await client.auth.stopAutoRefresh(); }
+});
+
+for (const replacementMode of ['SDK sign-in', 'silent stored session']) {
+  test(`a pending native session_not_found cannot clear a replacement ${replacementMode}`, { timeout: 3000 }, async () => {
+    const key = `recovery-native-read-${replacementMode}`;
+    const stored = new Map(); const entered = deferred(); const reply = deferred();
+    const first = { ...session(), refresh_token: 'synthetic-original-refresh', token_type: 'bearer', expires_in: 3600, expires_at: 9999999999,
+      user: { id, email: 'original@example.test', factors: [] } };
+    const second = { ...session(otherId), refresh_token: 'synthetic-replacement-refresh', token_type: 'bearer', expires_in: 3600, expires_at: 9999999999,
+      user: { id: otherId, email: 'replacement@example.test', factors: [] } };
+    const calls = []; let sdkUserReads = 0; let sdkMfaReads = 0;
+    const request = async (url, init = {}) => {
+      const path = new URL(url).pathname; calls.push({ path, method: init.method });
+      if (path.endsWith('/verify')) return Response.json(first);
+      if (path.endsWith('/token')) return Response.json(second);
+      assert.equal(path, '/auth/v1/user'); assert.equal(init.method, 'GET');
+      assert.equal(new Headers(init.headers).get('authorization'), `Bearer ${first.access_token}`);
+      entered.resolve(); await reply.promise;
+      return Response.json({ code: 'session_not_found', message: 'PRIVATE_PROVIDER_MESSAGE' },
+        { status: 403, headers: { 'x-supabase-api-version': '2024-01-01' } });
+    };
+    const client = createClient('https://synthetic.invalid', 'synthetic-public-key', {
+      global: { fetch: request }, auth: { storageKey: key,
+        storage: { getItem: name => stored.get(name) ?? null, setItem: (name, value) => stored.set(name, value), removeItem: name => stored.delete(name) },
+        persistSession: true, autoRefreshToken: false, detectSessionInUrl: false },
+    });
+    const bridge = createPasswordRecoveryOwnerBridge({ auth: client.auth, sessionIdentity: authSessionIdentity });
+    let controller;
+    try {
+      assert.equal((await client.auth.verifyOtp({ type: 'recovery', token_hash: 'synthetic-recovery' })).error, null);
+      controller = createPasswordRecoveryController({ auth: {
+        onAuthStateChange: listener => bridge.connect(listener), getSession: () => client.auth.getSession(),
+        // Actual installed SDK methods would clear the replacement on this 403.
+        getUser: token => { sdkUserReads++; return client.auth.getUser(token); },
+        mfa: { getAuthenticatorAssuranceLevel: token => { sdkMfaReads++; return client.auth.mfa.getAuthenticatorAssuranceLevel(token); } },
+      }, sessionIdentity: authSessionIdentity, supabaseUrl: 'https://synthetic.invalid', apiKey: 'synthetic-public-key', request });
+      assert.equal(controller.getState().phase, 'pending');
+      const pending = controller.verify(); const rejected = assert.rejects(pending, error => !error.message.includes('PRIVATE'));
+      await entered.promise;
+      if (replacementMode === 'SDK sign-in') assert.equal((await client.auth.signInWithPassword({ email: second.user.email, password: 'synthetic replacement password' })).error, null);
+      else stored.set(key, JSON.stringify(second));
+      reply.resolve(); await rejected; await new Promise(resolve => setTimeout(resolve, 0));
+      assert.equal(JSON.parse(stored.get(key)).access_token, second.access_token);
+      assert.equal((await client.auth.getSession()).data.session.user.id, otherId);
+      assert.equal(sdkUserReads, 0); assert.equal(sdkMfaReads, 0);
+      assert.equal(controller.getState().owner, null);
+      assert.equal(calls.some(call => call.method === 'PUT' || call.path.endsWith('/logout')), false);
+    } finally { reply.resolve(); controller?.destroy(); bridge.destroy(); await client.auth.stopAutoRefresh(); }
+  });
+}
+
+for (const patch of [{ aal: undefined }, { aal: 'aal3' }, { exp: undefined }, { exp: '9999999999' }, { exp: 1 }]) {
+  test(`server-validated JWT must also contain supported unexpired recovery claims ${JSON.stringify(patch)}`, async () => {
+    const value = session(); const payload = JSON.parse(Buffer.from(value.access_token.split('.')[1], 'base64url'));
+    value.access_token = [encode({ alg: 'HS256' }), encode({ ...payload, ...patch }), encode('synthetic')].join('.');
+    const f = fixture({ session: value }); f.emit('PASSWORD_RECOVERY');
+    await assert.rejects(f.controller.verify());
+    assert.equal(f.validationCalls.length, 1); assert.equal(f.calls.length, 0);
+    assert.equal(f.controller.getState().owner, null); f.controller.destroy();
+  });
+}
+
+for (const kind of ['oversized', 'stalled']) test(`native ownership ${kind} body is cancelled within the existing deadline`, async () => {
+  let cancelled = false;
+  const f = fixture({ deadlineMs: 20, userResponse: () => new Response(new ReadableStream({
+    start(stream) { if (kind === 'oversized') stream.enqueue(new Uint8Array(65537)); },
+    cancel() { cancelled = true; },
+  })) });
+  f.emit('PASSWORD_RECOVERY'); await assert.rejects(f.controller.verify());
+  assert.equal(cancelled, true); assert.equal(f.calls.length, 0); assert.equal(f.controller.getState().owner, null); f.controller.destroy();
 });

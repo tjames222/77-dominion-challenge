@@ -21,14 +21,14 @@ const own = (value, key) => {
 };
 
 // One existing Auth singleton, never another SDK client. Event payloads are only
-// lifecycle evidence. Native getUser(jwt) and MFA(jwt) authorize outside the
-// callback. Password and logout requests never ask the SDK to select an owner.
+// lifecycle evidence. A pinned native /user request authorizes outside the
+// callback. SDK getUser/MFA can clear a replacement session on a stale 403;
+// validation, password and logout therefore never use those mutable SDK paths.
 export function createPasswordRecoveryController({
   auth, sessionIdentity, supabaseUrl, apiKey, authStorageKey,
   request = globalThis.fetch, eventTarget = globalThis.window, deadlineMs = 10000, now = Date.now,
 } = {}) {
   if (!auth || typeof auth.onAuthStateChange !== 'function' || typeof auth.getSession !== 'function'
-    || typeof auth.getUser !== 'function' || typeof auth.mfa?.getAuthenticatorAssuranceLevel !== 'function'
     || typeof sessionIdentity !== 'function' || typeof request !== 'function' || typeof now !== 'function'
     || typeof apiKey !== 'string' || !apiKey || /[\r\n]/.test(apiKey)
     || !Number.isInteger(deadlineMs) || deadlineMs < 1 || deadlineMs > 30000) {
@@ -72,18 +72,34 @@ export function createPasswordRecoveryController({
     if (!Number.isSafeInteger(value) || value < 0) throw passwordRecoverySessionError();
     return Math.floor(value / 1000);
   }
-  function verifiedFactors(user) {
-    const factors = own(user, 'factors');
-    if (!Array.isArray(factors) || factors.length > 32) return [];
-    const result = []; const ids = new Set();
+  function nativeFactors(user) {
+    // GoTrue omits this optional field when there are no factors. A malformed
+    // present field must never be interpreted as "MFA is not enabled".
+    const factors = own(user, 'factors') ?? (Object.hasOwn(user, 'factors') ? null : []);
+    if (!Array.isArray(factors) || factors.length > 32) throw passwordRecoverySessionError();
+    const result = []; const ids = new Set(); let hasVerified = false;
     for (const factor of factors) {
-      if (own(factor, 'factor_type') !== 'totp' || own(factor, 'status') !== 'verified') continue;
+      const status = own(factor, 'status'); const type = own(factor, 'factor_type');
       const id = own(factor, 'id'); const name = own(factor, 'friendly_name');
-      if (typeof id !== 'string' || !UUID.test(id) || ids.has(id)) throw passwordRecoverySessionError();
-      ids.add(id); result.push({ id, friendlyName: typeof name === 'string' && name.trim()
+      if (!['verified', 'unverified'].includes(status) || typeof type !== 'string' || !type
+        || typeof id !== 'string' || !UUID.test(id) || ids.has(id)) throw passwordRecoverySessionError();
+      ids.add(id);
+      if (status !== 'verified') continue;
+      hasVerified = true; // Includes phone/WebAuthn/future verified factor types.
+      if (type !== 'totp') continue;
+      result.push({ id, friendlyName: typeof name === 'string' && name.trim()
         ? name.trim().slice(0, 80) : `Authenticator ${result.length + 1}` });
     }
-    return result;
+    return { factors: result, hasVerified };
+  }
+  function validatedLevel(token, captured) {
+    // Called only after native /user has authenticated this exact bearer. Local
+    // decoding binds that server-validated JWT; it never replaces verification.
+    const claims = JSON.parse(globalThis.atob(token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/')));
+    const level = own(claims, 'aal'); const expiresAt = own(claims, 'exp');
+    if (own(claims, 'sub') !== captured.id || `${captured.id}:${own(claims, 'session_id')}` !== captured.identity
+      || !['aal1', 'aal2'].includes(level) || !Number.isSafeInteger(expiresAt) || expiresAt <= currentTime()) throw passwordRecoverySessionError();
+    return level;
   }
   const subscription = auth.onAuthStateChange((event, session) => {
     if (disposed) return;
@@ -126,23 +142,23 @@ export function createPasswordRecoveryController({
       }
     }
     try {
-      return await bounded(async () => {
+      return await bounded(async signal => {
         await exactSession();
         if (captured.elevatedToken && captured.elevatedExpiresAt <= currentTime()) throw passwordRecoverySessionError();
-        const response = await wait(() => auth.getUser(token));
-        const user = own(own(response, 'data'), 'user');
-        if (own(response, 'error') || own(user, 'id') !== captured.id) throw passwordRecoverySessionError();
-        const factors = verifiedFactors(user);
+        const response = await wait(() => nativeRequest(userUrl, token, signal, 'GET'));
+        if (response?.ok !== true) { void response?.body?.cancel().catch(() => {}); throw passwordRecoverySessionError(); }
+        const user = await wait(() => responseJson(response, signal));
+        if (own(user, 'id') !== captured.id) throw passwordRecoverySessionError();
+        const { factors, hasVerified } = nativeFactors(user);
         if (factorId && !factors.some(factor => factor.id === factorId)) throw passwordRecoverySessionError('RECOVERY_MFA_UNSUPPORTED');
-        const assurance = await wait(() => auth.mfa.getAuthenticatorAssuranceLevel(token));
-        const data = own(assurance, 'data');
-        const level = own(data, 'currentLevel'); const next = own(data, 'nextLevel');
-        if (own(assurance, 'error') || !['aal1', 'aal2'].includes(level) || !['aal1', 'aal2'].includes(next)) throw passwordRecoverySessionError();
+        const level = validatedLevel(token, captured);
+        const next = hasVerified ? 'aal2' : level;
         const requiresMfa = level !== 'aal2' && next === 'aal2';
         if (captured.elevatedToken && (level !== 'aal2' || next !== 'aal2')) throw passwordRecoverySessionError();
         if (requiresMfa && !allowMfa) throw passwordRecoverySessionError('RECOVERY_MFA_REQUIRED');
         if (requiresMfa && !factors.length) throw passwordRecoverySessionError('RECOVERY_MFA_UNSUPPORTED');
         await exactSession(); check();
+        validatedLevel(token, captured); // Expiry can cross during the final SDK read.
         if (captured.elevatedToken && captured.elevatedExpiresAt <= currentTime()) throw passwordRecoverySessionError();
         return { requiresMfa, factors, level, next };
       }, controller);
