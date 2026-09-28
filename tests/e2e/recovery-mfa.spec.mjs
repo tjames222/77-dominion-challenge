@@ -21,8 +21,8 @@ async function verify(page, code = '654321') {
   await page.getByRole('button', { name: 'Verify authenticator', exact: true }).click();
 }
 
-test('existing authenticator unlocks same-page password recovery with private derived authorization', async ({ context, page }, testInfo) => {
-  const auth = await installRecoveryStub(context);
+test('existing authenticator unlocks same-page password recovery with private derived authorization', async ({ context, page, baseURL }, testInfo) => {
+  const auth = await installRecoveryStub(context, { baseURL });
   const errors = []; page.on('pageerror', error => errors.push(error.message));
   await openRecovery(page, auth);
   await expect(page.locator('#passwordRecoveryMfaForm')).toBeVisible();
@@ -50,8 +50,8 @@ test('existing authenticator unlocks same-page password recovery with private de
   expect(errors).toEqual([]);
 });
 
-test('a rejected code is clearly retryable and uses a fresh challenge', async ({ context, page }) => {
-  const auth = await installRecoveryStub(context);
+test('a rejected code is clearly retryable and uses a fresh challenge', async ({ context, page, baseURL }) => {
+  const auth = await installRecoveryStub(context, { baseURL });
   await openRecovery(page, auth);
   await verify(page, '000000');
   await expect(page.locator('#passwordResetFeedback')).toContainText('not accepted');
@@ -63,8 +63,8 @@ test('a rejected code is clearly retryable and uses a fresh challenge', async ({
   expect(auth.requests.filter(r => r.method === 'PUT')).toHaveLength(0);
 });
 
-test('another account response cannot unlock recovery', async ({ context, page }) => {
-  const auth = await installRecoveryStub(context, { wrongActor: true });
+test('another account response cannot unlock recovery', async ({ context, page, baseURL }) => {
+  const auth = await installRecoveryStub(context, { baseURL, wrongActor: true });
   await openRecovery(page, auth);
   await verify(page);
   await expect(page.locator('#passwordRecoveryMfa')).toBeHidden();
@@ -74,8 +74,8 @@ test('another account response cannot unlock recovery', async ({ context, page }
   await auth.assertAnchorUnchanged(page, expect);
 });
 
-test('an account replacement during verification retires the page without touching the replacement', async ({ context, page }) => {
-  const auth = await installRecoveryStub(context);
+test('an account replacement during verification retires the page without touching the replacement', async ({ context, page, baseURL }) => {
+  const auth = await installRecoveryStub(context, { baseURL });
   await openRecovery(page, auth);
   const release = auth.holdVerification();
   try {
@@ -91,8 +91,8 @@ test('an account replacement during verification retires the page without touchi
   } finally { release(); }
 });
 
-test('recovery without an enrolled authenticator preserves the existing password flow', async ({ context, page }) => {
-  const auth = await installRecoveryStub(context, { enrolled: false });
+test('recovery without an enrolled authenticator preserves the existing password flow', async ({ context, page, baseURL }) => {
+  const auth = await installRecoveryStub(context, { baseURL, enrolled: false });
   await openRecovery(page, auth);
   await expect(page.getByLabel('New password', { exact: true })).toBeEnabled();
   await expect(page.locator('#passwordRecoveryMfa')).toBeHidden();

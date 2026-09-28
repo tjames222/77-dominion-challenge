@@ -9,7 +9,10 @@ const json = (route, body, status = 200) => route.fulfill({
   status, contentType: 'application/json', headers: { 'x-supabase-api-version': '2024-01-01' }, body: JSON.stringify(body),
 });
 
-export async function installRecoveryStub(context, { enrolled = true, wrongActor = false } = {}) {
+export async function installRecoveryStub(context, { baseURL, enrolled = true, wrongActor = false } = {}) {
+  const local = new URL(baseURL);
+  if (local.protocol !== 'http:' || local.hostname !== '127.0.0.1' || local.pathname !== '/'
+    || local.username || local.password || local.search || local.hash) throw new Error('Recovery fixture requires an exact loopback origin.');
   const requests = [];
   const tokens = new Map();
   let sequence = 0;
@@ -29,7 +32,7 @@ export async function installRecoveryStub(context, { enrolled = true, wrongActor
   }
   const anchor = session();
   const replacement = session('aal1', B);
-  await context.route(url => /^\/(auth\/v1|rest\/v1|functions\/v1)\//.test(url.pathname), async route => {
+  await context.route(url => url.origin === local.origin && /^\/(auth\/v1|rest\/v1|functions\/v1)\//.test(url.pathname), async route => {
     const req = route.request(); const path = new URL(req.url()).pathname;
     const bearer = (req.headers().authorization || '').replace(/^Bearer\s+/i, '');
     const auth = tokens.get(bearer);

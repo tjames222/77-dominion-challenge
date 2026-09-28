@@ -141,6 +141,18 @@ test('same-page recovery MFA is compiled with a root-only local native Auth fixt
   assert.doesNotMatch(config, /supabase\.co|SUPABASE_ACCESS_TOKEN|SERVICE_ROLE_KEY|CLOUDFLARE_API_TOKEN/);
 });
 
+test('recovery provider stub cannot mask a forbidden external-origin request', async () => {
+  const { installRecoveryStub } = await import('../../tests/e2e/support/recovery-auth-stub.mjs');
+  let matches;
+  await installRecoveryStub({ route: async predicate => { matches = predicate; } }, { baseURL: 'http://127.0.0.1:4442' });
+  assert.equal(matches(new URL('http://127.0.0.1:4442/auth/v1/user')), true);
+  assert.equal(matches(new URL('http://127.0.0.1:4443/auth/v1/user')), false);
+  assert.equal(matches(new URL('https://unexpected.example.test/auth/v1/user')), false);
+  assert.equal(matches(new URL('https://unexpected.example.test/rest/v1/profiles')), false);
+  assert.equal(matches(new URL('http://127.0.0.1:4442/reset-password.html')), false);
+  await assert.rejects(installRecoveryStub({}, { baseURL: 'https://unexpected.example.test' }), /exact loopback origin/);
+});
+
 test('early-access feedback is a required production-wired browser gate with isolated SQL checks', () => {
   const config = readFileSync(new URL('../../playwright.feedback.config.mjs', import.meta.url), 'utf8');
   assert.equal(packageJson.scripts['test:e2e:feedback'], 'playwright test --config=playwright.feedback.config.mjs');
