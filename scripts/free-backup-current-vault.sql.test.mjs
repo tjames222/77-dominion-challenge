@@ -54,7 +54,7 @@ before(async () => {
     assert.ok(ready, 'Owned Vault fixture did not become ready.');
     query(kind, 'create role postgres login superuser;create schema vault;create extension supabase_vault with schema vault;create extension pg_cron with schema pg_catalog;');
   }
-  query('source', `select vault.create_secret(${literal(projectUrl)},'profile_photo_project_url');select vault.create_secret(${literal(secret)},'profile_photo_worker_secret');
+  query('source', `select vault.create_secret(${literal(projectUrl)},'profile_photo_project_url','Fixture project URL description');select vault.create_secret(${literal(secret)},'profile_photo_worker_secret','Fixture worker secret description');
     select cron.schedule('process-profile-photo-cleanup','*/5 * * * *',${literal(PROFILE_PHOTO_CLEANUP_CRON_COMMAND)});`, 'postgres');
   sourceHash = inventory('source'); assert.match(sourceHash, /^[a-f0-9]{64}$/);
   const ciphertext = query('source', 'select jsonb_agg(to_jsonb(t)) from vault.secrets t;');
@@ -85,6 +85,10 @@ test('foreign-root ciphertext cannot decrypt; explicit local reconstruction veri
   assert.match(cannotDecrypt.stderr, /invalid ciphertext/);
   const output = query('restore', currentBackupLocalVaultRecoverySql(secret));
   requireCurrentBackupLocalVaultRecovery(output); assert.equal(inventory('restore'), sourceHash);
+  const descriptionCheck = currentBackupLocalVaultRecoverySql(secret).replace(/ROLLBACK;\n$/, `SELECT count(*)=2 AND bool_and(description=case name
+    when 'profile_photo_project_url' then 'Fixture project URL description'
+    when 'profile_photo_worker_secret' then 'Fixture worker secret description' end) FROM vault.secrets;\nROLLBACK;\n`);
+  assert.equal(query('restore', descriptionCheck), '2\nt\nt'); assert.equal(inventory('restore'), sourceHash);
   assert.notEqual(execute('restore', 'select count(decrypted_secret) from vault.decrypted_secrets;').status, 0, 'ROLLBACK must preserve the original foreign-root ciphertext.');
 });
 test('local reconstruction rejects the wrong role before writing and preserves ciphertext', () => {
@@ -99,6 +103,10 @@ test('UUID foreign-key consumers make both source proof and local reconstruction
   for (const kind of ['source', 'restore']) query(kind, 'drop table public.fixture_vault_consumer;');
 });
 test('unexpected additional Vault authority is never silently reconstructed', () => {
+  query('source', "select vault.create_secret('synthetic-unknown-setting','unreviewed_secret');");
+  const changedSourceHash = inventory('source'); assert.notEqual(changedSourceHash, sourceHash);
+  assert.equal(query('source', currentBackupVaultProofSql(secret, changedSourceHash), 'postgres'), 'f');
+  assert.equal(inventory('source'), changedSourceHash);
   query('restore', "select vault.create_secret('synthetic-unknown-setting','unreviewed_secret');");
   const changedHash = inventory('restore'); assert.notEqual(changedHash, sourceHash);
   assert.notEqual(execute('restore', currentBackupLocalVaultRecoverySql(secret)).status, 0);
