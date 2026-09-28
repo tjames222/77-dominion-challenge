@@ -33,6 +33,29 @@ async function fill(page) {
   await page.getByLabel('Expected or desired behavior', { exact: false }).fill('Original expected behavior');
   await page.getByRole('combobox', { name: 'Impact', exact: true }).selectOption('minor');
 }
+async function expectVisibleReceipt(page) {
+  const receipt = page.locator('.feedback-confirmation');
+  await expect(receipt).toBeVisible(); await expect(receipt).toBeFocused();
+  await expect(receipt.getByRole('heading', { name: 'Feedback submitted' })).toBeVisible();
+  await expect(receipt).toContainText('Your feedback is saved.');
+  await expect(receipt).toContainText('no need to submit it again');
+  await expect(page.locator('.feedback-editor')).toBeHidden();
+  await expect(page.getByRole('button', { name: 'Close', exact: true })).toBeVisible();
+  // No scroll helper here: success itself must reveal the complete receipt
+  // and action, not merely leave them somewhere in the scrollable dialog.
+  for (const element of [receipt, page.getByRole('button', { name: 'Close', exact: true })]) {
+    await expect.poll(() => element.evaluate(node => {
+      const rect = node.getBoundingClientRect();
+      const viewport = window.visualViewport;
+      const top = viewport?.offsetTop || 0; const left = viewport?.offsetLeft || 0;
+      const hit = document.elementFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2);
+      return rect.top >= top && rect.left >= left
+        && rect.bottom <= top + (viewport?.height || innerHeight)
+        && rect.right <= left + (viewport?.width || innerWidth)
+        && (hit === node || node.contains(hit));
+    })).toBe(true);
+  }
+}
 async function contactGeometry(page) {
   const check = page.getByRole('checkbox', { name: 'You may contact me about this feedback.', exact: true });
   const label = page.getByText('You may contact me about this feedback.', { exact: true });
@@ -62,6 +85,7 @@ test('active EA saves exact explicit input and allowlisted context without colle
   await expect(page.getByLabel('What happened or what would you like to change?', { exact: false })).toHaveValue('  My explicit feedback\n');
   await page.getByRole('button', { name: 'Send feedback', exact: true }).click();
   await expect(dialog(page)).toContainText('Your feedback is saved.');
+  await expectVisibleReceipt(page);
   expect(auth.writes()).toHaveLength(1); const body = auth.writes()[0].body;
   expect(body.target_input).toEqual({ type: 'bug', description: '  My explicit feedback\n', expectedBehavior: 'Original expected behavior', impact: 'minor', contactAllowed: false });
   expect(Object.keys(body.target_context).sort()).toEqual(['browser', 'buildSha', 'platform', 'route', 'theme', 'viewport']);
@@ -223,7 +247,7 @@ test('all fourteen routes provide reachable bottom placement and hide rather tha
   });
 });
 for (const theme of ['light', 'dark', 'dominion-night', 'dominion-platinum']) test(`${theme} native dialog focus, accessible form and viewport bounds`, async ({ context, page }, testInfo) => {
-  await installFeedbackStub(context); await ready(page);
+  const auth = await installFeedbackStub(context); await ready(page);
   await page.evaluate(value => document.documentElement.setAttribute('data-theme', value), theme);
   const box = await widget(page).boundingBox(); const size = page.viewportSize();
   expect(box.width).toBeGreaterThanOrEqual(44); expect(box.height).toBeGreaterThanOrEqual(44);
@@ -236,7 +260,38 @@ for (const theme of ['light', 'dark', 'dominion-night', 'dominion-platinum']) te
   expect(action.y + action.height).toBeLessThanOrEqual(size.height + 1);
   expect((await new AxeBuilder({ page }).include('.app-dialog-layer[data-pattern="feedback"]').analyze()).violations).toEqual([]);
   await page.screenshot({ path: testInfo.outputPath(`${theme}-feedback.png`) });
+  await fill(page);
+  await page.getByRole('button', { name: 'Send feedback', exact: true }).click();
+  await expectVisibleReceipt(page);
+  expect(auth.writes()).toHaveLength(1);
+  expect((await new AxeBuilder({ page }).include('.app-dialog-layer[data-pattern="feedback"]').analyze()).violations).toEqual([]);
+  await page.screenshot({ path: testInfo.outputPath(`${theme}-feedback-saved.png`) });
   await page.keyboard.press('Escape'); await expect(widget(page)).toBeFocused();
+});
+test('short phone reveals the saved confirmation and Close without another scroll', async ({ context, page, isMobile }) => {
+  await page.setViewportSize({ width: 375, height: 667 });
+  const auth = await installFeedbackStub(context); await ready(page); await widget(page).click(); await fill(page);
+  const release = auth.hold();
+  try {
+    await page.getByRole('button', { name: 'Send feedback', exact: true }).click();
+    await expect.poll(() => auth.writes().length).toBe(1);
+    await expect(page.locator('.feedback-confirmation')).toBeHidden();
+    await dialog(page).locator('.app-dialog-body').evaluate(body => { body.scrollTop = 0; });
+  } finally { release(); }
+  await expectVisibleReceipt(page);
+  if (isMobile) {
+    // The iPhone fixture uses native touch interaction; hardware-keyboard Tab
+    // navigation depends on Safari's separate full-keyboard-access setting.
+    await page.getByRole('button', { name: 'Close', exact: true }).tap();
+  } else {
+    await page.keyboard.press('Tab');
+    await expect(page.getByRole('button', { name: 'Close', exact: true })).toBeFocused();
+    await page.keyboard.press('Enter');
+  }
+  await expect(widget(page)).toBeFocused();
+  await widget(page).click(); await expect(page.locator('.feedback-confirmation')).toBeHidden();
+  await expect(page.getByRole('combobox', { name: 'Feedback type', exact: true })).toBeFocused();
+  expect(auth.writes()).toHaveLength(1);
 });
 test('tablet contact permission remains fully readable and operable without inner overflow', async ({ context, page }, testInfo) => {
   await page.setViewportSize({ width: 768, height: 1024 }); await installFeedbackStub(context); await ready(page); await widget(page).click();
