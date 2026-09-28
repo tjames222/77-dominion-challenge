@@ -29,6 +29,17 @@ test('early-access intake never submits PII through a no-JavaScript GET form', (
   assert.match(html, /<noscript>[\s\S]*enable JavaScript/);
   assert.match(html, /name="email"[^>]*maxlength="254"/);
 });
+test('early-access confirmation is an atomic focusable live region with a real success heading', () => {
+  const html = readFileSync(new URL('../../membership.html', import.meta.url), 'utf8');
+  const entry = readFileSync(new URL('./early-access.js', import.meta.url), 'utf8');
+  assert.match(html, /<div[^>]*id="earlyAccessStatus"[^>]*role="status"[^>]*aria-atomic="true"[^>]*tabindex="-1"><\/div>/);
+  assert.match(entry, /if \(generation !== epoch\) return;\s+const heading = document\.createElement\('h3'\)/);
+  assert.match(entry, /result\.preview \? 'Preview request saved' : 'Request received'/);
+  assert.match(entry, /status\.replaceChildren\(heading, message\)/);
+  assert.match(entry, /status\.focus\(\{ preventScroll: true \}\)/);
+  assert.match(entry, /status\.scrollIntoView\(\{ block: 'center', behavior: 'instant' \}\)/);
+  assert.match(entry, /const clearStatus = \(\) => \{\s+status\.replaceChildren\(\);\s+delete status\.dataset\.state;/);
+});
 
 test('early-access transport posts a minimal body with optional verified-session authorization and no redirects', async () => {
   for (const accessToken of ['', 'test-user-session']) {

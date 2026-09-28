@@ -20,6 +20,10 @@ if (section && form) {
   let epoch = 0;
   let busy = false;
   let suspended = false;
+  const clearStatus = () => {
+    status.replaceChildren();
+    delete status.dataset.state;
+  };
   const setBusy = (value) => {
     busy = value;
     form.setAttribute('aria-busy', String(value));
@@ -31,7 +35,7 @@ if (section && form) {
     const generation = ++epoch;
     if (clear) {
       form.reset();
-      status.textContent = '';
+      clearStatus();
       error.textContent = '';
       form.hidden = true;
       setBusy(false);
@@ -78,7 +82,7 @@ if (section && form) {
     form.reset();
     email.readOnly = false;
     form.hidden = true;
-    status.textContent = '';
+    clearStatus();
     error.textContent = '';
     retry.hidden = true;
     setBusy(false);
@@ -95,6 +99,7 @@ if (section && form) {
     if (busy || !hydrated || !form.reportValidity()) return;
     const generation = epoch;
     error.textContent = '';
+    clearStatus();
     status.textContent = 'Sending your request…';
     setBusy(true);
     try {
@@ -102,14 +107,22 @@ if (section && form) {
         name: name.value, email: email.value, website: form.elements.namedItem('website').value,
       }, { expectedUserId: actorId });
       if (generation !== epoch) return;
-      status.textContent = result.preview
+      const heading = document.createElement('h3');
+      heading.textContent = result.preview ? 'Preview request saved' : 'Request received';
+      const message = document.createElement('p');
+      message.textContent = result.preview
         ? 'Preview request saved in this browser only. No real request or email was sent.'
         : EARLY_ACCESS_RECEIVED;
+      status.replaceChildren(heading, message);
+      status.dataset.state = 'received';
       form.hidden = true;
-      status.focus();
+      // Presentation failures must not erase a confirmed receipt or suggest a
+      // retry. Each enhancement is independent; the persistent card remains.
+      try { status.focus({ preventScroll: true }); } catch {}
+      try { status.scrollIntoView({ block: 'center', behavior: 'instant' }); } catch {}
     } catch (failure) {
       if (generation !== epoch) return;
-      status.textContent = '';
+      clearStatus();
       error.textContent = failure.message;
     } finally {
       if (generation === epoch) setBusy(false);

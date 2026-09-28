@@ -6,8 +6,12 @@
 .early-access-form input[readonly] { opacity: .85; }
 .early-access-form button { min-height: 3rem; justify-self: start; white-space: normal; }
 .early-access-form .early-access-honeypot { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
-.early-access-status { line-height: 1.6; overflow-wrap: anywhere; }
+.early-access-status { margin: 1em 0; line-height: 1.6; overflow-wrap: anywhere; }
+.early-access-status[data-state="received"] { display: grid; gap: .65rem; box-sizing: border-box; max-width: 40rem; padding: clamp(1rem, 3vw, 1.5rem); border: 2px solid var(--success); border-radius: 1rem; background: color-mix(in srgb, var(--success) 10%, var(--surface-elevated)); color: var(--text); scroll-margin-block: calc(var(--topbar-sticky-height, 72px) + 1rem) 1rem; }
+.early-access-status[data-state="received"] h3 { margin: 0; font-size: clamp(1.2rem, 3vw, 1.5rem); line-height: 1.25; color: var(--text); }
+.early-access-status[data-state="received"] p { margin: 0; }
+.early-access-status[data-state="received"]:focus { outline: 3px solid var(--focus-ring); outline-offset: 4px; }
 .early-access-error { color: var(--danger, #ef7676); line-height: 1.6; }
 .early-access-section [hidden] { display: none !important; }
 @media (max-width: 640px) { .early-access-form button { width: 100%; } }
-@media (forced-colors: active) { .early-access-form input { border-color: ButtonText; } }
+@media (forced-colors: active) { .early-access-form input { border-color: ButtonText; } .early-access-status[data-state="received"] { border-color: CanvasText; background: Canvas; color: CanvasText; } }

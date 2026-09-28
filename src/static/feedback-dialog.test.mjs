@@ -81,11 +81,17 @@ test('pending submission cannot double-submit, dismiss or clear text before exac
   const waiting = deferred(); const calls = []; const ui = setup({ submit: (intent, options) => { calls.push({ intent, options }); return waiting.promise; } });
   ui.controller.open(ui.trigger); ui.fill(); const first = ui.form.dispatch('submit'); await ui.form.dispatch('submit');
   assert.equal(calls.length, 1); assert.equal(ui.field('description').value, '  Original private feedback\n');
+  assert.equal(ui.find(node => node.className === 'feedback-confirmation').hidden, true);
   assert.equal(ui.field('description').disabled, true); assert.equal(ui.button('Cancel').disabled, true);
   ui.document.keydown('Escape'); assert.ok(ui.find(node => node.dataset.open === ''));
   waiting.resolve(saved(calls[0].intent)); await first;
   assert.equal(ui.field('description').value, ''); assert.match(ui.text(), /feedback is saved/);
-  assert.equal(ui.document.activeElement, ui.button('Close')); ui.controller.destroy();
+  const confirmation = ui.find(node => node.className === 'feedback-confirmation');
+  assert.equal(confirmation.hidden, false); assert.equal(ui.document.activeElement, confirmation);
+  assert.equal(ui.find(node => node.className === 'feedback-editor').hidden, true);
+  assert.equal(ui.button('Saved').hidden, true); assert.equal(ui.button('Close').disabled, false);
+  assert.match(ui.text(), /Feedback submitted/); assert.match(ui.text(), /no need to submit it again/);
+  ui.controller.destroy();
 });
 
 test('uncertain retry preserves same immutable intent and ignores raw provider errors or edited disabled DOM', async () => {
@@ -105,6 +111,7 @@ test('malformed or wrong-owner persisted responses stay uncertain instead of cla
   for (const patch of [{ status: 'queued' }, { actorId: '44444444-4444-4444-8444-444444444444' }, { operationId: 'bad' }, { provider: 'sent' }]) {
     const ui = setup({ submit: async intent => ({ ...saved(intent), ...patch }) }); ui.controller.open(ui.trigger); ui.fill(); await ui.form.dispatch('submit');
     assert.ok(ui.button('Retry same submission')); assert.equal(ui.field('description').value, '  Original private feedback\n');
+    assert.equal(ui.find(node => node.className === 'feedback-confirmation').hidden, true);
     assert.equal(ui.find(node => node.className === 'feedback-status').textContent, ''); ui.controller.destroy();
   }
 });
@@ -132,8 +139,28 @@ test('shared-dialog replacement scrubs and retires feedback even while its trans
 test('saved callback failure does not reclassify receipt; a later new submission gets a new operation', async () => {
   const ui = setup({ onSaved: () => { throw new Error('presentation failed'); } });
   ui.controller.open(ui.trigger); ui.fill(); await ui.form.dispatch('submit'); assert.match(ui.text(), /Your feedback is saved/);
-  await ui.button('Close').dispatch('click'); ui.controller.open(ui.trigger); ui.fill(); await ui.form.dispatch('submit');
+  await ui.button('Close').dispatch('click'); ui.controller.open(ui.trigger);
+  assert.equal(ui.find(node => node.className === 'feedback-confirmation').hidden, true);
+  assert.equal(ui.find(node => node.className === 'feedback-editor').hidden, false);
+  assert.equal(ui.button('Send feedback').hidden, false);
+  ui.fill(); await ui.form.dispatch('submit');
   assert.equal(ui.calls.length, 2); assert.notEqual(ui.calls[0].intent.operationId, ui.calls[1].intent.operationId); ui.controller.destroy();
+});
+
+test('failed focus or scroll presentation cannot reclassify a durable receipt as uncertain', async () => {
+  for (const method of ['focus', 'scrollIntoView']) {
+    let notices = 0; const ui = setup({ onSaved: () => notices++ });
+    ui.controller.open(ui.trigger); ui.fill();
+    const confirmation = ui.find(node => node.className === 'feedback-confirmation');
+    confirmation[method] = () => { throw new Error('Presentation unavailable'); };
+    await ui.form.dispatch('submit');
+    assert.equal(confirmation.hidden, false); assert.equal(notices, 1);
+    assert.equal(ui.button('Saved').hidden, true); assert.equal(ui.button('Close').disabled, false);
+    assert.equal(ui.button('Retry same submission'), undefined);
+    assert.doesNotMatch(ui.text(), /could not confirm/); assert.equal(ui.controller.hasPendingIntent(), false);
+    await ui.form.dispatch('submit'); assert.equal(ui.calls.length, 1);
+    ui.controller.destroy();
+  }
 });
 
 test('bounded deadline abort retains draft and same intent, permits closing, and fences the late result', async () => {

@@ -53,7 +53,14 @@ export function createFeedbackDialog({ owner: suppliedOwner, context: suppliedCo
       });
     },
   });
-  const status = make('p'); status.className = 'feedback-status'; status.setAttribute('role', 'status'); status.setAttribute('aria-live', 'polite');
+  const confirmation = make('section'); confirmation.className = 'feedback-confirmation'; confirmation.hidden = true;
+  confirmation.tabIndex = -1; confirmation.setAttribute('role', 'status'); confirmation.setAttribute('aria-live', 'polite'); confirmation.setAttribute('aria-atomic', 'true');
+  const successTitle = make('h3', 'Feedback submitted'); successTitle.id = `${dialog.elements.panel.id}-saved-title`;
+  const status = make('p'); status.className = 'feedback-status'; status.id = `${dialog.elements.panel.id}-saved-description`;
+  confirmation.setAttribute('aria-labelledby', successTitle.id); confirmation.setAttribute('aria-describedby', status.id);
+  confirmation.append(successTitle, status);
+  const editor = make('div'); editor.className = 'feedback-editor';
+  form.append(confirmation, editor);
   const addField = (name, label, tag = 'select', choices = null) => {
     const wrapper = make('label'); wrapper.className = 'feedback-field';
     const labelText = make('span', label); const control = make(tag); control.name = name;
@@ -61,7 +68,7 @@ export function createFeedbackDialog({ owner: suppliedOwner, context: suppliedCo
       const empty = make('option', 'Choose an option'); empty.value = ''; control.append(empty);
       for (const [value, text] of Object.entries(choices)) { const option = make('option', text); option.value = value; control.append(option); }
     }
-    fields[name] = control; wrapper.append(labelText, control); form.append(wrapper); return control;
+    fields[name] = control; wrapper.append(labelText, control); editor.append(wrapper); return control;
   };
   const type = addField('type', 'Feedback type', 'select', FEEDBACK_TYPES); type.required = true; type.dataset.dialogInitialFocus = '';
   const description = addField('description', 'What happened or what would you like to change? (10,000 characters maximum)', 'textarea');
@@ -71,11 +78,11 @@ export function createFeedbackDialog({ owner: suppliedOwner, context: suppliedCo
   const impact = addField('impact', 'Impact', 'select', FEEDBACK_IMPACTS); impact.required = true;
   const contactLabel = make('label'); contactLabel.className = 'feedback-contact';
   const contact = make('input'); contact.type = 'checkbox'; contact.name = 'contactAllowed'; fields.contactAllowed = contact;
-  contactLabel.append(contact, make('span', 'You may contact me about this feedback.')); form.append(contactLabel);
+  contactLabel.append(contact, make('span', 'You may contact me about this feedback.')); editor.append(contactLabel);
   const privacy = make('p', 'Includes this page name, theme, screen size, app version and coarse browser/device type. Your account and Early Access status are verified by the server. No journal, prayer, form or other page content is collected automatically. Images are not supported in this form.');
-  privacy.className = 'feedback-privacy'; form.append(privacy);
+  privacy.className = 'feedback-privacy'; editor.append(privacy);
   const summary = make('p', `Page: ${context.route} · Theme: ${context.theme} · Screen: ${context.viewport.width} × ${context.viewport.height}`);
-  summary.className = 'feedback-context'; form.append(summary, status);
+  summary.className = 'feedback-context'; editor.append(summary);
   const actions = make('div'); actions.className = 'feedback-actions';
   const cancel = make('button', 'Cancel'); cancel.type = 'button';
   const send = make('button', 'Send feedback'); send.type = 'submit';
@@ -86,6 +93,7 @@ export function createFeedbackDialog({ owner: suppliedOwner, context: suppliedCo
   function scrub() {
     for (const field of Object.values(fields)) { field.value = ''; field.checked = false; field.disabled = false; field.removeAttribute('aria-invalid'); }
     intent = null; state = 'editing'; status.textContent = ''; send.textContent = 'Send feedback'; send.disabled = false; cancel.disabled = false;
+    confirmation.hidden = true; editor.hidden = false; send.hidden = false;
   }
   function destroy() {
     restoreRevision += 1; returnPosition = null;
@@ -147,8 +155,15 @@ export function createFeedbackDialog({ owner: suppliedOwner, context: suppliedCo
       // Only an exact persisted receipt permits erasing the private draft.
       for (const field of Object.values(fields)) { field.value = ''; field.checked = false; }
       intent = null; send.textContent = 'Saved'; send.disabled = true; cancel.disabled = false; cancel.textContent = 'Close';
-      status.textContent = 'Your feedback is saved. Delivery to our team may still be pending.';
-      cancel.focus();
+      editor.hidden = true; send.hidden = true; confirmation.hidden = false;
+      status.textContent = 'Your feedback is saved. Thank you! You can close this window—there is no need to submit it again. Delivery to our team may still be pending.';
+      // Replace the long form with a durable receipt, and reset its inner
+      // scroll so phone users do not have to hunt for the confirmation.
+      try {
+        dialog.elements.body.scrollTop = 0;
+        confirmation.focus({ preventScroll: true });
+        confirmation.scrollIntoView?.({ block: 'nearest', behavior: 'instant' });
+      } catch { /* Presentation cannot turn a persisted receipt into an uncertain retry. */ }
       try { onSaved?.(receipt); } catch { /* A presentation callback cannot undo a durable receipt. */ }
     } catch {
       if (captured !== generation || !current()) { destroy(); return; }

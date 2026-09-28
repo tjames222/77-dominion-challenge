@@ -1,8 +1,27 @@
 /* Lazy feedback leaf; no global selectors or changes to shared dialog styles. */
-.app-dialog-layer[data-pattern="feedback"] .feedback-form {
+.app-dialog-layer[data-pattern="feedback"] :is(.feedback-form, .feedback-editor) {
   display: grid;
   gap: 1rem;
   min-width: 0;
+}
+.app-dialog-layer[data-pattern="feedback"] [hidden] { display: none !important; }
+.app-dialog-layer[data-pattern="feedback"] .feedback-confirmation {
+  padding: 1.25rem;
+  border: 2px solid var(--success);
+  border-radius: 1rem;
+  background: var(--surface-elevated);
+  color: var(--text);
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+.app-dialog-layer[data-pattern="feedback"] .feedback-confirmation h3 {
+  margin: 0 0 .5rem;
+  color: var(--text);
+  font-size: 1.35rem;
+}
+.app-dialog-layer[data-pattern="feedback"] .feedback-confirmation:focus {
+  outline: 3px solid var(--focus-ring);
+  outline-offset: 3px;
 }
 .app-dialog-layer[data-pattern="feedback"] .feedback-field {
   display: grid;

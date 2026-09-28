@@ -9,6 +9,32 @@ async function fill(page, name = 'Sam Example', email = 'sam@example.com') {
   await page.getByLabel('Name', { exact: true }).fill(name);
   await page.getByLabel('Email', { exact: true }).fill(email);
 }
+async function expectProminentConfirmation(page) {
+  const status = page.locator('#earlyAccessStatus');
+  await expect(status).toHaveAttribute('data-state', 'received');
+  await expect(status).toHaveAttribute('role', 'status');
+  await expect(status).toHaveAttribute('aria-atomic', 'true');
+  await expect(status.getByRole('heading', { name: 'Preview request saved', exact: true })).toBeVisible();
+  await expect(status).toContainText('No real request or email was sent.');
+  await expect(status).toBeFocused();
+  // Do not scroll from the test: success itself must reveal the entire card,
+  // including on a phone after the form collapses and its button disappears.
+  await expect.poll(() => status.evaluate((element) => {
+    const rect = element.getBoundingClientRect();
+    const viewport = window.visualViewport;
+    const top = viewport?.offsetTop || 0;
+    const bottom = top + (viewport?.height || innerHeight);
+    const header = document.querySelector('.topbar')?.getBoundingClientRect();
+    const visibleTop = Math.max(top, header && header.bottom > top && header.top < bottom ? header.bottom : top);
+    const points = [[rect.left + 8, rect.top + 8], [rect.right - 8, rect.bottom - 8]];
+    return {
+      fullyVisible: rect.top >= visibleTop && rect.bottom <= bottom && rect.left >= 0 && rect.right <= innerWidth,
+      unobscured: points.every(([x, y]) => element.contains(document.elementFromPoint(x, y))),
+      overflow: document.documentElement.scrollWidth > innerWidth,
+      border: Number.parseFloat(getComputedStyle(element).borderTopWidth),
+    };
+  })).toEqual({ fullyVisible: true, unobscured: true, overflow: false, border: 2 });
+}
 
 test('Get Early Access opens a branded anonymous request form and saves one preview receipt', async ({ page, app }) => {
   const external = [];
@@ -22,6 +48,7 @@ test('Get Early Access opens a branded anonymous request form and saves one prev
   await expect(page.locator('#earlyAccessStatus')).toContainText('Preview request saved in this browser only');
   await expect(page.locator('#earlyAccessForm')).toBeHidden();
   await expect(page.locator('#earlyAccessStatus')).toBeFocused();
+  await expectProminentConfirmation(page);
   const first = await receipts(page);
   expect(first).toHaveLength(1);
   expect(first[0][0]).toMatch(/:[a-f0-9]{64}$/);
@@ -33,6 +60,56 @@ test('Get Early Access opens a branded anonymous request form and saves one prev
   await expect(page.locator('#earlyAccessStatus')).toContainText('Preview request saved');
   expect(await receipts(page)).toEqual(first);
   expect(external).toEqual([]);
+});
+
+for (const theme of ['light', 'dark', 'dominion-night', 'dominion-platinum']) for (const width of [390, 1440]) {
+  test(`request success stays prominent without manual scrolling at ${width}px in ${theme}`, async ({ page, app }) => {
+    const external = [];
+    page.on('request', (request) => { if (/supabase\.co|stripe\.com/.test(request.url())) external.push(request.url()); });
+    await page.setViewportSize({ width, height: width === 390 ? 844 : 1000 });
+    await app.open(ROUTE_BY_ID.membership, { state: 'guest', theme });
+    if (await page.getByLabel('Email', { exact: true }).getAttribute('readonly') === null) await fill(page);
+    await page.getByRole('button', { name: 'Request early access', exact: true }).click();
+    await expect(page.locator('#earlyAccessForm')).toBeHidden();
+    await expectProminentConfirmation(page);
+    assertNoBlockingAxeViolations(await analyzeAccessibility(page));
+    await page.locator('#earlyAccessStatus').screenshot({ path: test.info().outputPath(`early-access-success-${theme}-${width}.png`) });
+    await expectProminentConfirmation(page);
+    await page.emulateMedia({ forcedColors: 'active' });
+    await expectProminentConfirmation(page);
+    expect(external).toEqual([]);
+    app.assertNoRuntimeErrors();
+  });
+}
+
+test('account refresh clears a prior success card before displaying a new request form', async ({ page, app }) => {
+  await app.open(ROUTE_BY_ID.membership, { state: 'guest' });
+  await fill(page); await page.getByRole('button', { name: 'Request early access', exact: true }).click();
+  await expectProminentConfirmation(page);
+  await page.evaluate(() => window.dispatchEvent(new StorageEvent('storage', { key: 'dominion:user' })));
+  await expect(page.locator('#earlyAccessForm')).toBeVisible();
+  await expect(page.locator('#earlyAccessStatus')).toHaveText('');
+  await expect(page.locator('#earlyAccessStatus')).not.toHaveAttribute('data-state');
+  await expect(page.locator('#earlyAccessStatus h3')).toHaveCount(0);
+});
+
+for (const method of ['focus', 'scrollIntoView']) test(`confirmed receipt survives a ${method} presentation failure`, async ({ page, app }) => {
+  await app.open(ROUTE_BY_ID.membership, { state: 'guest' });
+  await fill(page);
+  await page.locator('#earlyAccessStatus').evaluate((element, method) => {
+    element[method] = () => { throw new Error('Fixture presentation unavailable'); };
+  }, method);
+  await page.getByRole('button', { name: 'Request early access', exact: true }).click();
+  await expect(page.locator('#earlyAccessStatus')).toHaveAttribute('data-state', 'received');
+  await expect(page.locator('#earlyAccessStatus h3')).toHaveText('Preview request saved');
+  await expect(page.locator('#earlyAccessStatus')).toContainText('No real request or email was sent.');
+  await expect(page.locator('#earlyAccessForm')).toBeHidden();
+  await expect(page.locator('#earlyAccessError')).toHaveText('');
+  expect(await receipts(page)).toHaveLength(1);
+  app.assertNoRuntimeErrors();
+  await page.evaluate(() => window.dispatchEvent(new PageTransitionEvent('pagehide', { persisted: true })));
+  await expect(page.locator('#earlyAccessStatus')).toHaveText('');
+  await expect(page.locator('#earlyAccessStatus')).not.toHaveAttribute('data-state');
 });
 
 test('authenticated name and email prefill and account switching clears prior entered details', async ({ page, context, app }) => {
@@ -73,6 +150,7 @@ test('validation and failed submission preserve the entered information for a cl
   });
   await page.getByRole('button', { name: 'Request early access', exact: true }).click();
   await expect(page.locator('#earlyAccessError')).toContainText('Your details are still here');
+  await expect(page.locator('#earlyAccessStatus')).not.toHaveAttribute('data-state');
   await expect(page.getByLabel('Name', { exact: true })).toHaveValue('Sam Example');
   await expect(page.getByLabel('Email', { exact: true })).toHaveValue('sam@example.com');
   await expect(page.getByRole('button', { name: 'Request early access', exact: true })).toBeEnabled();
@@ -95,6 +173,7 @@ test('loading blocks accidental resubmission and rejects an actor switch before 
   await page.getByRole('button', { name: 'Request early access', exact: true }).click();
   await expect(page.getByRole('button', { name: 'Sending request…', exact: true })).toBeDisabled();
   await expect(page.locator('#earlyAccessForm')).toHaveAttribute('aria-busy', 'true');
+  await expect(page.locator('#earlyAccessStatus')).not.toHaveAttribute('data-state');
   const other = await context.newPage();
   await other.goto('/index.html');
   await other.evaluate(async () => {
@@ -104,6 +183,7 @@ test('loading blocks accidental resubmission and rejects an actor switch before 
   await expect(page.getByLabel('Email', { exact: true })).toHaveValue('new@example.test');
   await page.evaluate(() => window.releaseEarlyAccessDigest());
   await expect(page.locator('#earlyAccessStatus')).toHaveText('');
+  await expect(page.locator('#earlyAccessStatus')).not.toHaveAttribute('data-state');
   expect(await receipts(page)).toEqual([]);
   await other.close();
 });
@@ -182,6 +262,7 @@ test('late submission results cannot repopulate a page after its lifecycle has e
   await expect(page.locator('#earlyAccessForm')).toBeHidden();
   await expect(page.locator('#earlyAccessForm')).toHaveAttribute('aria-busy', 'false');
   await expect(page.locator('#earlyAccessStatus')).toHaveText('');
+  await expect(page.locator('#earlyAccessStatus')).not.toHaveAttribute('data-state');
   await expect(page.locator('#earlyAccessError')).toHaveText('');
   await expect(page.getByLabel('Name', { exact: true })).toHaveValue('');
   await expect(page.getByLabel('Email', { exact: true })).toHaveValue('');
