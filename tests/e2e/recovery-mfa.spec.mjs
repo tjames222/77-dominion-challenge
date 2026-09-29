@@ -28,6 +28,11 @@ test('existing authenticator unlocks same-page password recovery with private de
   await expect(page.locator('#passwordRecoveryMfaForm')).toBeVisible();
   await expect(page.locator('#passwordResetForm')).toBeHidden();
   await expect(page.getByLabel('Six-digit code', { exact: true })).toBeFocused();
+  // Visibility/focus can precede the real 680ms reveal transition. Measure the
+  // rendered card, not an intermediate translucent frame; keep every axe rule.
+  await expect(page.locator('.auth-card')).toHaveClass(/is-visible/);
+  await expect(page.locator('.auth-card')).toHaveCSS('opacity', '1');
+  await page.evaluate(() => document.fonts.ready.then(() => undefined));
   const accessibility = await new AxeBuilder({ page }).analyze();
   expect(accessibility.violations).toEqual([]);
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
