@@ -377,6 +377,31 @@ features and entry-safe split require further graph/API work. FOU-1501 remains
 open; this local checkpoint is neither deployed timing evidence nor a passing
 performance release claim.
 
+## App Streak presentation checkpoint (2026-09-29, local)
+
+The header's App Streak dialog is now a click-only presentation module. Initial
+counts, activation reads, visit coalescing and actor-bound date mutations remain
+in the eager controller. The existing menu lifecycle generation prevents a late
+import from opening after a session change, account switch, logout or pagehide.
+Import failures require an explicit reload with an unfinished-work warning.
+
+With the same `ac41479249861fbe4de82ed36b27be1d14b92292` build SHA before and
+after, all 29 main/develop entry graphs have no final JS/CSS/static-request
+regression. Ordinary routes save 766–783 gzip bytes. Account Security changes
+by -1 byte in develop and -3 in main; the invitation entry changes by -1/0.
+An earlier checkpoint failed by +2 bytes on develop Account Security solely due
+to generated asset-filename hash entropy. That failed result was preserved;
+functional fixes subsequently passed the strict comparison without an exception.
+
+The required `test:e2e:app-streak` gate runs compiled Chromium and WebKit against
+a loopback synthetic provider. It verifies click-only loading, lifecycle fences,
+failure/reload recovery, keyboard focus, locked dates, and no duplicate mutation
+after a pending or unknown response. Existing Auth/MFA/invitation graph guards,
+all-chunk accounting, and interim budgets remain unchanged.
+
+This is a local incremental reduction, not deployed timing evidence or the
+40%/25% completion target. FOU-1501 remains open.
+
 ## Interim automated budgets
 
 `pnpm run check:frontend-performance` audits a freshly built canonical mock preview

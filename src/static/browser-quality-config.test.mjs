@@ -58,7 +58,7 @@ const workflowJob = (id) => {
 
 test('two standard-runner shards preserve preliminary checks and the full main matrix', () => {
   const preflight = workflowJob('preflight');
-  for (const command of ['pnpm test', 'pnpm build', 'pnpm test:e2e:auth', 'pnpm test:e2e:mfa', 'pnpm test:e2e:admin', 'pnpm test:e2e:daily-bootstrap', 'pnpm test:e2e:preview-badges']) {
+  for (const command of ['pnpm test', 'pnpm build', 'pnpm test:e2e:auth', 'pnpm test:e2e:mfa', 'pnpm test:e2e:admin', 'pnpm test:e2e:daily-bootstrap', 'pnpm test:e2e:preview-badges', 'pnpm test:e2e:app-streak']) {
     assert.ok(preflight.includes(`run: ${command}\n`), `Missing preliminary ${command}`);
   }
   const shards = workflowJob('browser-shards');
@@ -195,6 +195,24 @@ test('optional preview badge tests are a required isolated compiled and hybrid b
   assert.match(buildConfig, /\.\.\.PRODUCTION_ENTRYPOINTS/);
   assert.match(buildConfig, /previewBadgeTest: 'tests\/e2e\/fixtures\/preview-badges\.html'/);
   assert.doesNotMatch(buildConfig, /codeSplitting|modulePreload|\.css|define:/);
+});
+
+test('deferred App Streak is a required compiled Chromium and WebKit gate using only a local synthetic provider', () => {
+  const config = readFileSync(new URL('../../playwright.app-streak.config.mjs', import.meta.url), 'utf8');
+  assert.equal(packageJson.scripts['test:e2e:app-streak'], 'playwright test --config=playwright.app-streak.config.mjs');
+  assert.match(workflowJob('preflight'), /- name: Verify deferred App Streak ownership boundaries\n\s+run: pnpm test:e2e:app-streak/);
+  assert.ok(playwrightConfig.includes('/app-streak-live\\.spec\\.mjs/'));
+  assert.match(config, /testMatch: \/app-streak-live\\\.spec\\\.mjs\//);
+  assert.match(config, /const baseURL = `http:\/\/127\.0\.0\.1:\$\{port\}`/);
+  assert.match(config, /VITE_ENABLE_MOCKS: 'false'/);
+  assert.match(config, /VITE_ENABLE_PRODUCTION_CONNECTIONS: 'true'/);
+  assert.match(config, /VITE_SUPABASE_URL: `\$\{baseURL\}\/__admin_fixture__`/);
+  assert.match(config, /reuseExistingServer: false/);
+  assert.match(config, /retries: 0/);
+  assert.match(config, /name: 'streak-chromium'.*devices\['Desktop Chrome'\]/);
+  assert.match(config, /name: 'streak-webkit'.*devices\['iPhone 13'\]/);
+  assert.match(config, /outputFolder: 'playwright-report'/);
+  assert.doesNotMatch(config, /supabase\.co|SUPABASE_ACCESS_TOKEN|SERVICE_ROLE_KEY|CLOUDFLARE_API_TOKEN/);
 });
 
 test('browser diagnostics are short-lived and uploaded only when the gate fails', () => {
