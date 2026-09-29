@@ -72,9 +72,10 @@ describe('challenge activation client integration', () => {
 
   test('uses the persisted mock lifecycle in the shared header and keeps stale recovery busy', async () => {
     const header = await read('./shared-header-actions.js');
+    const presentation = await read('./app-streak-dialog.mjs');
     const saveFlow = header.slice(
-      header.indexOf("content.querySelector('[data-global-streak-start-date-form]')"),
-      header.indexOf("dateInput.addEventListener('input'"),
+      header.indexOf('async function saveStartDate(value)'),
+      header.indexOf("streakButton.addEventListener('click'"),
     );
 
     assert.match(header, /const activation = await getChallengeActivation\(\{ expectedUserId: currentUser\?\.userId \}\);[\s\S]*localHeaderSnapshot\([\s\S]*activation/);
@@ -86,8 +87,8 @@ describe('challenge activation client integration', () => {
     assert.match(saveFlow, /timeZone: submitTimeZone/);
     assert.match(saveFlow, /expectedUserId: submitOwnerKey/);
     assert.doesNotMatch(saveFlow, /resolvedOptions\(\)\.timeZone/);
-    assert.match(header, /input\.disabled = true/);
-    assert.match(header, /saveButton\.disabled = true/);
+    assert.match(presentation, /dateInput\.disabled = true/);
+    assert.match(presentation, /saveButton\.disabled = true/);
   });
 
   test('stores exact mock request replays and rejects request reuse before another mutation', async () => {
@@ -150,15 +151,15 @@ describe('challenge activation client integration', () => {
   });
 
   test('turns malformed lifecycle reads into recoverable consumer error states', async () => {
-    const [activation, header, dailyStandard, dashboard] = await Promise.all([
+    const [activation, headerPresentation, dailyStandard, dashboard] = await Promise.all([
       read('./challenge-activation.mjs'),
-      read('./shared-header-actions.js'),
+      read('./app-streak-dialog.mjs'),
       read('./daily-standard-page.js'),
       read('./dashboard.js'),
     ]);
 
     assert.match(activation, /const closed = challengeActivationReadError\(INVALID_CONTRACT_READ_ERROR\)/);
-    assert.match(header, /currentActivation\?\.readState === 'error'/);
+    assert.match(headerPresentation, /currentActivation\?\.readState === 'error'/);
     assert.match(dailyStandard, /challengeActivation\.readState === 'error'/);
     assert.match(dashboard, /challengeActivation\.readState === 'error'/);
   });
