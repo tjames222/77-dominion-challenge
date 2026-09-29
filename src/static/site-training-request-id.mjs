@@ -28,4 +28,3 @@ export function newSiteTrainingRequestId() {
   }
   throw new Error('Unable to create a fresh page training request ID.');
 }
-
