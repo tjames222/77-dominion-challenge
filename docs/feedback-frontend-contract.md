@@ -37,6 +37,24 @@ It does not restore focus to an ineligible trigger. Another shared dialog's
 forced replacement also retires this instance. Recreate with a freshly verified
 owner before mounting again. Drafts are deliberately not stored or logged.
 
+## Persistent placement
+
+Ordinary scrolling never hides the Feedback launcher. On phones up to 600px,
+its labeled square occupies a dedicated row in the existing sticky header;
+the existing header height observer also offsets member/secondary tabs. This
+uses some vertical space but keeps the full content width, including at 320px.
+Larger viewports retain the bottom-right square, reserving a narrow page edge
+only when the existing margin outside the widest (1240px) page shell is too small.
+The target is at least 44px and scales with enlarged text. Safe-area insets are
+preserved. Rotation moves the same button, not a second controller or owner.
+
+The launcher remains hidden while the shared menu or an application dialog owns
+interaction. Closing feedback restores its original scroll position and focus;
+it does not jump to the document bottom to find an unoccupied rectangle. Owner
+teardown also removes the reserved slot/edge. Placement does not scan surrounding
+page controls or install scroll/geometry observers, and does not change feedback
+eligibility, payloads, receipts, retry authority or service calls.
+
 ## Fixed input and context
 
 Input fields are `type`, `description`, optional `expectedBehavior`, `impact` and
@@ -63,8 +81,7 @@ The dialog receives these already-coarsened values. `feedback-context.mjs`
 reduces the runtime user-agent string to fixed enums and discards the raw string;
 the widget captures only pathname, theme, viewport and validated build SHA.
 There is no DOM/form-content scanning, storage/referrer collection, private
-content, token, user-metadata or screenshot capture. Geometry-only placement
-checks do not add context fields. Server-derived reporter/email/cohort and
+content, token, user-metadata or screenshot capture. Server-derived reporter/email/cohort and
 timestamps are not accepted as client-authoritative context.
 
 The fixed route list is dashboard, badges-rewards, bible-reading,
