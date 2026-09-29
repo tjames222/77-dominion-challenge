@@ -56,11 +56,12 @@ describe('authenticated shared header actions', () => {
   });
 
   test('injects labeled, accessible actions and clears stale account state', async () => {
-    const [menu, actions, composer, css] = await Promise.all([
+    const [menu, actions, composer, css, streakDialog] = await Promise.all([
       read('./menu.js'),
       read('./shared-header-actions.js'),
       read('./share-composer.js'),
       read('../assets/menu.css'),
+      read('./app-streak-dialog.mjs'),
     ]);
 
     assert.match(actions, /shared-header-action-label', 'Share'/);
@@ -68,7 +69,7 @@ describe('authenticated shared header actions', () => {
     assert.match(actions, /aria-controls', 'globalStreakDetailsDialog'/);
     assert.match(actions, /streakButton\.setAttribute\('aria-expanded', 'true'\)/);
     assert.match(actions, /onClose: \(\) => streakButton\.setAttribute\('aria-expanded', 'false'\)/);
-    assert.match(actions, /dialog\.destroy\(\)/);
+    assert.match(streakDialog, /dialog\.destroy\(\)/);
     assert.match(menu, /currentMenuOwner !== nextOwner/);
     assert.match(menu, /closeShareComposer\('account-change'\)/);
     assert.match(menu, /sharedHeaderActions\?\.destroy\(\)/);
@@ -89,8 +90,8 @@ describe('authenticated shared header actions', () => {
     assert.match(css, /@media \(max-width: 340px\)[\s\S]*\.shared-header-action \.app-icon\s*\{[^}]*display:\s*none/);
     assert.doesNotMatch(css, /\.shared-header-action-label\s*\{[^}]*display:\s*none/);
     assert.match(css, /@media \(prefers-reduced-motion: reduce\)[\s\S]*\.shared-header-action/);
-    assert.match(actions, /dialog\.elements\.body\.scrollTop = 0/);
-    assert.match(actions, /dialog\.close\('replaced'\)/);
+    assert.match(streakDialog, /dialog\.elements\.body\.scrollTop = 0/);
+    assert.match(actions, /dialog\?\.close\('replaced'\)/);
     assert.match(actions, /submitOwnerVersion !== ownerVersion/);
     assert.match(composer, /shareComposerInstance\?\.reset\?\.\(reason\)/);
     assert.match(composer, /dialog\.close\('replaced'\)/);
@@ -100,6 +101,7 @@ describe('authenticated shared header actions', () => {
 
   test('relocates challenge start-date persistence and lock behavior into App Streak', async () => {
     const actions = await read('./shared-header-actions.js');
+    const streakDialog = await read('./app-streak-dialog.mjs');
     assert.match(actions, /getChallengeActivation\(\{ expectedUserId/);
     assert.match(actions, /updateChallengeStartDate\(\{/);
     assert.match(actions, /recordVisitPromise = recordAppVisit\(\{ expectedUserId \}\)\.catch/);
@@ -116,9 +118,9 @@ describe('authenticated shared header actions', () => {
     assert.doesNotMatch(actions, /storage\?\.setItem\?\.\(START_DATE_STORAGE_KEY/);
     assert.match(actions, /dominion:challenge-start-date-updated/);
     assert.match(actions, /activation: savedActivation/);
-    assert.match(actions, /controls stay locked until your activation status can be refreshed/i);
-    assert.match(actions, /role', 'status'/);
-    assert.match(actions, /aria-live', 'polite'/);
+    assert.match(streakDialog, /controls stay locked until your activation status can be refreshed/i);
+    assert.match(streakDialog, /role', 'status'/);
+    assert.match(streakDialog, /aria-live', 'polite'/);
   });
 
   test('validates calendar dates without timezone rollover', () => {

@@ -109,6 +109,7 @@ export default defineConfig({
         /recovery-mfa\.spec\.mjs/,
         /admin-live\.spec\.mjs/,
         /feedback-live\.spec\.mjs/,
+        /app-streak-live\.spec\.mjs/,
         /daily-action-bootstrap-live\.spec\.mjs/,
         /admin-early-access-live\.spec\.mjs/,
         /admin-roles-live\.spec\.mjs/,
