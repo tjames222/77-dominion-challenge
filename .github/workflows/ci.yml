@@ -79,7 +79,9 @@ jobs:
       - name: Test restored encrypted production backup release gate
         run: pnpm run test:free-production-backup-evidence
       - name: Test free production backup encryption and boundaries
-        run: pnpm run test:free-production-backup
+        run: |
+          pnpm run test:free-production-backup
+          node --test scripts/free-backup-post-early-access-vault.test.mjs
       - name: Test production one-version reconciliation boundaries
         run: pnpm run test:production-reconciliation
       - name: Test production Auth canary policy guard
@@ -109,6 +111,9 @@ jobs:
       - name: Verify exact pg_net extension data preservation
         timeout-minutes: 5
         run: node --test scripts/free-backup-current-pgnet.sql.test.mjs
+      - name: Verify isolated post-Early-Access five-setting Vault reconstruction
+        timeout-minutes: 5
+        run: node --test scripts/free-backup-post-early-access-vault.sql.test.mjs
       - name: Execute production canary SQL in isolated PostgreSQL
         run: pnpm run test:production-canary-entitlement-sql
       - name: Execute early-access intake SQL in isolated PostgreSQL

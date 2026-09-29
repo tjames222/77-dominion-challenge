@@ -63,8 +63,9 @@ test('integration preserves all inventory equality, current-only startup/replay 
   assert.match(replay,/assert.deepEqual\(currentBackupPgNetManifest/); assert.match(replay,/await local\(/); assert.doesNotMatch(replay,/remote\(/);
   assert.match(source,/assert.equal\(await readFile\(after, 'utf8'\), beforeText/);
   assert.match(source,/assert.equal\(comparableInventory\(restoredText\), comparableInventory\(beforeText\)/);
-  assert.match(source,/backupMode === CURRENT_BACKUP_MODE \? \['-e', 'DOMINION_BACKUP_CURRENT_PG_NET=1'\] : \[\]/);
-  assert.match(source,/backupMode === CURRENT_BACKUP_MODE \? CURRENT_PGNET_TABLES.map\(table => table.file\) : \[\]/);
+  assert.match(source,/const usesPgNetSupplement = backupMode === CURRENT_BACKUP_MODE \|\| backupMode === POST_EARLY_ACCESS_BACKUP_MODE/);
+  assert.match(source,/usesPgNetSupplement \? \['-e', 'DOMINION_BACKUP_CURRENT_PG_NET=1'\] : \[\]/);
+  assert.match(source,/usesPgNetSupplement \? CURRENT_PGNET_TABLES.map\(table => table.file\) : \[\]/);
   assert(source.indexOf("stage('content-verify')") < source.indexOf("stage('encryption')"));
   const startup=await readFile(new URL('./free-backup-local-postgres.sh',import.meta.url),'utf8');
   assert.match(startup,/backup_postgres_options=\(-c shared_preload_libraries=pgsodium,pg_cron,supabase_vault\)/);
