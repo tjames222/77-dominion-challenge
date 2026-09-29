@@ -20,8 +20,8 @@ describe('static phone layout contract', () => {
       const viewport = html.match(/<meta name="viewport" content="([^"]+)"/i)?.[1] || '';
       assert.match(viewport, /width=device-width/);
       assert.match(viewport, /initial-scale=1/);
-      if (['account-security.html', 'admin.html', 'early-access-invite.html'].includes(route)) {
-        // Security setup must support zoom while reading/copying a setup key.
+      if (['account-security.html', 'admin.html', 'early-access-invite.html', 'reset-password.html'].includes(route)) {
+        // Security setup and recovery must support zoom while entering codes.
         assert.doesNotMatch(viewport, /maximum-scale=1|user-scalable=no/);
       } else {
         assert.match(viewport, /maximum-scale=1/);
