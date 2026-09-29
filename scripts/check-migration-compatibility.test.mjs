@@ -490,7 +490,7 @@ test("package, CI, and production deploy run the gate before migrations", async 
     deployWorkflow.match(
       /SUPABASE_ACCESS_TOKEN="\$SUPABASE_ACCESS_TOKEN"/gu,
     )?.length,
-    15,
+    16, // Includes the bounded read-only inbox catalog postflight.
   );
   assert.equal(deployWorkflow.split("--credential-only").length - 1, 6);
   assert.equal(deployWorkflow.split("--revoke-credentials").length - 1, 9);
