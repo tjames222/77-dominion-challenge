@@ -6,10 +6,10 @@ const read = (path) => readFile(new URL(path, import.meta.url), 'utf8');
 
 describe('site training client integration', () => {
   test('binds reads and every mutation to the captured actor and strict response contract', async () => {
-    const api = await read('./api.js');
+    const api = await read('./site-training-api.mjs');
     const surface = api.slice(
-      api.indexOf('export async function getSiteTrainingState'),
-      api.indexOf('const rpcDraft'),
+      api.indexOf('async function getSiteTrainingState'),
+      api.indexOf('return Object.freeze({ getSiteTrainingState'),
     );
     assert.equal((surface.match(/requireCapturedSiteTrainingActor\(expectedUserId\)/g) || []).length, 3);
     assert.equal((surface.match(/const user = await requireUser\(actorId\)/g) || []).length, 3);
@@ -20,7 +20,7 @@ describe('site training client integration', () => {
   });
 
   test('keeps preview reads side-effect free and request replays ahead of revision checks', async () => {
-    const api = await read('./api.js');
+    const api = await read('./site-training-api.mjs');
     const reader = api.slice(
       api.indexOf('function readMockSiteTrainingStore'),
       api.indexOf('function createMockSiteTrainingOverall'),
@@ -29,7 +29,7 @@ describe('site training client integration', () => {
       api.indexOf('function runMockSiteTrainingOperation'),
       api.indexOf('function siteTrainingRpcParameters'),
     );
-    assert.match(reader, /peekPreviewUserValue\(localStorage/);
+    assert.match(reader, /peekPreviewUserValue\(storage/);
     assert.match(api, /function withMockSiteTrainingAttemptParity/);
     assert.match(api, /page: withMockSiteTrainingAttemptParity\(prior\.result\?\.page\)/);
     assert.match(api, /readMockSiteTrainingStore\(actorId, \{ readOnly: true \}\)/);
@@ -61,12 +61,12 @@ describe('site training client integration', () => {
 
   test('keeps restart page-only and exposes observable runtime state for controls', async () => {
     const [api, runtime] = await Promise.all([
-      read('./api.js'),
+      read('./site-training-api.mjs'),
       read('./site-training-runtime.mjs'),
     ]);
     const transition = api.slice(
-      api.indexOf('export async function transitionSiteTraining'),
-      api.indexOf('const rpcDraft'),
+      api.indexOf('async function transitionSiteTraining'),
+      api.indexOf('return Object.freeze({ getSiteTrainingState'),
     );
     assert.match(transition, /operation\.action === 'restart' && operation\.scope !== 'page'/);
     assert.match(transition, /Restart is available only for current page training/);

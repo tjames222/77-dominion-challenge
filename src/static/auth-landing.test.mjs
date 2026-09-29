@@ -1,7 +1,21 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+import { readFileSync } from 'node:fs';
+import { runInNewContext } from 'node:vm';
 import { finishAuthLanding } from './auth-landing.mjs';
 import { authSessionIdentity } from './mfa-auth.mjs';
+import { canonicalHtmlRouteFileName } from './route-path.mjs';
+
+test('the intentional entry-local landing parser remains equivalent to the shared pure parser', () => {
+  const source = readFileSync(new URL('./auth-landing.mjs', import.meta.url), 'utf8');
+  const local = runInNewContext(source.slice(source.indexOf('const HTML_EXTENSION'), source.indexOf('function landingError'))
+    + '\ncanonicalHtmlRouteFileName;');
+  for (const value of [undefined, null, '', '/', '//', './dashboard', '/dashboard/', 'dashboard.html',
+    '/dashboard?start=solo', '/dashboard.html#challenge', '/profile.html?x#y', './INDEX.HTML',
+    '/unknown.txt', '/nested/path', '/nested/file.name', '?only', '#only', 0, 42]) {
+    assert.equal(local(value), canonicalHtmlRouteFileName(value), String(value));
+  }
+});
 
 const A = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
 const B = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';

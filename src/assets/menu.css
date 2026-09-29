@@ -13,7 +13,8 @@
   --layer-menu-drawer: 170;
   --layer-menu-close: 180;
   --layer-application-overlay: 900;
-  --topbar-sticky-height: calc(72px + env(safe-area-inset-top));
+  --topbar-min-height: calc(72px + env(safe-area-inset-top));
+  --topbar-sticky-height: var(--topbar-min-height);
   --member-tabs-sticky-height: 0px;
   --navigation-stack-gap: clamp(8px, 1.6vw, 12px);
   --navigation-content-gap: clamp(20px, 3.2vw, 32px);
@@ -43,7 +44,9 @@ body {
   top: 0;
   z-index: var(--layer-primary-header);
   isolation: isolate;
-  min-height: var(--topbar-sticky-height);
+  /* Sticky offsets are measured output, never the header's intrinsic input:
+   * a temporary row must be able to shrink again after rotation or teardown. */
+  min-height: var(--topbar-min-height);
   margin-top: calc(-1 * max(var(--shell-pad, clamp(18px, 4vw, 34px)), env(safe-area-inset-top)));
   margin-inline: calc(-1 * var(--shell-pad, clamp(18px, 4vw, 34px)));
   margin-bottom: 0;

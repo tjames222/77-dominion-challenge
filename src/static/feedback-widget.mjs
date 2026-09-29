@@ -9,6 +9,9 @@ export function mountFeedbackWidget({ client, owner, beforeOpen = () => {}, buil
   document: ownerDocument = globalThis.document, window: ownerWindow = globalThis.window } = {}) {
   const binding = client.bindOwner(owner);
   let destroyed = false; let eligible = true; let dialog = null;
+  const header = ownerDocument.querySelector('.topbar');
+  const phone = ownerWindow.matchMedia('(max-width: 600px)');
+  const headerSlot = ownerDocument.createElement('div'); headerSlot.className = 'feedback-header-slot';
   const button = ownerDocument.createElement('button');
   button.type = 'button'; button.className = 'feedback-widget'; button.dataset.feedbackWidget = '';
   const icon = ownerDocument.createElementNS('http://www.w3.org/2000/svg', 'svg');
@@ -17,51 +20,30 @@ export function mountFeedbackWidget({ client, owner, beforeOpen = () => {}, buil
   path.setAttribute('d', 'M5 4h14a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H9l-5 3v-3H3V6a2 2 0 0 1 2-2Zm2 5h10M7 13h7');
   icon.append(path); const label = ownerDocument.createElement('span'); label.textContent = 'Feedback';
   button.append(icon, label); button.setAttribute('aria-label', 'Send Feedback');
-  let frame = 0; let controls = []; let refreshControls = true;
-  function checkPlacement() {
-    frame = 0; if (destroyed || button.hidden) return;
-    // Keep the last unobstructed trigger geometry while the existing modal
-    // system isolates the page. Its synchronous close can then restore focus.
-    if (ownerDocument.body.hasAttribute('data-dialog-open') || ownerDocument.body.classList.contains('menu-open')) return;
-    const rect = button.getBoundingClientRect();
-    // Geometry/element roles only. Never inspect any page text, form value,
-    // attributes containing content, or include these nodes in feedback data.
-    // Cache role-bearing nodes until structure changes. Scroll/resize checks
-    // only intersect rectangles; there is no per-frame selector/DOM scan and
-    // narrow or partially overlapping controls cannot fall between samples.
-    if (refreshControls) {
-      controls = [...ownerDocument.querySelectorAll('button, a, input, textarea, select, summary, [role="button"]')]
-        .filter(node => node !== button && !button.contains(node));
-      refreshControls = false;
-    }
-    const obstructed = controls.some(node => node.isConnected && [...node.getClientRects()].some(other =>
-      other.width > 0 && other.height > 0 && other.left < rect.right && other.right > rect.left && other.top < rect.bottom && other.bottom > rect.top));
-    button.toggleAttribute('data-obstructed', obstructed);
-  }
-  function schedulePlacement() { if (!destroyed && !frame) frame = ownerWindow.requestAnimationFrame(checkPlacement); }
-  const resize = typeof ownerWindow.ResizeObserver === 'function' ? new ownerWindow.ResizeObserver(schedulePlacement) : null;
-  const mutation = new ownerWindow.MutationObserver(records => {
-    if (records.some(record => record.type === 'childList')) refreshControls = true;
-    schedulePlacement();
-  });
-  resize?.observe(ownerDocument.body); mutation.observe(ownerDocument.body, {
-    childList: true, subtree: true, attributes: true, attributeFilter: ['style', 'class', 'hidden', 'open'],
-  });
-  ownerWindow.addEventListener('scroll', schedulePlacement, true); ownerWindow.addEventListener('resize', schedulePlacement);
-  ownerDocument.addEventListener('focusin', schedulePlacement); ownerDocument.addEventListener('focusout', schedulePlacement);
   function update() {
     if (destroyed) return;
     const retry = Boolean(dialog?.hasPendingIntent());
     button.hidden = !eligible && !retry;
     button.setAttribute('aria-label', retry ? 'Retry feedback submission' : 'Send Feedback');
-    label.textContent = retry ? 'Retry' : 'Feedback'; schedulePlacement();
+    label.textContent = retry ? 'Retry' : 'Feedback';
+    // A reserved header slot on phones preserves their full content width;
+    // wider screens use a stable outside edge. No page-content scans on scroll.
+    ownerDocument.body.toggleAttribute('data-feedback-mounted', !button.hidden);
+    headerSlot.hidden = button.hidden;
+  }
+  function place() {
+    if (destroyed) return;
+    if (phone.matches && header) {
+      header.append(headerSlot); headerSlot.append(button);
+    } else {
+      ownerDocument.body.append(button); headerSlot.remove();
+    }
   }
   function destroy() {
     if (destroyed) return; destroyed = true;
-    resize?.disconnect(); mutation.disconnect(); ownerWindow.cancelAnimationFrame(frame);
-    ownerWindow.removeEventListener('scroll', schedulePlacement, true); ownerWindow.removeEventListener('resize', schedulePlacement);
-    ownerDocument.removeEventListener('focusin', schedulePlacement); ownerDocument.removeEventListener('focusout', schedulePlacement);
-    dialog?.destroy(); dialog = null; controls = []; button.remove(); ownerDocument.body.removeAttribute('data-feedback-mounted'); unsubscribe();
+    dialog?.destroy(); dialog = null; button.remove(); headerSlot.remove();
+    phone.removeEventListener('change', place);
+    ownerDocument.body.removeAttribute('data-feedback-mounted'); unsubscribe();
   }
   const unsubscribe = client.subscribe(destroy);
   button.addEventListener('click', () => {
@@ -75,24 +57,12 @@ export function mountFeedbackWidget({ client, owner, beforeOpen = () => {}, buil
           theme: ownerDocument.documentElement.getAttribute('data-theme'),
           width: ownerWindow.innerWidth, height: ownerWindow.innerHeight,
           buildSha, userAgent: ownerWindow.navigator.userAgent });
-        dialog = createFeedbackDialog({ ...binding, context, document: ownerDocument, onSaved: update,
-          restoreTriggerGeometry() {
-            checkPlacement();
-            // Page hydration can change geometry while a dialog is open. If
-            // its old position now covers an action, use the reserved bottom
-            // space before returning focus; never unhide an overlapping button.
-            if (button.hasAttribute('data-obstructed') && Number.isFinite(ownerDocument.body.scrollHeight)) {
-              ownerWindow.scrollTo({ left: ownerWindow.scrollX, top: ownerDocument.body.scrollHeight, behavior: 'instant' });
-              checkPlacement();
-            }
-          },
-        });
+        dialog = createFeedbackDialog({ ...binding, context, document: ownerDocument, onSaved: update });
       }
       dialog.open(button); update();
     } catch { /* Missing release/context information must never submit guessed data. */ }
   });
-  ownerDocument.body.setAttribute('data-feedback-mounted', '');
-  ownerDocument.body.append(button); checkPlacement();
+  place(); phone.addEventListener('change', place); update();
   return Object.freeze({ owner, isCurrent: () => !destroyed && binding.isCurrent(owner),
     setEligible(value) {
       eligible = value === true;
