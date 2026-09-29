@@ -5,6 +5,10 @@ Supabase Edge Functions, environment configuration, and the production frontend
 release. Pull-request validation runs entirely against local or stubbed services;
 it does not connect to or mutate production.
 
+Named incident and secret-rotation ownership, the approved solo-maintainer review
+model, and the unchanged GitHub protections are recorded in
+[`release-governance.md`](release-governance.md).
+
 ## Local prerequisites
 
 - Node.js 22 or newer
@@ -55,8 +59,9 @@ pnpm run check:functions
 pnpm run test:functions
 ```
 
-The pull-request workflow exposes three required checks so failures are easy to
-route: `Frontend`, `Database`, and `Edge Functions`. The database job owns the
+The backend-validation workflow exposes `Frontend`, `Database`, and `Edge
+Functions`; the separate browser workflow adds `Routes, accessibility, and
+visuals`. All four are required pull-request checks. The database job owns the
 local Supabase lifecycle and always stops it, including on failure.
 
 ### Database test discovery contract
@@ -98,6 +103,11 @@ The prelaunch environment model deliberately uses no paid staging project:
   validated without connecting `develop` to production.
 
 ### GitHub production secrets
+
+Tim James is the accountable rotation owner for the responsibility labels below,
+as recorded in the [ownership decision](release-governance.md). That decision also
+covers active invitation, feedback, Resend, and Linear credentials listed in
+their respective runtime runbooks; it does not provision deferred credentials.
 
 | Name | Purpose | Rotation owner |
 | --- | --- | --- |
@@ -278,8 +288,13 @@ creation hard-disabled. Direct Upload previews are built from protected
 
 Before approving the GitHub `production` environment deployment, confirm:
 
-1. The release commit is on `main`, came through a reviewed pull request, and all
-   three validation jobs passed for that exact commit.
+1. The release commit is on `main` and came through a reviewed pull request under
+   the [approved review model](release-governance.md). All four required checks
+   must pass on the exact reviewed candidate. Verify the merge/release tree is
+   identical to that candidate; if its contents changed, require fresh checks
+   for those contents. The release workflow must also pass its three validation
+   jobs on the exact `main` release commit. A merge SHA change alone does not
+   mean the browser workflow automatically reran on that SHA.
 2. A recent production backup or point-in-time recovery window is available.
    For this Free-plan initial cutover, run the protected
    [Free production backup workflow](free-production-backup.md), preserve the

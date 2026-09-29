@@ -106,6 +106,7 @@ export default defineConfig({
         /fou-1452-hybrid-auth\.spec\.mjs/,
         /local-production-stack\.spec\.mjs/,
         /mfa-live-auth\.spec\.mjs/,
+        /recovery-mfa\.spec\.mjs/,
         /admin-live\.spec\.mjs/,
         /feedback-live\.spec\.mjs/,
         /daily-action-bootstrap-live\.spec\.mjs/,

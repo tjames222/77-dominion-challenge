@@ -1,4 +1,5 @@
 import {
+  challengePasswordRecoveryMfa,
   completePasswordRecovery,
   getAuthSession,
   getPasswordRecoveryState,
@@ -7,6 +8,7 @@ import {
   requestPasswordRecovery,
   subscribeToPasswordRecoveryState,
   verifyPasswordRecoverySession,
+  verifyPasswordRecoveryMfa,
 } from './api';
 import { passwordRecoverySessionError } from './account-recovery-session.mjs';
 import {
@@ -25,6 +27,12 @@ const resetConfirmation = document.getElementById('confirmNewPassword');
 const resetFeedback = document.getElementById('passwordResetFeedback');
 const resetSubmit = resetForm?.querySelector('button[type="submit"]');
 const resetComplete = document.getElementById('passwordResetComplete');
+const mfaSection = document.getElementById('passwordRecoveryMfa');
+const mfaForm = document.getElementById('passwordRecoveryMfaForm');
+const mfaFactor = document.getElementById('passwordRecoveryMfaFactor');
+const mfaCode = document.getElementById('passwordRecoveryMfaCode');
+let mfaInFlight = false;
+let observedPhase = '';
 let resetInFlight = false;
 let resetCompleted = false;
 let recoveryOwner = null;
@@ -39,7 +47,7 @@ function setFeedback(element, message, tone = '') {
 function setFormBusy(form, busy, busyLabel) {
   if (!form) return;
   form.setAttribute('aria-busy', String(busy));
-  form.querySelectorAll('input, button').forEach((control) => { control.disabled = busy; });
+  form.querySelectorAll('input, select, button').forEach((control) => { control.disabled = busy; });
   const submit = form.querySelector('button[type="submit"]');
   if (!submit) return;
   submit.dataset.idleLabel ||= submit.textContent;
@@ -81,8 +89,28 @@ function observeRecoveryState(state) {
   if (!resetForm || resetCompleted) return;
   const previous = recoveryOwner;
   recoveryOwner = state?.owner || null;
-  if (previous !== recoveryOwner || state?.phase === 'blocked') resetForm.reset();
+  const mfaVisible = ['mfa-required', 'mfa-challenging', 'mfa-code', 'mfa-verifying'].includes(state?.phase);
+  if (previous !== recoveryOwner || state?.phase === 'blocked') {
+    resetForm.reset(); mfaForm?.reset(); mfaFactor?.replaceChildren();
+  }
+  if (mfaSection) mfaSection.hidden = !mfaVisible;
+  resetForm.hidden = mfaVisible;
+  if (mfaVisible && mfaFactor && state?.phase === 'mfa-required') {
+    const selected = mfaFactor.value;
+    mfaFactor.replaceChildren(...(state.factors || []).map(factor => {
+      const option = document.createElement('option');
+      option.value = factor.id; option.textContent = factor.friendlyName; return option;
+    }));
+    if ([...mfaFactor.options].some(option => option.value === selected)) mfaFactor.value = selected;
+  }
+  setFormBusy(mfaForm, state?.phase !== 'mfa-required' || mfaInFlight, 'Verifying...');
   setResetSessionReady(state?.phase === 'ready' && !resetInFlight);
+  if (mfaVisible) {
+    setFeedback(resetFeedback, state?.phase === 'mfa-required'
+      ? passwordRecoverySessionError(state.code).message : 'Verifying your authenticator...',
+    state?.code === 'RECOVERY_MFA_REJECTED' ? 'error' : '');
+    if (state?.phase === 'mfa-required' && observedPhase !== 'mfa-required' && !mfaInFlight) mfaCode?.focus();
+  }
   if (state?.phase === 'blocked' || state?.phase === 'idle') {
     setFeedback(resetFeedback, passwordRecoverySessionError(state?.code).message, 'error');
   }
@@ -96,7 +124,29 @@ function observeRecoveryState(state) {
       }
     }, 0);
   }
+  observedPhase = state?.phase || '';
 }
+
+mfaForm?.addEventListener('submit', async event => {
+  event.preventDefault();
+  if (mfaInFlight || !recoveryOwner || getPasswordRecoveryState()?.phase !== 'mfa-required') return;
+  let code = mfaCode.value;
+  if (!/^\d{6}$/.test(code)) { setFeedback(resetFeedback, passwordRecoverySessionError('RECOVERY_MFA_CODE').message, 'error'); return; }
+  const submittedOwner = recoveryOwner; const factorId = mfaFactor.value;
+  mfaCode.value = ''; mfaInFlight = true;
+  setFormBusy(mfaForm, true, 'Verifying...');
+  try {
+    await challengePasswordRecoveryMfa(submittedOwner, factorId);
+    if (recoveryOwner !== submittedOwner) return;
+    await verifyPasswordRecoveryMfa(submittedOwner, code);
+  } catch {
+    // Fixed controller state owns the message; no provider payload is rendered.
+  } finally {
+    code = ''; mfaInFlight = false;
+    observeRecoveryState(getPasswordRecoveryState());
+    if (getPasswordRecoveryState()?.phase === 'mfa-required') mfaCode?.focus();
+  }
+});
 
 async function hydrateResetSession() {
   if (!resetForm) return;
@@ -124,6 +174,8 @@ async function hydrateResetSession() {
   window.addEventListener('pagehide', () => {
     recoveryOwner = null;
     resetForm.reset();
+    mfaForm?.reset(); mfaFactor?.replaceChildren();
+    if (mfaSection) mfaSection.hidden = true;
     setResetSessionReady(false);
     unsubscribe();
   }, { once: true });

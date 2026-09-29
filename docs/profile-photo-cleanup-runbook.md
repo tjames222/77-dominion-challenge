@@ -49,6 +49,13 @@ change; claims are capped at
 
 ## Health and alerting
 
+Tim James is the approved cleanup-alert owner, with operational notifications
+destined for `tjames@cablueprinting.com` (September 28, 2026
+[ownership decision](release-governance.md)). The worker and five-minute Cron
+are deployed, but naming this owner does not configure notifications: FOU-802
+remains open until threshold evaluation, durable deduplication/recovery behavior,
+and a received alert through the installed delivery channel are verified.
+
 Call health mode only from a trusted operator or monitor:
 
 ```bash
