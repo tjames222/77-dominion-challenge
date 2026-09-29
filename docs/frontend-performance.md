@@ -63,6 +63,52 @@ Navigation runs leave INP null: interaction lab checks and sufficiently sampled
 production p75 RUM require separate evidence. Before and after must use identical
 flags, routes, profiles and fixture state; attach the JSON summaries to the ticket.
 
+## Deferred training service boundary
+
+The training API implementation and state engine now travel with the existing
+optional `menu-training-controllers` graph. `api.js` retains the three compatible
+training exports, but no ordinary initial graph includes the domain service or
+state engine. The request-ID generator is a small shared module with the same
+collision counter/fallback behavior, re-exported from its original state module.
+No additional optional request, SDK client, Auth observer, cache lifetime or RPC
+contract is introduced.
+
+Each call captures its actor, exact session/bearer and existing lifecycle epoch
+before importing code. The epoch is captured before even the first session-read
+await; it already changes for account/session events, cross-tab invalidation and
+pagehide. Delayed code may be cached, but a stale call cannot initialize an
+actor-owned operation. The per-call service factory receives the existing shared
+preview stores and in-flight coalescer, so request replays and read deduplication
+are not reset. Calls preserve their input and default request ID before loading.
+An import failure or30-second timeout requires the existing explicit reload
+recovery; neither loading nor mutation failures trigger an automatic retry.
+
+Existing server user checks and expected-actor RPC arguments remain. Immediately
+before an RPC, the caller rechecks the exact owner and pins its captured bearer
+on the existing PostgREST builder. The installed SDK still awaits its mutable
+token lookup internally; the explicit Authorization header prevents that lookup
+from substituting a replacement account's bearer. Post-response ownership checks
+withhold stale results. This is a bounded training-call fence, not a claim that
+all SDK awaits or unrelated Auth races have been eliminated.
+
+The stateless route-filename parser is intentionally copied inside the already
+entry-local post-login/MFA helper, with equivalence tests against the shared
+parser. Removing the eager training state dependency otherwise caused bundler
+ownership of the shared parser to drag menu listeners into MFA. Neither the
+single-Auth-runtime nor the invitation fragment-cleanup boundary is relaxed.
+
+Local Node24.19.0 before/after mock-preview builds used the same exact base SHA
+input `4b101eb80e106add2659377bb76425d00e39f7a2` and in-memory output. Initial JS
+gzip decreased from135969→131363 for Landing,139974→135459 for Login,
+154563→149955 for Dashboard and147101→142485 for Rewards. All seven measured
+routes retain their initial request counts and CSS bytes. The shared Auth chunk
+decreased114440→109756 gzip bytes; the deferred controller implementation grew
+14227→19204, as expected. Eligible members may still request that deferred graph
+after session resolution, so these static-graph savings are not equivalent to
+removing all network work. This is a working-tree checkpoint, not deployed timing
+or final merged-artifact evidence; remeasure the final SHA after integration.
+The final40% public/25% authenticated targets remain unmet, and no ceiling changed.
+
 ## Changes in the first asset phase
 
 - Hashed `/assets/*` files receive one-year immutable freshness. Root HTML and

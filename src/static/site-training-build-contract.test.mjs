@@ -98,6 +98,9 @@ test('actual production graph keeps MFA free of menu side effects and training s
     build: { write: false },
   });
   const assets = new Map(artifact.output.map(asset => [asset.fileName, asset]));
+  const trainingService = artifact.output.find(asset => asset.type === 'chunk'
+    && Object.keys(asset.modules).some(id => id.endsWith('/src/static/site-training-api.mjs')));
+  assert.equal(trainingService?.name, 'menu-training-controllers', 'training service shares the existing optional request');
   function graph(entry) {
     const visited = new Set();
     const pending = htmlAssetReferences(String(assets.get(entry).source)).map(path => posix.normalize(path));
@@ -118,6 +121,9 @@ test('actual production graph keeps MFA free of menu side effects and training s
   for (const entry of Object.values(PRODUCTION_ENTRYPOINTS)) {
     const modules = graph(entry).filter(asset => asset.type === 'chunk').flatMap(asset => Object.keys(asset.modules));
     assert.equal(modules.filter(id => id.endsWith('/src/static/auth-runtime-core.mjs')).length, entry === 'early-access-invite.html' ? 0 : 1, `${entry} shared Auth runtime (invitation defers until fragment cleanup)`);
+    for (const name of ['site-training-api.mjs', 'site-training-state.mjs']) {
+      assert.ok(!modules.some(id => id.endsWith(`/src/static/${name}`)), `${entry} keeps training service/state deferred`);
+    }
     const landingModules = modules.filter(id => /\/src\/static\/auth-landing\.mjs(?:\?.*)?$/.test(id));
     const landingEntry = ['login.html', 'register.html'].includes(entry) ? 'auth' : entry === 'account-security.html' ? 'security' : '';
     assert.equal(landingModules.length, landingEntry ? 1 : 0, `${entry} owns only its entry-local post-auth helper`);
@@ -126,6 +132,7 @@ test('actual production graph keeps MFA free of menu side effects and training s
       const chunk = graph(entry).find(asset => asset.type === 'chunk' && landingModules[0] in asset.modules);
       const controller = landingEntry === 'auth' ? 'auth.js' : 'account-security.js';
       assert.ok(Object.keys(chunk.modules).some(id => id.endsWith(`/src/static/${controller}`)), `${entry} does not add a separate helper request`);
+      assert.ok(!modules.some(id => id.endsWith('/src/static/route-path.mjs?auth-landing')), `${entry} does not add a shared parser request`);
     }
     assert.equal(modules.some(id => id.endsWith('/src/static/reward-link-contract.mjs')), entry === 'badges-rewards.html', `${entry} loads the pure reward-link parser only when needed`);
     for (const name of ['reward-celebrations.mjs', 'celebration-delivery-token.mjs']) {

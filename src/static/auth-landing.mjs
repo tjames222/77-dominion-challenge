@@ -1,5 +1,15 @@
 import { authSessionIdentity } from './mfa-auth.mjs';
-import { canonicalHtmlRouteFileName } from './route-path.mjs';
+
+// Intentionally entry-local copy of the stateless route parser: sharing its
+// module would pull menu side effects into MFA or add an initial request.
+const HTML_EXTENSION = '.html';
+
+function canonicalHtmlRouteFileName(pathname = '') {
+  const path = String(pathname || '').split(/[?#]/, 1)[0];
+  const fileName = path.split('/').filter(Boolean).pop() || `index${HTML_EXTENSION}`;
+  if (fileName.endsWith(HTML_EXTENSION) || fileName.includes('.')) return fileName;
+  return `${fileName}${HTML_EXTENSION}`;
+}
 
 function landingError(changed = false) {
   return Object.assign(new Error(changed
