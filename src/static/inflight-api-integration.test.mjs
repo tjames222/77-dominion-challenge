@@ -58,7 +58,9 @@ test('a late response is rejected if the authenticated user differs even without
 });
 
 test('training coalescing uses every server argument and retains expected-actor verification', () => {
-  const source = extract('getSiteTrainingState', 'claimSiteTraining');
+  const training = readFileSync(new URL('./site-training-api.mjs', import.meta.url), 'utf8');
+  const source = training.slice(training.indexOf('async function getSiteTrainingState'),
+    training.indexOf('async function claimSiteTraining'));
   assert.match(source, /query: 'get_site_training_state', version: 1/);
   assert.match(source, /args: \[page\.id, page\.contentVersion, program\?\.id \|\| null, program\?\.version \|\| null\]/);
   assert.match(source, /await requireUser\(actorId\);[\s\S]*client\.rpc\('get_site_training_state'[\s\S]*await requireUser\(actorId\)/);

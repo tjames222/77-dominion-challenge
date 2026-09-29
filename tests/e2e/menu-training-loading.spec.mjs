@@ -35,7 +35,7 @@ for (const chunk of ['menu-training-controllers entry', 'menu-training-controlle
       assets.set(`/${relative(publicRoot, path)}`, readFileSync(path));
     }
     const trainingChunks = artifact.output.filter((asset) => asset.type === 'chunk'
-      && Object.keys(asset.modules).some((id) => /(?:site-training-registry|site-training-runtime|page-training-controls|solo-first-run-training|site-training-coachmark)\.(?:mjs|js)$/.test(id)));
+      && Object.keys(asset.modules).some((id) => /(?:site-training-api|site-training-state|site-training-registry|site-training-runtime|page-training-controls|solo-first-run-training|site-training-coachmark)\.(?:mjs|js)$/.test(id)));
     expect(trainingChunks.map((asset) => asset.name).sort())
       .toEqual(['menu-training-controllers', 'site-training-ui']);
     // Rolldown may emit both a dynamic-entry facade and the shared controller
@@ -118,7 +118,7 @@ test('visitor navigation does not fetch the training catalog, controllers, or pr
     await expect(page.locator('.global-menu-links a[href="./login.html"]')).toBeVisible();
     await page.keyboard.press('Escape');
   }
-  expect(requests.filter((url) => /(?:menu-training-controllers|site-training-registry|site-training-runtime|page-training-controls|solo-first-run-training|site-training-ui\.js)/.test(url))).toEqual([]);
+  expect(requests.filter((url) => /(?:menu-training-controllers|site-training-api\.(?:mjs|js)|site-training-state|site-training-registry|site-training-runtime|page-training-controls|solo-first-run-training|site-training-ui\.js)/.test(url))).toEqual([]);
   app.assertNoRuntimeErrors();
 });
 
