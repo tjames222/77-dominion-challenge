@@ -6,7 +6,6 @@ import {
   updateChallengeStartDate,
 } from './api';
 import { dateKeyForTimeZone, migrateMockCheckInCache } from './check-in.mjs';
-import { createDialog } from './dialog.mjs';
 import {
   PREVIEW_CHALLENGE_STORAGE_KEY,
   PREVIEW_CHECK_IN_DATES_STORAGE_KEY,
@@ -16,10 +15,8 @@ import {
 import { readPreviewUserValue, writePreviewUserValue } from './preview-user-state.mjs';
 import { initShareComposer } from './share-composer-loader.js';
 import {
-  STREAK_METRIC_DEFINITIONS,
   buildStreakSummary,
   streakIndicatorLabel,
-  streakMetrics,
 } from './streak-summary.mjs';
 import { normalizeChallengeStartDate } from './shared-header-state.mjs';
 
@@ -47,97 +44,13 @@ function localDateKey() {
   }
 }
 
-function formatChallengeStartDate(value) {
-  const normalized = normalizeChallengeStartDate(value);
-  if (!normalized) return 'Not set';
-  const [year, month, day] = normalized.split('-').map(Number);
-  return new Intl.DateTimeFormat(undefined, {
-    month: 'long',
-    day: 'numeric',
-    year: 'numeric',
-  }).format(new Date(year, month - 1, day));
-}
-
-function createStreakDetailsContent(ownerDocument) {
-  const wrapper = element(ownerDocument, 'div', 'global-streak-details');
-
-  const loadStatus = element(ownerDocument, 'p', 'global-streak-load-status', 'Loading your current streaks…');
-  loadStatus.dataset.globalStreakLoadStatus = '';
-  loadStatus.setAttribute('role', 'status');
-  loadStatus.setAttribute('aria-live', 'polite');
-
-  const zeroState = element(
-    ownerDocument,
-    'p',
-    'global-streak-zero',
-    'No streak history yet. Complete all seven Daily Actions to start a perfect-day streak.',
-  );
-  zeroState.dataset.globalStreakZero = '';
-  zeroState.hidden = true;
-
-  const grid = element(ownerDocument, 'div', 'global-streak-grid');
-  STREAK_METRIC_DEFINITIONS.forEach(({ key, kind, label }) => {
-    const metric = element(ownerDocument, 'article', 'global-streak-metric');
-    metric.dataset.streakKind = kind === 'Personal best' ? 'best' : 'current';
-    metric.append(
-      element(ownerDocument, 'span', 'global-streak-kind', kind),
-      element(ownerDocument, 'h3', '', label),
-    );
-
-    const valueRow = element(ownerDocument, 'p', 'global-streak-value');
-    const value = element(ownerDocument, 'strong', '', '0');
-    value.dataset.globalStreakValue = key;
-    const unit = element(ownerDocument, 'span', '', 'days');
-    unit.dataset.globalStreakUnit = key;
-    valueRow.append(value, unit);
-    metric.append(valueRow);
-    grid.append(metric);
+let streakDialogModule;
+function loadStreakDialog() {
+  if (!streakDialogModule) streakDialogModule = new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error('App Streak needs a reload.')), 30_000);
+    import('./app-streak-dialog.mjs').then(resolve, reject).finally(() => clearTimeout(timer));
   });
-
-  const startDateSection = element(ownerDocument, 'section', 'global-streak-start-date');
-  const heading = element(ownerDocument, 'div', 'global-streak-start-date-heading');
-  const headingCopy = element(ownerDocument, 'div');
-  headingCopy.append(
-    element(ownerDocument, 'p', 'eyebrow', 'Challenge timeline'),
-    element(ownerDocument, 'h3', '', 'Challenge start date'),
-  );
-  const dateDisplay = element(ownerDocument, 'strong', 'global-streak-start-date-display', 'Not set');
-  dateDisplay.dataset.globalStreakStartDateDisplay = '';
-  heading.append(headingCopy, dateDisplay);
-
-  const form = element(ownerDocument, 'form', 'global-streak-start-date-form');
-  form.dataset.globalStreakStartDateForm = '';
-  const label = element(ownerDocument, 'label');
-  label.append(element(ownerDocument, 'span', '', 'Start date'));
-  const input = ownerDocument.createElement('input');
-  input.type = 'date';
-  input.name = 'challengeStartDate';
-  input.required = true;
-  input.disabled = true;
-  input.dataset.globalStreakStartDateInput = '';
-  label.append(input);
-  const saveButton = element(ownerDocument, 'button', 'primary', 'Save start date');
-  saveButton.type = 'submit';
-  saveButton.disabled = true;
-  saveButton.dataset.globalStreakStartDateSave = '';
-  form.append(label, saveButton);
-
-  const help = element(
-    ownerDocument,
-    'p',
-    'global-streak-start-date-help',
-    'Set this before your first check-in. After a check-in is posted, the date stays locked to protect challenge progress.',
-  );
-  help.dataset.globalStreakStartDateHelp = '';
-  const feedback = element(ownerDocument, 'p', 'global-streak-start-date-feedback');
-  feedback.dataset.globalStreakStartDateFeedback = '';
-  feedback.setAttribute('role', 'status');
-  feedback.setAttribute('aria-live', 'polite');
-  feedback.setAttribute('aria-atomic', 'true');
-
-  startDateSection.append(heading, form, help, feedback);
-  wrapper.append(loadStatus, zeroState, grid, startDateSection);
-  return wrapper;
+  return streakDialogModule;
 }
 
 function localHeaderSnapshot(user, storage, activation) {
@@ -187,9 +100,12 @@ function localHeaderSnapshot(user, storage, activation) {
 export function createAuthenticatedHeaderActions({
   topbar,
   user,
+  captureLifecycle,
+  isCurrentLifecycle,
   document: ownerDocument = globalThis.document,
 } = {}) {
-  if (!topbar || !ownerDocument?.createElement) {
+  if (!topbar || !ownerDocument?.createElement
+    || typeof captureLifecycle !== 'function' || typeof isCurrentLifecycle !== 'function') {
     throw new TypeError('Authenticated header actions require a topbar and document.');
   }
 
@@ -241,14 +157,11 @@ export function createAuthenticatedHeaderActions({
   const menuButton = trailingActions.querySelector('.global-menu-button');
   trailingActions.insertBefore(actionGroup, menuButton || null);
 
-  const content = createStreakDetailsContent(ownerDocument);
-  const dateInput = content.querySelector('[data-global-streak-start-date-input]');
-  const saveButton = content.querySelector('[data-global-streak-start-date-save]');
-  const dateDisplay = content.querySelector('[data-global-streak-start-date-display]');
-  const dateHelp = content.querySelector('[data-global-streak-start-date-help]');
-  const dateFeedback = content.querySelector('[data-global-streak-start-date-feedback]');
-  const loadStatus = content.querySelector('[data-global-streak-load-status]');
-  const zeroState = content.querySelector('[data-global-streak-zero]');
+  let dialog = null;
+  let openRequest = 0;
+  let loadingDialog = false;
+  let dialogLoadFailed = false;
+  let currentSummary = buildStreakSummary(DEFAULT_GAME_STATS, localDateKey());
 
   let currentUser = user;
   let currentStartDate = '';
@@ -261,40 +174,56 @@ export function createAuthenticatedHeaderActions({
   let recordedVisitOwner = '';
   let recordVisitPromise = null;
 
-  const dialog = createDialog({
-    id: 'globalStreakDetailsDialog',
-    title: 'App Streak',
-    eyebrow: 'Your consistency',
-    description: 'See current and personal-best streaks, and manage the date that anchors your 77-day challenge.',
-    presentation: 'responsive',
-    content,
-    onOpen: () => {
-      dialog.elements.body.scrollTop = 0;
-      streakButton.setAttribute('aria-expanded', 'true');
-      void refresh({ includeLockState: true });
-    },
-    onClose: () => streakButton.setAttribute('aria-expanded', 'false'),
-  });
+  const renderStartDate = () => dialog?.renderTimeline();
 
-  const renderStartDate = () => {
-    dateInput.value = currentStartDate;
-    dateInput.disabled = startDateLocked;
-    saveButton.disabled = true;
-    dateDisplay.textContent = formatChallengeStartDate(currentStartDate);
-    if (previewActive) {
-      dateHelp.textContent = 'The preview simulator controls this challenge date.';
-    } else if (currentActivation?.readState === 'error') {
-      dateHelp.textContent = 'Challenge timeline controls stay locked until your activation status can be refreshed.';
-    } else if (currentActivation?.status === 'not_started') {
-      dateHelp.textContent = 'Start your challenge before setting its timeline.';
-    } else if (currentActivation?.mode === 'group') {
-      dateHelp.textContent = 'Your crew owns the Group challenge start date.';
-    } else if (startDateLocked) {
-      dateHelp.textContent = 'The challenge start date is locked after the first check-in.';
-    } else {
-      dateHelp.textContent = 'Set this before your first check-in. After a check-in is posted, the date stays locked to protect challenge progress.';
+  async function openStreakDialog() {
+    if (destroyed || loadingDialog) return;
+    if (dialogLoadFailed) {
+      if (ownerDocument.defaultView?.confirm('Save any unfinished work before reloading to load App Streak. Reload now?')) {
+        ownerDocument.defaultView.location.reload();
+      }
+      return;
     }
-  };
+    const generation = captureLifecycle();
+    const version = ownerVersion;
+    const request = ++openRequest;
+    const isCurrent = () => !destroyed && request === openRequest
+      && version === ownerVersion && isCurrentLifecycle(generation);
+    loadingDialog = true;
+    streakButton.disabled = true;
+    streakButton.setAttribute('aria-busy', 'true');
+    try {
+      if (!dialog) {
+        const { createAppStreakDialog } = await loadStreakDialog();
+        if (!isCurrent()) return;
+        dialog = createAppStreakDialog({
+          document: ownerDocument,
+          getState: () => ({ currentStartDate, startDateLocked, currentActivation, previewActive }),
+          onSubmit: saveStartDate,
+          onOpen: () => {
+            streakButton.setAttribute('aria-expanded', 'true');
+            void refresh({ includeLockState: true });
+          },
+          onClose: () => streakButton.setAttribute('aria-expanded', 'false'),
+        });
+      }
+      if (!isCurrent()) return;
+      dialog.render(currentSummary);
+      dialog.open(streakButton);
+    } catch {
+      if (isCurrent()) {
+        dialogLoadFailed = true;
+        streakLabel.textContent = 'Reload for App Streak';
+        streakButton.setAttribute('aria-label', 'Reload this page to load App Streak. Save unfinished work first.');
+      }
+    } finally {
+      if (!destroyed && request === openRequest) {
+        loadingDialog = false;
+        streakButton.disabled = false;
+        streakButton.removeAttribute('aria-busy');
+      }
+    }
+  }
 
   const renderSnapshot = ({
     stats = DEFAULT_GAME_STATS,
@@ -313,21 +242,15 @@ export function createAuthenticatedHeaderActions({
     );
     const summary = buildStreakSummary(stats, localDateKey());
     streakCount.textContent = String(summary.currentAppStreak);
-    streakButton.setAttribute('aria-label', streakIndicatorLabel(summary));
-    streakMetrics(summary).forEach(({ key, value, unit }) => {
-      const valueElement = content.querySelector(`[data-global-streak-value="${key}"]`);
-      const unitElement = content.querySelector(`[data-global-streak-unit="${key}"]`);
-      if (valueElement) valueElement.textContent = String(value);
-      if (unitElement) unitElement.textContent = unit;
-    });
-    zeroState.hidden = summary.hasHistory;
+    if (!dialogLoadFailed) streakButton.setAttribute('aria-label', streakIndicatorLabel(summary));
+    currentSummary = summary;
     currentActivation = activation;
     currentStartDate = normalizeChallengeStartDate(
       activation?.startDate || profile?.challengeStartDate,
     );
     startDateLocked = Boolean(locked || !activation?.canEditStartDate);
     previewActive = Boolean(preview);
-    renderStartDate();
+    dialog?.render(summary);
   };
 
   async function loadSnapshot(includeLockState) {
@@ -366,34 +289,31 @@ export function createAuthenticatedHeaderActions({
     if (destroyed) return;
     const requestId = ++hydrationRequest;
     const ownerKey = currentUser?.userId || currentUser?.email || '';
-    loadStatus.hidden = false;
-    loadStatus.textContent = 'Loading your current streaks…';
-    if (dialog.isOpen) dialog.setBusy(true, 'Refreshing streak details…');
+    dialog?.loading('Loading your current streaks…');
+    if (dialog?.isOpen) dialog.setBusy(true, 'Refreshing streak details…');
 
     try {
       const snapshot = await loadSnapshot(includeLockState);
       const currentOwnerKey = currentUser?.userId || currentUser?.email || '';
       if (destroyed || requestId !== hydrationRequest || ownerKey !== currentOwnerKey) return;
       renderSnapshot(snapshot);
-      loadStatus.hidden = true;
-      dialog.clearError();
+      dialog?.loading();
+      dialog?.clearError();
     } catch (error) {
       if (destroyed || requestId !== hydrationRequest) return;
-      loadStatus.hidden = false;
-      loadStatus.textContent = 'Streak details could not be refreshed.';
-      if (dialog.isOpen) dialog.setError(error?.message || 'Unable to load your streak details.');
+      dialog?.loading('Streak details could not be refreshed.');
+      if (dialog?.isOpen) dialog.setError(error?.message || 'Unable to load your streak details.');
     } finally {
-      if (!destroyed && requestId === hydrationRequest && dialog.isOpen) dialog.setBusy(false);
+      if (!destroyed && requestId === hydrationRequest && dialog?.isOpen) dialog.setBusy(false);
     }
   }
 
-  content.querySelector('[data-global-streak-start-date-form]')?.addEventListener('submit', async (event) => {
-    event.preventDefault();
-    if (startDateLocked || dialog.isBusy) return;
-    const nextStartDate = normalizeChallengeStartDate(dateInput.value);
+  async function saveStartDate(value) {
+    if (startDateLocked || !dialog || dialog.isBusy) return;
+    const nextStartDate = normalizeChallengeStartDate(value);
     if (!nextStartDate) {
-      dateFeedback.textContent = 'Choose a valid challenge start date.';
-      dateInput.focus();
+      dialog.setDateFeedback('Choose a valid challenge start date.');
+      dialog.focusDate();
       return;
     }
 
@@ -403,11 +323,10 @@ export function createAuthenticatedHeaderActions({
     const expectedRevision = currentActivation?.revision ?? null;
     const submitTimeZone = currentActivation?.timeZone || '';
     currentStartDate = nextStartDate;
-    dateFeedback.textContent = '';
+    dialog.setDateFeedback('');
     dialog.clearError();
     renderStartDate();
     dialog.setBusy(true, 'Saving challenge start date…');
-    saveButton.disabled = true;
 
     try {
       const savedActivation = await updateChallengeStartDate({
@@ -426,7 +345,7 @@ export function createAuthenticatedHeaderActions({
       currentActivation = savedActivation;
       currentStartDate = savedActivation.startDate || nextStartDate;
       startDateLocked = !savedActivation.canEditStartDate;
-      dateFeedback.textContent = 'Challenge start date saved.';
+      dialog.setDateFeedback('Challenge start date saved.');
       const CustomEventConstructor = ownerDocument.defaultView?.CustomEvent;
       if (CustomEventConstructor) {
         ownerDocument.defaultView.dispatchEvent(new CustomEventConstructor('dominion:challenge-start-date-updated', {
@@ -445,24 +364,19 @@ export function createAuthenticatedHeaderActions({
       ) return;
       currentStartDate = previousStartDate;
       renderStartDate();
-      dateFeedback.textContent = error?.message || 'Unable to save the challenge start date.';
-      dialog.setError(dateFeedback.textContent);
+      const message = error?.message || 'Unable to save the challenge start date.';
+      dialog.setDateFeedback(message);
+      dialog.setError(message);
       await refresh({ includeLockState: true });
     } finally {
       if (!destroyed && submitOwnerVersion === ownerVersion) {
         dialog.setBusy(false);
-        saveButton.disabled = true;
+        dialog.disableSave();
       }
     }
-  });
+  }
 
-  dateInput.addEventListener('input', () => {
-    const nextStartDate = normalizeChallengeStartDate(dateInput.value);
-    dateFeedback.textContent = '';
-    saveButton.disabled = startDateLocked || !nextStartDate || nextStartDate === currentStartDate;
-  });
-
-  streakButton.addEventListener('click', () => dialog.open(streakButton));
+  streakButton.addEventListener('click', () => { void openStreakDialog(); });
   initShareComposer(ownerDocument);
   void refresh();
 
@@ -479,30 +393,18 @@ export function createAuthenticatedHeaderActions({
         hydrationRequest += 1;
         recordedVisitOwner = '';
         recordVisitPromise = null;
-        dialog.close('replaced');
-        dialog.setBusy(false);
+        dialog?.close('replaced');
+        dialog?.destroy();
+        dialog = null;
+        currentSummary = buildStreakSummary(DEFAULT_GAME_STATS, localDateKey());
         streakCount.textContent = '—';
-        streakButton.setAttribute('aria-label', 'App streak: loading. View streak details.');
+        if (!dialogLoadFailed) streakButton.setAttribute('aria-label', 'App streak: loading. View streak details.');
         shareButton.disabled = true;
         shareButton.setAttribute('aria-label', 'Share progress unavailable until your challenge starts.');
-        content.querySelectorAll('[data-global-streak-value]').forEach((valueElement) => {
-          valueElement.textContent = '0';
-        });
-        content.querySelectorAll('[data-global-streak-unit]').forEach((unitElement) => {
-          unitElement.textContent = 'days';
-        });
         currentStartDate = '';
         currentActivation = null;
         startDateLocked = true;
         previewActive = false;
-        dateInput.value = '';
-        dateInput.disabled = true;
-        saveButton.disabled = true;
-        dateDisplay.textContent = 'Loading…';
-        dateFeedback.textContent = '';
-        zeroState.hidden = true;
-        loadStatus.hidden = false;
-        loadStatus.textContent = 'Loading your current streaks…';
       }
       void refresh();
     },
@@ -511,7 +413,7 @@ export function createAuthenticatedHeaderActions({
       destroyed = true;
       ownerVersion += 1;
       hydrationRequest += 1;
-      dialog.destroy();
+      dialog?.destroy();
       actionGroup.remove();
       topbar.classList.remove('has-authenticated-header-actions');
     },

@@ -26,7 +26,9 @@ export async function installDailyBootstrapStub(context, { status = 'active', ap
     requests.push({path,method:request.method(),args,actorId});
     const payload=()=>dailyBootstrapFixture({actorId,status,appAccess,completed:savedCompleted,version});
     if(path==='/auth/v1/user'){
-      if(userGateActive&&userGate&&heldUserRequests===0){heldUserRequests+=1;await userGate;}
+      // A concurrent shell read must not consume the hold before the focused
+      // bootstrap's own post-response verification reaches Auth.
+      if(userGateActive&&userGate){heldUserRequests+=1;await userGate;}
       return json(route,user(actorId));
     }
     if(path==='/auth/v1/token')return json(route,sessionFor(actorId));

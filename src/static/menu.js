@@ -556,7 +556,11 @@ async function buildMenu() {
 
   if (showMemberActions) {
     if (sharedHeaderActions) sharedHeaderActions.setUser(user);
-    else sharedHeaderActions = createAuthenticatedHeaderActions({ topbar, user });
+    else sharedHeaderActions = createAuthenticatedHeaderActions({
+      topbar, user,
+      captureLifecycle: () => menuHydrationRequest,
+      isCurrentLifecycle: generation => generation === menuHydrationRequest,
+    });
   } else if (sharedHeaderActions) {
     closeShareComposer('auth-change');
     sharedHeaderActions.destroy();

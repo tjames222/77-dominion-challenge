@@ -121,8 +121,8 @@ test('actual production graph keeps MFA free of menu side effects and training s
   for (const entry of Object.values(PRODUCTION_ENTRYPOINTS)) {
     const modules = graph(entry).filter(asset => asset.type === 'chunk').flatMap(asset => Object.keys(asset.modules));
     assert.equal(modules.filter(id => id.endsWith('/src/static/auth-runtime-core.mjs')).length, entry === 'early-access-invite.html' ? 0 : 1, `${entry} shared Auth runtime (invitation defers until fragment cleanup)`);
-    for (const name of ['site-training-api.mjs', 'site-training-state.mjs']) {
-      assert.ok(!modules.some(id => id.endsWith(`/src/static/${name}`)), `${entry} keeps training service/state deferred`);
+    for (const name of ['site-training-api.mjs', 'site-training-state.mjs', 'app-streak-dialog.mjs']) {
+      assert.ok(!modules.some(id => id.endsWith(`/src/static/${name}`)), `${entry} keeps optional service/presentation deferred`);
     }
     const landingModules = modules.filter(id => /\/src\/static\/auth-landing\.mjs(?:\?.*)?$/.test(id));
     const landingEntry = ['login.html', 'register.html'].includes(entry) ? 'auth' : entry === 'account-security.html' ? 'security' : '';
