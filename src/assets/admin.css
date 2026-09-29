@@ -20,6 +20,9 @@
 .admin-filters label { display: grid; gap: .45rem; font-size: .875rem; font-weight: 650; min-width: 0; }
 .admin-filters input, .admin-filters select { width: 100%; min-width: 0; box-sizing: border-box; min-height: 48px; border: 1px solid var(--border); border-radius: 10px; background: var(--input); color: var(--text); padding: .75rem; }
 .admin-filters select { appearance: none; -webkit-appearance: none; padding-right: 2.25rem; background-image: linear-gradient(45deg, transparent 50%, var(--text) 50%), linear-gradient(135deg, var(--text) 50%, transparent 50%); background-position: calc(100% - 17px) 50%, calc(100% - 12px) 50%; background-size: 5px 5px; background-repeat: no-repeat; }
+/* Reflow these three full-label filters when text or viewport space changes. */
+#adminRequestsFilters { grid-template-columns: repeat(auto-fit, minmax(min(100%, 16rem), 1fr)); }
+#adminRequestsFilters select { padding-inline: .75em 2.25em; }
 .admin-table-wrap { border: 1px solid var(--border); border-radius: 14px; overflow: auto; background: var(--surface); }
 .admin-table { width: 100%; border-collapse: collapse; text-align: left; font-size: .95rem; }
 .admin-table caption { padding: 1rem; text-align: left; font-size: .875rem; color: var(--text-muted); }
@@ -30,6 +33,10 @@
 .admin-table td:first-child { min-width: 12rem; }
 .admin-table td:last-child { width: 1%; white-space: nowrap; }
 .admin-table td:last-child button { min-width: 8rem; white-space: nowrap; overflow-wrap: normal; word-break: normal; }
+.admin-requests-table td:last-child { width: auto; white-space: normal; }
+.admin-requests-table .admin-request-facts { margin: 0; display: grid; gap: .65rem; line-height: 1.5; }
+.admin-requests-table dt { color: var(--text-muted); font-size: .8rem; }
+.admin-requests-table dd { margin: .15rem 0 0; }
 #adminUsersPanel .admin-table { table-layout: fixed; }
 #adminUsersPanel th:first-child { width: 20%; }
 #adminUsersPanel th:nth-child(2) { width: 24%; }
@@ -94,6 +101,7 @@
   .admin-table td::before { content: attr(data-label); display: block; color: var(--text-muted); font-size: .8rem; margin-bottom: .2rem; }
   .admin-table td:last-child { width: auto; }
   .admin-table td:last-child::before { display: none; }
+  .admin-requests-table td:last-child::before { display: block; }
   .admin-pagination { justify-content: flex-start; }
   .admin-detail { padding: 1rem; }
   .admin-detail dl { grid-template-columns: 1fr; gap: .3rem; }

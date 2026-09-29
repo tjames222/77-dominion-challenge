@@ -101,6 +101,9 @@ jobs:
       - name: Cache verified exact-version fixture images without ECR downloads
         timeout-minutes: 10
         run: node scripts/prepare-ci-fixture-images.mjs
+      - name: Verify isolated account-request inbox authority
+        timeout-minutes: 5
+        run: node --test scripts/site-admin-account-requests.sql.test.mjs
       - name: Verify isolated fresh-key Vault backup reconstruction
         timeout-minutes: 5
         env:
