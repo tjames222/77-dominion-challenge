@@ -94,6 +94,8 @@ jobs:
         run: pnpm run test:production-canary-restart
       - name: Test canonical database manifest gates
         run: pnpm run test:database-manifest
+      - name: Test bounded production inbox catalog verification
+        run: node --test scripts/verify-production-account-request-inbox.test.mjs
       - name: Start local Supabase
         run: pnpm run supabase:start
       - name: Verify exact isolated-fixture image cache preparation
@@ -104,6 +106,9 @@ jobs:
       - name: Verify isolated account-request inbox authority
         timeout-minutes: 5
         run: node --test scripts/site-admin-account-requests.sql.test.mjs
+      - name: Verify source-fixed inbox catalog in isolated PostgreSQL
+        timeout-minutes: 5
+        run: node --test scripts/verify-production-account-request-inbox.sql.test.mjs
       - name: Verify isolated fresh-key Vault backup reconstruction
         timeout-minutes: 5
         env:
