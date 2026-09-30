@@ -75,7 +75,10 @@ test('unlocked challenge progression has a deterministic visual contract', async
   const resetReward = page.locator('[data-reward-key="seven_day_reset"]');
   await expect(resetReward).toContainText('7-Day Reset');
   await expect(resetReward).toContainText('Available');
-  await expect(resetReward.getByRole('button', { name: 'Start challenge' })).toBeVisible();
+  // Availability is preserved, but the legacy Start API stays disabled until
+  // the validated repeatable-instance lifecycle is deployed.
+  await expect(resetReward.getByRole('button', { name: 'Start challenge' })).toHaveCount(0);
+  await expect(resetReward.getByRole('button', { name: 'View progress for 7-Day Reset' })).toBeVisible();
   for (const badge of BASE_BADGES) {
     await expect(page.locator(`[data-badge-key="${badge.key}"]`)).toHaveAttribute('aria-label', new RegExp(`View ${badge.name} badge details`));
   }
