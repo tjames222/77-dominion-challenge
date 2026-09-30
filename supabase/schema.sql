@@ -87,7 +87,8 @@ create table if not exists public.check_ins (
   id uuid primary key default gen_random_uuid(),
   user_id uuid not null references auth.users(id) on delete cascade,
   entry_date date not null,
-  challenge_day integer not null check (challenge_day between 1 and 77),
+  challenge_day integer not null
+    constraint check_ins_challenge_day_range check (challenge_day between 1 and 77),
   status text not null check (status in ('complete', 'partial', 'scheduled')),
   completed_count integer not null default 0,
   completed text[] not null default '{}',

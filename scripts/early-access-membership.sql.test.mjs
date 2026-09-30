@@ -200,6 +200,23 @@ test('canonical application snapshot plus complete new migration preserves ACLs 
     has_function_privilege('anon','private.lock_early_access_authority(uuid[])','execute'),
     has_function_privilege('authenticated','private.lock_early_access_authority(uuid[])','execute'),
     has_function_privilege('service_role','private.lock_early_access_authority(uuid[])','execute'));`),[[false,false,false]]);
+  assert.deepEqual(values(`select jsonb_build_object(
+    'count',count(*),
+    'name',min(conname),
+    'definition',min(pg_get_constraintdef(oid)),
+    'validated',bool_and(convalidated)
+  ) from pg_constraint
+  where conrelid='public.check_ins'::regclass and contype='c'
+    and pg_get_constraintdef(oid) like '%challenge_day%';`),[{
+    count:1,
+    name:'check_ins_challenge_day_range',
+    definition:'CHECK (((challenge_day >= 1) AND (challenge_day <= 3652059)))',
+    validated:true,
+  }]);
+  assert.equal(sql(`begin;set local session_replication_role=replica;
+    insert into public.check_ins(user_id,entry_date,challenge_day,status,completed_count,completed)
+    values('${actor}','2026-03-19',78,'partial',1,array['walk']::text[]);
+    select challenge_day from public.check_ins where user_id='${actor}';rollback;`),'78');
   assert.match(integrationSql,/order by g.user_id for share/);
 });
 
