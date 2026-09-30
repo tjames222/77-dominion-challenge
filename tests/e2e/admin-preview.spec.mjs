@@ -2,6 +2,17 @@ import { test, expect, expectNoHorizontalOverflow } from './support/app-test.mjs
 import { ROUTE_BY_ID } from './support/routes.mjs';
 import AxeBuilder from '@axe-core/playwright';
 
+test('Account requests preview is explicitly synthetic, read-only and scrubbed on account change', async ({ page, app }) => {
+  await app.open({ ...ROUTE_BY_ID.admin, path: '/admin.html?admin-preview=ready#account-requests' });
+  await expect(page.locator('#adminPreview')).toBeVisible(); await expect(page.locator('#adminRequestsRows tr')).toHaveCount(25);
+  await expect(page.locator('#adminRequestsRows button, #adminRequestsRows a')).toHaveCount(0);
+  await page.locator('#adminNextPage').click(); await expect(page.locator('#adminRequestsRows tr')).toHaveCount(3);
+  await expectNoHorizontalOverflow(page);
+  await page.evaluate(() => { localStorage.removeItem('dominion:user'); window.dispatchEvent(new StorageEvent('storage', { key: 'dominion:user', newValue: null })); });
+  await expect(page.locator('#adminWorkspace')).toBeHidden(); await expect(page.locator('#adminRequestsRows tr')).toHaveCount(0);
+  app.assertNoRuntimeErrors();
+});
+
 test('admin direct load and refresh never hydrate member Share or Streak controls', async ({ page, app }) => {
   await app.open({ ...ROUTE_BY_ID.admin, path: '/admin.html?admin-preview=ready' });
   await expect(page.locator('#adminUsersRows tr')).toHaveCount(25);

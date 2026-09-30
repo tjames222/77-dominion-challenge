@@ -29,6 +29,7 @@
           <button id="adminUsersTab" type="button" role="tab" aria-selected="true" aria-controls="adminUsersPanel" data-admin-tab="users">Users</button>
           <button id="adminAuditTab" type="button" role="tab" aria-selected="false" aria-controls="adminAuditPanel" tabindex="-1" data-admin-tab="audit">Audit</button>
           <button id="adminEarlyTab" type="button" role="tab" aria-selected="false" aria-controls="adminEarlyPanel" tabindex="-1" data-admin-tab="early" hidden>Early Access</button>
+          <button id="adminRequestsTab" type="button" role="tab" aria-selected="false" aria-controls="adminRequestsPanel" tabindex="-1" data-admin-tab="requests" hidden>Account requests</button>
         </nav>
         <p class="admin-status" id="adminStatus" role="status" aria-live="polite"></p>
         <section id="adminUsersPanel" role="tabpanel" aria-labelledby="adminUsersTab" data-admin-panel="users">
@@ -60,6 +61,16 @@
           </form>
           <div class="admin-table-wrap" tabindex="0" aria-label="Early-access request records"><table class="admin-table"><caption>Early-access requests · Dates shown in UTC</caption><thead><tr><th scope="col">Applicant</th><th scope="col">Status</th><th scope="col">Account match</th><th scope="col">Requested</th><th scope="col">Review</th></tr></thead><tbody id="adminEarlyRows"></tbody></table></div>
           <p class="admin-footnote">Review requests individually. Authorized reviewers can approve and queue an invitation email, deny a pending request, or manage an existing invitation. Approval does not confirm email delivery or grant access; Early Access begins after a valid invitation is accepted.</p>
+        </section>
+        <section id="adminRequestsPanel" role="tabpanel" aria-labelledby="adminRequestsTab" data-admin-panel="requests" hidden>
+          <form id="adminRequestsFilters" class="admin-filters" autocomplete="off">
+            <label>Request type<select name="type"><option value="all">All request types</option><option value="data_export">Data export</option><option value="account_deletion">Account deletion</option></select></label>
+            <label>Recorded request status<select name="status"><option value="active">Active requests</option><option value="all">All recorded statuses</option><option value="requested">Requested</option><option value="in_progress">In progress</option><option value="fulfilled">Recorded fulfilled</option><option value="cancelled">Cancelled</option><option value="declined">Declined</option></select></label>
+            <label>Account request sort<select name="sort"><option value="oldest">Oldest first</option><option value="newest">Newest first</option></select></label>
+            <button type="submit">Apply filters</button>
+          </form>
+          <p class="admin-footnote" id="adminRequestsNote">Read-only intake. Active means requested or in progress. Recorded outcomes are not proof of export delivery or complete erasure. Fulfillment remains a separately approved operator workflow.</p>
+          <div class="admin-table-wrap" tabindex="0" aria-label="Account request records"><table class="admin-table admin-requests-table" role="table" aria-describedby="adminRequestsNote"><caption>Account requests · Recorded timestamps shown in UTC</caption><thead role="rowgroup"><tr role="row"><th scope="col" role="columnheader">Request and requester IDs</th><th scope="col" role="columnheader">Type</th><th scope="col" role="columnheader">Recorded status</th><th scope="col" role="columnheader">Timeline</th></tr></thead><tbody id="adminRequestsRows" role="rowgroup"></tbody></table></div>
         </section>
         <div class="admin-pagination" aria-label="Record pages"><button id="adminFirstPage" type="button" disabled>First page</button><button id="adminPreviousPage" type="button" disabled>Previous</button><span id="adminPageLabel">Page 1</span><button id="adminNextPage" type="button" disabled>Next</button><button id="adminRefresh" type="button">Refresh</button></div>
         <p class="admin-footnote">Account details and Audit are read-only. Separately authorized role changes require explicit review and confirmation. Other account changes, testing grants, and metrics are not available here. Stored progress and subscription snapshots are not live access or completion decisions.</p>

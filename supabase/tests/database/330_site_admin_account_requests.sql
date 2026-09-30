@@ -1,0 +1,27 @@
+begin;
+create extension if not exists pgtap with schema extensions;
+set local search_path=public,extensions;
+select plan(16);
+
+select has_function('public','site_admin_list_account_requests',array['uuid','integer','text','text','text','jsonb'],'metadata inbox has one fixed read RPC');
+select ok(has_function_privilege('authenticated','public.site_admin_list_account_requests(uuid,integer,text,text,text,jsonb)','execute'),'authenticated callers may enter the native admin guard');
+select ok(not has_function_privilege('anon','public.site_admin_list_account_requests(uuid,integer,text,text,text,jsonb)','execute'),'anonymous callers cannot execute the inbox');
+select ok(not has_function_privilege('service_role','public.site_admin_list_account_requests(uuid,integer,text,text,text,jsonb)','execute'),'service keys cannot substitute for an admin actor');
+select ok((select prosecdef and provolatile='s' and proconfig=array['search_path=""'] from pg_proc where oid='public.site_admin_list_account_requests(uuid,integer,text,text,text,jsonb)'::regprocedure),'reader has a stable snapshot and empty search path');
+select ok((select relrowsecurity and relforcerowsecurity from pg_class where oid='public.account_lifecycle_requests'::regclass),'request table retains FORCE RLS');
+select is((select count(*)::integer from pg_policies where schemaname='public' and tablename='account_lifecycle_requests'),2,'only the two existing member policies remain');
+select ok(not has_table_privilege('authenticated','public.account_lifecycle_requests','update'),'members cannot fulfill requests directly');
+select ok(not has_table_privilege('authenticated','public.account_lifecycle_requests','delete'),'members cannot erase the request ledger');
+select ok(has_column_privilege('authenticated','public.account_lifecycle_requests','user_id','insert') and has_column_privilege('authenticated','public.account_lifecycle_requests','request_type','insert'),'existing member intake remains available');
+select ok(not has_column_privilege('authenticated','public.account_lifecycle_requests','operator_note','insert'),'the inbox adds no operator-note write grant');
+select has_index('public','account_lifecycle_requests','account_lifecycle_requests_admin_bucket_idx','admin fixed buckets have one ordered keyset index');
+select has_index('public','account_lifecycle_requests','account_lifecycle_requests_one_active_kind_idx','existing one-active-kind member constraint remains');
+select has_index('public','account_lifecycle_requests','account_lifecycle_requests_user_requested_idx','existing member history index remains');
+select ok(not has_function_privilege('authenticated','private.require_site_admin(text,uuid,boolean)','execute'),'the private authority helper is not exposed');
+grant usage on schema extensions to authenticated;
+set local request.jwt.claims='{}';
+set local role authenticated;
+select throws_ok($$select public.site_admin_list_account_requests('15020000-0000-4000-8000-000000000001')$$,'PT401','admin_authentication_required','missing live actor is rejected before any inbox data');
+reset role;
+select * from finish();
+rollback;

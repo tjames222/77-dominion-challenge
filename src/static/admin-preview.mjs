@@ -67,6 +67,13 @@ export function createAdminPreview({ getUser, mode }) {
       adminReady: mode === 'ready', reason: mode === 'mfa' ? 'mfa_required' : null,
       permissions: mode === 'ready' ? ['users.read', 'audit.read', 'operations.read', 'operations.manage'] : [], stepUpRequired: false };
     if (mode !== 'ready') throw adminReadError('ADMIN_DENIED');
+    if (name === 'site_admin_list_account_requests') {
+      const { previewAccountRequests } = await import('./admin-account-request-preview.mjs');
+      const result = await previewAccountRequests(args, actor.actorId);
+      const current = await owner();
+      if (captured !== epoch || signal?.aborted || current.actorId !== actor.actorId) throw adminReadError('ADMIN_CHANGED');
+      return { ...base, ...result };
+    }
     if (name.includes('early_access')) {
       const store = await earlyStore(); const current = await owner();
       if (captured !== epoch || signal?.aborted || current.actorId !== actor.actorId) throw adminReadError('ADMIN_CHANGED');

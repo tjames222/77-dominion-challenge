@@ -88,6 +88,41 @@ role or sent to a hosted service.
 
 ## Verification and remaining scope
 
+### Read-only account requests inbox
+
+The Account requests tab (`/admin.html#account-requests`) independently requires
+`operations.read`. It lists the existing export/deletion intake, initially active
+(`requested` or `in_progress`) and oldest first. Type, recorded-status and sort
+filters use the new bounded server keyset read; page size is 25. There is no total
+count, client-side aggregate, fulfillment control or automatic status transition.
+
+Only request UUID, nullable requester UUID, request type/status, and requested,
+updated and resolved UTC timestamps are rendered. No notes, names, email
+addresses, export data, links or private content are selected or displayed. A
+removed account reference remains explicitly absent; it is not reconstructed.
+Recorded fulfilled is historical operator state, not new proof of delivery or
+complete erasure. Declined is not relabeled as a failed processor run. This slice
+does not provide account-detail links; separately opening Users still requires
+the existing `users.read` authorization.
+
+The entire new list operation, including deferred loading and Auth waits, has a
+ten-second deadline; its exact-bearer native POST also limits UTF-8 response data
+to 64KiB. No automatic retry occurs. The existing Admin owner/epoch checks and
+row/filter/cursor scrubbing apply. All response rows validate before publishing
+any of them; malformed status, timestamps, requester, or oversized cursor causes
+the fixed unavailable state. Other Admin mutation/read transport is unchanged.
+New view/transport modules stay out of every non-Admin initial graph. Synthetic
+preview data is generated only by the explicit mock adapter and is never stored.
+
+The production-built Admin suite includes Operations-only isolation, paging and
+filters, each existing status, removed requester, private-field sentinels,
+permission loss, wrong actor, same-user session replacement, A→B→A, pagehide and
+late-response rejection. Chromium/WebKit cover keyboard tabs, four themes, 200%
+text, responsive tables and axe. Separate unit tests exercise stream limits,
+malformed MIME/UTF-8, aborted/stalled fetch/body, and late module/Auth continuation
+after deadline. Exact SQL authorization and query plans are separate evidence;
+the local HTTP provider is not proof of hosted fulfillment.
+
 Run `pnpm test`, `pnpm test:e2e:admin`, and the `admin-preview.spec.mjs` Chromium
 and WebKit projects. The live-build suite uses the actual installed Supabase SDK
 against a local synthetic HTTP provider with mocks disabled. It covers anonymous,

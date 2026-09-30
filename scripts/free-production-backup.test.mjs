@@ -8,6 +8,7 @@ import { classifyBackupFailure, classifyDockerFailure, classifyPgRestoreFailure,
 import { CURRENT_BACKUP_MODE, LEGACY_BACKUP_MODE, currentBackupVaultProofSql, currentBackupLocalVaultRecoverySql,
   requireCurrentBackupVaultProof, requireCurrentBackupLocalVaultRecovery, currentBackupVaultRecoveryManifest } from './free-backup-current-vault.mjs';
 import { verifyBackupManifest } from './verify-free-production-backup-evidence.mjs';
+import { POST_EARLY_ACCESS_BACKUP_MODE, postEarlyAccessVaultRecoveryManifest } from './free-backup-post-early-access-vault.mjs';
 
 const { publicKey, privateKey } = generateKeyPairSync('rsa', {
   modulusLength: 4096,
@@ -62,6 +63,7 @@ test('diagnostics emit only fixed codes, never private response or Docker text',
   assert.equal(classifyBackupFailure(Object.assign(new Error(secret), { diagnosticCode: 'login-ttl-below-900' })), 'login-ttl-below-900');
   assert.equal(classifyBackupFailure(Object.assign(new Error(secret), { diagnosticCode: 'pooler-scram' })), 'pooler-scram');
   assert.equal(classifyBackupFailure(Object.assign(new Error(secret), { diagnosticCode: 'current-vault-contract' })), 'current-vault-contract');
+  assert.equal(classifyBackupFailure(Object.assign(new Error(secret), { diagnosticCode: 'post-early-access-vault-contract' })), 'post-early-access-vault-contract');
   assert.equal(classifyBackupFailure(new Error('Existing-project CLI state is invalid: the exact project pooler lookup returned HTTP 403')), 'credential-pooler-http-403');
   assert.equal(classifyBackupFailure(new Error('Existing-project CLI state is invalid: the exact project lookup request failed')), 'credential-project-network');
   assert.equal(classifyBackupFailure(new Error('Existing-project CLI state is invalid: the Management API project identity, region, health, or PostgreSQL contract does not match')), 'credential-project-contract');
@@ -452,6 +454,50 @@ test('legacy mode stays default and current mode pins the exact61 pre-release mi
   for (const mode of ['current', '', 'all', 'CURRENT-PRODUCTION-2026-09-27']) assert.throws(() => selectBackupMigrationCheckpoint(files, mode));
 });
 
+test('post-Early-Access mode pins exactly66 and never silently follows new migrations', async () => {
+  const files = await readdir(new URL('../supabase/migrations/', import.meta.url));
+  const expected = selectBackupMigrationCheckpoint(files, POST_EARLY_ACCESS_BACKUP_MODE);
+  assert.equal(expected.length, 66); assert.equal(expected.at(-1), '20260927233055');
+  assert(!files.some(name => name.startsWith('99999999999999_')), 'Synthetic future version must not collide with repository migrations');
+  assert.deepEqual(selectBackupMigrationCheckpoint([...files, '99999999999999_future.sql'], POST_EARLY_ACCESS_BACKUP_MODE), expected);
+  for (const names of [files.filter(name => !name.startsWith('20260927233055_')),
+    [...files, '20260927233055_duplicate.sql'],
+    files.map(name => name.startsWith('20260927233055_') ? '20260927233056_changed.sql' : name)]) {
+    assert.throws(() => selectBackupMigrationCheckpoint(names, POST_EARLY_ACCESS_BACKUP_MODE));
+  }
+});
+
+test('post-Early-Access inventory requires exact66 and five Vault rows without weakening other boundaries', async () => {
+  const expected = selectBackupMigrationCheckpoint(await readdir(new URL('../supabase/migrations/', import.meta.url)), POST_EARLY_ACCESS_BACKUP_MODE);
+  const records = fixture(); records.find(r => r.kind === 'history').versions = expected;
+  records.find(r => r.schema === 'vault').count = 5;
+  assert.deepEqual(parseInventory(serialized(records), expected, POST_EARLY_ACCESS_BACKUP_MODE), records);
+  for (const mode of [LEGACY_BACKUP_MODE, CURRENT_BACKUP_MODE]) {
+    assert.throws(() => parseInventory(serialized(records), expected, mode));
+  }
+  for (const mutate of [
+    values => { values.find(r => r.schema === 'vault').count = 2; },
+    values => { values.find(r => r.schema === 'vault').count = 4; },
+    values => { values.find(r => r.schema === 'vault').count = 6; },
+    values => { values.find(r => r.schema === 'pgsodium').count = 1; },
+    values => { values.find(r => r.schema === 'storage' && r.name === 'objects').count = 1; },
+    values => { values.find(r => r.schema === 'storage' && r.name === 's3_multipart_uploads').count = 1; },
+    values => { values.find(r => r.schema === 'storage' && r.name === 's3_multipart_uploads_parts').count = 1; },
+    values => { values.find(r => r.kind === 'boundary').foreignTables = 1; },
+    values => { values.find(r => r.kind === 'boundary').serverVersion = '170011'; },
+    values => { values.find(r => r.kind === 'boundary').reservedRoleExists = true; },
+    values => { values.find(r => r.kind === 'history').versions.pop(); },
+    values => { values.find(r => r.kind === 'history').versions.push('20260929000950'); },
+  ]) {
+    const changed = structuredClone(records); mutate(changed);
+    assert.throws(() => parseInventory(serialized(changed), expected, POST_EARLY_ACCESS_BACKUP_MODE));
+  }
+  assert.throws(() => parseInventory(serialized(records.filter(r => r.schema !== 'vault')), expected, POST_EARLY_ACCESS_BACKUP_MODE));
+  assert.throws(() => parseInventory(serialized(records), expected.slice(0, 61), POST_EARLY_ACCESS_BACKUP_MODE));
+  const changedPrefix = [...expected]; changedPrefix[0] = '20260707170001';
+  assert.throws(() => parseInventory(serialized(records), changedPrefix, POST_EARLY_ACCESS_BACKUP_MODE));
+});
+
 test('current inventory still rejects external data, unknown history and unbounded encrypted data', async () => {
   const expected = selectBackupMigrationCheckpoint(await readdir(new URL('../supabase/migrations/', import.meta.url)), CURRENT_BACKUP_MODE);
   const records = fixture(); records.find(r => r.kind === 'history').versions = expected;
@@ -553,8 +599,8 @@ test('current integration keeps secret SQL in0600 tmpfs outside archive and rese
   assert.match(local, /flag: 'wx', mode: 0o600/); assert.match(local, /await local\(psql, \{ input: recovery \}\)/);
   assert.doesNotMatch(local, /remote\(/);
   assert(source.indexOf('assert.equal(comparableInventory(restoredText)') < source.indexOf("stage('local-vault-reconstruction')"));
-  assert.match(source, /'tar', \['-cf', tarball, '-C', capture, 'roles.sql', 'database.dump', 'inventory.jsonl',\s*\.\.\.\(backupMode === CURRENT_BACKUP_MODE \? CURRENT_PGNET_TABLES.map\(table => table.file\) : \[\]\)\]/);
-  assert.match(source, /schemaVersion: backupMode === CURRENT_BACKUP_MODE \? 2 : 1/);
+  assert.match(source, /'tar', \['-cf', tarball, '-C', capture, 'roles.sql', 'database.dump', 'inventory.jsonl',\s*\.\.\.\(usesPgNetSupplement \? CURRENT_PGNET_TABLES.map\(table => table.file\) : \[\]\)\]/);
+  assert.match(source, /schemaVersion: backupMode === POST_EARLY_ACCESS_BACKUP_MODE \? 3 : backupMode === CURRENT_BACKUP_MODE \? 2 : 1/);
   assert.match(source, /'dominion-free-current-production-backup\/v1' : 'dominion-free-production-backup\/v1'/);
   const startup = await readFile(new URL('./free-backup-local-postgres.sh', import.meta.url), 'utf8');
   assert.match(startup, /shared_preload_libraries=pgsodium,pg_cron,supabase_vault/);
@@ -567,15 +613,42 @@ test('legacy cutover evidence verifier rejects the distinct conditional current-
     vaultRecovery: currentBackupVaultRecoveryManifest() }, Buffer.from('fixture'), {
     runId: '123', releaseCommit: 'a'.repeat(40), publicKey,
   }), /does not prove the exact project, release, and restored checkpoint/);
+  assert.throws(() => verifyBackupManifest({ schemaVersion: 3, artifactContract: 'dominion-free-post-early-access-backup/v1',
+    vaultRecovery: postEarlyAccessVaultRecoveryManifest() }, Buffer.from('fixture'), {
+    runId: '123', releaseCommit: 'a'.repeat(40), publicKey,
+  }), /does not prove the exact project, release, and restored checkpoint/);
 });
 
 test('workflow currentmode is explicitly selected and only then receives the existing protected worker key', async () => {
   const workflow = await readFile(new URL('../.github/workflows/production-backup.yml', import.meta.url), 'utf8');
   assert.match(workflow, /default: legacy-thirteen-migration-cutover/);
   assert.match(workflow, /type: choice\n        options:\n          - legacy-thirteen-migration-cutover\n          - current-production-2026-09-27/);
-  assert.match(workflow, /PROFILE_PHOTO_WORKER_SECRET: \$\{\{ inputs\.backup_mode == 'current-production-2026-09-27' && secrets\.PROFILE_PHOTO_WORKER_SECRET \|\| '' \}\}/);
+  assert(workflow.includes("PROFILE_PHOTO_WORKER_SECRET: ${{ (inputs.backup_mode == 'current-production-2026-09-27' || inputs.backup_mode == 'post-early-access-66') && secrets.PROFILE_PHOTO_WORKER_SECRET || '' }}"));
   assert.match(workflow, /PROFILE_PHOTO_WORKER_SECRET="\$PROFILE_PHOTO_WORKER_SECRET"/);
   assert.doesNotMatch(workflow, /root_key|VAULT_KEY|PGSODIUM_KEY/);
+});
+
+test('newmode alone receives the fixed Early Access worker bindings; invitation envelope keys are never read', async () => {
+  const workflow = await readFile(new URL('../.github/workflows/production-backup.yml', import.meta.url), 'utf8');
+  for (const key of ['FEEDBACK_WORKER_SECRET', 'EARLY_ACCESS_INVITATION_WORKER_SECRET']) {
+    assert(workflow.includes(key + ": ${{ inputs.backup_mode == 'post-early-access-66' && secrets." + key + " || '' }}"));
+    assert(workflow.includes(key + '="$' + key + '"'));
+  }
+  assert.match(workflow, /- current-production-2026-09-27\n          - post-early-access-66/);
+  assert.doesNotMatch(workflow, /secrets\.(?:EARLY_ACCESS_INVITATION_KEY|EARLY_ACCESS_INVITATION_KEY_VERSION|RESEND_API_KEY|LINEAR_FEEDBACK_API_KEY)\b/);
+  const source = await readFile(new URL('./free-production-backup.mjs', import.meta.url), 'utf8');
+  assert.match(source, /const usesPgNetSupplement = backupMode === CURRENT_BACKUP_MODE \|\| backupMode === POST_EARLY_ACCESS_BACKUP_MODE/);
+  const proof = source.slice(source.indexOf("stage('post-early-access-vault-proof')"), source.indexOf("stage('roles-capture')"));
+  assert.match(proof, /postEarlyAccessVaultProofSql\(postEarlyAccessSecrets, vault.sha256\)/);
+  assert.match(proof, /flag: 'wx', mode: 0o600/);
+  assert.match(proof, /requirePostEarlyAccessVaultProof\(await remote/);
+  assert.match(proof, /'-f', '-'\], undefined, proof/);
+  assert.match(proof, /await rm\(proof\)/);
+  assert(source.indexOf('postEarlyAccessLocalVaultRecoverySql(postEarlyAccessSecrets)') < source.indexOf('stage(\'temporary-credentials\')'));
+  assert.match(source, /requirePostEarlyAccessLocalVaultRecovery\(recoveryResult\)/);
+  assert.match(source, /encryptedInvitationPayloadsPreserved: true,\s*decryptionVerified: false/);
+  assert.match(source, /requiredExternalSettings: \['EARLY_ACCESS_INVITATION_KEY', 'EARLY_ACCESS_INVITATION_KEY_VERSION'\]/);
+  assert.doesNotMatch(source, /process\.env\.(?:EARLY_ACCESS_INVITATION_KEY|EARLY_ACCESS_INVITATION_KEY_VERSION)\b/);
 });
 
 test('cleanup attempts every owned boundary and suppresses artifacts after any cleanup failure', async () => {

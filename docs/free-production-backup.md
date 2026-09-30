@@ -56,8 +56,8 @@ assuming the whole chain rolled back or blindly retrying it.
 
 The backup is restored into a new `initdb` cluster in a network-disabled container
 with tmpfs data. It has no hosted database credentials and its local admin role
-must be absent from the source. The current mode additionally feeds an existing
-worker credential on stdin for its local reconstruction test, described below;
+must be absent from the source. The explicitly selected 61/66 modes additionally
+feed their existing worker credentials on stdin for local reconstruction tests, described below;
 no database credential is passed or mounted. Cron execution is disabled. The restore must reproduce
 every non-system table's row count and SHA-256 content fingerprint, sequence
 state, large-object fingerprint, migration history, and event-trigger ownership,
@@ -67,8 +67,8 @@ grants issued by the source bootstrap superuser are replayed by the disposable
 cluster's bootstrap administrator; other grantors and all grant options are
 preserved. The original role SQL remains unchanged in the backup. Matching source
 inventories before and after capture also reject concurrent changes. Foreign
-tables, Storage objects or multipart uploads, and Vault/pgsodium encrypted data
-fail closed because this backup would not contain their external data or root key.
+tables, Storage objects or multipart uploads, and unreviewed Vault/pgsodium encrypted
+data fail closed because this backup would not contain their external data or root key.
 
 Stock PostgreSQL 17 requires an event trigger's target owner to be a superuser
 when replaying its ownership, even if the restore executor is a superuser. The
@@ -82,7 +82,8 @@ downgrade. Any restore, downgrade, or comparison failure stops verification and
 encryption and removes the owned container. This compatibility step never
 changes hosted roles, the original role SQL/archive, object owners, or ACLs.
 
-Run this workflow from `main`, download its successful encrypted artifact, apply
+For the historical thirteen-migration cutover only, run this workflow from `main`,
+download its successful encrypted artifact, apply
 the bounded owner canary grant, then dispatch the compatibility cutover with its
 `backup_run_id`. Once that succeeds, dispatch the full release. The manifest binds the exact
 release commit and canonical SPKI DER recipient key fingerprint. Do not modify
@@ -101,10 +102,10 @@ It does not connect to a database. The archive contains `roles.sql`,
 reviewed recovery action. A successful isolated restore does not create a hosted
 project or reset the existing one.
 
-## Current September 27 checkpoint
+## Historical 61-migration September 27 checkpoint
 
 Choose `current-production-2026-09-27` explicitly when dispatching the manual
-workflow to capture the current, pre-release database. This separate mode pins
+workflow to capture that historical pre-release database checkpoint. This separate mode pins
 exactly 61 migration versions through `20260913082358` and a source-fixed SHA-256
 of that complete ordered prefix. It does not silently accept the candidate's
 five pending migrations, an arbitrary database history, or a different prefix.
@@ -155,7 +156,7 @@ expired responses, nulls, JSON, Unicode, newlines and bytea; both sequence state
 metadata/runtime/role refusals; and rollback of damaged binary copies. The
 existing fresh-key Vault tests also run under this current-mode startup in CI.
 
-Current production contains exactly two regenerable Vault settings:
+The 61-migration checkpoint contains exactly two regenerable Vault settings:
 `profile_photo_project_url` and `profile_photo_worker_secret`, used by the one
 `process-profile-photo-cleanup` Cron job. All other encrypted Vault data remains
 out of scope. A fixed, parameterized, repeatable-read **read-only** query verifies
@@ -203,3 +204,79 @@ value. The isolated recovery proof instead recreates the exact two name-addresse
 settings with explicit values without first decrypting their old ciphertext.
 Any actual hosted recovery—including a proposed secret recreation—is a separate
 reviewed action; this proof does not authorize or perform it.
+
+## Post-Early-Access 66-migration checkpoint
+
+Choose `post-early-access-66` explicitly when dispatching
+`production-backup.yml` from reviewed protected `main`. This is not a
+"latest" mode: it pins exactly 66 versions through
+`20260927233055_early_access_account_bootstrap`, with SHA-256
+`f39a1a6975b422fdeb0e3fd3a928957d3f674e2e99e37551e78266d613277caf`
+of the ordered version array. A 61-, 65-, or 67-migration source, a modified
+prefix, or PostgreSQL other than the already pinned 17.6 fails closed. Neither
+historical mode nor its manifest/evidence semantics changes.
+
+This mode is bounded to exactly these five Vault names:
+
+- `profile_photo_project_url`
+- `profile_photo_worker_secret`
+- `early_access_project_url`
+- `early_access_feedback_worker_secret`
+- `early_access_invitation_worker_secret`
+
+Both URL values must equal the fixed existing project URL. The three worker
+values must equal the already-existing protected production settings
+`PROFILE_PHOTO_WORKER_SECRET`, `FEEDBACK_WORKER_SECRET`, and
+`EARLY_ACCESS_INVITATION_WORKER_SECRET`. Only this mode receives the latter
+two secrets. Before actual dispatch, obtain explicit owner approval for these
+additional protected-secret reads and for the conditional recovery contract;
+local synthetic tests do not constitute that approval. No secret is created,
+rotated, repaired, disclosed, or written to hosted Vault.
+
+The parameter-bound source proof returns only one boolean and requires exactly
+the three existing active five-minute jobs, with the source-fixed command,
+database and owner for each: `process-profile-photo-cleanup`,
+`process-early-access-feedback`, and `process-early-access-invitations`.
+It additionally retains the ciphertext-inventory hash binding, null key IDs,
+unique exact names, and absence of referring foreign keys. A mismatched job,
+extra Vault row, wrong protected value, or unknown key is a failure, not
+permission to change the source.
+
+Capture retains all private Early Access request, invitation, feedback,
+bootstrap and delivery rows, including application-encrypted envelopes.
+The existing exact pg_net supplement, all-table/sequence/large-object/
+event-trigger inventory, before/after equality, credential deadline, encrypted
+size cap, seven-day artifact retention, and cleanup boundaries are unchanged.
+Storage objects, multipart uploads/parts, foreign tables and pgsodium key rows
+must still be absent. Production workers are not paused by this workflow;
+concurrent changes can safely stop capture, and a retry requires investigating
+the failed gate rather than ignoring changed inventory.
+
+After credential revocation and exact full restore comparison, only the
+owned fresh-root, network-none local cluster can test reconstruction. Its
+guards require the local restore administrator/socket/no-listener settings,
+Cron disabled, pg_net workers disabled, the nonexistent worker database and
+zero background workers. It deletes and recreates only these five names,
+preserves descriptions, verifies the explicit values under the fresh key, and
+rolls everything back. The archive retains the original ciphertext and IDs.
+No hosted restore, reset, new project, email, worker invocation, plan upgrade,
+or old canary entitlement operation is authorized or performed.
+
+The new manifest is `schemaVersion: 3`,
+`dominion-free-post-early-access-backup/v1`. Its Vault recovery remains
+`selfContained: false`, conditional on the fixed project URL and those three
+protected worker keys; it does not contain the Vault root key. Its separate
+`applicationEnvelopeRecovery` record explicitly says that encrypted
+invitation/setup payloads were preserved but **decryption was not verified**.
+Recovery of those payloads also depends on the separately retained
+`EARLY_ACCESS_INVITATION_KEY` and `EARLY_ACCESS_INVITATION_KEY_VERSION`.
+This backup mode neither reads nor passes either application-envelope setting.
+Their custody and any future decryption/recovery must be reviewed separately.
+
+The historical compatibility-cutover verifier intentionally rejects this new
+contract. A successful 66-migration backup is not permission to run the old
+cutover/restart controller or owner-canary grant. Before a later full release,
+download the fresh artifact, retain the recipient private key securely, verify
+its exact commit/run/checkpoint/encrypted hashes and isolated-restore evidence,
+and obtain the separate release approval. An older successful 61-migration
+artifact does not prove a backup of subsequent production activity.

@@ -4,13 +4,14 @@ on:
   workflow_dispatch:
     inputs:
       backup_mode:
-        description: Legacy cutover checkpoint or the reviewed current database with conditional protected-settings Vault recovery.
+        description: Select the reviewed 13, 61, or post-Early-Access 66 migration checkpoint; Vault recovery remains conditional on protected settings.
         required: true
         default: legacy-thirteen-migration-cutover
         type: choice
         options:
           - legacy-thirteen-migration-cutover
           - current-production-2026-09-27
+          - post-early-access-66
 
 permissions:
   contents: read
@@ -44,7 +45,7 @@ jobs:
         with:
           version: 2.109.0
       - name: Verify backup encryption and boundary checks
-        run: node --test scripts/free-production-backup.test.mjs
+        run: node --test scripts/free-production-backup.test.mjs scripts/free-backup-post-early-access-vault.test.mjs
       - name: Capture and rehearse restore
         id: backup
         env:
@@ -52,7 +53,9 @@ jobs:
           SUPABASE_PROJECT_REF: ${{ vars.SUPABASE_PROJECT_REF }}
           PRODUCTION_BACKUP_PUBLIC_KEY: ${{ vars.PRODUCTION_BACKUP_PUBLIC_KEY }}
           BACKUP_MODE: ${{ inputs.backup_mode }}
-          PROFILE_PHOTO_WORKER_SECRET: ${{ inputs.backup_mode == 'current-production-2026-09-27' && secrets.PROFILE_PHOTO_WORKER_SECRET || '' }}
+          PROFILE_PHOTO_WORKER_SECRET: ${{ (inputs.backup_mode == 'current-production-2026-09-27' || inputs.backup_mode == 'post-early-access-66') && secrets.PROFILE_PHOTO_WORKER_SECRET || '' }}
+          FEEDBACK_WORKER_SECRET: ${{ inputs.backup_mode == 'post-early-access-66' && secrets.FEEDBACK_WORKER_SECRET || '' }}
+          EARLY_ACCESS_INVITATION_WORKER_SECRET: ${{ inputs.backup_mode == 'post-early-access-66' && secrets.EARLY_ACCESS_INVITATION_WORKER_SECRET || '' }}
         shell: bash
         run: |
           set +x
@@ -68,6 +71,8 @@ jobs:
             PRODUCTION_BACKUP_PUBLIC_KEY="$PRODUCTION_BACKUP_PUBLIC_KEY" \
             BACKUP_MODE="$BACKUP_MODE" \
             PROFILE_PHOTO_WORKER_SECRET="$PROFILE_PHOTO_WORKER_SECRET" \
+            FEEDBACK_WORKER_SECRET="$FEEDBACK_WORKER_SECRET" \
+            EARLY_ACCESS_INVITATION_WORKER_SECRET="$EARLY_ACCESS_INVITATION_WORKER_SECRET" \
             node scripts/free-production-backup.mjs
       - name: Retain encrypted backup for seven days
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
