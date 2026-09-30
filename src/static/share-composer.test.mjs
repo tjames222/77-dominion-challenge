@@ -12,6 +12,7 @@ import {
 describe('sharing composer contract', () => {
   test('offers public sharing only; private invitations use their secure dialog', () => {
     assert.deepEqual(Object.keys(SHARE_FLOWS), ['streak', 'progress', 'general']);
+    assert.equal(SHARE_FLOWS.progress.description, 'Share your submitted check-ins out of 77.');
     assert.equal(normalizeShareKind('unknown'), 'progress');
     assert.equal(normalizeShareKind('invite'), 'progress');
   });

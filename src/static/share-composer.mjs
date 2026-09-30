@@ -7,7 +7,7 @@ export const SHARE_FLOWS = Object.freeze({
   progress: Object.freeze({
     kind: 'progress',
     label: 'Challenge progress',
-    description: 'Share your submitted check-ins toward the 77-check-in challenge.',
+    description: 'Share your submitted check-ins out of 77.',
   }),
   general: Object.freeze({
     kind: 'general',

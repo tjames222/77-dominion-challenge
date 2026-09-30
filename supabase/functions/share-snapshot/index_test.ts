@@ -140,7 +140,10 @@ Deno.test("V2 shares display submitted counts while immutable V1 retains calenda
     const presentation = sharePresentation(snapshot);
     assertEquals(presentation.metric, `${count}/77`);
     assertEquals(presentation.metricLabel, "submitted check-ins");
-    assert(presentation.description.includes("Partial check-ins count."));
+    assertEquals(
+      presentation.description,
+      `${count} of 77 check-ins submitted. Partial check-ins count.`,
+    );
     const html = renderShareHtml(
       snapshot,
       `https://share.dominion.example/s/${token}`,

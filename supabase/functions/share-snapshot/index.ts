@@ -195,7 +195,7 @@ export function sharePresentation(snapshot: ShareSnapshot) {
         eyebrow: "Challenge progress",
         title: `${count} of 77 Dominion check-ins`,
         description:
-          `${count} submitted check-ins toward the original Dominion challenge. Partial check-ins count.`,
+          `${count} of 77 check-ins submitted. Partial check-ins count.`,
         metric: `${count}/77`,
         metricLabel: "submitted check-ins",
       };
