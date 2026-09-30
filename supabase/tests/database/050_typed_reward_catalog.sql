@@ -118,11 +118,11 @@ select is(
   'the existing unlocked challenge stays available'
 );
 select is(
-  public.get_reward_catalog(
+  jsonb_array_length(public.get_reward_catalog(
     50, null, null, '10000000-0000-4000-8000-000000000001'
-  ) #>> '{items,4,allowedActions,0}',
-  'start',
-  'only the available challenge exposes its existing Start action'
+  ) #> '{items,4,allowedActions}'),
+  0,
+  'available challenges expose no Start action until challenge instances are available'
 );
 select is(
   public.get_reward_catalog(

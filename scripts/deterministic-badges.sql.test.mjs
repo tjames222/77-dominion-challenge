@@ -67,8 +67,21 @@ before(async()=>{
     ${checkIn(1,{completed:['workoutOne'],difficulty:{one:'hard'}})}`);
   const draft=await readFile(new URL('../supabase/migrations/20260913033347_deterministic_badge_pipeline.sql',import.meta.url),'utf8');
   const catalog=JSON.parse(draft.match(/\$badge_catalog\$(.*?)\$badge_catalog\$/s)[1]);
-  assert.deepEqual(catalog,BADGE_CATALOG);
+  const historicalCatalog=structuredClone(BADGE_CATALOG);
+  Object.assign(historicalCatalog.find(r=>r.key==='original_77_completed'),{
+    description:'Complete the original 77-day challenge under its authoritative completion rules.',
+    requirement:'Complete the original 77-day challenge under its authoritative completion rules.',
+    status:'blocked',
+    tierRationale:'Reserved for authoritative challenge completion.',
+    migrationTreatment:'New key; completion predicate is awaiting product decision. No evaluator accepts client completion flags or elapsed day77 as evidence.',
+  });
+  assert.deepEqual(catalog,historicalCatalog,'historical seed remains immutable before the live completion migration');
   query(`begin;${draft}commit;`);
+  const liveRuntime=await readFile(new URL('../supabase/migrations/20260930160740_wire_original_77_live_completion.sql',import.meta.url),'utf8');
+  const liveCatalogUpdate=liveRuntime.match(/update public\.badge_definitions set[\s\S]*?where badge_key='original_77_completed'[\s\S]*?criteria_version=1;/)?.[0];
+  const liveRuleMatcher=liveRuntime.match(/create or replace function private\.badge_rule_matches\([\s\S]*?\n\$\$;/)?.[0];
+  assert.ok(liveCatalogUpdate&&liveRuleMatcher,'live migration must carry the catalog activation and typed matcher');
+  query(`begin;${liveCatalogUpdate}${liveRuleMatcher}commit;`);
   query('create trigger process_check_in_game_rewards_before_insert before insert on public.check_ins for each row execute function public.process_check_in_game_rewards();');
   const rows=query(`select jsonb_build_object('legacy',metadata->'legacy','snapshotTier',metadata->'awardDefinition'->'tier','earnedAt',earned_at,'seen',celebration_seen_at is not null) from public.user_badges where badge_key='seven_sealed';
     select jsonb_build_object('count',count(*),'allSeen',bool_and(celebration_seen_at is not null),'originalDate',bool_and(earned_at='2026-01-01T12:00:00Z')) from public.user_badges where badge_key in ('faithful_start','honest_partial','hard_path');`);
@@ -178,7 +191,7 @@ test('collection reports authoritative current-scope progress and omits hidden l
   const [original]=query(asActor(`set role authenticated;select public.get_badge_collection('${actor}');`));
   assert.equal(original.items.find(r=>r.key==='check_ins_7').progress.current,1);
   assert.equal(original.items.some(r=>r.key==='day_77_finisher'),false);
-  assert.equal(original.items.find(r=>r.key==='original_77_completed').status,'blocked');
+  assert.equal(original.items.find(r=>r.key==='original_77_completed').status,'active');
   query("update public.profiles set challenge_start_date='2026-01-02';update public.badge_definitions set visibility='hidden' where badge_key='check_ins_70';");
   const [changed]=query(asActor(`set role authenticated;select public.get_badge_collection('${actor}');`));
   assert.equal(changed.items.find(r=>r.key==='check_ins_7').progress.current,0);

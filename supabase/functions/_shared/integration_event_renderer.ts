@@ -136,7 +136,14 @@ function eventText(
 
   if (delivery.event_type === "check_in") {
     exactKeys(payload, ["challengeDay", "status", "completedCount"]);
-    const challengeDay = integer(payload.challengeDay, "Challenge day", 1, 77);
+    // Calendar ordinal is not the submitted-check-in completion target. The
+    // database binds it to an exact date/start within Gregorian years1..9999.
+    const challengeDay = integer(
+      payload.challengeDay,
+      "Challenge day",
+      1,
+      3652059,
+    );
     const completedCount = integer(
       payload.completedCount,
       "Completed action count",

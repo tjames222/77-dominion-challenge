@@ -1,3 +1,5 @@
+import { emptyOriginal77Progress, normalizeOriginal77Progress, MAX_ORIGINAL_CALENDAR_DAY } from './original-77-progress.mjs';
+
 export const CHALLENGE_ACTIVATION_SCHEMA_VERSION = 1;
 
 const READ_STATES = new Set(['loading', 'ready', 'error']);
@@ -150,6 +152,7 @@ export function createChallengeActivationState(readState = 'loading') {
     confirmedBy: null,
     revision: 0,
     reviewRequired: false,
+    originalProgress: null,
     ...capabilities,
     capabilities: { ...capabilities },
   };
@@ -158,7 +161,7 @@ export function createChallengeActivationState(readState = 'loading') {
   return activation;
 }
 
-export function normalizeChallengeActivation(payload, { readState = 'ready' } = {}) {
+export function normalizeChallengeActivation(payload, { readState = 'ready', expectedUserId = '', preview = false } = {}) {
   const normalizedState = normalizedReadState(readState);
   if (normalizedState !== 'ready') return createChallengeActivationState(normalizedState);
 
@@ -251,8 +254,9 @@ export function normalizeChallengeActivation(payload, { readState = 'ready' } = 
       : PARTICIPATION_MODES.has(mode)
         && validDateKey(startDate)
         && validTimeZone(timeZone)
-        && Number.isInteger(challengeDay)
+        && Number.isSafeInteger(challengeDay)
         && challengeDay >= 1
+        && challengeDay <= MAX_ORIGINAL_CALENDAR_DAY
         && activatedAt !== null
         && activatedBy !== null
         && confirmedAt !== null
@@ -274,12 +278,21 @@ export function normalizeChallengeActivation(payload, { readState = 'ready' } = 
 
   if (!metadataValid) return closed;
 
+  const originalProgress = status === 'not_started' ? null : normalizeOriginal77Progress(payload.originalProgress, {
+    userId: expectedUserId || payload.originalProgress?.userId, startDate, preview,
+  });
+  if (status === 'not_started' ? payload.originalProgress !== null : !originalProgress) return closed;
+  if (originalProgress?.completionState !== 'in_progress' && requestedCapabilities.canMutateDailyStandards) return closed;
+
   const canParticipate = requestedCapabilities.canParticipate
-    && status === 'active';
+    && status === 'active'
+    && originalProgress?.completionState === 'in_progress';
   const canMutateDailyStandards = requestedCapabilities.canMutateDailyStandards
     && canParticipate;
   const canEditStartDate = requestedCapabilities.canEditStartDate
     && mode === 'solo'
+    && originalProgress?.completionState === 'in_progress'
+    && originalProgress.submittedCount === 0
     && (status === 'scheduled' || status === 'active');
   const capabilities = {
     canActivateSolo: requestedCapabilities.canActivateSolo && status === 'not_started',
@@ -308,13 +321,14 @@ export function normalizeChallengeActivation(payload, { readState = 'ready' } = 
     confirmedBy,
     revision,
     reviewRequired,
+    originalProgress,
     ...capabilities,
     capabilities: { ...capabilities },
   };
 }
 
-export function normalizeChallengeActivationMutation(payload) {
-  const activation = normalizeChallengeActivation(payload);
+export function normalizeChallengeActivationMutation(payload, options) {
+  const activation = normalizeChallengeActivation(payload, options);
   if (activation.contractValid) return activation;
 
   const error = new Error('The challenge activation response was invalid. Refresh and try again.');
@@ -339,6 +353,7 @@ export function createMockNotStartedChallengeActivation() {
     activatedBy: null,
     confirmedBy: null,
     reviewRequired: false,
+    originalProgress: null,
     canActivateSolo: true,
     canActivateGroup: true,
     canParticipate: false,
@@ -368,9 +383,12 @@ export function refreshMockChallengeActivation(
     hasCheckIns = false,
     hasEntitlement = true,
     groupMembershipActive = false,
+    originalProgress = payload?.originalProgress,
   } = {},
 ) {
-  const current = normalizeChallengeActivationMutation(payload);
+  const current = normalizeChallengeActivationMutation({ ...payload, originalProgress,
+    canMutateDailyStandards: payload?.canMutateDailyStandards === true && originalProgress?.completionState === 'in_progress',
+  }, { preview: true });
   if (current.status === 'not_started') {
     return normalizeChallengeActivationMutation({
       ...current,
@@ -388,10 +406,10 @@ export function refreshMockChallengeActivation(
   const challengeDay = status === 'active'
     ? challengeActivationDay(current.startDate, currentDate)
     : null;
-  const canParticipate = status === 'active';
+  const canParticipate = status === 'active' && current.originalProgress?.completionState === 'in_progress';
   const canMutateDailyStandards = canParticipate
     && challengeDay >= 1
-    && challengeDay <= 77
+    && current.originalProgress?.completionState === 'in_progress'
     && hasEntitlement;
   const canEditStartDate = current.mode === 'solo'
     && ['scheduled', 'active'].includes(status)
@@ -413,13 +431,14 @@ export function refreshMockChallengeActivation(
     canParticipate,
     canMutateDailyStandards,
     canEditStartDate,
-  });
+  }, { preview: true });
 }
 
 export function buildMockLegacyChallengeActivation({
   startDate,
   timeZone,
   actorId,
+  originalProgress = emptyOriginal77Progress(actorId, startDate),
   hasCheckIns = false,
   hasEntitlement = true,
   now = new Date(),
@@ -436,7 +455,7 @@ export function buildMockLegacyChallengeActivation({
   const recordedAt = (now instanceof Date ? now : new Date(now)).toISOString();
   const canMutateDailyStandards = status === 'active'
     && challengeDay >= 1
-    && challengeDay <= 77
+    && originalProgress?.completionState === 'in_progress'
     && hasEntitlement;
 
   return normalizeChallengeActivationMutation({
@@ -455,12 +474,13 @@ export function buildMockLegacyChallengeActivation({
     activatedBy: status === 'active' ? actorId : null,
     confirmedBy: actorId,
     reviewRequired: false,
+    originalProgress,
     canActivateSolo: false,
     canActivateGroup: false,
-    canParticipate: status === 'active',
+    canParticipate: status === 'active' && originalProgress?.completionState === 'in_progress',
     canMutateDailyStandards,
     canEditStartDate: !hasCheckIns,
-  });
+  }, { expectedUserId: actorId, preview: true });
 }
 
 export function buildMockChallengeActivation({
@@ -475,7 +495,7 @@ export function buildMockChallengeActivation({
   hasEntitlement = true,
   now = new Date(),
 } = {}) {
-  const prior = normalizeChallengeActivationMutation(current);
+  const prior = normalizeChallengeActivationMutation(current, { expectedUserId: actorId, preview: true });
   const requestedTimeZone = typeof timeZone === 'string' ? timeZone.trim() : '';
   const currentDate = challengeActivationDateKeyForTimeZone(now, requestedTimeZone);
   validateMockStartDate(startDate, currentDate);
@@ -503,6 +523,7 @@ export function buildMockChallengeActivation({
       status,
       storedStatus: status,
       startDate,
+      originalProgress: emptyOriginal77Progress(actorId, startDate),
       timeZone: requestedTimeZone,
       challengeDay: status === 'active' ? challengeActivationDay(startDate, currentDate) : null,
       activatedAt: status === 'active' ? (prior.activatedAt || confirmedAt) : null,
@@ -510,7 +531,7 @@ export function buildMockChallengeActivation({
       canParticipate: status === 'active',
       canMutateDailyStandards: status === 'active' && hasEntitlement,
       canEditStartDate: true,
-    });
+    }, { expectedUserId: actorId, preview: true });
   }
 
   if (!['solo_activate', 'group_activate'].includes(action)) {
@@ -546,12 +567,13 @@ export function buildMockChallengeActivation({
     activatedBy: status === 'active' ? actorId : null,
     confirmedBy: actorId,
     reviewRequired: false,
+    originalProgress: emptyOriginal77Progress(actorId, startDate),
     canActivateSolo: false,
     canActivateGroup: false,
     canParticipate: status === 'active',
     canMutateDailyStandards: status === 'active' && hasEntitlement,
     canEditStartDate: mode === 'solo',
-  });
+  }, { expectedUserId: actorId, preview: true });
 }
 
 export function challengeActivationReadError(error) {

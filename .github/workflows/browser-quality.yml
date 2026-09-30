@@ -77,6 +77,9 @@ jobs:
       - name: Verify deferred App Streak ownership boundaries
         run: pnpm test:e2e:app-streak
 
+      - name: Verify original challenge completion and session recovery
+        run: pnpm test:e2e:original77
+
       - name: Verify complete two-shard inventory
         id: plan
         env:

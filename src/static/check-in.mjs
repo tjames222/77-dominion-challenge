@@ -49,8 +49,7 @@ export function normalizeCheckInDates(values = []) {
 
 export function normalizeChallengeDays(values = []) {
   return [...new Set((Array.isArray(values) ? values : [])
-    .map(Number)
-    .filter((value) => Number.isInteger(value) && value >= 1 && value <= 77))]
+    .filter((value) => Number.isSafeInteger(value) && value >= 1 && value <= 3652059))]
     .sort((a, b) => b - a);
 }
 

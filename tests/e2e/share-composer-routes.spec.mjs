@@ -89,6 +89,7 @@ for (const route of shareRoutes) {
     for (const phase of ['direct', 'refresh']) {
       await page.locator('.shared-header-share').click();
       await expectBrandedComposer(page);
+      await expect(page.locator('.share-composer-actions button:visible').first()).toBeInViewport({ ratio: 1 });
       await page.keyboard.press('Escape');
       await expect(page.getByRole('dialog', { name: dialogName })).toBeHidden();
       await expect(page.locator('.shared-header-share')).toBeFocused();
@@ -113,6 +114,9 @@ for (const theme of ['light', 'dark', 'dominion-night', 'dominion-platinum']) {
       await page.keyboard.press('Enter');
       await expectBrandedComposer(page);
       const dialog = page.getByRole('dialog', { name: dialogName });
+      if (width === 390) {
+        await expect(dialog.locator('.share-composer-actions button:visible').first()).toBeInViewport({ ratio: 1 });
+      }
       const checked = dialog.locator('[data-share-flow]:checked');
       await expect(checked).toBeFocused();
       await page.keyboard.press('ArrowRight');

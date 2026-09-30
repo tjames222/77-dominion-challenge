@@ -989,6 +989,14 @@ jobs:
               --credential-directory "$credential_directory" \
               --supabase-home "$supabase_home" \
               --workdir "$GITHUB_WORKSPACE"
+      # Readers must understand late calendar ordinals and V2 submitted-progress
+      # snapshots before any migration can produce them. These compatible
+      # deployments use existing secrets and do not enable optional workers.
+      - name: Deploy compatible public share renderer before migrations
+        run: supabase functions deploy share-snapshot --project-ref "$SUPABASE_PROJECT_REF" --no-verify-jwt
+      - name: Deploy compatible integration reader before migrations
+        if: steps.function-secrets.outputs.integration_runtime_enabled == 'true'
+        run: supabase functions deploy process-integration-outbox --project-ref "$SUPABASE_PROJECT_REF" --no-verify-jwt
       - name: Apply database migrations
         shell: bash
         run: |
@@ -1179,6 +1187,18 @@ jobs:
             SUPABASE_ACCESS_TOKEN="$SUPABASE_ACCESS_TOKEN" \
             SUPABASE_PROJECT_REF="$SUPABASE_PROJECT_REF" \
             node scripts/verify-production-account-request-inbox.mjs
+      - name: Verify source-fixed original77 completion catalog
+        timeout-minutes: 1
+        shell: bash
+        run: |
+          set -euo pipefail
+          set +x
+          ulimit -c 0
+          /usr/bin/env -i \
+            PATH="$PATH" \
+            SUPABASE_ACCESS_TOKEN="$SUPABASE_ACCESS_TOKEN" \
+            SUPABASE_PROJECT_REF="$SUPABASE_PROJECT_REF" \
+            node scripts/verify-production-original77.mjs
       - name: Reverify exact canary continuity after migration
         if: steps.cutover-plan.outputs.mode == 'initial-cutover'
         run: |
@@ -1264,8 +1284,6 @@ jobs:
           supabase functions deploy admin-early-access-invitation --project-ref "$SUPABASE_PROJECT_REF"
       - name: Deploy Stripe webhook
         run: supabase functions deploy stripe-webhook --project-ref "$SUPABASE_PROJECT_REF" --no-verify-jwt
-      - name: Deploy public share renderer
-        run: supabase functions deploy share-snapshot --project-ref "$SUPABASE_PROJECT_REF" --no-verify-jwt
       - name: Deploy public early-access request intake
         run: supabase functions deploy request-early-access --project-ref "$SUPABASE_PROJECT_REF" --no-verify-jwt
       - name: Deploy secret-authenticated Early Access workers
@@ -1274,9 +1292,6 @@ jobs:
           supabase functions deploy process-early-access-invitations --project-ref "$SUPABASE_PROJECT_REF" --no-verify-jwt
       - name: Configure and verify Early Access worker schedules
         run: node scripts/configure-production-early-access-workers.mjs
-      - name: Deploy integration delivery worker
-        if: steps.function-secrets.outputs.integration_runtime_enabled == 'true'
-        run: supabase functions deploy process-integration-outbox --project-ref "$SUPABASE_PROJECT_REF" --no-verify-jwt
       - name: Deploy retired Community deletion worker
         if: steps.function-secrets.outputs.retention_runtime_enabled == 'true'
         run: supabase functions deploy process-retired-community-deletions --project-ref "$SUPABASE_PROJECT_REF" --no-verify-jwt

@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       backup_mode:
-        description: Select the reviewed 13, 61, or post-Early-Access 66 migration checkpoint; Vault recovery remains conditional on protected settings.
+        description: Select the reviewed 13, 61, 66, or post-admin-inbox 67 migration checkpoint; Vault recovery remains conditional on protected settings.
         required: true
         default: legacy-thirteen-migration-cutover
         type: choice
@@ -12,6 +12,7 @@ on:
           - legacy-thirteen-migration-cutover
           - current-production-2026-09-27
           - post-early-access-66
+          - post-admin-inbox-67
 
 permissions:
   contents: read
@@ -53,9 +54,9 @@ jobs:
           SUPABASE_PROJECT_REF: ${{ vars.SUPABASE_PROJECT_REF }}
           PRODUCTION_BACKUP_PUBLIC_KEY: ${{ vars.PRODUCTION_BACKUP_PUBLIC_KEY }}
           BACKUP_MODE: ${{ inputs.backup_mode }}
-          PROFILE_PHOTO_WORKER_SECRET: ${{ (inputs.backup_mode == 'current-production-2026-09-27' || inputs.backup_mode == 'post-early-access-66') && secrets.PROFILE_PHOTO_WORKER_SECRET || '' }}
-          FEEDBACK_WORKER_SECRET: ${{ inputs.backup_mode == 'post-early-access-66' && secrets.FEEDBACK_WORKER_SECRET || '' }}
-          EARLY_ACCESS_INVITATION_WORKER_SECRET: ${{ inputs.backup_mode == 'post-early-access-66' && secrets.EARLY_ACCESS_INVITATION_WORKER_SECRET || '' }}
+          PROFILE_PHOTO_WORKER_SECRET: ${{ (inputs.backup_mode == 'current-production-2026-09-27' || inputs.backup_mode == 'post-early-access-66' || inputs.backup_mode == 'post-admin-inbox-67') && secrets.PROFILE_PHOTO_WORKER_SECRET || '' }}
+          FEEDBACK_WORKER_SECRET: ${{ (inputs.backup_mode == 'post-early-access-66' || inputs.backup_mode == 'post-admin-inbox-67') && secrets.FEEDBACK_WORKER_SECRET || '' }}
+          EARLY_ACCESS_INVITATION_WORKER_SECRET: ${{ (inputs.backup_mode == 'post-early-access-66' || inputs.backup_mode == 'post-admin-inbox-67') && secrets.EARLY_ACCESS_INVITATION_WORKER_SECRET || '' }}
         shell: bash
         run: |
           set +x

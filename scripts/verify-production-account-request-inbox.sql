@@ -1,5 +1,6 @@
 -- Fixed read-only production release checkpoint; never accepts caller SQL.
--- Source: A 93610a9d28dd36073407fb052199f8973d954c97, PostgreSQL 17.6.
+-- Inbox catalog source: A 93610a9d28dd36073407fb052199f8973d954c97, PostgreSQL 17.6.
+-- Exact history advances to the reviewed original-77 three-migration suffix.
 -- Catalog metadata only: no RPC invocation, Auth/session rows, ledger rows,
 -- key/decrypted-value reads, canary grant, stored helper, or mutation.
 WITH canonical_deparse_context AS MATERIALIZED (
@@ -110,13 +111,18 @@ WITH canonical_deparse_context AS MATERIALIZED (
   CROSS JOIN canonical_deparse_context
 )
 SELECT
-  coalesce((SELECT pg_catalog.count(*)=67 AND pg_catalog.count(DISTINCT version)=67
-    AND pg_catalog.max(version::text)='20260929000950'
+  coalesce((SELECT pg_catalog.count(*)=70 AND pg_catalog.count(DISTINCT version)=70
+    AND pg_catalog.max(version::text)='20260930161218'
     AND pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(pg_catalog.string_agg(version::text,',' ORDER BY version::text COLLATE "C"),'UTF8')),'hex')
-      ='5593452c85b58a6f666815475a5cdfed619b788c52e177074c76d294ed795a52'
+      ='09d7293ce15add9360f88a89337ea54822e64f015b1e6ef63eaba1543f36c872'
     FROM supabase_migrations.schema_migrations),false)
     AND EXISTS(SELECT 1 FROM supabase_migrations.schema_migrations
-      WHERE version='20260929000950' AND name='site_admin_account_requests_inbox') AS exact_migration_history_ok,
+      WHERE version='20260929000950' AND name='site_admin_account_requests_inbox')
+    AND (SELECT pg_catalog.count(*)=3 FROM supabase_migrations.schema_migrations
+      WHERE (version,name) IN (
+        ('20260930152825','add_original_77_completion_evidence_foundation'),
+        ('20260930160740','wire_original_77_live_completion'),
+        ('20260930161218','share_submitted_progress_v2'))) AS exact_migration_history_ok,
   CASE WHEN canonical_deparse_context.pinned_search_path='pg_catalog' AND canonical_deparse_context.pinned_timezone='UTC' AND canonical_deparse_context.pinned_datestyle='ISO, YMD'
     AND canonical_deparse_context.pinned_timeout='15s' AND canonical_deparse_context.pinned_lock_timeout='5s'
     THEN pg_catalog.current_setting('transaction_read_only')='on' AND pg_catalog.current_setting('server_version_num')='170006'

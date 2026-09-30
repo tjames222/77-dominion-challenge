@@ -19,6 +19,7 @@
     "test:e2e:admin": "playwright test --config=playwright.admin.config.mjs",
     "test:e2e:feedback": "playwright test --config=playwright.feedback.config.mjs",
     "test:e2e:app-streak": "playwright test --config=playwright.app-streak.config.mjs",
+    "test:e2e:original77": "playwright test --config=playwright.original77.config.mjs",
     "test:e2e:daily-bootstrap": "playwright test --config=playwright.daily-bootstrap.config.mjs",
     "test:e2e:preview-badges": "playwright test --config=playwright.preview-badges.config.mjs",
     "test:daily-bootstrap-sql": "node --test scripts/daily-action-bootstrap.sql.test.mjs",

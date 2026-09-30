@@ -136,7 +136,7 @@ const REWARD_TOAST_EXIT_MS = 320;
 const BADGE_REVEAL_DURATION_MS = 5600;
 const COMPLETION_HERO = {
   title: 'Congratulations, you did it!',
-  lead: 'You reached the 77-day finish line. Your next point-unlocked challenge is ready below.',
+  lead: 'You submitted 77 check-ins. Review your earned badges and rewards on the Rewards page.',
 };
 const specialCelebrationBadges = new Set();
 const finaleBadgeKey = 'original_77_completed';
@@ -544,7 +544,6 @@ let countdownTimer = null;
 let activeCountdownCallout = '';
 let confettiTimer = null;
 let confettiRunId = 0;
-let finishCelebrated = false;
 let entrySaveQueue = Promise.resolve();
 const pendingActionMutations = new Map();
 const pendingWorkoutMutations = new Map();
@@ -694,11 +693,8 @@ const isCurrentMutationOwner = (owner) => Boolean(
 const isCheckInStatusReady = (dateKey = todayKey()) => (
   hasHydratedAuthOwner() && (!hasSupabaseAuth() || checkInStatusHydratedDate === dateKey)
 );
-const canParticipateInChallenge = () => previewChallengeMode()
-  || challengeActivation.canParticipate === true;
-const canMutateChallenge = () => hasHydratedAuthOwner() && (
-  previewChallengeMode() || challengeActivation.canMutateDailyStandards === true
-);
+const canParticipateInChallenge = () => challengeActivation.canParticipate === true;
+const canMutateChallenge = () => hasHydratedAuthOwner() && challengeActivation.canMutateDailyStandards === true;
 function readPreviewDashboardUserState(ownerId) {
   const storedPreview = readPreviewUserValue(
     localStorage,
@@ -832,23 +828,19 @@ const rawChallengeDay = () => previewChallengeMode()
   ? previewChallengeState.day
   : Number.isInteger(challengeActivation.challengeDay)
     ? challengeActivation.challengeDay
-    : canParticipateInChallenge() && startDate
+    : challengeActivation.status === 'active' && startDate
       ? calendarDayDifference(todayKey(), startDate) + 1
       : 0;
-const currentDay = () => canParticipateInChallenge()
-  ? Math.min(Math.max(rawChallengeDay(), 1), TOTAL_DAYS)
-  : 0;
-const hasFinalBadge = () => badges.some((badge) => badge.key === finaleBadgeKey);
-const isChallengeFinished = () => previewChallengeMode()
-  ? isPreviewChallengeComplete(previewChallengeState)
-  : canParticipateInChallenge() && (hasFinalBadge() || rawChallengeDay() > TOTAL_DAYS);
+const currentDay = () => Math.max(rawChallengeDay(), 0);
+const isChallengeFinished = () => challengeActivation.originalProgress?.completionState === 'live_completed';
+const isCompletionProvenancePending = () => challengeActivation.originalProgress?.completionState === 'historical_provenance_pending';
 function advanceCommittedPreviewPost(entry, submissionDay) {
-  const nextState = advancePreviewChallenge(previewChallengeState);
+  const nextState = advancePreviewChallenge(previewChallengeState, challengeActivation.originalProgress);
   previewChallengeState = nextState;
   persistPreviewDashboardUserState();
 
-  if (isPreviewChallengeComplete(previewChallengeState)) {
-    setCheckInNotice(entry.date, 'Day 77 is posted. The preview challenge is complete.');
+  if (isPreviewChallengeComplete(previewChallengeState, challengeActivation.originalProgress)) {
+    setCheckInNotice(entry.date, 'Your 77th check-in is posted. The preview challenge is complete.');
   } else {
     const nextDate = previewChallengeDate(previewChallengeState);
     setCheckInNotice(nextDate, `Day ${submissionDay} is posted. Day ${previewChallengeDay(previewChallengeState)} is ready.`);
@@ -1015,7 +1007,7 @@ function updateCountdownCard() {
   const countdownActionsLabel = $('countdownActionsLabel');
   if (!countdownTime || !countdownProgress || !countdownCallout) return;
 
-  if (!canParticipateInChallenge()) {
+  if (!canParticipateInChallenge() && !isChallengeFinished() && !isCompletionProvenancePending()) {
     const scheduled = !previewChallengeMode() && challengeActivation.status === 'scheduled';
     const failed = !previewChallengeMode() && challengeActivation.readState === 'error';
     countdownTime.textContent = scheduled ? 'Scheduled' : failed ? 'Unavailable' : 'Not started';
@@ -1034,13 +1026,15 @@ function updateCountdownCard() {
   }
 
   const entry = todayEntry();
-  if (isChallengeFinished()) {
-    countdownTime.textContent = '77 days complete';
+  if (isChallengeFinished() || isCompletionProvenancePending()) {
+    countdownTime.textContent = '77 check-ins submitted';
     countdownProgress.style.setProperty('--progress', '100%');
-    countdownCallout.textContent = 'You finished the 77-day challenge. Review your next challenge in Badges & Rewards.';
+    countdownCallout.textContent = isCompletionProvenancePending()
+      ? 'Your submitted check-ins are counted. Historical Finisher verification is pending; no new award has been created.'
+      : 'You finished the original challenge. Review your earned badges and rewards on the Rewards page.';
     activeCountdownCallout = countdownCallout.textContent;
-    if (countdownProgressLabel) countdownProgressLabel.textContent = 'Challenge complete';
-    if (countdownActionsLabel) countdownActionsLabel.textContent = 'New challenges are ready';
+    if (countdownProgressLabel) countdownProgressLabel.textContent = isCompletionProvenancePending() ? 'Finisher verification pending' : 'Challenge complete';
+    if (countdownActionsLabel) countdownActionsLabel.textContent = '77 of 77 submitted check-ins';
     return;
   }
 
@@ -1120,6 +1114,7 @@ function render() {
   const selectAllActionsButton = $('selectAllActionsButton');
   const selectAllActionsLabel = $('selectAllActionsLabel');
   const scorecardSelectionStatus = $('scorecardSelectionStatus');
+  const scorecardCalendarDay = $('scorecardCalendarDay');
   const checklist = $('checklist');
   const feedEl = $('feed');
   const completedToday = $('completedToday');
@@ -1133,8 +1128,9 @@ function render() {
     ? storedEntry
     : { ...storedEntry, completed: [] };
   const completedStandards = new Set(entry.completed);
-  const challengePercent = participationOpen
-    ? finished ? 100 : Math.round((currentDay() / TOTAL_DAYS) * 100)
+  const submittedCount = challengeActivation.originalProgress?.submittedCount;
+  const challengePercent = Number.isInteger(submittedCount)
+    ? Math.round((submittedCount / TOTAL_DAYS) * 100)
     : 0;
   const todayPercent = Math.round((entry.completed.length / standards.length) * 100);
   const hasCompletedActions = entry.completed.length > 0;
@@ -1149,9 +1145,9 @@ function render() {
   const hasPostableCheckIn = !finished && !scorecardLocked && hasCompletedActions;
   const allActionsCompleted = standards.every(([id]) => completedStandards.has(id));
   if (challengePercentEl) challengePercentEl.textContent = challengeActivation.readState === 'loading'
-    && !previewChallengeMode() ? '—' : `${challengePercent}%`;
-  if (challengeDayEl) challengeDayEl.textContent = canParticipateInChallenge()
-    ? `Day ${currentDay()} of 77`
+    || (challengeActivation.status === 'active' && !Number.isInteger(submittedCount)) ? '—' : `${challengePercent}%`;
+  if (challengeDayEl) challengeDayEl.textContent = challengeActivation.status === 'active'
+    ? Number.isInteger(submittedCount) ? `${submittedCount} of 77 check-ins` : 'Progress unavailable'
     : challengeActivation.status === 'scheduled'
       ? 'Scheduled'
       : challengeActivation.readState === 'error'
@@ -1159,6 +1155,8 @@ function render() {
         : challengeActivation.readState === 'loading'
           ? 'Confirming…'
           : 'Not started';
+  if (scorecardCalendarDay) scorecardCalendarDay.textContent = currentDay() > 0
+    ? `Today's Scorecard · Calendar day ${currentDay()}` : "Today's Scorecard";
   if (challengeRing) challengeRing.style.setProperty('--value', `${challengePercent}%`);
   if (todayPercentEl) todayPercentEl.textContent = `${todayPercent}%`;
   if (todayCountEl) todayCountEl.textContent = `${entry.completed.length} of ${standards.length} done`;
@@ -1225,13 +1223,6 @@ function render() {
   }
   if (completedToday) completedToday.textContent = completedTodayLabel(feed, completedTodayCount);
   updateCountdownCard();
-  if (finished && !finishCelebrated) {
-    finishCelebrated = true;
-    launchConfetti();
-  } else if (!finished) {
-    finishCelebrated = false;
-    stopEndlessConfetti();
-  }
 }
 function startCountdownCard() {
   if (countdownTimer) window.clearInterval(countdownTimer);
@@ -1250,6 +1241,22 @@ function applyAuthoritativeChallengeActivation(nextActivation) {
   checkInNoticeDate = '';
   render();
   return true;
+}
+
+function applyPostedChallengeActivation(nextActivation, owner) {
+  if (!isCurrentMutationOwner(owner)) return false;
+  // A whole-dashboard read started before the commit must not replace the new
+  // count with an older snapshot after the mutation's own read cache cleared.
+  dashboardHydrationRequestId += 1;
+  const valid = Boolean(nextActivation?.contractValid && nextActivation.readState === 'ready'
+    && nextActivation.originalProgress?.userId === owner.userId
+    && nextActivation.originalProgress.completionState !== 'invalid_evidence');
+  challengeActivation = valid ? nextActivation : createChallengeActivationState('error');
+  if (valid) {
+    userTimeZone = nextActivation.timeZone || BROWSER_TIME_ZONE;
+    startDate = nextActivation.startDate || '';
+  }
+  return valid;
 }
 
 function clearDashboardUserState() {
@@ -1278,7 +1285,6 @@ function clearDashboardUserState() {
   checkInStatusHydratedDate = '';
   renderedDateKey = calendarTodayKey();
   activeCountdownCallout = '';
-  finishCelebrated = false;
   entrySaveQueue = Promise.resolve();
   celebrationSequence.clear({ forgetCompleted: true });
   celebrationReturnFocus = null;
@@ -1778,7 +1784,7 @@ if (checkInButton) checkInButton.addEventListener('click', async () => {
     return;
   }
   if (isChallengeFinished()) {
-    window.alert('The 77-day challenge is complete. Choose your next challenge in Badges & Rewards.');
+    window.alert('The original challenge is complete. Review your earned badges and rewards on the Rewards page.');
     render();
     return;
   }
@@ -1803,6 +1809,7 @@ if (checkInButton) checkInButton.addEventListener('click', async () => {
 
   checkInSubmissionPending = true;
   checkInSubmissionDate = entry.date;
+  dashboardHydrationRequestId += 1;
   setCheckInNotice(entry.date, 'Posting today’s check-in…');
   render();
 
@@ -1832,18 +1839,30 @@ if (checkInButton) checkInButton.addEventListener('click', async () => {
       );
       if (!isCurrentMutationOwner(submissionOwner)) return;
       submissionCommitted = true;
+      const { activation: postedActivation, ...postedFeed } = postedCheckIn;
       feedItem = {
-        ...postedCheckIn,
+        ...postedFeed,
         name: 'You',
         timestamp: 'Today',
       };
       markCheckInSubmitted(entry.date, submissionDay);
-      setCheckInNotice(entry.date, 'Today’s check-in is posted. Come back tomorrow for the next challenge day.');
+      if (!applyPostedChallengeActivation(postedActivation, submissionOwner)) throw new Error('Your check-in is posted; progress needs to refresh.');
+      setCheckInNotice(entry.date, isChallengeFinished()
+        ? 'Your 77th check-in is posted. You completed the original challenge.'
+        : 'Today’s check-in is posted. Come back tomorrow for your next check-in.');
       await refreshGameSummary(submissionOwner);
       earnedBadges = await collectPendingBadgeCelebrations(submissionOwner);
     } else {
-      if (!markCheckInSubmitted(entry.date, submissionDay)) throw createCheckInAlreadyCompleteError();
+      const postedBadges = await recordPreviewCheckInBadges({ ...entry, day: submissionDay,
+        createdAt: feedItem.createdAt, workoutDifficultySelections: selectedWorkoutDifficulty },
+      { expectedUserId: submissionOwner.userId, requireNew: true });
+      if (!isCurrentMutationOwner(submissionOwner)) return;
       submissionCommitted = true;
+      if (!markCheckInSubmitted(entry.date, submissionDay)) throw createCheckInAlreadyCompleteError();
+      badges = postedBadges;
+      const postedActivation = await getChallengeActivation({ expectedUserId: submissionOwner.userId });
+      if (!isCurrentMutationOwner(submissionOwner)) return;
+      if (!applyPostedChallengeActivation(postedActivation, submissionOwner)) throw new Error('Your check-in is posted; progress needs to refresh.');
       setCheckInNotice(entry.date, 'Today’s check-in is posted. Come back tomorrow for the next challenge day.');
       let points = calculateLocalPoints(entry, status);
       let nextStreak = gameStats.currentFullDayStreak || 0;
@@ -1859,11 +1878,8 @@ if (checkInButton) checkInButton.addEventListener('click', async () => {
       gameStats.challengePoints = (gameStats.challengePoints || 0) + points;
       gameStats.dailyStandardsPoints = (gameStats.dailyStandardsPoints || 0) + points;
       feedItem.pointsAwarded = points;
-      badges = await recordPreviewCheckInBadges({ ...entry, day: submissionDay,
-        createdAt: feedItem.createdAt, workoutDifficultySelections: selectedWorkoutDifficulty },
-      { expectedUserId: submissionOwner.userId });
-      earnedBadges = await collectPendingBadgeCelebrations(submissionOwner);
       if (simulatedPreviewPost) advanceCommittedPreviewPost(entry, submissionDay);
+      earnedBadges = await collectPendingBadgeCelebrations(submissionOwner);
     }
 
     if (!isCurrentMutationOwner(submissionOwner)) return;
@@ -1889,8 +1905,8 @@ if (checkInButton) checkInButton.addEventListener('click', async () => {
       markCheckInSubmitted(entry.date, submissionDay);
       setCheckInNotice(entry.date, error.message || CHECK_IN_ALREADY_COMPLETE_MESSAGE);
       if (hasSupabaseAuth()) await hydrateDashboardFromApi(submissionOwner.userId);
-    } else if (submissionCommitted) {
-      setCheckInNotice(entry.date, 'Today’s check-in is posted. Your rewards are still syncing and will appear after a refresh.');
+    } else if (submissionCommitted || error?.checkInCommitted) {
+      setCheckInNotice(entry.date, 'Today’s check-in is posted. Your progress and rewards are refreshing.');
       if (hasSupabaseAuth()) await hydrateDashboardFromApi(submissionOwner.userId);
     } else {
       window.alert(error?.message || 'Unable to post that check-in right now.');

@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
+import { emptyOriginal77Progress } from './original-77-progress.mjs';
 import {
   CHALLENGE_ACTIVATION_SCHEMA_VERSION,
   buildMockChallengeActivation,
@@ -25,6 +26,7 @@ const explicitCapabilities = Object.freeze({
 });
 
 const activeSolo = Object.freeze({
+  originalProgress: emptyOriginal77Progress('user-1', '2026-08-04'),
   schemaVersion: CHALLENGE_ACTIVATION_SCHEMA_VERSION,
   status: 'active',
   storedStatus: 'active',
@@ -44,6 +46,7 @@ const activeSolo = Object.freeze({
 });
 
 const notStarted = Object.freeze({
+  originalProgress: null,
   schemaVersion: CHALLENGE_ACTIVATION_SCHEMA_VERSION,
   status: 'not_started',
   storedStatus: 'not_started',
@@ -130,6 +133,7 @@ describe('challenge activation read contract', () => {
       confirmed_by: 'user-1',
       activation_revision: 2,
       activation_review_required: false,
+      originalProgress: emptyOriginal77Progress('user-1', '2026-08-10'),
       capabilities: {
         can_activate_solo: false,
         can_activate_group: false,
@@ -212,6 +216,55 @@ describe('challenge activation read contract', () => {
     assert.equal(failure.canMutateDailyStandards, false);
     assert.equal(failure.canEditStartDate, false);
     assert.equal(Object.hasOwn(createChallengeActivationState('ready'), 'errorMessage'), false);
+  });
+
+  test('binds progress to the expected actor and locks canonical completed or invalid evidence', () => {
+    const late = { ...activeSolo, challengeDay: 91, originalProgress: { ...activeSolo.originalProgress, submittedCount: 76 } };
+    assert.equal(normalizeChallengeActivation(late, { expectedUserId: 'user-1' }).canMutateDailyStandards, true);
+    assert.equal(normalizeChallengeActivation(late, { expectedUserId: 'other' }).contractValid, false);
+    assert.equal(normalizeChallengeActivation({ ...late, originalProgress: undefined }).contractValid, false);
+    for (const [submittedCount, completionState] of [[77, 'historical_provenance_pending'], [null, 'invalid_evidence']]) {
+      const completed = { ...late, canParticipate: false, canMutateDailyStandards: false, canEditStartDate: false,
+        originalProgress: { ...late.originalProgress, submittedCount, completionState } };
+      const normalized = normalizeChallengeActivation(completed, { expectedUserId: 'user-1' });
+      assert.equal(normalized.contractValid, true); assert.equal(normalized.challengeDay, 91);
+      assert.equal(normalized.originalProgress.submittedCount, submittedCount);
+      assert.equal(normalizeChallengeActivation({ ...completed, canMutateDailyStandards: true }).contractValid, false);
+    }
+  });
+
+  test('closed progress cannot reopen participation or start-date edits through inconsistent capabilities', () => {
+    const event = { id: '11111111-1111-4111-8111-111111111111',
+      sourceId: '22222222-2222-4222-8222-222222222222', localDate: '2026-11-02',
+      recordedAt: '2026-11-02T12:00:00.123456Z', persistedAt: '2026-11-02T12:00:01.123456Z' };
+    for (const [submittedCount, completionState, canonicalEvent] of [
+      [null, 'invalid_evidence', null], [77, 'historical_provenance_pending', null],
+      [77, 'live_completed', event],
+    ]) {
+      const normalized = normalizeChallengeActivation({ ...activeSolo, challengeDay: 91,
+        canParticipate: true, canMutateDailyStandards: false, canEditStartDate: true,
+        originalProgress: { ...activeSolo.originalProgress, submittedCount, completionState, canonicalEvent },
+      }, { expectedUserId: 'user-1' });
+      assert.equal(normalized.contractValid, true);
+      assert.equal(normalized.originalProgress.submittedCount, submittedCount);
+      assert.equal(normalized.originalProgress.completionState, completionState);
+      for (const key of ['canParticipate', 'canMutateDailyStandards', 'canEditStartDate']) {
+        assert.equal(normalized[key], false);
+        assert.equal(normalized.capabilities[key], false);
+      }
+    }
+  });
+
+  test('a submitted check-in makes the original start date immutable despite a requested capability', () => {
+    for (const submittedCount of [0, 1, 76]) {
+      const normalized = normalizeChallengeActivation({ ...activeSolo,
+        originalProgress: { ...activeSolo.originalProgress, submittedCount },
+      }, { expectedUserId: 'user-1' });
+      assert.equal(normalized.contractValid, true);
+      assert.equal(normalized.canMutateDailyStandards, true);
+      assert.equal(normalized.canEditStartDate, submittedCount === 0);
+      assert.equal(normalized.capabilities.canEditStartDate, submittedCount === 0);
+    }
   });
 
   test('creates UUID-v4 request identifiers, including without randomUUID', () => {
@@ -322,7 +375,7 @@ describe('challenge activation read contract', () => {
     assert.equal(stillLocked.canMutateDailyStandards, true);
   });
 
-  test('backfills a valid legacy mock date without truncating completed challenge history', () => {
+  test('retains a past77 legacy calendar ordinal without inventing completion from elapsed time', () => {
     const backfilled = buildMockLegacyChallengeActivation({
       startDate: '2026-05-01',
       timeZone: 'America/Los_Angeles',
@@ -338,7 +391,8 @@ describe('challenge activation read contract', () => {
     assert.equal(backfilled.timeZone, 'America/Los_Angeles');
     assert.equal(backfilled.challengeDay, 97);
     assert.equal(backfilled.canParticipate, true);
-    assert.equal(backfilled.canMutateDailyStandards, false);
+    assert.equal(backfilled.canMutateDailyStandards, true);
+    assert.equal(backfilled.originalProgress.submittedCount, 0);
     assert.equal(backfilled.canEditStartDate, false);
   });
 

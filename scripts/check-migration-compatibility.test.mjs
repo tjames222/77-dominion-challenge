@@ -490,8 +490,12 @@ test("package, CI, and production deploy run the gate before migrations", async 
     deployWorkflow.match(
       /SUPABASE_ACCESS_TOKEN="\$SUPABASE_ACCESS_TOKEN"/gu,
     )?.length,
-    16, // Includes the bounded read-only inbox catalog postflight.
+    17, // Includes the separate bounded read-only inbox and original77 postflights.
   );
+  const cleanCatalogPostflights = deployWorkflow.match(
+    /\/usr\/bin\/env -i \\\n\s+PATH="\$PATH" \\\n\s+SUPABASE_ACCESS_TOKEN="\$SUPABASE_ACCESS_TOKEN" \\\n\s+SUPABASE_PROJECT_REF="\$SUPABASE_PROJECT_REF" \\\n\s+node scripts\/verify-production-(?:account-request-inbox|original77)\.mjs/gu,
+  ) ?? [];
+  assert.equal(cleanCatalogPostflights.length, 2);
   assert.equal(deployWorkflow.split("--credential-only").length - 1, 6);
   assert.equal(deployWorkflow.split("--revoke-credentials").length - 1, 9);
   assert.equal(

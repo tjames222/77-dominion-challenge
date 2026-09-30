@@ -110,6 +110,7 @@ export default defineConfig({
         /admin-live\.spec\.mjs/,
         /feedback-live\.spec\.mjs/,
         /app-streak-live\.spec\.mjs/,
+        /original77-live\.spec\.mjs/,
         /daily-action-bootstrap-live\.spec\.mjs/,
         /admin-early-access-live\.spec\.mjs/,
         /admin-roles-live\.spec\.mjs/,
