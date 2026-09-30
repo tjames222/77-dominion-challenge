@@ -222,7 +222,8 @@ test('Solo confirmation activates once, claims training, and resumes after refre
   await expect(page.locator('#siteTrainingProgress')).toHaveText('Page 1 of 14 · Step 1 of 9');
   await expect(page.locator('#siteTrainingTitle')).toBeFocused();
   await expect(page.locator('#challengeStartGate')).toBeHidden();
-  await expect(page.locator('#challengeDay')).toHaveText('Day 1 of 77');
+  await expect(page.locator('#challengeDay')).toHaveText('0 of 77 check-ins');
+  await expect(page.locator('#scorecardCalendarDay')).toContainText('Calendar day 1');
   await expect(page.locator('.check-row-toggle').first()).toBeEnabled();
   await expect(page.locator('.check-row-details').first()).toHaveAttribute('href', /bible-reading\.html/);
   await expect(page.locator('.shared-header-share')).toBeEnabled();
@@ -306,7 +307,8 @@ test('Solo confirmation activates once, claims training, and resumes after refre
 
   await page.reload({ waitUntil: 'networkidle' });
   await expect(page.locator('#challengeStartGate')).toBeHidden();
-  await expect(page.locator('#challengeDay')).toHaveText('Day 1 of 77');
+  await expect(page.locator('#challengeDay')).toHaveText('0 of 77 check-ins');
+  await expect(page.locator('#scorecardCalendarDay')).toContainText('Calendar day 1');
   await expect(page.locator('.site-training-layer')).toBeHidden();
   await page.getByRole('button', { name: 'Open menu' }).click();
   await expect(page.getByRole('button', { name: 'Resume Training' })).toBeVisible();

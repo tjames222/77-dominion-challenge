@@ -130,7 +130,7 @@ jobs:
         run: node --test scripts/free-backup-post-admin-inbox.sql.test.mjs
       - name: Verify original challenge submission evidence and atomic completion
         timeout-minutes: 5
-        run: node --test scripts/original-77-completion-evidence.sql.test.mjs scripts/original-77-live-completion.sql.test.mjs scripts/original-77-fullchain-runtime.sql.test.mjs
+        run: node --test scripts/original-77-completion-evidence.sql.test.mjs scripts/original-77-live-completion.sql.test.mjs scripts/original-77-fullchain-runtime.sql.test.mjs scripts/original77-legacy-range.sql.test.mjs
       - name: Verify versioned submitted-progress snapshot privacy
         timeout-minutes: 5
         run: node --test scripts/share-submitted-progress-v2.sql.test.mjs scripts/original77-share-fullchain.sql.test.mjs

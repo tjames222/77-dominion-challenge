@@ -58,7 +58,7 @@ const workflowJob = (id) => {
 
 test('two standard-runner shards preserve preliminary checks and the full main matrix', () => {
   const preflight = workflowJob('preflight');
-  for (const command of ['pnpm test', 'pnpm build', 'pnpm test:e2e:auth', 'pnpm test:e2e:mfa', 'pnpm test:e2e:admin', 'pnpm test:e2e:daily-bootstrap', 'pnpm test:e2e:preview-badges', 'pnpm test:e2e:app-streak']) {
+  for (const command of ['pnpm test', 'pnpm build', 'pnpm test:e2e:auth', 'pnpm test:e2e:mfa', 'pnpm test:e2e:admin', 'pnpm test:e2e:daily-bootstrap', 'pnpm test:e2e:preview-badges', 'pnpm test:e2e:app-streak', 'pnpm test:e2e:original77']) {
     assert.ok(preflight.includes(`run: ${command}\n`), `Missing preliminary ${command}`);
   }
   const shards = workflowJob('browser-shards');
@@ -213,6 +213,21 @@ test('deferred App Streak is a required compiled Chromium and WebKit gate using 
   assert.match(config, /name: 'streak-webkit'.*devices\['iPhone 13'\]/);
   assert.match(config, /outputFolder: 'playwright-report'/);
   assert.doesNotMatch(config, /supabase\.co|SUPABASE_ACCESS_TOKEN|SERVICE_ROLE_KEY|CLOUDFLARE_API_TOKEN/);
+});
+
+test('original completion runs in its compiled real-SDK gate instead of the general mock matrix', async () => {
+  const { default: config } = await import('../../playwright.original77.config.mjs');
+  assert.equal(packageJson.scripts['test:e2e:original77'], 'playwright test --config=playwright.original77.config.mjs');
+  assert.match(workflowJob('preflight'), /- name: Verify original challenge completion and session recovery\n\s+run: pnpm test:e2e:original77/);
+  assert.ok(playwrightConfig.includes('/original77-live\\.spec\\.mjs/'));
+  assert.equal(config.testMatch.source, 'original77-live\\.spec\\.mjs');
+  assert.equal(config.webServer.env.VITE_ENABLE_MOCKS, 'false');
+  assert.equal(config.webServer.env.VITE_ENABLE_PRODUCTION_CONNECTIONS, 'true');
+  assert.equal(config.webServer.env.VITE_SUPABASE_URL, `${config.use.baseURL}/__admin_fixture__`);
+  assert.match(config.use.baseURL, /^http:\/\/127\.0\.0\.1:\d+$/);
+  assert.equal(config.webServer.reuseExistingServer, false);
+  assert.match(config.webServer.command, /\/tmp\/77dc-original77-dist-\d+/);
+  assert.deepEqual(config.projects.map(project => project.use.defaultBrowserType), ['chromium', 'webkit']);
 });
 
 test('browser diagnostics are short-lived and uploaded only when the gate fails', () => {

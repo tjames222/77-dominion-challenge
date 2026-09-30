@@ -16,6 +16,7 @@ const crew = '32000000-0000-4000-8000-000000000001';
 const sid = '33000000-0000-4000-8000-000000000001';
 let containerId;
 let originalAcls;
+let postIntegrationAcls;
 let integrationSql;
 const literal = value => `'${String(value).replaceAll("'", "''")}'`;
 const docker = (args, input) => spawnSync('docker', args, {
@@ -143,19 +144,29 @@ before(async () => {
   // Use its reviewed provider shapes here; full Supabase replay remains a CI gate.
   const snapshotUrl=new URL('../supabase/schema.sql',import.meta.url);
   const snapshot=await readFile(snapshotUrl,'utf8');
-  let expanded='';
+  let beforeIntegration='';
+  let afterIntegration='';
+  let reachedIntegration=false;
   for(const line of snapshot.split('\n')){
     const include=line.match(/^\\ir (.+)$/);
     if(include){
-      if(include[1]===`migrations/${migrationName}`)continue;
-      expanded+=await readFile(new URL(include[1],snapshotUrl),'utf8');
-    }else expanded+=line;
-    expanded+='\n';
+      const source=await readFile(new URL(include[1],snapshotUrl),'utf8');
+      if(include[1]===`migrations/${migrationName}`){
+        integrationSql=source;reachedIntegration=true;continue;
+      }
+      if(reachedIntegration)afterIntegration+=source;
+      else beforeIntegration+=source;
+    }else if(reachedIntegration)afterIntegration+=line;
+    else beforeIntegration+=line;
+    if(reachedIntegration)afterIntegration+='\n';
+    else beforeIntegration+='\n';
   }
-  sql(`set search_path=public,extensions;begin;${expanded}\ncommit;`,'ea_template');
+  assert.ok(reachedIntegration,'The early-access integration migration must be present in the canonical snapshot.');
+  sql(`set search_path=public,extensions;begin;${beforeIntegration}\ncommit;`,'ea_template');
   originalAcls=sql(aclQuery,'ea_template');
-  integrationSql=await readFile(new URL(`../supabase/migrations/${migrationName}`,import.meta.url),'utf8');
   sql(`begin;${integrationSql}\ncommit;`,'ea_template');
+  postIntegrationAcls=sql(aclQuery,'ea_template');
+  sql(`set search_path=public,extensions;begin;${afterIntegration}\ncommit;`,'ea_template');
 });
 
 beforeEach(() => {
@@ -177,7 +188,13 @@ after(() => {
 });
 
 test('canonical application snapshot plus complete new migration preserves ACLs and never seeds access',()=>{
-  assert.equal(sql(aclQuery),originalAcls);
+  assert.equal(postIntegrationAcls,originalAcls);
+  const before=JSON.parse(originalAcls);
+  const final=JSON.parse(sql(aclQuery));
+  const actorBoundStart='public.start_challenge(target_challenge_key text, target_expected_actor_id uuid)';
+  assert.deepEqual(final[actorBoundStart],['postgres=X/postgres','authenticated=X/postgres']);
+  delete final[actorBoundStart];
+  assert.deepEqual(final,before);
   assert.deepEqual(values('select jsonb_build_array((select count(*) from private.early_access_grants),(select count(*) from private.early_access_price_qualifications));'),[[0,0]]);
   assert.deepEqual(values(`select jsonb_build_array(
     has_function_privilege('anon','private.lock_early_access_authority(uuid[])','execute'),
@@ -215,9 +232,20 @@ test('challenge readers, reconciliation, claim and start use EA without granting
   assert.equal(challenge.canAccess,true);assert.equal(challenge.status,'available');
   const reward=values(`select public.reward_catalog_item_for_user('${actor}',reward_key,10000) from public.reward_definitions where challenge_key='seven_day_reset';`)[0];
   assert.equal(reward.canAccess,true);
+  assert.deepEqual(reward.allowedActions,[]);
   const claim=values(asActor('select public.claim_challenge_unlocks();'))[0];assert.ok(claim.claimedKeys.includes('seven_day_reset'));
-  const started=values(asActor("select public.start_challenge('seven_day_reset');"))[0];
-  assert.equal(started.challenges.find(row=>row.key==='seven_day_reset').status,'active');
+  for(const statement of [
+    "select public.start_challenge('seven_day_reset');",
+    `select public.start_challenge('seven_day_reset','${actor}');`,
+  ]){
+    const denied=docker(psqlArgs('ea_test'),`\\set VERBOSITY verbose\n${asActor(statement)}`);
+    assert.notEqual(denied.status,0);assert.match(denied.stderr,/55000|not ready to start/);
+  }
+  const changedActor=docker(psqlArgs('ea_test'),`\\set VERBOSITY verbose\n${asActor(`select public.start_challenge('seven_day_reset','${other}');`)}`);
+  assert.notEqual(changedActor.status,0);assert.match(changedActor.stderr,/40001|signed-in account changed/);
+  assert.deepEqual(values(`select jsonb_build_object('status',status,'startedAt',started_at)
+    from public.user_challenge_states where user_id='${actor}' and challenge_key='seven_day_reset';`),
+    [{status:'available',startedAt:null}]);
   sql(`insert into public.challenge_definitions(challenge_key,title,teaser,challenge_type,points_required,duration_days,entitlement_key,icon,sort_order)
     values('fixture_ea','EA challenge','Fixture','reset',21,7,'membership_active','repeat',999),
       ('fixture_other','Unrelated product','Fixture','reset',21,7,'premium_unrelated','repeat',1000);`);
@@ -257,6 +285,11 @@ test('solo activation and Daily Action bootstrap recognize EA through canonical 
   assert.equal(active.status,'active');assert.equal(active.canMutateDailyStandards,true);
   const daily=values(asActor(`select public.get_daily_action_bootstrap('${actor}','UTC',null);`))[0];
   assert.equal(daily.appAccess,true);assert.equal(daily.activation.canMutateDailyStandards,true);
+  assert.deepEqual(daily.activation.originalProgress,{
+    schemaVersion:1,userId:actor,instanceId:`original77:${daily.activation.startDate}`,
+    targetCount:77,submittedCount:0,completionState:'in_progress',canonicalEvent:null,
+  });
+  assert.equal(daily.activation.canEditStartDate,true);
   revoke();
   const after=values(asActor(`select public.get_daily_action_bootstrap('${actor}','UTC',null);`))[0];
   assert.equal(after.appAccess,false);assert.equal(after.draft,null);
