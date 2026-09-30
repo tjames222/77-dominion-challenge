@@ -13904,3 +13904,6 @@ revoke execute on function public.grant_sharing_reward_after_invite_redemption()
 \ir migrations/20260927225600_early_access_invitation_lifecycle.sql
 \ir migrations/20260927233055_early_access_account_bootstrap.sql
 \ir migrations/20260929000950_site_admin_account_requests_inbox.sql
+\ir migrations/20260930152825_add_original_77_completion_evidence_foundation.sql
+\ir migrations/20260930160740_wire_original_77_live_completion.sql
+\ir migrations/20260930161218_share_submitted_progress_v2.sql

@@ -125,6 +125,115 @@ Deno.test("server-rendered share HTML includes crawler metadata and no private f
   assert(!html.includes("journal"));
 });
 
+Deno.test("V2 shares display submitted counts while immutable V1 retains calendar meaning", () => {
+  for (const count of [0, 1, 76, 77]) {
+    const snapshot = {
+      schemaVersion: 2,
+      kind: "progress" as const,
+      payload: {
+        schemaVersion: 2,
+        kind: "progress",
+        submittedCheckIns: count,
+        targetCheckIns: 77,
+      },
+    };
+    const presentation = sharePresentation(snapshot);
+    assertEquals(presentation.metric, `${count}/77`);
+    assertEquals(presentation.metricLabel, "submitted check-ins");
+    assert(presentation.description.includes("Partial check-ins count."));
+    const html = renderShareHtml(
+      snapshot,
+      `https://share.dominion.example/s/${token}`,
+      "https://dominion.example",
+    );
+    assert(html.includes(`${count} of 77 Dominion check-ins`));
+    assert(!html.includes("challenge days"));
+    assert(!html.includes("Finisher"));
+  }
+  const legacy = sharePresentation({
+    schemaVersion: 1,
+    kind: "progress",
+    payload: { currentChallengeDay: 77, challengeLength: 77 },
+  });
+  assertEquals(legacy.metricLabel, "challenge days");
+  assertEquals(legacy.title, "Day 77 of the 77-Day Dominion Challenge");
+});
+
+Deno.test("V2 public snapshots reject malformed counts and private or calendar fields", async () => {
+  const valid = {
+    schemaVersion: 2,
+    kind: "progress",
+    submittedCheckIns: 76,
+    targetCheckIns: 77,
+  };
+  for (
+    const payload of [
+      ...[-1, 78, 76.5, "76", null, undefined].map((submittedCheckIns) => ({
+        ...valid,
+        submittedCheckIns,
+      })),
+      { ...valid, targetCheckIns: 78 },
+      { ...valid, schemaVersion: 1 },
+      { ...valid, kind: "streak" },
+      { ...valid, currentChallengeDay: 78 },
+      { ...valid, userId: "private-owner" },
+      { ...valid, completed: true },
+    ]
+  ) {
+    const response = await testHandler({
+      createAdminClient: () =>
+        rpcClient(() => ({
+          schemaVersion: 2,
+          kind: "progress",
+          payload,
+        })),
+    })(request("GET", undefined, `share-snapshot/${token}`));
+    assertEquals(response.status, 404);
+    assert(
+      (await response.text()).includes("This share is no longer available."),
+    );
+  }
+});
+
+Deno.test("V2 preview, create and public delivery preserve the same bounded presentation", async () => {
+  const snapshot = {
+    schemaVersion: 2,
+    kind: "progress",
+    snapshotId,
+    token,
+    payload: {
+      schemaVersion: 2,
+      kind: "progress",
+      submittedCheckIns: 77,
+      targetCheckIns: 77,
+    },
+  };
+  const handler = testHandler({
+    createUserClient: () => rpcClient(() => snapshot),
+    createAdminClient: () => rpcClient(() => snapshot),
+  });
+  for (const action of ["preview", "create"]) {
+    const response = await handler(
+      request("POST", { action, kind: "progress" }),
+    );
+    assertEquals(response.status, action === "preview" ? 200 : 201);
+    const result = await responseJson(response);
+    assertEquals(result.schemaVersion, 2);
+    assertEquals(
+      (result.presentation as Record<string, unknown>).metricLabel,
+      "submitted check-ins",
+    );
+  }
+  const response = await handler(
+    request("GET", undefined, `share-snapshot/${token}`),
+  );
+  assertEquals(response.status, 200);
+  assertEquals(
+    response.headers.get("cache-control"),
+    "private, no-store, max-age=0",
+  );
+});
+
 Deno.test("public GET resolves an opaque token and emits hardened no-store HTML", async () => {
   let receivedToken = "";
   const response = await testHandler({

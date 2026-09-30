@@ -431,10 +431,16 @@ test('leap dates and years below100 retain exact Gregorian instance arithmetic',
   assert.equal(result.submittedCount, 3);
 });
 
-test('this contract cannot activate the blocked catalog or legacy finisher', async () => {
+test('pure evidence remains non-awarding after activation of the separately persisted completion rule', async () => {
   const catalog = JSON.parse(await readFile(new URL('./badge-catalog.v1.json', import.meta.url), 'utf8'));
-  assert.equal(catalog.badges.find((badge) => badge.key === 'original_77_completed').status, 'blocked');
+  assert.equal(catalog.badges.find((badge) => badge.key === 'original_77_completed').status, 'active');
   assert.equal(catalog.badges.find((badge) => badge.key === 'day_77_finisher').status, 'retired');
+  const { evaluateBadgeEvent } = await import('./badge-evaluation.mjs');
+  assert.deepEqual(evaluateBadgeEvent(live(liveInput())), []);
+  const qualifiedHistory = historical(historyInput());
+  assert.equal(qualifiedHistory.valid, true);
+  assert.equal(qualifiedHistory.meetsSubmissionRule, true);
+  assert.deepEqual(evaluateBadgeEvent(qualifiedHistory), []);
   const source = await readFile(new URL('./original-77-submission-evidence.mjs', import.meta.url), 'utf8');
   assert.doesNotMatch(source, /\bimport\s|\bfetch\s*\(|\blocalStorage\b|\bsessionStorage\b|\bconsole\s*\.|Date\.now\s*\(/);
 });

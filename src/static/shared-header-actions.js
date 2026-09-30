@@ -74,12 +74,6 @@ function localHeaderSnapshot(user, storage, activation) {
   const effectiveActivation = previewActive
     ? {
         ...activation,
-        readState: 'ready',
-        contractValid: true,
-        status: 'active',
-        mode: 'solo',
-        startDate: previewState.anchorDate,
-        canParticipate: true,
         canEditStartDate: false,
       }
     : activation;
@@ -234,7 +228,10 @@ export function createAuthenticatedHeaderActions({
   }) => {
     const shareAvailable = activation?.readState === 'ready'
       && activation?.contractValid
-      && activation?.canParticipate === true;
+      && (activation?.canParticipate === true
+        || (activation.originalProgress?.userId === currentUser?.userId
+          && activation.originalProgress?.submittedCount === 77
+          && ['live_completed', 'historical_provenance_pending'].includes(activation.originalProgress?.completionState)));
     shareButton.disabled = !shareAvailable;
     shareButton.setAttribute(
       'aria-label',

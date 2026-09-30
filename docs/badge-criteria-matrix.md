@@ -1,11 +1,15 @@
 # Canonical badge matrix v1 (FOU-1499)
 
 This matrix audits all 31 pre-cutover keys. Eight submitted-check-in milestones
-and one blocked completion definition use new keys because their meanings differ
+and one completion definition use new keys because their meanings differ
 from calendar-position awards. Active perfect-streak crossings are 3, 7, 14, 28,
 56 and 70 consecutive local dates; retired intermediate weeks reduce repetition.
 The four explicitly chosen workout difficulties remain one-time action wins.
 Existing awards and their original definition snapshots are never removed.
+The current feature-branch Finisher changes have explicit database-migration
+approval and local integration evidence, but still require protected checks,
+a current backup and deployment. The production Finisher definition remains
+blocked until that release succeeds.
 
 `src/static/badge-catalog.v1.json` is the checked-in source consumed by preview
 and mirrored exactly by the SQL seed (the fixture asserts byte-content JSON parity). The typed SQL and JavaScript evaluators are checked
@@ -52,16 +56,28 @@ against the same one-before/exact/one-after cases; no criterion executes code.
 | full_streak_49 | 49-Day Perfect Streak | retired | none: retired = not earnable | lifetime | gold | 1036 | Retired dense weekly streak cadence; existing awards retained. |
 | full_streak_63 | 63-Day Perfect Streak | retired | none: retired = not earnable | lifetime | gold | 1037 | Retired dense weekly streak cadence; existing awards retained. |
 | day_77_finisher | 77 Days Complete | retired | none: retired = not earnable | lifetime | gold | 1038 | Retired elapsed-day rule; no new finisher until an approved canonical completion event exists. |
-| original_77_completed | 77-Day Finisher | blocked | challenge_completion: original_77_completion = 1 | challenge_instance | gold | 900 | New key; completion predicate is awaiting product decision. No evaluator accepts client completion flags or elapsed day77 as evidence. |
+| original_77_completed | 77-Day Finisher | active in candidate only | challenge_completion: persisted live 77th submitted check-in | challenge_instance | gold | 900 | Partials and submissions after calendar day77 count. No historical earned-time invention or award replay. |
 
-## Unresolved completion contract
+## Approved completion contract and release boundary
 
-The original 77-day challenge's completion predicate is not yet approved. Elapsed
-calendar day 77, a client flag, a points balance, and an old finisher badge are not
-completion evidence. `original_77_completed` is deliberately blocked and no
-completion trigger is installed. Later challenge requirements/instance writers
-are also outside this cutover. This acceptance criterion remains blocked pending
-the user's decision and a canonical server completion event.
+Tim approved 77 submitted check-ins, including partials, with submissions allowed
+after calendar day77 until that count is reached. Elapsed day77, a client flag,
+a points balance, and an old finisher badge are not completion evidence. A live
+77th insertion must atomically persist an immutable completion event and scoped
+award. The event ID and source check-in ID remain separate; earned time comes
+from the actual source, never from a sorted historical timestamp.
+
+The preview adapter validates the complete 76-row prior snapshot and actual new
+row against an explicit completion record. Its facts are frozen and locally
+branded; serialized copies and arbitrary completion flags cannot enter the
+Finisher evaluator. This protects preview consistency, not production authority.
+Production must independently derive and persist its own event in PostgreSQL.
+
+Historical 77-row qualification without canonical completion provenance remains
+pending, without a new award or ceremony. Existing awards remain untouched.
+Later challenge instances and the six-reward curve remain separate work. The
+database migration has explicit approval; local candidate tests do not
+establish hosted completion or deployment.
 
 ## Calendar and provenance
 
@@ -125,9 +141,10 @@ RLS/privileges, preservation, collection scope, SQL/preview rule parity, and the
 registered220 pgTAP contract. Frontend and Chromium/mobile-WebKit regressions run
 against mocks only. The pinned full local Supabase stack is absent and Docker's
 persistent disk is full; local advisors, db pull, and migration list cannot connect.
-A minimal full-chain replay was also correctly rejected by the frozen baseline's
-real Supabase vector-inventory privilege requirement. Full-chain replay/advisors
-and integration checks therefore remain release-CI requirements, not claimed as
-local successes. Backend migration must deploy before the new frontend SELECT/RPC
-contract. No hosted database, project, auth, billing, or entitlement was changed
-while preparing this candidate.
+The later owned full-chain fixture supplies the baseline's real SELECT-only
+vector-inventory dependency and replays all 70 application migrations unchanged
+as NOSUPERUSER postgres. Its structural provider tables do not simulate managed
+Auth or Storage. Native advisors and platform integration therefore remain
+release-CI requirements. Compatible Edge readers must deploy before the database,
+and the database before the new frontend contract. No hosted database, project,
+auth, billing, or entitlement was changed while preparing this candidate.

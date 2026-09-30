@@ -1,16 +1,25 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { BADGE_CATALOG, badgeRuleMatches, checkInBadgeFacts, appVisitBadgeFacts, evaluateBadgeEvent } from './badge-evaluation.mjs';
+import { BADGE_CATALOG, badgeRuleMatches, checkInBadgeFacts, appVisitBadgeFacts, evaluateBadgeEvent, original77CompletionBadgeFacts } from './badge-evaluation.mjs';
 
 const actions = ['bible','morningPrayer','worshipOnly','eveningPrayer','workoutOne','walk','workoutTwo'];
 const event = (day, extra={}) => ({sourceId:`event-${day}`,localDate:new Date(Date.UTC(2026,0,day)).toISOString().slice(0,10),
   occurredAt:new Date(Date.UTC(2026,0,day,12)).toISOString(),challengeDay:day,completed:actions,...extra});
 const history = (n) => Array.from({length:n},(_,i)=>event(i+1));
+const completionInput = () => {
+  const last = { ...event(78, { completed: ['walk'] }), source: 'check_in' };
+  return { userId: 'preview-user-a', startDate: '2026-01-01', event: last,
+    priorEvents: history(76).map(row => ({ ...row, source: 'check_in' })),
+    completionEvent: { id: '10000000-0000-4000-8000-000000000077',
+      userId: 'preview-user-a', startDate: '2026-01-01', sourceId: last.sourceId,
+      localDate: last.localDate, recordedAt: last.occurredAt, persistedAt: '2026-03-19T12:00:00.000001Z' } };
+};
 
-test('catalog audits all31 old keys and explicitly blocks undefined completion', () => {
+test('catalog audits all31 old keys and activates only the canonical submission completion rule', () => {
   assert.equal(BADGE_CATALOG.filter((r)=>!r.key.startsWith('check_ins_')&&r.key!=='original_77_completed').length,31);
   assert.equal(new Set(BADGE_CATALOG.map(r=>r.key)).size,BADGE_CATALOG.length);
-  assert.equal(BADGE_CATALOG.find(r=>r.key==='original_77_completed').status,'blocked');
+  assert.equal(BADGE_CATALOG.find(r=>r.key==='original_77_completed').status,'active');
+  assert.equal(BADGE_CATALOG.find(r=>r.key==='day_77_finisher').status,'retired');
   for (const r of BADGE_CATALOG.filter(r=>r.status==='active')) {
     assert.equal(r.criteriaVersion,1); assert.ok(r.requirement); assert.ok(r.migrationTreatment); assert.ok(r.tierRationale);
     assert.equal(r.tierRank,{bronze:1,silver:2,gold:3}[r.tier]);
@@ -28,6 +37,10 @@ for (const rule of BADGE_CATALOG.filter(r=>r.status==='active')) {
       assert.equal(badgeRuleMatches(rule,facts),false);
       assert.equal(badgeRuleMatches(rule,{...facts,workouts:{[rule.predicate]:'one'}}),true);
       assert.equal(badgeRuleMatches(rule,{...facts,workouts:{invalid:'one'}}),false);
+    } else if (rule.metric === 'original_77_completion') {
+      const canonical = original77CompletionBadgeFacts(completionInput());
+      assert.equal(badgeRuleMatches(rule, canonical), true);
+      for (const delta of [-1, 0, 1]) assert.equal(badgeRuleMatches(rule, { ...canonical, [rule.metric]: rule.threshold + delta }), false);
     } else for(const delta of [-1,0,1]) assert.equal(badgeRuleMatches(rule,{...facts,[rule.metric]:rule.threshold+delta}),delta===0);
     assert.equal(badgeRuleMatches(rule,{...facts,source:'untrusted'}),false);
   });
@@ -64,4 +77,90 @@ test('scope, retries, contradictory records, and incomplete evidence fail safely
   assert.equal(checkInBadgeFacts(event(1),[event(1,{sourceId:'contradiction'})]),null);
   assert.equal(checkInBadgeFacts(event(1,{localDate:'2026-02-31'})),null);
   assert.deepEqual(evaluateBadgeEvent({...facts,sourceId:''}),[]);
+});
+
+test('late partial 77th INSERT awards one scoped Finisher with explicit immutable-event provenance', () => {
+  const input = completionInput();
+  const facts = original77CompletionBadgeFacts(input);
+  assert.ok(facts);
+  assert.equal(Object.isFrozen(facts), true);
+  const [award] = evaluateBadgeEvent(facts);
+  assert.equal(award.key, 'original_77_completed');
+  assert.equal(award.scopeKey, 'original77:2026-01-01');
+  assert.equal(award.earnedAt, input.event.occurredAt);
+  assert.equal(award.entryDate, input.event.localDate);
+  assert.equal(award.metadata.sourceRecordId, input.completionEvent.id);
+  assert.equal(award.metadata.sourceCheckInId, input.event.sourceId);
+  assert.deepEqual(award.earningEvidence, { schemaVersion: 1, kind: 'challenge_completion',
+    completionKind: 'original_77_submissions', completionEventId: input.completionEvent.id,
+    sourceCheckInId: input.event.sourceId, submittedCount: 77, targetCount: 77 });
+  assert.deepEqual(evaluateBadgeEvent(facts, [award]), []);
+  assert.deepEqual(evaluateBadgeEvent({ ...facts }), []);
+  assert.deepEqual(evaluateBadgeEvent(JSON.parse(JSON.stringify(facts))), []);
+  assert.equal(checkInBadgeFacts(input.event, input.priorEvents).instance_check_in_count, 77);
+  assert.ok(!evaluateBadgeEvent(checkInBadgeFacts(input.event, input.priorEvents)).some(row => row.key === award.key));
+});
+
+test('completion uses the explicit insertion identity, never inferred timestamp order', () => {
+  const input = completionInput();
+  input.event.occurredAt = '2026-01-01T12:00:00.123456Z';
+  input.completionEvent.recordedAt = input.event.occurredAt;
+  input.completionEvent.persistedAt = '2026-01-01T11:00:00.000001Z';
+  assert.equal(original77CompletionBadgeFacts(input).occurredAt, input.event.occurredAt);
+  input.completionEvent.recordedAt = '2026-01-01T12:00:00.123455Z';
+  assert.equal(original77CompletionBadgeFacts(input), null);
+});
+
+for (const [label, change] of [
+  ['only 76 submissions', input => input.priorEvents.pop()],
+  ['78 submissions', input => input.priorEvents.push({ ...event(77), source: 'check_in' })],
+  ['wrong owner', input => { input.completionEvent.userId = 'other'; }],
+  ['wrong scope', input => { input.completionEvent.startDate = '2026-01-02'; }],
+  ['wrong source row', input => { input.completionEvent.sourceId = input.priorEvents[0].sourceId; }],
+  ['wrong source date', input => { input.completionEvent.localDate = '2026-03-18'; }],
+  ['invalid event ID', input => { input.completionEvent.id += '\n'; }],
+  ['invalid owner ID', input => { input.userId += '\n'; input.completionEvent.userId = input.userId; }],
+  ['unknown action', input => { input.priorEvents[0].completed = ['unknown']; }],
+  ['empty actions', input => { input.priorEvents[0].completed = []; }],
+  ['duplicate actions', input => { input.priorEvents[0].completed = ['walk', 'walk']; }],
+  ['sparse actions', input => { input.priorEvents[0].completed = new Array(1); }],
+  ['foreign event source', input => { input.priorEvents[0].source = 'app_visit'; }],
+  ['duplicate event ID', input => { input.priorEvents[0].sourceId = input.event.sourceId; }],
+  ['duplicate date', input => { input.priorEvents[0] = { ...input.event, sourceId: 'distinct' }; }],
+  ['wrong ordinal', input => { input.priorEvents[0].challengeDay = 2; }],
+  ['oversized ordinal', input => { input.event.challengeDay = Number.MAX_SAFE_INTEGER; }],
+  ['zero ordinal', input => { input.event.challengeDay = 0; }],
+  ['noncanonical date', input => { input.priorEvents[0].localDate = '2026-02-30'; }],
+  ['invalid persisted time', input => { input.completionEvent.persistedAt = '2026-03-19T24:00:00Z'; }],
+  ['unknown offset', input => { input.completionEvent.persistedAt = '2026-03-19T12:00:00-00:00'; }],
+  ['invalid source time', input => { input.priorEvents[0].occurredAt = '0000-01-01T12:00:00Z'; }],
+  ['extra context flag', input => { input.historical = true; }],
+  ['extra event flag', input => { input.completionEvent.backfilled = true; }],
+  ['sparse history', input => { delete input.priorEvents[0]; }],
+]) {
+  test(`Finisher INSERT adapter rejects ${label}`, () => {
+    const input = completionInput(); change(input);
+    assert.equal(original77CompletionBadgeFacts(input), null);
+  });
+}
+
+test('Finisher adapter does not invoke accessor-backed evidence', () => {
+  let reads = 0;
+  for (const target of ['context', 'row', 'completion', 'history', 'actions']) {
+    const input = completionInput();
+    const [object, field] = target === 'context' ? [input, 'event']
+      : target === 'row' ? [input.event, 'sourceId']
+      : target === 'completion' ? [input.completionEvent, 'recordedAt']
+      : target === 'history' ? [input.priorEvents, '0'] : [input.event.completed, '0'];
+    Object.defineProperty(object, field, { enumerable: true, get() { reads++; throw new Error('not data'); } });
+    assert.equal(original77CompletionBadgeFacts(input), null);
+  }
+  assert.equal(reads, 0);
+});
+
+test('positive calendar ordinals are date-bounded without a day-77 cap', () => {
+  assert.equal(checkInBadgeFacts(event(78)).instanceId, 'original77:2026-01-01');
+  for (const day of [0, -1, 1.5, Number.MAX_SAFE_INTEGER, Infinity, '78']) {
+    assert.equal(checkInBadgeFacts(event(78, { challengeDay: day })), null);
+  }
 });

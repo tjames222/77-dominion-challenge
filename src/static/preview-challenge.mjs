@@ -1,23 +1,17 @@
+import { MAX_ORIGINAL_CALENDAR_DAY, original77DateNumber } from './original-77-progress.mjs';
+
 export const PREVIEW_CHALLENGE_STORAGE_KEY = 'dominion:previewChallengeSimulation';
 export const PREVIEW_CHECK_IN_DATES_STORAGE_KEY = 'dominion:previewCheckInDates';
 export const PREVIEW_TOTAL_DAYS = 77;
 export const PREVIEW_COMPLETE_DAY = PREVIEW_TOTAL_DAYS + 1;
 
-const DATE_KEY_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
-
 function validDateKey(value) {
-  if (!DATE_KEY_PATTERN.test(String(value || ''))) return false;
-  const [year, month, day] = value.split('-').map(Number);
-  const date = new Date(Date.UTC(year, month - 1, day));
-  return date.getUTCFullYear() === year
-    && date.getUTCMonth() === month - 1
-    && date.getUTCDate() === day;
+  return original77DateNumber(value) !== null;
 }
 
 export function addPreviewCalendarDays(dateKey, days) {
   if (!validDateKey(dateKey)) throw new TypeError('A valid YYYY-MM-DD preview anchor is required.');
-  const [year, month, day] = dateKey.split('-').map(Number);
-  const date = new Date(Date.UTC(year, month - 1, day));
+  const date = new Date(`${dateKey}T00:00:00Z`);
   date.setUTCDate(date.getUTCDate() + Math.trunc(Number(days) || 0));
   return date.toISOString().slice(0, 10);
 }
@@ -25,11 +19,13 @@ export function addPreviewCalendarDays(dateKey, days) {
 export function normalizePreviewChallengeState(value = {}, fallbackDate) {
   const fallbackAnchor = validDateKey(fallbackDate) ? fallbackDate : '2026-01-01';
   const numericDay = Math.floor(Number(value?.day));
+  const anchorDate = validDateKey(value?.anchorDate) ? value.anchorDate : fallbackAnchor;
+  const maximumDay = original77DateNumber('9999-12-31') - original77DateNumber(anchorDate) + 1;
   return {
     enabled: value?.enabled === true,
-    anchorDate: validDateKey(value?.anchorDate) ? value.anchorDate : fallbackAnchor,
+    anchorDate,
     day: Number.isFinite(numericDay)
-      ? Math.min(Math.max(numericDay, 1), PREVIEW_COMPLETE_DAY)
+      ? Math.min(Math.max(numericDay, 1), maximumDay, MAX_ORIGINAL_CALENDAR_DAY)
       : 1,
   };
 }
@@ -39,7 +35,7 @@ export function isPreviewChallengeActive(isLocalPreview, state) {
 }
 
 export function previewChallengeDay(state) {
-  return Math.min(normalizePreviewChallengeState(state, state?.anchorDate).day, PREVIEW_TOTAL_DAYS);
+  return normalizePreviewChallengeState(state, state?.anchorDate).day;
 }
 
 export function previewChallengeDate(state) {
@@ -47,8 +43,10 @@ export function previewChallengeDate(state) {
   return addPreviewCalendarDays(normalized.anchorDate, previewChallengeDay(normalized) - 1);
 }
 
-export function isPreviewChallengeComplete(state) {
-  return normalizePreviewChallengeState(state, state?.anchorDate).day > PREVIEW_TOTAL_DAYS;
+export function isPreviewChallengeComplete(state, progress) {
+  return normalizePreviewChallengeState(state, state?.anchorDate).enabled
+    && progress?.submittedCount === PREVIEW_TOTAL_DAYS
+    && ['live_completed', 'historical_provenance_pending'].includes(progress.completionState);
 }
 
 export function setPreviewChallengeEnabled(state, enabled, fallbackDate) {
@@ -58,13 +56,13 @@ export function setPreviewChallengeEnabled(state, enabled, fallbackDate) {
   };
 }
 
-export function advancePreviewChallenge(state) {
+export function advancePreviewChallenge(state, progress) {
   const normalized = normalizePreviewChallengeState(state, state?.anchorDate);
-  if (!normalized.enabled || isPreviewChallengeComplete(normalized)) return normalized;
-  return {
+  if (!normalized.enabled || isPreviewChallengeComplete(normalized, progress)) return normalized;
+  return normalizePreviewChallengeState({
     ...normalized,
-    day: Math.min(normalized.day + 1, PREVIEW_COMPLETE_DAY),
-  };
+    day: normalized.day + 1,
+  }, normalized.anchorDate);
 }
 
 export function advancePreviewStreaks(stats = {}, status = 'partial', entryDate = '') {

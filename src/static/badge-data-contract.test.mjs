@@ -96,3 +96,14 @@ test('badge display defaults and invalid-tier fallback remain unchanged', () => 
     displayOrder: 10000,
   });
 });
+
+test('Finisher copy describes submitted check-ins rather than a first check-in', () => {
+  const badge = { requirement: 'Submit 77 check-ins in your original challenge; partial check-ins count.',
+    earningEvidence: { schemaVersion: 1, kind: 'challenge_completion', completionKind: 'original_77_submissions',
+      submittedCount: 77, targetCount: 77 } };
+  assert.equal(data.badgeCelebrationReason(badge),
+    'You submitted 77 check-ins in your original challenge, including partial check-ins.');
+  for (const change of [{ submittedCount: 76 }, { submittedCount: '77' }, { targetCount: 78 }, { completionKind: 'claimed' }]) {
+    assert.equal(data.badgeCelebrationReason({ ...badge, earningEvidence: { ...badge.earningEvidence, ...change } }), badge.requirement);
+  }
+});

@@ -102,6 +102,58 @@ Deno.test("anonymous rendering never uses a resolved subject name", () => {
   assert(!rendered.text.includes("https://"));
 });
 
+Deno.test("check-in calendar ordinals beyond77 remain strict and date-domain bounded", () => {
+  for (const day of [77, 78, 3652059]) {
+    const result = renderOutboundEvent(
+      {
+        event_type: "check_in",
+        payload: { challengeDay: day, status: "partial", completedCount: 1 },
+      },
+      namedResolution,
+      null,
+    );
+    assert(result.text.includes(`challenge day ${day} (1 of 7 actions)`));
+  }
+  for (
+    const day of [
+      0,
+      -1,
+      77.5,
+      3652060,
+      Number.MAX_SAFE_INTEGER,
+      Infinity,
+      "78",
+      null,
+    ]
+  ) {
+    rejects(() =>
+      renderOutboundEvent(
+        {
+          event_type: "check_in",
+          payload: { challengeDay: day, status: "partial", completedCount: 1 },
+        },
+        namedResolution,
+        null,
+      )
+    );
+  }
+  rejects(() =>
+    renderOutboundEvent(
+      {
+        event_type: "check_in",
+        payload: {
+          challengeDay: 78,
+          status: "partial",
+          completedCount: 1,
+          completed: true,
+        },
+      },
+      namedResolution,
+      null,
+    )
+  );
+});
+
 Deno.test("renderer neutralizes provider markup and mass mentions", () => {
   const rendered = renderOutboundEvent({
     event_type: "badge_reward",

@@ -24,7 +24,9 @@ async function fixture(context, { locked = false } = {}) {
     if (name === 'record_app_visit') return json(route, { current_app_streak: 6, best_app_streak: 8 });
     if (name === 'get_challenge_activation') return json(route, activation);
     if (body.target_expected_actor_id !== actor || locked) return json(route, { message: 'Start date is locked.' }, 403);
-    activation.startDate = body.target_start_date; activation.revision++;
+    activation.startDate = body.target_start_date;
+    activation.originalProgress.instanceId = `original77:${body.target_start_date}`;
+    activation.revision++;
     if (holding) await holding;
     return lost ? json(route, { message: 'Could not confirm the save.' }, 503) : json(route, activation);
   });

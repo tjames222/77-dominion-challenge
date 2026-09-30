@@ -204,9 +204,9 @@ set local "request.jwt.claims" = '{"sub":"30000000-0000-4000-8000-000000000003",
 
 select throws_ok(
   $$ select public.start_challenge('twenty_one_day_prayer') $$,
-  'P0001',
-  'That challenge is still locked.',
-  'a challenge below the point threshold remains locked'
+  '55000',
+  'This challenge is not ready to start yet.',
+  'the legacy Start API stays disabled until challenge instances are available'
 );
 
 set local "request.jwt.claim.sub" = '10000000-0000-4000-8000-000000000001';

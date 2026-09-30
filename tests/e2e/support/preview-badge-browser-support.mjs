@@ -1,4 +1,5 @@
 import { test as base, expect } from '@playwright/test';
+import { fixtureFor, FIXED_NOW, FIXED_CHALLENGE_START } from './fixtures.mjs';
 
 export const HARNESS = '/tests/e2e/fixtures/preview-badges.html';
 export const RUNTIME = /\/assets\/badge-preview-state-[^/]+\.js(?:\?.*)?$/;
@@ -44,7 +45,32 @@ export async function openHarness(page) {
   await expect.poll(() => page.evaluate(() => Boolean(window.__previewBadgeTest))).toBe(true);
 }
 export async function signInMock(page, email = 'alpha.badges@example.test') {
-  return page.evaluate(email => window.__previewBadgeTest.api.saveLocalMockUser({ name: 'Badge Member', email }).userId, email);
+  const owner = await page.evaluate(email => window.__previewBadgeTest.api.saveLocalMockUser({ name: 'Badge Member', email }).userId, email);
+  await activateFixtureChallenge(page, owner);
+  return owner;
+}
+export async function activateFixtureChallenge(page, owner) {
+  const activation = await page.evaluate(async ({ owner, subscription, fixedTime, startDate }) => {
+    // These canonical events deliberately retain their February date/day pair.
+    // Exercise the real activation API at that fixture date, then restore the
+    // wall clock before any delivery lease or session-switch assertion runs.
+    const NativeDate = globalThis.Date;
+    const fixedNow = NativeDate.parse(fixedTime);
+    window.__previewBadgeTest.writePreviewUserValue(localStorage, owner, 'dominion:mockSubscription', subscription);
+    globalThis.Date = class extends NativeDate {
+      constructor(...args) { super(...(args.length ? args : [fixedNow])); }
+      static now() { return fixedNow; }
+    };
+    try {
+      return await window.__previewBadgeTest.api.activateSoloChallenge({
+        startDate, timeZone: 'UTC', expectedUserId: owner,
+      });
+    } finally { globalThis.Date = NativeDate; }
+  }, { owner, subscription: fixtureFor('member').json['dominion:mockSubscription'],
+    fixedTime: FIXED_NOW, startDate: FIXED_CHALLENGE_START });
+  expect(activation.contractValid).toBe(true);
+  expect(activation.startDate).toBe(FIXED_CHALLENGE_START);
+  expect(activation.canMutateDailyStandards).toBe(true);
 }
 export async function stateFor(page, owner) {
   return page.evaluate(owner => window.__previewBadgeTest.peekPreviewUserValue(localStorage, owner, 'dominion:badgeState:v1', null), owner);

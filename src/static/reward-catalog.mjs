@@ -225,7 +225,9 @@ export function challengeProgressionToRewardCatalog(progression = {}) {
       challengeType: challenge.type || 'general',
       durationDays: challenge.durationDays ?? null,
     },
-    allowedActions: challenge.status === 'available' && challenge.accessGranted !== false ? ['start'] : [],
+    // Ownership/unlock thresholds remain intact; later-instance execution is
+    // not implemented by the original-challenge completion release.
+    allowedActions: [],
     canAccess: challenge.accessGranted ?? true,
     accessReason: challenge.accessReason || null,
   }));

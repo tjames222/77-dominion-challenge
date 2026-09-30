@@ -14,6 +14,10 @@ export function badgeCelebrationReason(badge) {
   const evidence = badge?.earningEvidence;
   if (evidence?.schemaVersion !== 1) return badge?.requirement || 'An earned part of your badge collection.';
   const count = evidence.qualifyingValue;
+  if (evidence.kind === 'challenge_completion' && evidence.completionKind === 'original_77_submissions'
+    && evidence.submittedCount === 77 && evidence.targetCount === 77) {
+    return 'You submitted 77 check-ins in your original challenge, including partial check-ins.';
+  }
   if (evidence.kind === 'workout' && ['one', 'two'].includes(evidence.workout) && difficulties.has(evidence.difficulty)) {
     const label = evidence.difficulty[0].toUpperCase() + evidence.difficulty.slice(1);
     return `You completed Workout ${evidence.workout === 'one' ? 'One' : 'Two'} at ${label} difficulty.`;

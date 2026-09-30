@@ -2,7 +2,6 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { addCheckInDate, createCheckInCache, normalizeChallengeDays } from './check-in.mjs';
 import {
-  PREVIEW_COMPLETE_DAY,
   advancePreviewChallenge,
   advancePreviewStreaks,
   addPreviewCalendarDays,
@@ -17,7 +16,8 @@ import {
 describe('preview 77-day challenge simulator', () => {
   it('normalizes invalid persisted state and cannot activate outside local preview', () => {
     const state = normalizePreviewChallengeState({ enabled: true, anchorDate: 'bad', day: 200 }, '2026-07-18');
-    assert.deepEqual(state, { enabled: true, anchorDate: '2026-07-18', day: PREVIEW_COMPLETE_DAY });
+    assert.deepEqual(state, { enabled: true, anchorDate: '2026-07-18', day: 200 });
+    assert.equal(isPreviewChallengeComplete(state), false, 'an old day counter is not completion evidence');
     assert.equal(isPreviewChallengeActive(false, state), false);
     assert.equal(isPreviewChallengeActive(true, state), true);
   });
@@ -43,12 +43,12 @@ describe('preview 77-day challenge simulator', () => {
         previewChallengeDay(state),
       ]);
       dates.push(date);
-      state = advancePreviewChallenge(state);
+      state = advancePreviewChallenge(state, { submittedCount: day, completionState: day === 77 ? 'live_completed' : 'in_progress' });
     }
 
     assert.equal(new Set(dates).size, 77);
     assert.deepEqual(normalizeChallengeDays(cache.challengeDays), Array.from({ length: 77 }, (_, index) => 77 - index));
-    assert.equal(isPreviewChallengeComplete(state), true);
+    assert.equal(isPreviewChallengeComplete(state, { submittedCount: 77, completionState: 'live_completed' }), true);
     assert.equal(previewChallengeDay(state), 77);
     assert.equal(previewChallengeDate(state), dates[76]);
     assert.equal(addCheckInDate(cache.dates, dates[76]).added, false);
@@ -59,6 +59,21 @@ describe('preview 77-day challenge simulator', () => {
     const paused = setPreviewChallengeEnabled(dayTwo, false, '2026-07-18');
     assert.equal(advancePreviewChallenge(paused).day, 2);
     assert.equal(setPreviewChallengeEnabled(paused, true, '2026-07-18').day, 2);
+  });
+
+  it('continues after calendar day77 until the canonical submitted count reaches77', () => {
+    const state = normalizePreviewChallengeState({ enabled: true, anchorDate: '2026-01-01', day: 91 });
+    assert.equal(previewChallengeDay(state), 91);
+    assert.equal(previewChallengeDate(state), '2026-04-01');
+    const partial = { submittedCount: 76, completionState: 'in_progress' };
+    assert.equal(isPreviewChallengeComplete(state, partial), false);
+    assert.equal(advancePreviewChallenge(state, partial).day, 92);
+    for (const completionState of ['live_completed', 'historical_provenance_pending']) {
+      const complete = { submittedCount: 77, completionState };
+      assert.equal(isPreviewChallengeComplete(state, complete), true);
+      assert.equal(advancePreviewChallenge(state, complete).day, 91);
+    }
+    assert.equal(isPreviewChallengeComplete(state, { submittedCount: '77', completionState: 'live_completed' }), false);
   });
 
   it('advances the app streak on every post and keeps production full-streak continuity', () => {

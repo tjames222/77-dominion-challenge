@@ -643,6 +643,7 @@ select is(
     'crewId',
     'groupMembershipActive',
     'mode',
+    'originalProgress',
     'reviewRequired',
     'revision',
     'schemaVersion',
@@ -660,7 +661,8 @@ select ok(
       "canActivateGroup": true,
       "canParticipate": false,
       "canMutateDailyStandards": false,
-      "canEditStartDate": false
+      "canEditStartDate": false,
+      "originalProgress": null
     }'::jsonb
     from activation_test_results where key = 'solo-before'
   ),

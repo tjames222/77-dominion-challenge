@@ -34,7 +34,7 @@ export function normalizeDailyActionBootstrap(value, expectedActor, requestedDat
     if (['activation', 'timeZone', 'entryDate', 'draft'].some((key) => value[key] !== null)) throw dailyActionBootstrapError();
     return { ...base, activation: null, timeZone: null, entryDate: null, draft: null };
   }
-  const activation = normalizeChallengeActivation(value.activation);
+  const activation = normalizeChallengeActivation(value.activation, { expectedUserId: expectedActor });
   const raw = value.draft;
   if (!activation.contractValid || activation.readState !== 'ready' || !validTimeZone(value.timeZone)
     || !dateKey(value.entryDate) || (requestedDate !== null && requestedDate !== value.entryDate)

@@ -1,4 +1,4 @@
-import { test, expect, HARNESS, RUNTIME, DELIVERY_DATABASE, deferred, openHarness, signInMock, stateFor, deliveryRowsFor, holdDeliveryStore, releaseDeliveryStore, startCheckIn, finishOperation } from './support/preview-badge-browser-support.mjs';
+import { test, expect, HARNESS, RUNTIME, DELIVERY_DATABASE, deferred, openHarness, signInMock, activateFixtureChallenge, stateFor, deliveryRowsFor, holdDeliveryStore, releaseDeliveryStore, startCheckIn, finishOperation } from './support/preview-badge-browser-support.mjs';
 import { fixtureFor, FIXED_NOW, FIXED_USER_ID } from './support/fixtures.mjs';
 import { randomUUID } from 'node:crypto';
 import { DEFAULT_OWNERSHIP_REWARD_DEFINITIONS } from '../../src/static/reward-catalog.mjs';
@@ -24,6 +24,30 @@ for (const roundTrip of [false, true]) test(`delayed compiled import cannot writ
   if (roundTrip) expect(await signInMock(page)).toBe(owner);
   release.resolve();
   expect(await finishOperation(page)).toEqual({ ok: false, error: 'The signed-in account changed. Try again.' });
+  expect(await stateFor(page, owner)).toBeNull();
+});
+
+test('canonical check-in denies a not-started owner and an active owner without access', async ({ page }) => {
+  await openHarness(page);
+  const owner = await page.evaluate(subscription => {
+    const { api, writePreviewUserValue } = window.__previewBadgeTest;
+    const owner = api.saveLocalMockUser({ name: 'Denied Badge Member', email: 'denied.badges@example.test' }).userId;
+    writePreviewUserValue(localStorage, owner, 'dominion:mockSubscription', subscription);
+    return owner;
+  }, fixtureFor('member').json['dominion:mockSubscription']);
+  const activation = () => page.evaluate(owner => window.__previewBadgeTest.api.getChallengeActivation({ expectedUserId: owner }), owner);
+  expect((await activation()).status).toBe('not_started');
+  await startCheckIn(page, owner);
+  expect(await finishOperation(page)).toEqual({ ok: false, error: 'The original challenge cannot accept another Check-In.' });
+  expect(await stateFor(page, owner)).toBeNull();
+
+  await activateFixtureChallenge(page, owner);
+  await page.evaluate(owner => window.__previewBadgeTest.writePreviewUserValue(localStorage, owner, 'dominion:mockSubscription', null), owner);
+  const withoutAccess = await activation();
+  expect(withoutAccess.status).toBe('active');
+  expect(withoutAccess.canMutateDailyStandards).toBe(false);
+  await startCheckIn(page, owner);
+  expect(await finishOperation(page)).toEqual({ ok: false, error: 'The original challenge cannot accept another Check-In.' });
   expect(await stateFor(page, owner)).toBeNull();
 });
 

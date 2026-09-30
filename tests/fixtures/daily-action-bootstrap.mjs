@@ -4,6 +4,9 @@ export function dailyBootstrapFixture({ actorId = DAILY_ACTOR, entryDate = '2026
   version = 2, submitted = false } = {}) {
   const active = status === 'active';
   const activation = {
+    originalProgress: status === 'not_started' ? null : { schemaVersion: 1, userId: actorId,
+      instanceId: `original77:${active ? entryDate : '2026-09-20'}`, targetCount: 77,
+      submittedCount: 0, completionState: 'in_progress', canonicalEvent: null },
     schemaVersion: 1, status, storedStatus: status, mode: status === 'not_started' ? null : 'solo',
     startDate: status === 'not_started' ? null : active ? entryDate : '2026-09-20',
     timeZone: status === 'not_started' ? null : timeZone, challengeDay: active ? 1 : null,

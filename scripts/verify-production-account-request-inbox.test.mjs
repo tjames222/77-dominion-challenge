@@ -86,14 +86,20 @@ test('oversized and stalled bodies cannot bypass byte and wall-clock bounds', as
   }), { status: 201, headers: { 'content-type': 'application/json' } }), { requestTimeoutMs: 10 }), failure);
 });
 
-test('query is source-fixed single SELECT with ordered canonical deparsing and exact67 history', async () => {
+test('query is source-fixed single SELECT with ordered canonical deparsing and exact70 history', async () => {
   const versions = (await readdir(new URL('../supabase/migrations/', import.meta.url)))
-    .filter(name => name.endsWith('.sql')).sort().slice(0, 67).map(name => name.split('_')[0]);
-  assert.equal(versions.length, 67); assert.equal(versions.at(-1), '20260929000950');
+    .filter(name => name.endsWith('.sql')).sort().map(name => name.split('_')[0]);
+  assert.equal(versions.length, 70); assert.equal(new Set(versions).size, 70);
+  assert.equal(versions.at(-1), '20260930161218');
   const hash = createHash('sha256').update(versions.join(',')).digest('hex');
-  assert.equal(hash, '5593452c85b58a6f666815475a5cdfed619b788c52e177074c76d294ed795a52');
+  assert.equal(hash, '09d7293ce15add9360f88a89337ea54822e64f015b1e6ef63eaba1543f36c872');
   assert(INBOX_CATALOG_QUERY.includes(hash));
   assert.match(INBOX_CATALOG_QUERY, /version='20260929000950' AND name='site_admin_account_requests_inbox'/);
+  for (const [version, name] of [
+    ['20260930152825', 'add_original_77_completion_evidence_foundation'],
+    ['20260930160740', 'wire_original_77_live_completion'],
+    ['20260930161218', 'share_submitted_progress_v2'],
+  ]) assert(INBOX_CATALOG_QUERY.includes(`('${version}','${name}')`));
   const executable = INBOX_CATALOG_QUERY.replace(/^--.*$/gm, '');
   assert.equal(executable.split(';').filter(part => part.trim()).length, 1);
   assert.match(executable, /WITH canonical_deparse_context AS MATERIALIZED/);
@@ -106,7 +112,7 @@ test('query is source-fixed single SELECT with ordered canonical deparsing and e
   for (const key of INBOX_CATALOG_FIELDS) assert(executable.includes(' AS ' + key));
 });
 
-test('full release blocks after exact history and before Edge/frontend, with no new secret bindings', async () => {
+test('full release blocks after exact history and before remaining Edge/frontend, with no new secret bindings', async () => {
   const workflow = await readFile(new URL('../.github/workflows/deploy.yml', import.meta.url), 'utf8');
   const step = workflow.slice(workflow.indexOf('      - name: Verify source-fixed account-request inbox catalog'),
     workflow.indexOf('      - name: Reverify exact canary continuity after migration'));
@@ -121,4 +127,28 @@ test('full release blocks after exact history and before Edge/frontend, with no 
   const helper = await readFile(new URL('./verify-production-account-request-inbox.mjs', import.meta.url), 'utf8');
   assert.deepEqual([...helper.matchAll(/process\.env\.([A-Z_]+)/g)].map(match => match[1]).sort(), ['SUPABASE_ACCESS_TOKEN', 'SUPABASE_PROJECT_REF']);
   assert.doesNotMatch(helper, /--credential|prepareProduction|SERVICE_ROLE|PUBLIC_SITE_URL|VITE_|console\.error\(error/);
+});
+
+test('compatible readers deploy after validated dry-run and before new database payload producers', async () => {
+  const workflow = await readFile(new URL('../.github/workflows/deploy.yml', import.meta.url), 'utf8');
+  const backend = workflow.slice(workflow.indexOf('  backend:'), workflow.indexOf('  frontend:'));
+  const preview = backend.indexOf('      - name: Verify migration history and preview the migration plan');
+  const readers = backend.indexOf('      - name: Deploy compatible public share renderer before migrations');
+  const apply = backend.indexOf('      - name: Apply database migrations');
+  assert(preview >= 0 && readers > preview && apply > readers);
+  const section = backend.slice(readers, apply);
+  assert.equal((section.match(/supabase functions deploy /g) || []).length, 2);
+  for (const name of ['share-snapshot', 'process-integration-outbox']) {
+    assert.equal((backend.match(new RegExp(`supabase functions deploy ${name} `, 'g')) || []).length, 1);
+    assert(section.includes(`supabase functions deploy ${name} --project-ref "$SUPABASE_PROJECT_REF" --no-verify-jwt`));
+  }
+  assert.match(section, /Deploy compatible integration reader before migrations\n        if: steps.function-secrets.outputs.integration_runtime_enabled == 'true'/);
+  assert.doesNotMatch(section, /continue-on-error|always\(\)|\$\{\{\s*secrets\.|supabase secrets|configure-|curl|--body|--data/);
+  assert(backend.indexOf('      - name: Validate Edge Function secret topology') < readers);
+  assert(backend.indexOf('      - name: Require exact authoritative migration history') < readers);
+  assert(backend.indexOf('      - name: Verify source-fixed account-request inbox catalog') > apply);
+  assert(backend.indexOf('      - name: Synchronize Edge Function secrets') > apply);
+  assert.match(backend, /environment: production/);
+  assert.match(backend, /if: inputs.release_scope == 'full'/);
+  assert.match(backend, /Revoke any remaining backend database login roles\n        if: always\(\)/);
 });
