@@ -41,7 +41,7 @@ jobs:
   database:
     name: Database
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 40
     env:
       SUPABASE_TELEMETRY_DISABLED: "1"
       SUPABASE_DB_URL: postgresql://postgres:postgres@127.0.0.1:54322/postgres
