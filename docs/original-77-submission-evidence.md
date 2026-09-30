@@ -1,8 +1,8 @@
 # Original challenge submission evidence
 
 This document records the approved completion rule and the boundaries of its
-implementation. The current pure helper is test-only: it does not change live
-check-in limits, grant a Finisher badge, or unlock another challenge.
+implementation. The pure helper and private database foundation do not change
+live check-in limits, grant a Finisher badge, or unlock another challenge.
 
 ## Approved rule
 
@@ -37,6 +37,21 @@ Historical timestamps are not a commit sequence. Even an ordered, untied
 timestamps cannot be repaired by sorting them into a fabricated earned date.
 The retired `day_77_finisher` and all existing award identities remain unchanged.
 
+## Private database foundation
+
+The additive migration creates a private, immutable completion-event ledger and
+a read-only evidence assessor. Neither has execution or table grants for public,
+anonymous, authenticated, or service roles. The ledger also enforces RLS and
+inherits account deletion through explicit foreign-key cascades.
+
+The assessor examines at most 78 actor-owned rows, rejecting overflow, malformed
+actions, noncanonical dates, conflicting ordinals, and mismatched event owners.
+Without a persisted live event, 77 canonical submissions are reported only as
+historical qualification pending provenance. There is no writer, trigger on
+check-ins, historical backfill, award, outbound event, or successor activation.
+The assessor is not an authentication boundary: a future trusted writer must
+independently establish the caller, session, insertion context, and lock order.
+
 ## Coherent live implementation still required
 
 The original challenge can be implemented before repeatable later instances,
@@ -70,5 +85,9 @@ backup, and a separately verified deployment.
 The pure helper update passed 171 focused tests and the broader 1,539-test
 frontend suite under Node 24.19.0. The first broad run encountered a sandbox
 permission error writing Vite temporary files; the unchanged permitted rerun
-passed. The helper has no production imports. Runtime database and browser
+passed. The helper has no production imports. The private foundation passed an
+independent eight-test fixture using cached PostgreSQL 17.6.1.141 in a disposable
+network-isolated container. That adversarial fixture intentionally omits some
+production constraints to exercise malformed evidence; it does not prove the
+full migration chain or concurrent live completion. Runtime writer and browser
 completion behavior remain unimplemented and are not claimed by these tests.
