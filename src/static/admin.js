@@ -3,25 +3,29 @@ import {
   listSiteAdminAudit, getSiteAdminAuditEvent, subscribeToAdminInvalidation,
   cancelAdminReads, clearAuthSession,
   listSiteAdminEarlyAccess, getSiteAdminEarlyAccess,
+  listSiteAdminAccountRequests,
 } from './api.js';
 import { adminReadError } from './admin-read-client.mjs';
 import { normalizeEarlyAccessRequest } from './admin-early-access-contract.mjs';
 import { mountEarlyAccessDetail } from './admin-early-access-detail.mjs';
 import { mountRoleDetail } from './admin-role-detail.mjs';
 import { adminUserListFacts } from './admin-user-presentation.mjs';
+import { normalizeAdminAccountRequestPage, accountRequestTypeLabel, accountRequestRecordedStatus } from './admin-account-requests.mjs';
+import { readAdminAccountRequests } from './admin-account-request-transport.mjs';
 import { mfaChallengeHref } from './mfa-navigation.mjs';
 
 const byId = (id) => document.getElementById(id);
 const workspace = byId('adminWorkspace');
 const dialog = byId('adminDetail');
 let epoch = 0; let queryEpoch = 0; let detailEpoch = 0;
-let owner = null; let permissions = []; let tab = location.hash === '#early-access' ? 'early' : 'users'; let loading = false;
+let owner = null; let permissions = []; let tab = location.hash === '#account-requests' ? 'requests' : location.hash === '#early-access' ? 'early' : 'users'; let loading = false;
 let cursors = [null]; let page = 0; let nextCursor = null; let detailOpener = null;
 let suspended = false; let checking = false;
 let listController = null; let detailController = null; let detailCleanup = null;
 const tabs = { users: { permission: 'users.read', prefix: 'adminUsers', list: listSiteAdminUsers, get: getSiteAdminUser },
   audit: { permission: 'audit.read', prefix: 'adminAudit', list: listSiteAdminAudit, get: getSiteAdminAuditEvent },
-  early: { permission: 'operations.read', prefix: 'adminEarly', list: listSiteAdminEarlyAccess, get: getSiteAdminEarlyAccess } };
+  early: { permission: 'operations.read', prefix: 'adminEarly', list: listSiteAdminEarlyAccess, get: getSiteAdminEarlyAccess },
+  requests: { permission: 'operations.read', prefix: 'adminRequests', list: (args, options) => readAdminAccountRequests(listSiteAdminAccountRequests, args, options) } };
 const text = (value) => typeof value === 'string' || typeof value === 'number' ? String(value).slice(0, 2000) : 'Not recorded';
 const date = (value) => {
   if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}T/.test(value)) return 'Not recorded';
@@ -81,8 +85,8 @@ function userStatus(item) {
   return values.join(' · ');
 }
 function cell(row, label, value) { const node = element('td'); node.dataset.label = label; node.append(value instanceof Node ? value : element('span', value)); row.append(node); }
-function userFacts(pairs) {
-  const list = element('dl', undefined, 'admin-user-facts');
+function userFacts(pairs, className = 'admin-user-facts') {
+  const list = element('dl', undefined, className);
   for (const [label, value] of pairs) { const pair = element('div'); pair.append(element('dt', label), element('dd', value)); list.append(pair); }
   return list;
 }
@@ -105,6 +109,15 @@ function renderRows(items) {
   for (const raw of items) {
     const item = tab === 'early' ? normalizeEarlyAccessRequest(raw) : raw;
     const row = element('tr');
+    if (tab === 'requests') {
+      row.setAttribute('role', 'row');
+      cell(row, 'Request and requester IDs', userFacts([['Request ID', item.id], ['Requester ID', item.userId ?? 'Account reference removed']], 'admin-request-facts'));
+      cell(row, 'Type', accountRequestTypeLabel(item.requestType));
+      cell(row, 'Recorded status', accountRequestRecordedStatus(item.status));
+      cell(row, 'Timeline', userFacts([['Requested', date(item.requestedAt)], ['Updated', date(item.updatedAt)], ['Resolved', item.resolvedAt === null ? 'Not resolved' : date(item.resolvedAt)]], 'admin-request-facts'));
+      for (const node of row.children) node.setAttribute('role', 'cell');
+      fragment.append(row); continue;
+    }
     if (tab === 'users') {
       // Explicit roles retain table relationships when Users becomes cards.
       row.setAttribute('role', 'row');
@@ -133,6 +146,7 @@ function renderRows(items) {
 }
 function listArgs() {
   const data = new FormData(byId(`${tabs[tab].prefix}Filters`));
+  if (tab === 'requests') return { target_limit: 25, target_cursor: cursors[page], target_request_type: data.get('type'), target_status: data.get('status'), target_sort: data.get('sort') };
   if (tab === 'early') return { target_limit: 25, target_cursor: cursors[page], target_search: data.get('search').trim(), target_status: data.get('status'), target_sort: data.get('sort') };
   return tab === 'users' ? { target_limit: 25, target_cursor: cursors[page], target_search: data.get('search').trim(), target_role: data.get('role'), target_status: data.get('status'), target_sort: data.get('sort') }
     : { target_limit: 25, target_cursor: cursors[page], target_user_id: data.get('target').trim() || null, target_action: data.get('action'), target_outcome: data.get('outcome') };
@@ -144,8 +158,9 @@ async function loadPage() {
   const captured = epoch; const query = queryEpoch; const actorId = owner.actorId;
   listController = new AbortController(); const signal = listController.signal;
   try {
-    const result = await tabs[tab].list(listArgs(), { expectedUserId: actorId, signal });
+    let result = await tabs[tab].list(listArgs(), { expectedUserId: actorId, signal });
     if (captured !== epoch || query !== queryEpoch || suspended) return;
+    if (tab === 'requests') result = normalizeAdminAccountRequestPage(result);
     renderRows(result.items);
     if (result.nextCursor !== null && (typeof result.nextCursor !== 'object' || Array.isArray(result.nextCursor))) throw adminReadError();
     nextCursor = result.nextCursor;
@@ -276,7 +291,7 @@ for (const node of document.querySelectorAll('[data-admin-tab]')) {
       : allowed[(index + (event.key === 'ArrowLeft' ? -1 : 1) + allowed.length) % allowed.length], { focus: true });
   });
 }
-for (const id of ['adminUsersFilters', 'adminAuditFilters', 'adminEarlyFilters']) {
+for (const id of ['adminUsersFilters', 'adminAuditFilters', 'adminEarlyFilters', 'adminRequestsFilters']) {
   byId(id).addEventListener('submit', (event) => { event.preventDefault(); cursors = [null]; page = 0; void loadPage(); });
   byId(id).addEventListener('input', () => { clearRows(); cursors = [null]; page = 0; updatePagination(); byId('adminStatus').textContent = 'Filters changed. Apply filters to load records.'; });
 }

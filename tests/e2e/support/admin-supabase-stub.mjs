@@ -58,7 +58,7 @@ export async function installAdminStub(context, { role = 'site_admin', aal = 'aa
       }
       const denial = name === 'site_admin_deny_early_access_request';
       const assignment = name === 'site_admin_assign_role';
-      const capability = assignment ? 'roles.manage' : denial ? 'operations.manage' : name.includes('early_access') ? 'operations.read' : name.includes('audit') ? 'audit.read' : 'users.read';
+      const capability = assignment ? 'roles.manage' : denial ? 'operations.manage' : name.includes('early_access') || name === 'site_admin_list_account_requests' ? 'operations.read' : name.includes('audit') ? 'audit.read' : 'users.read';
       if (!ready || !permissions.includes(capability) || ((denial || assignment) && recentMfaRequired)) return json(route, { message: 'admin_permission_or_step_up_required' }, 403);
       const held = !holdNames || holdNames.includes(name) ? hold : null;
       if (held) await held;

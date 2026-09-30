@@ -2,6 +2,148 @@ import { test, expect } from '@playwright/test';
 import AxeBuilder from '@axe-core/playwright';
 import { installAdminStub } from './support/admin-supabase-stub.mjs';
 
+test.describe('Account requests inbox', () => {
+  test.beforeEach(async ({ page, baseURL }) => {
+    page.__inboxEvidence = { external: [], errors: [] };
+    page.on('pageerror', error => page.__inboxEvidence.errors.push(error.message));
+    await page.route('**/*', route => {
+      if (new URL(route.request().url()).origin !== new URL(baseURL).origin) {
+        page.__inboxEvidence.external.push(new URL(route.request().url()).origin); return route.abort();
+      }
+      return route.fallback();
+    });
+  });
+  test.afterEach(async ({ page }) => {
+    expect(page.__inboxEvidence.external).toEqual([]); expect(page.__inboxEvidence.errors).toEqual([]);
+    const stored = await page.evaluate(() => JSON.stringify({ ...localStorage, ...sessionStorage })).catch(() => '');
+    expect(stored).not.toMatch(/80000000-0000-4000-8000|resolvedAt|operatorNote|PRIVATE_INBOX/);
+  });
+  async function inbox(context, page, options = {}) {
+    const auth = await installAdminStub(context, { permissions: ['operations.read'], ...options });
+    await page.goto('/admin.html#account-requests'); await expect(page.locator('#adminRequestsRows tr')).toHaveCount(25);
+    return auth;
+  }
+  test('Operations-only reads are paginated, metadata-only and have no account or fulfillment actions', async ({ context, page }) => {
+    const auth = await inbox(context, page);
+    await expect(page.locator('#adminUsersTab')).toBeHidden(); await expect(page.locator('#adminAuditTab')).toBeHidden();
+    await expect(page.locator('#adminRequestsRows')).toContainText('Data export'); await expect(page.locator('#adminRequestsRows')).toContainText('In progress');
+    await expect(page.locator('#adminRequestsRows button, #adminRequestsRows a')).toHaveCount(0);
+    await page.locator('#adminNextPage').click(); await expect(page.locator('#adminRequestsRows tr')).toHaveCount(3);
+    await expect(page.locator('#adminNextPage')).toBeDisabled();
+    await page.locator('#adminPreviousPage').click(); await expect(page.locator('#adminRequestsRows tr')).toHaveCount(25);
+    await page.getByRole('combobox', { name: 'Request type', exact: true }).selectOption('data_export');
+    await expect(page.locator('#adminRequestsRows tr')).toHaveCount(0);
+    await page.locator('#adminRequestsFilters button').click(); await expect(page.locator('#adminRequestsRows tr')).toHaveCount(14);
+    const first = await page.locator('#adminRequestsRows tr').first().textContent();
+    await page.getByRole('combobox', { name: 'Account request sort', exact: true }).selectOption('newest');
+    await page.locator('#adminRequestsFilters button').click();
+    await expect(page.locator('#adminRequestsRows tr').first()).not.toHaveText(first);
+    expect(auth.reads().every(r => r.path.endsWith('/site_admin_list_account_requests'))).toBe(true);
+    expect(auth.requests.filter(r => r.method !== 'GET' && !r.path.includes('/rpc/'))).toEqual([]);
+    await expect(page.locator('#adminRequestsNote')).toContainText('not proof of export delivery or complete erasure');
+  });
+  test('recorded terminal states and removed requester remain distinct from processing failures', async ({ context, page }) => {
+    await inbox(context, page);
+    await page.getByRole('combobox', { name: 'Recorded request status', exact: true }).selectOption('all');
+    await page.getByRole('combobox', { name: 'Account request sort', exact: true }).selectOption('newest');
+    await page.locator('#adminRequestsFilters button').click();
+    await expect(page.locator('#adminRequestsRows')).toContainText('Account reference removed');
+    await expect(page.locator('#adminRequestsRows')).toContainText('Recorded fulfilled');
+    await expect(page.locator('#adminRequestsRows')).toContainText('Cancelled');
+    await expect(page.locator('#adminRequestsRows')).toContainText('Declined');
+    await expect(page.locator('#adminRequestsRows')).not.toContainText('Failed');
+    await page.getByRole('combobox', { name: 'Request type', exact: true }).selectOption('data_export');
+    await page.getByRole('combobox', { name: 'Recorded request status', exact: true }).selectOption('in_progress');
+    await page.locator('#adminRequestsFilters button').click();
+    await expect(page.locator('#adminRequestsRows tr')).toHaveCount(0); await expect(page.locator('#adminStatus')).toHaveText('No records match these filters.');
+  });
+  for (const [name, options] of [['member', { role: 'member' }], ['AAL1', { aal: 'aal1' }], ['missing permission', { permissions: ['users.read'] }]]) {
+    test(`${name} cannot open or fetch Operations records`, async ({ context, page }) => {
+      const auth = await installAdminStub(context, options); await page.goto('/admin.html#account-requests');
+      if (name === 'missing permission') await expect(page.locator('#adminUsersRows tr')).toHaveCount(25);
+      else await expect(page.locator('#adminGateTitle')).not.toHaveText('Checking access');
+      await expect(page.locator('#adminRequestsTab')).toBeHidden(); await expect(page.locator('#adminRequestsRows tr')).toHaveCount(0);
+      expect(auth.requests.some(r => r.path.endsWith('/site_admin_list_account_requests'))).toBe(false);
+    });
+  }
+  for (const mode of ['failure', 'wrong actor', 'permission revoked']) test(`${mode} clears all previously displayed request metadata`, async ({ context, page }) => {
+    const auth = await inbox(context, page);
+    if (mode === 'failure') auth.fail(); else if (mode === 'wrong actor') auth.corrupt(); else auth.permissions([]);
+    await page.locator('#adminRefresh').click(); await expect(page.locator('#adminRequestsRows tr')).toHaveCount(0);
+    if (mode === 'permission revoked') await expect(page.locator('#adminWorkspace')).toBeHidden();
+    else await expect(page.locator('#adminStatus')).toContainText('temporarily unavailable');
+    expect(await page.content()).not.toContain('PRIVATE RAW ERROR');
+  });
+  for (const mode of ['pagehide', 'replacement', 'ABA']) test(`${mode} rejects a held response and scrubs filters and cursor history`, async ({ context, page }) => {
+    const auth = await inbox(context, page); const release = auth.hold(['site_admin_list_account_requests']);
+    try {
+      const before = auth.reads().length; await page.locator('#adminNextPage').click();
+      await expect.poll(() => auth.reads().length).toBeGreaterThan(before);
+      if (mode === 'pagehide') await page.evaluate(() => window.dispatchEvent(new PageTransitionEvent('pagehide')));
+      else {
+        const replacement = auth.session(mode === 'ABA' ? auth.B : auth.A, 'aal2', '22222222-2222-4222-8222-222222222222');
+        await page.evaluate(value => { localStorage.setItem('sb-127-auth-token', JSON.stringify(value)); window.dispatchEvent(new StorageEvent('storage', { key: 'sb-127-auth-token', newValue: JSON.stringify(value) })); }, replacement);
+        if (mode === 'ABA') await page.evaluate(value => { localStorage.setItem('sb-127-auth-token', JSON.stringify(value)); window.dispatchEvent(new StorageEvent('storage', { key: 'sb-127-auth-token', newValue: JSON.stringify(value) })); }, auth.firstSession);
+      }
+      await expect(page.locator('#adminWorkspace')).toBeHidden(); release();
+      await expect(page.locator('#adminRequestsRows tr')).toHaveCount(0); await expect(page.locator('#adminPageLabel')).toHaveText('Page 1');
+      expect(await page.locator('#adminRequestsFilters select[name="status"]').inputValue()).toBe('active');
+    } finally { release(); }
+  });
+  test('unknown or private fields never render; malformed stored status fails closed', async ({ context, page }) => {
+    await installAdminStub(context, { permissions: ['operations.read'] }); let malformed = false;
+    await page.route('**/site_admin_list_account_requests', route => {
+      const body = route.request().postDataJSON();
+      return route.fulfill({ contentType: 'application/json', body: JSON.stringify({ schemaVersion: 1, actorId: body.target_expected_actor_id,
+        observedAt: '2026-01-01T12:00:00Z', nextCursor: null, items: [{ id: '80000000-0000-4000-8000-000000000001', userId: null,
+          requestType: 'data_export', status: malformed ? 'failed' : 'requested', requestedAt: '2026-01-01T12:00:00Z', updatedAt: '2026-01-01T12:00:00Z', resolvedAt: null,
+          operatorNote: 'PRIVATE_INBOX_NOTE', email: 'PRIVATE_INBOX_EMAIL', payload: '<img src=x onerror=alert(1)>' }] }) });
+    });
+    await page.goto('/admin.html#account-requests'); await expect(page.locator('#adminRequestsRows tr')).toHaveCount(1);
+    expect(await page.content()).not.toMatch(/PRIVATE_INBOX|onerror=alert/);
+    malformed = true; await page.locator('#adminRefresh').click(); await expect(page.locator('#adminRequestsRows tr')).toHaveCount(0);
+    await expect(page.locator('#adminStatus')).toContainText('temporarily unavailable');
+  });
+  test('filter choices stay fully readable across viewport and text sizes', async ({ context, page }, testInfo) => {
+    await inbox(context, page);
+    await page.evaluate(() => document.fonts.ready.then(() => undefined));
+    for (const width of [320, 390, 768, 1050, 1440]) {
+      await page.setViewportSize({ width, height: 1000 });
+      for (const scale of ['100%', '200%']) {
+        await page.evaluate(value => { document.documentElement.style.fontSize = value; }, scale);
+        const choices = await page.locator('#adminRequestsFilters select').evaluateAll(selects => selects.flatMap(select => {
+          const style = getComputedStyle(select);
+          const measure = document.createElement('canvas').getContext('2d'); measure.font = style.font;
+          const available = select.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight);
+          return [...select.options].map(option => ({ label: option.text, available, required: measure.measureText(option.text).width }));
+        }));
+        for (const choice of choices) expect(choice.available, `${width}px / ${scale}: ${choice.label}`).toBeGreaterThanOrEqual(choice.required);
+        expect(await page.locator('#adminRequestsFilters').evaluate(form => form.scrollWidth <= form.clientWidth)).toBe(true);
+        if ([320, 1440].includes(width)) {
+          await page.locator('#adminRequestsFilters').scrollIntoViewIfNeeded();
+          await page.screenshot({ path: testInfo.outputPath(`account-request-filters-${width}-${scale}.png`) });
+        }
+      }
+    }
+  });
+  for (const theme of ['light', 'dark', 'dominion-night', 'dominion-platinum']) test(`${theme} keyboard, table semantics and 200% text remain accessible`, async ({ context, page }, testInfo) => {
+    await inbox(context, page);
+    await page.evaluate(theme => { document.documentElement.dataset.theme = theme; }, theme);
+    const table = page.getByRole('table', { name: /^Account requests/ });
+    await expect(table.getByRole('columnheader')).toHaveCount(4); await expect(table.getByRole('row')).toHaveCount(26);
+    await page.locator('#adminRequestsTab').focus(); await page.keyboard.press('Home'); await expect(page.locator('#adminEarlyTab')).toBeFocused();
+    await page.keyboard.press('End'); await expect(page.locator('#adminRequestsTab')).toBeFocused();
+    await expect(page.locator('#adminRequestsRows tr')).toHaveCount(25);
+    await page.evaluate(() => document.fonts.ready.then(() => undefined));
+    for (const scale of ['100%', '200%']) {
+      await page.evaluate(value => { document.documentElement.style.fontSize = value; }, scale);
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
+      expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
+    }
+    await page.screenshot({ path: testInfo.outputPath(`${theme}-account-requests.png`) });
+  });
+});
+
 async function ready(page) { await page.goto('/admin.html'); await expect(page.locator('#adminUsersRows tr')).toHaveCount(25); }
 const PRESENTATION_USER = '70000000-0000-4000-8000-000000000028';
 function presentationFixture(auth) {

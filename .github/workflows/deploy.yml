@@ -1167,6 +1167,18 @@ jobs:
           node scripts/verify-production-raw-migration-history.mjs \
             --cli-history "$post_migration_history_file" \
             --require-no-pending
+      - name: Verify source-fixed account-request inbox catalog
+        timeout-minutes: 1
+        shell: bash
+        run: |
+          set -euo pipefail
+          set +x
+          ulimit -c 0
+          /usr/bin/env -i \
+            PATH="$PATH" \
+            SUPABASE_ACCESS_TOKEN="$SUPABASE_ACCESS_TOKEN" \
+            SUPABASE_PROJECT_REF="$SUPABASE_PROJECT_REF" \
+            node scripts/verify-production-account-request-inbox.mjs
       - name: Reverify exact canary continuity after migration
         if: steps.cutover-plan.outputs.mode == 'initial-cutover'
         run: |

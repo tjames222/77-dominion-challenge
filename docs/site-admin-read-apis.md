@@ -1,6 +1,7 @@
 # Site-admin account and audit reads (FOU-1502, partial delivery)
 
-These four read-only RPCs extend the [security foundation](site-admin-foundation.md).
+The original four account/audit read-only RPCs and the account-request inbox below
+extend the [security foundation](site-admin-foundation.md).
 They do not construct an Auth Admin client, change accounts/roles, append audit
 events, or expose an admin UI by themselves. The separately shipped
 [read-only admin screen](site-admin-read-ui.md) consumes these contracts.
@@ -118,6 +119,81 @@ user UUID, action (`all`, `roles.assign`, `roles.bootstrap`) and outcome (`all`,
 `success`, `failure`). Cursor actor/query/version/type/size validation mirrors
 the account list. Detail IDs must be positive canonical bigint decimal strings;
 overflow is a stable `admin_invalid_input`, not a leaked cast error.
+
+## Account requests inbox (read-only operations slice)
+
+`site_admin_list_account_requests(target_expected_actor_id, target_limit=25,
+target_request_type='all', target_status='active', target_sort='oldest',
+target_cursor=null)` requires **only `operations.read`**, with the same captured
+actor, allowed Origin, live healthy native session/account and same-session
+verified TOTP/AAL2 checks described above. It does not require `users.read` or
+write step-up and does not read account names/emails. `anon` and `service_role`
+have no execute grant. This is a public API function solely so authenticated
+admin requests can enter the private guard; no private helper is exposed.
+
+The envelope is `{schemaVersion:1, actorId, observedAt, items, nextCursor}`.
+Each item has exactly `id`, `userId` (UUID or `null`), `requestType`, `status`,
+`requestedAt`, `updatedAt`, and `resolvedAt`. A null requester stays null: no
+identity lookup, email/name enrichment or recovery is attempted. Notes, Auth
+metadata/credentials, exports, object paths, journals and payment data are never
+selected. A recorded `fulfilled` status is not independent proof that data was
+delivered or every asynchronous erasure task completed; `declined` is not renamed
+to failed. There is no detail or fulfillment operation in this slice.
+
+Supported types are `all`, `data_export`, `account_deletion`; statuses are
+`active`, `all`, `requested`, `in_progress`, `fulfilled`, `cancelled`, `declined`.
+`active` means only requested/in-progress. Sort is `oldest` (default) or `newest`,
+with `(requested_at,id)` in the same direction and page size 1–50. There is no
+search, total count, OFFSET, arbitrary SQL sort, long-lived snapshot, or ledger
+mutation. Each page takes a fresh authorized statement snapshot. Refresh from
+page one to see new earlier rows or requests whose filter membership changed.
+
+Return the opaque cursor unchanged. It contains exactly
+`{v:1,actorId,query,stamp,id}`, with a SHA-256 query binding over the three
+normalized filter/sort values, a finite RFC3339 timestamp and canonical UUID.
+It is capped at 2 KiB and bound to the current actor; changing type/status/sort
+invalidates it, while changing page size is supported. It is not a bearer token
+or an authority cache. Invalid input and cursor errors are the fixed
+`admin_invalid_input` / `admin_invalid_cursor` labels without cast diagnostics.
+
+The additive migration changes no roles, grants on data tables, policies,
+provider Auth objects or existing member indexes. The original table remains
+FORCE RLS with its two member policies and restricted intake columns. One new
+`(request_type,status,requested_at,id)` index supports at most ten allowlisted
+type/status buckets. Each bucket reads at most `limit+1` ordered entries; the
+final merge sorts no more than 510 candidates and returns at most 50 items plus
+the next-page cursor. All query values are parameters; only fixed ascending/
+descending and greater/less operators enter dynamic SQL text.
+
+### Inbox validation evidence
+
+`node --test scripts/site-admin-account-requests.sql.test.mjs` passes 13 native
+tests, including the 16 pgTAP assertions in `330_site_admin_account_requests.sql`.
+It uses the exact cached PostgreSQL 17.6.1.141 image in a newly owned no-network,
+no-port, read-only-root, nonroot tmpfs container with background workers disabled.
+The fixture loads the actual request-table migration, including FORCE RLS, its
+policies/constraints and Auth foreign key. The table owner is non-superuser and
+NOBYPASSRLS. A separate, fixture-only trusted NOLOGIN/BYPASSRLS function owner
+models the existing managed `postgres` function-owner privilege, with only the
+needed SELECT and private-guard execute grants; no client can assume that role.
+This is not a production role/policy change. Direct member reads remain own-only
+even for a site admin, and the ordinary table owner remains subject to FORCE RLS.
+
+All 42 type/status/sort combinations and both initial/cursor variants are measured
+using `EXPLAIN (ANALYZE, BUFFERS)` on the exact query over 50,000 synthetic rows,
+before and after the index. The native run recorded sequential scans in all 84
+baseline plans (820–8,200 shared blocks; 1.848–23.697 ms). All 84 indexed plans
+used ordered bucket scans with no filtered rows, at most 51 rows per bucket and
+510 sort inputs (12–133 shared blocks; 0.032–0.261 ms). Timings are local evidence,
+not production latency guarantees. Tests also cover ties/pages, null requester,
+empty/changed-status pages, strict malformed cursors, denied roles, native
+session/account/factor/permission revocation, no-store and unchanged ledger data.
+
+The CLI generated `20260929000950_site_admin_account_requests_inbox.sql`; native
+SQL was executed only in the disposable fixture. Shared-stack reset and hosted
+database/advisor calls were not used. Normal full-chain CI remains required before
+release. This completes only the metadata inbox part of FOU-1502, not fulfillment,
+account recovery, dashboard metrics or other remaining admin capabilities.
 
 ## Validation and intentionally omitted fields
 
