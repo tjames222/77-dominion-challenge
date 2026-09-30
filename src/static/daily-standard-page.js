@@ -147,18 +147,7 @@ function readLocalDraft(activation, user) {
   const date = localEntryDate(activation.timeZone || browserTimeZone, user.userId);
   const preview = localPreviewState(user.userId);
   const previewActive = isPreviewChallengeActive(localDemoMode, preview);
-  const nextActivation = previewActive
-    ? {
-        ...activation,
-        readState: 'ready',
-        contractValid: true,
-        status: 'active',
-        mode: 'solo',
-        startDate: preview.anchorDate,
-        canParticipate: true,
-        canMutateDailyStandards: true,
-      }
-    : activation;
+  const nextActivation = activation;
   const challengeActive = nextActivation.canMutateDailyStandards === true;
   const storedEntries = readPreviewUserValue(localStorage, user.userId, ENTRY_STORAGE_KEY, []);
   const entries = Array.isArray(storedEntries) ? storedEntries : [];
@@ -177,7 +166,7 @@ function readLocalDraft(activation, user) {
         {},
       ),
       submitted,
-      locked: submitted || isPreviewChallengeComplete(preview) || !challengeActive,
+      locked: submitted || isPreviewChallengeComplete(preview, activation.originalProgress) || !challengeActive,
       lockReason: challengeActive ? null : 'challenge_not_active',
     }),
   };

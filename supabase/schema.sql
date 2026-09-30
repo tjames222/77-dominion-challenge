@@ -87,7 +87,8 @@ create table if not exists public.check_ins (
   id uuid primary key default gen_random_uuid(),
   user_id uuid not null references auth.users(id) on delete cascade,
   entry_date date not null,
-  challenge_day integer not null check (challenge_day between 1 and 77),
+  challenge_day integer not null
+    constraint check_ins_challenge_day_range check (challenge_day between 1 and 77),
   status text not null check (status in ('complete', 'partial', 'scheduled')),
   completed_count integer not null default 0,
   completed text[] not null default '{}',
@@ -13904,3 +13905,6 @@ revoke execute on function public.grant_sharing_reward_after_invite_redemption()
 \ir migrations/20260927225600_early_access_invitation_lifecycle.sql
 \ir migrations/20260927233055_early_access_account_bootstrap.sql
 \ir migrations/20260929000950_site_admin_account_requests_inbox.sql
+\ir migrations/20260930152825_add_original_77_completion_evidence_foundation.sql
+\ir migrations/20260930160740_wire_original_77_live_completion.sql
+\ir migrations/20260930161218_share_submitted_progress_v2.sql

@@ -902,14 +902,14 @@
     {
       "key": "original_77_completed",
       "name": "77-Day Finisher",
-      "description": "Complete the original 77-day challenge under its authoritative completion rules.",
-      "requirement": "Complete the original 77-day challenge under its authoritative completion rules.",
+      "description": "Submit 77 check-ins in your original challenge; partial check-ins count.",
+      "requirement": "Submit 77 check-ins in your original challenge; partial check-ins count.",
       "series": "completion",
       "tier": "gold",
       "tierRank": 3,
       "icon": "crown",
       "displayOrder": 900,
-      "status": "blocked",
+      "status": "active",
       "criteriaVersion": 1,
       "source": "challenge_completion",
       "metric": "original_77_completion",
@@ -919,8 +919,8 @@
       "visibility": "public",
       "showProgress": false,
       "celebration": "queue",
-      "tierRationale": "Reserved for authoritative challenge completion.",
-      "migrationTreatment": "New key; completion predicate is awaiting product decision. No evaluator accepts client completion flags or elapsed day77 as evidence."
+      "tierRationale": "Completing 77 submitted check-ins is the original challenge milestone.",
+      "migrationTreatment": "Award only from the persisted live 77th submission, including partials and submissions after calendar day77. Historical qualification without a canonical completion event does not invent an earned timestamp or replay an award."
     }
   ]
 }

@@ -1,16 +1,18 @@
-import { test, expect, deferred, openHarness, stateFor, deliveryRowsFor, holdDeliveryStore, releaseDeliveryStore, startCheckIn, finishOperation } from './support/preview-badge-browser-support.mjs';
+import { test, expect, deferred, openHarness, activateFixtureChallenge, stateFor, deliveryRowsFor, holdDeliveryStore, releaseDeliveryStore, startCheckIn, finishOperation } from './support/preview-badge-browser-support.mjs';
 import { installFou1452SupabaseAuthStub } from './support/fou-1452-supabase-auth-stub.mjs';
 
 const A = { email: 'alpha.badge-hybrid@example.test', password: 'Synthetic-Badge-Password1!' };
 const B = { email: 'bravo.badge-hybrid@example.test', password: 'Synthetic-Badge-Password2!' };
 const RUNTIME = /\/src\/static\/badge-preview-state\.mjs(?:\?.*)?$/;
 async function register(page, account = A) {
-  return page.evaluate(async account => {
+  const owner = await page.evaluate(async account => {
     const { api } = window.__previewBadgeTest;
     const result = await api.supabase.auth.signUp(account);
     if (result.error) throw result.error;
     return (await api.getLocalOrSessionUser()).userId;
   }, account);
+  await activateFixtureChallenge(page, owner);
+  return owner;
 }
 async function replaceSession(page, sameActor) {
   await page.evaluate(async ({ sameActor, A, B }) => {

@@ -60,6 +60,7 @@ export SUPABASE_TELEMETRY_DISABLED=1
 lock_holder_pid=""
 lock_holder_log=""
 migration_failure_log=""
+completion_failure_log=""
 
 restore_current_schema() {
   local test_status=$?
@@ -72,6 +73,7 @@ restore_current_schema() {
   fi
   [[ -z "$lock_holder_log" ]] || rm -f "$lock_holder_log"
   [[ -z "$migration_failure_log" ]] || rm -f "$migration_failure_log"
+  [[ -z "$completion_failure_log" ]] || rm -f "$completion_failure_log"
   echo "Restoring the current local schema and seed..."
   set +e
   bash "$repository_root/scripts/reset-local-database.sh"
@@ -567,7 +569,53 @@ fi
 echo "Activation cutover timeout rolled back fully; the drained retry may proceed."
 
 echo "Applying the challenge activation lifecycle migration..."
-"$supabase_cli" migration up --local
+# This historical rehearsal deliberately retains an impossible max-int ordinal.
+# Activation must preserve and flag it, while the later completion migration must
+# refuse it without partial DDL/history. Do not normalize or delete the evidence
+# just to let a final-schema migration pass. The EXIT trap rebuilds clean head.
+completion_failure_log="$(mktemp)"
+set +e
+"$supabase_cli" migration up --local >"$completion_failure_log" 2>&1
+completion_migration_status=$?
+set -e
+if (( completion_migration_status == 0 )) \
+   || ! grep -Fq 'validate constraint check_ins_challenge_day_range' "$completion_failure_log"; then
+  cat "$completion_failure_log" >&2
+  echo "The completion migration did not reject the retained invalid ordinal at its validation boundary." >&2
+  exit 1
+fi
+completion_rollback_verified="$(run_psql --set=ON_ERROR_STOP=1 --tuples-only --no-align --quiet --command "
+  select
+    (select max(version) from supabase_migrations.schema_migrations) = '20260930152825'
+    and not exists (
+      select 1 from supabase_migrations.schema_migrations
+      where version in ('20260930160740', '20260930161218')
+    )
+    and exists (
+      select 1 from public.check_ins
+      where user_id = 'e2000000-0000-4000-8000-000000000002'
+        and challenge_day = 2147483647 and entry_date = '-infinity'::date
+    )
+    and exists (
+      select 1 from pg_catalog.pg_constraint
+      where conrelid = 'public.check_ins'::regclass
+        and conname = 'check_ins_challenge_day_range'
+        and not convalidated
+        and pg_catalog.pg_get_constraintdef(oid) =
+          'CHECK (((challenge_day >= 1) AND (challenge_day <= 77))) NOT VALID'
+    )
+    and not exists (
+      select 1 from information_schema.columns
+      where table_schema = 'private' and table_name = 'original_77_completion_events'
+        and column_name in ('source_local_date', 'source_recorded_at')
+    );
+")"
+if [[ "$completion_rollback_verified" != "t" ]]; then
+  cat "$completion_failure_log" >&2
+  echo "The rejected completion migration changed retained evidence, schema or history." >&2
+  exit 1
+fi
+echo "Activation migrated and retained malformed evidence; the later completion boundary rolled back atomically."
 
 echo "Activating a fresh account on a non-UTC date boundary..."
 run_psql --set=ON_ERROR_STOP=1 --quiet <<'SQL'

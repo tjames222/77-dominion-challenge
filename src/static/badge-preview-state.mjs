@@ -1,5 +1,6 @@
-import { BADGE_CATALOG, appVisitBadgeFacts, badgeCatalogOrder, checkInBadgeFacts, evaluateBadgeEvent } from './badge-evaluation.mjs';
+import { BADGE_CATALOG, appVisitBadgeFacts, badgeCatalogOrder, checkInBadgeFacts, evaluateBadgeEvent, original77CompletionBadgeFacts } from './badge-evaluation.mjs';
 import { badgeAwardIdentity } from './badge-data-contract.mjs';
+import { previewOriginal77Progress } from './original-77-progress.mjs';
 
 export { PREVIEW_BADGE_STATE_KEY } from './badge-data-contract.mjs';
 export { evaluateBadgeEvent } from './badge-evaluation.mjs';
@@ -8,19 +9,39 @@ export function normalizePreviewBadgeState(value, legacy=[]) {
   const isEvent = (row) => row && typeof row === 'object' && typeof row.localDate === 'string' && typeof row.sourceId === 'string';
   if(value?.schemaVersion===1&&Array.isArray(value.awards)&&Array.isArray(value.checkIns)&&Array.isArray(value.visits)) return {
     schemaVersion:1,awards:structuredClone(value.awards.filter(isAward)),
-    checkIns:structuredClone(value.checkIns.filter(isEvent)),visits:structuredClone(value.visits.filter(isEvent)),
+    checkIns:structuredClone(value.checkIns),visits:structuredClone(value.visits.filter(isEvent)),
+    completionEvents:structuredClone(value.completionEvents ?? []),
   };
-  return {schemaVersion:1,checkIns:[],visits:[],awards:(Array.isArray(legacy)?legacy:[]).filter(isAward).map(award=>({...award,
+  return {schemaVersion:1,checkIns:[],visits:[],completionEvents:[],awards:(Array.isArray(legacy)?legacy:[]).filter(isAward).map(award=>({...award,
     scopeKey:award.scopeKey||award.scope_key||'lifetime',awardId:award.awardId||award.id||`legacy:${badgeAwardIdentity(award)}`,
     legacy:true,celebrationSeenAt:award.earnedAt||'legacy'}))};
 }
-export function recordPreviewBadgeEvent(state,event) {
+export function recordPreviewBadgeEvent(state,event,completionContext) {
+  if (!['check_in', 'app_visit'].includes(event?.source)) throw new Error('A supported posted badge event is required.');
   const history=event.source==='check_in'?state.checkIns:state.visits;
-  if(history.some(row=>row.localDate===event.localDate)) return [];
+  if(history.some(row=>row?.localDate===event.localDate)) return [];
+  let completionEvent = null; let completionAwards = [];
+  if (event.source === 'check_in' && completionContext) {
+    const { userId, startDate, createEventId = () => crypto.randomUUID(), now = () => new Date().toISOString() } = completionContext;
+    const progress = previewOriginal77Progress(state, { userId, startDate });
+    if (progress.completionState !== 'in_progress') throw new Error('The original challenge cannot accept another Check-In.');
+    // Validate the actual new row before changing any state. Existing history
+    // alone never creates a completion or even an unacknowledged award.
+    const nextProgress = previewOriginal77Progress({ ...state, checkIns: [...history, event] }, { userId, startDate });
+    if (nextProgress.completionState === 'invalid_evidence') throw new Error('The posted Check-In could not be verified.');
+    if (progress.submittedCount === 76) {
+      completionEvent = { id: createEventId(), userId, startDate, sourceId: event.sourceId,
+        localDate: event.localDate, recordedAt: event.occurredAt, persistedAt: now() };
+      const completionFacts = original77CompletionBadgeFacts({ userId, startDate, event, priorEvents: history, completionEvent });
+      if (!completionFacts) throw new Error('The completion event could not be verified.');
+      completionAwards = evaluateBadgeEvent(completionFacts, state.awards);
+    }
+  }
   const facts=event.source==='check_in'?checkInBadgeFacts(event,history):appVisitBadgeFacts(event,history);
   if(!facts) throw new Error('A complete posted badge event is required.');
-  const awards=evaluateBadgeEvent(facts,state.awards).map(award=>({...award,awardId:`preview:${award.key}:${award.scopeKey}`}));
+  const awards=[...evaluateBadgeEvent(facts,state.awards), ...completionAwards].map(award=>({...award,awardId:`preview:${award.key}:${award.scopeKey}`}));
   history.push(structuredClone(event));state.awards.push(...awards);
+  if (completionEvent) state.completionEvents.push(completionEvent);
   return awards;
 }
 export function claimPreviewBadgeCelebrations(state,token,now=Date.now()) {

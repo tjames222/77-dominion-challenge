@@ -56,7 +56,7 @@ assuming the whole chain rolled back or blindly retrying it.
 
 The backup is restored into a new `initdb` cluster in a network-disabled container
 with tmpfs data. It has no hosted database credentials and its local admin role
-must be absent from the source. The explicitly selected 61/66 modes additionally
+must be absent from the source. The explicitly selected 61/66/67 modes additionally
 feed their existing worker credentials on stdin for local reconstruction tests, described below;
 no database credential is passed or mounted. Cron execution is disabled. The restore must reproduce
 every non-system table's row count and SHA-256 content fingerprint, sequence
@@ -227,8 +227,8 @@ This mode is bounded to exactly these five Vault names:
 Both URL values must equal the fixed existing project URL. The three worker
 values must equal the already-existing protected production settings
 `PROFILE_PHOTO_WORKER_SECRET`, `FEEDBACK_WORKER_SECRET`, and
-`EARLY_ACCESS_INVITATION_WORKER_SECRET`. Only this mode receives the latter
-two secrets. Before actual dispatch, obtain explicit owner approval for these
+`EARLY_ACCESS_INVITATION_WORKER_SECRET`. Only the explicit 66 and 67 modes receive
+the latter two secrets. Before actual dispatch, obtain explicit owner approval for these
 additional protected-secret reads and for the conditional recovery contract;
 local synthetic tests do not constitute that approval. No secret is created,
 rotated, repaired, disclosed, or written to hosted Vault.
@@ -280,3 +280,44 @@ download the fresh artifact, retain the recipient private key securely, verify
 its exact commit/run/checkpoint/encrypted hashes and isolated-restore evidence,
 and obtain the separate release approval. An older successful 61-migration
 artifact does not prove a backup of subsequent production activity.
+
+## Post-admin-inbox 67-migration checkpoint
+
+Choose `post-admin-inbox-67` explicitly for the database after the admin inbox
+release. It pins exactly 67 migration versions through
+`20260929000950_site_admin_account_requests_inbox`, with SHA-256
+`fea508a9d28234417a250bfd23825eb418265957c8c1e11b7365750acafb1358`
+of the ordered version array. Pending later source migrations do not advance
+the selected checkpoint. A 66-, 68-, or any other migration-count source,
+missing/changed prefix, unsupported PostgreSQL version or failed inventory
+boundary is rejected. The historical 13, 61 and 66 modes remain unchanged;
+do not run the 66 mode against the deployed 67-migration database.
+
+The inbox migration adds its metadata-only RPC, index and execution ACL; it
+adds no Vault names, Cron jobs, pg_net relations or external Storage data.
+The 67 mode therefore reuses the exact five-name, three-job, parameter-bound
+source proof and fresh-root reconstruction described above without widening
+them. Only the same three existing protected worker keys are passed, and only
+after approval for this capture and conditional recovery contract. No root
+key, application-envelope key, Resend key or Linear key is read by this mode.
+
+The manifest remains version 3 with contract
+`dominion-free-post-early-access-backup/v1`; the explicit `backupMode` and exact
+migration array distinguish this checkpoint. All size, encryption, credential,
+pg_net, zero-Storage, before/after inventory, cleanup and recovery-custody
+requirements remain unchanged. The backup is still not self-contained for
+Vault or invitation-envelope recovery. A synthetic native test additionally
+restores the actual inbox schema and nonempty request ledger, checking the
+RPC definition/owner/ACL/configuration, index, RLS and member privileges along
+with original Vault ciphertext and pg_net data.
+
+Before the next normal full release, merge and validate the exact protected
+main commit, obtain approval for this fresh capture, and run the 67 mode from
+that same commit while production is still at 67. Require complete workflow
+success including final credential cleanup, independently download and verify
+its ciphertext/manifest and run/attempt/commit/checkpoint, and retain the
+recipient private key securely before dispatching the separately approved
+release. The older 66 artifact is pre-inbox evidence, not a backup of the
+current database. A later migration cannot make it current, and this mode
+does not authorize hosted restore, reset, secret repair or replay of the old
+canary cutover.

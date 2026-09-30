@@ -13,7 +13,7 @@ describe('challenge activation client integration', () => {
     );
 
     assert.equal(
-      (activationApi.match(/return normalizeChallengeActivationMutation\(data\);/g) || []).length,
+      (activationApi.match(/return normalizeChallengeActivationMutation\(data, \{ expectedUserId: capturedActorId \}\);/g) || []).length,
       3,
     );
     assert.equal((activationApi.match(/expectedUserId,/g) || []).length, 3);
@@ -42,7 +42,7 @@ describe('challenge activation client integration', () => {
     );
     assert.match(api, /if \(!actorId\) \{[\s\S]*captured signed-in account is required/);
     assert.doesNotMatch(activationApi, /return normalizeChallengeActivation\(data\);/);
-    assert.match(api, /const normalized = normalizeChallengeActivationMutation\(activation\);[\s\S]*const userId = getMockUserId\(\);[\s\S]*states\[userId\] = normalized/);
+    assert.match(api, /const normalized = normalizeChallengeActivationMutation\(activation, \{ expectedUserId: getMockUserId\(\), preview: true \}\);[\s\S]*const userId = getMockUserId\(\);[\s\S]*states\[userId\] = normalized/);
   });
 
   test('rehydrates a Daily Standard after activation events and mutation authorization failures', async () => {
@@ -101,7 +101,7 @@ describe('challenge activation client integration', () => {
     assert.match(requestRunner, /const prior = requests\[requestId\]/);
     assert.match(requestRunner, /storedRequests && typeof storedRequests === 'object' && !Array\.isArray\(storedRequests\)/);
     assert.match(requestRunner, /prior\.signature !== signature/);
-    assert.match(requestRunner, /return normalizeChallengeActivationMutation\(prior\.result\)/);
+    assert.match(requestRunner, /return normalizeChallengeActivationMutation\(prior\.result, \{ expectedUserId: actorId, preview: true \}\)/);
     assert.match(requestRunner, /requests\[requestId\] = \{ actorId, action, signature, result \}/);
     assert.match(api, /expectedRevision,[\s\S]*buildMockChallengeActivation\(\{[\s\S]*expectedRevision/);
 

@@ -3,7 +3,7 @@ begin;
 create extension if not exists pgtap with schema extensions;
 set local search_path = public, extensions;
 
-select plan(35);
+select plan(43);
 
 select ok(
   exists (
@@ -95,8 +95,15 @@ select is((public.preview_share_snapshot('streak') #>> '{payload,appStreak}')::i
 select is((public.preview_share_snapshot('streak') #>> '{payload,fullStandardStreak}')::integer, 5, 'streak preview uses server full-standard state');
 select is((public.preview_share_snapshot('streak') #>> '{privacy,includesIdentity}')::boolean, false, 'the preview declares that identity is excluded');
 select ok(public.preview_share_snapshot('streak')::text not ilike '%alice%', 'the preview does not expose a name or email');
-select is((public.preview_share_snapshot('progress') #>> '{payload,currentChallengeDay}')::integer, 10, 'progress uses the authoritative latest challenge day');
-select is((public.preview_share_snapshot('progress') #>> '{payload,challengeLength}')::integer, 77, 'progress includes the public challenge length');
+select is((public.preview_share_snapshot('progress') #>> '{payload,submittedCheckIns}')::integer, 1, 'progress counts the one submitted check-in rather than calendar day ten');
+select is((public.preview_share_snapshot('progress') #>> '{payload,targetCheckIns}')::integer, 77, 'progress includes the submitted check-in target');
+select is((public.preview_share_snapshot('progress') ->> 'schemaVersion')::integer, 2, 'new progress previews declare version two');
+select is(
+  (select array_agg(key order by key) from jsonb_object_keys(public.preview_share_snapshot('progress') -> 'payload') key),
+  array['kind','schemaVersion','submittedCheckIns','targetCheckIns']::text[],
+  'new progress payloads have exactly four public fields'
+);
+select ok(public.preview_share_snapshot('progress')::text !~ 'currentChallengeDay|percentComplete|userId|instanceId|canonicalEvent', 'progress hides calendar and private source identities');
 select is((public.preview_share_snapshot('general') #>> '{payload,dailyStandards}')::integer, 7, 'general shares contain only fixed product facts');
 
 with created as (
@@ -126,6 +133,16 @@ select throws_ok(
 );
 
 reset role;
+
+insert into public.public_share_snapshots (
+  user_id, public_token_digest, snapshot_version, share_kind, snapshot_payload, expires_at
+) values (
+  '10000000-0000-4000-8000-000000000001', digest(repeat('a',64),'sha256'), 1, 'progress',
+  '{"schemaVersion":1,"kind":"progress","currentChallengeDay":10,"challengeLength":77,"percentComplete":13.0}'::jsonb,
+  now()+interval '30 days'
+);
+select is((public.get_public_share_snapshot(repeat('a',64)) ->> 'schemaVersion')::integer, 1, 'stored progress links retain version one');
+select is((public.get_public_share_snapshot(repeat('a',64)) #>> '{payload,currentChallengeDay}')::integer, 10, 'stored version one still means calendar position');
 
 select is(
   public.get_public_share_snapshot((select token from share_test_values where label = 'alice-streak')) ->> 'kind',
@@ -219,6 +236,10 @@ with created as (
 insert into share_test_values (label, snapshot_id, token)
 select 'carol-general', (result ->> 'snapshotId')::uuid, result ->> 'token' from created;
 reset role;
+
+select is((select snapshot_version from public.public_share_snapshots where id=(select snapshot_id from share_test_values where label='carol-progress')), 2, 'new progress links store version two');
+select is((public.get_public_share_snapshot((select token from share_test_values where label='carol-progress')) ->> 'schemaVersion')::integer, 2, 'public reads return the stored version two');
+select is((public.get_public_share_snapshot((select token from share_test_values where label='carol-progress')) #>> '{payload,submittedCheckIns}')::integer, 0, 'another owner receives only her own submitted count');
 
 update public.profiles
 set challenge_start_date = challenge_start_date + 1

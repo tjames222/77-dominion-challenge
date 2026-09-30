@@ -63,7 +63,9 @@ test('integration preserves all inventory equality, current-only startup/replay 
   assert.match(replay,/assert.deepEqual\(currentBackupPgNetManifest/); assert.match(replay,/await local\(/); assert.doesNotMatch(replay,/remote\(/);
   assert.match(source,/assert.equal\(await readFile\(after, 'utf8'\), beforeText/);
   assert.match(source,/assert.equal\(comparableInventory\(restoredText\), comparableInventory\(beforeText\)/);
-  assert.match(source,/const usesPgNetSupplement = backupMode === CURRENT_BACKUP_MODE \|\| backupMode === POST_EARLY_ACCESS_BACKUP_MODE/);
+  assert.match(source,/const usesFiveSettingVault = \(mode\) => mode === POST_EARLY_ACCESS_BACKUP_MODE \|\| mode === POST_ADMIN_INBOX_BACKUP_MODE;/);
+  assert.match(source,/const usesPostEarlyAccessRecovery = usesFiveSettingVault\(backupMode\);/);
+  assert.match(source,/const usesPgNetSupplement = backupMode === CURRENT_BACKUP_MODE \|\| usesPostEarlyAccessRecovery;/);
   assert.match(source,/usesPgNetSupplement \? \['-e', 'DOMINION_BACKUP_CURRENT_PG_NET=1'\] : \[\]/);
   assert.match(source,/usesPgNetSupplement \? CURRENT_PGNET_TABLES.map\(table => table.file\) : \[\]/);
   assert(source.indexOf("stage('content-verify')") < source.indexOf("stage('encryption')"));

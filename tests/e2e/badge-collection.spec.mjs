@@ -53,7 +53,10 @@ for (const theme of ['light', 'dark', 'dominion-night', 'dominion-platinum']) {
       const seven = collection.locator('[data-badge-requirement="check_ins_7"]');
       await expect(seven).toContainText('0 of 7 check-ins');
       const finisher = collection.locator('[data-badge-requirement="original_77_completed"]');
-      await expect(finisher).toContainText('Not available yet');
+      expect(catalog.items.find((item) => item.key === 'original_77_completed')?.status).toBe('active');
+      await expect(finisher).toContainText('Not yet earned');
+      await expect(finisher).toContainText('Submit 77 check-ins in your original challenge; partial check-ins count.');
+      await expect(finisher).not.toContainText('Not available yet');
       await expect(finisher.getByRole('progressbar')).toHaveCount(0);
       await expectNoHorizontalOverflow(page);
       assertNoBlockingAxeViolations(await analyzeAccessibility(page));

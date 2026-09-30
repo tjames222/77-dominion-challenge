@@ -50,6 +50,23 @@ test('invalid, mismatched, unsafe or permissive draft contracts fail closed', ()
   }
   assert.throws(() => normalizeDailyActionBootstrap(dailyBootstrapFixture(), A, '2026-09-11'));
 });
+test('late count76 stays editable and historical77 stays readable but locked in the same bootstrap', () => {
+  const late = dailyBootstrapFixture();
+  late.activation.startDate = '2026-06-14'; late.activation.challengeDay = 91;
+  late.activation.originalProgress = { ...late.activation.originalProgress, instanceId: 'original77:2026-06-14', submittedCount: 76 };
+  assert.equal(normalizeDailyActionBootstrap(late, A).draft.locked, false);
+  const completed = structuredClone(late);
+  completed.activation.originalProgress.submittedCount = 77;
+  completed.activation.originalProgress.completionState = 'historical_provenance_pending';
+  completed.activation.canParticipate = false; completed.activation.canMutateDailyStandards = false;
+  completed.draft.locked = true;
+  const result = normalizeDailyActionBootstrap(completed, A);
+  assert.equal(result.activation.originalProgress.submittedCount, 77); assert.equal(result.draft.locked, true);
+  for (const patch of [{ userId: B }, { submittedCount: '76' }, { instanceId: 'original77:2026-01-01' }]) {
+    const invalid = structuredClone(late); Object.assign(invalid.activation.originalProgress, patch);
+    assert.throws(() => normalizeDailyActionBootstrap(invalid, A));
+  }
+});
 test('identical pending reads share one RPC and pre/post Auth checks, with independent returned objects', async () => {
   const f = fixture(); const gate = deferred(); f.response(() => gate.promise);
   const one = f.read(); const two = f.read(); await untilRequest(f);

@@ -121,17 +121,41 @@ function requestedToken(req: Request) {
   return tokenPattern.test(segment) ? segment : null;
 }
 
+function validSubmittedProgress(payload: Record<string, unknown>) {
+  const keys = Object.keys(payload).sort();
+  return JSON.stringify(keys) === JSON.stringify([
+        "kind",
+        "schemaVersion",
+        "submittedCheckIns",
+        "targetCheckIns",
+      ]) &&
+    payload.schemaVersion === 2 && payload.kind === "progress" &&
+    typeof payload.submittedCheckIns === "number" &&
+    Number.isInteger(payload.submittedCheckIns) &&
+    payload.submittedCheckIns >= 0 && payload.submittedCheckIns <= 77 &&
+    payload.targetCheckIns === 77;
+}
+
 function normalizeSnapshot(value: unknown): ShareSnapshot | null {
   if (!value || typeof value !== "object") return null;
   const record = value as Record<string, unknown>;
   const kind = String(record.kind || "") as ShareKind;
-  if (!shareKinds.has(kind) || record.schemaVersion !== 1) return null;
+  if (
+    !shareKinds.has(kind) || ![1, 2].includes(record.schemaVersion as number)
+  ) {
+    return null;
+  }
   if (
     !record.payload || typeof record.payload !== "object" ||
     Array.isArray(record.payload)
   ) return null;
+  if (
+    record.schemaVersion === 2 &&
+    (kind !== "progress" ||
+      !validSubmittedProgress(record.payload as Record<string, unknown>))
+  ) return null;
   return {
-    schemaVersion: 1,
+    schemaVersion: record.schemaVersion as number,
     kind,
     payload: record.payload as Record<string, unknown>,
     expiresAt: typeof record.expiresAt === "string"
@@ -141,6 +165,12 @@ function normalizeSnapshot(value: unknown): ShareSnapshot | null {
 }
 
 export function sharePresentation(snapshot: ShareSnapshot) {
+  if (
+    ![1, 2].includes(snapshot.schemaVersion) ||
+    (snapshot.schemaVersion === 2 &&
+      (snapshot.kind !== "progress" ||
+        !validSubmittedProgress(snapshot.payload)))
+  ) throw new Error("Share snapshot response was invalid.");
   if (snapshot.kind === "streak") {
     const appStreak = wholeNumber(snapshot.payload.appStreak, 100000);
     const fullStandardStreak = wholeNumber(
@@ -159,6 +189,19 @@ export function sharePresentation(snapshot: ShareSnapshot) {
   }
 
   if (snapshot.kind === "progress") {
+    if (snapshot.schemaVersion === 2) {
+      const count = snapshot.payload.submittedCheckIns as number;
+      return {
+        eyebrow: "Challenge progress",
+        title: `${count} of 77 Dominion check-ins`,
+        description:
+          `${count} of 77 check-ins submitted. Partial check-ins count.`,
+        metric: `${count}/77`,
+        metricLabel: "submitted check-ins",
+      };
+    }
+    // Stored V1 snapshots are immutable calendar-era presentations. Never
+    // reinterpret their currentChallengeDay as a submitted-check-in count.
     const currentDay = wholeNumber(snapshot.payload.currentChallengeDay, 77);
     const length = wholeNumber(snapshot.payload.challengeLength, 77) || 77;
     return {

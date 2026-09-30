@@ -106,6 +106,16 @@ describe('typed reward catalog', () => {
     assert.equal(catalog.items[0].metadata.durationDays, 7);
   });
 
+  it('preserves unlocked later-track ownership without enabling its incomplete runtime', () => {
+    const catalog = challengeProgressionToRewardCatalog({ totalPoints: 140, challenges: [{ key: 'seven_day_reset',
+      status: 'available', pointsRequired: 140, accessGranted: true, unlockedAt: '2026-01-01T00:00:00Z' }] });
+    assert.equal(catalog.items[0].status, 'available'); assert.equal(catalog.items[0].unlockedAt, '2026-01-01T00:00:00Z');
+    assert.deepEqual(catalog.items[0].allowedActions, []);
+    const start = api.slice(api.indexOf('export async function startChallenge'), api.indexOf('export async function getDashboard'));
+    assert.match(start, /Later challenge tracks are not available to start yet/);
+    assert.doesNotMatch(start, /transitionChallengeRecord|writeMockUserValue/);
+  });
+
   it('uses the current-user RPC and passes only the stable pagination cursor', () => {
     const getRewardCatalog = api.match(
       /export async function getRewardCatalog\([^]*?\n\}/,

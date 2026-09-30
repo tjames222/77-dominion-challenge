@@ -58,7 +58,7 @@ describe('daily check-in safeguards', () => {
     assert.deepEqual(cache, {
       owner: 'user-a',
       dates: ['2026-07-16'],
-      challengeDays: [4],
+      challengeDays: [78, 4],
     });
     assert.deepEqual(checkInCacheForOwner(cache, 'user-a'), cache);
     assert.deepEqual(checkInCacheForOwner(cache, 'user-b'), {
@@ -66,7 +66,8 @@ describe('daily check-in safeguards', () => {
       dates: [],
       challengeDays: [],
     });
-    assert.deepEqual(normalizeChallengeDays([2, '2', 1, 0, 78, 'bad']), [2, 1]);
+    assert.deepEqual(normalizeChallengeDays([2, '2', 1, 0, 78, 'bad']), [78, 2, 1]);
+    assert.deepEqual(normalizeChallengeDays([91, '91', 1.5, Infinity, 3652060, 3652059]), [3652059, 91]);
   });
 
   it('migrates an email-owned preview cache to the stable mock user ID', () => {
