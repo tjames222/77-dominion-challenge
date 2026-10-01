@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import { runInNewContext } from 'node:vm';
 import test from 'node:test';
 import { createChallengeActivationState, normalizeChallengeActivation } from './challenge-activation.mjs';
+import { authSessionIdentity } from './mfa-auth.mjs';
 import { instanceActivationFixture, INSTANCE_ACTOR as userId, INSTANCE_ID as instanceId } from '../../tests/fixtures/challenge-instance.mjs';
 
 const startDate = '2026-07-01';
@@ -16,13 +17,16 @@ const dashboard = readFileSync(new URL('./dashboard.js', import.meta.url), 'utf8
 const header = readFileSync(new URL('./shared-header-actions.js', import.meta.url), 'utf8');
 function postFixture(data, error = null) {
   let actor = userId; let calls = 0; let invalidations = 0;
-  let sid = 'session-a'; let needsMfa = false;
+  let sid = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'; let needsMfa = false;
+  const session = (refresh = 0) => ({ user: { id: actor },
+    access_token: `fixture.${Buffer.from(JSON.stringify({ sub: actor, session_id: sid, refresh })).toString('base64url')}.signature` });
+  let currentSession = session();
   let respond = async () => ({ data, error });
   const globals = {
     isLocalDemoMode: () => false,
     previewBadgeEpoch: 0,
-    getAuthSession: async () => ({ user: { id: actor }, sid, access_token: `${actor}:${sid}` }),
-    authSessionIdentity: (session) => `${session.user.id}:${session.sid}`,
+    getAuthSession: async () => currentSession,
+    authSessionIdentity,
     sessionRequiresMfa: async () => needsMfa,
     requireCapturedChallengeInstance: value => { assert.equal(value, instanceId); },
     requireSupabase: () => ({ rpc: async (name, args) => {
@@ -39,8 +43,13 @@ function postFixture(data, error = null) {
   const source = api.slice(api.indexOf('export async function postCheckIn'), api.indexOf('export async function getCommunityFeed')).replace(/^export /, '');
   runInNewContext(`${source}\nglobalThis.post = postCheckIn;`, globals);
   return { post: () => globals.post({ date: '2026-09-30', day: 92, status: 'partial', completed: ['walk'], completedCount: 1 }, { expectedUserId: userId, expectedInstanceId: instanceId }),
-    calls: () => calls, invalidations: () => invalidations, setActor: (value) => { actor = value; }, response: (value) => { respond = value; },
-    replaceSession(value = 'session-b', notify = true) { sid = value; if (notify) globals.previewBadgeEpoch += 1; },
+    calls: () => calls, invalidations: () => invalidations,
+    setActor: (value) => { actor = value; currentSession = session(); }, response: (value) => { respond = value; },
+    replaceSession(value = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', notify = true) {
+      sid = value; currentSession = session(); if (notify) globals.previewBadgeEpoch += 1;
+    },
+    replaceTokenInPlace() { currentSession.access_token = session(1).access_token; },
+    removeToken() { delete currentSession.access_token; },
     setMfa(value) { needsMfa = value; },
   };
 }
@@ -51,6 +60,11 @@ test('submission preserves actor-bound post-write activation without another pro
   assert.equal(result.activation.currentInstance.submittedCount, 76);
   assert.equal(result.activation.actorId, userId);
   assert.equal(f.calls(), 1); assert.equal(f.invalidations(), 2);
+});
+test('submission without an access token fails before dispatch', async () => {
+  const f = postFixture(committed()); f.removeToken();
+  await assert.rejects(f.post(), error => /account changed/.test(error.message) && error.checkInCommitted !== true);
+  assert.equal(f.calls(), 0); assert.equal(f.invalidations(), 0);
 });
 test('confirmed submission with malformed progress retains committed classification and closes presentation', async () => {
   for (const value of [null, {}, { ...activation(), actorId: 'other' }]) {
@@ -71,20 +85,21 @@ test('late post-response account changes never publish private activation and re
   f.response(() => new Promise((resolve) => { release = resolve; }));
   const pending = f.post(); const rejected = assert.rejects(pending, (error) => error.checkInCommitted === true && /account changed/.test(error.message));
   for (let i = 0; i < 10 && !release; i += 1) await Promise.resolve();
-  f.setActor('other'); release({ data: { id: 'posted', activation: activation() }, error: null });
+  f.setActor('other'); release({ data: committed(), error: null });
   await rejected;
 });
 for (const [name, change] of [
   ['same owner new immutable session', (f) => f.replaceSession()],
-  ['same owner new session without notification', (f) => f.replaceSession('session-b', false)],
-  ['A to B to A epoch change', (f) => { f.setActor('B'); f.replaceSession(); f.setActor(userId); f.replaceSession('session-a'); }],
+  ['same owner new session without notification', (f) => f.replaceSession('bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', false)],
+  ['silent in-place bearer mutation with the same actor and session identity', (f) => f.replaceTokenInPlace()],
+  ['A to B to A epoch change', (f) => { f.setActor('B'); f.replaceSession(); f.setActor(userId); f.replaceSession('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'); }],
   ['MFA assurance downgrade', (f) => f.setMfa(true)],
 ]) test(`successful submission never publishes a stale private result after ${name}`, async () => {
   const f = postFixture(null); let release;
   f.response(() => new Promise((resolve) => { release = resolve; }));
-  const pending = f.post(); const rejected = assert.rejects(pending, (error) => error.checkInCommitted === true);
+  const pending = f.post(); const rejected = assert.rejects(pending, (error) => error.checkInCommitted === true && /account changed|verification/.test(error.message));
   for (let i = 0; i < 10 && !release; i += 1) await Promise.resolve();
-  assert.ok(release); change(f); release({ data: { id: 'posted', activation: activation() }, error: null });
+  assert.ok(release); change(f); release({ data: committed(), error: null });
   await rejected; assert.equal(f.calls(), 1);
 });
 test('postcommit publication advances the whole-dashboard fence and never opens malformed progress', () => {

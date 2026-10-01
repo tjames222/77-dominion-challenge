@@ -40,10 +40,12 @@ function sessionFixture() {
     let observedAuthSession = null;
     let dashboardHydrationRequestId = 3;
     let entrySaveQueue = Promise.resolve();
+    let committedCheckInRefreshPending = 0;
     let challengeActivation = { currentInstance: { id: ${JSON.stringify(instanceId)} } };
     const pendingActionMutations = new Map([['walk', true]]);
     const pendingWorkoutMutations = new Map([['one', 'hard']]);
     const billingWaiters = [];
+    let hydrationHold = null;
     const hydrations = [];
     const recoveries = [];
     let clearCount = 0;
@@ -63,7 +65,10 @@ function sessionFixture() {
       entrySaveQueue = Promise.resolve();
     };
     const getBillingState = () => new Promise((resolve, reject) => billingWaiters.push({ resolve, reject }));
-    const hydrateDashboardFromApi = async (owner) => { hydrations.push({ owner, epoch: authOwnerEpoch }); };
+    const hydrateDashboardFromApi = async (owner) => {
+      hydrations.push({ owner, epoch: authOwnerEpoch });
+      if (hydrationHold) await hydrationHold.promise;
+    };
     const recoverPendingCelebrations = async () => { recoveries.push(authOwnerEpoch); };
     const isCurrentMutationOwner = (owner) => Boolean(owner
       && owner.userId === observedAuthOwner
@@ -79,11 +84,19 @@ function sessionFixture() {
     globalThis.fixture = {
       notify: handleDashboardAuthStateChange,
       runMutation: runCurrentDraftMutation,
+      recoverCommitted: refreshCommittedCheckInForCurrentOwner,
       captureOwner: () => ({ userId: hydratedAuthOwner, epoch: authOwnerEpoch, instanceId: challengeActivation.currentInstance.id }),
       restoreHydratedOwner: () => { hydratedAuthOwner = observedAuthOwner; },
+      holdHydration: () => {
+        let release;
+        const promise = new Promise((resolve) => { release = resolve; });
+        hydrationHold = { promise, release };
+        return () => { hydrationHold.release(); hydrationHold = null; };
+      },
       releaseBilling: (index, value = { authenticated: true, appAccess: true }) => billingWaiters[index].resolve(value),
       state: () => ({ observedAuthOwner, hydratedAuthOwner, authOwnerEpoch, observedAuthSession,
         pendingActions: pendingActionMutations.size, pendingWorkouts: pendingWorkoutMutations.size,
+        committedCheckInRefreshPending,
         clearCount, renderCount, closeCount, redirects, billingCount: billingWaiters.length,
         hydrations: [...hydrations], recoveries: [...recoveries] }),
     };
@@ -155,6 +168,49 @@ test('a first non-initial same-user notification fails closed as a replacement w
   await pending;
 });
 
+test('a stale same-actor committed write forces a current-session read even while replacement hydration is pending', async () => {
+  const fixture = sessionFixture();
+  await fixture.notify({ event: 'INITIAL_SESSION', user: { userId: actorId }, sessionIdentity: `${actorId}:session-one` });
+  const staleOwner = fixture.captureOwner();
+  const releaseHydration = fixture.holdHydration();
+  const replacement = fixture.notify({ event: 'SIGNED_IN', user: { userId: actorId }, sessionIdentity: `${actorId}:session-two` });
+  assert.equal(fixture.state().hydratedAuthOwner, '');
+  fixture.releaseBilling(0);
+  for (let attempt = 0; attempt < 10 && fixture.state().hydrations.length === 0; attempt += 1) {
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+  assert.equal(fixture.state().hydrations.length, 1, 'the replacement hydration is already in flight');
+
+  const recovery = fixture.recoverCommitted(staleOwner, { checkInCommitted: true, privatePayload: 'ignored' });
+  await Promise.resolve();
+  assert.equal(fixture.state().committedCheckInRefreshPending, 1);
+  assert.equal(fixture.state().hydrations.length, 2, 'the postcommit read supersedes the precommit read');
+  for (const hydration of fixture.state().hydrations) {
+    assert.equal(hydration.owner, actorId);
+    assert.equal(hydration.epoch, 8);
+  }
+  releaseHydration();
+  assert.equal(await recovery, true);
+  assert.equal(fixture.state().committedCheckInRefreshPending, 0);
+  await replacement;
+});
+
+test('committed recovery never reads for an unrelated current actor or an uncommitted stale failure', async () => {
+  const fixture = sessionFixture();
+  await fixture.notify({ event: 'INITIAL_SESSION', user: { userId: actorId }, sessionIdentity: `${actorId}:session-one` });
+  const staleOwner = fixture.captureOwner();
+  assert.equal(await fixture.recoverCommitted(staleOwner, new Error('not committed')), false);
+
+  const otherActor = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
+  const replacement = fixture.notify({ event: 'SIGNED_IN', user: { userId: otherActor }, sessionIdentity: `${otherActor}:session-one` });
+  assert.equal(await fixture.recoverCommitted(staleOwner, { checkInCommitted: true }), false);
+  assert.equal(fixture.state().hydrations.length, 0);
+  fixture.releaseBilling(0);
+  await replacement;
+  assert.equal(fixture.state().hydrations.length, 1);
+  assert.equal(fixture.state().hydrations[0].owner, otherActor);
+});
+
 test('Dashboard invalidation clears only page-local optimistic state and both draft queues use the epoch fence', () => {
   const clearSource = sourceBetween('function clearDashboardUserState', 'function invalidateDashboardOwner');
   assert.match(clearSource, /pendingActionMutations\.clear\(\)/);
@@ -166,4 +222,5 @@ test('Dashboard invalidation clears only page-local optimistic state and both dr
   assert.match(dashboard, /subscribeToAuthStateChanges\(\(change\) => \{\s*void handleDashboardAuthStateChange\(change\)/);
   assert.match(authStateSource, /event !== 'INITIAL_SESSION'/);
   assert.match(authStateSource, /observedAuthSession !== nextSession/);
+  assert.match(dashboard, /setAttribute\('aria-busy', String\(submissionPendingToday \|\| committedRefreshPending\)\)/);
 });

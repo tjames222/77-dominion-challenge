@@ -545,6 +545,7 @@ const pendingWorkoutMutations = new Map();
 let pendingDetailsNavigation = '';
 let checkInSubmissionPending = false;
 let checkInSubmissionDate = '';
+let committedCheckInRefreshPending = 0;
 let lastCheckInSubmissionAt = 0;
 let checkInNotice = '';
 let checkInNoticeDate = '';
@@ -673,7 +674,10 @@ const todayEntry = () => {
 const hasSubmittedCheckIn = (dateKey = todayKey(), challengeDay = currentDay()) => (
   submittedCheckInDates.has(dateKey) || submittedChallengeDays.has(challengeDay)
 );
-const isCheckInPending = (dateKey = todayKey()) => checkInSubmissionPending && checkInSubmissionDate === dateKey;
+const isCheckInPending = (dateKey = todayKey()) => (
+  (checkInSubmissionPending && checkInSubmissionDate === dateKey)
+  || committedCheckInRefreshPending > 0
+);
 const hasHydratedAuthOwner = () => Boolean(
   hydratedAuthOwner && observedAuthOwner === hydratedAuthOwner,
 );
@@ -1148,12 +1152,15 @@ function render() {
   const todayPercent = Math.round((entry.completed.length / standards.length) * 100);
   const hasCompletedActions = entry.completed.length > 0;
   const submittedToday = participationOpen && hasSubmittedCheckIn(entry.date);
-  const submissionPendingToday = participationOpen && isCheckInPending(entry.date);
+  const submissionPendingToday = participationOpen
+    && checkInSubmissionPending && checkInSubmissionDate === entry.date;
+  const committedRefreshPending = participationOpen && committedCheckInRefreshPending > 0;
   const checkInStatusReady = isCheckInStatusReady(entry.date);
   const scorecardLocked = !canMutateChallenge()
     || !checkInStatusReady
     || submittedToday
-    || submissionPendingToday;
+    || submissionPendingToday
+    || committedRefreshPending;
   const dailyDraftBusy = pendingActionMutations.size > 0 || pendingWorkoutMutations.size > 0;
   const hasPostableCheckIn = !finished && !scorecardLocked && hasCompletedActions;
   const allActionsCompleted = standards.every(([id]) => completedStandards.has(id));
@@ -1180,7 +1187,9 @@ function render() {
   if (checkInButton) {
     checkInButton.disabled = !hasPostableCheckIn || dailyDraftBusy;
     checkInButton.classList.toggle('is-complete', submittedToday);
-    checkInButton.textContent = submissionPendingToday
+    checkInButton.textContent = committedRefreshPending
+      ? 'Refreshing...'
+      : submissionPendingToday
       ? 'Posting...'
       : submittedToday
         ? 'Today’s Check-In Complete'
@@ -1201,7 +1210,7 @@ function render() {
       : currentNotice;
     checkInStatus.textContent = statusCopy;
     checkInStatus.classList.toggle('is-complete', submittedToday);
-    checkInStatus.setAttribute('aria-busy', String(submissionPendingToday));
+    checkInStatus.setAttribute('aria-busy', String(submissionPendingToday || committedRefreshPending));
   }
   if (countdownCheckInButton) {
     countdownCheckInButton.disabled = !canMutateChallenge()
@@ -1295,6 +1304,7 @@ function clearDashboardUserState() {
   pendingDetailsNavigation = '';
   checkInSubmissionPending = false;
   checkInSubmissionDate = '';
+  committedCheckInRefreshPending = 0;
   lastCheckInSubmissionAt = 0;
   checkInNotice = '';
   checkInNoticeDate = '';
@@ -1434,6 +1444,23 @@ function handleDashboardAuthStateChange({ event, user, sessionIdentity } = {}) {
     : observedAuthSession !== nextSession;
   observedAuthSession = nextSession;
   return handleDashboardAuthOwnerChange(user, { force: sessionChanged });
+}
+
+async function refreshCommittedCheckInForCurrentOwner(submissionOwner, error) {
+  if (!error?.checkInCommitted) return false;
+  const recoveryOwner = { userId: observedAuthOwner, epoch: authOwnerEpoch };
+  if (!recoveryOwner.userId || recoveryOwner.userId !== submissionOwner?.userId) return false;
+  committedCheckInRefreshPending += 1;
+  render();
+  try {
+    await hydrateDashboardFromApi(recoveryOwner.userId);
+    return recoveryOwner.epoch === authOwnerEpoch && recoveryOwner.userId === observedAuthOwner;
+  } finally {
+    if (recoveryOwner.epoch === authOwnerEpoch && recoveryOwner.userId === observedAuthOwner) {
+      committedCheckInRefreshPending = Math.max(committedCheckInRefreshPending - 1, 0);
+      render();
+    }
+  }
 }
 
 async function refreshGameSummary(owner = captureMutationOwner()) {
@@ -1866,7 +1893,10 @@ if (checkInButton) checkInButton.addEventListener('click', async () => {
     });
     await queuePermanentRewardAndChallengeCelebrations(submissionOwner);
   } catch (error) {
-    if (!isCurrentMutationOwner(submissionOwner)) return;
+    if (!isCurrentMutationOwner(submissionOwner)) {
+      await refreshCommittedCheckInForCurrentOwner(submissionOwner, error);
+      return;
+    }
     console.warn('Unable to sync check-in', error);
     if (error?.code === CHECK_IN_ALREADY_COMPLETE_CODE) {
       markCheckInSubmitted(entry.date, submissionDay);

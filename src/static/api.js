@@ -3025,8 +3025,9 @@ export async function postCheckIn(checkIn, { expectedUserId = '', expectedInstan
   const submissionEpoch = previewBadgeEpoch;
   const submissionSession = await getAuthSession();
   const submissionIdentity = authSessionIdentity(submissionSession);
+  const submissionAccessToken = submissionSession?.access_token;
   const user = await requireUser(expectedUserId);
-  if (!submissionIdentity || submissionSession?.user?.id !== user.id || submissionEpoch !== previewBadgeEpoch) {
+  if (!submissionIdentity || !submissionAccessToken || submissionSession?.user?.id !== user.id || submissionEpoch !== previewBadgeEpoch) {
     throw new Error('The signed-in account changed. Try again.');
   }
   invalidateDailyActionBootstrap();
@@ -3051,7 +3052,7 @@ export async function postCheckIn(checkIn, { expectedUserId = '', expectedInstan
     if (await sessionRequiresMfa(client.auth)) throw new Error('Complete account verification before continuing.');
     const currentSession = await getAuthSession();
     if (submissionEpoch !== previewBadgeEpoch || authSessionIdentity(currentSession) !== submissionIdentity
-      || currentSession?.access_token !== submissionSession.access_token) throw new Error('The signed-in account changed. Try again.');
+      || currentSession?.access_token !== submissionAccessToken) throw new Error('The signed-in account changed. Try again.');
   } catch (error) {
     error.checkInCommitted = true;
     throw error;
