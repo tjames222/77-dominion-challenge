@@ -49,7 +49,7 @@ test('pins the sole cutover identity after the exact70 prefix', () => {
 
 test('pins the exact frozen migration bytes and rejects any source drift', async () => {
   assert.equal(REPEATABLE_CHALLENGE_MIGRATION_SHA256,
-    '7e295a3708a3c241b60917fb16db00f27a39aa327f19c557595a5cbab2396bfc');
+    '0250b78791964615abcbe8066245df73ed98d78dbdb5a4e418d3bfbc7bec652b');
   const bytes = await readFile(new URL(`../supabase/migrations/${REPEATABLE_CHALLENGE_MIGRATION_FILENAME}`, import.meta.url));
   assert.equal(createHash('sha256').update(bytes).digest('hex'), REPEATABLE_CHALLENGE_MIGRATION_SHA256);
   assert.equal(verifyRepeatableChallengeCutoverPlan({

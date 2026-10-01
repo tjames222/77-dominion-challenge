@@ -49,7 +49,7 @@ before(async () => {
     { version: '20261001001245', name: 'repeatable_challenge_instances_v2' }];
   const migrationSource = await readFile(new URL('../supabase/migrations/20261001001245_repeatable_challenge_instances_v2.sql', import.meta.url), 'utf8');
   migrationSourceHash = digest(migrationSource);
-  assert.equal(migrationSourceHash, '7e295a3708a3c241b60917fb16db00f27a39aa327f19c557595a5cbab2396bfc');
+  assert.equal(migrationSourceHash, '0250b78791964615abcbe8066245df73ed98d78dbdb5a4e418d3bfbc7bec652b');
   fixture.query(`begin;set local check_function_bodies=on;set local search_path=public,extensions;
     ${migrationSource}
     insert into supabase_migrations.schema_migrations(version,name,statements)

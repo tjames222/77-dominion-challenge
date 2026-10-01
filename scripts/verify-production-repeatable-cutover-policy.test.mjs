@@ -57,7 +57,7 @@ test('fails closed on partial, extra, malformed and wrong-scope inventories', ()
 
 test('uses the frozen source pin and fails closed on any migration-byte drift', () => {
   assert.equal(REPEATABLE_CHALLENGE_MIGRATION_SHA256,
-    '7e295a3708a3c241b60917fb16db00f27a39aa327f19c557595a5cbab2396bfc');
+    '0250b78791964615abcbe8066245df73ed98d78dbdb5a4e418d3bfbc7bec652b');
   assert.equal(verifyProductionRepeatableCutoverPolicy({
     releaseScope: 'repeatable-challenge-cutover',
     rawResponse: rows(exact70),

@@ -7,7 +7,7 @@
 -- from the reviewed exact-70 checkpoint on PostgreSQL 17.6. The JavaScript
 -- wrapper refuses every network request if any pin is later missing or stale.
 -- Frozen migration source SHA-256:
--- 20261001001245 7e295a3708a3c241b60917fb16db00f27a39aa327f19c557595a5cbab2396bfc
+-- 20261001001245 0250b78791964615abcbe8066245df73ed98d78dbdb5a4e418d3bfbc7bec652b
 -- Exact 71-version history SHA-256: e6090c27e44dd678cab1b8178058f780bec2d0b4dcd99dee0d96407d24a5bb26
 WITH canonical_deparse_context AS MATERIALIZED (
   SELECT pg_catalog.set_config('search_path','pg_catalog',true) AS pinned_search_path,
@@ -169,7 +169,17 @@ WITH canonical_deparse_context AS MATERIALIZED (
       'threshold',b.threshold,'predicate',b.predicate,'scope',b.scope,'visibility',b.visibility,
       'showProgress',b.show_progress,'celebration',b.celebration,'retired',b.retired,'blocked',b.blocked)
       ORDER BY b.badge_key COLLATE "C")
-      FROM public.badge_definitions b WHERE b.badge_key='original_77_completed'),'[]'::jsonb)
+      FROM public.badge_definitions b WHERE b.badge_key='original_77_completed'),'[]'::jsonb),
+    'instanceBadgeDefinitions',coalesce((SELECT pg_catalog.jsonb_agg(pg_catalog.jsonb_build_object(
+      'badgeKey',b.badge_key,'name',b.name,'description',b.description,'requirement',b.requirement,
+      'category',b.category,'tier',b.tier,'tierRank',b.tier_rank,'icon',b.icon,'sortOrder',b.sort_order,
+      'criteriaVersion',b.criteria_version,'sourceEvent',b.source_event,'metric',b.metric,
+      'threshold',b.threshold,'predicate',b.predicate,'scope',b.scope,'visibility',b.visibility,
+      'showProgress',b.show_progress,'celebration',b.celebration,'retired',b.retired,'blocked',b.blocked)
+      ORDER BY b.badge_key COLLATE "C")
+      FROM public.badge_definitions b WHERE b.badge_key IN (
+        'streak_flame','seven_sealed','full_streak_14','full_streak_28','full_streak_56','full_streak_70',
+        'check_ins_7','check_ins_14','check_ins_21','check_ins_26','check_ins_39','check_ins_50','check_ins_60','check_ins_70')),'[]'::jsonb)
   ) AS document FROM canonical_deparse_context
 ), security_document AS MATERIALIZED (
   SELECT pg_catalog.jsonb_build_object(
@@ -204,7 +214,7 @@ WITH canonical_deparse_context AS MATERIALIZED (
   ('catalog_tables','f0ec8a89808406703d38d65bf484d578b07e8f5d7ce1e7362a9daa60ebf7105e'),
   ('functions','2ec976c9180de305690d254f3e8801ad7b3a825376f5db8d245b2ccfbf90957a'),
   ('triggers','43de2ac1520532e3b590e93f565e2a1280ba7f61339625f78b5087fca00668b0'),
-  ('catalog','822a99528a215527f5cb341298b5ab64892851c7bcdca3b3287583f0d8336edb'),
+  ('catalog','fa75d7f6e94ba1f8cc98657c814fd89dc8b76b31256e5f0962e516e84bc39bbd'),
   ('security','2c07b9113bb3e3e0462ef381a29f8d0778fa0236bf1c4fea028a72f9aa19bc2e'),
   ('share','ca6ed6796c7630d644c5d25db94d53e652b281fafb7d6366011f9e991253a401')
 ), expected_history(definition_hash) AS (VALUES

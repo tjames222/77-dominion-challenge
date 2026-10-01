@@ -2868,13 +2868,34 @@ const rpcDraft = async (name, parameters, { expectedUserId = '', expectedInstanc
       return normalizeDailyStandardDraft({ ...draft, activation: previewActivationFor(aggregate) });
     });
     const client = requireSupabase();
-    const user = await requireUser(expectedUserId);
-    await bootstrapDailyStandardTimeZone(client, user.id);
+    const draftEpoch = previewBadgeEpoch;
+    const draftSession = await getAuthSession();
+    const draftIdentity = authSessionIdentity(draftSession);
+    const draftActorId = draftSession?.user?.id;
+    const draftAccessToken = draftSession?.access_token;
+    const verifyDraftOwner = async () => {
+      const actor = await requireUser(expectedUserId);
+      if (!draftIdentity || !draftAccessToken || actor.id !== draftActorId || draftEpoch !== previewBadgeEpoch) {
+        throw new Error('The signed-in account changed. Try again.');
+      }
+      if (await sessionRequiresMfa(client.auth)) throw new Error('Complete account verification before continuing.');
+      const currentSession = await getAuthSession();
+      if (draftEpoch !== previewBadgeEpoch || authSessionIdentity(currentSession) !== draftIdentity
+        || currentSession?.access_token !== draftAccessToken) throw new Error('The signed-in account changed. Try again.');
+      return actor;
+    };
+    const user = await verifyDraftOwner();
+    try { await bootstrapDailyStandardTimeZone(client, user.id); }
+    catch (error) { await verifyDraftOwner(); throw error; }
+    await verifyDraftOwner();
     const rpcParameters = { ...parameters, target_expected_actor_id: user.id, target_expected_instance_id: expectedInstanceId };
     if (mutation) invalidateDailyActionBootstrap();
-    const { data, error } = await client.rpc(name, rpcParameters);
+    let response;
+    try { response = await client.rpc(name, rpcParameters); }
+    catch (error) { await verifyDraftOwner(); throw error; }
+    await verifyDraftOwner();
+    const { data, error } = response;
     if (error) throw error;
-    await requireUser(user.id);
     const activation = normalizeChallengeActivation(data?.activation, { expectedUserId: user.id });
     if (data?.schemaVersion !== 2 || data.actorId !== user.id || data.instanceId !== expectedInstanceId
       || !activation.contractValid || activation.currentInstance?.id !== expectedInstanceId
@@ -2885,6 +2906,7 @@ const rpcDraft = async (name, parameters, { expectedUserId = '', expectedInstanc
       || (!data.locked && (data.submitted || !activation.canMutateDailyStandards))) throw new Error('The challenge changed. Reload this action.');
     return normalizeDailyStandardDraft(data, parameters.target_entry_date);
   } catch (error) {
+    invalidateDailyActionBootstrap();
     throw naturalizeDailyActionError(error);
   } finally {
     if (mutation) invalidateDailyActionBootstrap();

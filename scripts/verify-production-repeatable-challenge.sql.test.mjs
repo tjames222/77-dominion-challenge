@@ -10,6 +10,8 @@ const migrationUrl = new URL('../supabase/migrations/20261001001245_repeatable_c
 const hash = value => createHash('sha256').update(value).digest('hex');
 const q = value => `'${String(value).replaceAll("'", "''")}'`;
 const finalSelectMarker = '\nSELECT\n  coalesce((SELECT pg_catalog.count(*)=71';
+const instanceBadgeKeys = ['streak_flame','seven_sealed','full_streak_14','full_streak_28','full_streak_56','full_streak_70',
+  'check_ins_7','check_ins_14','check_ins_21','check_ins_26','check_ins_39','check_ins_50','check_ins_60','check_ins_70'];
 
 function derivationQuery(source) {
   const marker = source.indexOf(finalSelectMarker);
@@ -33,6 +35,14 @@ async function replayAndDerive({ migrationSource, checkpoint, derivedQuery }) {
       insert into supabase_migrations.schema_migrations(version,name,statements)
         values('20261001001245','repeatable_challenge_instances_v2',array[${q(migrationSource)}]::text[]);
       commit;`);
+    const preview = JSON.parse(await readFile(new URL('../src/static/badge-catalog.v1.json', import.meta.url), 'utf8'));
+    const expectedCopy = preview.badges.filter(row => instanceBadgeKeys.includes(row.key))
+      .map(row => ({ key: row.key, description: row.description, requirement: row.requirement })).sort((a,b) => a.key.localeCompare(b.key));
+    assert.equal(expectedCopy.length, 14);
+    const actualCopy = JSON.parse(fixture.query(`select jsonb_agg(jsonb_build_object('key',badge_key,
+      'description',description,'requirement',requirement) order by badge_key collate "C")
+      from public.badge_definitions where badge_key in (${instanceBadgeKeys.map(q).join(',')});`));
+    assert.deepEqual(actualCopy, expectedCopy, 'Every current badge copy pair must match the browser catalog.');
     const catalog = JSON.parse(fixture.query(`begin read only;${derivedQuery}commit;`).split('\n').at(-1));
     const history = JSON.parse(fixture.query(`select jsonb_agg(jsonb_build_object('version',version,'name',name)
       order by version collate "C") from supabase_migrations.schema_migrations;`));
@@ -50,6 +60,19 @@ async function replayAndDerive({ migrationSource, checkpoint, derivedQuery }) {
         commit;`).split('\n').at(-1));
       assert.deepEqual(parseRepeatableChallengeCatalogResult([verified]),
         Object.fromEntries(REPEATABLE_CHALLENGE_CATALOG_FIELDS.map(key => [key, true])));
+      for (const key of instanceBadgeKeys) for (const field of ['description','requirement']) {
+        const drift = JSON.parse(fixture.query(`begin;
+          update public.badge_definitions set ${field}=${field}||' [synthetic drift]' where badge_key=${q(key)};
+          select pg_catalog.row_to_json(checkpoint) from (${fixedSelect}) checkpoint;
+          rollback;`).split('\n').at(-1));
+        assert.equal(drift.repeatable_reward_catalog_ok, false, `${key}.${field} must fail the catalog digest.`);
+        for (const name of REPEATABLE_CHALLENGE_CATALOG_FIELDS.filter(name => !['repeatable_reward_catalog_ok','read_only_pinned_server_ok'].includes(name))) {
+          assert.equal(drift[name], true, `${key}.${field} must not weaken ${name}.`);
+        }
+      }
+      const restored = JSON.parse(fixture.query(`begin read only;
+        select pg_catalog.row_to_json(checkpoint) from (${fixedSelect}) checkpoint;commit;`).split('\n').at(-1));
+      assert.deepEqual(parseRepeatableChallengeCatalogResult([restored]), verified, 'Synthetic copy drift must roll back.');
     }
     return catalog;
   } finally { fixture.close(); }

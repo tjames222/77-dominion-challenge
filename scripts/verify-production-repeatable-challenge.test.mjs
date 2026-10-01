@@ -58,7 +58,7 @@ test('catalog result is an exact immutable eleven-boolean boundary', () => {
 
 test('frozen source, history and catalog pins are complete and tied to the executable query', () => {
   assert.equal(REPEATABLE_CHALLENGE_MIGRATION_SHA256,
-    '7e295a3708a3c241b60917fb16db00f27a39aa327f19c557595a5cbab2396bfc');
+    '0250b78791964615abcbe8066245df73ed98d78dbdb5a4e418d3bfbc7bec652b');
   assert.match(REPEATABLE_CHALLENGE_CATALOG_QUERY,
     new RegExp(`^-- 20261001001245 ${REPEATABLE_CHALLENGE_MIGRATION_SHA256}$`, 'mu'));
   assert.match(REPEATABLE_CHALLENGE_CATALOG_QUERY,

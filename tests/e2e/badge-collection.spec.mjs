@@ -5,8 +5,8 @@ import { analyzeAccessibility, assertNoBlockingAxeViolations } from './support/q
 const payload = {
   collection: { catalogVersion: 1, items: [
     { key: 'faithful_start', name: 'Faithful Start', series: 'foundation', displayOrder: 10, status: 'active', visibility: 'public', earnedInCurrentScope: true },
-    { key: 'check_ins_7', name: '7 Check-Ins', requirement: 'Post 7 check-ins in one original 77-day challenge.', series: 'participation', displayOrder: 200, status: 'active', visibility: 'public', tier: 'silver', icon: 'check', showProgress: true, progress: { metric: 'instance_check_in_count', current: 5, target: 7 } },
-    { key: 'seven_sealed', name: '7-Day Perfect Streak', requirement: 'Post all seven Daily Actions on 7 consecutive local calendar days.', series: 'perfect_streak', displayOrder: 100, status: 'active', visibility: 'public', tier: 'silver', icon: 'flame', showProgress: true, progress: { metric: 'perfect_streak', current: 2, target: 7 } },
+    { key: 'check_ins_7', name: '7 Check-Ins', requirement: 'Post exactly 7 check-ins in one challenge run; partial check-ins count.', series: 'participation', displayOrder: 200, status: 'active', visibility: 'public', tier: 'silver', icon: 'check', showProgress: true, progress: { metric: 'instance_check_in_count', current: 5, target: 7 } },
+    { key: 'seven_sealed', name: '7-Day Perfect Streak', requirement: 'Post all seven Daily Actions on 7 consecutive local calendar days in one challenge run.', series: 'perfect_streak', displayOrder: 100, status: 'active', visibility: 'public', tier: 'silver', icon: 'flame', showProgress: true, progress: { metric: 'perfect_streak', current: 2, target: 7 } },
     { key: 'secret', name: 'Hidden locked badge', series: 'community', status: 'active', visibility: 'hidden' },
   ] },
   awards: GALLERY_BADGES,
@@ -52,6 +52,7 @@ for (const theme of ['light', 'dark', 'dominion-night', 'dominion-platinum']) {
       await expect(collection.getByRole('heading', { name: 'Check-in milestones' })).toBeVisible();
       const seven = collection.locator('[data-badge-requirement="check_ins_7"]');
       await expect(seven).toContainText('0 of 7 check-ins');
+      await expect(seven).toContainText('Post exactly 7 check-ins in one challenge run; partial check-ins count.');
       const finisher = collection.locator('[data-badge-requirement="original_77_completed"]');
       expect(catalog.items.find((item) => item.key === 'original_77_completed')?.status).toBe('active');
       await expect(finisher).toContainText('Not yet earned');

@@ -127,6 +127,14 @@ for (const [key, target, successor] of [['seven_day_reset', 7, 'twenty_one_day_p
     assert.deepEqual(available, successor ? [successor] : []);
     if (successor) assert.equal(fixture.query(`select unlock_points is null from public.user_challenge_states where user_id=${q(actor)} and challenge_key=${q(successor)}`), 't');
     assert.equal(fixture.query(`select count(*) from public.user_badges where user_id=${q(actor)} and badge_key='original_77_completed'`), '0');
+    if (key === 'seven_day_reset') {
+      const award = JSON.parse(fixture.query(`select to_jsonb(b) from public.user_badges b
+        where user_id=${q(actor)} and badge_key='check_ins_7' and scope_key=${q(`instance:${instance}`)}`));
+      assert.equal(award.metadata.awardDefinition.requirement,
+        'Post exactly 7 check-ins in one challenge run; partial check-ins count.');
+      assert.equal(award.metadata.awardDefinition.description, award.metadata.awardDefinition.requirement);
+      assert.equal(award.metadata.sourceRecordId, result.id);
+    }
   });
 }
 

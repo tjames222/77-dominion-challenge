@@ -13,7 +13,9 @@ const ids = Object.fromEntries(['inert', 'draft', 'partial', 'scheduled', 'overd
   'event77', 'later', 'laterCompleted', 'available', 'invalidRows', 'tooMany', 'invalidZone', 'review',
   'orphanHistory', 'conflict', 'twoActive', 'invalidLater'].map(key => [key, randomUUID()]));
 const crew = randomUUID(), oldEvent = randomUUID(), destination = randomUUID();
-let fixture, source, sourceHash, preserved;
+let fixture, source, sourceHash, preserved, priorBadgeDefinitions, currentBadgeCatalog;
+const instanceBadgeKeys = ['streak_flame','seven_sealed','full_streak_14','full_streak_28','full_streak_56','full_streak_70',
+  'check_ins_7','check_ins_14','check_ins_21','check_ins_26','check_ins_39','check_ins_50','check_ins_60','check_ins_70'];
 const tables = ['public.profiles', 'public.check_ins', 'public.challenge_entries', 'public.user_game_stats',
   'public.game_point_events', 'public.user_reward_entitlements', 'public.user_challenge_states', 'public.user_badges',
   'private.original_77_completion_events', 'public.community_feed_items', 'private.outbound_deliveries',
@@ -133,6 +135,15 @@ before(async () => {
       select user_id,'original_77_completed','original77:'||(current_date-160)::text,source_local_date,source_recorded_at,
         jsonb_build_object('completionEventId',id) from private.original_77_completion_events where id=${q(oldEvent)};
     commit;`);
+  for (const key of ['seven_sealed', 'check_ins_7']) fixture.queryAsBootstrap(`begin;set local session_replication_role=replica;
+    insert into public.user_badges(user_id,badge_key,scope_key,entry_date,earned_at,celebration_seen_at,metadata)
+      select ${q(ids.partial)},badge_key,'original77:'||(current_date-160)::text,current_date-154,
+        '2026-01-07T12:34:56.123456Z','2026-01-08T01:02:03.654321Z',
+        jsonb_build_object('legacy',false,'sourceRecordId','synthetic-preserved-badge-source',
+          'awardDefinition',jsonb_build_object('name',name,'description',description,'requirement',requirement,'tier',tier))
+      from public.badge_definitions where badge_key=${q(key)};commit;`);
+  priorBadgeDefinitions = JSON.parse(fixture.query('select jsonb_agg(to_jsonb(d) order by badge_key) from public.badge_definitions d'));
+  currentBadgeCatalog = JSON.parse(await readFile(new URL('../src/static/badge-catalog.v1.json', import.meta.url), 'utf8'));
   preserved = snapshot();
   fixture.query(wrap(source));
 });
@@ -146,9 +157,31 @@ test('70→71 preserves every source column except the new check-in UUID, and cr
   assert.equal(fixture.query('select count(*) from public.challenge_entries where challenge_instance_id is not null'), '0');
   assert.equal(fixture.query('select count(*) from private.challenge_instance_completions'), '1');
   assert.equal(fixture.query('select count(*) from private.original_77_completion_events'), '1');
-  assert.equal(fixture.query('select count(*) from public.user_badges'), '1');
+  assert.equal(fixture.query('select count(*) from public.user_badges'), '3');
   assert.equal(fixture.query('select count(*) from public.game_point_events'), '1');
   assert.equal(fixture.query('select count(*) from private.outbound_deliveries'), '1');
+});
+
+test('only 14 current badge copy pairs change, with exact preview/RPC parity and immutable earned snapshots', () => {
+  const actual = JSON.parse(fixture.query('select jsonb_agg(to_jsonb(d) order by badge_key) from public.badge_definitions d'));
+  const expected = priorBadgeDefinitions.map(row => instanceBadgeKeys.includes(row.badge_key)
+    ? { ...row, description: row.description.replace('one original 77-day challenge', 'one challenge run'),
+      requirement: row.requirement.replace('one original 77-day challenge', 'one challenge run') } : row);
+  assert.deepEqual(actual, expected, 'No criterion, Finisher, retired definition or other field may change.');
+  assert.equal(actual.filter((row, index) => JSON.stringify(row) !== JSON.stringify(priorBadgeDefinitions[index])).length, 14);
+  const rpc = call(ids.partial, `select public.get_badge_collection(${q(ids.partial)})`);
+  for (const key of instanceBadgeKeys) {
+    const definition = actual.find(row => row.badge_key === key);
+    const preview = currentBadgeCatalog.badges.find(row => row.key === key);
+    const presented = rpc.items.find(row => row.key === key);
+    assert.equal(definition.description, preview.description); assert.equal(definition.requirement, preview.requirement);
+    assert.equal(presented.description, preview.description); assert.equal(presented.requirement, preview.requirement);
+    assert.match(preview.requirement, /one challenge run/); assert.doesNotMatch(preview.requirement, /original 77-day/);
+  }
+  const oldAwards = preserved['public.user_badges'].filter(row => row.user_id === ids.partial);
+  assert.equal(oldAwards.length, 2);
+  for (const award of oldAwards) assert.match(award.metadata.awardDefinition.requirement, /one original 77-day challenge/);
+  assert.deepEqual(snapshot()['public.user_badges'], preserved['public.user_badges']);
 });
 
 test('valid partial, scheduled, overdue and group histories bind to exactly one original UUID with original scope/date/attribution', () => {
@@ -374,5 +407,22 @@ test('an unexpected generic check-in UPDATE trigger aborts the entire cutover be
     assert.deepEqual(snapshot(db), before);
     assert.equal(db.query("select to_regclass('private.challenge_instances') is null"), 't');
     assert.equal(db.query("select count(*) from pg_attribute where attrelid='public.check_ins'::regclass and attname='challenge_instance_id' and not attisdropped"), '0');
+  } finally { db.close(); }
+});
+
+test('noncanonical per-run badge definitions abort the entire migration without source or partial DDL changes', async () => {
+  const db = await createOriginal77FullchainFixture({ through: 70 });
+  try {
+    const before = snapshot(db);
+    assert.throws(() => db.query(wrap("update public.badge_definitions set criteria_version=2 where badge_key='check_ins_7';")),
+      /badge_definitions_criteria_version_check/, 'The released schema already rejects any other criteria version.');
+    for (const change of ["description='Unexpected copy'", "requirement='Unexpected copy'", 'threshold=8',
+      "metric='check_in_count'", "scope='lifetime'", "source_event='app_visit'", 'blocked=true']) {
+      assert.throws(() => db.query(wrap(`update public.badge_definitions set ${change} where badge_key='check_ins_7';${source}`)),
+        /Expected exactly 14 canonical per-instance badge definitions/);
+      assert.deepEqual(snapshot(db), before);
+      assert.equal(db.query("select to_regclass('private.challenge_instances') is null"), 't');
+      assert.equal(db.query("select count(*) from pg_attribute where attrelid='public.check_ins'::regclass and attname='challenge_instance_id' and not attisdropped"), '0');
+    }
   } finally { db.close(); }
 });

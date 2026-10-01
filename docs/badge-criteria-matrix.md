@@ -12,7 +12,11 @@ release candidate, not yet deployed**; it still requires its separately reviewed
 cutover integrations, current backup, protected checks and deployment.
 
 `src/static/badge-catalog.v1.json` is the checked-in source consumed by preview
-and mirrored exactly by the SQL seed (the fixture asserts byte-content JSON parity). The typed SQL and JavaScript evaluators are checked
+and mirrored by the current SQL definitions. The historical fixture verifies the
+immutable seed with only the explicit later Finisher activation and 14 per-run
+copy corrections reversed. Current participation and perfect-streak requirements
+say “one challenge run”; they apply to original and later runs. Existing earned
+definition snapshots retain their original wording. The typed SQL and JavaScript evaluators are checked
 against the same one-before/exact/one-after cases; no criterion executes code.
 
 | Key | Name | State | Source / exact rule | Scope | Tier | Order | Migration treatment |

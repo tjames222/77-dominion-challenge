@@ -224,6 +224,38 @@ insert into public.challenge_definitions(challenge_key,title,teaser,challenge_ty
 values('original_77','77-Day Dominion Challenge','Submit 77 check-ins; partial check-ins count.',
   'original',null,77,'membership_active',0,true);
 
+-- Current participation/streak rules apply to every UUID-bound challenge run.
+-- Correct only their display copy; immutable earned award snapshots and every
+-- rule identity, threshold, scope and criteria version remain untouched.
+do $instance_badge_copy$
+declare changed integer;
+begin
+  update public.badge_definitions d set
+    description=replace(d.description,'one original 77-day challenge','one challenge run'),
+    requirement=replace(d.requirement,'one original 77-day challenge','one challenge run')
+  from (values
+    ('streak_flame','perfect_streak',3),('seven_sealed','perfect_streak',7),
+    ('full_streak_14','perfect_streak',14),('full_streak_28','perfect_streak',28),
+    ('full_streak_56','perfect_streak',56),('full_streak_70','perfect_streak',70),
+    ('check_ins_7','instance_check_in_count',7),('check_ins_14','instance_check_in_count',14),
+    ('check_ins_21','instance_check_in_count',21),('check_ins_26','instance_check_in_count',26),
+    ('check_ins_39','instance_check_in_count',39),('check_ins_50','instance_check_in_count',50),
+    ('check_ins_60','instance_check_in_count',60),('check_ins_70','instance_check_in_count',70)
+  ) expected(key,metric,threshold)
+  where d.badge_key=expected.key and d.metric=expected.metric and d.threshold=expected.threshold
+    and d.scope='challenge_instance' and d.source_event='check_in' and d.criteria_version=1
+    and not d.retired and not d.blocked and d.predicate is null
+    and d.requirement=d.description
+    and d.description=case expected.metric when 'perfect_streak' then
+      format('Post all seven Daily Actions on %s consecutive local calendar days in one original 77-day challenge.',expected.threshold)
+      else format('Post exactly %s check-ins in one original 77-day challenge; partial check-ins count.',expected.threshold) end;
+  get diagnostics changed=row_count;
+  if changed<>14 then
+    raise exception 'Expected exactly 14 canonical per-instance badge definitions.' using errcode='23514';
+  end if;
+end;
+$instance_badge_copy$;
+
 create function private.reject_instance_completion_update()
 returns trigger language plpgsql security invoker set search_path='' as $$
 begin raise exception 'challenge_instance_completion_immutable' using errcode='42501'; end;

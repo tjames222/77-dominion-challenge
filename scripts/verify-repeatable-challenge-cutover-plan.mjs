@@ -8,7 +8,7 @@ export const REPEATABLE_CHALLENGE_MIGRATION_VERSION = '20261001001245';
 export const REPEATABLE_CHALLENGE_MIGRATION_FILENAME =
   `${REPEATABLE_CHALLENGE_MIGRATION_VERSION}_repeatable_challenge_instances_v2.sql`;
 export const REPEATABLE_CHALLENGE_MIGRATION_SHA256 =
-  '7e295a3708a3c241b60917fb16db00f27a39aa327f19c557595a5cbab2396bfc';
+  '0250b78791964615abcbe8066245df73ed98d78dbdb5a4e418d3bfbc7bec652b';
 const migrationsDirectory = new URL('../supabase/migrations/', import.meta.url);
 const repeatableChallengeMigration = new URL(
   `../supabase/migrations/${REPEATABLE_CHALLENGE_MIGRATION_FILENAME}`,

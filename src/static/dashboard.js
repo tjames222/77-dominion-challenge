@@ -554,6 +554,7 @@ let dashboardHydrationRequestId = 0;
 let observedAuthOwner = '';
 let hydratedAuthOwner = '';
 let authOwnerEpoch = 0;
+let observedAuthSession = null;
 let celebrationReturnFocus = null;
 let challengeStartFlow = null;
 const $ = (id) => document.getElementById(id);
@@ -805,6 +806,10 @@ const withPendingDraftMutations = (draft) => {
   };
 };
 
+const runCurrentDraftMutation = (owner, mutation) => (
+  isCurrentMutationOwner(owner) ? mutation() : null
+);
+
 async function reconcileDailyStandardDraft(date, fallbackMessage, owner = captureRunMutationOwner()) {
   if (!owner) return;
   try {
@@ -940,14 +945,14 @@ function toggleStandard(id) {
   render();
 
   entrySaveQueue = entrySaveQueue
-    .then(() => mutateDailyStandardDraft({
+    .then(() => runCurrentDraftMutation(owner, () => mutateDailyStandardDraft({
       date: currentEntry.date,
       actionId: id,
       completed: nextCompleted,
       expectedVersion: currentEntry.version,
       expectedUserId: owner.userId,
       expectedInstanceId: owner.instanceId,
-    }))
+    })))
     .then((authoritative) => {
       if (!isCurrentMutationOwner(owner)) return;
       if (pendingActionMutations.get(id) === nextCompleted) pendingActionMutations.delete(id);
@@ -1391,6 +1396,8 @@ async function handleDashboardAuthOwnerChange(nextUser, { force = false } = {}) 
   const nextOwner = String(nextUser?.userId || '');
   if (!force && nextOwner && nextOwner === observedAuthOwner) return;
   invalidateDashboardOwner(nextOwner);
+  const ownerEpoch = authOwnerEpoch;
+  const current = () => ownerEpoch === authOwnerEpoch && observedAuthOwner === nextOwner;
   if (!nextOwner) {
     redirectToLogin();
     return;
@@ -1398,7 +1405,7 @@ async function handleDashboardAuthOwnerChange(nextUser, { force = false } = {}) 
 
   try {
     const billing = await getBillingState();
-    if (observedAuthOwner !== nextOwner) return;
+    if (!current()) return;
     if (!billing.authenticated) {
       redirectToLogin();
       return;
@@ -1408,14 +1415,25 @@ async function handleDashboardAuthOwnerChange(nextUser, { force = false } = {}) 
       return;
     }
     await hydrateDashboardFromApi(nextOwner);
+    if (!current()) return;
     await recoverPendingCelebrations();
   } catch (error) {
-    if (observedAuthOwner !== nextOwner) return;
+    if (!current()) return;
     console.warn('Unable to rehydrate the dashboard after an account change', error);
     clearDashboardUserState();
     challengeActivation = createChallengeActivationState('error');
     render();
   }
+}
+
+function handleDashboardAuthStateChange({ event, user, sessionIdentity } = {}) {
+  const nextSession = String(sessionIdentity || '');
+  const nextOwner = String(user?.userId || '');
+  const sessionChanged = observedAuthSession === null
+    ? Boolean(nextOwner && nextOwner === observedAuthOwner && event !== 'INITIAL_SESSION')
+    : observedAuthSession !== nextSession;
+  observedAuthSession = nextSession;
+  return handleDashboardAuthOwnerChange(user, { force: sessionChanged });
 }
 
 async function refreshGameSummary(owner = captureMutationOwner()) {
@@ -1615,14 +1633,14 @@ document.addEventListener('change', (event) => {
   render();
 
   entrySaveQueue = entrySaveQueue
-    .then(() => setDailyStandardWorkoutDifficulty({
+    .then(() => runCurrentDraftMutation(owner, () => setDailyStandardWorkoutDifficulty({
       date: currentEntry.date,
       workoutId: target.dataset.workout,
       difficulty: target.value,
       expectedVersion: currentEntry.version,
       expectedUserId: owner.userId,
       expectedInstanceId: owner.instanceId,
-    }))
+    })))
     .then((authoritative) => {
       if (!isCurrentMutationOwner(owner)) return;
       if (pendingWorkoutMutations.get(target.dataset.workout) === target.value) pendingWorkoutMutations.delete(target.dataset.workout);
@@ -1888,8 +1906,8 @@ async function bootDashboard() {
       return;
     }
     invalidateDashboardOwner(currentUser.userId);
-    const unsubscribeAuth = subscribeToAuthStateChanges(({ user }) => {
-      void handleDashboardAuthOwnerChange(user);
+    const unsubscribeAuth = subscribeToAuthStateChanges((change) => {
+      void handleDashboardAuthStateChange(change);
     });
     window.addEventListener('pagehide', unsubscribeAuth, { once: true });
     window.addEventListener('pagehide', () => invalidateDashboardOwner(''), { once: true });
