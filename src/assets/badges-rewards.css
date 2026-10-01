@@ -210,6 +210,10 @@
   white-space: nowrap;
 }
 
+:root[data-theme="light"] #rewardsCatalogSummary {
+  color: color-mix(in srgb, var(--accent-strong) 90%, var(--text));
+}
+
 .reward-next-panel > p {
   color: var(--text-muted);
   line-height: 1.55;
