@@ -85,6 +85,15 @@ test('mobile Share footer visibility is checked early without narrowing the full
   assert.doesNotMatch(workflowJob('browser-shards'), /--grep|--project|--workers|--retries|--timeout|continue-on-error/);
 });
 
+test('concurrent reward queue fixtures are checked early in Chromium and WebKit', () => {
+  const preflight = workflowJob('preflight');
+  const command = "run: pnpm exec playwright test tests/e2e/reward-celebrations.spec.mjs tests/e2e/reward-celebrations-failure.spec.mjs --project=chromium-functional --project=webkit-reward-celebrations-mobile --grep 'check-in queues day complete|a failed permanent reward lookup'";
+  assert.ok(preflight.includes(command));
+  assert.ok(preflight.indexOf(command) < preflight.indexOf('run: pnpm test:e2e:auth'));
+  assert.match(playwrightConfig, /name: 'webkit-reward-celebrations-mobile'/);
+  assert.doesNotMatch(workflowJob('browser-shards'), /--grep|--project|--workers|--retries|--timeout|continue-on-error/);
+});
+
 test('the unchanged required check is an always-run fail-closed aggregate', () => {
   const aggregate = workflowJob('browser-quality');
   assert.equal((workflow.match(/name: Routes, accessibility, and visuals/g) || []).length, 1);

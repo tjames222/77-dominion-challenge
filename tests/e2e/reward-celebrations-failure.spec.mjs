@@ -16,6 +16,9 @@ test('a failed permanent reward lookup cannot block day, badge or challenge cele
     localStorage.setItem('dominion:mockChallengeStates', JSON.stringify([{ key: 'seven_day_reset', status: 'available', unlockedAt: '2026-02-01T00:00:00.000Z', celebrationSeenAt: '2026-02-01T00:00:00.000Z' }]));
   }, DEFAULT_OWNERSHIP_REWARD_DEFINITIONS.filter((item) => item.key !== 'dominion_night_theme').map((item) => ({ key: item.key, ownedAt: '2026-02-01T00:00:00.000Z', celebrationSeenAt: '2026-02-01T00:00:00.000Z' })));
   await page.goto('/dashboard.html'); await app.stable();
+  // Stage the concurrent unlock after boot recovery, not while it can consume
+  // the newly unseen fixture before the Check-In starts.
+  await expect(page.locator('.dashboard-brand-panel')).toHaveClass(/\b(?:pending-reveal|is-visible)\b/);
   await page.evaluate(owner => {
     const key = 'dominion:challengeAggregateV2:' + owner;
     const aggregate = JSON.parse(localStorage.getItem(key));

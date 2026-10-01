@@ -238,6 +238,9 @@ test('a duplicated tab cannot share an active reward delivery token', async ({ p
 test('check-in queues day complete, every badge, permanent reward, then a concurrent challenge without overlap', async ({ page, app }) => {
   await seedRewards(page, app, { unseen: [], missing: ['dominion_night_theme'], points: 105 });
   await page.goto(ROUTE_BY_ID.dashboard.path); await app.stable(); await expect(stage(page)).toHaveCount(0);
+  // Boot initializes reveal states only after its initial celebration recovery.
+  // This offscreen panel may stay pending until scrolled into view.
+  await expect(page.locator('.dashboard-brand-panel')).toHaveClass(/\b(?:pending-reveal|is-visible)\b/);
   await page.evaluate(owner => {
     const key = 'dominion:challengeAggregateV2:' + owner;
     const aggregate = JSON.parse(localStorage.getItem(key));
