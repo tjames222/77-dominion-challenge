@@ -56,6 +56,9 @@ jobs:
       - name: Production build
         run: pnpm build
 
+      - name: Verify mobile Share footer in WebKit
+        run: pnpm exec playwright test tests/e2e/share-composer-routes.spec.mjs --project=webkit-share-composer-mobile --grep 'composer retains branded accessible layout.*at 390px'
+
       - name: Hybrid dev authentication regression
         run: pnpm test:e2e:auth
 

@@ -2,9 +2,10 @@
 
 FOU-1497's delivery protocol uses the typed reward catalog and permanent
 ownership records. It does not itself change thresholds, eligibility,
-fulfillment, paid services or completion rules. The **not-yet-deployed FOU-1498
-V2 candidate** integrates the same protocol with the new catalog and repeatable
-runs; its pending release is not implied by this document.
+fulfillment, paid services or completion rules. The **FOU-1498 V2 contract**
+integrates the same protocol with the new catalog and repeatable runs. Production
+availability requires the verified migration-71 cutover and matching frontend
+deployment; this document does not establish deployment status.
 
 ## Server contract
 
@@ -24,7 +25,7 @@ Recovery runs on Dashboard entry, focus, visibility, online and relevant storage
 
 Recovery batches with multiple rewards are consolidated into one count-based catch-up popup. Live point crossings use deterministic catalog order, one popup per newly owned reward. Backfill/catalog-threshold sources consolidate even in a live refresh. Challenge-lifecycle records are always excluded, including future challenge types. New permanent reward types use the same contract and a safe gift-icon fallback.
 
-## V2 catalog and repeat-run integration (local candidate)
+## V2 catalog and repeat-run integration
 
 All reward presentation uses the actor-bound V2 catalog described in
 [reward-catalog-contract.md](reward-catalog-contract.md). The new six core

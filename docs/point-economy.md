@@ -1,10 +1,11 @@
 # Dominion point economy contract
 
-Status: **FOU-1498 V2 local release candidate; not yet deployed.** This document
-describes the implementation on the repeatable-challenge feature branch, not the
-current production reward curve. The earlier original77 completion prerequisite
-has shipped; that does not establish deployment of the six-reward rebalance or
-UUID repeatable runs. See the release boundary below.
+Release contract: **FOU-1498 V2, migration 20261001001245.** This document
+describes the implemented six-reward rebalance and UUID repeatable runs. Their
+production availability requires the successful guarded migration-71 cutover
+and matching frontend deployment; the earlier original77 prerequisite alone
+does not establish that release. See the release boundary below and the
+production release workflow evidence for deployment status.
 
 ## Point sources stay unchanged
 

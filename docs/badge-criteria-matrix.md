@@ -7,9 +7,10 @@ from calendar-position awards. Active perfect-streak crossings are 3, 7, 14, 28,
 The four explicitly chosen workout difficulties remain one-time action wins.
 Existing awards and their original definition snapshots are never removed.
 The original77 canonical completion prerequisite shipped in the prior release.
-The FOU-1498 V2 UUID/repeatable-run integration described below is a **local
-release candidate, not yet deployed**; it still requires its separately reviewed
-cutover integrations, current backup, protected checks and deployment.
+The FOU-1498 V2 UUID/repeatable-run integration described below is implemented
+in migration **20261001001245**. Production availability requires its current
+backup, protected checks, guarded cutover and matching frontend deployment;
+consult production release workflow evidence rather than this matrix for status.
 
 `src/static/badge-catalog.v1.json` is the checked-in source consumed by preview
 and mirrored by the current SQL definitions. The historical fixture verifies the

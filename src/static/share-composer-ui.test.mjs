@@ -88,6 +88,7 @@ describe('sharing composer browser integration', () => {
     assert.match(composer, /dialog\.elements\.footer\.append\(actionRow, status\)/);
     assert.match(composer, /dialog\.elements\.footer\.hidden = false/);
     assert.match(css, /\.share-composer-footer\s*\{\s*display: grid/);
+    assert.match(css, /\.share-composer-footer\s*\{[^}]*grid-template-columns: minmax\(0, 1fr\)/);
   });
 
   test('force-closes and clears account-scoped state across authentication changes', () => {

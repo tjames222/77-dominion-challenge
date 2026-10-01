@@ -76,6 +76,15 @@ test('two standard-runner shards preserve preliminary checks and the full main m
   assert.match(playwrightConfig, /timeout: 45_000/);
 });
 
+test('mobile Share footer visibility is checked early without narrowing the full matrix', () => {
+  const preflight = workflowJob('preflight');
+  const command = "run: pnpm exec playwright test tests/e2e/share-composer-routes.spec.mjs --project=webkit-share-composer-mobile --grep 'composer retains branded accessible layout.*at 390px'";
+  assert.ok(preflight.includes(command));
+  assert.ok(preflight.indexOf(command) < preflight.indexOf('run: pnpm test:e2e:auth'));
+  assert.match(playwrightConfig, /name: 'webkit-share-composer-mobile'/);
+  assert.doesNotMatch(workflowJob('browser-shards'), /--grep|--project|--workers|--retries|--timeout|continue-on-error/);
+});
+
 test('the unchanged required check is an always-run fail-closed aggregate', () => {
   const aggregate = workflowJob('browser-quality');
   assert.equal((workflow.match(/name: Routes, accessibility, and visuals/g) || []).length, 1);

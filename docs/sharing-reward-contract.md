@@ -32,9 +32,9 @@ The internal grant takes a transaction-scoped user lock, inserts one 14-point le
 
 Reward progress and next-unlock calculations read `user_game_stats.total_points`, which the atomic grant updates immediately. The all-badges contract reads `badge_definitions` and `user_badges`, so the catalog entry and earned badge appear without a separate client-side badge definition.
 
-## Pending repeatable-run release compatibility
+## Repeatable-run release compatibility
 
-The local FOU-1498 candidate adds explicit `contractVersion: 2` to authenticated
+The FOU-1498 V2 contract adds explicit `contractVersion: 2` to authenticated
 share preview/create requests. These use only the new instance-bound RPCs:
 the verified actor is required, and progress creation must include the run UUID
 captured by its preview. A failed or unavailable V2 RPC never falls back to an
@@ -52,5 +52,6 @@ exactly six public fields: `schemaVersion`, `kind`, `challengeKey`, `title`,
 `submittedCheckIns`, and `targetCheckIns`. It excludes identity, dates, private
 activity details, and run UUIDs. Previewing does not create a link; creation is
 explicit, rate-limited, expiring, and revocable. Existing links remain readable.
-This remains a local release candidate until the hosted cutover is verified.
+Production availability requires the verified hosted cutover and matching
+frontend deployment; consult the production release workflow evidence for status.
 Sharing-bonus evidence and lifetime idempotency stay unchanged.

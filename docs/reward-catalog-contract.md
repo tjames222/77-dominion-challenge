@@ -1,10 +1,11 @@
 # Typed reward catalog contract
 
-Status: **FOU-1498 V2 local release candidate; not yet deployed.** This is the
-pending server/client contract, not a claim that production serves V2. The
-original77 completion prerequisite shipped separately. Historical-instance
-binding/initial activation and generic public-share SQL remain distinct cutover
-integrations to finish and verify before releasing this candidate.
+Release contract: **FOU-1498 V2, migration 20261001001245.** Historical-instance
+binding, initial activation and generic public-share SQL are implemented and
+covered by preservation, concurrency and privacy checks. Production availability
+requires the successful guarded migration-71 cutover and matching frontend
+deployment; this document is a contract, not deployment evidence. The original77
+completion prerequisite shipped separately.
 
 ## Configuration and authority
 
