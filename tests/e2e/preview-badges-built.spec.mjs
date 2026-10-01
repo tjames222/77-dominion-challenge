@@ -65,8 +65,18 @@ test('compiled preview completes 77 partial submissions, preserves history on re
       for (let index = 0; index < 77; index += 1) { if (index) at += 86400000; await submit(); }
       const completed = read();
       const catalog = await api.getAllRewardCatalog({ expectedUserId: owner });
+      const activation = await api.getChallengeActivation({ expectedUserId: owner });
+      if (activation?.schemaVersion !== 2 || activation.contractValid !== true || activation.actorId !== owner
+        || activation.currentInstance?.id !== catalog.currentInstance?.id || activation.revision !== catalog.revision
+        || activation.currentInstance?.status !== 'completed' || activation.reviewRequired
+        || activation.timeZone !== catalog.currentInstance?.timeZone
+        || activation.timeZone !== activation.currentInstance?.timeZone
+        || !/^\d{4}-\d{2}-\d{2}$/.test(activation.serverDate || '')) {
+        throw new Error('The preview challenge start context was not verified.');
+      }
       const options = { expectedUserId: owner, expectedInstanceId: catalog.currentInstance.id,
-        expectedRevision: catalog.revision, startDate: null, timeZone: 'UTC', requestId: crypto.randomUUID() };
+        expectedRevision: catalog.revision, startDate: activation.serverDate,
+        timeZone: activation.timeZone, requestId: crypto.randomUUID() };
       const first = await api.startChallenge('original_77', options);
       const afterStart = read(); const replay = await api.startChallenge('original_77', options); const afterReplay = read();
       let sameDayError;
