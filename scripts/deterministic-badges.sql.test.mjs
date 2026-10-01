@@ -68,6 +68,26 @@ before(async()=>{
   const draft=await readFile(new URL('../supabase/migrations/20260913033347_deterministic_badge_pipeline.sql',import.meta.url),'utf8');
   const catalog=JSON.parse(draft.match(/\$badge_catalog\$(.*?)\$badge_catalog\$/s)[1]);
   const historicalCatalog=structuredClone(BADGE_CATALOG);
+  const currentInstanceRules=historicalCatalog.filter(r=>r.status==='active'&&r.scope==='challenge_instance'
+    &&['perfect_streak','instance_check_in_count'].includes(r.metric));
+  assert.deepEqual(currentInstanceRules.map(r=>[r.key,r.metric,r.threshold]),[
+    ['streak_flame','perfect_streak',3],['seven_sealed','perfect_streak',7],
+    ['full_streak_14','perfect_streak',14],['full_streak_28','perfect_streak',28],
+    ['full_streak_56','perfect_streak',56],['full_streak_70','perfect_streak',70],
+    ['check_ins_7','instance_check_in_count',7],['check_ins_14','instance_check_in_count',14],
+    ['check_ins_21','instance_check_in_count',21],['check_ins_26','instance_check_in_count',26],
+    ['check_ins_39','instance_check_in_count',39],['check_ins_50','instance_check_in_count',50],
+    ['check_ins_60','instance_check_in_count',60],['check_ins_70','instance_check_in_count',70],
+  ]);
+  for(const rule of currentInstanceRules){
+    const expected=rule.metric==='perfect_streak'
+      ?`Post all seven Daily Actions on ${rule.threshold} consecutive local calendar days in one challenge run.`
+      :`Post exactly ${rule.threshold} check-ins in one challenge run; partial check-ins count.`;
+    assert.equal(rule.description,expected);assert.equal(rule.requirement,expected);
+    // This fixture intentionally executes pre71 behavior. Reverse only the
+    // reviewed copy correction, never an earning criterion or arbitrary drift.
+    rule.description=rule.requirement=expected.replace('one challenge run','one original 77-day challenge');
+  }
   Object.assign(historicalCatalog.find(r=>r.key==='original_77_completed'),{
     description:'Complete the original 77-day challenge under its authoritative completion rules.',
     requirement:'Complete the original 77-day challenge under its authoritative completion rules.',

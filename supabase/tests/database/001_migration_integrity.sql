@@ -216,20 +216,21 @@ select ok(to_regclass('private.challenge_activation_migration_reviews') is not n
 select ok(
   to_regprocedure('public.bootstrap_daily_standard_time_zone(text,uuid)') is not null
   and to_regprocedure(
-    'public.mutate_daily_standard_draft(date,text,boolean,bigint,uuid)'
+    'public.mutate_daily_standard_draft_v2(date,text,boolean,bigint,uuid,uuid)'
   ) is not null
   and to_regprocedure(
-    'public.set_daily_standard_workout_difficulty(date,text,text,bigint,uuid)'
+    'public.set_daily_standard_workout_difficulty_v2(date,text,text,bigint,uuid,uuid)'
   ) is not null
   and to_regprocedure(
-    'public.submit_daily_check_in(text,text[],jsonb,text,date,uuid)'
+    'public.submit_daily_check_in_v2(text,text[],jsonb,text,date,uuid,uuid)'
   ) is not null,
-  'the Daily Standards mutation RPCs have expected-actor signatures'
+  'the Daily Action mutation RPCs require both expected actor and instance'
 );
 select ok(
   to_regprocedure('public.get_challenge_activation(uuid)') is not null
+  and to_regprocedure('public.get_challenge_activation_v2(uuid)') is not null
   and to_regprocedure('public.get_challenge_activation()') is null,
-  'the authoritative challenge activation RPC has an expected-actor signature'
+  'legacy and V2 challenge activation reads require an expected actor'
 );
 select ok(to_regprocedure('public.activate_solo_challenge(date,text,uuid,uuid)') is not null,
   'the Solo challenge activation RPC has the expected signature');
@@ -241,8 +242,8 @@ select ok(
   ) is not null,
   'the atomic crew-create and Group-start RPC has the expected signature'
 );
-select ok(to_regprocedure('public.set_challenge_start_date(date,text,uuid,bigint,uuid)') is not null,
-  'the challenge date-edit RPC has the expected signature');
+select ok(to_regprocedure('public.set_challenge_start_date_v2(date,text,uuid,bigint,uuid,uuid)') is not null,
+  'the challenge date-edit RPC requires actor, instance and revision');
 select ok(to_regprocedure('public.record_app_visit(uuid)') is not null, 'the app-visit RPC exists');
 select ok(to_regprocedure('public.create_sharing_reward_intent(text)') is not null, 'the Sharing intent RPC exists');
 select ok(to_regprocedure('public.complete_sharing_reward(text)') is not null, 'the Sharing completion RPC exists');
@@ -278,8 +279,8 @@ select is(
     from public.reward_definitions
     where reward_key = 'dominion_night_theme'
   ),
-  56,
-  'the Dominion Night theme reward starts at exactly 56 points'
+  112,
+  'the V2 Dominion Night theme reward starts at exactly 112 points'
 );
 select is(
   (
@@ -362,10 +363,10 @@ select ok(
     from pg_indexes
     where schemaname = 'public'
       and tablename = 'check_ins'
-      and indexname = 'check_ins_user_challenge_day_unique_idx'
+      and indexname = 'check_ins_instance_challenge_day_unique_idx'
       and indexdef like 'CREATE UNIQUE INDEX%'
   ),
-  'one check-in per user and challenge day is enforced'
+  'one check-in per instance and calendar day is enforced across repeatable runs'
 );
 
 select ok(

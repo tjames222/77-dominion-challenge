@@ -3,7 +3,7 @@ begin;
 create extension if not exists pgtap with schema extensions;
 set local search_path = public, extensions;
 
-select plan(40);
+select plan(42);
 
 select ok(to_regclass('public.reward_definitions') is not null, 'the typed reward catalog exists');
 select ok(to_regclass('public.user_reward_entitlements') is not null, 'permanent reward ownership exists');
@@ -18,8 +18,8 @@ select is(
     from public.reward_definitions
     where reward_type = 'challenge'
   ),
-  array[140, 336, 406, 469, 532],
-  'the launch challenge thresholds are paced across the first challenge'
+  array[420, null, null, null, null]::integer[],
+  'Reset uses points and all four successors use completion'
 );
 select ok(
   not exists (
@@ -104,49 +104,49 @@ set local "request.jwt.claim.sub" = '10000000-0000-4000-8000-000000000001';
 set local "request.jwt.claims" = '{"sub":"10000000-0000-4000-8000-000000000001","role":"authenticated"}';
 
 select is(
-  jsonb_array_length(public.get_reward_catalog(
+  jsonb_array_length(public.get_reward_catalog_v2(
     50, null, null, '10000000-0000-4000-8000-000000000001'
   ) -> 'items'),
   11,
   'the authenticated read contract returns challenges and cosmetics together'
 );
 select is(
-  public.get_reward_catalog(
+  public.get_reward_catalog_v2(
     50, null, null, '10000000-0000-4000-8000-000000000001'
-  ) #>> '{items,4,status}',
+  ) #>> '{items,5,status}',
   'available',
   'the existing unlocked challenge stays available'
 );
 select is(
-  jsonb_array_length(public.get_reward_catalog(
+  jsonb_array_length(public.get_reward_catalog_v2(
     50, null, null, '10000000-0000-4000-8000-000000000001'
-  ) #> '{items,4,allowedActions}'),
+  ) #> '{items,5,allowedActions}'),
   0,
-  'available challenges expose no Start action until challenge instances are available'
+  'available challenges expose no Start while the current original run is incomplete'
 );
 select is(
-  public.get_reward_catalog(
+  public.get_reward_catalog_v2(
     50, null, null, '10000000-0000-4000-8000-000000000001'
   ) #>> '{items,0,status}',
   'owned',
   'the cosmetic uses owned instead of challenge lifecycle states'
 );
 select is(
-  public.get_reward_catalog(
+  public.get_reward_catalog_v2(
     50, null, null, '10000000-0000-4000-8000-000000000001'
   ) #>> '{nextUnlock,key}',
   'gym_training_discount',
   'lifetime points cannot bypass the gym reward Daily Standards requirement'
 );
 select is(
-  (public.get_reward_catalog(
+  (public.get_reward_catalog_v2(
     2, null, null, '10000000-0000-4000-8000-000000000001'
   ) #>> '{page,hasMore}')::boolean,
   true,
   'the catalog exposes bounded pagination'
 );
 select is(
-  public.get_reward_catalog(
+  public.get_reward_catalog_v2(
     2, null, null, '10000000-0000-4000-8000-000000000001'
   ) #>> '{page,nextCursor,key}',
   'gym_training_discount',
@@ -171,30 +171,44 @@ set local "request.jwt.claim.sub" = '20000000-0000-4000-8000-000000000002';
 set local "request.jwt.claims" = '{"sub":"20000000-0000-4000-8000-000000000002","role":"authenticated"}';
 select is(
   (select count(*)::integer from public.user_reward_entitlements),
-  4,
+  3,
   'another user sees only their own earned reward ownership'
 );
 select is(
-  public.get_reward_catalog(
+  public.get_reward_catalog_v2(
     50, null, null, '20000000-0000-4000-8000-000000000002'
   ) #>> '{nextUnlock,key}',
-  'gym_training_discount',
-  'the nearest locked reward respects its independent eligibility source'
+  'test_theme_reward',
+  'configured insertion order controls the next locked reward'
 );
 select is(
-  (public.get_reward_catalog(
+  (public.get_reward_catalog_v2(
     50, null, null, '20000000-0000-4000-8000-000000000002'
   ) #>> '{nextUnlock,pointsRemaining}')::integer,
-  21,
-  'gym next-unlock progress uses trusted Daily Standards points'
+  160,
+  'configured next-unlock progress uses its lifetime eligibility source'
 );
 
+select is(
+  (select (item->>'currentPoints')::integer from jsonb_array_elements(
+    public.get_reward_catalog_v2(50,null,null,'20000000-0000-4000-8000-000000000002')->'items'
+  ) item where item->>'key'='gym_training_discount'),
+  0,
+  'gym progress independently uses trusted Daily Action points'
+);
+select is(
+  (select (item->>'pointsRemaining')::integer from jsonb_array_elements(
+    public.get_reward_catalog_v2(50,null,null,'20000000-0000-4000-8000-000000000002')->'items'
+  ) item where item->>'key'='gym_training_discount'),
+  42,
+  'a high lifetime balance does not reduce the gym trusted-point requirement'
+);
 reset role;
 set local role anon;
 select throws_ok(
-  $$ select public.get_reward_catalog(50, null, null, null) $$,
+  $$ select public.get_reward_catalog_v2(50, null, null, null) $$,
   '42501',
-  'permission denied for function get_reward_catalog',
+  'permission denied for function get_reward_catalog_v2',
   'anonymous users cannot read the reward contract'
 );
 reset role;
@@ -206,20 +220,20 @@ set total_points = 0
 where user_id = '30000000-0000-4000-8000-000000000003';
 
 select is(
-  public.reward_catalog_for_user(
-    '30000000-0000-4000-8000-000000000003', 100, null, null
+  private.reward_catalog_v2(
+    '30000000-0000-4000-8000-000000000003', 100, null, null, null, null, null
   ) #>> '{nextUnlock,status}',
   'locked',
   'a new user sees a locked next reward'
 );
 select is(
   (
-    public.reward_catalog_for_user(
-      '30000000-0000-4000-8000-000000000003', 100, null, null
+    private.reward_catalog_v2(
+      '30000000-0000-4000-8000-000000000003', 100, null, null, null, null, null
     ) #>> '{nextUnlock,pointsRemaining}'
   )::integer,
-  21,
-  'a new user sees the complete points remaining'
+  560,
+  'a new user sees the configured next reward points remaining'
 );
 
 update public.user_game_stats
@@ -303,8 +317,8 @@ select ok(
   'catalog edits advance a monotonic version'
 );
 select is(
-  public.reward_catalog_for_user(
-    '30000000-0000-4000-8000-000000000003', 100, null, null
+  private.reward_catalog_v2(
+    '30000000-0000-4000-8000-000000000003', 100, null, null, null, null, null
   ) #>> '{items,0,status}',
   'owned',
   'the read contract trusts persisted ownership after corrections'
@@ -333,8 +347,8 @@ update public.reward_definitions
 set is_active = false
 where reward_key = 'test_theme_reward';
 select is(
-  public.reward_catalog_for_user(
-    '30000000-0000-4000-8000-000000000003', 100, null, null
+  private.reward_catalog_v2(
+    '30000000-0000-4000-8000-000000000003', 100, null, null, null, null, null
   ) #>> '{items,0,active}',
   'false',
   'owned cosmetics remain visible when catalog configuration is disabled'
@@ -364,7 +378,7 @@ select is(
 select is(
   has_function_privilege(
     'authenticated',
-    'public.get_reward_catalog(integer,integer,text,uuid)',
+    'public.get_reward_catalog_v2(integer,integer,text,uuid,bigint,bigint,text)',
     'EXECUTE'
   ),
   true,

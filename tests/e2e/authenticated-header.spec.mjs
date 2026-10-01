@@ -22,6 +22,46 @@ async function logInAsPreviewAccount(page, user, { logOutFirst = true } = {}) {
   }, { nextUser: user, shouldLogOut: logOutFirst });
 }
 
+async function prepareLegacyHeaderPreview(page, app, { dropIdentityMap = false } = {}) {
+  await app.seed('member');
+  // Initialize browser storage without running app code, so this really tests
+  // the one-time legacy import rather than rewriting an already-imported run.
+  await page.route('**/__header-fixture', route => route.fulfill({
+    contentType: 'text/html', body: '<!doctype html><title>Header import fixture</title>',
+  }));
+  await page.goto('/__header-fixture');
+  await page.evaluate(({ dropIdentityMap }) => {
+    if (dropIdentityMap) localStorage.removeItem('dominion:mockUserIdsByIdentity');
+    localStorage.removeItem('dominion:mockChallengeActivation');
+    localStorage.removeItem('dominion:mockChallengeActivationLegacyOwner');
+    if (dropIdentityMap) localStorage.setItem('dominion:mockCrewMembers', JSON.stringify({}));
+    localStorage.setItem('dominion:startDate', JSON.stringify('2026-02-03'));
+    localStorage.setItem('dominion:checkInDates', JSON.stringify(['2026-02-10']));
+    localStorage.setItem('dominion:badgeState:v1', JSON.stringify({
+      schemaVersion: 1, awards: [], visits: [], completionEvents: [],
+      checkIns: [{ source: 'check_in', sourceId: 'preview-check-in:2026-02-10',
+        localDate: '2026-02-10', occurredAt: '2026-02-10T17:30:00.000Z',
+        challengeDay: 8, completed: ['walk'], workoutDifficultySelections: {} }],
+    }));
+  }, { dropIdentityMap });
+}
+
+async function activationFor(page, userId) {
+  return page.evaluate(async expectedUserId => {
+    const api = await import('/src/static/api.js');
+    return api.getChallengeActivation({ expectedUserId });
+  }, userId);
+}
+
+async function checkInHistoryFor(page, userId) {
+  return page.evaluate(async expectedUserId => {
+    const api = await import('/src/static/api.js');
+    const dashboard = await api.getDashboard();
+    if (dashboard.profile.userId !== expectedUserId) throw new Error('The history belongs to another actor.');
+    return dashboard.checkIns;
+  }, userId);
+}
+
 test('authenticated header allowlist covers every eligible production route', () => {
   const expectedEntries = authenticatedHeaderRoutes.map((route) => route.htmlEntry).sort();
   expect([...AUTHENTICATED_HEADER_ROUTES].sort()).toEqual(expectedEntries);
@@ -215,8 +255,9 @@ test('authenticated header dialogs restore keyboard focus to their triggers', as
 });
 
 test('App Streak date-only edits preserve the activation timezone', async ({ page, app }) => {
-  await app.open(ROUTE_BY_ID.dashboard);
-  await page.evaluate((userId) => {
+  await app.seed('activeSolo');
+  await page.addInitScript((userId) => {
+    if (sessionStorage.getItem('header-timezone-seeded')) return;
     const states = JSON.parse(localStorage.getItem('dominion:mockChallengeActivation') || '{}');
     states[userId] = {
       ...states[userId],
@@ -232,8 +273,9 @@ test('App Streak date-only edits preserve the activation timezone', async ({ pag
       },
     };
     localStorage.setItem('dominion:mockChallengeActivation', JSON.stringify(states));
+    sessionStorage.setItem('header-timezone-seeded', 'true');
   }, FIXED_USER_ID);
-  await page.reload({ waitUntil: 'networkidle' });
+  await page.goto(ROUTE_BY_ID.dashboard.path, { waitUntil: 'networkidle' });
   await app.stable();
 
   await page.locator('.shared-header-streak').click();
@@ -245,34 +287,27 @@ test('App Streak date-only edits preserve the activation timezone', async ({ pag
   await expect(dialog.locator('[data-global-streak-start-date-feedback]'))
     .toContainText('Challenge start date saved.');
 
-  const saved = await page.evaluate((userId) => (
-    JSON.parse(localStorage.getItem('dominion:mockChallengeActivation') || '{}')[userId]
-  ), FIXED_USER_ID);
+  const saved = await activationFor(page, FIXED_USER_ID);
   expect(saved.startDate).toBe('2026-02-02');
   expect(saved.timeZone).toBe('America/Los_Angeles');
 });
 
 test('legacy mock start dates wait for their evidenced owner and never leak to another account', async ({ page, app }) => {
-  await app.open(ROUTE_BY_ID.dashboard);
-  await page.evaluate(() => {
-    localStorage.removeItem('dominion:mockChallengeActivation');
-    localStorage.removeItem('dominion:mockChallengeActivationLegacyOwner');
-    localStorage.setItem('dominion:startDate', JSON.stringify('2026-02-03'));
-    localStorage.setItem('dominion:checkInDates', JSON.stringify(['2026-02-10']));
-  });
+  await prepareLegacyHeaderPreview(page, app);
   const secondUser = {
     name: 'Second Member',
     email: 'second.member@example.test',
     avatarUrl: '',
   };
   const secondUserId = await logInAsPreviewAccount(page, secondUser);
+  await page.goto(ROUTE_BY_ID.dashboard.path, { waitUntil: 'networkidle' });
+  await app.stable();
 
-  const wrongAccountState = await page.evaluate((userId) => ({
-    activation: JSON.parse(localStorage.getItem('dominion:mockChallengeActivation') || '{}')
-      [userId],
+  const wrongAccountState = await page.evaluate(() => ({
     legacyOwner: localStorage.getItem('dominion:mockChallengeActivationLegacyOwner'),
     checkIns: JSON.parse(localStorage.getItem('dominion:checkInDates') || 'null'),
-  }), secondUserId);
+  }));
+  wrongAccountState.activation = await activationFor(page, secondUserId);
   expect(wrongAccountState.activation.status).toBe('not_started');
   expect(wrongAccountState.activation.startDate).toBeNull();
   expect(wrongAccountState.legacyOwner).toBeNull();
@@ -284,24 +319,21 @@ test('legacy mock start dates wait for their evidenced owner and never leak to a
 
   expect(await logInAsPreviewAccount(page, FIXED_USER)).toBe(FIXED_USER_ID);
 
-  await expect.poll(() => page.evaluate(() => {
-    const states = JSON.parse(localStorage.getItem('dominion:mockChallengeActivation') || '{}');
-    return states.mock_user_e2e_77?.startDate || 'missing';
-  })).toBe('2026-02-03');
+  await expect.poll(async () => (await activationFor(page, FIXED_USER_ID)).startDate).toBe('2026-02-03');
 
   const rightfulOwnerState = await page.evaluate((userId) => ({
-    activation: JSON.parse(localStorage.getItem('dominion:mockChallengeActivation') || '{}')[userId],
     legacyOwner: localStorage.getItem('dominion:mockChallengeActivationLegacyOwner'),
-    checkIns: JSON.parse(localStorage.getItem('dominion:checkInDates') || 'null'),
   }), FIXED_USER_ID);
+  rightfulOwnerState.activation = await activationFor(page, FIXED_USER_ID);
+  rightfulOwnerState.checkIns = await checkInHistoryFor(page, FIXED_USER_ID);
   expect(rightfulOwnerState.legacyOwner).toBe(FIXED_USER_ID);
   expect(rightfulOwnerState.activation.mode).toBe('solo');
   expect(rightfulOwnerState.activation.canEditStartDate).toBe(false);
-  expect(rightfulOwnerState.checkIns).toEqual({
-    owner: `mock:${FIXED_USER_ID}`,
-    dates: ['2026-02-10'],
-    challengeDays: [],
-  });
+  expect(rightfulOwnerState.activation.currentInstance.submittedCount).toBe(1);
+  expect(rightfulOwnerState.checkIns).toEqual([{
+    instanceId: rightfulOwnerState.activation.currentInstance.id,
+    date: '2026-02-10', challengeDay: 8,
+  }]);
 
   await page.locator('.shared-header-streak').click();
   await expect(page.getByRole('dialog', { name: 'App Streak' }).getByLabel('Start date'))
@@ -314,10 +346,8 @@ test('legacy mock start dates wait for their evidenced owner and never leak to a
   }, secondUserId);
   expect(await logInAsPreviewAccount(page, secondUser)).toBe(secondUserId);
 
-  await expect.poll(() => page.evaluate((userId) => {
-    const states = JSON.parse(localStorage.getItem('dominion:mockChallengeActivation') || '{}');
-    return states[userId]?.status || 'missing';
-  }, secondUserId)).toBe('not_started');
+  await expect.poll(async () => (await activationFor(page, secondUserId)).status).toBe('not_started');
+  expect((await activationFor(page, secondUserId)).currentInstance).toBeNull();
   expect(await page.evaluate(() => (
     localStorage.getItem('dominion:mockChallengeActivationLegacyOwner')
   ))).toBe(FIXED_USER_ID);
@@ -344,24 +374,16 @@ test('profile hydration clears loading feedback independently for each preview a
 });
 
 test('adopting a legacy preview ID preserves its Solo date and owned check-in lock', async ({ page, app }) => {
-  await app.open(ROUTE_BY_ID.dashboard);
-  await page.evaluate(() => {
-    localStorage.removeItem('dominion:mockUserIdsByIdentity');
-    localStorage.removeItem('dominion:mockChallengeActivation');
-    localStorage.removeItem('dominion:mockChallengeActivationLegacyOwner');
-    localStorage.setItem('dominion:mockCrewMembers', JSON.stringify({}));
-    localStorage.setItem('dominion:startDate', JSON.stringify('2026-02-03'));
-    localStorage.setItem('dominion:checkInDates', JSON.stringify(['2026-02-10']));
-  });
-  await page.reload({ waitUntil: 'networkidle' });
+  await prepareLegacyHeaderPreview(page, app, { dropIdentityMap: true });
+  await page.goto(ROUTE_BY_ID.dashboard.path, { waitUntil: 'networkidle' });
   await app.stable();
 
   const continuity = await page.evaluate(({ userId, email }) => ({
     mappedUserId: JSON.parse(localStorage.getItem('dominion:mockUserIdsByIdentity') || '{}')[email],
     legacyOwner: localStorage.getItem('dominion:mockChallengeActivationLegacyOwner'),
-    activation: JSON.parse(localStorage.getItem('dominion:mockChallengeActivation') || '{}')[userId],
-    checkIns: JSON.parse(localStorage.getItem('dominion:checkInDates') || 'null'),
   }), { userId: FIXED_USER_ID, email: FIXED_USER.email });
+  continuity.activation = await activationFor(page, FIXED_USER_ID);
+  continuity.checkIns = await checkInHistoryFor(page, FIXED_USER_ID);
 
   expect(continuity.mappedUserId).toBe(FIXED_USER_ID);
   expect(continuity.legacyOwner).toBe(FIXED_USER_ID);
@@ -370,11 +392,11 @@ test('adopting a legacy preview ID preserves its Solo date and owned check-in lo
     startDate: '2026-02-03',
     canEditStartDate: false,
   });
-  expect(continuity.checkIns).toEqual({
-    owner: `mock:${FIXED_USER_ID}`,
-    dates: ['2026-02-10'],
-    challengeDays: [],
-  });
+  expect(continuity.activation.currentInstance.submittedCount).toBe(1);
+  expect(continuity.checkIns).toEqual([{
+    instanceId: continuity.activation.currentInstance.id,
+    date: '2026-02-10', challengeDay: 8,
+  }]);
 });
 
 test('a fresh activation cannot claim another account’s ambiguous legacy preview state', async ({ page, app }) => {
@@ -388,7 +410,8 @@ test('a fresh activation cannot claim another account’s ambiguous legacy previ
   const result = await page.evaluate(async ({ firstUserEmail, firstUserId, nextUser, nextUserId }) => {
     const api = await import('/src/static/api.js');
     const { readPreviewUserValue } = await import('/src/static/preview-user-state.mjs');
-    const readStats = () => readPreviewUserValue(
+    const readStats = () => JSON.parse(localStorage.getItem('dominion:challengeAggregateV2:' + nextUserId))
+      ?.values['dominion:gameStats'] ?? readPreviewUserValue(
       localStorage,
       nextUserId,
       'dominion:gameStats',
@@ -448,21 +471,16 @@ test('a fresh activation cannot claim another account’s ambiguous legacy previ
   await page.reload({ waitUntil: 'networkidle' });
   await app.stable();
   const reloaded = await page.evaluate(async () => {
-    const { readPreviewUserValue } = await import('/src/static/preview-user-state.mjs');
     const { PREVIEW_BADGE_STATE_KEY } = await import('/src/static/badge-preview-state.mjs');
     const user = JSON.parse(localStorage.getItem('dominion:user') || '{}');
     const identityMap = JSON.parse(localStorage.getItem('dominion:mockUserIdsByIdentity') || '{}');
     const userId = identityMap[String(user.email || '').trim().toLowerCase()] || '';
+    const aggregate = JSON.parse(localStorage.getItem('dominion:challengeAggregateV2:' + userId));
     return {
-      stats: readPreviewUserValue(
-        localStorage,
-        userId,
-        'dominion:gameStats',
-        { totalPoints: 0, currentAppStreak: 0 },
-      ),
+      stats: aggregate.values['dominion:gameStats'],
       activationLegacyOwner: localStorage.getItem('dominion:mockChallengeActivationLegacyOwner'),
       previewLegacyOwner: localStorage.getItem('dominion:previewUserStateLegacyOwner'),
-      visitDates: readPreviewUserValue(localStorage, userId, PREVIEW_BADGE_STATE_KEY, { visits: [] }).visits.map((visit) => visit.localDate),
+      visitDates: aggregate.values[PREVIEW_BADGE_STATE_KEY].visits.map((visit) => visit.localDate),
       today: new Date().toISOString().slice(0, 10),
       legacyStats: JSON.parse(localStorage.getItem('dominion:gameStats') || '{}'),
     };
@@ -486,7 +504,10 @@ test('authenticated header clears stale controls and composer state across accou
   await expect(composer).toBeVisible();
 
   await page.evaluate(() => {
-    localStorage.setItem('dominion:gameStats', JSON.stringify({
+    const owner = localStorage.getItem('dominion:mockUserId');
+    const key = 'dominion:challengeAggregateV2:' + owner;
+    const aggregate = JSON.parse(localStorage.getItem(key));
+    aggregate.values['dominion:gameStats'] = {
       totalPoints: 28,
       challengePoints: 28,
       currentAppStreak: 2,
@@ -495,7 +516,10 @@ test('authenticated header clears stale controls and composer state across accou
       bestFullDayStreak: 2,
       lastSeenDate: '2026-02-14',
       lastFullDayDate: '2026-02-13',
-    }));
+    };
+    aggregate.runtime.lifetimePoints = 28;
+    aggregate.generation += 1;
+    localStorage.setItem(key, JSON.stringify(aggregate));
   });
   const secondUser = {
     name: 'Second Member',
@@ -559,6 +583,9 @@ test('preview account switches preserve stable identities and lock stale Dashboa
   const staleControl = page.locator('#checklist [data-standard="bible"]');
   await expect(staleControl).toBeEnabled();
   const entriesBeforeSwitch = await page.evaluate(() => localStorage.getItem('dominion:entries'));
+  const draftsBeforeSwitch = await page.evaluate(userId => JSON.parse(
+    localStorage.getItem('dominion:challengeAggregateV2:' + userId),
+  ).runtime.drafts, FIXED_USER_ID);
 
   const secondUser = {
     name: 'Second Member',
@@ -571,10 +598,10 @@ test('preview account switches preserve stable identities and lock stale Dashboa
 
   await staleControl.evaluate((control) => control.click());
   expect(await page.evaluate(() => localStorage.getItem('dominion:entries'))).toBe(entriesBeforeSwitch);
-  expect(await page.evaluate((userId) => {
-    const states = JSON.parse(localStorage.getItem('dominion:mockChallengeActivation') || '{}');
-    return states[userId]?.status;
-  }, secondUserId)).toBe('not_started');
+  expect(await page.evaluate(userId => JSON.parse(
+    localStorage.getItem('dominion:challengeAggregateV2:' + userId),
+  ).runtime.drafts, FIXED_USER_ID)).toEqual(draftsBeforeSwitch);
+  expect(await activationFor(page, secondUserId)).toMatchObject({ status: 'not_started', currentInstance: null });
 
   expect(await logInAsPreviewAccount(page, FIXED_USER)).toBe(FIXED_USER_ID);
   await expect(staleControl).toBeEnabled();

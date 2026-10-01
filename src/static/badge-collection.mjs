@@ -1,5 +1,5 @@
 import { createBadgeGallery } from './badge-gallery.mjs';
-import { iconClass, normalizeEarnedBadges } from './badges-rewards.mjs';
+import { iconClass, normalizeEarnedBadges } from './badge-data-contract.mjs';
 
 const SERIES = new Map([
   ['foundation', 'Getting started'], ['check_in_progress', 'Check-in milestones'],

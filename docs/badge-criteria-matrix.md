@@ -6,13 +6,18 @@ from calendar-position awards. Active perfect-streak crossings are 3, 7, 14, 28,
 56 and 70 consecutive local dates; retired intermediate weeks reduce repetition.
 The four explicitly chosen workout difficulties remain one-time action wins.
 Existing awards and their original definition snapshots are never removed.
-The current feature-branch Finisher changes have explicit database-migration
-approval and local integration evidence, but still require protected checks,
-a current backup and deployment. The production Finisher definition remains
-blocked until that release succeeds.
+The original77 canonical completion prerequisite shipped in the prior release.
+The FOU-1498 V2 UUID/repeatable-run integration described below is implemented
+in migration **20261001001245**. Production availability requires its current
+backup, protected checks, guarded cutover and matching frontend deployment;
+consult production release workflow evidence rather than this matrix for status.
 
 `src/static/badge-catalog.v1.json` is the checked-in source consumed by preview
-and mirrored exactly by the SQL seed (the fixture asserts byte-content JSON parity). The typed SQL and JavaScript evaluators are checked
+and mirrored by the current SQL definitions. The historical fixture verifies the
+immutable seed with only the explicit later Finisher activation and 14 per-run
+copy corrections reversed. Current participation and perfect-streak requirements
+say “one challenge run”; they apply to original and later runs. Existing earned
+definition snapshots retain their original wording. The typed SQL and JavaScript evaluators are checked
 against the same one-before/exact/one-after cases; no criterion executes code.
 
 | Key | Name | State | Source / exact rule | Scope | Tier | Order | Migration treatment |
@@ -55,8 +60,8 @@ against the same one-before/exact/one-after cases; no criterion executes code.
 | full_streak_42 | 42-Day Perfect Streak | retired | none: retired = not earnable | lifetime | gold | 1035 | Retired dense weekly streak cadence; existing awards retained. |
 | full_streak_49 | 49-Day Perfect Streak | retired | none: retired = not earnable | lifetime | gold | 1036 | Retired dense weekly streak cadence; existing awards retained. |
 | full_streak_63 | 63-Day Perfect Streak | retired | none: retired = not earnable | lifetime | gold | 1037 | Retired dense weekly streak cadence; existing awards retained. |
-| day_77_finisher | 77 Days Complete | retired | none: retired = not earnable | lifetime | gold | 1038 | Retired elapsed-day rule; no new finisher until an approved canonical completion event exists. |
-| original_77_completed | 77-Day Finisher | active in candidate only | challenge_completion: persisted live 77th submitted check-in | challenge_instance | gold | 900 | Partials and submissions after calendar day77 count. No historical earned-time invention or award replay. |
+| day_77_finisher | 77 Days Complete | retired | none: retired = not earnable | lifetime | gold | 1038 | Elapsed-day rule retired; new Finishers use canonical original_77_completed events. |
+| original_77_completed | 77-Day Finisher | active; UUID repeats in V2 candidate | challenge_completion: persisted live 77th submitted check-in of an original run | challenge_instance | gold | 900 | Partials and submissions after calendar day77 count. No historical earned-time invention or award replay. |
 
 ## Approved completion contract and release boundary
 
@@ -73,17 +78,23 @@ branded; serialized copies and arbitrary completion flags cannot enter the
 Finisher evaluator. This protects preview consistency, not production authority.
 Production must independently derive and persist its own event in PostgreSQL.
 
-Historical 77-row qualification without canonical completion provenance remains
-pending, without a new award or ceremony. Existing awards remain untouched.
-Later challenge instances and the six-reward curve remain separate work. The
-database migration has explicit approval; local candidate tests do not
-establish hosted completion or deployment.
+The V2 candidate can preserve validated historical completion as
+`legacy_completed`, without inventing a completion event, earned time, new award
+or ceremony. Ambiguous history remains review-required. Existing awards remain
+untouched. Each new original run has its own canonical completion and Finisher
+scope; completing a later track does not award an original77 Finisher. Later
+tracks count their configured number of submissions, including partials, and
+grant only their configured successor. See [point-economy.md](point-economy.md).
+Local candidate tests do not establish hosted completion or deployment.
 
 ## Calendar and provenance
 
-Check-in facts use immutable posted check-ins, not draft entries. An original
-instance is the recorded start date (`entry_date - challenge_day + 1`); affected
-rows must agree with the authoritative activation start. Counts are posted rows,
+Check-in facts use immutable posted check-ins, not draft entries. Bound initial
+original runs retain their recorded `original77:<start-date>` award scope;
+historical rows must agree with that authoritative start
+(`entry_date - challenge_day + 1`). New V2 runs have a UUID and
+`instance:<UUID>` scope. Facts use only source rows bound to that run; a fresh
+run cannot reuse an earlier run's counts or completion event. Counts are posted rows,
 including partial check-ins. Streaks require all seven distinct Daily Actions on
 consecutive recorded local dates, not an aggregate streak counter or UTC dates.
 App visits use the server's authoritative activation/profile timezone and a
@@ -95,11 +106,12 @@ the actual product values easy/medium/hard/extreme (never a guessed Medium).
 
 ## Cutover, recovery, and collection contract
 
-Existing earned rows retain their original timestamps and presentation snapshots;
-they are marked legacy and already presented. Historical canonical check-ins may
-fill omitted awards with the original event time, but those reconciled inserts
-never enqueue outbound notifications or fresh celebrations. No old aggregate
-counter is expanded into invented event rows.
+Existing earned rows retain their original timestamps and presentation snapshots.
+The earlier badge-pipeline cutover's preserved legacy rows remain presented.
+The V2 repeatable-run candidate adds no historical award backfill and must not
+invoke an older reconciliation path to manufacture missing awards. No old
+aggregate counter is expanded into invented event rows; existing acknowledgment
+state does not reset on a new run or catalog revision.
 
 An ongoing app streak keeps its trusted display continuity at cutover (same local
 day is unchanged, yesterday advances, a missing date resets). Its prior best is
@@ -113,8 +125,10 @@ earned history and actor-checked catalog RPC. It returns
 `{catalogVersion:1,scopeKey,items,earnedBadges}`. Items carry definition identity,
 name, description, requirement, series, tier/tierRank, icon, displayOrder, status,
 scope, criteriaVersion, sourceEvent, visibility, showProgress,
-earnedInCurrentScope and `progress:{metric,current,target}`. Scoped progress is
-zero when the latest evidence does not belong to the current activation. Hidden
+earnedInCurrentScope and `progress:{metric,current,target}`. V2 selects
+`currentInstance.scopeKey`, retaining original scopes for bound history and UUID
+scopes for fresh runs. Scoped progress is zero when the latest evidence does not
+belong to the current instance. Hidden
 locked and unowned retired definitions are omitted; owned retired definitions
 remain retired, not newly earnable.
 
@@ -131,7 +145,12 @@ Web Lock. Without document locks, an old lease may need its two-minute expiry
 before another page can recover it. Account epochs and pagehide cleanup prevent
 stale responses from presenting or acknowledging another account's awards.
 
-## Validation and release boundary
+## Earlier badge-pipeline validation record
+
+The following records the earlier badge-pipeline candidate's local validation,
+not fresh evidence that the V2 repeatable-run release or its hosted cutover has
+completed. Current V2 release invariants are in
+[point-economy.md](point-economy.md#release-invariants-and-boundary).
 
 The exact CLI-generated migration is
 `20260913033347_deterministic_badge_pipeline.sql`. Local validation uses an owned,

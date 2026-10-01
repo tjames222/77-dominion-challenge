@@ -7,7 +7,7 @@ export const SHARE_FLOWS = Object.freeze({
   progress: Object.freeze({
     kind: 'progress',
     label: 'Challenge progress',
-    description: 'Share your submitted check-ins out of 77.',
+    description: 'Share submitted check-ins for your current challenge.',
   }),
   general: Object.freeze({
     kind: 'general',
@@ -46,7 +46,7 @@ export function shareCopy({ presentation = {}, url = '', kind = 'general', group
   const fallbackTitle = normalizedKind === 'streak'
     ? 'My Dominion streak'
     : normalizedKind === 'progress'
-      ? 'My 77-Day Dominion Challenge progress'
+      ? 'My Dominion challenge progress'
       : 'Take the 77-Day Dominion Challenge';
   return {
     title: String(presentation.title || fallbackTitle),

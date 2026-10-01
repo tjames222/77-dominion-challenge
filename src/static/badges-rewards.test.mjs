@@ -20,6 +20,37 @@ const dashboardSource = readFileSync(new URL('./dashboard.js', import.meta.url),
 const menuSource = readFileSync(new URL('./menu.js', import.meta.url), 'utf8');
 
 describe('Badges & Rewards page model', () => {
+  it('uses semantic contrasting button tokens for reward actions and the next-unlock marker in every theme', () => {
+    for (const selector of ['.reward-action-button,', '.reward-next-marker,']) {
+      const rule = pageCss.slice(pageCss.indexOf(selector), pageCss.indexOf('}', pageCss.indexOf(selector)));
+      assert.match(rule, /color: var\(--button-primary-text\)/);
+      assert.match(rule, /background: var\(--button-primary-background\)/);
+    }
+  });
+
+  it('keeps small light next-unlock text above AA with contrast headroom on its tinted surface', () => {
+    const stylesCss = readFileSync(new URL('../assets/styles.css', import.meta.url), 'utf8');
+    const light = stylesCss.match(/:root\[data-theme="light"\]\s*\{([^}]+)\}/)[1];
+    const next = pageCss.match(/:root\[data-theme="light"\] \.reward-row\.is-next\s*\{([^}]+)\}/)[1];
+    const color = (rule, token) => rule.match(new RegExp(`${token}:\\s*(#[a-f0-9]{6});`, 'i'))[1]
+      .slice(1).match(/../g).map(channel => Number.parseInt(channel, 16));
+    const mix = (foreground, background, amount) => foreground.map((channel, index) =>
+      Math.round(channel * amount + background[index] * (1 - amount)));
+    const luminance = channels => channels.map(channel => channel / 255)
+      .map(channel => channel <= .04045 ? channel / 12.92 : ((channel + .055) / 1.055) ** 2.4)
+      .reduce((sum, channel, index) => sum + channel * [.2126, .7152, .0722][index], 0);
+    const contrast = (foreground, background) => (luminance(background) + .05) / (luminance(foreground) + .05);
+    const tint = Number(pageCss.match(/\.reward-row\.is-next\s*\{[^}]*var\(--accent\) (\d+)%/)[1]) / 100;
+    const background = mix(color(light, '--accent'), color(light, '--background'), tint);
+    for (const token of ['--accent-strong', '--text-muted']) {
+      const foreground = color(next, token);
+      assert.ok(contrast(foreground, background) >= 5.5, `${token} needs settled contrast headroom`);
+      // Cover the ~4% compositing wash observed beneath sticky navigation in
+      // WebKit, without excluding the card from the full browser axe audit.
+      assert.ok(contrast(mix(foreground, background, .96), background) >= 5, `${token} needs compositing headroom`);
+    }
+  });
+
   it('preserves the Sharing badge icon instead of falling back', () => {
     assert.equal(iconClass('share'), 'icon-share');
   });
@@ -245,7 +276,8 @@ describe('Badges & Rewards route integration', () => {
     assert.match(pageSource, /await openRewardDetail\(deepLinkKey, trigger\)/);
     assert.match(pageSource, /claimChallengeUnlocks\(\{ expectedUserId \}\)/);
     assert.match(rewardCardSource, /data-start-reward/);
-    assert.match(pageSource, /await startChallenge\(pendingRewardKey, \{ expectedUserId \}\)/);
+    assert.match(pageSource, /await startChallenge\(challengeKey, \{ expectedUserId, expectedInstanceId, expectedRevision,/);
+    assert.match(pageSource, /requestId: request\.requestId/);
   });
 
   it('renders every reward through one accessible shared card contract', () => {

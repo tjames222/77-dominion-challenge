@@ -1,59 +1,12 @@
-import { REWARD_POINT_THRESHOLDS } from './point-economy.mjs';
+import progressionCatalog from './reward-progression-catalog.v2.json' with { type: 'json' };
 
 const VALID_CHALLENGE_STATES = new Set(['available', 'active', 'completed']);
 
-export const DEFAULT_CHALLENGE_DEFINITIONS = Object.freeze([
-  {
-    key: 'seven_day_reset',
-    title: '7-Day Reset',
-    teaser: 'A focused week to rebuild your habits and get moving again.',
-    type: 'reset',
-    pointsRequired: REWARD_POINT_THRESHOLDS.seven_day_reset,
-    durationDays: 7,
-    icon: 'repeat',
-    sortOrder: 40,
-  },
-  {
-    key: 'twenty_one_day_prayer',
-    title: '21-Day Prayer Track',
-    teaser: 'Deepen the daily prayer habit with a guided three-week track.',
-    type: 'spiritual',
-    pointsRequired: REWARD_POINT_THRESHOLDS.twenty_one_day_prayer,
-    durationDays: 21,
-    icon: 'spark',
-    sortOrder: 70,
-  },
-  {
-    key: 'thirty_day_strength',
-    title: '30-Day Strength Intensive',
-    teaser: 'Turn consistency into a focused month of physical training.',
-    type: 'physical',
-    pointsRequired: REWARD_POINT_THRESHOLDS.thirty_day_strength,
-    durationDays: 30,
-    icon: 'dumbbell',
-    sortOrder: 80,
-  },
-  {
-    key: 'forty_day_fast',
-    title: '40-Day Fasting & Prayer Track',
-    teaser: 'Follow a guided pattern of fasting, prayer, and reflection.',
-    type: 'fasting',
-    pointsRequired: REWARD_POINT_THRESHOLDS.forty_day_fast,
-    durationDays: 40,
-    icon: 'flame',
-    sortOrder: 90,
-  },
-  {
-    key: 'bible_in_a_year',
-    title: 'Bible in a Year',
-    teaser: 'Carry the reading discipline into a complete yearlong plan.',
-    type: 'bible',
-    pointsRequired: REWARD_POINT_THRESHOLDS.bible_in_a_year,
-    durationDays: 365,
-    icon: 'book',
-    sortOrder: 100,
-  },
-]);
+export const DEFAULT_CHALLENGE_DEFINITIONS = Object.freeze(progressionCatalog.rewards
+  .filter(reward => reward.stateModel === 'challenge_lifecycle')
+  .map(reward => Object.freeze({ ...reward, type: 'challenge', teaser: reward.title,
+    durationDays: reward.targetSubmittedCheckIns, pointsRequired: reward.unlockRule.pointsRequired ?? null,
+    icon: 'repeat', unlockRule: Object.freeze({ ...reward.unlockRule }) })));
 
 const safePoints = (value) => {
   const points = Number(value);
@@ -70,7 +23,9 @@ const normalizeDefinition = (definition = {}) => {
     title: definition.title || 'New Challenge',
     teaser: definition.teaser || definition.description || '',
     type: definition.type || definition.challengeType || definition.challenge_type || 'general',
-    pointsRequired: safePoints(definition.pointsRequired ?? definition.points_required),
+    pointsRequired: definition.unlockRule?.type === 'challenge_completion' ? null : safePoints(definition.pointsRequired ?? definition.points_required),
+    unlockRule: definition.unlockRule || { type: 'lifetime_points', pointsRequired: safePoints(definition.pointsRequired ?? definition.points_required) },
+    phase: definition.phase || 'core',
     durationDays: definition.durationDays ?? definition.duration_days ?? null,
     entitlementKey: entitlementProperty ? definition[entitlementProperty] : 'membership_active',
     icon: String(definition.icon || 'target').replace(/[^a-z-]/g, '') || 'target',
@@ -101,12 +56,13 @@ export function buildChallengeProgression({
   totalPoints = 0,
   now = new Date().toISOString(),
   allowClientUnlocks = true,
+  completedChallengeKeys = [],
 } = {}) {
   const points = safePoints(totalPoints);
   const normalizedDefinitions = definitions
     .map(normalizeDefinition)
     .filter((definition) => definition.key && definition.active)
-    .sort((left, right) => left.pointsRequired - right.pointsRequired || left.sortOrder - right.sortOrder);
+    .sort((left, right) => left.sortOrder - right.sortOrder || left.key.localeCompare(right.key));
   const recordsByKey = new Map(
     records
       .map(normalizeRecord)
@@ -116,7 +72,10 @@ export function buildChallengeProgression({
   const newlyUnlockedKeys = new Set();
 
   normalizedDefinitions.forEach((definition) => {
-    if (!allowClientUnlocks || !definition.accessGranted || recordsByKey.has(definition.key) || points < definition.pointsRequired) return;
+    const eligible = definition.unlockRule.type === 'challenge_completion'
+      ? completedChallengeKeys.includes(definition.unlockRule.prerequisiteChallengeKey)
+      : points >= definition.pointsRequired;
+    if (!allowClientUnlocks || !definition.accessGranted || recordsByKey.has(definition.key) || !eligible) return;
     recordsByKey.set(definition.key, {
       key: definition.key,
       status: 'available',
@@ -132,8 +91,9 @@ export function buildChallengeProgression({
   const challenges = normalizedDefinitions.map((definition) => {
     const record = recordsByKey.get(definition.key) || null;
     const status = record?.status || 'locked';
-    const pointsRemaining = status === 'locked' ? Math.max(definition.pointsRequired - points, 0) : 0;
-    const progressPercent = status !== 'locked' || definition.pointsRequired === 0
+    const completionBased = definition.unlockRule.type === 'challenge_completion';
+    const pointsRemaining = completionBased ? null : status === 'locked' ? Math.max(definition.pointsRequired - points, 0) : 0;
+    const progressPercent = completionBased ? null : status !== 'locked' || definition.pointsRequired === 0
       ? 100
       : Math.min((points / definition.pointsRequired) * 100, 100);
     return {
@@ -141,6 +101,8 @@ export function buildChallengeProgression({
       status,
       pointsRemaining,
       progressPercent,
+      requirement: completionBased ? { ...definition.unlockRule, satisfied: completedChallengeKeys.includes(definition.unlockRule.prerequisiteChallengeKey) }
+        : { ...definition.unlockRule, currentPoints: points, pointsRemaining, progressPercent },
       unlockPoints: record?.unlockPoints ?? null,
       unlockedAt: record?.unlockedAt || null,
       startedAt: record?.startedAt || null,

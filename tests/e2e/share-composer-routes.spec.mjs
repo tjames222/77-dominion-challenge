@@ -39,6 +39,8 @@ async function expectBrandedComposer(page) {
       };
     });
     const body = panel.querySelector('.app-dialog-body');
+    const footer = panel.querySelector('.share-composer-footer');
+    const footerStyle = getComputedStyle(footer);
     return {
       fieldsetDisplay: fieldset.display,
       fieldsetBorder: fieldset.borderTopWidth,
@@ -51,6 +53,10 @@ async function expectBrandedComposer(page) {
       actionWeight: parseInt(action.fontWeight, 10),
       actionRadius: parseFloat(action.borderTopLeftRadius),
       bodyOverflow: body.scrollWidth - body.clientWidth,
+      actionsWidth: parseFloat(css('.share-composer-actions').width),
+      footerContentWidth: parseFloat(footerStyle.width)
+        - parseFloat(footerStyle.paddingLeft) - parseFloat(footerStyle.paddingRight)
+        - parseFloat(footerStyle.borderLeftWidth) - parseFloat(footerStyle.borderRightWidth),
       options,
     };
   });
@@ -65,6 +71,7 @@ async function expectBrandedComposer(page) {
   expect(styles.actionWeight).toBeGreaterThanOrEqual(700);
   expect(styles.actionRadius).toBeGreaterThan(0);
   expect(styles.bodyOverflow).toBeLessThanOrEqual(1);
+  expect(styles.actionsWidth).toBeCloseTo(styles.footerContentWidth, 1);
   for (const option of styles.options) {
     expect(option.radioOpacity).toBe('0');
     expect(option.radioWidth).toBe('1px');

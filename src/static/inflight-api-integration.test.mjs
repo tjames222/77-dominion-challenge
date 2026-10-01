@@ -18,7 +18,7 @@ function activationFixture() {
     requireCapturedActivationActor: (id) => { assert.ok(id); return id; },
     isLocalDemoMode: () => false,
     requireSupabase: () => ({ rpc: async (name, parameters) => {
-      assert.equal(name, 'get_challenge_activation');
+      assert.equal(name, 'get_challenge_activation_v2');
       assert.equal(parameters.target_expected_actor_id, 'A');
       calls += 1; return response;
     } }),
@@ -40,9 +40,9 @@ test('concurrent real-wire activation consumers issue one RPC with pre/post acto
   const fixture = activationFixture();
   const first = fixture.read({ expectedUserId: 'A' });
   const second = fixture.read({ expectedUserId: 'A' });
-  fixture.resolve({ data: { status: 'active' }, error: null });
-  assert.deepEqual(await first, { status: 'active' });
-  assert.deepEqual(await second, { status: 'active' });
+  fixture.resolve({ data: { schemaVersion: 2, status: 'active' }, error: null });
+  assert.deepEqual(await first, { schemaVersion: 2, status: 'active' });
+  assert.deepEqual(await second, { schemaVersion: 2, status: 'active' });
   assert.equal(fixture.calls(), 1);
   assert.equal(fixture.checks(), 2, 'Authorization itself is still checked before and after the RPC.');
 });
@@ -71,7 +71,7 @@ test('auth loss, cross-tab changes and mutation settlement invalidate without ca
   assert.match(runtime, /inflightActorReads\.observeAuth\(event, session\?\.user\?\.id \|\| '', authSessionIdentity\(session\)\)/);
   assert.match(runtime, /addEventListener\('storage',[\s\S]*inflightActorReads\.invalidate\(\)/);
   assert.match(runtime, /finally \{\s+inflightActorReads\.invalidate\(query\)/);
-  for (const endpoint of ['activate_solo_challenge', 'activate_group_challenge', 'set_challenge_start_date',
+  for (const endpoint of ['activate_solo_challenge', 'activate_group_challenge', 'set_challenge_start_date_v2', 'start_challenge_instance_v2',
     'create_crew_and_activate_group', 'delete_crew', 'leave_crew', 'confirm_crew_invite']) {
     assert.ok(api.includes(`invalidateReadsAroundMutation(() => client.rpc('${endpoint}'`), endpoint);
   }

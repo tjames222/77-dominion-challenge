@@ -2,8 +2,9 @@ import { test, expect } from '@playwright/test';
 import AxeBuilder from '@axe-core/playwright';
 import { DAILY_STANDARD_ROUTE_LIST } from '../../src/static/daily-standard-routes.mjs';
 import { installDailyBootstrapStub } from './support/daily-bootstrap-supabase-stub.mjs';
+import { DAILY_INSTANCE_ID } from '../fixtures/daily-action-bootstrap-v2.mjs';
 
-const unrelated = /\/(?:challenge_entries|check_ins|community_feed_items)$|\/(?:get_daily_standard_draft|bootstrap_daily_standard_time_zone)$/;
+const unrelated = /\/(?:challenge_entries|check_ins|community_feed_items)$|\/(?:get_daily_standard_draft(?:_v2)?|bootstrap_daily_standard_time_zone)$/;
 async function usable(page) { await expect(page.locator('#actionCompletionToggle')).toBeEnabled();await expect(page.locator('[data-daily-standard-page]')).toHaveAttribute('aria-busy','false'); }
 async function replaceSessions(page, sessions) {
   await page.evaluate(async (values) => {
@@ -93,13 +94,13 @@ for(const action of DAILY_STANDARD_ROUTE_LIST)for(const clean of [false,true]){
     await page.goto(clean?action.route.slice(1).replace('.html',''):action.route.slice(1));await usable(page);
     expect(fixture.bootstrapRequests()).toHaveLength(1);
     expect(fixture.bootstrapRequests()[0].method).toBe('POST');
-    expect(fixture.bootstrapRequests()[0].args).toEqual({target_expected_actor_id:'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',target_time_zone:'UTC',target_entry_date:null});
+    expect(fixture.bootstrapRequests()[0].args).toEqual({target_expected_actor_id:'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',target_time_zone:'UTC',target_entry_date:null,target_expected_instance_id:null});
     expect(fixture.requests.filter(r=>unrelated.test(r.path))).toEqual([]);
     await expect(page.locator('#actionPageDate')).toHaveAttribute('datetime','2026-09-12');
     await expect(page.locator('#actionProgressCount')).toHaveText('0 of 7 complete');
     await testInfo.attach('separate-startup-request-counts',{contentType:'application/json',body:JSON.stringify({
       focusedRoute:fixture.bootstrapRequests().length,auth:fixture.requests.filter(r=>r.path.startsWith('/auth/')).length,
-      sharedShellAndTraining:fixture.requests.filter(r=>r.path.startsWith('/rest/')&&!r.path.endsWith('/get_daily_action_bootstrap')).map(r=>r.path),
+      sharedShellAndTraining:fixture.requests.filter(r=>r.path.startsWith('/rest/')&&!r.path.endsWith('/get_daily_action_bootstrap_v2')).map(r=>r.path),
       note:'This is one route bootstrap, not a one-request whole page. Shared shell/visit/training remain separately counted.',
     },null,2)});
   });
@@ -164,10 +165,11 @@ test('completion remains a user-triggered atomic mutation using the returned can
   const f=await installDailyBootstrapStub(context);await page.goto('/bible-reading.html');await usable(page);
   await page.locator('#actionCompletionToggle').click();await expect(page.locator('#actionProgressCount')).toHaveText('1 of 7 complete');
   // The count is optimistic. Wait for the existing atomic save, not just paint.
-  await expect.poll(()=>f.requests.filter(r=>r.path.endsWith('/mutate_daily_standard_draft')).length).toBe(1);
+  await expect.poll(()=>f.requests.filter(r=>r.path.endsWith('/mutate_daily_standard_draft_v2')).length).toBe(1);
   await usable(page);
-  const mutation=f.requests.find(r=>r.path.endsWith('/mutate_daily_standard_draft'));
+  const mutation=f.requests.find(r=>r.path.endsWith('/mutate_daily_standard_draft_v2'));
   expect(mutation.args.target_entry_date).toBe('2026-09-12');expect(mutation.args.target_expected_version).toBe(2);
+  expect(mutation.args.target_expected_instance_id).toBe(DAILY_INSTANCE_ID);
   expect(f.bootstrapRequests()).toHaveLength(1);expect(f.requests.some(r=>/submit_daily_check_in/.test(r.path))).toBe(false);
 });
 for(const theme of ['dark','light','dominion-night','dominion-platinum'])test(`${theme} usable action and retry remain accessible`,async({page,context})=>{

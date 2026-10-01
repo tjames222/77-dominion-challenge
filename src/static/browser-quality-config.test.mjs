@@ -58,7 +58,7 @@ const workflowJob = (id) => {
 
 test('two standard-runner shards preserve preliminary checks and the full main matrix', () => {
   const preflight = workflowJob('preflight');
-  for (const command of ['pnpm test', 'pnpm build', 'pnpm test:e2e:auth', 'pnpm test:e2e:mfa', 'pnpm test:e2e:admin', 'pnpm test:e2e:daily-bootstrap', 'pnpm test:e2e:preview-badges', 'pnpm test:e2e:app-streak', 'pnpm test:e2e:original77']) {
+  for (const command of ['pnpm test', 'pnpm build', 'pnpm test:e2e:auth', 'pnpm test:e2e:mfa', 'pnpm test:e2e:admin', 'pnpm test:e2e:daily-bootstrap', 'pnpm test:e2e:preview-badges', 'pnpm test:e2e:app-streak', 'pnpm test:e2e:original77', 'pnpm test:e2e:reward-progression']) {
     assert.ok(preflight.includes(`run: ${command}\n`), `Missing preliminary ${command}`);
   }
   const shards = workflowJob('browser-shards');
@@ -74,6 +74,24 @@ test('two standard-runner shards preserve preliminary checks and the full main m
   assert.match(playwrightConfig, /workers: process\.env\.CI \? 2 : undefined/);
   assert.match(playwrightConfig, /retries: process\.env\.CI \? 1 : 0/);
   assert.match(playwrightConfig, /timeout: 45_000/);
+});
+
+test('mobile Share footer visibility is checked early without narrowing the full matrix', () => {
+  const preflight = workflowJob('preflight');
+  const command = "run: pnpm exec playwright test tests/e2e/share-composer-routes.spec.mjs --project=webkit-share-composer-mobile --grep 'composer retains branded accessible layout.*at 390px'";
+  assert.ok(preflight.includes(command));
+  assert.ok(preflight.indexOf(command) < preflight.indexOf('run: pnpm test:e2e:auth'));
+  assert.match(playwrightConfig, /name: 'webkit-share-composer-mobile'/);
+  assert.doesNotMatch(workflowJob('browser-shards'), /--grep|--project|--workers|--retries|--timeout|continue-on-error/);
+});
+
+test('concurrent reward queue fixtures are checked early in Chromium and WebKit', () => {
+  const preflight = workflowJob('preflight');
+  const command = "run: pnpm exec playwright test tests/e2e/reward-celebrations.spec.mjs tests/e2e/reward-celebrations-failure.spec.mjs --project=chromium-functional --project=webkit-reward-celebrations-mobile --grep 'check-in queues day complete|a failed permanent reward lookup'";
+  assert.ok(preflight.includes(command));
+  assert.ok(preflight.indexOf(command) < preflight.indexOf('run: pnpm test:e2e:auth'));
+  assert.match(playwrightConfig, /name: 'webkit-reward-celebrations-mobile'/);
+  assert.doesNotMatch(workflowJob('browser-shards'), /--grep|--project|--workers|--retries|--timeout|continue-on-error/);
 });
 
 test('the unchanged required check is an always-run fail-closed aggregate', () => {
@@ -227,6 +245,21 @@ test('original completion runs in its compiled real-SDK gate instead of the gene
   assert.match(config.use.baseURL, /^http:\/\/127\.0\.0\.1:\d+$/);
   assert.equal(config.webServer.reuseExistingServer, false);
   assert.match(config.webServer.command, /\/tmp\/77dc-original77-dist-\d+/);
+  assert.deepEqual(config.projects.map(project => project.use.defaultBrowserType), ['chromium', 'webkit']);
+});
+
+test('reward progression has a compiled real-SDK gate for desktop and mobile without external providers', async () => {
+  const { default: config } = await import('../../playwright.reward-progression.config.mjs');
+  assert.equal(packageJson.scripts['test:e2e:reward-progression'], 'playwright test --config=playwright.reward-progression.config.mjs');
+  assert.match(workflowJob('preflight'), /- name: Verify repeatable challenge and reward progression UI\n\s+run: pnpm test:e2e:reward-progression/);
+  assert.ok(playwrightConfig.includes('/reward-progression-live\\.spec\\.mjs/'));
+  assert.equal(config.testMatch.source, 'reward-progression-live\\.spec\\.mjs');
+  assert.equal(config.webServer.env.VITE_ENABLE_MOCKS, 'false');
+  assert.equal(config.webServer.env.VITE_ENABLE_PRODUCTION_CONNECTIONS, 'true');
+  assert.equal(config.webServer.env.VITE_SUPABASE_URL, `${config.use.baseURL}/__admin_fixture__`);
+  assert.match(config.use.baseURL, /^http:\/\/127\.0\.0\.1:\d+$/);
+  assert.equal(config.webServer.reuseExistingServer, false);
+  assert.match(config.webServer.command, /\/tmp\/77dc-reward-progression-dist-\d+/);
   assert.deepEqual(config.projects.map(project => project.use.defaultBrowserType), ['chromium', 'webkit']);
 });
 

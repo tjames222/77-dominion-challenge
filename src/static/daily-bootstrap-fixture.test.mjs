@@ -38,7 +38,7 @@ test('Daily bootstrap fixture leaves Auth unheld until an armed successful boots
     await beforeBootstrap.done;
     assert.equal(beforeBootstrap.response.value.status, 200);
     fixture.failNext();
-    const failedBootstrap = request('/rest/v1/rpc/get_daily_action_bootstrap');
+    const failedBootstrap = request('/rest/v1/rpc/get_daily_action_bootstrap_v2');
     await failedBootstrap.done;
     assert.equal(failedBootstrap.response.value.status, 503);
     const afterFailure = request('/auth/v1/user');
@@ -53,7 +53,7 @@ test('Daily bootstrap fixture holds every concurrent post-bootstrap user check u
   const release = fixture.holdPostBootstrapUser();
   const held = [];
   try {
-    await request('/rest/v1/rpc/get_daily_action_bootstrap').done;
+    await request('/rest/v1/rpc/get_daily_action_bootstrap_v2').done;
     // Simulate a shell verification arriving ahead of the focused read, then
     // another concurrent caller. None may consume a one-request-only hold.
     held.push(request('/auth/v1/user'), request('/auth/v1/user'));
@@ -61,7 +61,7 @@ test('Daily bootstrap fixture holds every concurrent post-bootstrap user check u
     held.push(request('/auth/v1/user'));
     assert.equal(fixture.heldUserRequests(), 3);
     assert(held.every(({ response }) => response.value === undefined));
-    const unrelated = request('/rest/v1/rpc/get_challenge_activation');
+    const unrelated = request('/rest/v1/rpc/get_challenge_activation_v2');
     await unrelated.done;
     assert.equal(unrelated.response.value.status, 200);
     assert(held.every(({ response }) => response.value === undefined));

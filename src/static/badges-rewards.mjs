@@ -1,28 +1,7 @@
-import { normalizeEarnedBadges } from './badge-data-contract.mjs';
-export { validBadgeTimestamp, badgeAwardIdentity, normalizeEarnedBadges } from './badge-data-contract.mjs';
+import { normalizeEarnedBadges, iconClass } from './badge-data-contract.mjs';
+export { validBadgeTimestamp, badgeAwardIdentity, normalizeEarnedBadges, iconClass } from './badge-data-contract.mjs';
 
 const REWARD_STATES = new Set(['locked', 'available', 'active', 'completed', 'owned']);
-const ALLOWED_ICONS = new Set([
-  'book',
-  'calendar',
-  'check',
-  'crown',
-  'dumbbell',
-  'eye',
-  'flag',
-  'flame',
-  'gift',
-  'mountain',
-  'palette',
-  'repeat',
-  'run',
-  'share',
-  'shield',
-  'spark',
-  'star',
-  'target',
-]);
-
 const safeWholeNumber = (value) => {
   const number = Number(value);
   return Number.isFinite(number) ? Math.max(0, Math.floor(number)) : 0;
@@ -42,11 +21,6 @@ export const escapeHtml = (value = '') => String(value).replace(/[&<>"']/g, (cha
   '"': '&quot;',
   "'": '&#039;',
 }[character]));
-
-export function iconClass(icon, fallback = 'target') {
-  const normalized = String(icon || '').toLowerCase().replace(/[^a-z-]/g, '');
-  return `icon-${ALLOWED_ICONS.has(normalized) ? normalized : fallback}`;
-}
 
 const safeAppRoute = (value) => {
   const route = String(value || '').trim();
@@ -82,12 +56,13 @@ export function rewardViewModel(reward = {}, nextRewardKey = '') {
   const stateModel = reward.stateModel || reward.state_model || 'ownership';
   const rawStatus = String(reward.status || 'locked');
   const status = REWARD_STATES.has(rawStatus) ? rawStatus : 'locked';
-  const pointsRequired = safeWholeNumber(reward.pointsRequired ?? reward.points_required);
-  const currentPoints = safeWholeNumber(reward.currentPoints ?? reward.current_points);
-  const pointsRemaining = status === 'locked'
+  const completionBased = reward.requirement?.type === 'challenge_completion';
+  const pointsRequired = completionBased ? null : safeWholeNumber(reward.pointsRequired ?? reward.points_required);
+  const currentPoints = completionBased ? null : safeWholeNumber(reward.currentPoints ?? reward.current_points);
+  const pointsRemaining = completionBased ? null : status === 'locked'
     ? safeWholeNumber(reward.pointsRemaining ?? reward.points_remaining ?? Math.max(pointsRequired - currentPoints, 0))
     : 0;
-  const progressPercent = status === 'locked'
+  const progressPercent = completionBased ? null : status === 'locked'
     ? safePercent(
       reward.progressPercent ?? reward.progress_percent
         ?? (pointsRequired ? currentPoints / pointsRequired * 100 : 100),
@@ -102,12 +77,16 @@ export function rewardViewModel(reward = {}, nextRewardKey = '') {
   const unlockedDate = readableDate(reward.unlockedAt || reward.unlocked_at);
   const startedDate = readableDate(reward.startedAt || reward.started_at);
   const completedDate = readableDate(reward.completedAt || reward.completed_at);
+  const prerequisiteTitle = String(reward.requirement?.prerequisiteTitle || reward.prerequisiteTitle
+    || reward.requirement?.prerequisiteChallengeKey?.replace(/_/g, ' ') || 'the preceding challenge');
+  const requirementLabel = completionBased ? `Complete ${prerequisiteTitle} to unlock`
+    : `${pointsRequired.toLocaleString()} ${reward.requirement?.type === 'trusted_points' ? 'Daily Actions points' : 'points'} required`;
   let detail;
 
   if (!canAccess) {
     detail = 'Membership access is required for this reward.';
   } else if (status === 'locked') {
-    detail = `${pointsRemaining.toLocaleString()} ${pointsRemaining === 1 ? 'point' : 'points'} remaining`;
+    detail = completionBased ? requirementLabel : `${pointsRemaining.toLocaleString()} ${pointsRemaining === 1 ? 'point' : 'points'} remaining`;
   } else if (status === 'available') {
     detail = unlockedDate ? `Unlocked ${unlockedDate}` : 'Unlocked and ready to start';
   } else if (status === 'active') {
@@ -116,6 +95,12 @@ export function rewardViewModel(reward = {}, nextRewardKey = '') {
     detail = completedDate ? `Completed ${completedDate}` : 'Challenge completed';
   } else {
     detail = ownedDate ? `Permanently owned · Unlocked ${ownedDate}` : 'Permanently owned';
+  }
+  const blockedReason = reward.blockedReason || null;
+  if (stateModel === 'challenge_lifecycle' && ['available', 'completed'].includes(status) && !allowedActions.includes('start') && blockedReason) {
+    detail += ['active_challenge', 'active_instance', 'active_instance_exists'].includes(blockedReason)
+      ? ' · Finish your current challenge before starting this one.'
+      : blockedReason === 'review_required' ? ' · Challenge verification is required before starting.' : ' · Starting is currently unavailable.';
   }
 
   return {
@@ -130,12 +115,17 @@ export function rewardViewModel(reward = {}, nextRewardKey = '') {
     currentPoints,
     pointsRemaining,
     progressPercent,
+    requirement: reward.requirement || { type: 'lifetime_points', pointsRequired, currentPoints, pointsRemaining, progressPercent },
+    requirementLabel,
+    completionBased,
+    phase: reward.phase || 'core',
+    blockedReason,
     detail,
     iconClass: iconClass(reward.icon, stateModel === 'ownership' ? 'gift' : 'target'),
     sortOrder: Number(reward.sortOrder ?? reward.sort_order) || 0,
     isNext: safeKey(reward.key || reward.rewardKey || reward.reward_key) === safeKey(nextRewardKey),
     canStart: stateModel === 'challenge_lifecycle'
-      && status === 'available'
+      && ['available', 'completed'].includes(status)
       && canAccess
       && allowedActions.includes('start'),
     selectionHref: stateModel === 'ownership' && status === 'owned' && reward.active !== false
@@ -177,8 +167,9 @@ export function badgeViewModel(badge = {}) {
 export function buildBadgesRewardsPageModel({ catalog = {}, badges = [] } = {}) {
   const catalogItems = Array.isArray(catalog.items) ? catalog.items : [];
   const nextKey = safeKey(catalog.nextUnlock?.key || catalog.next_unlock?.key);
+  const titlesByChallenge = new Map(catalogItems.filter(item => item.stateModel === 'challenge_lifecycle').map(item => [item.fulfillmentKey || item.key, item.title]));
   const rewards = catalogItems
-    .map((reward) => rewardViewModel(reward, nextKey))
+    .map((reward) => rewardViewModel({ ...reward, prerequisiteTitle: titlesByChallenge.get(reward.requirement?.prerequisiteChallengeKey) }, nextKey))
     .filter((reward) => reward.key)
     .sort((left, right) => left.sortOrder - right.sortOrder || left.key.localeCompare(right.key));
   const nextUnlock = rewards.find((reward) => reward.key === nextKey) || null;
@@ -199,5 +190,7 @@ export function buildBadgesRewardsPageModel({ catalog = {}, badges = [] } = {}) 
     nextUnlock,
     unlockedCount,
     summaryMode,
+    originalRepeat: catalog.schemaVersion === 2 ? catalog.originalRepeat : null,
+    currentInstance: catalog.schemaVersion === 2 ? catalog.currentInstance : null,
   };
 }

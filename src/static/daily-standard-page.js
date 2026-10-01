@@ -110,13 +110,14 @@ const hasHydratedAuthOwner = () => Boolean(
   hydratedAuthOwner && hydratedAuthOwner === observedAuthOwner,
 );
 const captureMutationOwner = () => hasHydratedAuthOwner()
-  ? { userId: hydratedAuthOwner, epoch: authOwnerEpoch }
+  ? { userId: hydratedAuthOwner, epoch: authOwnerEpoch, instanceId: challengeActivation.currentInstance?.id ?? null }
   : null;
 const isCurrentMutationOwner = (owner) => Boolean(
   owner
   && owner.epoch === authOwnerEpoch
   && owner.userId === hydratedAuthOwner
-  && owner.userId === observedAuthOwner,
+  && owner.userId === observedAuthOwner
+  && owner.instanceId === (challengeActivation.currentInstance?.id ?? null),
 );
 
 function localPreviewState(ownerId) {
@@ -490,29 +491,28 @@ async function setWorkoutDifficulty(event) {
   render();
 
   try {
-    if (hasSupabaseAuth()) {
+    if (hasSupabaseAuth() || localDemoMode) {
       const authoritative = await setDailyStandardWorkoutDifficulty({
         date: entryDate,
         workoutId,
         difficulty,
         expectedVersion: previousDraft.version,
         expectedUserId: owner.userId,
+        expectedInstanceId: owner.instanceId,
       });
       if (!isCurrentMutationOwner(owner)) return;
       draft = authoritative;
-    } else {
-      if (!isCurrentMutationOwner(owner)) return;
-      writeLocalDraft(draft, owner.userId);
     }
   } catch (error) {
     if (!isCurrentMutationOwner(owner)) return;
     draft = previousDraft;
     errorMessage = error?.message || 'That difficulty could not be saved. Try again.';
-    if (hasSupabaseAuth()) {
+    if (hasSupabaseAuth() || localDemoMode) {
       activationRefreshPending = true;
       try {
         const authoritative = await getDailyStandardDraft(entryDate, {
           expectedUserId: owner.userId,
+          expectedInstanceId: owner.instanceId,
         });
         if (isCurrentMutationOwner(owner)) draft = authoritative;
       } catch { /* keep recoverable local state */ }
@@ -541,7 +541,7 @@ async function hydrate(expectedOwnerId = observedAuthOwner) {
     let nextDraft;
     let nextActivation;
     let snapshotOwner;
-    if (hasSupabaseAuth()) {
+    if (hasSupabaseAuth() || localDemoMode) {
       const snapshot = await getDailyActionBootstrap({ expectedUserId: requestedOwner, timeZone: browserTimeZone });
       snapshotOwner = snapshot.actorId;
       if (requestId !== hydrationRequestId || observedAuthOwner !== snapshotOwner) return;
@@ -552,20 +552,6 @@ async function hydrate(expectedOwnerId = observedAuthOwner) {
       nextActivation = snapshot.activation;
       nextDate = snapshot.entryDate;
       nextDraft = snapshot.draft;
-    } else {
-      const currentUser = await getLocalOrSessionUser();
-      snapshotOwner = String(currentUser?.userId || '');
-      if (!snapshotOwner) throw new Error('You need to log in again.');
-      if ((requestedOwner && requestedOwner !== snapshotOwner)
-        || (observedAuthOwner && observedAuthOwner !== snapshotOwner)) return;
-      const activation = await getChallengeActivation({ expectedUserId: snapshotOwner });
-      const localState = readLocalDraft(
-        activation,
-        currentUser,
-      );
-      nextActivation = localState.activation;
-      nextDraft = localState.draft;
-      nextDate = localState.date;
     }
     if (requestId !== hydrationRequestId
       || saving
@@ -574,7 +560,8 @@ async function hydrate(expectedOwnerId = observedAuthOwner) {
     hydratedAuthOwner = snapshotOwner;
     challengeActivation = nextActivation;
     entryDate = nextDate;
-    draft = nextDraft;
+    draft = nextDraft ?? normalizeDailyStandardDraft({ entry_date: nextDate, locked: true,
+      activation_status: nextActivation.status, schemaVersion: 2, actorId: snapshotOwner, instanceId: null });
     interactiveReady = true;
   } catch (error) {
     if (requestId !== hydrationRequestId) return;
@@ -666,19 +653,17 @@ async function toggleCompletion() {
   render();
 
   try {
-    if (hasSupabaseAuth()) {
+    if (hasSupabaseAuth() || localDemoMode) {
       const authoritative = await mutateDailyStandardDraft({
         date: entryDate,
         actionId: action.id,
         completed: nextCompleted,
         expectedVersion: previousDraft.version,
         expectedUserId: owner.userId,
+        expectedInstanceId: owner.instanceId,
       });
       if (!isCurrentMutationOwner(owner)) return;
       draft = authoritative;
-    } else {
-      if (!isCurrentMutationOwner(owner)) return;
-      writeLocalDraft(draft, owner.userId);
     }
   } catch (error) {
     if (!isCurrentMutationOwner(owner)) return;
@@ -689,6 +674,7 @@ async function toggleCompletion() {
       try {
         const authoritative = await getDailyStandardDraft(entryDate, {
           expectedUserId: owner.userId,
+          expectedInstanceId: owner.instanceId,
         });
         if (isCurrentMutationOwner(owner)) draft = authoritative;
       } catch { /* keep recoverable local state */ }
@@ -774,6 +760,7 @@ async function boot() {
       return;
     }
     if (localDemoMode && [
+      `dominion:challengeAggregateV2:${observedAuthOwner}`,
       PREVIEW_USER_STATE_STORAGE_KEY,
       ENTRY_STORAGE_KEY,
       'dominion:checkInDates',

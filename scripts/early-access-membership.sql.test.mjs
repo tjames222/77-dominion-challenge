@@ -35,6 +35,11 @@ const asActor = (input, user = actor) => `set request.jwt.claim.sub=${literal(us
   set request.jwt.claims=${literal(JSON.stringify({sub:user,role:'authenticated',aal:'aal1',session_id:sid}))};
   set request.headers='{"origin":"https://77dominion.com"}';set role authenticated;${input}`;
 const memberRead = () => values(asActor(`select public.get_member_access_context('${actor}');`))[0];
+const catalogRead = () => values(asActor(`select public.get_reward_catalog_v2(100,null,null,'${actor}',null,null,null);`))[0];
+function expectActorError(statement, pattern) {
+  const result=docker(psqlArgs('ea_test'),`\\set VERBOSITY verbose\n${asActor(statement)}`);
+  assert.notEqual(result.status,0);assert.match(result.stderr,pattern);
+}
 function qualify(user = actor) {
   sql(`with request as (
     insert into private.early_access_requests(name,email,user_id,status)
@@ -195,6 +200,17 @@ test('canonical application snapshot plus complete new migration preserves ACLs 
   assert.deepEqual(final[actorBoundStart],['postgres=X/postgres','authenticated=X/postgres']);
   delete final[actorBoundStart];
   assert.deepEqual(final,before);
+  for(const signature of [
+    'public.get_reward_catalog_v2(integer,integer,text,uuid,bigint,bigint,text)',
+    'public.get_challenge_activation_v2(uuid)',
+    'public.get_daily_action_bootstrap_v2(uuid,text,date,uuid)',
+    'public.start_challenge_instance_v2(text,date,text,uuid,uuid,uuid,bigint)',
+  ]){
+    assert.deepEqual(values(`select jsonb_build_array(
+      has_function_privilege('authenticated',${literal(signature)},'execute'),
+      has_function_privilege('anon',${literal(signature)},'execute'),
+      has_function_privilege('service_role',${literal(signature)},'execute'));`),[[true,false,false]]);
+  }
   assert.deepEqual(values('select jsonb_build_array((select count(*) from private.early_access_grants),(select count(*) from private.early_access_price_qualifications));'),[[0,0]]);
   assert.deepEqual(values(`select jsonb_build_array(
     has_function_privilege('anon','private.lock_early_access_authority(uuid[])','execute'),
@@ -251,6 +267,18 @@ test('challenge readers, reconciliation, claim and start use EA without granting
   assert.equal(reward.canAccess,true);
   assert.deepEqual(reward.allowedActions,[]);
   const claim=values(asActor('select public.claim_challenge_unlocks();'))[0];assert.ok(claim.claimedKeys.includes('seven_day_reset'));
+  const catalog=catalogRead();
+  assert.equal(catalog.schemaVersion,2);assert.equal(catalog.actorId,actor);
+  assert.equal(catalog.currentInstance,null);assert.match(catalog.snapshotVersion,/^[a-f0-9]{64}$/);
+  const reset=catalog.items.find(row=>row.key==='seven_day_reset');
+  assert.equal(reset.canAccess,true);assert.equal(reset.status,'available');
+  assert.deepEqual(reset.allowedActions,[],'Points unlock Reset but cannot bypass the required current challenge.');
+  assert.deepEqual(values(`select coalesce(jsonb_agg(challenge_key order by challenge_key),'[]')
+    from public.user_challenge_states where user_id='${actor}';`),[['seven_day_reset']],
+  'Lifetime points must not grant any completion-only successor.');
+  expectActorError(`select public.get_reward_catalog_v2(100,null,null,'${other}',null,null,null);`,/40001|signed-in account changed/);
+  expectActorError(`select public.start_challenge_instance_v2('seven_day_reset',current_date,'UTC','${randomUUID()}','${actor}',null,${catalog.revision+1});`,/40001|challenge timeline changed/);
+  expectActorError(`select public.start_challenge_instance_v2('seven_day_reset',current_date,'UTC','${randomUUID()}','${actor}',null,${catalog.revision});`,/55000|Complete the current challenge/);
   for(const statement of [
     "select public.start_challenge('seven_day_reset');",
     `select public.start_challenge('seven_day_reset','${actor}');`,
@@ -266,12 +294,29 @@ test('challenge readers, reconciliation, claim and start use EA without granting
   sql(`insert into public.challenge_definitions(challenge_key,title,teaser,challenge_type,points_required,duration_days,entitlement_key,icon,sort_order)
     values('fixture_ea','EA challenge','Fixture','reset',21,7,'membership_active','repeat',999),
       ('fixture_other','Unrelated product','Fixture','reset',21,7,'premium_unrelated','repeat',1000);`);
+  // V2 intentionally removed definition-insert point fan-out. Register each
+  // released rule explicitly, then use the real actor-bound reconciliation.
+  sql(`insert into public.reward_definitions(reward_key,reward_type,state_model,title,points_required,
+      fulfillment_key,challenge_key,required_entitlement_key,sort_order,unlock_rule_type,phase,released)
+    values('fixture_ea','challenge','challenge_lifecycle','EA challenge',21,'fixture_ea','fixture_ea','membership_active',999,'lifetime_points','core',true),
+      ('fixture_other','challenge','challenge_lifecycle','Unrelated product',21,'fixture_other','fixture_other','premium_unrelated',1000,'lifetime_points','core',true);`);
+  assert.deepEqual(values(`select coalesce(jsonb_agg(challenge_key order by challenge_key),'[]')
+    from public.user_challenge_states where user_id='${actor}' and challenge_key like 'fixture_%';`),[[]]);
+  const configured=catalogRead();
+  assert.equal(configured.items.find(row=>row.key==='fixture_ea').canAccess,true);
+  assert.equal(configured.items.find(row=>row.key==='fixture_other').canAccess,false);
   assert.deepEqual(values(`select jsonb_agg(challenge_key order by challenge_key) from public.user_challenge_states where user_id='${actor}' and challenge_key like 'fixture_%';`),[['fixture_ea']]);
+  assert.deepEqual(values(`select to_jsonb(count(*)) from private.challenge_instance_requests where user_id='${actor}';`),[0]);
   revoke();
   const after=values(`select public.challenge_progression_for_user('${actor}');`)[0];
   assert.equal(after.challenges.find(row=>row.key==='seven_day_reset').canAccess,false);
   assert.equal(after.challenges.find(row=>row.key==='fixture_other').canAccess,false);
   assert.equal(after.challenges.find(row=>row.key==='fixture_other').accessReason,'membership_required');
+  const revokedCatalog=catalogRead();
+  for(const key of ['seven_day_reset','fixture_ea','fixture_other']){
+    assert.equal(revokedCatalog.items.find(row=>row.key===key).canAccess,false);
+    assert.deepEqual(revokedCatalog.items.find(row=>row.key===key).allowedActions,[]);
+  }
 });
 
 test('EA crew issuer, recipient confirmation and same-crew badge reader work without billing rows',()=>{
@@ -307,10 +352,29 @@ test('solo activation and Daily Action bootstrap recognize EA through canonical 
     targetCount:77,submittedCount:0,completionState:'in_progress',canonicalEvent:null,
   });
   assert.equal(daily.activation.canEditStartDate,true);
+  const activation=values(asActor(`select public.get_challenge_activation_v2('${actor}');`))[0];
+  const instanceId=activation.currentInstance.id;
+  assert.equal(activation.schemaVersion,2);assert.equal(activation.actorId,actor);
+  assert.match(instanceId,/^[a-f0-9-]{36}$/);
+  assert.equal(activation.currentInstance.challengeKey,'original_77');
+  assert.equal(activation.currentInstance.targetCount,77);
+  assert.equal(activation.currentInstance.submittedCount,0);
+  const current=values(asActor(`select public.get_daily_action_bootstrap_v2('${actor}','UTC',null,'${instanceId}');`))[0];
+  assert.equal(current.schemaVersion,2);assert.equal(current.actorId,actor);
+  assert.equal(current.appAccess,true);assert.equal(current.instanceId,instanceId);
+  assert.equal(current.activation.currentInstance.id,instanceId);assert.equal(current.draft.locked,false);
+  expectActorError(`select public.get_daily_action_bootstrap_v2('${other}','UTC',null,'${instanceId}');`,/40001|signed-in account changed/);
+  expectActorError(`select public.get_daily_action_bootstrap_v2('${actor}','UTC',null,'${randomUUID()}');`,/40001|challenge instance changed/);
+  values(asActor(`select public.mutate_daily_standard_draft_v2('${current.entryDate}','walk',true,${current.draft.version},'${actor}','${instanceId}');`));
   revoke();
   const after=values(asActor(`select public.get_daily_action_bootstrap('${actor}','UTC',null);`))[0];
   assert.equal(after.appAccess,false);assert.equal(after.draft,null);
   assert.equal(values(`select public.challenge_activation_payload_for_user('${actor}');`)[0].canMutateDailyStandards,false);
+  const revoked=values(asActor(`select public.get_daily_action_bootstrap_v2('${actor}','UTC',null,'${instanceId}');`))[0];
+  assert.equal(revoked.appAccess,false);assert.equal(revoked.draft,null);assert.equal(revoked.activation,null);
+  expectActorError(`select public.mutate_daily_standard_draft_v2('${current.entryDate}','walk',false,null,'${actor}','${instanceId}');`,/42501|membership/);
+  assert.deepEqual(values(`select to_jsonb(completed) from public.challenge_entries where user_id='${actor}' and entry_date='${current.entryDate}';`),[['walk']],
+    'Revoked access cannot mutate an already saved current-run draft.');
 });
 
 test('all EA readers fail closed on unconfigured programs and unhealthy accounts',()=>{

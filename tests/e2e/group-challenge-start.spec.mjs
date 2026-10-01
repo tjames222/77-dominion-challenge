@@ -8,6 +8,13 @@ import {
 
 const INTENT_KEY = 'dominion:challengeStartIntent';
 
+async function currentActivation(page) {
+  return page.evaluate(async expectedUserId => {
+    const api = await import('/src/static/api.js');
+    return api.getChallengeActivation({ expectedUserId });
+  }, FIXED_USER_ID);
+}
+
 function intentFixture() {
   return {
     version: 1,
@@ -48,10 +55,9 @@ for (const theme of ['light', 'dark']) {
     await expect(page).toHaveURL(/\/community\.html$/);
     const persisted = await page.evaluate((key) => ({
       intent: sessionStorage.getItem(key),
-      activation: JSON.parse(localStorage.getItem('dominion:mockChallengeActivation') || '{}'),
     }), INTENT_KEY);
     expect(persisted.intent).toBeNull();
-    expect(persisted.activation[FIXED_USER_ID].status).toBe('not_started');
+    expect((await currentActivation(page)).status).toBe('not_started');
   });
 }
 
@@ -63,13 +69,13 @@ test('existing-member confirmation activates the authoritative crew date once', 
   await expect(page.locator('#communityFeedback')).toContainText('now your Group challenge');
   await expect(page).toHaveURL(/\/community\.html$/);
 
-  const result = await page.evaluate((key) => ({
+  const activation = await currentActivation(page);
+  const result = await page.evaluate(({ key, actorId }) => ({
     intent: sessionStorage.getItem(key),
-    activation: JSON.parse(localStorage.getItem('dominion:mockChallengeActivation') || '{}'),
-    requests: JSON.parse(localStorage.getItem('dominion:mockChallengeActivationRequests') || '{}'),
-  }), INTENT_KEY);
+    runtime: JSON.parse(localStorage.getItem('dominion:challengeAggregateV2:' + actorId)).runtime,
+  }), { key: INTENT_KEY, actorId: FIXED_USER_ID });
   expect(result.intent).toBeNull();
-  expect(result.activation[FIXED_USER_ID]).toMatchObject({
+  expect(activation).toMatchObject({
     status: 'active',
     mode: 'group',
     startDate: '2026-02-01',
@@ -77,7 +83,10 @@ test('existing-member confirmation activates the authoritative crew date once', 
     groupMembershipActive: true,
     revision: 1,
   });
-  expect(Object.keys(result.requests)).toHaveLength(1);
+  expect(result.runtime.actorId).toBe(FIXED_USER_ID);
+  expect(result.runtime.requests).toHaveLength(1);
+  expect(result.runtime.runs).toHaveLength(1);
+  expect(result.runtime.currentInstanceId).toBe(activation.currentInstance.id);
 });
 
 test('create path atomically creates membership and starts the Group challenge', async ({ page, app }) => {
@@ -93,14 +102,13 @@ test('create path atomically creates membership and starts the Group challenge',
     intent: sessionStorage.getItem(key),
     crews: JSON.parse(localStorage.getItem('dominion:mockCrews') || '[]'),
     members: JSON.parse(localStorage.getItem('dominion:mockCrewMembers') || '{}'),
-    activation: JSON.parse(localStorage.getItem('dominion:mockChallengeActivation') || '{}'),
   }), INTENT_KEY);
   expect(started.intent).toBeNull();
   expect(started.crews).toHaveLength(1);
   expect(started.members[started.crews[0].id]).toEqual(expect.arrayContaining([
     expect.objectContaining({ userId: FIXED_USER_ID, role: 'owner' }),
   ]));
-  expect(started.activation[FIXED_USER_ID]).toMatchObject({
+  expect(await currentActivation(page)).toMatchObject({
     mode: 'group',
     crewId: started.crews[0].id,
     revision: 1,
@@ -117,10 +125,7 @@ test('ordinary Community crew creation remains challenge-gated', async ({ page, 
   await page.getByRole('button', { name: 'Create a Group' }).click();
   await page.getByLabel('Group name').fill('Ordinary Group');
   await page.locator('#crewForm').getByRole('button', { name: 'Create Group' }).click();
-  const activation = await page.evaluate(() => (
-    JSON.parse(localStorage.getItem('dominion:mockChallengeActivation') || '{}')
-  ));
-  expect(activation[FIXED_USER_ID]).toMatchObject({ status: 'not_started', revision: 0 });
+  expect(await currentActivation(page)).toMatchObject({ status: 'not_started', revision: 0, currentInstance: null });
 });
 
 test('invite join activates only after membership succeeds and never launches owner training', async ({ page, app }) => {
@@ -132,24 +137,22 @@ test('invite join activates only after membership succeeds and never launches ow
 
   const before = await page.evaluate(() => ({
     members: JSON.parse(localStorage.getItem('dominion:mockCrewMembers') || '{}'),
-    activation: JSON.parse(localStorage.getItem('dominion:mockChallengeActivation') || '{}'),
   }));
   expect(before.members.crew_e2e_alpha.some((member) => member.userId === FIXED_USER_ID)).toBe(false);
-  expect(before.activation[FIXED_USER_ID].status).toBe('not_started');
+  expect((await currentActivation(page)).status).toBe('not_started');
 
   await confirm.click();
   await expect(page.locator('#inviteTitle')).toHaveText('You are starting with Steady Hands.');
   const after = await page.evaluate((key) => ({
     intent: sessionStorage.getItem(key),
     members: JSON.parse(localStorage.getItem('dominion:mockCrewMembers') || '{}'),
-    activation: JSON.parse(localStorage.getItem('dominion:mockChallengeActivation') || '{}'),
     training: JSON.parse(localStorage.getItem('dominion:mockCrewTraining') || '{}'),
   }), INTENT_KEY);
   expect(after.intent).toBeNull();
   expect(after.members.crew_e2e_alpha).toEqual(expect.arrayContaining([
     expect.objectContaining({ userId: FIXED_USER_ID, role: 'member' }),
   ]));
-  expect(after.activation[FIXED_USER_ID]).toMatchObject({
+  expect(await currentActivation(page)).toMatchObject({
     status: 'active', mode: 'group', crewId: 'crew_e2e_alpha', revision: 1,
   });
   expect(after.training).toEqual({});
@@ -167,12 +170,11 @@ test('post-membership activation failure preserves one retry-safe continuation',
   const recovery = await page.evaluate((key) => ({
     intent: JSON.parse(sessionStorage.getItem(key) || 'null'),
     members: JSON.parse(localStorage.getItem('dominion:mockCrewMembers') || '{}'),
-    activation: JSON.parse(localStorage.getItem('dominion:mockChallengeActivation') || '{}'),
   }), INTENT_KEY);
   expect(recovery.members.crew_e2e_alpha).toEqual(expect.arrayContaining([
     expect.objectContaining({ userId: FIXED_USER_ID, role: 'member' }),
   ]));
-  expect(recovery.activation[FIXED_USER_ID].status).toBe('not_started');
+  expect((await currentActivation(page)).status).toBe('not_started');
   expect(recovery.intent).toMatchObject({
     stage: 'activation_pending',
     actorId: FIXED_USER_ID,

@@ -105,14 +105,9 @@ async function seedPage(page, stateName, theme) {
     window.Date = FixedDate;
     Math.random = () => 0.4177;
 
-    try {
-      Object.defineProperty(globalThis.crypto, 'randomUUID', {
-        configurable: true,
-        value: () => '00000000-0000-4000-8000-000000000077',
-      });
-    } catch {
-      // Some engines expose randomUUID as non-configurable; seeded IDs avoid it.
-    }
+    // Keep native UUID generation: run, request and source-event identities
+    // must remain distinct across retries, tabs and reloads. Visible fixture
+    // data is deterministic without replacing every UUID with the same value.
 
     const root = document.documentElement;
     const readThemeState = () => ({

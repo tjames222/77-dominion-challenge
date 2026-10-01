@@ -345,15 +345,16 @@ test('hybrid dev Auth registers, persists, logs in, isolates UUID-owned state, a
     && new URL(response.url()).pathname.endsWith('/auth/v1/user')
     && response.status() === 403
   ));
-  const loginRedirect = page.waitForURL(/\/login\.html\?returnTo=/);
-
   auth.invalidateUser(ACCOUNT_A.email);
   releaseStaleWrite();
 
-  const [failedUserCheck] = await Promise.all([invalidSessionResponse, loginRedirect]);
+  const failedUserCheck = await invalidSessionResponse;
   expect(await failedUserCheck.json()).toMatchObject({ error_code: 'session_not_found' });
   expect(auth.count('/user', 'GET')).toBeGreaterThan(getUserBeforeInvalidation);
-  await page.waitForLoadState('domcontentloaded');
+  // Concurrent invalidated readers may replace an in-flight Login navigation.
+  // Require the final destination and rendered form, not one navigation's load.
+  await expect(page).toHaveURL(/\/login\.html\?returnTo=/);
+  await expect(page.locator('#authForm')).toBeVisible();
   expect(await page.evaluate((marker) => (
     Object.values(localStorage).some((value) => String(value).includes(marker))
   ), STALE_JOURNAL)).toBe(false);
