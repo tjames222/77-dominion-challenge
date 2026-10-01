@@ -28,6 +28,8 @@ describe('daily check-in safeguards', () => {
   it('calculates challenge days without daylight-saving drift', () => {
     assert.equal(calendarDayDifference('2026-11-02', '2026-10-31'), 2);
     assert.equal(calendarDayDifference('2026-03-09', '2026-03-07'), 2);
+    assert.equal(calendarDayDifference('0100-01-01', '0099-12-31'), 1);
+    assert.throws(() => calendarDayDifference('2026-02-31', '2026-01-01'));
   });
 
   it('resets the visible full-day streak after an unsubmitted day passes', () => {
@@ -83,6 +85,19 @@ describe('daily check-in safeguards', () => {
     assert.deepEqual(migrateMockCheckInCache(migrated, 'mock-user-b', 'new@example.test').dates, []);
   });
 
+  it('retains global submitted dates while discarding another run’s calendar ordinals', () => {
+    const cache = createCheckInCache('user-a', ['2026-09-30'], [77], 'run-a');
+    assert.deepEqual(checkInCacheForOwner(cache, 'user-a', 'run-a'), cache);
+    assert.deepEqual(checkInCacheForOwner(cache, 'user-a', 'run-b'), {
+      owner: 'user-a', instanceId: 'run-b', dates: ['2026-09-30'], challengeDays: [],
+    });
+    assert.deepEqual(checkInCacheForOwner(cache, 'user-b', 'run-b'), {
+      owner: 'user-b', instanceId: 'run-b', dates: [], challengeDays: [],
+    });
+    const mock = createCheckInCache('mock:user-a', ['2026-09-30'], [77], 'run-a');
+    assert.deepEqual(migrateMockCheckInCache(mock, 'user-a'), mock);
+  });
+
   it('recognizes only the daily check-in uniqueness failure', () => {
     assert.equal(isDuplicateCheckInError({
       code: '23505',
@@ -94,6 +109,9 @@ describe('daily check-in safeguards', () => {
     }), true);
     assert.equal(isDuplicateCheckInError({ code: '23505', message: 'duplicate primary key' }), false);
     assert.equal(isDuplicateCheckInError({ code: '42501', message: 'permission denied' }), false);
+    assert.equal(isDuplicateCheckInError({ code: '23505', message: 'duplicate key violates unique constraint "check_ins_instance_challenge_day_unique_idx"' }), true);
+    assert.equal(isDuplicateCheckInError({ code: '23505', details: 'Key (instance_id, challenge_day) already exists.' }), true);
+    assert.equal(isDuplicateCheckInError({ code: '23505', details: 'Key (challenge_instance_id, challenge_day) already exists.' }), true);
   });
 
   it('maps duplicate attempts to clear non-destructive feedback', () => {

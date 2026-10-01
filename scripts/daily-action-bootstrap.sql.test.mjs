@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { after, before, test } from 'node:test';
 import { createOriginal77FullchainFixture } from './fixtures/original77-fullchain-fixture.mjs';
@@ -94,7 +95,18 @@ async function waitForSql(predicate) {
 }
 
 before(async () => {
+  // Byte-identical protected-release 27201cd3f244cc35c93f561143c5de99003b23c4
+  // 280_daily_action_bootstrap.sql. Current V2/71 coverage remains in the
+  // unchanged latest-schema-pgtap.sql.test.mjs runner, not this V1/70 proof.
+  const pgTap = await readFile(new URL('./fixtures/original77-daily-bootstrap-exact70.pgtap.sql', import.meta.url), 'utf8');
+  assert.equal(createHash('sha256').update(pgTap).digest('hex'),
+    '9ca6d4fa4c344111eedaf71193d1138b25a1d2a487da1720069c6f6851409e0b',
+    'The protected-release exact70 Daily Action fixture changed.');
   fixture = await createOriginal77FullchainFixture({ through: 70 });
+  assert.equal(fixture.history.length, 70);
+  assert.equal(fixture.history.at(-1).version, '20260930161218');
+  assert.equal(fixture.query("select to_regclass('private.challenge_instances') is null;"), 't',
+    'The historical Daily Action proof must not import migration71 instance state.');
   fixture.queryAsBootstrap(`create extension if not exists pgtap with schema extensions;
     grant usage on schema extensions to anon,authenticated;
     -- The structural provider fixture stores the subject in a dedicated GUC,
@@ -106,7 +118,6 @@ before(async () => {
         nullif(pg_catalog.current_setting('request.jwt.claim.sub',true),''),
         nullif(pg_catalog.current_setting('request.jwt.claims',true),'')::jsonb->>'sub'
       )::uuid$$;`);
-  const pgTap = await readFile(new URL('../supabase/tests/database/280_daily_action_bootstrap.sql', import.meta.url), 'utf8');
   const output = fixture.queryAsBootstrap(pgTap);
   assert.doesNotMatch(output, /^not ok\b|^Bail out!|^# Looks like/m, output);
   assert.match(output, /^1\.\.24$/m, 'The complete Daily Action pgTAP plan must run against all 70 migrations.');

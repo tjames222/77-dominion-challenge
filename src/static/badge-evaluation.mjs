@@ -1,4 +1,5 @@
 import catalog from './badge-catalog.v1.json' with { type: 'json' };
+import { normalizeChallengeInstance } from './challenge-instance-contract.mjs';
 
 export const BADGE_CATALOG = Object.freeze(catalog.badges.map((badge) => Object.freeze(badge)));
 export const BADGE_CATALOG_VERSION = catalog.schemaVersion;
@@ -19,8 +20,15 @@ const instance = (event) => {
   const date = dayNumber(event.localDate);
   if (date === null || !Number.isSafeInteger(event.challengeDay) || event.challengeDay < 1) return '';
   const start = date - event.challengeDay + 1;
-  return start >= minimumDay && start <= maximumDay
+  const legacy = start >= minimumDay && start <= maximumDay
     ? `original77:${new Date(start * oneDay).toISOString().slice(0, 10)}` : '';
+  if (Object.hasOwn(event, 'instanceId') || Object.hasOwn(event, 'scopeKey')) {
+    const id = Object.getOwnPropertyDescriptor(event, 'instanceId');
+    const scope = Object.getOwnPropertyDescriptor(event, 'scopeKey');
+    if (!id || !scope || !Object.hasOwn(id, 'value') || !Object.hasOwn(scope, 'value') || !completionUuid(id.value)) return '';
+    return scope.value === `instance:${id.value}` || scope.value === legacy ? scope.value : '';
+  }
+  return legacy;
 };
 
 // Only the owner-fenced preview INSERT reducer calls this adapter. A generic
@@ -96,6 +104,43 @@ export function original77CompletionBadgeFacts(input) {
       sourceCheckInId: event.sourceId, submittedCount: 77, targetCount: 77, original_77_completion: 1 });
     liveCompletionFacts.add(facts);
     return facts;
+  } catch { return null; }
+}
+
+// New UUID-run insertion adapter. The same 77-submission rule is preserved,
+// but its award is scoped to this immutable run, not a reconstructed date.
+export function instanceCompletionBadgeFacts(input) {
+  try {
+    const data = ownFields(input, ['userId', 'run', 'event', 'priorInstanceCheckIns', 'completionEvidence'], true);
+    if (!data || !previewIdentity(data.userId)) return null;
+    const run = normalizeChallengeInstance(data.run, { preview: true });
+    if (!run || run.challengeKey !== 'original_77' || run.status !== 'completed' || run.reviewRequired
+      || run.provenance === 'legacy_completed' || run.targetCount !== 77 || run.submittedCount !== 77) return null;
+    const prior = ownList(data.priorInstanceCheckIns, 76);
+    const proof = ownFields(data.completionEvidence, ['kind', 'userId', 'challengeKey', 'instanceId', 'eventId',
+      'sourceCheckInId', 'submittedCount', 'targetCount', 'completedAt', 'persistedAt'], true);
+    if (!prior || !proof || proof.kind !== 'canonical_instance_completion' || proof.userId !== data.userId
+      || proof.instanceId !== run.id || proof.challengeKey !== run.challengeKey || proof.submittedCount !== 77 || proof.targetCount !== 77
+      || proof.eventId !== run.completionEventId || !completionUuid(proof.eventId) || proof.eventId === proof.sourceCheckInId
+      || proof.completedAt !== run.completedAt || !completionStamp(proof.persistedAt)) return null;
+    const ids = new Set(); const dates = new Set(); const ordinals = new Set(); let current;
+    for (const raw of [...prior, data.event]) {
+      const row = ownFields(raw, ['source', 'sourceId', 'localDate', 'occurredAt', 'challengeDay', 'completed', 'instanceId', 'scopeKey']);
+      if (!row || row.source !== 'check_in' || !completionUuid(row.sourceId) || row.instanceId !== run.id || instance(row) !== run.scopeKey
+        || !completionStamp(row.occurredAt) || dayNumber(row.localDate) - row.challengeDay + 1 !== dayNumber(run.startDate)
+        || ids.has(row.sourceId) || dates.has(row.localDate) || ordinals.has(row.challengeDay)) return null;
+      const count = Object.getOwnPropertyDescriptor(row.completed || {}, 'length')?.value;
+      const entries = Number.isInteger(count) && count >= 1 && count <= 7 ? ownList(row.completed, count) : null;
+      if (!entries || !validCompleted({ completed: entries })) return null;
+      ids.add(row.sourceId); dates.add(row.localDate); ordinals.add(row.challengeDay); current = row;
+    }
+    if (current.sourceId !== proof.sourceCheckInId || current.occurredAt !== proof.completedAt
+      || current.challengeDay !== run.calendarDay) return null;
+    const facts = Object.freeze({ source: 'challenge_completion', sourceId: proof.eventId,
+      occurredAt: current.occurredAt, localDate: current.localDate, instanceId: run.scopeKey,
+      completionKind: 'original_77_submissions', completionEventId: proof.eventId,
+      sourceCheckInId: current.sourceId, submittedCount: 77, targetCount: 77, original_77_completion: 1 });
+    liveCompletionFacts.add(facts); return facts;
   } catch { return null; }
 }
 

@@ -1,6 +1,11 @@
 # Permanent reward celebration delivery
 
-FOU-1497 uses the existing typed reward catalog and permanent ownership records. It does not change point thresholds, ownership eligibility, fulfillment, paid services, theme activation, or challenge completion rules. The held FOU-1498 catalog is not a dependency.
+FOU-1497's delivery protocol uses the typed reward catalog and permanent
+ownership records. It does not itself change thresholds, eligibility,
+fulfillment, paid services or completion rules. The **FOU-1498 V2 contract**
+integrates the same protocol with the new catalog and repeatable runs. Production
+availability requires the verified migration-71 cutover and matching frontend
+deployment; this document does not establish deployment status.
 
 ## Server contract
 
@@ -19,6 +24,24 @@ With Web Locks and session storage available, the delivery token survives a tab 
 Recovery runs on Dashboard entry, focus, visibility, online and relevant storage events, and at one-minute intervals while visible and online. Hidden, offline, or in-flight check-in states skip periodic recovery. Account identity is rechecked after asynchronous stages; storage denial retains in-memory acknowledgement suppression for the current document.
 
 Recovery batches with multiple rewards are consolidated into one count-based catch-up popup. Live point crossings use deterministic catalog order, one popup per newly owned reward. Backfill/catalog-threshold sources consolidate even in a live refresh. Challenge-lifecycle records are always excluded, including future challenge types. New permanent reward types use the same contract and a safe gift-icon fallback.
+
+## V2 catalog and repeat-run integration
+
+All reward presentation uses the actor-bound V2 catalog described in
+[reward-catalog-contract.md](reward-catalog-contract.md). The new six core
+thresholds do not rewrite recorded grant milestones or acknowledgment timestamps.
+Explicit legacy ownership remains owned, including below the new threshold;
+changing catalog version or starting another run must not enqueue that ownership
+again. Original repeats and completion-gated tracks are not ownership rewards
+and do not enter this queue.
+
+The preview adapter persists run, point, badge and grant changes in one
+actor-scoped aggregate; delivery leases and acknowledgment recovery remain
+owner-fenced. Read-only refreshes do not continually rewrite unchanged aggregate
+storage. Keep the existing recoverable behavior: interrupted unacknowledged
+presentations may return, but acknowledged or locally dismissed keys remain
+suppressed while acknowledgment retries. The V2 migration does not authorize a
+historical award backfill or a stack of new migration ceremonies.
 
 ## Verification
 

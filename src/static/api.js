@@ -22,17 +22,11 @@ import { authSessionIdentity, sessionRequiresMfa } from './mfa-auth.mjs';
 import { createAdminReadClient, adminReadError } from './admin-read-client.mjs';
 import { createDailyActionBootstrapClient } from './daily-action-bootstrap.mjs';
 import { previewOriginal77Progress } from './original-77-progress.mjs';
-import { normalizePreviewChallengeState, isPreviewChallengeActive, previewChallengeDate } from './preview-challenge.mjs';
+import { normalizePreviewChallengeState, isPreviewChallengeActive, previewChallengeDate, advancePreviewStreaks } from './preview-challenge.mjs';
 import { assertEarlyAccessActor, normalizeEarlyAccessRequest, postEarlyAccessRequest } from './early-access-request.mjs';
 import {
-  DEFAULT_CHALLENGE_DEFINITIONS,
-  acknowledgeChallengeRecord,
-  buildChallengeProgression,
-  migrateChallengeUnlockRecords,
-  normalizeChallengeProgression,
-} from './challenge-progression.mjs';
-import {
   createCheckInAlreadyCompleteError,
+  calendarDayDifference,
   dateKeyForTimeZone,
   isDuplicateCheckInError,
   migrateMockCheckInCache,
@@ -103,10 +97,6 @@ import {
   outboundConsentWritePayload,
 } from './integration-consent.mjs';
 import {
-  backfillMockRewardEntitlements,
-  buildMockRewardCatalog,
-  claimMockRewardEntitlementUnlocks,
-  challengeProgressionToRewardCatalog,
   normalizeRewardCatalog,
   normalizeReward,
 } from './reward-catalog.mjs';
@@ -294,13 +284,124 @@ const getMockUserId = () => {
   return resolution.userId;
 };
 
-const readMockUserValue = (key, fallback, userId = getMockUserId()) => (
-  readPreviewUserValue(localStorage, userId, key, fallback)
-);
+const PREVIEW_AGGREGATE_PREFIX = 'dominion:challengeAggregateV2:';
+let importPreviewChallengeInstances, createPreviewChallengeInstancesState, getPreviewChallengeActivation,
+  activatePreviewInitial, startPreviewChallenge, updatePreviewChallengeStartDate, getPreviewChallengeDraft,
+  mutatePreviewChallengeDraft, setPreviewChallengeWorkoutDifficulty, submitPreviewChallengeCheckIn,
+  getPreviewChallengeFacts, buildMockRewardCatalogV2;
+async function loadPreviewChallengeRuntime() {
+  const [runtime, importer, rewards] = await Promise.all([
+    import('./preview-challenge-instances.mjs'), import('./preview-challenge-import.mjs'),
+    import('./preview-reward-catalog.mjs'),
+  ]);
+  ({ createPreviewChallengeInstancesState, getPreviewChallengeActivation, activatePreviewInitial,
+    startPreviewChallenge, updatePreviewChallengeStartDate, getPreviewChallengeDraft, mutatePreviewChallengeDraft,
+    setPreviewChallengeWorkoutDifficulty, submitPreviewChallengeCheckIn, getPreviewChallengeFacts } = runtime);
+  ({ importPreviewChallengeInstances } = importer);
+  ({ buildMockRewardCatalogV2 } = rewards);
+}
+let previewAggregateTransaction = null;
+function readPreviewAggregate(actorId) {
+  if (previewAggregateTransaction?.actorId === actorId) return previewAggregateTransaction;
+  const raw = localStorage.getItem(`${PREVIEW_AGGREGATE_PREFIX}${actorId}`);
+  if (raw === null) return null;
+  const aggregate = JSON.parse(raw);
+  if (aggregate?.schemaVersion !== 2 || aggregate.actorId !== actorId || !aggregate.values
+    || !Number.isSafeInteger(aggregate.generation) || aggregate.generation < 0) throw new Error('Saved preview progress needs review.');
+  if (aggregate.runtime?.actorId !== actorId) throw new Error('Saved preview progress belongs to another account.');
+  return aggregate;
+}
+const readMockUserValue = (key, fallback, userId = getMockUserId()) => {
+  const aggregate = readPreviewAggregate(userId);
+  return aggregate && Object.hasOwn(aggregate.values, key) ? structuredClone(aggregate.values[key])
+    : readPreviewUserValue(localStorage, userId, key, fallback);
+};
 
-const writeMockUserValue = (key, value, userId = getMockUserId()) => (
-  writePreviewUserValue(localStorage, userId, key, value)
-);
+const writeMockUserValue = (key, value, userId = getMockUserId()) => {
+  const aggregate = previewAggregateTransaction;
+  if (aggregate?.actorId === userId) {
+    aggregate.values[key] = structuredClone(value);
+    if (key === 'dominion:gameStats') aggregate.runtime = createPreviewChallengeInstancesState({ ...aggregate.runtime,
+      lifetimePoints: value.totalPoints ?? aggregate.runtime.lifetimePoints,
+      trustedDailyStandardPoints: value.dailyStandardsPoints ?? aggregate.runtime.trustedDailyStandardPoints });
+    return value;
+  }
+  return writePreviewUserValue(localStorage, userId, key, value);
+};
+
+function previewRunDate(runtime, actorId) {
+  const simulation = normalizePreviewChallengeState(readMockUserValue('dominion:previewChallengeSimulation', {}, actorId), dateKeyForTimeZone());
+  return isPreviewChallengeActive(isLocalDemoMode(), simulation) ? previewChallengeDate(simulation)
+    : dateKeyForTimeZone(new Date(), runtime.runs.at(-1)?.timeZone || browserTimeZone());
+}
+
+function previewActivationFor(aggregate) {
+  const current = aggregate.runtime.runs.at(-1);
+  const raw = getPreviewChallengeActivation(aggregate.runtime, { actorId: aggregate.actorId,
+    serverDate: previewRunDate(aggregate.runtime, aggregate.actorId), hasEntitlement: getMockBillingState().appAccess,
+    groupMembershipActive: current?.mode === 'group' && mockGroupMembershipIsActive(current), canActivateGroup: true });
+  return normalizeChallengeActivationMutation(raw, { expectedUserId: aggregate.actorId, preview: true });
+}
+
+function previewCatalogFor(aggregate) {
+  const activation = previewActivationFor(aggregate);
+  const facts = getPreviewChallengeFacts(aggregate.runtime, { actorId: aggregate.actorId });
+  return buildMockRewardCatalogV2({ actorId: aggregate.actorId, revision: aggregate.runtime.revision,
+    snapshotVersion: '0'.repeat(64), currentInstance: activation.currentInstance, originalRepeat: activation.originalRepeat,
+    totalPoints: facts.lifetimePoints, trustedDailyStandardPoints: facts.trustedDailyStandardPoints,
+    ownershipRecords: aggregate.values[MOCK_REWARD_ENTITLEMENTS_KEY] || [],
+    challengeRecords: aggregate.values[MOCK_CHALLENGE_STATES_KEY] || [],
+    completionEvidence: facts.completionEvidence, preservedLegacyRecords: facts.preservedLegacyRecords,
+    now: aggregate.updatedAt, membershipActive: getMockBillingState().appAccess });
+}
+
+async function withPreviewAggregate(actorId, operation) {
+  return getPreviewBadgeBoundary().run(actorId, async (badgeRuntime, verifyOwner, owner) => {
+    await loadPreviewChallengeRuntime();
+    await verifyOwner();
+    assertPreviewDeliveryOwner(owner);
+    let aggregate = readPreviewAggregate(actorId);
+    if (aggregate) aggregate.runtime = createPreviewChallengeInstancesState(aggregate.runtime);
+    const previousState = aggregate ? JSON.stringify(aggregate) : null;
+    if (!aggregate) {
+      const legacyActivation = readLegacyMockChallengeActivation();
+      const badgeState = badgeRuntime.normalizePreviewBadgeState(readMockUserValue(PREVIEW_BADGE_STATE_KEY, null, actorId), readMockUserValue('dominion:badges', [], actorId));
+      const gameStats = readMockUserValue('dominion:gameStats', {}, actorId);
+      const challengeRecords = readMockUserValue(MOCK_CHALLENGE_STATES_KEY, [], actorId);
+      const ownershipRecords = readMockUserValue(MOCK_REWARD_ENTITLEMENTS_KEY, [], actorId);
+      const runtime = importPreviewChallengeInstances({ actorId, legacyActivation, badgeState, gameStats,
+        challengeRecords, ownershipRecords, drafts: readMockUserValue('dominion:entries', [], actorId),
+        scoredDates: [], createUuid: () => crypto.randomUUID() });
+      aggregate = { schemaVersion: 2, actorId, generation: 0, runtime, updatedAt: new Date().toISOString(), values: {
+        [PREVIEW_BADGE_STATE_KEY]: badgeState, 'dominion:badges': badgeState.awards,
+        // The strict importer validates owner/lifecycle evidence above. Keep
+        // its original grant records too: typed preservation facts deliberately
+        // omit award-time celebration metadata and are not a replacement for it.
+        'dominion:gameStats': gameStats, [MOCK_CHALLENGE_STATES_KEY]: structuredClone(challengeRecords),
+        [MOCK_REWARD_ENTITLEMENTS_KEY]: structuredClone(ownershipRecords),
+      } };
+    }
+    if (previewAggregateTransaction) throw new Error('Preview progress is already being updated.');
+    previewAggregateTransaction = aggregate;
+    try {
+      const result = operation(aggregate, badgeRuntime);
+      if (result && typeof result.then === 'function') throw new Error('Preview transactions must commit synchronously.');
+      const grants = previewCatalogFor(aggregate);
+      aggregate.values[MOCK_REWARD_ENTITLEMENTS_KEY] = grants.ownershipRecords;
+      aggregate.values[MOCK_CHALLENGE_STATES_KEY] = grants.challengeRecords;
+      assertPreviewDeliveryOwner(owner);
+      if (previousState !== JSON.stringify(aggregate)) {
+        aggregate.generation += 1;
+        aggregate.updatedAt = new Date().toISOString();
+        // One authoritative write: runs, drafts, check-ins, points, badges and grants.
+        // Unchanged reads must not trigger a cross-tab storage/refresh loop.
+        localStorage.setItem(`${PREVIEW_AGGREGATE_PREFIX}${actorId}`, JSON.stringify(aggregate));
+        inflightActorReads.invalidate();
+      }
+      return result;
+    } finally { previewAggregateTransaction = null; }
+  });
+}
 
 const getMockSubscription = () => readMockUserValue(MOCK_SUBSCRIPTION_KEY, null);
 
@@ -1655,23 +1756,27 @@ const mockSharePresentation = (kind) => {
     };
   }
   if (kind === 'progress') {
-    const progress = readMockChallengeActivation().originalProgress;
-    if (!progress || progress.completionState === 'invalid_evidence') throw new Error('Challenge progress is unavailable.');
-    const count = progress.submittedCount;
+    const activation = readMockChallengeActivation();
+    const instance = activation.currentInstance;
+    if (!activation.contractValid || !instance || instance.reviewRequired || instance.status === 'scheduled') throw new Error('Challenge progress is unavailable.');
+    const count = instance.submittedCount;
+    const target = instance.targetCount;
     return {
-      schemaVersion: 2,
+      schemaVersion: 3,
       kind,
       payload: {
-        schemaVersion: 2,
+        schemaVersion: 3,
         kind,
+        challengeKey: instance.challengeKey,
+        title: instance.title,
         submittedCheckIns: count,
-        targetCheckIns: 77,
+        targetCheckIns: target,
       },
       presentation: {
-        eyebrow: 'Challenge progress',
-        title: `${count} of 77 Dominion check-ins`,
-        description: `${count} of 77 check-ins submitted. Partial check-ins count.`,
-        metric: `${count}/77`,
+        eyebrow: instance.title,
+        title: `${count} of ${target} Dominion check-ins`,
+        description: `${instance.title}: ${count} of ${target} check-ins submitted. Partial check-ins count.`,
+        metric: `${count}/${target}`,
         metricLabel: 'submitted check-ins',
       },
     };
@@ -1690,30 +1795,60 @@ const mockSharePresentation = (kind) => {
   };
 };
 
-export async function previewShareSnapshot(kind) {
-  if (isLocalDemoMode()) return mockSharePresentation(kind);
-  return invokeSupabaseAction('share-snapshot', { action: 'preview', kind });
+function verifiedShareContext(snapshot, kind, actorId, expectedInstanceId = null) {
+  const context = snapshot?.context;
+  if (context?.schemaVersion !== 2 || context.actorId !== actorId
+    || (kind === 'progress' ? !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(context.instanceId || '') : context.instanceId !== null)
+    || (expectedInstanceId !== null && context.instanceId !== expectedInstanceId)) {
+    throw new Error('The challenge changed. Reopen the share preview.');
+  }
+  return snapshot;
 }
 
-export async function createShareSnapshot(kind, { expectedUserId = '' } = {}) {
+export async function previewShareSnapshot(kind, { expectedUserId = '' } = {}) {
+  const user = await getLocalOrSessionUser();
+  const actorId = expectedUserId || user?.userId;
+  if (!user?.authenticated || !actorId || user.userId !== actorId) throw new Error('The signed-in account changed. Try again.');
   if (isLocalDemoMode()) {
-    await requireHybridPreviewUser(expectedUserId);
-    if (expectedUserId && getMockUserId() !== expectedUserId) {
-      throw new Error('The signed-in account changed. Try again.');
-    }
-    const preview = mockSharePresentation(kind);
-    const destination = new URL('./index.html', window.location.href);
-    destination.searchParams.set('shared', kind);
-    return {
-      ...preview,
-      snapshotId: randomId('preview_snapshot'),
-      url: destination.href,
-      expiresAt: new Date(Date.now() + 30 * 86400000).toISOString(),
-      preview: true,
-    };
+    return withPreviewAggregate(actorId, () => {
+      const snapshot = mockSharePresentation(kind);
+      return { ...snapshot, context: { schemaVersion: 2, actorId,
+        instanceId: kind === 'progress' ? readMockChallengeActivation().currentInstance.id : null } };
+    });
+  }
+  const result = await invokeSupabaseAction('share-snapshot', {
+    action: 'preview', kind, contractVersion: 2, expectedUserId: actorId,
+  });
+  await requireUser(actorId);
+  return verifiedShareContext(result, kind, actorId);
+}
+
+export async function createShareSnapshot(kind, { expectedUserId = '', expectedInstanceId = null } = {}) {
+  if (!expectedUserId || (kind === 'progress' && !expectedInstanceId)) throw new Error('Reopen the share preview before creating a link.');
+  if (isLocalDemoMode()) {
+    return withPreviewAggregate(expectedUserId, () => {
+      const preview = mockSharePresentation(kind);
+      const context = { schemaVersion: 2, actorId: expectedUserId,
+        instanceId: kind === 'progress' ? readMockChallengeActivation().currentInstance.id : null };
+      verifiedShareContext({ context }, kind, expectedUserId, expectedInstanceId);
+      const destination = new URL('./index.html', window.location.href);
+      destination.searchParams.set('shared', kind);
+      return {
+        ...preview,
+        context,
+        snapshotId: randomId('preview_snapshot'),
+        url: destination.href,
+        expiresAt: new Date(Date.now() + 30 * 86400000).toISOString(),
+        preview: true,
+      };
+    });
   }
   await requireUser(expectedUserId);
-  return invokeSupabaseAction('share-snapshot', { action: 'create', kind });
+  const result = await invokeSupabaseAction('share-snapshot', {
+    action: 'create', kind, contractVersion: 2, expectedUserId, expectedInstanceId,
+  });
+  await requireUser(expectedUserId);
+  return verifiedShareContext(result, kind, expectedUserId, expectedInstanceId);
 }
 
 export async function createSharingRewardIntent(shareKind, { expectedUserId = '' } = {}) {
@@ -1779,72 +1914,40 @@ export async function completeSharingReward(completionToken, { expectedUserId = 
 }
 
 function getMockChallengeProgression() {
-  const gameStats = readMockUserValue('dominion:gameStats', {});
-  const sharingGranted = Boolean(readMockUserValue(MOCK_SHARING_REWARD_KEY, null));
-  const eligibleDailyStandardPoints = Number.isFinite(Number(gameStats.dailyStandardsPoints))
-    ? Math.max(0, Math.floor(Number(gameStats.dailyStandardsPoints)))
-    : Math.max(0, Math.floor(Number(gameStats.totalPoints ?? gameStats.challengePoints ?? 0)) - (sharingGranted ? 14 : 0));
-  let records = readMockUserValue(MOCK_CHALLENGE_STATES_KEY, []);
-  const thresholdVersion = Number(readMockUserValue(MOCK_CHALLENGE_THRESHOLDS_VERSION_KEY, 0));
-  if (!Number.isFinite(thresholdVersion) || thresholdVersion < MOCK_CHALLENGE_THRESHOLDS_VERSION) {
-    const migratedAt = new Date().toISOString();
-    const totalPoints = gameStats.totalPoints ?? gameStats.challengePoints ?? 0;
-    records = migrateChallengeUnlockRecords({
-      previousDefinitions: DEFAULT_CHALLENGE_DEFINITIONS,
-      records: Array.isArray(records) ? records : [],
-      totalPoints,
-      now: migratedAt,
-    });
-    const migratedProgression = buildChallengeProgression({
-      definitions: DEFAULT_CHALLENGE_DEFINITIONS,
-      records,
-      totalPoints,
-      now: migratedAt,
-    });
-    migratedProgression.eligibleDailyStandardPoints = eligibleDailyStandardPoints;
-    const ownershipRecords = backfillMockRewardEntitlements({
-      progression: migratedProgression,
-      ownershipRecords: readMockUserValue(MOCK_REWARD_ENTITLEMENTS_KEY, []),
-      now: migratedAt,
-    });
-    writeMockUserValue(MOCK_CHALLENGE_STATES_KEY, records);
-    writeMockUserValue(MOCK_REWARD_ENTITLEMENTS_KEY, ownershipRecords);
-    writeMockUserValue(MOCK_CHALLENGE_THRESHOLDS_VERSION_KEY, MOCK_CHALLENGE_THRESHOLDS_VERSION);
-  }
-  const progression = buildChallengeProgression({
-    definitions: DEFAULT_CHALLENGE_DEFINITIONS,
-    records: Array.isArray(records) ? records : [],
-    totalPoints: gameStats.totalPoints ?? gameStats.challengePoints ?? 0,
-  });
-  progression.eligibleDailyStandardPoints = eligibleDailyStandardPoints;
-  writeMockUserValue(MOCK_CHALLENGE_STATES_KEY, progression.records);
-  return progression;
+  const { catalog, challengeRecords } = getMockRewardCatalog({ snapshot: true });
+  return { totalPoints: catalog.totalPoints, records: challengeRecords,
+    challenges: catalog.items.filter(item => item.stateModel === 'challenge_lifecycle'), nextUnlock: catalog.nextUnlock };
 }
 
 function getMockRewardCatalog({ snapshot = false } = {}) {
-  const progression = getMockChallengeProgression();
-  const result = buildMockRewardCatalog({
-    progression,
-    ownershipRecords: readMockUserValue(MOCK_REWARD_ENTITLEMENTS_KEY, []),
-  });
-  writeMockUserValue(MOCK_REWARD_ENTITLEMENTS_KEY, result.ownershipRecords);
+  const aggregate = readPreviewAggregate(getMockUserId());
+  if (!aggregate) throw new Error('Reload preview progress before viewing rewards.');
+  const result = previewCatalogFor(aggregate);
+  const progression = { totalPoints: result.catalog.totalPoints, records: result.challengeRecords,
+    challenges: result.catalog.items.filter(item => item.stateModel === 'challenge_lifecycle'), nextUnlock: result.catalog.nextUnlock };
   return snapshot ? { ...result, progression } : result.catalog;
 }
 
 export async function getChallengeProgression() {
-  if (isLocalDemoMode()) return getMockChallengeProgression();
-
-  const client = requireSupabase();
-  await requireUser();
-  const { data, error } = await client.rpc('get_challenge_progression');
-  if (error) throw error;
-  return normalizeChallengeProgression(data || {});
+  if (isLocalDemoMode()) { await withPreviewAggregate(requireMockRewardActor(), () => null); return getMockChallengeProgression(); }
+  const actor = await requireUser();
+  const catalog = await getAllRewardCatalog({ expectedUserId: actor.id });
+  return { challenges: catalog.items.filter(item => item.stateModel === 'challenge_lifecycle'), totalPoints: catalog.totalPoints };
 }
 
-export async function getRewardCatalog({ limit = 50, cursor = null, expectedUserId = '', signal } = {}) {
+export async function getRewardCatalog({ limit = 50, cursor = null, expectedUserId = '', expectedRevision = null, expectedCatalogVersion = null, expectedSnapshotVersion = null, signal } = {}) {
   signal?.throwIfAborted();
   if (isLocalDemoMode()) {
+    const owner = Object.freeze({ ...await capturePreviewBadgeOwner(expectedUserId) });
     const result = await withPreviewRewardDelivery(expectedUserId, ({ catalog }) => catalog, [], signal);
+    const bytes = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(JSON.stringify(result)));
+    result.snapshotVersion = [...new Uint8Array(bytes)].map(value => value.toString(16).padStart(2, '0')).join('');
+    if ((expectedRevision !== null && result.revision !== expectedRevision)
+      || (expectedCatalogVersion !== null && result.catalogVersion !== expectedCatalogVersion)
+      || (expectedSnapshotVersion !== null && result.snapshotVersion !== expectedSnapshotVersion)) throw new Error('Reward progress changed. Refresh and try again.');
+    const currentOwner = await capturePreviewBadgeOwner(expectedUserId);
+    if (currentOwner.sessionIdentity !== owner.sessionIdentity || currentOwner.token !== owner.token
+      || currentOwner.epoch !== owner.epoch) throw new Error('The signed-in account changed. Try again.');
     signal?.throwIfAborted();
     return result;
   }
@@ -1852,17 +1955,25 @@ export async function getRewardCatalog({ limit = 50, cursor = null, expectedUser
   const client = requireSupabase();
   const actor = await requireUser(expectedUserId);
   signal?.throwIfAborted();
-  const request = client.rpc('get_reward_catalog', {
+  const request = client.rpc('get_reward_catalog_v2', {
     target_page_size: limit,
     target_after_sort_order: cursor?.sortOrder ?? null,
     target_after_reward_key: cursor?.key || null,
     target_expected_actor_id: actor.id,
+    target_expected_revision: expectedRevision,
+    target_expected_catalog_version: expectedCatalogVersion,
+    target_expected_snapshot_version: expectedSnapshotVersion,
   });
   const { data, error } = await (signal ? request.abortSignal(signal) : request);
   signal?.throwIfAborted();
   await requireUser(actor.id);
   signal?.throwIfAborted();
   if (error) throw error;
+  if (data?.schemaVersion !== 2 || data.actorId !== actor.id
+    || (expectedRevision !== null && data.revision !== expectedRevision)
+    || (expectedCatalogVersion !== null && data.catalogVersion !== expectedCatalogVersion)
+    || typeof data.snapshotVersion !== 'string' || !/^[0-9a-f]{64}$/.test(data.snapshotVersion)
+    || (expectedSnapshotVersion !== null && data.snapshotVersion !== expectedSnapshotVersion)) throw new Error('Reward progress changed. Refresh and try again.');
   return normalizeRewardCatalog(data || {});
 }
 
@@ -1878,7 +1989,11 @@ export async function getAllRewardCatalog({ pageSize = 100, expectedUserId = '' 
   let totalItems = 0;
 
   while (true) {
-    const page = await getRewardCatalog({ limit: normalizedPageSize, cursor, expectedUserId: actorId });
+    const page = await getRewardCatalog({ limit: normalizedPageSize, cursor, expectedUserId: actorId,
+      expectedRevision: firstPage?.revision ?? null, expectedCatalogVersion: firstPage?.catalogVersion ?? null,
+      expectedSnapshotVersion: firstPage?.snapshotVersion ?? null });
+    if (firstPage && (page.actorId !== firstPage.actorId || page.catalogVersion !== firstPage.catalogVersion
+      || page.revision !== firstPage.revision || page.snapshotVersion !== firstPage.snapshotVersion)) throw new Error('Reward progress changed. Refresh and try again.');
     firstPage ||= page;
     totalItems = Math.max(totalItems, page.page.totalItems);
     for (const reward of page.items) itemsByKey.set(reward.key, reward);
@@ -1905,7 +2020,7 @@ export async function getAllRewardCatalog({ pageSize = 100, expectedUserId = '' 
       hasMore: false,
       nextCursor: null,
     },
-  });
+  }, { preview: isLocalDemoMode() });
 }
 
 const MOCK_REWARD_CELEBRATION_LEASES_KEY = 'dominion:rewardCelebrationLeases';
@@ -1951,11 +2066,14 @@ export async function acknowledgeRewardCelebrations({ expectedUserId = '', claim
 
 export async function claimRewardEntitlementUnlocks({ expectedUserId = '' } = {}) {
   if (isLocalDemoMode()) {
-    return withPreviewRewardDelivery(expectedUserId, ({ progression, ownershipRecords, leases, rows, module, now }) => {
-      const result = claimMockRewardEntitlementUnlocks({ progression, ownershipRecords, now: new Date(now).toISOString() });
-      module.saveRewardDelivery(result.ownershipRecords, leases, rows);
-      module.overlayRewardDelivery(result.catalog, rows);
-      return { claimedUnlocks: result.claimedUnlocks, catalog: result.catalog };
+    return withPreviewRewardDelivery(expectedUserId, ({ catalog, ownershipRecords, leases, rows, module, now }) => {
+      const claimedKeys = new Set(ownershipRecords.filter(record => !record.celebrationSeenAt).map(record => record.key));
+      const claimedUnlocks = catalog.items.filter(reward => claimedKeys.has(reward.key));
+      const nextRecords = ownershipRecords.map(record => claimedKeys.has(record.key)
+        ? { ...record, celebrationSeenAt: new Date(now).toISOString() } : record);
+      module.saveRewardDelivery(nextRecords, leases, rows);
+      module.overlayRewardDelivery(catalog, rows);
+      return { claimedUnlocks, catalog };
     });
   }
 
@@ -1966,7 +2084,7 @@ export async function claimRewardEntitlementUnlocks({ expectedUserId = '' } = {}
   });
   await requireUser(actor.id);
   if (error) throw error;
-  const catalog = normalizeRewardCatalog(data?.catalog || {});
+  const catalog = await getAllRewardCatalog({ expectedUserId: actor.id });
   const claimedKeys = new Set(data?.claimedKeys || data?.claimed_keys || []);
   return {
     claimedUnlocks: catalog.items.filter((reward) => claimedKeys.has(reward.key)),
@@ -2119,26 +2237,14 @@ export async function downloadRewardAsset(rewardKey, { expectedUserId = '' } = {
 
 export async function claimChallengeUnlocks({ expectedUserId = '' } = {}) {
   if (isLocalDemoMode()) {
-    await requireHybridPreviewUser(expectedUserId);
-    const actorId = requireMockRewardActor(expectedUserId);
-    const progression = getMockChallengeProgression();
-    const claimedKeys = progression.unseenUnlocks.map((challenge) => challenge.key);
-    const claimedKeySet = new Set(claimedKeys);
-    const records = progression.records.map((item) => (
-      claimedKeySet.has(item.key) ? acknowledgeChallengeRecord(item) : item
-    ));
-    writeMockUserValue(MOCK_CHALLENGE_STATES_KEY, records);
-    const nextProgression = buildChallengeProgression({
-      definitions: DEFAULT_CHALLENGE_DEFINITIONS,
-      records,
-      totalPoints: progression.totalPoints,
+    return withPreviewAggregate(requireMockRewardActor(expectedUserId), aggregate => {
+      const { catalog, challengeRecords } = previewCatalogFor(aggregate);
+      const claimed = new Set(challengeRecords.filter(record => !record.celebrationSeenAt).map(record => record.key));
+      aggregate.values[MOCK_CHALLENGE_STATES_KEY] = challengeRecords.map(record => claimed.has(record.key)
+        ? { ...record, celebrationSeenAt: new Date().toISOString() } : record);
+      const challenges = catalog.items.filter(item => item.stateModel === 'challenge_lifecycle');
+      return { claimedUnlocks: challenges.filter(item => claimed.has(item.key)), progression: { challenges, totalPoints: catalog.totalPoints } };
     });
-    await requireHybridPreviewUser(actorId);
-    requireMockRewardActor(actorId);
-    return {
-      claimedUnlocks: progression.challenges.filter((challenge) => claimedKeySet.has(challenge.key)),
-      progression: nextProgression,
-    };
   }
 
   const client = requireSupabase();
@@ -2148,51 +2254,106 @@ export async function claimChallengeUnlocks({ expectedUserId = '' } = {}) {
   });
   await requireUser(actor.id);
   if (error) throw error;
-  const progression = normalizeChallengeProgression(data?.progression || {});
   const claimedKeySet = new Set(data?.claimedKeys || data?.claimed_keys || []);
+  const catalog = await getAllRewardCatalog({ expectedUserId: actor.id });
+  const progression = { challenges: catalog.items.filter(item => item.stateModel === 'challenge_lifecycle'), totalPoints: catalog.totalPoints };
   return {
     claimedUnlocks: progression.challenges.filter((challenge) => claimedKeySet.has(challenge.key)),
     progression,
   };
 }
 
-export async function startChallenge(challengeKey, { expectedUserId = '' } = {}) {
+export async function startChallenge(challengeKey, { expectedUserId = '', expectedInstanceId = null,
+  expectedRevision = null, startDate = null, timeZone = browserTimeZone(), requestId = newChallengeActivationRequestId() } = {}) {
+  requireCapturedChallengeInstance(expectedInstanceId);
+  if (!Number.isSafeInteger(expectedRevision) || expectedRevision < 0) throw new Error('Reload challenge progress before starting another run.');
+  if (!isSupportedChallengeActivationDate(startDate)) throw new Error('Reload challenge progress to choose a valid start date.');
   if (isLocalDemoMode()) {
     await requireHybridPreviewUser(expectedUserId);
     requireMockRewardActor(expectedUserId);
-    throw new Error('Later challenge tracks are not available to start yet. Your unlock is saved.');
+    return withPreviewAggregate(expectedUserId, aggregate => {
+      const prior = aggregate.runtime.requests.find(row => row.requestId === requestId);
+      const catalog = previewCatalogFor(aggregate);
+      const result = startPreviewChallenge(aggregate.runtime, { actorId: expectedUserId,
+        requestId, instanceId: prior?.instanceId || crypto.randomUUID(), expectedRevision,
+        expectedCurrentInstanceId: expectedInstanceId, challengeKey, startDate: startDate || previewRunDate(aggregate.runtime, expectedUserId),
+        timeZone, serverDate: previewRunDate(aggregate.runtime, expectedUserId), hasEntitlement: getMockBillingState().appAccess,
+        challengeUnlocked: catalog.challengeUnlockedKeys.includes(challengeKey) });
+      aggregate.runtime = result.state;
+      const records = catalog.challengeRecords.map(record => !result.replayed && record.key === challengeKey && record.status !== 'completed'
+        ? { ...record, status: 'active', startedAt: new Date().toISOString(), completedAt: null } : record);
+      aggregate.values[MOCK_CHALLENGE_STATES_KEY] = records;
+      return { schemaVersion: 2, actorId: expectedUserId, instanceId: result.instanceId,
+        replayed: result.replayed, activation: previewActivationFor(aggregate) };
+    });
   }
 
   const client = requireSupabase();
-  const actor = await requireUser(expectedUserId);
-  const { data, error } = await client.rpc('start_challenge', {
+  const startEpoch = previewBadgeEpoch;
+  const startSession = await getAuthSession();
+  const startIdentity = authSessionIdentity(startSession);
+  const startActorId = startSession?.user?.id;
+  const startAccessToken = startSession?.access_token;
+  const verifyStartOwner = async () => {
+    const actor = await requireUser(expectedUserId);
+    if (!startIdentity || !startAccessToken || actor.id !== startActorId || startEpoch !== previewBadgeEpoch) {
+      throw new Error('The signed-in account changed. Try again.');
+    }
+    if (await sessionRequiresMfa(client.auth)) throw new Error('Complete account verification before continuing.');
+    const currentSession = await getAuthSession();
+    if (startEpoch !== previewBadgeEpoch || authSessionIdentity(currentSession) !== startIdentity
+      || currentSession?.access_token !== startAccessToken) throw new Error('The signed-in account changed. Try again.');
+    return actor;
+  };
+  const actor = await verifyStartOwner();
+  invalidateDailyActionBootstrap();
+  let response;
+  try { response = await invalidateReadsAroundMutation(() => client.rpc('start_challenge_instance_v2', {
     target_challenge_key: challengeKey,
+    target_start_date: startDate,
+    target_time_zone: timeZone,
+    target_request_id: requestId,
     target_expected_actor_id: actor.id,
-  });
-  await requireUser(actor.id);
+    target_expected_instance_id: expectedInstanceId,
+    target_expected_revision: expectedRevision,
+  })); } finally { invalidateDailyActionBootstrap(); }
+  await verifyStartOwner();
+  const { data, error } = response;
   if (error) throw error;
-  return normalizeChallengeProgression(data || {});
+  const activation = normalizeChallengeActivationMutation(data?.activation, { expectedUserId: actor.id });
+  if (data?.schemaVersion !== 2 || data.actorId !== actor.id || data.instanceId !== activation.currentInstance?.id
+    || data.instanceId === expectedInstanceId || activation.currentInstance?.challengeKey !== challengeKey
+    || activation.revision !== expectedRevision + 1
+    || typeof data.replayed !== 'boolean') throw new Error('The challenge start response could not be verified. Reload your progress.');
+  return { ...data, activation };
 }
 
 export async function getDashboard() {
+  if (isLocalDemoMode()) {
+    const actorId = (await getLocalOrSessionUser())?.userId;
+    return withPreviewAggregate(actorId, aggregate => {
+      const activation = previewActivationFor(aggregate);
+      const date = activation.serverDate;
+      const draft = activation.currentInstance ? normalizeDailyStandardDraft({
+        ...getPreviewChallengeDraft(aggregate.runtime, { actorId, instanceId: activation.currentInstance.id, localDate: date }),
+        activation,
+      }) : null;
+      return { profile: { ...getMockUser(), userId: actorId, timeZone: activation.timeZone }, activation,
+        entries: draft ? [draft] : [], checkIns: aggregate.runtime.checkIns.filter(row => row.instanceId === activation.currentInstance?.id)
+          .map(row => ({ date: row.localDate, challengeDay: row.calendarDay, instanceId: row.instanceId })),
+        globalSubmittedDates: aggregate.runtime.scoredDates,
+        gameStats: mapGameStats({ ...aggregate.values['dominion:gameStats'], totalPoints: aggregate.runtime.lifetimePoints,
+          dailyStandardsPoints: aggregate.runtime.trustedDailyStandardPoints }),
+        badges: (aggregate.values[PREVIEW_BADGE_STATE_KEY]?.awards || []).map(mapBadge),
+        feed: readMockUserValue('dominion:feed', [], actorId) };
+    });
+  }
   const client = requireSupabase();
   const user = await requireUser();
   const todayBounds = localDayBounds();
-  const [profile, activation, entriesResult, checkInsResult, feedResult, completedTodayResult, statsResult, badgesResult] = await Promise.all([
+  const [profile, bootstrap, feedResult, completedTodayResult, statsResult, badgesResult] = await Promise.all([
     getProfile({ expectedUserId: user.id }),
-    getChallengeActivation({ expectedUserId: user.id }),
-    client
-      .from('challenge_entries')
-      .select('entry_date, completed, workout_difficulty, version, updated_at')
-      .eq('user_id', user.id)
-      .order('entry_date', { ascending: false })
-      .limit(90),
-    client
-      .from('check_ins')
-      .select('entry_date, challenge_day')
-      .eq('user_id', user.id)
-      .order('entry_date', { ascending: false })
-      .limit(90),
+    getDailyActionBootstrap({ expectedUserId: user.id, timeZone: browserTimeZone() }),
     client
       .from('community_feed_items')
       .select('id, display_name, challenge_day, status, completed_count, points_awarded, created_at')
@@ -2219,21 +2380,44 @@ export async function getDashboard() {
       .limit(12),
   ]);
 
-  if (entriesResult.error) throw entriesResult.error;
-  if (checkInsResult.error) throw checkInsResult.error;
   if (feedResult.error) throw feedResult.error;
   if (completedTodayResult.error) throw completedTodayResult.error;
   if (statsResult.error) throw statsResult.error;
   if (badgesResult.error) throw badgesResult.error;
+  if (bootstrap.schemaVersion !== 2 || !bootstrap.appAccess || !bootstrap.activation?.contractValid) {
+    throw new Error('Your current challenge could not be confirmed. Reload to continue.');
+  }
+  const activation = bootstrap.activation;
+  const instance = activation.currentInstance;
+  let checkIns = [];
+  if (instance) {
+    const { data, error } = await client.rpc('get_challenge_check_ins_v2', {
+      target_expected_actor_id: user.id,
+      target_expected_instance_id: instance.id,
+    });
+    if (error) throw error;
+    if (data?.schemaVersion !== 2 || data.actorId !== user.id || data.instanceId !== instance.id
+      || !Array.isArray(data.checkIns) || data.checkIns.length > instance.targetCount
+      || data.checkIns.some(row => row?.instanceId !== instance.id
+        || !isSupportedChallengeActivationDate(row.entry_date)
+        || row.entry_date < instance.startDate || row.entry_date > activation.serverDate
+        || !Number.isSafeInteger(row.challenge_day) || row.challenge_day < 1
+        || row.challenge_day !== calendarDayDifference(row.entry_date, instance.startDate) + 1)
+      || new Set(data.checkIns.map(row => row.entry_date)).size !== data.checkIns.length
+      || new Set(data.checkIns.map(row => row.challenge_day)).size !== data.checkIns.length
+      || (instance.provenance !== 'legacy_completed' && data.checkIns.length !== instance.submittedCount)) {
+      throw new Error('Your challenge progress changed while loading. Reload to continue.');
+    }
+    checkIns = data.checkIns.map(row => ({ date: row.entry_date, challengeDay: row.challenge_day, instanceId: instance.id }));
+  }
+  await requireUser(user.id);
 
   return {
     profile,
     activation,
-    entries: entriesResult.data.map(mapEntry),
-    checkIns: (checkInsResult.data || []).map((checkIn) => ({
-      date: checkIn.entry_date,
-      challengeDay: checkIn.challenge_day,
-    })),
+    entries: bootstrap.draft ? [bootstrap.draft] : [],
+    checkIns,
+    globalSubmittedDates: bootstrap.draft?.submitted ? [bootstrap.entryDate] : [],
     feed: (feedResult.data || []).map(mapFeedItem),
     completedTodayCount: Math.max(0, Number(completedTodayResult.count) || 0),
     gameStats: mapGameStats(statsResult.data),
@@ -2344,6 +2528,12 @@ function runMockActivationRequest({ requestId, action, parameters, mutate }) {
 }
 
 function readMockChallengeActivation() {
+  const aggregate = readPreviewAggregate(getMockUserId());
+  if (!aggregate) throw new Error('Reload preview progress before continuing.');
+  return previewActivationFor(aggregate);
+}
+
+function readLegacyMockChallengeActivation() {
   const storedStates = readJson(MOCK_CHALLENGE_ACTIVATION_KEY, {});
   const states = storedStates && typeof storedStates === 'object' && !Array.isArray(storedStates)
     ? storedStates
@@ -2411,24 +2601,33 @@ const requireCapturedActivationActor = (expectedUserId) => {
   return actorId;
 };
 
+function requireCapturedChallengeInstance(instanceId) {
+  if (typeof instanceId !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(instanceId)) {
+    throw new Error('Reload this challenge before making changes.');
+  }
+  return instanceId;
+}
+
 export async function getChallengeActivation({ expectedUserId } = {}) {
   const capturedActorId = requireCapturedActivationActor(expectedUserId);
-  return inflightActorReads.run({ actorId: capturedActorId, query: 'get_challenge_activation', version: 1 }, async () => {
-    if (isLocalDemoMode()) {
-      await requireHybridPreviewUser(capturedActorId);
-      if (getMockUserId() !== capturedActorId) {
-        throw new Error('The signed-in account changed. Try again.');
-      }
-      return readMockChallengeActivation();
+  if (isLocalDemoMode()) {
+    await requireHybridPreviewUser(capturedActorId);
+    if (getMockUserId() !== capturedActorId) {
+      throw new Error('The signed-in account changed. Try again.');
     }
-
+    // Initial local import can write state; the owner-fenced lock is the read
+    // boundary here, so its own invalidation must not cancel this response.
+    return withPreviewAggregate(capturedActorId, aggregate => previewActivationFor(aggregate));
+  }
+  return inflightActorReads.run({ actorId: capturedActorId, query: 'get_challenge_activation_v2', version: 2 }, async () => {
     const client = requireSupabase();
     const user = await requireUser(capturedActorId);
-    const { data, error } = await client.rpc('get_challenge_activation', {
+    const { data, error } = await client.rpc('get_challenge_activation_v2', {
       target_expected_actor_id: user.id,
     });
     await requireUser(capturedActorId);
     if (error) return challengeActivationReadError(error);
+    if (data?.schemaVersion !== 2) return challengeActivationReadError('Challenge data needs a refresh.');
     return normalizeChallengeActivation(data, { expectedUserId: capturedActorId });
   });
 }
@@ -2446,18 +2645,13 @@ export async function activateSoloChallenge({
     if (userId !== capturedActorId) {
       throw new Error('The signed-in account changed. Try again.');
     }
-    return runMockActivationRequest({
-      requestId,
-      action: 'solo_activate',
-      parameters: { startDate, timeZone: String(timeZone || '').trim() },
-      mutate: () => writeMockChallengeActivation(buildMockChallengeActivation({
-        current: readMockChallengeActivation(),
-        action: 'solo_activate',
-        startDate,
-        timeZone,
-        actorId: userId,
-        hasEntitlement: getMockBillingState().appAccess,
-      })),
+    return withPreviewAggregate(userId, aggregate => {
+      const prior = aggregate.runtime.requests.find(row => row.requestId === requestId);
+      const result = activatePreviewInitial(aggregate.runtime, { actorId: userId, requestId,
+        instanceId: prior?.instanceId || crypto.randomUUID(), expectedRevision: prior ? prior.revision - 1 : aggregate.runtime.revision,
+        startDate, timeZone, serverDate: dateKeyForTimeZone(new Date(), timeZone), hasEntitlement: getMockBillingState().appAccess });
+      aggregate.runtime = result.state;
+      return previewActivationFor(aggregate);
     });
   }
 
@@ -2470,7 +2664,9 @@ export async function activateSoloChallenge({
     target_expected_actor_id: user.id,
   }));
   if (error) throw error;
-  return normalizeChallengeActivationMutation(data, { expectedUserId: capturedActorId });
+  await requireUser(capturedActorId);
+  const activation = await getChallengeActivation({ expectedUserId: capturedActorId });
+  return normalizeChallengeActivationMutation(activation, { expectedUserId: capturedActorId });
 }
 
 export async function activateGroupChallenge({
@@ -2486,11 +2682,7 @@ export async function activateGroupChallenge({
     if (userId !== capturedActorId) {
       throw new Error('The signed-in account changed. Try again.');
     }
-    return runMockActivationRequest({
-      requestId,
-      action: 'group_activate',
-      parameters: { crewId, timeZone: String(timeZone || '').trim() },
-      mutate: () => {
+    return withPreviewAggregate(userId, aggregate => {
         const { crews, members } = ensureMockCrews();
         const crew = crews.find((item) => item.id === crewId);
         if (!crew) throw new Error('Current crew membership is required for Group activation.');
@@ -2500,17 +2692,17 @@ export async function activateGroupChallenge({
         if (!membershipActive) {
           throw new Error('Current crew membership is required for Group activation.');
         }
-        return writeMockChallengeActivation(buildMockChallengeActivation({
-          current: readMockChallengeActivation(),
-          action: 'group_activate',
-          startDate: crew.challengeStartDate,
-          timeZone,
-          actorId: userId,
-          crewId,
+        const prior = aggregate.runtime.requests.find(row => row.requestId === requestId);
+        const result = activatePreviewInitial(aggregate.runtime, {
+          actorId: userId, requestId, instanceId: prior?.instanceId || crypto.randomUUID(),
+          expectedRevision: prior ? prior.revision - 1 : aggregate.runtime.revision,
+          startDate: crew.challengeStartDate, timeZone, mode: 'group', crewId,
+          serverDate: dateKeyForTimeZone(new Date(), timeZone),
           groupMembershipActive: membershipActive,
           hasEntitlement: getMockBillingState().appAccess,
-        }));
-      },
+        });
+        aggregate.runtime = result.state;
+        return previewActivationFor(aggregate);
     });
   }
 
@@ -2523,7 +2715,9 @@ export async function activateGroupChallenge({
     target_expected_actor_id: user.id,
   }));
   if (error) throw error;
-  return normalizeChallengeActivationMutation(data, { expectedUserId: capturedActorId });
+  await requireUser(capturedActorId);
+  const activation = await getChallengeActivation({ expectedUserId: capturedActorId });
+  return normalizeChallengeActivationMutation(activation, { expectedUserId: capturedActorId });
 }
 
 export async function updateChallengeStartDate({
@@ -2532,44 +2726,38 @@ export async function updateChallengeStartDate({
   requestId = newChallengeActivationRequestId(),
   expectedRevision = null,
   expectedUserId,
+  expectedInstanceId,
 } = {}) {
   const capturedActorId = requireCapturedActivationActor(expectedUserId);
+  requireCapturedChallengeInstance(expectedInstanceId);
   if (isLocalDemoMode()) {
     await requireHybridPreviewUser(capturedActorId);
     const userId = getMockUserId();
     if (userId !== capturedActorId) {
       throw new Error('The signed-in account changed. Try again.');
     }
-    return runMockActivationRequest({
-      requestId,
-      action: 'date_update',
-      parameters: {
-        startDate,
-        timeZone: String(timeZone || '').trim(),
-        expectedRevision,
-      },
-      mutate: () => writeMockChallengeActivation(buildMockChallengeActivation({
-        current: readMockChallengeActivation(),
-        action: 'date_update',
-        startDate,
-        timeZone,
-        actorId: userId,
-        expectedRevision,
-        hasEntitlement: getMockBillingState().appAccess,
-      })),
+    return withPreviewAggregate(userId, aggregate => {
+      const result = updatePreviewChallengeStartDate(aggregate.runtime, { actorId: userId, instanceId: expectedInstanceId,
+        requestId, startDate, timeZone, expectedRevision, serverDate: previewRunDate(aggregate.runtime, userId),
+        hasEntitlement: getMockBillingState().appAccess });
+      aggregate.runtime = result.state;
+      return previewActivationFor(aggregate);
     });
   }
 
   const client = requireSupabase();
   const user = await requireUser(capturedActorId);
-  const { data, error } = await invalidateReadsAroundMutation(() => client.rpc('set_challenge_start_date', {
+  const { data, error } = await invalidateReadsAroundMutation(() => client.rpc('set_challenge_start_date_v2', {
     target_start_date: startDate,
     target_time_zone: timeZone,
     target_request_id: requestId,
     target_expected_revision: expectedRevision,
     target_expected_actor_id: user.id,
+    target_expected_instance_id: expectedInstanceId,
   }));
   if (error) throw error;
+  await requireUser(capturedActorId);
+  if (data?.schemaVersion !== 2 || data.currentInstance?.id !== expectedInstanceId) throw new Error('The challenge changed. Reload to continue.');
   return normalizeChallengeActivationMutation(data, { expectedUserId: capturedActorId });
 }
 
@@ -2620,20 +2808,37 @@ export async function transitionSiteTraining(args = {}) {
 
 let dailyActionBootstrapClient = null;
 export function invalidateDailyActionBootstrap() { dailyActionBootstrapClient?.invalidate(); }
-export async function getDailyActionBootstrap({ expectedUserId, timeZone = browserTimeZone(), entryDate = null } = {}) {
+export async function getDailyActionBootstrap({ expectedUserId, timeZone = browserTimeZone(), entryDate = null, expectedInstanceId = null } = {}) {
+  if (isLocalDemoMode()) {
+    const actorId = expectedUserId || (await getLocalOrSessionUser())?.userId;
+    return withPreviewAggregate(actorId, aggregate => {
+      const appAccess = getMockBillingState().appAccess;
+      if (!appAccess) return { schemaVersion: 2, actorId, appAccess: false, activation: null,
+        draft: null, entryDate: null, timeZone: null, instanceId: null };
+      const activation = previewActivationFor(aggregate);
+      if (expectedInstanceId !== null && expectedInstanceId !== activation.currentInstance?.id) throw new Error('The challenge changed. Reload this action.');
+      const date = previewRunDate(aggregate.runtime, actorId);
+      if (entryDate !== null && entryDate !== date) throw new Error('Only today’s Daily Actions can be opened.');
+      const draft = activation.currentInstance ? normalizeDailyStandardDraft({
+        ...getPreviewChallengeDraft(aggregate.runtime, { actorId, instanceId: activation.currentInstance.id, localDate: date }), activation,
+      }) : null;
+      return { schemaVersion: 2, actorId, appAccess, activation, draft, entryDate: date,
+        timeZone: activation.timeZone || timeZone, instanceId: activation.currentInstance?.id || null };
+    });
+  }
   if (!dailyActionBootstrapClient) {
     const client = requireSupabase();
     dailyActionBootstrapClient = createDailyActionBootstrapClient({
       getSession: getAuthSession, getUser: requireUser, sessionIdentity: authSessionIdentity,
       requiresMfa: () => sessionRequiresMfa(client.auth), subscribe: subscribeToAuthStateChanges,
       request: async (args, signal) => {
-        const { data, error } = await client.rpc('get_daily_action_bootstrap', args).abortSignal(signal);
+        const { data, error } = await client.rpc('get_daily_action_bootstrap_v2', args).abortSignal(signal);
         if (error) throw error;
         return data;
       },
     });
   }
-  return dailyActionBootstrapClient.read({ expectedUserId, timeZone, entryDate });
+  return dailyActionBootstrapClient.read({ expectedUserId, timeZone, entryDate, expectedInstanceId });
 }
 if (typeof window !== 'undefined') {
   window.addEventListener('pagehide', invalidateDailyActionBootstrap);
@@ -2642,30 +2847,77 @@ if (typeof window !== 'undefined') {
   });
 }
 
-const rpcDraft = async (name, parameters, { expectedUserId = '', mutation = false } = {}) => {
+const rpcDraft = async (name, parameters, { expectedUserId = '', expectedInstanceId, mutation = false } = {}) => {
   try {
+    requireCapturedChallengeInstance(expectedInstanceId);
+    if (isLocalDemoMode()) return await withPreviewAggregate(expectedUserId, aggregate => {
+      const activation = previewActivationFor(aggregate);
+      if (!getMockBillingState().appAccess || (mutation && !activation.canMutateDailyStandards)) throw new Error('Today’s Daily Actions are locked.');
+      const args = { actorId: expectedUserId, instanceId: expectedInstanceId, localDate: parameters.target_entry_date,
+        serverDate: previewRunDate(aggregate.runtime, expectedUserId), expectedVersion: parameters.target_expected_version,
+        now: new Date().toISOString() };
+      let draft;
+      if (name === 'get_daily_standard_draft_v2') draft = getPreviewChallengeDraft(aggregate.runtime, args);
+      else {
+        const result = name === 'mutate_daily_standard_draft_v2'
+          ? mutatePreviewChallengeDraft(aggregate.runtime, { ...args, actionId: parameters.target_action_id, completed: parameters.target_completed })
+          : setPreviewChallengeWorkoutDifficulty(aggregate.runtime, { ...args, workoutId: parameters.target_workout_id, difficulty: parameters.target_difficulty });
+        aggregate.runtime = result.state;
+        draft = result.draft;
+      }
+      return normalizeDailyStandardDraft({ ...draft, activation: previewActivationFor(aggregate) });
+    });
     const client = requireSupabase();
-    const user = await requireUser(expectedUserId);
-    await bootstrapDailyStandardTimeZone(client, user.id);
-    const rpcParameters = mutation
-      ? { ...parameters, target_expected_actor_id: user.id }
-      : parameters;
+    const draftEpoch = previewBadgeEpoch;
+    const draftSession = await getAuthSession();
+    const draftIdentity = authSessionIdentity(draftSession);
+    const draftActorId = draftSession?.user?.id;
+    const draftAccessToken = draftSession?.access_token;
+    const verifyDraftOwner = async () => {
+      const actor = await requireUser(expectedUserId);
+      if (!draftIdentity || !draftAccessToken || actor.id !== draftActorId || draftEpoch !== previewBadgeEpoch) {
+        throw new Error('The signed-in account changed. Try again.');
+      }
+      if (await sessionRequiresMfa(client.auth)) throw new Error('Complete account verification before continuing.');
+      const currentSession = await getAuthSession();
+      if (draftEpoch !== previewBadgeEpoch || authSessionIdentity(currentSession) !== draftIdentity
+        || currentSession?.access_token !== draftAccessToken) throw new Error('The signed-in account changed. Try again.');
+      return actor;
+    };
+    const user = await verifyDraftOwner();
+    try { await bootstrapDailyStandardTimeZone(client, user.id); }
+    catch (error) { await verifyDraftOwner(); throw error; }
+    await verifyDraftOwner();
+    const rpcParameters = { ...parameters, target_expected_actor_id: user.id, target_expected_instance_id: expectedInstanceId };
     if (mutation) invalidateDailyActionBootstrap();
-    const { data, error } = await client.rpc(name, rpcParameters);
+    let response;
+    try { response = await client.rpc(name, rpcParameters); }
+    catch (error) { await verifyDraftOwner(); throw error; }
+    await verifyDraftOwner();
+    const { data, error } = response;
     if (error) throw error;
+    const activation = normalizeChallengeActivation(data?.activation, { expectedUserId: user.id });
+    if (data?.schemaVersion !== 2 || data.actorId !== user.id || data.instanceId !== expectedInstanceId
+      || !activation.contractValid || activation.currentInstance?.id !== expectedInstanceId
+      || data.entry_date !== parameters.target_entry_date || !Array.isArray(data.completed)
+      || !Number.isSafeInteger(data.version) || data.version < 0
+      || typeof data.locked !== 'boolean' || typeof data.submitted !== 'boolean'
+      || data.activation_status !== activation.status
+      || (!data.locked && (data.submitted || !activation.canMutateDailyStandards))) throw new Error('The challenge changed. Reload this action.');
     return normalizeDailyStandardDraft(data, parameters.target_entry_date);
   } catch (error) {
+    invalidateDailyActionBootstrap();
     throw naturalizeDailyActionError(error);
   } finally {
     if (mutation) invalidateDailyActionBootstrap();
   }
 };
 
-export async function getDailyStandardDraft(entryDate, { expectedUserId = '' } = {}) {
+export async function getDailyStandardDraft(entryDate, { expectedUserId = '', expectedInstanceId } = {}) {
   return rpcDraft(
-    'get_daily_standard_draft',
+    'get_daily_standard_draft_v2',
     { target_entry_date: entryDate },
-    { expectedUserId },
+    { expectedUserId, expectedInstanceId },
   );
 }
 
@@ -2675,19 +2927,20 @@ export async function mutateDailyStandardDraft({
   completed,
   expectedVersion = null,
   expectedUserId = '',
+  expectedInstanceId,
 }) {
   if (typeof completed !== 'boolean') {
     throw new TypeError('Daily Action completion must be true or false.');
   }
   return rpcDraft(
-    'mutate_daily_standard_draft',
+    'mutate_daily_standard_draft_v2',
     {
       target_entry_date: date,
       target_action_id: actionId,
       target_completed: completed,
       target_expected_version: expectedVersion,
     },
-    { expectedUserId, mutation: true },
+    { expectedUserId, expectedInstanceId, mutation: true },
   );
 }
 
@@ -2697,24 +2950,25 @@ export async function setDailyStandardWorkoutDifficulty({
   difficulty,
   expectedVersion = null,
   expectedUserId = '',
+  expectedInstanceId,
 }) {
   return rpcDraft(
-    'set_daily_standard_workout_difficulty',
+    'set_daily_standard_workout_difficulty_v2',
     {
       target_entry_date: date,
       target_workout_id: workoutId,
       target_difficulty: difficulty,
       target_expected_version: expectedVersion,
     },
-    { expectedUserId, mutation: true },
+    { expectedUserId, expectedInstanceId, mutation: true },
   );
 }
 
 // Compatibility bridge for older completion-only callers. Legacy snapshots may
 // add actions, but cannot remove an action they may simply be too stale to see.
-export async function saveChallengeEntry(entry, { expectedUserId = '' } = {}) {
+export async function saveChallengeEntry(entry, { expectedUserId = '', expectedInstanceId } = {}) {
   const desired = new Set(normalizeDailyStandardDraft(entry).completed);
-  let current = await getDailyStandardDraft(entry.date, { expectedUserId });
+  let current = await getDailyStandardDraft(entry.date, { expectedUserId, expectedInstanceId });
   for (const actionId of desired) {
     if (current.completed.includes(actionId)) continue;
     current = await mutateDailyStandardDraft({
@@ -2723,29 +2977,69 @@ export async function saveChallengeEntry(entry, { expectedUserId = '' } = {}) {
       completed: true,
       expectedVersion: current.version,
       expectedUserId,
+      expectedInstanceId,
     });
   }
   return current;
 }
 
-export async function postCheckIn(checkIn, { expectedUserId = '' } = {}) {
+export async function postCheckIn(checkIn, { expectedUserId = '', expectedInstanceId } = {}) {
+  requireCapturedChallengeInstance(expectedInstanceId);
+  if (isLocalDemoMode()) {
+    try { return await withPreviewAggregate(expectedUserId, (aggregate, badgeRuntime) => {
+      const activation = previewActivationFor(aggregate);
+      if (!activation.canMutateDailyStandards) throw new Error('This challenge cannot accept another check-in.');
+      const previous = aggregate.runtime;
+      const run = activation.currentInstance;
+      const now = new Date().toISOString();
+      const result = submitPreviewChallengeCheckIn(previous, { actorId: expectedUserId,
+        instanceId: expectedInstanceId, localDate: checkIn.date, serverDate: previewRunDate(previous, expectedUserId),
+        checkInId: crypto.randomUUID(), recordedAt: now,
+        ...(run.submittedCount + 1 === run.targetCount ? { completionEventId: crypto.randomUUID(), persistedAt: now } : {}) });
+      aggregate.runtime = result.state;
+      const eventFor = row => ({ source: 'check_in', sourceId: row.id, localDate: row.localDate,
+        occurredAt: row.recordedAt, challengeDay: row.calendarDay, completed: row.completed,
+        workoutDifficultySelections: row.workoutDifficulty, instanceId: row.instanceId, scopeKey: run.scopeKey });
+      const state = badgeRuntime.normalizePreviewBadgeState(aggregate.values[PREVIEW_BADGE_STATE_KEY], []);
+      badgeRuntime.recordPreviewInstanceBadgeEvent(state, eventFor(result.checkIn), {
+        userId: expectedUserId, run: result.result.activation.currentInstance, completionEvidence: result.completionEvidence,
+        priorInstanceCheckIns: previous.checkIns.filter(row => row.instanceId === expectedInstanceId).map(eventFor) });
+      aggregate.values[PREVIEW_BADGE_STATE_KEY] = state;
+      aggregate.values['dominion:badges'] = state.awards;
+      const beforeStats = aggregate.values['dominion:gameStats'] || {};
+      const stats = advancePreviewStreaks(beforeStats, result.checkIn.status, checkIn.date);
+      const simulated = normalizePreviewChallengeState(readMockUserValue('dominion:previewChallengeSimulation', {}, expectedUserId), checkIn.date).enabled;
+      if (!simulated) { stats.currentAppStreak = beforeStats.currentAppStreak || 0; stats.bestAppStreak = beforeStats.bestAppStreak || 0; }
+      aggregate.values['dominion:gameStats'] = { ...stats, totalPoints: result.state.lifetimePoints,
+        challengePoints: result.state.lifetimePoints, dailyStandardsPoints: result.state.trustedDailyStandardPoints };
+      if (result.completionEvidence) aggregate.values[MOCK_CHALLENGE_STATES_KEY] = (aggregate.values[MOCK_CHALLENGE_STATES_KEY] || [])
+        .map(record => record.key === run.challengeKey && record.status !== 'completed'
+          ? { ...record, status: 'completed', completedAt: now } : record);
+      return { ...mapFeedItem({ ...result.result, display_name: getMockUser().name || 'You' }), activation: previewActivationFor(aggregate) };
+    }); } catch (error) {
+      if (error?.code === 'PREVIEW_CHECK_IN_ALREADY_COMPLETE') throw createCheckInAlreadyCompleteError(error);
+      throw error;
+    }
+  }
   const client = requireSupabase();
   const submissionEpoch = previewBadgeEpoch;
   const submissionSession = await getAuthSession();
   const submissionIdentity = authSessionIdentity(submissionSession);
+  const submissionAccessToken = submissionSession?.access_token;
   const user = await requireUser(expectedUserId);
-  if (!submissionIdentity || submissionSession?.user?.id !== user.id || submissionEpoch !== previewBadgeEpoch) {
+  if (!submissionIdentity || !submissionAccessToken || submissionSession?.user?.id !== user.id || submissionEpoch !== previewBadgeEpoch) {
     throw new Error('The signed-in account changed. Try again.');
   }
   invalidateDailyActionBootstrap();
   let response;
-  try { response = await invalidateReadsAroundMutation(() => client.rpc('submit_daily_check_in', {
+  try { response = await invalidateReadsAroundMutation(() => client.rpc('submit_daily_check_in_v2', {
       target_status: checkIn.status,
       target_completed: checkIn.completed || [],
       target_workout_difficulty: checkIn.workoutDifficulty || {},
       target_time_zone: checkIn.timeZone || 'UTC',
       target_expected_date: checkIn.date,
       target_expected_actor_id: user.id,
+      target_expected_instance_id: expectedInstanceId,
     })); } finally { invalidateDailyActionBootstrap(); }
   const { data, error } = response;
 
@@ -2758,22 +3052,35 @@ export async function postCheckIn(checkIn, { expectedUserId = '' } = {}) {
     if (await sessionRequiresMfa(client.auth)) throw new Error('Complete account verification before continuing.');
     const currentSession = await getAuthSession();
     if (submissionEpoch !== previewBadgeEpoch || authSessionIdentity(currentSession) !== submissionIdentity
-      || currentSession?.access_token !== submissionSession.access_token) throw new Error('The signed-in account changed. Try again.');
+      || currentSession?.access_token !== submissionAccessToken) throw new Error('The signed-in account changed. Try again.');
   } catch (error) {
+    error.checkInCommitted = true;
+    throw error;
+  }
+  const activation = normalizeChallengeActivation(data?.activation, { expectedUserId: user.id });
+  if (data?.schemaVersion !== 2 || data.actorId !== user.id || data.instanceId !== expectedInstanceId
+    || !activation.contractValid || activation.currentInstance?.id !== expectedInstanceId
+    || typeof data.id !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(data.id)
+    || data.entry_date !== checkIn.date || data.challenge_day !== activation.currentInstance.calendarDay
+    || !['partial', 'complete'].includes(data.status)
+    || !Number.isSafeInteger(data.completed_count) || data.completed_count < 1 || data.completed_count > 7
+    || !Number.isSafeInteger(data.points_awarded) || data.points_awarded < 0
+    || typeof data.created_at !== 'string' || !/^\d{4}-\d{2}-\d{2}T/.test(data.created_at) || !Number.isFinite(Date.parse(data.created_at))) {
+    const error = new Error('Your Check-In was saved, but the updated run could not be verified. Reload to continue.');
     error.checkInCommitted = true;
     throw error;
   }
   const profile = readJson('dominion:user', { name: 'You' });
   return { ...mapFeedItem({
-    id: data?.id || globalThis.crypto?.randomUUID?.() || `${checkIn.date}-${Date.now()}`,
-    entry_date: data?.entry_date || checkIn.date,
+    id: data.id,
+    entry_date: data.entry_date,
     display_name: profile?.name || 'You',
-    challenge_day: data?.challenge_day || checkIn.day,
-    status: data?.status || checkIn.status,
-    completed_count: data?.completed_count || checkIn.completedCount,
-    points_awarded: data?.points_awarded || 0,
-    created_at: data?.created_at || new Date().toISOString(),
-  }), activation: normalizeChallengeActivation(data?.activation, { expectedUserId: user.id }) };
+    challenge_day: data.challenge_day,
+    status: data.status,
+    completed_count: data.completed_count,
+    points_awarded: data.points_awarded,
+    created_at: data.created_at,
+  }), activation };
 }
 
 export async function getCommunityFeed() {
@@ -2817,7 +3124,7 @@ function getPreviewBadgeBoundary() {
 }
 
 async function withPreviewBadgeState(expectedUserId, operation) {
-  return getPreviewBadgeBoundary().run(expectedUserId, (runtime) => {
+  return withPreviewAggregate(expectedUserId, (_aggregate, runtime) => {
     const state = runtime.normalizePreviewBadgeState(readMockUserValue(PREVIEW_BADGE_STATE_KEY, null, expectedUserId), readMockUserValue('dominion:badges', [], expectedUserId));
     const result = operation(state, runtime);
     writeMockUserValue(PREVIEW_BADGE_STATE_KEY, state, expectedUserId);
@@ -2846,6 +3153,7 @@ async function withPreviewDelivery(owner, verifyOwner, setup, signal) {
 
 async function withPreviewRewardDelivery(expectedUserId, operation, receiptIds = [], signal, prepare = () => undefined) {
   const actorId = requireMockRewardActor(expectedUserId);
+  await withPreviewAggregate(actorId, () => null);
   const owner = Object.freeze({ ...await capturePreviewBadgeOwner(actorId) });
   const verifyOwner = async () => {
     const current = await capturePreviewBadgeOwner(actorId);
@@ -2871,6 +3179,7 @@ async function withPreviewRewardDelivery(expectedUserId, operation, receiptIds =
 }
 
 async function readPreviewBadgeHistory(expectedUserId, operation) {
+  await withPreviewAggregate(expectedUserId, () => null);
   return getPreviewBadgeBoundary().run(expectedUserId, async (runtime, verifyOwner, owner) => {
     assertPreviewDeliveryOwner(owner);
     const source = readMockUserValue(PREVIEW_BADGE_STATE_KEY, null, expectedUserId);
@@ -2891,6 +3200,7 @@ function previewRewardFulfillment(actorId, rewardKey, action = 'read') {
 }
 
 async function withPreviewBadgeDelivery(expectedUserId, operation, { receiptIds = [] } = {}) {
+  await withPreviewAggregate(expectedUserId, () => null);
   return getPreviewBadgeBoundary().run(expectedUserId, (runtime, verifyOwner, owner) => withPreviewDelivery(owner, verifyOwner, module => {
     const state = runtime.normalizePreviewBadgeState(readMockUserValue(PREVIEW_BADGE_STATE_KEY, null, expectedUserId),
       readMockUserValue('dominion:badges', [], expectedUserId));
@@ -2903,18 +3213,10 @@ async function withPreviewBadgeDelivery(expectedUserId, operation, { receiptIds 
   }));
 }
 
-export async function recordPreviewCheckInBadges(entry, { expectedUserId = '', requireNew = false } = {}) {
+export async function recordPreviewCheckInBadges(entry, { expectedUserId = '', expectedInstanceId } = {}) {
   if (!isLocalDemoMode()) throw new Error('Preview badge events cannot be submitted to production.');
-  try { return await withPreviewBadgeState(expectedUserId, (state, { recordPreviewBadgeEvent }) => {
-    if (requireNew && state.checkIns.some((row) => row?.localDate === entry.date)) throw createCheckInAlreadyCompleteError();
-    const activation = readMockChallengeActivation();
-    if (!activation.contractValid || !activation.canMutateDailyStandards) throw new Error('The original challenge cannot accept another Check-In.');
-    recordPreviewBadgeEvent(state, { source: 'check_in', sourceId: `preview-check-in:${entry.date}`,
-      occurredAt: entry.createdAt || new Date().toISOString(), localDate: entry.date, challengeDay: entry.day,
-      completed: entry.completed, workoutDifficultySelections: entry.workoutDifficultySelections || {} },
-    { userId: expectedUserId, startDate: activation.startDate });
-    return state.awards.map(mapBadge);
-  }); } finally { inflightActorReads.invalidate(); }
+  await postCheckIn(entry, { expectedUserId, expectedInstanceId });
+  return (await getGameSummary()).badges;
 }
 
 export async function claimBadgeCelebrations({ expectedUserId = '', claimToken = crypto.randomUUID() } = {}) {
@@ -2978,6 +3280,13 @@ export async function recordAppVisit({ expectedUserId = '' } = {}) {
 }
 
 export async function getGameSummary() {
+  if (isLocalDemoMode()) {
+    const actorId = (await getLocalOrSessionUser())?.userId;
+    return withPreviewAggregate(actorId, aggregate => ({
+      gameStats: mapGameStats({ ...aggregate.values['dominion:gameStats'], totalPoints: aggregate.runtime.lifetimePoints }),
+      badges: (aggregate.values[PREVIEW_BADGE_STATE_KEY]?.awards || []).map(mapBadge).filter(Boolean),
+    }));
+  }
   const client = requireSupabase();
   const user = await requireUser();
   const [statsResult, badgesResult] = await Promise.all([
@@ -3598,7 +3907,7 @@ export async function createCrewAndActivateGroup({
     if (actorId !== capturedActorId) {
       throw new Error('The signed-in account changed. Try again.');
     }
-
+    return withPreviewAggregate(actorId, aggregate => {
     const signature = JSON.stringify([
       String(name || '').trim(),
       String(description || ''),
@@ -3615,7 +3924,9 @@ export async function createCrewAndActivateGroup({
       if (priorStart.actorId !== actorId || priorStart.signature !== signature) {
         throw new Error('This request ID was already used for another operation.');
       }
-      return normalizeCreatedGroupStart(priorStart.result, { expectedUserId: actorId, preview: true });
+      const activation = previewActivationFor(aggregate);
+      if (activation.crewId !== priorStart.result?.crew?.id) throw new Error('The challenge changed. Reload your progress.');
+      return normalizeCreatedGroupStart({ ...priorStart.result, activation }, { expectedUserId: actorId, preview: true });
     }
 
     const { crews, members } = ensureMockCrews();
@@ -3651,16 +3962,12 @@ export async function createCrewAndActivateGroup({
       createdNew: true,
     };
     activationParameters.crewId = crew.id;
-    const activation = normalizeChallengeActivationMutation(buildMockChallengeActivation({
-      current: readMockChallengeActivation(),
-      action: 'group_activate',
-      startDate: crew.challengeStartDate,
-      timeZone,
-      actorId,
-      crewId: crew.id,
-      groupMembershipActive: true,
-      hasEntitlement: getMockBillingState().appAccess,
-    }));
+    const transition = activatePreviewInitial(aggregate.runtime, { actorId, requestId: activationRequestId,
+      instanceId: crypto.randomUUID(), expectedRevision: aggregate.runtime.revision, startDate: crew.challengeStartDate,
+      timeZone, mode: 'group', crewId: crew.id, groupMembershipActive: true,
+      serverDate: dateKeyForTimeZone(new Date(), timeZone), hasEntitlement: getMockBillingState().appAccess });
+    aggregate.runtime = transition.state;
+    const activation = normalizeChallengeActivationMutation(transition.activation, { expectedUserId: actorId, preview: true });
 
     const result = { crew, activation };
     crews.unshift(crew);
@@ -3674,7 +3981,6 @@ export async function createCrewAndActivateGroup({
     }];
     writeJson(MOCK_CREWS_KEY, crews);
     saveMockCrewMembers(members);
-    writeMockChallengeActivation(activation);
     activationRequests[activationRequestId] = {
       actorId,
       action: 'group_activate',
@@ -3685,6 +3991,7 @@ export async function createCrewAndActivateGroup({
     starts[crewRequestId] = { actorId, signature, result };
     writeJson(MOCK_GROUP_START_REQUESTS_KEY, starts);
     return normalizeCreatedGroupStart(result, { expectedUserId: actorId, preview: true });
+    });
   }
 
   const client = requireSupabase();
@@ -3700,7 +4007,8 @@ export async function createCrewAndActivateGroup({
   }));
   if (error) throw error;
   await requireUser(capturedActorId);
-  return normalizeCreatedGroupStart(data, { expectedUserId: capturedActorId });
+  const activation = await getChallengeActivation({ expectedUserId: capturedActorId });
+  return normalizeCreatedGroupStart({ ...data, activation }, { expectedUserId: capturedActorId });
 }
 
 function defaultCrewTrainingProgress(crewId, userId, contentVersion) {

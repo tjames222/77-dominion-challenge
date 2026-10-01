@@ -299,12 +299,15 @@ select ok(
   'membership delivery stores consent context but no member content'
 );
 
--- This synthetic challenge begins 31 days ago, so both the day-2 Check-In and
--- the previous-week recap fixture belong to the same canonical instance.
+-- The live submitted event uses today on calendar day 32. A separate explicit
+-- historical source fixture below tests recap aggregation, not submission.
 set local "request.jwt.claim.sub" = '10000000-0000-4000-8000-000000000001';
 set local "request.jwt.claims" = '{"sub":"10000000-0000-4000-8000-000000000001","role":"authenticated"}';
 update public.profiles set challenge_start_date = current_date - 31
 where user_id = '10000000-0000-4000-8000-000000000001';
+update private.challenge_instances set start_date = current_date - 31,
+  scope_key = 'original77:' || (current_date - 31)::text, time_zone = 'UTC'
+where user_id = '10000000-0000-4000-8000-000000000001' and sequence_no = 0;
 
 insert into public.challenge_entries (
   user_id,
@@ -313,7 +316,7 @@ insert into public.challenge_entries (
   workout_difficulty
 ) values (
   '10000000-0000-4000-8000-000000000001',
-  current_date - 30,
+  current_date,
   array['bible'],
   '{}'::jsonb
 ) on conflict (user_id, entry_date) do update set
@@ -328,15 +331,17 @@ insert into public.check_ins (
   status,
   completed_count,
   completed,
+  challenge_instance_id,
   workout_difficulty
 ) values (
   'd1000000-0000-4000-8000-000000000001',
   '10000000-0000-4000-8000-000000000001',
-  current_date - 30,
-  2,
+  current_date,
+  32,
   'partial',
   1,
   array['bible'],
+  (select current_instance_id from private.challenge_runtime where user_id = '10000000-0000-4000-8000-000000000001'),
   '{}'::jsonb
 );
 
@@ -357,7 +362,7 @@ select is(
     where event_type = 'check_in'
       and source_reference = 'check-in:d1000000-0000-4000-8000-000000000001'
   ),
-  '{"challengeDay":2,"status":"partial","completedCount":1}'::jsonb,
+  '{"challengeDay":32,"status":"partial","completedCount":1}'::jsonb,
   'the Check-In event contains only the rendered allowlist fields'
 );
 
@@ -385,6 +390,7 @@ select throws_ok(
       status,
       completed_count,
       completed,
+      challenge_instance_id,
       workout_difficulty
     ) values (
       'd1000000-0000-4000-8000-000000000002',
@@ -394,6 +400,7 @@ select throws_ok(
       'scheduled',
       0,
       '{}',
+      (select current_instance_id from private.challenge_runtime where user_id = '10000000-0000-4000-8000-000000000001'),
       '{}'::jsonb
     )
   $$,
@@ -816,8 +823,9 @@ select ok(
 
 delete from private.outbound_deliveries;
 
--- Return from worker context to the actual Check-In actor while constructing
--- the recap's trusted source row, then restore worker context below.
+-- Construct one immutable historical source row for aggregation only. The live
+-- submission/outbound trigger path was exercised above with all guards enabled.
+-- The fixture constructor does not manufacture any delivery or point event.
 set local "request.jwt.claim.sub" = '10000000-0000-4000-8000-000000000001';
 set local "request.jwt.claims" = '{"sub":"10000000-0000-4000-8000-000000000001","role":"authenticated"}';
 
@@ -835,6 +843,7 @@ insert into public.challenge_entries (
   completed = excluded.completed,
   workout_difficulty = excluded.workout_difficulty;
 
+set local session_replication_role = replica;
 insert into public.check_ins (
   id,
   user_id,
@@ -843,6 +852,7 @@ insert into public.check_ins (
   status,
   completed_count,
   completed,
+  challenge_instance_id,
   workout_difficulty
 ) values (
   'd1000000-0000-4000-8000-000000000003',
@@ -853,9 +863,11 @@ insert into public.check_ins (
   'partial',
   2,
   array['bible', 'walk'],
+  (select current_instance_id from private.challenge_runtime where user_id = '10000000-0000-4000-8000-000000000001'),
   '{}'::jsonb
 );
 
+set local session_replication_role = origin;
 set local "request.jwt.claim.sub" = '';
 set local "request.jwt.claims" = '{"role":"service_role"}';
 

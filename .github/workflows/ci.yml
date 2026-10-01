@@ -96,8 +96,10 @@ jobs:
         run: pnpm run test:production-canary-restart
       - name: Test canonical database manifest gates
         run: pnpm run test:database-manifest
-      - name: Test bounded production inbox and original challenge catalog verification
-        run: node --test scripts/verify-production-account-request-inbox.test.mjs scripts/verify-production-original77.test.mjs
+      - name: Test bounded production inbox and challenge catalog verification
+        run: node --test scripts/verify-production-account-request-inbox.test.mjs scripts/verify-production-original77.test.mjs scripts/verify-production-repeatable-challenge.test.mjs
+      - name: Test repeatable challenge cutover and exact backup release boundary
+        run: node --test scripts/verify-repeatable-challenge-cutover-plan.test.mjs scripts/verify-production-repeatable-cutover-policy.test.mjs scripts/verify-post-original77-backup-evidence.test.mjs
       - name: Start local Supabase
         run: pnpm run supabase:start
       - name: Verify exact isolated-fixture image cache preparation
@@ -114,6 +116,9 @@ jobs:
       - name: Verify source-fixed original challenge catalog after exact migration replay
         timeout-minutes: 5
         run: node --test scripts/verify-production-original77.sql.test.mjs
+      - name: Verify deterministic repeatable challenge catalog after two exact replays
+        timeout-minutes: 5
+        run: node --test scripts/verify-production-repeatable-challenge.sql.test.mjs
       - name: Verify isolated fresh-key Vault backup reconstruction
         timeout-minutes: 5
         env:
@@ -128,12 +133,27 @@ jobs:
       - name: Verify isolated current inbox backup and full custom archive restore
         timeout-minutes: 5
         run: node --test scripts/free-backup-post-admin-inbox.sql.test.mjs
+      - name: Verify exact original challenge backup and full custom archive restore
+        timeout-minutes: 5
+        run: node --test scripts/free-backup-post-original77.sql.test.mjs
       - name: Verify original challenge submission evidence and atomic completion
         timeout-minutes: 5
         run: node --test scripts/original-77-completion-evidence.sql.test.mjs scripts/original-77-live-completion.sql.test.mjs scripts/original-77-fullchain-runtime.sql.test.mjs scripts/original77-legacy-range.sql.test.mjs
       - name: Verify versioned submitted-progress snapshot privacy
         timeout-minutes: 5
         run: node --test scripts/share-submitted-progress-v2.sql.test.mjs scripts/original77-share-fullchain.sql.test.mjs
+      - name: Verify repeatable challenge instance runtime boundaries
+        timeout-minutes: 5
+        run: node --test scripts/repeatable-challenge-runtime.sql.test.mjs
+      - name: Verify repeatable challenge cutover preservation and races
+        timeout-minutes: 5
+        run: node --test scripts/repeatable-challenge-cutover.sql.test.mjs
+      - name: Verify repeatable challenge Share V3 privacy
+        timeout-minutes: 5
+        run: node --test scripts/repeatable-share.sql.test.mjs
+      - name: Audit every latest-schema pgTAP and non-reset RPC contract
+        timeout-minutes: 5
+        run: node --test scripts/latest-schema-pgtap.sql.test.mjs
       - name: Execute production canary SQL in isolated PostgreSQL
         run: pnpm run test:production-canary-entitlement-sql
       - name: Execute early-access intake SQL in isolated PostgreSQL

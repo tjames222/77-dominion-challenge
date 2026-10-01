@@ -31,21 +31,23 @@ test('real SDK preview counts every canonical user check without live database c
   let marker = auth.requests.length;
   await startCheckIn(page, owner); expect((await finishOperation(page)).ok).toBe(true);
   const locked = auth.requests.slice(marker).map(({ method, endpoint }) => method + ' ' + endpoint);
-  expect(locked).toEqual(['GET /user', 'GET /user', 'GET /user']);
+  // Each operation checks capture, badge import, lock entry and the deferred
+  // instance-runtime import before touching private state.
+  expect(locked).toEqual(Array(12).fill('GET /user'));
   marker = auth.requests.length;
   const collection = await page.evaluate(owner => window.__previewBadgeTest.api.getBadgeCollection({ expectedUserId: owner }), owner);
   expect(collection.items.length).toBeGreaterThan(20);
   const read = auth.requests.slice(marker).map(({ method, endpoint }) => method + ' ' + endpoint);
-  // History is one snapshot with capture, post-import and post-snapshot
-  // verification. It does not open the delivery database or reread history.
-  expect(read).toEqual(['GET /user', 'GET /user', 'GET /user']);
+  // Four aggregate checks precede the separate historical snapshot's
+  // capture, post-import and post-snapshot canonical verification.
+  expect(read).toEqual(Array(7).fill('GET /user'));
   marker = auth.requests.length;
   await page.evaluate(owner => window.__previewBadgeTest.api.claimBadgeCelebrations({ expectedUserId: owner, claimToken: 'claim' }), owner);
   const coldDelivery = auth.requests.slice(marker).map(({ method, endpoint }) => method + ' ' + endpoint);
   // Preserve capture, badge import and lock fences, then verify after the
   // delivery import, database open and transaction commit. A warm module or
   // connection is not permission to skip canonical identity verification.
-  const deliveryChecks = ['GET /user', 'GET /user', 'GET /user', 'GET /user', 'GET /user', 'GET /user'];
+  const deliveryChecks = Array(10).fill('GET /user');
   expect(coldDelivery).toEqual(deliveryChecks);
   marker = auth.requests.length;
   await page.evaluate(owner => window.__previewBadgeTest.api.claimBadgeCelebrations({ expectedUserId: owner, claimToken: 'claim' }), owner);
@@ -101,11 +103,12 @@ test('collection rejects a registered replacement session while verifying its ea
     schemaVersion: 1, checkIns: [], visits: [],
     awards: [{ key: 'faithful_start', name: 'Old-session award', scopeKey: 'lifetime', awardId: 'old-award', legacy: true }],
   }), owner);
+  await page.evaluate(owner => window.__previewBadgeTest.api.getDailyActionBootstrap({ expectedUserId: owner, timeZone: 'UTC' }), owner);
   const entered = deferred(); const release = deferred(); let reads = 0;
   await page.route(/\/__fou_1452_supabase__\/auth\/v1\/user$/, async route => {
     reads += 1;
     // Hold the final canonical verification of the single historical snapshot.
-    if (reads === 3) { entered.resolve(); await release.promise; }
+    if (reads === 6) { entered.resolve(); await release.promise; }
     await route.fallback();
   });
   await page.evaluate(owner => {
@@ -126,10 +129,15 @@ test('collection rejects a registered replacement session while verifying its ea
     // observer notification. Canonical post-await session checks must catch it.
     localStorage.setItem('sb-127-auth-token', JSON.stringify(data.session));
     writePreviewUserValue(localStorage, owner, 'dominion:badgeState:v1', { schemaVersion: 1, awards: [], checkIns: [], visits: [] });
+    const key = 'dominion:challengeAggregateV2:' + owner;
+    const aggregate = JSON.parse(localStorage.getItem(key));
+    aggregate.values['dominion:badgeState:v1'] = { schemaVersion: 1, awards: [], checkIns: [], visits: [], completionEvents: [] };
+    aggregate.values['dominion:badges'] = [];
+    localStorage.setItem(key, JSON.stringify(aggregate));
   }, { account: A, owner });
   release.resolve();
   expect((await finishOperation(page)).error).toBe('The signed-in account changed. Try again.');
-  expect(reads).toBe(3);
+  expect(reads).toBe(6);
   expect((await stateFor(page, owner)).awards).toEqual([]);
 });
 

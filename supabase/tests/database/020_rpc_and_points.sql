@@ -80,28 +80,40 @@ update public.profiles
 set challenge_start_date = current_date, time_zone = 'UTC'
 where user_id = '10000000-0000-4000-8000-000000000001';
 
+-- This transaction constructs a current-day synthetic run. Production date
+-- changes use the actor/run/revision-bound RPC tested in 120.
+update private.challenge_instances
+set start_date = current_date, time_zone = 'UTC', scope_key = 'original77:' || current_date::text
+where user_id = '10000000-0000-4000-8000-000000000001' and sequence_no = 0;
+create temporary table rpc_test_instance as
+select current_instance_id as id from private.challenge_runtime
+where user_id = '10000000-0000-4000-8000-000000000001';
+grant select on rpc_test_instance to authenticated;
+
 set local role authenticated;
 set local "request.jwt.claim.sub" = '10000000-0000-4000-8000-000000000001';
 set local "request.jwt.claims" = '{"sub":"10000000-0000-4000-8000-000000000001","role":"authenticated","email":"alice@example.test","user_metadata":{"name":"Alice Example"}}';
 
 select lives_ok(
-  $$ select public.mutate_daily_standard_draft(
+  $$ select public.mutate_daily_standard_draft_v2(
     current_date,
     'bible',
     true,
     null,
-    '10000000-0000-4000-8000-000000000001'
+    '10000000-0000-4000-8000-000000000001',
+    (select id from rpc_test_instance)
   ) $$,
   'the trusted draft mutation records the completed Daily Standard before submission'
 );
 
 select is(
-  public.set_daily_standard_workout_difficulty(
+  public.set_daily_standard_workout_difficulty_v2(
     current_date,
     'one',
     'medium',
     null,
-    '10000000-0000-4000-8000-000000000001'
+    '10000000-0000-4000-8000-000000000001',
+    (select id from rpc_test_instance)
   ) #>> '{workout_difficulty,one}',
   'medium',
   'an explicit Medium selection is returned instead of collapsing into the default'
@@ -128,6 +140,7 @@ select throws_ok(
       status,
       completed_count,
       completed,
+      challenge_instance_id,
       workout_difficulty
     ) values (
       '10000000-0000-4000-8000-000000000001',
@@ -136,6 +149,7 @@ select throws_ok(
       'scheduled',
       0,
       '{}',
+      (select id from rpc_test_instance),
       '{}'::jsonb
     )
   $$,
@@ -147,13 +161,14 @@ select throws_ok(
 set local role authenticated;
 
 select is(
-  public.submit_daily_check_in(
+  public.submit_daily_check_in_v2(
     'complete',
     array['bible', 'bible', 'notAnAction'],
     '{}',
     'UTC',
     current_date,
-    '10000000-0000-4000-8000-000000000001'
+    '10000000-0000-4000-8000-000000000001',
+    (select id from rpc_test_instance)
   ) ->> 'status',
   'partial',
   'the RPC derives status from the authoritative draft instead of client-supplied actions'
@@ -205,8 +220,8 @@ set local "request.jwt.claims" = '{"sub":"30000000-0000-4000-8000-000000000003",
 select throws_ok(
   $$ select public.start_challenge('twenty_one_day_prayer') $$,
   '55000',
-  'This challenge is not ready to start yet.',
-  'the legacy Start API stays disabled until challenge instances are available'
+  'Refresh to use instance-bound challenge starts.',
+  'the legacy Start API cannot bypass the instance-bound contract'
 );
 
 set local "request.jwt.claim.sub" = '10000000-0000-4000-8000-000000000001';
@@ -214,8 +229,8 @@ set local "request.jwt.claims" = '{"sub":"10000000-0000-4000-8000-000000000001",
 
 select is(
   jsonb_array_length(public.claim_challenge_unlocks() -> 'claimedKeys'),
-  5,
-  'all eligible pending unlocks from the seeded point total are claimed once'
+  1,
+  'only the point-earned Reset unlock is claimable without completion evidence'
 );
 select is(
   jsonb_array_length(public.claim_challenge_unlocks() -> 'claimedKeys'),

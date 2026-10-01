@@ -29,6 +29,9 @@ export function normalizeDailyStandardDraft(draft = {}, fallbackDate = '') {
     ?? {};
 
   return {
+    ...(draft.schemaVersion === 2 || Object.hasOwn(draft, 'instanceId') ? {
+      schemaVersion: 2, actorId: draft.actorId || null, instanceId: draft.instanceId ?? null,
+    } : {}),
     date: draft.date || draft.entry_date || fallbackDate,
     completed,
     workoutDifficulty: {

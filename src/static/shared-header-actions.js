@@ -5,14 +5,13 @@ import {
   recordAppVisit,
   updateChallengeStartDate,
 } from './api';
-import { dateKeyForTimeZone, migrateMockCheckInCache } from './check-in.mjs';
+import { dateKeyForTimeZone } from './check-in.mjs';
 import {
   PREVIEW_CHALLENGE_STORAGE_KEY,
-  PREVIEW_CHECK_IN_DATES_STORAGE_KEY,
   isPreviewChallengeActive,
   normalizePreviewChallengeState,
 } from './preview-challenge.mjs';
-import { readPreviewUserValue, writePreviewUserValue } from './preview-user-state.mjs';
+import { readPreviewUserValue } from './preview-user-state.mjs';
 import { initShareComposer } from './share-composer-loader.js';
 import {
   buildStreakSummary,
@@ -20,8 +19,6 @@ import {
 } from './streak-summary.mjs';
 import { normalizeChallengeStartDate } from './shared-header-state.mjs';
 
-const GAME_STATS_STORAGE_KEY = 'dominion:gameStats';
-const CHECK_IN_DATES_STORAGE_KEY = 'dominion:checkInDates';
 const DEFAULT_GAME_STATS = Object.freeze({
   currentAppStreak: 0,
   bestAppStreak: 0,
@@ -53,24 +50,14 @@ function loadStreakDialog() {
   return streakDialogModule;
 }
 
-function localHeaderSnapshot(user, storage, activation) {
+function localHeaderSnapshot(user, storage, activation, stats) {
   const today = localDateKey();
   const ownerId = String(user?.userId || '');
-  const stats = readPreviewUserValue(storage, ownerId, GAME_STATS_STORAGE_KEY, DEFAULT_GAME_STATS);
   const previewState = normalizePreviewChallengeState(
     readPreviewUserValue(storage, ownerId, PREVIEW_CHALLENGE_STORAGE_KEY, {}),
     today,
   );
   const previewActive = isPreviewChallengeActive(true, previewState);
-  const checkInStorageKey = previewActive
-    ? PREVIEW_CHECK_IN_DATES_STORAGE_KEY
-    : CHECK_IN_DATES_STORAGE_KEY;
-  const checkIns = migrateMockCheckInCache(
-    readPreviewUserValue(storage, ownerId, checkInStorageKey, {}),
-    ownerId,
-    user?.email,
-  );
-  writePreviewUserValue(storage, ownerId, checkInStorageKey, checkIns);
   const effectiveActivation = previewActive
     ? {
         ...activation,
@@ -80,13 +67,11 @@ function localHeaderSnapshot(user, storage, activation) {
   const startDate = effectiveActivation?.startDate || '';
 
   return {
-    stats,
+    stats: stats || DEFAULT_GAME_STATS,
     profile: { challengeStartDate: startDate },
     activation: effectiveActivation,
     startDateLocked: previewActive
-      || !effectiveActivation?.canEditStartDate
-      || checkIns.dates.length > 0
-      || checkIns.challengeDays.length > 0,
+      || !effectiveActivation?.canEditStartDate,
     previewActive,
   };
 }
@@ -229,6 +214,8 @@ export function createAuthenticatedHeaderActions({
     const shareAvailable = activation?.readState === 'ready'
       && activation?.contractValid
       && (activation?.canParticipate === true
+        || (activation.schemaVersion === 2 && activation.actorId === currentUser?.userId
+          && activation.currentInstance?.status === 'completed' && !activation.reviewRequired)
         || (activation.originalProgress?.userId === currentUser?.userId
           && activation.originalProgress?.submittedCount === 77
           && ['live_completed', 'historical_provenance_pending'].includes(activation.originalProgress?.completionState)));
@@ -252,11 +239,16 @@ export function createAuthenticatedHeaderActions({
 
   async function loadSnapshot(includeLockState) {
     if (isLocalDemoMode()) {
-      const activation = await getChallengeActivation({ expectedUserId: currentUser?.userId });
+      const expectedUserId = currentUser?.userId || '';
+      const [activation, summary] = await Promise.all([
+        getChallengeActivation({ expectedUserId }),
+        getGameSummary(),
+      ]);
       return localHeaderSnapshot(
         currentUser,
         ownerDocument.defaultView?.localStorage,
         activation,
+        summary?.gameStats,
       );
     }
     const expectedUserId = currentUser?.userId || '';
@@ -318,6 +310,7 @@ export function createAuthenticatedHeaderActions({
     const submitOwnerVersion = ownerVersion;
     const submitOwnerKey = currentUser?.userId || currentUser?.email || '';
     const expectedRevision = currentActivation?.revision ?? null;
+    const expectedInstanceId = currentActivation?.currentInstance?.id ?? null;
     const submitTimeZone = currentActivation?.timeZone || '';
     currentStartDate = nextStartDate;
     dialog.setDateFeedback('');
@@ -331,12 +324,14 @@ export function createAuthenticatedHeaderActions({
         timeZone: submitTimeZone,
         expectedRevision,
         expectedUserId: submitOwnerKey,
+        expectedInstanceId,
       });
 
       if (
         destroyed
         || submitOwnerVersion !== ownerVersion
         || submitOwnerKey !== (currentUser?.userId || currentUser?.email || '')
+        || expectedInstanceId !== currentActivation?.currentInstance?.id
       ) return;
 
       currentActivation = savedActivation;
@@ -358,6 +353,7 @@ export function createAuthenticatedHeaderActions({
         destroyed
         || submitOwnerVersion !== ownerVersion
         || submitOwnerKey !== (currentUser?.userId || currentUser?.email || '')
+        || expectedInstanceId !== currentActivation?.currentInstance?.id
       ) return;
       currentStartDate = previousStartDate;
       renderStartDate();

@@ -1,4 +1,5 @@
 import { emptyOriginal77Progress, normalizeOriginal77Progress, MAX_ORIGINAL_CALENDAR_DAY } from './original-77-progress.mjs';
+import { normalizeInstanceActivation } from './challenge-instance-contract.mjs';
 
 export const CHALLENGE_ACTIVATION_SCHEMA_VERSION = 1;
 
@@ -167,6 +168,10 @@ export function normalizeChallengeActivation(payload, { readState = 'ready', exp
 
   const closed = challengeActivationReadError(INVALID_CONTRACT_READ_ERROR);
   if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return closed;
+  if (payload.schemaVersion === 2) {
+    const current = normalizeInstanceActivation(payload, expectedUserId, { preview });
+    return current ? { ...current, readState: 'ready', contractValid: true, originalProgress: null } : closed;
+  }
 
   const schemaVersion = readField(payload, 'schemaVersion', 'schema_version');
   const status = readField(payload, 'status');

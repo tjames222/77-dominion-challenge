@@ -1,4 +1,5 @@
-import { BADGE_CATALOG, appVisitBadgeFacts, badgeCatalogOrder, checkInBadgeFacts, evaluateBadgeEvent, original77CompletionBadgeFacts } from './badge-evaluation.mjs';
+import { BADGE_CATALOG, appVisitBadgeFacts, badgeCatalogOrder, checkInBadgeFacts, evaluateBadgeEvent, original77CompletionBadgeFacts, instanceCompletionBadgeFacts } from './badge-evaluation.mjs';
+import { normalizeChallengeInstance, instanceCalendarDay } from './challenge-instance-contract.mjs';
 import { badgeAwardIdentity } from './badge-data-contract.mjs';
 import { previewOriginal77Progress } from './original-77-progress.mjs';
 
@@ -44,6 +45,59 @@ export function recordPreviewBadgeEvent(state,event,completionContext) {
   if (completionEvent) state.completionEvents.push(completionEvent);
   return awards;
 }
+
+export function recordPreviewInstanceBadgeEvent(state, event, { userId, run: rawRun,
+  completionEvidence = null, priorInstanceCheckIns = [] } = {}) {
+  const run = normalizeChallengeInstance(rawRun, { preview: true });
+  const invalid = () => { throw new Error('The posted instance badge event could not be verified.'); };
+  const uuid = value => typeof value === 'string' && /^[a-f0-9]{8}-[a-f0-9]{4}-[1-8][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i.test(value);
+  const eventValid = row => row && Object.getOwnPropertyDescriptors(row)
+    && Reflect.ownKeys(row).every(key => Object.hasOwn(Object.getOwnPropertyDescriptor(row, key), 'value'))
+    && row.source === 'check_in' && uuid(row.sourceId) && row.instanceId === run.id && row.scopeKey === run.scopeKey
+    && row.challengeDay === instanceCalendarDay(run.startDate, row.localDate) && row.challengeDay >= 1
+    && checkInBadgeFacts(row, [])?.instanceId === run.scopeKey;
+  if (!run || run.reviewRequired || run.status === 'scheduled' || run.provenance === 'legacy_completed'
+    || typeof userId !== 'string' || !userId || !Array.isArray(state?.checkIns) || !Array.isArray(state.awards)
+    || !Array.isArray(state.completionEvents) || !eventValid(event)) invalid();
+  const existing = state.checkIns.find(row => row?.localDate === event.localDate || row?.sourceId === event.sourceId);
+  if (existing) {
+    if (existing.sourceId === event.sourceId && existing.localDate === event.localDate && existing.instanceId === event.instanceId
+      && existing.scopeKey === event.scopeKey && JSON.stringify(existing.completed) === JSON.stringify(event.completed)
+      && existing.occurredAt === event.occurredAt && existing.challengeDay === event.challengeDay) return [];
+    invalid();
+  }
+  if (!Array.isArray(priorInstanceCheckIns) || priorInstanceCheckIns.length !== run.submittedCount - 1
+    || priorInstanceCheckIns.some(row => !eventValid(row))
+    || new Set(priorInstanceCheckIns.map(row => row.sourceId)).size !== priorInstanceCheckIns.length
+    || new Set(priorInstanceCheckIns.map(row => row.localDate)).size !== priorInstanceCheckIns.length
+    || priorInstanceCheckIns.some(row => row.sourceId === event.sourceId || row.localDate === event.localDate)) invalid();
+  const canonicalDates = new Set(priorInstanceCheckIns.map(row => row.localDate));
+  const facts = checkInBadgeFacts(event, [...state.checkIns.filter(row => !canonicalDates.has(row.localDate)), ...priorInstanceCheckIns]);
+  if (!facts || event.challengeDay !== run.calendarDay) invalid();
+  let completionAwards = [];
+  if (run.status === 'completed') {
+    if (!completionEvidence || completionEvidence.kind !== 'canonical_instance_completion' || completionEvidence.userId !== userId
+      || completionEvidence.instanceId !== run.id || completionEvidence.challengeKey !== run.challengeKey
+      || completionEvidence.eventId !== run.completionEventId || !uuid(completionEvidence.eventId)
+      || completionEvidence.eventId === event.sourceId || completionEvidence.sourceCheckInId !== event.sourceId
+      || completionEvidence.submittedCount !== run.targetCount || completionEvidence.targetCount !== run.targetCount
+      || completionEvidence.completedAt !== event.occurredAt || completionEvidence.completedAt !== run.completedAt
+      || !Number.isFinite(Date.parse(completionEvidence.persistedAt))
+      || state.completionEvents.some(row => row.eventId === completionEvidence.eventId || row.instanceId === run.id)) invalid();
+    if (run.challengeKey === 'original_77') {
+      const complete = instanceCompletionBadgeFacts({ userId, run, event, priorInstanceCheckIns, completionEvidence });
+      if (!complete) invalid();
+      completionAwards = evaluateBadgeEvent(complete, state.awards);
+    }
+  } else if (completionEvidence !== null) invalid();
+  const awards = [...evaluateBadgeEvent(facts, state.awards), ...completionAwards]
+    .map(award => ({ ...award, awardId: `preview:${award.key}:${award.scopeKey}` }));
+  // All failure-prone work precedes state mutation; the caller persists this
+  // state with the canonical check-in/completion in one owner-bound aggregate.
+  state.checkIns.push(structuredClone(event)); state.awards.push(...awards);
+  if (completionEvidence) state.completionEvents.push(structuredClone(completionEvidence));
+  return awards;
+}
 export function claimPreviewBadgeCelebrations(state,token,now=Date.now()) {
   const candidates=state.awards.filter(award=>award.legacy===false&&!award.celebrationSeenAt
     &&(award.celebrationClaimToken===token||!award.celebrationClaimUntil||Date.parse(award.celebrationClaimUntil)<=now))
@@ -60,7 +114,8 @@ export function acknowledgePreviewBadgeCelebrations(state,token,ids,now=Date.now
 }
 
 export function previewBadgeCollection(state,activation,today) {
-  const scopeKey=activation?.startDate?`original77:${activation.startDate}`:null;
+  const scopeKey = activation?.schemaVersion === 2 ? normalizeChallengeInstance(activation.currentInstance, { preview: true })?.scopeKey || null
+    : activation?.startDate ? `original77:${activation.startDate}` : null;
   const latest=[...state.checkIns].sort((a,b)=>b.localDate.localeCompare(a.localDate))[0];
   const facts=latest?checkInBadgeFacts(latest,state.checkIns)||{}:{};
   if (!scopeKey || facts.instanceId !== scopeKey) {

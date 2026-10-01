@@ -73,7 +73,7 @@ test('identical pending reads share one RPC and pre/post Auth checks, with indep
   gate.resolve(dailyBootstrapFixture()); const [left, right] = await Promise.all([one, two]);
   left.draft.completed.push('bible'); assert.deepEqual(right.draft.completed, []);
   assert.equal(f.calls.length, 1); assert.equal(f.checks(), 2);
-  assert.deepEqual(f.calls[0].args, { target_expected_actor_id: A, target_time_zone: 'UTC', target_entry_date: null });
+  assert.deepEqual(f.calls[0].args, { target_expected_actor_id: A, target_time_zone: 'UTC', target_entry_date: null, target_expected_instance_id: null });
   await f.read(); assert.equal(f.calls.length, 2, 'settled private responses are not cached');
 });
 test('different query arguments are never coalesced and invalid inputs make no request', async () => {

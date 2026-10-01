@@ -1,4 +1,6 @@
 import { initReveal } from './reveal';
+import { newChallengeActivationRequestId } from './challenge-activation.mjs';
+import { prepareRewardStartRequest } from './reward-start-request.mjs';
 import {
   claimRewardOffer,
   claimChallengeUnlocks,
@@ -6,6 +8,7 @@ import {
   getAllRewardCatalog,
   getBillingState,
   getBadgeCollection,
+  getChallengeActivation,
   getLeaderboardPrestige,
   getLocalOrSessionUser,
   getRewardFulfillment,
@@ -21,7 +24,6 @@ import {
   rewardViewModel,
 } from './badges-rewards.mjs';
 import { renderGameProgress } from './game-progress.mjs';
-import { createBadgeCollection } from './badge-collection.mjs';
 import { rewardKeyFromLocation } from './reward-link-contract.mjs';
 import {
   buildFulfillmentDialogModel,
@@ -38,7 +40,7 @@ const LEADERBOARD_PRESTIGE_WINDOW = 'week';
 const rewardNextPanel = $('rewardNextPanel');
 const rewardsList = $('rewardsList');
 const badgesGallery = $('badgesGallery');
-const badgeGallery = badgesGallery ? createBadgeCollection(badgesGallery) : null;
+let badgeGallery = null;
 const errorPanel = $('badgesRewardsError');
 const retryButton = $('badgesRewardsRetry');
 const tabs = Array.from(document.querySelectorAll('.badges-rewards-tab'));
@@ -51,6 +53,7 @@ let catalog = null;
 let earnedBadges = [];
 let badgeCollection = null;
 let pendingRewardKey = '';
+let retryableStart = null;
 let loadRequestId = 0;
 let leaderboardPositions = {
   privateRank: null,
@@ -112,14 +115,20 @@ function renderNextUnlock(model) {
     const next = model.nextUnlock;
     if (eyebrow) eyebrow.textContent = 'Next reward';
     if (title) title.textContent = next.title;
-    if (copy) copy.textContent = `${formatRewardPoints(next.pointsRemaining)} to go · ${next.currentPoints.toLocaleString()} of ${next.pointsRequired.toLocaleString()} earned`;
+    if (copy) copy.textContent = next.status !== 'locked' ? next.detail
+      : next.completionBased ? next.requirementLabel
+        : `${formatRewardPoints(next.pointsRemaining)} to go · ${next.currentPoints.toLocaleString()} of ${next.pointsRequired.toLocaleString()} earned`;
     if (progress) {
-      progress.hidden = false;
+      progress.hidden = next.completionBased || next.status !== 'locked';
+      if (!next.completionBased) {
       progress.setAttribute('aria-valuemax', String(next.pointsRequired));
       progress.setAttribute('aria-valuenow', String(Math.min(next.currentPoints, next.pointsRequired)));
       progress.setAttribute('aria-valuetext', `${next.currentPoints} of ${next.pointsRequired} points earned toward ${next.title}`);
+      } else {
+        progress.removeAttribute('aria-valuemax'); progress.removeAttribute('aria-valuenow'); progress.removeAttribute('aria-valuetext');
+      }
     }
-    if (fill) fill.style.setProperty('--reward-progress', `${next.progressPercent}%`);
+    if (fill) fill.style.setProperty('--reward-progress', `${next.progressPercent ?? 0}%`);
     return;
   }
 
@@ -159,6 +168,13 @@ function renderPage() {
     rewardsList.innerHTML = model.rewards.length
       ? model.rewards.map((reward) => renderRewardCard(reward, { pendingRewardKey })).join('')
       : '<p class="badges-rewards-empty"><strong>No rewards are configured yet.</strong><span>Your lifetime points will keep accumulating.</span></p>';
+    if (model.originalRepeat?.available) {
+      const canStart = model.originalRepeat.canStart === true;
+      const repeatCopy = canStart ? 'Start a fresh 77-check-in run. Your past runs, lifetime points, and earned rewards are preserved.'
+        : model.originalRepeat.reason === 'review_required' ? 'Challenge verification is required before another run can begin.'
+          : 'Finish your current challenge before beginning another original 77-check-in run. Your history and rewards stay saved.';
+      rewardsList.insertAdjacentHTML('beforeend', `<article class="reward-row is-available" data-reward-key="original_77"><div class="reward-row-icon app-icon icon-repeat" aria-hidden="true"></div><div class="reward-row-main"><div class="reward-row-topline"><span>Original challenge</span><span class="reward-status">${canStart ? 'Ready for another run' : 'Saved for later'}</span></div><h3>Another 77-check-in challenge</h3><p>${escapeHtml(repeatCopy)}</p><div class="reward-card-actions">${canStart ? `<button class="reward-action-button" type="button" data-start-reward="original_77"${pendingRewardKey ? ' disabled' : ''}>${pendingRewardKey === 'original_77' ? 'Starting…' : 'Start another original challenge'}</button>` : ''}</div></div></article>`);
+    }
   }
   const rewardSummary = $('rewardsCatalogSummary');
   if (rewardSummary) rewardSummary.textContent = model.rewards.length
@@ -218,8 +234,8 @@ function renderRewardDetail({ busy = false } = {}) {
   const thumbnail = activeReward.thumbnailUrl
     ? `<img class="reward-detail-thumbnail" src="${escapeHtml(activeReward.thumbnailUrl)}" alt="${escapeHtml(activeReward.thumbnailAlt)}" />`
     : '';
-  const status = `<section class="reward-detail-state" aria-label="Reward status"><div><span>Status</span><strong>${escapeHtml(activeReward.statusLabel)}</strong></div><p>${escapeHtml(activeReward.detail)} · ${formatRewardPoints(activeReward.pointsRequired)} required</p></section>`;
-  const progress = activeReward.status === 'locked' && activeReward.active
+  const status = `<section class="reward-detail-state" aria-label="Reward status"><div><span>Status</span><strong>${escapeHtml(activeReward.statusLabel)}</strong></div><p>${escapeHtml(activeReward.detail)}${activeReward.completionBased ? '' : ` · ${escapeHtml(activeReward.requirementLabel)}`}</p></section>`;
+  const progress = activeReward.status === 'locked' && activeReward.active && !activeReward.completionBased
     ? `<div class="reward-detail-progress" role="progressbar" aria-label="Progress toward ${escapeHtml(activeReward.title)}" aria-valuemin="0" aria-valuemax="${activeReward.pointsRequired}" aria-valuenow="${Math.min(activeReward.currentPoints, activeReward.pointsRequired)}" aria-valuetext="${escapeHtml(`${activeReward.currentPoints} of ${activeReward.pointsRequired} points`)}"><span style="--reward-progress:${activeReward.progressPercent}%"></span></div><p><strong>${formatRewardPoints(activeReward.pointsRemaining)}</strong> remaining</p>`
     : '';
   const encouragement = fulfillmentModel?.encouragement
@@ -283,6 +299,7 @@ function scrubAccountBoundPage() {
   earnedBadges = [];
   badgeCollection = null;
   pendingRewardKey = '';
+  retryableStart = null;
   dismissAndScrubRewardDetail();
   rewardsList?.replaceChildren();
   badgeGallery?.clear();
@@ -483,7 +500,7 @@ async function loadBadgesAndRewards({ claimUnlocks = true } = {}) {
   const requestId = ++loadRequestId;
   setLoading();
   try {
-    const [badgesResult, catalogResult, prestigeResult] = await Promise.allSettled([
+    const [badgesResult, catalogResult, prestigeResult, galleryResult] = await Promise.allSettled([
       getBadgeCollection({ expectedUserId }),
       getAllRewardCatalog({ expectedUserId }),
       getLeaderboardPrestige({
@@ -491,10 +508,13 @@ async function loadBadgesAndRewards({ claimUnlocks = true } = {}) {
         window: LEADERBOARD_PRESTIGE_WINDOW,
         expectedUserId,
       }),
+      import('./badge-collection.mjs'),
     ]);
     if (badgesResult.status === 'rejected') throw badgesResult.reason;
     if (catalogResult.status === 'rejected') throw catalogResult.reason;
+    if (galleryResult.status === 'rejected') throw galleryResult.reason;
     if (requestId !== loadRequestId || pageActorId !== expectedUserId) return;
+    if (badgesGallery && !badgeGallery) badgeGallery = galleryResult.value.createBadgeCollection(badgesGallery);
     badgeCollection = badgesResult.value;
     earnedBadges = badgeCollection.earnedBadges;
     catalog = catalogResult.value;
@@ -511,25 +531,25 @@ async function loadBadgesAndRewards({ claimUnlocks = true } = {}) {
         window: LEADERBOARD_PRESTIGE_WINDOW,
       };
     }
-    renderPage();
-
-    const feedback = $('rewardsCatalogFeedback');
-    if (feedback) feedback.textContent = '';
-    if (!claimUnlocks) return;
-
     // Viewing a collection is not a presentation acknowledgement. Permanent
     // rewards remain unseen until their queued celebration is dismissed.
-    const [challengeClaim] = await Promise.allSettled([
-      claimChallengeUnlocks({ expectedUserId }),
-    ]);
-    if (requestId !== loadRequestId || pageActorId !== expectedUserId) return;
     const unlocks = [];
-    if (challengeClaim.status === 'fulfilled') {
-      unlocks.push(...challengeClaim.value.claimedUnlocks);
+    if (claimUnlocks) {
+      const [challengeClaim] = await Promise.allSettled([
+        claimChallengeUnlocks({ expectedUserId }),
+      ]);
+      if (requestId !== loadRequestId || pageActorId !== expectedUserId) return;
+      if (challengeClaim.status === 'fulfilled') {
+        unlocks.push(...challengeClaim.value.claimedUnlocks);
+      }
+      catalog = await getAllRewardCatalog({ expectedUserId });
+      if (requestId !== loadRequestId || pageActorId !== expectedUserId) return;
     }
-    catalog = await getAllRewardCatalog({ expectedUserId });
-    if (requestId !== loadRequestId || pageActorId !== expectedUserId) return;
+    // Publish one ready state. Replacing a ready list after the initial claim
+    // can remove a keyboard-focused Start button before Enter reaches it.
     renderPage();
+    const feedback = $('rewardsCatalogFeedback');
+    if (feedback) feedback.textContent = '';
     showUnlockNotice(unlocks);
   } catch (error) {
     if (requestId !== loadRequestId || pageActorId !== expectedUserId) return;
@@ -554,26 +574,49 @@ rewardsList?.addEventListener('click', async (event) => {
   }
   const button = event.target.closest('[data-start-reward]');
   if (!button || pendingRewardKey) return;
-  pendingRewardKey = button.dataset.startReward;
+  const challengeKey = button.dataset.startReward;
+  const allowed = catalog?.schemaVersion === 2 && catalog.actorId === pageActorId
+    && (challengeKey === 'original_77' ? catalog.originalRepeat?.canStart === true
+      : catalog.items.some(reward => reward.key === challengeKey && reward.allowedActions.includes('start')));
+  if (!allowed) return;
+  const expectedUserId = pageActorId;
+  const startCatalog = catalog;
+  const requestSequence = ++loadRequestId;
+  pendingRewardKey = challengeKey;
   renderPage();
   const feedback = $('rewardsCatalogFeedback');
   if (feedback) feedback.textContent = `Starting ${button.closest('[data-reward-key]')?.querySelector('h3')?.textContent || 'challenge'}…`;
-  const expectedUserId = pageActorId;
   try {
-    await startChallenge(pendingRewardKey, { expectedUserId });
-    if (pageActorId !== expectedUserId) return;
+    const activation = await getChallengeActivation({ expectedUserId });
+    if (actorInvalidated || pageActorId !== expectedUserId || requestSequence !== loadRequestId) return;
+    retryableStart = prepareRewardStartRequest({ catalog: startCatalog, activation, actorId: expectedUserId, challengeKey,
+      previous: retryableStart, createRequestId: newChallengeActivationRequestId });
+    const request = { ...retryableStart };
+    const { expectedInstanceId, expectedRevision } = request;
+    await startChallenge(challengeKey, { expectedUserId, expectedInstanceId, expectedRevision,
+      requestId: request.requestId, timeZone: request.timeZone, startDate: request.startDate });
+    if (actorInvalidated || pageActorId !== expectedUserId || requestSequence !== loadRequestId) return;
+    retryableStart = null;
     catalog = await getAllRewardCatalog({ expectedUserId });
     if (pageActorId !== expectedUserId) return;
-    if (feedback) feedback.textContent = 'Challenge started. Your rewards are up to date.';
+    if (feedback) {
+      feedback.textContent = 'Challenge started. Your past progress and rewards are saved. ';
+      const link = document.createElement('a'); link.href = './dashboard.html'; link.textContent = 'Open today’s Daily Actions'; feedback.append(link);
+    }
   } catch (error) {
     if (!(await pageActorIsCurrent(expectedUserId))) {
       invalidatePageActor();
       return;
     }
-    if (feedback) feedback.textContent = error?.message || 'Unable to start that challenge right now.';
+    if (feedback) feedback.textContent = error?.message || 'Unable to confirm the challenge start. Try again; the same request will be safely retried.';
   } finally {
     pendingRewardKey = '';
     renderPage();
+    if (pageActorId === expectedUserId) {
+      const nextFocus = feedback?.querySelector('a') || [...(rewardsList?.querySelectorAll('[data-start-reward]') || [])]
+        .find(node => node.dataset.startReward === challengeKey);
+      nextFocus?.focus();
+    }
   }
 });
 
@@ -592,6 +635,7 @@ window.addEventListener('storage', (event) => {
     return;
   }
   if ([
+    `dominion:challengeAggregateV2:${pageActorId}`,
     'dominion:badges',
     'dominion:badgeState:v1',
     'dominion:gameStats',

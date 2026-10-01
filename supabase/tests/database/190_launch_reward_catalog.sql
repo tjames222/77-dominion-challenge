@@ -7,7 +7,7 @@ select plan(65);
 
 select is(
   (
-    select array_agg(reward_key order by points_required)
+    select array_agg(reward_key order by sort_order)
     from public.reward_definitions
     where is_active
   ),
@@ -15,15 +15,15 @@ select is(
     'gym_training_discount',
     'dominion_night_theme',
     'nehemiah_leadership_handbook',
-    'seven_day_reset',
     'dominion_platinum',
+    'seven_day_reset',
     'big_god_energy_tshirt_discount',
     'twenty_one_day_prayer',
     'thirty_day_strength',
     'forty_day_fast',
     'bible_in_a_year'
   ]::text[],
-  'the final launch catalog has exactly ten rewards in point order'
+  'the versioned catalog has ten rewards in configured progression order'
 );
 select is(
   (
@@ -31,8 +31,8 @@ select is(
     from public.reward_definitions
     where is_active
   ),
-  array[21, 56, 98, 140, 210, 273, 336, 406, 469, 532],
-  'the database uses the authoritative launch thresholds'
+  array[42, 112, 210, 308, 420, 532, null, null, null, null]::integer[],
+  'the database uses six point thresholds and four completion requirements'
 );
 select is(
   (
@@ -40,8 +40,8 @@ select is(
     from public.reward_definitions
     where is_active
   ),
-  array[21, 56, 98, 140, 210, 273, 336, 406, 469, 532],
-  'catalog ordering matches threshold ordering'
+  array[42, 112, 210, 308, 420, 532, null, null, null, null]::integer[],
+  'catalog ordering places completion-only successors after the core point rewards'
 );
 select ok(
   not exists (
@@ -75,10 +75,10 @@ select is(
   (
     select array_agg(points_required order by points_required)
     from public.challenge_definitions
-    where is_active
+    where is_active and challenge_key <> 'original_77'
   ),
-  array[140, 336, 406, 469, 532],
-  'Challenge Vault definitions use the final five lifecycle thresholds'
+  array[420, null, null, null, null]::integer[],
+  'Challenge Vault definitions use Reset points and four completion-only requirements'
 );
 select throws_ok(
   $$
@@ -133,11 +133,11 @@ select
   generated.day_offset + 1,
   jsonb_build_object('completedCount', 7, 'actionPoints', 7),
   'reward-launch:carol:check-in:' || generated.day_offset
-from generate_series(0, 1) as generated(day_offset);
+from generate_series(0, 4) as generated(day_offset);
 
 update public.user_game_stats
-set total_points = 28,
-    challenge_points = 28
+set total_points = 49,
+    challenge_points = 49
 where user_id = '30000000-0000-4000-8000-000000000003';
 
 select is(
@@ -145,8 +145,8 @@ select is(
     '30000000-0000-4000-8000-000000000003',
     'gym_training_discount'
   ),
-  14,
-  'two perfect Check-Ins contribute fourteen trusted Daily Standards points'
+  35,
+  'five perfect Check-Ins contribute thirty-five trusted Daily Action points'
 );
 select is(
   public.reconcile_user_reward_entitlements(
@@ -163,18 +163,18 @@ select is(
       and reward_key = 'gym_training_discount'
   ),
   0,
-  'the gym entitlement remains absent below twenty-one trusted points'
+  'the gym entitlement remains absent below forty-two trusted points'
 );
 select is(
-  public.reward_catalog_for_user(
-    '30000000-0000-4000-8000-000000000003', 100, null, null
+  private.reward_catalog_v2(
+    '30000000-0000-4000-8000-000000000003', 100, null, null, null, null, null
   ) #>> '{items,0,currentPoints}',
-  '14',
+  '35',
   'the gym card displays only its eligible Daily Standards points'
 );
 select is(
-  public.reward_catalog_for_user(
-    '30000000-0000-4000-8000-000000000003', 100, null, null
+  private.reward_catalog_v2(
+    '30000000-0000-4000-8000-000000000003', 100, null, null, null, null, null
   ) #>> '{items,0,pointsRemaining}',
   '7',
   'the gym card reports eligible points remaining'
@@ -188,10 +188,10 @@ values (
   '30000000-0000-4000-8000-000000000003',
   'check_in',
   999,
-  current_date - 2,
-  3,
+  current_date - 5,
+  6,
   jsonb_build_object('completedCount', 999, 'actionPoints', 999),
-  'reward-launch:carol:check-in:2'
+  'reward-launch:carol:check-in:5'
 );
 
 select is(
@@ -199,7 +199,7 @@ select is(
     '30000000-0000-4000-8000-000000000003',
     'gym_training_discount'
   ),
-  21,
+  42,
   'each trusted Check-In contributes at most seven eligible points'
 );
 select is(
@@ -207,7 +207,7 @@ select is(
     '30000000-0000-4000-8000-000000000003'
   ),
   1,
-  'crossing twenty-one trusted points grants exactly one entitlement'
+  'crossing forty-two trusted points grants exactly one entitlement'
 );
 select is(
   public.reconcile_user_reward_entitlements(
@@ -302,23 +302,23 @@ set local "request.jwt.claims" =
 
 select throws_ok(
   $$
-    select public.get_reward_catalog(
+    select public.get_reward_catalog_v2(
       100, null, null, '20000000-0000-4000-8000-000000000002'
     )
   $$,
-  '42501',
-  'The signed-in account changed. Try again.',
+  '40001',
+  'The signed-in account changed. Refresh and try again.',
   'the catalog wrapper rejects a stale or cross-account actor'
 );
 select is(
-  jsonb_array_length(public.get_reward_catalog(
+  jsonb_array_length(public.get_reward_catalog_v2(
     100, null, null, '30000000-0000-4000-8000-000000000003'
   ) -> 'items'),
   10,
   'the current actor receives all ten launch rewards'
 );
 select is(
-  public.get_reward_catalog(
+  public.get_reward_catalog_v2(
     100, null, null, '30000000-0000-4000-8000-000000000003'
   ) #>> '{nextUnlock,key}',
   'dominion_night_theme',
@@ -707,7 +707,7 @@ reset role;
 select is(
   has_function_privilege(
     'authenticated',
-    'public.get_reward_catalog(integer,integer,text,uuid)',
+    'public.get_reward_catalog_v2(integer,integer,text,uuid,bigint,bigint,text)',
     'EXECUTE'
   ),
   true,

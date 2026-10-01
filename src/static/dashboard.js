@@ -73,7 +73,6 @@ import {
   previewChallengeDay,
 } from './preview-challenge.mjs';
 
-const TOTAL_DAYS = 77;
 const scorecardGroups = [
   {
     key: 'mind',
@@ -134,10 +133,6 @@ const REWARD_TOAST_DURATION_MS = 5200;
 const DAY_COMPLETE_TOAST_DURATION_MS = CONFETTI_DURATION_MS + 650;
 const REWARD_TOAST_EXIT_MS = 320;
 const BADGE_REVEAL_DURATION_MS = 5600;
-const COMPLETION_HERO = {
-  title: 'Congratulations, you did it!',
-  lead: 'You submitted 77 check-ins. Review your earned badges and rewards on the Rewards page.',
-};
 const specialCelebrationBadges = new Set();
 const finaleBadgeKey = 'original_77_completed';
 const BROWSER_TIME_ZONE = Intl.DateTimeFormat().resolvedOptions().timeZone;
@@ -550,6 +545,7 @@ const pendingWorkoutMutations = new Map();
 let pendingDetailsNavigation = '';
 let checkInSubmissionPending = false;
 let checkInSubmissionDate = '';
+let committedCheckInRefreshPending = 0;
 let lastCheckInSubmissionAt = 0;
 let checkInNotice = '';
 let checkInNoticeDate = '';
@@ -559,6 +555,7 @@ let dashboardHydrationRequestId = 0;
 let observedAuthOwner = '';
 let hydratedAuthOwner = '';
 let authOwnerEpoch = 0;
+let observedAuthSession = null;
 let celebrationReturnFocus = null;
 let challengeStartFlow = null;
 const $ = (id) => document.getElementById(id);
@@ -677,18 +674,26 @@ const todayEntry = () => {
 const hasSubmittedCheckIn = (dateKey = todayKey(), challengeDay = currentDay()) => (
   submittedCheckInDates.has(dateKey) || submittedChallengeDays.has(challengeDay)
 );
-const isCheckInPending = (dateKey = todayKey()) => checkInSubmissionPending && checkInSubmissionDate === dateKey;
+const isCheckInPending = (dateKey = todayKey()) => (
+  (checkInSubmissionPending && checkInSubmissionDate === dateKey)
+  || committedCheckInRefreshPending > 0
+);
 const hasHydratedAuthOwner = () => Boolean(
   hydratedAuthOwner && observedAuthOwner === hydratedAuthOwner,
 );
 const captureMutationOwner = () => hasHydratedAuthOwner()
   ? { userId: hydratedAuthOwner, epoch: authOwnerEpoch }
   : null;
+const captureRunMutationOwner = () => {
+  const owner = captureMutationOwner();
+  return owner ? { ...owner, instanceId: challengeActivation.currentInstance?.id ?? null } : null;
+};
 const isCurrentMutationOwner = (owner) => Boolean(
   owner
   && owner.epoch === authOwnerEpoch
   && owner.userId === hydratedAuthOwner
-  && owner.userId === observedAuthOwner,
+  && owner.userId === observedAuthOwner
+  && (!Object.hasOwn(owner, 'instanceId') || owner.instanceId === (challengeActivation.currentInstance?.id ?? null)),
 );
 const isCheckInStatusReady = (dateKey = todayKey()) => (
   hasHydratedAuthOwner() && (!hasSupabaseAuth() || checkInStatusHydratedDate === dateKey)
@@ -748,7 +753,7 @@ function setCheckInNotice(dateKey, message) {
   checkInNotice = message;
 }
 function replaceSubmittedCheckIns({ dates = [], challengeDays = [] }) {
-  const cache = createCheckInCache(checkInCacheOwner, dates, challengeDays);
+  const cache = createCheckInCache(checkInCacheOwner, dates, challengeDays, challengeActivation.currentInstance?.id ?? null);
   submittedCheckInDates = new Set(cache.dates);
   submittedChallengeDays = new Set(cache.challengeDays);
   if (localDemoMode) {
@@ -761,7 +766,7 @@ function markCheckInSubmitted(dateKey, challengeDay) {
   const storedCache = localDemoMode
     ? readPreviewUserValue(localStorage, hydratedAuthOwner, checkInDatesStorageKey(), {})
     : load(checkInDatesStorageKey(), {});
-  const cached = checkInCacheForOwner(storedCache, checkInCacheOwner);
+  const cached = checkInCacheForOwner(storedCache, checkInCacheOwner, challengeActivation.currentInstance?.id ?? null);
   const result = addCheckInDate([...submittedCheckInDates, ...cached.dates], dateKey);
   const challengeDays = normalizeChallengeDays([
     ...submittedChallengeDays,
@@ -805,10 +810,14 @@ const withPendingDraftMutations = (draft) => {
   };
 };
 
-async function reconcileDailyStandardDraft(date, fallbackMessage, owner = captureMutationOwner()) {
+const runCurrentDraftMutation = (owner, mutation) => (
+  isCurrentMutationOwner(owner) ? mutation() : null
+);
+
+async function reconcileDailyStandardDraft(date, fallbackMessage, owner = captureRunMutationOwner()) {
   if (!owner) return;
   try {
-    const authoritative = await getDailyStandardDraft(date, { expectedUserId: owner.userId });
+    const authoritative = await getDailyStandardDraft(date, { expectedUserId: owner.userId, expectedInstanceId: owner.instanceId });
     if (!isCurrentMutationOwner(owner)) return;
     const reconciled = withPendingDraftMutations(authoritative);
     replaceEntry(reconciled);
@@ -832,14 +841,20 @@ const rawChallengeDay = () => previewChallengeMode()
       ? calendarDayDifference(todayKey(), startDate) + 1
       : 0;
 const currentDay = () => Math.max(rawChallengeDay(), 0);
-const isChallengeFinished = () => challengeActivation.originalProgress?.completionState === 'live_completed';
-const isCompletionProvenancePending = () => challengeActivation.originalProgress?.completionState === 'historical_provenance_pending';
+const isChallengeFinished = () => challengeActivation.currentInstance?.status === 'completed'
+  || challengeActivation.originalProgress?.completionState === 'live_completed';
+const isCompletionProvenancePending = () => challengeActivation.reviewRequired === true
+  || challengeActivation.originalProgress?.completionState === 'historical_provenance_pending';
 function advanceCommittedPreviewPost(entry, submissionDay) {
-  const nextState = advancePreviewChallenge(previewChallengeState, challengeActivation.originalProgress);
+  const progress = challengeActivation.currentInstance
+    ? { submittedCount: challengeActivation.currentInstance.submittedCount,
+      completionState: challengeActivation.currentInstance.status === 'completed' ? 'live_completed' : 'in_progress' }
+    : challengeActivation.originalProgress;
+  const nextState = advancePreviewChallenge(previewChallengeState, progress);
   previewChallengeState = nextState;
   persistPreviewDashboardUserState();
 
-  if (isPreviewChallengeComplete(previewChallengeState, challengeActivation.originalProgress)) {
+  if (isChallengeFinished()) {
     setCheckInNotice(entry.date, 'Your 77th check-in is posted. The preview challenge is complete.');
   } else {
     const nextDate = previewChallengeDate(previewChallengeState);
@@ -922,7 +937,7 @@ function renderChecklist(entry) {
 }
 function toggleStandard(id) {
   if (!canMutateChallenge() || isChallengeFinished() || !isCheckInStatusReady() || hasSubmittedCheckIn() || isCheckInPending()) return;
-  const owner = captureMutationOwner();
+  const owner = captureRunMutationOwner();
   if (!owner) return;
   const currentEntry = todayEntry();
   const completed = new Set(currentEntry.completed);
@@ -933,19 +948,15 @@ function toggleStandard(id) {
   replaceEntry({ ...currentEntry, completed: [...completed], version: currentEntry.version + 1 });
   render();
 
-  if (!hasSupabaseAuth()) {
-    pendingActionMutations.delete(id);
-    render();
-    return;
-  }
   entrySaveQueue = entrySaveQueue
-    .then(() => mutateDailyStandardDraft({
+    .then(() => runCurrentDraftMutation(owner, () => mutateDailyStandardDraft({
       date: currentEntry.date,
       actionId: id,
       completed: nextCompleted,
       expectedVersion: currentEntry.version,
       expectedUserId: owner.userId,
-    }))
+      expectedInstanceId: owner.instanceId,
+    })))
     .then((authoritative) => {
       if (!isCurrentMutationOwner(owner)) return;
       if (pendingActionMutations.get(id) === nextCompleted) pendingActionMutations.delete(id);
@@ -1119,8 +1130,13 @@ function render() {
   const feedEl = $('feed');
   const completedToday = $('completedToday');
   renderChallengeStartGate();
-  if (dashboardTitle) dashboardTitle.textContent = finished ? COMPLETION_HERO.title : 'Today’s Dominion';
-  if (dashboardLead) dashboardLead.textContent = finished ? COMPLETION_HERO.lead : 'Track today’s actions and post your check-in.';
+  const currentInstance = challengeActivation.currentInstance;
+  if (dashboardTitle) dashboardTitle.textContent = finished ? 'Congratulations, you did it!' : 'Today’s Dominion';
+  if (dashboardLead) dashboardLead.textContent = finished
+    ? currentInstance?.provenance === 'legacy_completed'
+      ? `${currentInstance.title} is complete. Your history and rewards are preserved. Visit Rewards to choose your next challenge.`
+      : `You submitted ${currentInstance?.targetCount ?? 77} check-ins. Visit Rewards to choose your next challenge.`
+    : 'Track today’s actions and post your check-in.';
   if (challengeCompletePanel) challengeCompletePanel.hidden = !finished;
   const participationOpen = canParticipateInChallenge();
   const storedEntry = todayEntry();
@@ -1128,26 +1144,32 @@ function render() {
     ? storedEntry
     : { ...storedEntry, completed: [] };
   const completedStandards = new Set(entry.completed);
-  const submittedCount = challengeActivation.originalProgress?.submittedCount;
+  const submittedCount = currentInstance?.submittedCount ?? challengeActivation.originalProgress?.submittedCount;
+  const targetCount = currentInstance?.targetCount ?? 77;
   const challengePercent = Number.isInteger(submittedCount)
-    ? Math.round((submittedCount / TOTAL_DAYS) * 100)
+    ? finished ? 100 : Math.round((submittedCount / targetCount) * 100)
     : 0;
   const todayPercent = Math.round((entry.completed.length / standards.length) * 100);
   const hasCompletedActions = entry.completed.length > 0;
   const submittedToday = participationOpen && hasSubmittedCheckIn(entry.date);
-  const submissionPendingToday = participationOpen && isCheckInPending(entry.date);
+  const submissionPendingToday = participationOpen
+    && checkInSubmissionPending && checkInSubmissionDate === entry.date;
+  const committedRefreshPending = participationOpen && committedCheckInRefreshPending > 0;
   const checkInStatusReady = isCheckInStatusReady(entry.date);
   const scorecardLocked = !canMutateChallenge()
     || !checkInStatusReady
     || submittedToday
-    || submissionPendingToday;
+    || submissionPendingToday
+    || committedRefreshPending;
   const dailyDraftBusy = pendingActionMutations.size > 0 || pendingWorkoutMutations.size > 0;
   const hasPostableCheckIn = !finished && !scorecardLocked && hasCompletedActions;
   const allActionsCompleted = standards.every(([id]) => completedStandards.has(id));
   if (challengePercentEl) challengePercentEl.textContent = challengeActivation.readState === 'loading'
     || (challengeActivation.status === 'active' && !Number.isInteger(submittedCount)) ? '—' : `${challengePercent}%`;
-  if (challengeDayEl) challengeDayEl.textContent = challengeActivation.status === 'active'
-    ? Number.isInteger(submittedCount) ? `${submittedCount} of 77 check-ins` : 'Progress unavailable'
+  if (challengeDayEl) challengeDayEl.textContent = finished
+    ? currentInstance?.provenance === 'legacy_completed' ? 'Completed · history preserved' : `${submittedCount} of ${targetCount} check-ins`
+    : challengeActivation.status === 'active'
+    ? Number.isInteger(submittedCount) ? `${submittedCount} of ${targetCount} check-ins` : 'Progress unavailable'
     : challengeActivation.status === 'scheduled'
       ? 'Scheduled'
       : challengeActivation.readState === 'error'
@@ -1165,7 +1187,9 @@ function render() {
   if (checkInButton) {
     checkInButton.disabled = !hasPostableCheckIn || dailyDraftBusy;
     checkInButton.classList.toggle('is-complete', submittedToday);
-    checkInButton.textContent = submissionPendingToday
+    checkInButton.textContent = committedRefreshPending
+      ? 'Refreshing...'
+      : submissionPendingToday
       ? 'Posting...'
       : submittedToday
         ? 'Today’s Check-In Complete'
@@ -1186,7 +1210,7 @@ function render() {
       : currentNotice;
     checkInStatus.textContent = statusCopy;
     checkInStatus.classList.toggle('is-complete', submittedToday);
-    checkInStatus.setAttribute('aria-busy', String(submissionPendingToday));
+    checkInStatus.setAttribute('aria-busy', String(submissionPendingToday || committedRefreshPending));
   }
   if (countdownCheckInButton) {
     countdownCheckInButton.disabled = !canMutateChallenge()
@@ -1249,8 +1273,9 @@ function applyPostedChallengeActivation(nextActivation, owner) {
   // count with an older snapshot after the mutation's own read cache cleared.
   dashboardHydrationRequestId += 1;
   const valid = Boolean(nextActivation?.contractValid && nextActivation.readState === 'ready'
-    && nextActivation.originalProgress?.userId === owner.userId
-    && nextActivation.originalProgress.completionState !== 'invalid_evidence');
+    && nextActivation.actorId === owner.userId
+    && nextActivation.schemaVersion === 2
+    && nextActivation.currentInstance?.id === owner.instanceId);
   challengeActivation = valid ? nextActivation : createChallengeActivationState('error');
   if (valid) {
     userTimeZone = nextActivation.timeZone || BROWSER_TIME_ZONE;
@@ -1279,6 +1304,7 @@ function clearDashboardUserState() {
   pendingDetailsNavigation = '';
   checkInSubmissionPending = false;
   checkInSubmissionDate = '';
+  committedCheckInRefreshPending = 0;
   lastCheckInSubmissionAt = 0;
   checkInNotice = '';
   checkInNoticeDate = '';
@@ -1309,38 +1335,6 @@ async function hydrateDashboardFromApi(expectedOwnerId = observedAuthOwner) {
   const requestedOwner = String(expectedOwnerId || '');
 
   try {
-    if (localDemoMode) {
-      const currentUser = await getLocalOrSessionUser();
-      const dashboardOwner = String(currentUser?.userId || '');
-      if (!dashboardOwner) throw new Error('You need to log in again.');
-      if ((requestedOwner && requestedOwner !== dashboardOwner)
-        || (observedAuthOwner && observedAuthOwner !== dashboardOwner)) return;
-      const activation = await getChallengeActivation({ expectedUserId: dashboardOwner });
-      if (requestId !== dashboardHydrationRequestId
-        || (observedAuthOwner && observedAuthOwner !== dashboardOwner)) return;
-      observedAuthOwner ||= dashboardOwner;
-      hydratedAuthOwner = dashboardOwner;
-      challengeActivation = activation;
-      userTimeZone = activation.timeZone || BROWSER_TIME_ZONE;
-      readPreviewDashboardUserState(dashboardOwner);
-      checkInCacheOwner = mockCheckInOwnerForUser(dashboardOwner);
-      const storedCache = readPreviewUserValue(
-        localStorage,
-        dashboardOwner,
-        checkInDatesStorageKey(),
-        {},
-      );
-      const ownerCache = migrateMockCheckInCache(storedCache, dashboardOwner, currentUser.email);
-      writePreviewUserValue(localStorage, dashboardOwner, checkInDatesStorageKey(), ownerCache);
-      submittedCheckInDates = new Set(ownerCache.dates);
-      submittedChallengeDays = new Set(ownerCache.challengeDays);
-      startDate = activation.startDate || '';
-      renderedDateKey = todayKey();
-      checkInStatusHydratedDate = renderedDateKey;
-      render();
-      return;
-    }
-
     const dashboard = await getDashboard();
     if (requestId !== dashboardHydrationRequestId) return;
     const dashboardOwner = String(dashboard?.profile?.userId || '');
@@ -1349,13 +1343,14 @@ async function hydrateDashboardFromApi(expectedOwnerId = observedAuthOwner) {
       || (observedAuthOwner && observedAuthOwner !== dashboardOwner)) return;
     observedAuthOwner ||= dashboardOwner;
     hydratedAuthOwner = dashboardOwner;
-    if (dashboardOwner !== checkInCacheOwner) {
-      checkInCacheOwner = dashboardOwner;
-      const ownerCache = checkInCacheForOwner(load(CHECK_IN_DATES_STORAGE_KEY, {}), checkInCacheOwner);
-      submittedCheckInDates = new Set(ownerCache.dates);
-      submittedChallengeDays = new Set(ownerCache.challengeDays);
-    }
+    if (localDemoMode) previewChallengeState = normalizePreviewChallengeState(
+      readPreviewUserValue(localStorage, dashboardOwner, PREVIEW_CHALLENGE_STORAGE_KEY, {}), calendarTodayKey());
     challengeActivation = dashboard?.activation || createChallengeActivationState('error');
+    checkInCacheOwner = dashboardOwner;
+    const ownerCache = checkInCacheForOwner(load(CHECK_IN_DATES_STORAGE_KEY, {}), checkInCacheOwner,
+      challengeActivation.currentInstance?.id ?? null);
+    submittedCheckInDates = new Set(ownerCache.dates);
+    submittedChallengeDays = new Set(ownerCache.challengeDays);
     if (challengeActivation.timeZone || dashboard?.profile?.timeZone) {
       userTimeZone = challengeActivation.timeZone || dashboard.profile.timeZone;
       renderedDateKey = todayKey();
@@ -1373,14 +1368,12 @@ async function hydrateDashboardFromApi(expectedOwnerId = observedAuthOwner) {
     }
     if (Array.isArray(dashboard?.checkIns)) {
       replaceSubmittedCheckIns({
-        dates: [...submittedCheckInDates, ...dashboard.checkIns.map((checkIn) => checkIn.date)],
-        challengeDays: [
-          ...submittedChallengeDays,
-          ...dashboard.checkIns.map((checkIn) => checkIn.challengeDay),
-        ],
+        dates: [...submittedCheckInDates, ...dashboard.checkIns.map((checkIn) => checkIn.date),
+          ...(dashboard.globalSubmittedDates || [])],
+        challengeDays: dashboard.checkIns.map((checkIn) => checkIn.challengeDay),
       });
     }
-    const hydratedDate = dateKeyForTimeZone(requestStartedAt, userTimeZone);
+    const hydratedDate = localDemoMode ? dashboard.activation.serverDate : dateKeyForTimeZone(requestStartedAt, userTimeZone);
     if (todayKey() === hydratedDate) checkInStatusHydratedDate = hydratedDate;
     if (Array.isArray(dashboard?.feed)) {
       feed = dashboard.feed;
@@ -1413,6 +1406,8 @@ async function handleDashboardAuthOwnerChange(nextUser, { force = false } = {}) 
   const nextOwner = String(nextUser?.userId || '');
   if (!force && nextOwner && nextOwner === observedAuthOwner) return;
   invalidateDashboardOwner(nextOwner);
+  const ownerEpoch = authOwnerEpoch;
+  const current = () => ownerEpoch === authOwnerEpoch && observedAuthOwner === nextOwner;
   if (!nextOwner) {
     redirectToLogin();
     return;
@@ -1420,7 +1415,7 @@ async function handleDashboardAuthOwnerChange(nextUser, { force = false } = {}) 
 
   try {
     const billing = await getBillingState();
-    if (observedAuthOwner !== nextOwner) return;
+    if (!current()) return;
     if (!billing.authenticated) {
       redirectToLogin();
       return;
@@ -1430,9 +1425,10 @@ async function handleDashboardAuthOwnerChange(nextUser, { force = false } = {}) 
       return;
     }
     await hydrateDashboardFromApi(nextOwner);
+    if (!current()) return;
     await recoverPendingCelebrations();
   } catch (error) {
-    if (observedAuthOwner !== nextOwner) return;
+    if (!current()) return;
     console.warn('Unable to rehydrate the dashboard after an account change', error);
     clearDashboardUserState();
     challengeActivation = createChallengeActivationState('error');
@@ -1440,8 +1436,35 @@ async function handleDashboardAuthOwnerChange(nextUser, { force = false } = {}) 
   }
 }
 
+function handleDashboardAuthStateChange({ event, user, sessionIdentity } = {}) {
+  const nextSession = String(sessionIdentity || '');
+  const nextOwner = String(user?.userId || '');
+  const sessionChanged = observedAuthSession === null
+    ? Boolean(nextOwner && nextOwner === observedAuthOwner && event !== 'INITIAL_SESSION')
+    : observedAuthSession !== nextSession;
+  observedAuthSession = nextSession;
+  return handleDashboardAuthOwnerChange(user, { force: sessionChanged });
+}
+
+async function refreshCommittedCheckInForCurrentOwner(submissionOwner, error) {
+  if (!error?.checkInCommitted) return false;
+  const recoveryOwner = { userId: observedAuthOwner, epoch: authOwnerEpoch };
+  if (!recoveryOwner.userId || recoveryOwner.userId !== submissionOwner?.userId) return false;
+  committedCheckInRefreshPending += 1;
+  render();
+  try {
+    await hydrateDashboardFromApi(recoveryOwner.userId);
+    return recoveryOwner.epoch === authOwnerEpoch && recoveryOwner.userId === observedAuthOwner;
+  } finally {
+    if (recoveryOwner.epoch === authOwnerEpoch && recoveryOwner.userId === observedAuthOwner) {
+      committedCheckInRefreshPending = Math.max(committedCheckInRefreshPending - 1, 0);
+      render();
+    }
+  }
+}
+
 async function refreshGameSummary(owner = captureMutationOwner()) {
-  if (!hasSupabaseAuth() || !owner) return [];
+  if ((!hasSupabaseAuth() && !localDemoMode) || !owner) return [];
   const summary = await getGameSummary();
   if (!isCurrentMutationOwner(owner)) return [];
   gameStats = preserveBestStreaks(summary.gameStats, gameStats);
@@ -1621,7 +1644,7 @@ document.addEventListener('change', (event) => {
     render();
     return;
   }
-  const owner = captureMutationOwner();
+  const owner = captureRunMutationOwner();
   if (!owner) return;
   const currentEntry = todayEntry();
   workoutDifficulty = normalizeWorkoutDifficulty({ ...workoutDifficulty, [target.dataset.workout]: target.value });
@@ -1636,19 +1659,15 @@ document.addEventListener('change', (event) => {
   });
   render();
 
-  if (!hasSupabaseAuth()) {
-    pendingWorkoutMutations.delete(target.dataset.workout);
-    render();
-    return;
-  }
   entrySaveQueue = entrySaveQueue
-    .then(() => setDailyStandardWorkoutDifficulty({
+    .then(() => runCurrentDraftMutation(owner, () => setDailyStandardWorkoutDifficulty({
       date: currentEntry.date,
       workoutId: target.dataset.workout,
       difficulty: target.value,
       expectedVersion: currentEntry.version,
       expectedUserId: owner.userId,
-    }))
+      expectedInstanceId: owner.instanceId,
+    })))
     .then((authoritative) => {
       if (!isCurrentMutationOwner(owner)) return;
       if (pendingWorkoutMutations.get(target.dataset.workout) === target.value) pendingWorkoutMutations.delete(target.dataset.workout);
@@ -1719,7 +1738,7 @@ window.addEventListener('storage', (event) => {
       checkInDatesStorageKey(),
       {},
     );
-    const cache = checkInCacheForOwner(storedCache, checkInCacheOwner);
+    const cache = checkInCacheForOwner(storedCache, checkInCacheOwner, challengeActivation.currentInstance?.id ?? null);
     submittedCheckInDates = new Set(cache.dates);
     submittedChallengeDays = new Set(cache.challengeDays);
     if (hasSubmittedCheckIn()) setCheckInNotice(todayKey(), CHECK_IN_ALREADY_COMPLETE_MESSAGE);
@@ -1727,6 +1746,7 @@ window.addEventListener('storage', (event) => {
     return;
   }
   if (localDemoMode && [
+    `dominion:challengeAggregateV2:${observedAuthOwner}`,
     PREVIEW_USER_STATE_STORAGE_KEY,
     PREVIEW_CHALLENGE_STORAGE_KEY,
     ENTRY_STORAGE_KEY,
@@ -1775,7 +1795,7 @@ if (checkInButton) checkInButton.addEventListener('click', async () => {
   const submissionDay = currentDay();
   const simulatedPreviewPost = previewChallengeMode();
   if (!canMutateChallenge() || !isCheckInStatusReady(entry.date)) return;
-  const submissionOwner = captureMutationOwner();
+  const submissionOwner = captureRunMutationOwner();
   if (!submissionOwner) return;
   if (isCheckInPending(entry.date)) return;
   if (hasSubmittedCheckIn(entry.date)) {
@@ -1784,7 +1804,7 @@ if (checkInButton) checkInButton.addEventListener('click', async () => {
     return;
   }
   if (isChallengeFinished()) {
-    window.alert('The original challenge is complete. Review your earned badges and rewards on the Rewards page.');
+    window.alert('This challenge is complete. Visit Rewards to choose your next challenge.');
     render();
     return;
   }
@@ -1814,11 +1834,12 @@ if (checkInButton) checkInButton.addEventListener('click', async () => {
   render();
 
   try {
-    if (hasSupabaseAuth()) {
+    if (hasSupabaseAuth() || localDemoMode) {
       await entrySaveQueue;
       if (!isCurrentMutationOwner(submissionOwner)) return;
       entry = await getDailyStandardDraft(entry.date, {
         expectedUserId: submissionOwner.userId,
+        expectedInstanceId: submissionOwner.instanceId,
       });
       if (!isCurrentMutationOwner(submissionOwner)) return;
       replaceEntry(entry);
@@ -1835,7 +1856,7 @@ if (checkInButton) checkInButton.addEventListener('click', async () => {
           workoutDifficulty,
           timeZone: userTimeZone,
         },
-        { expectedUserId: submissionOwner.userId },
+        { expectedUserId: submissionOwner.userId, expectedInstanceId: submissionOwner.instanceId },
       );
       if (!isCurrentMutationOwner(submissionOwner)) return;
       submissionCommitted = true;
@@ -1848,37 +1869,10 @@ if (checkInButton) checkInButton.addEventListener('click', async () => {
       markCheckInSubmitted(entry.date, submissionDay);
       if (!applyPostedChallengeActivation(postedActivation, submissionOwner)) throw new Error('Your check-in is posted; progress needs to refresh.');
       setCheckInNotice(entry.date, isChallengeFinished()
-        ? 'Your 77th check-in is posted. You completed the original challenge.'
+        ? `Your final check-in is posted. You completed ${challengeActivation.currentInstance.title}.`
         : 'Today’s check-in is posted. Come back tomorrow for your next check-in.');
       await refreshGameSummary(submissionOwner);
-      earnedBadges = await collectPendingBadgeCelebrations(submissionOwner);
-    } else {
-      const postedBadges = await recordPreviewCheckInBadges({ ...entry, day: submissionDay,
-        createdAt: feedItem.createdAt, workoutDifficultySelections: selectedWorkoutDifficulty },
-      { expectedUserId: submissionOwner.userId, requireNew: true });
-      if (!isCurrentMutationOwner(submissionOwner)) return;
-      submissionCommitted = true;
-      if (!markCheckInSubmitted(entry.date, submissionDay)) throw createCheckInAlreadyCompleteError();
-      badges = postedBadges;
-      const postedActivation = await getChallengeActivation({ expectedUserId: submissionOwner.userId });
-      if (!isCurrentMutationOwner(submissionOwner)) return;
-      if (!applyPostedChallengeActivation(postedActivation, submissionOwner)) throw new Error('Your check-in is posted; progress needs to refresh.');
-      setCheckInNotice(entry.date, 'Today’s check-in is posted. Come back tomorrow for the next challenge day.');
-      let points = calculateLocalPoints(entry, status);
-      let nextStreak = gameStats.currentFullDayStreak || 0;
-      if (simulatedPreviewPost) {
-        gameStats = preserveBestStreaks(advancePreviewStreaks(gameStats, status, entry.date), gameStats);
-        nextStreak = gameStats.currentFullDayStreak;
-      } else if (status === 'complete') {
-        nextStreak += 1;
-        gameStats.currentFullDayStreak = nextStreak;
-        gameStats.bestFullDayStreak = Math.max(gameStats.bestFullDayStreak || 0, nextStreak);
-      }
-      gameStats.totalPoints = (gameStats.totalPoints || 0) + points;
-      gameStats.challengePoints = (gameStats.challengePoints || 0) + points;
-      gameStats.dailyStandardsPoints = (gameStats.dailyStandardsPoints || 0) + points;
-      feedItem.pointsAwarded = points;
-      if (simulatedPreviewPost) advanceCommittedPreviewPost(entry, submissionDay);
+      if (localDemoMode && simulatedPreviewPost) advanceCommittedPreviewPost(entry, submissionDay);
       earnedBadges = await collectPendingBadgeCelebrations(submissionOwner);
     }
 
@@ -1899,15 +1893,18 @@ if (checkInButton) checkInButton.addEventListener('click', async () => {
     });
     await queuePermanentRewardAndChallengeCelebrations(submissionOwner);
   } catch (error) {
-    if (!isCurrentMutationOwner(submissionOwner)) return;
+    if (!isCurrentMutationOwner(submissionOwner)) {
+      await refreshCommittedCheckInForCurrentOwner(submissionOwner, error);
+      return;
+    }
     console.warn('Unable to sync check-in', error);
     if (error?.code === CHECK_IN_ALREADY_COMPLETE_CODE) {
       markCheckInSubmitted(entry.date, submissionDay);
       setCheckInNotice(entry.date, error.message || CHECK_IN_ALREADY_COMPLETE_MESSAGE);
-      if (hasSupabaseAuth()) await hydrateDashboardFromApi(submissionOwner.userId);
+      if (hasSupabaseAuth() || localDemoMode) await hydrateDashboardFromApi(submissionOwner.userId);
     } else if (submissionCommitted || error?.checkInCommitted) {
       setCheckInNotice(entry.date, 'Today’s check-in is posted. Your progress and rewards are refreshing.');
-      if (hasSupabaseAuth()) await hydrateDashboardFromApi(submissionOwner.userId);
+      if (hasSupabaseAuth() || localDemoMode) await hydrateDashboardFromApi(submissionOwner.userId);
     } else {
       window.alert(error?.message || 'Unable to post that check-in right now.');
     }
@@ -1939,8 +1936,8 @@ async function bootDashboard() {
       return;
     }
     invalidateDashboardOwner(currentUser.userId);
-    const unsubscribeAuth = subscribeToAuthStateChanges(({ user }) => {
-      void handleDashboardAuthOwnerChange(user);
+    const unsubscribeAuth = subscribeToAuthStateChanges((change) => {
+      void handleDashboardAuthStateChange(change);
     });
     window.addEventListener('pagehide', unsubscribeAuth, { once: true });
     window.addEventListener('pagehide', () => invalidateDashboardOwner(''), { once: true });

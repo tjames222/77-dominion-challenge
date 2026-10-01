@@ -72,11 +72,11 @@ before(async () => {
   checkpoint = await readFile(new URL('./verify-production-account-request-inbox.sql', import.meta.url), 'utf8');
   const names = (await readdir(migrationDirectory)).filter(name => /^\d{14}_[a-z0-9_]+\.sql$/.test(name)).sort();
   history = names.map(name => ({ version: name.slice(0, 14), name: name.slice(15, -4) }));
-  assert.equal(history.length, 70, 'This release checkpoint is pinned to exactly 70 source migrations.');
-  assert.equal(new Set(history.map(row => row.version)).size, 70);
+  assert.equal(history.length, 71, 'This release checkpoint is pinned to exactly 71 source migrations.');
+  assert.equal(new Set(history.map(row => row.version)).size, 71);
   assert.equal(createHash('sha256').update(history.map(row => row.version).join(',')).digest('hex'),
-    '09d7293ce15add9360f88a89337ea54822e64f015b1e6ef63eaba1543f36c872');
-  assert.deepEqual(history.at(-1), { version: '20260930161218', name: 'share_submitted_progress_v2' });
+    'e6090c27e44dd678cab1b8178058f780bec2d0b4dcd99dee0d96407d24a5bb26');
+  assert.deepEqual(history.at(-1), { version: '20261001001245', name: 'repeatable_challenge_instances_v2' });
   const migrations = await Promise.all(migrationFiles.map(file => readFile(new URL(file, migrationDirectory), 'utf8')));
   const inspected = docker(['image', 'inspect', image, '--format', '{{.Id}}']);
   assert.equal(inspected.status, 0, 'Pinned PostgreSQL image must already be cached; this test never downloads images.');
@@ -177,14 +177,14 @@ test('removing the inbox migration cannot satisfy the original77 checkpoint', ()
   driftProbe("DELETE FROM supabase_migrations.schema_migrations WHERE version='20260929000950';", [0]);
 });
 
-for (const lastVersion of ['20260927233055', '20260929000950', '20260930152825', '20260930160740']) {
-  test(`earlier history through ${lastVersion} cannot satisfy the exact70 checkpoint`, () => {
+for (const lastVersion of ['20260927233055', '20260929000950', '20260930152825', '20260930160740', '20260930161218']) {
+  test(`earlier history through ${lastVersion} cannot satisfy the exact71 checkpoint`, () => {
     driftProbe(`DELETE FROM supabase_migrations.schema_migrations WHERE version>${literal(lastVersion)};`, [0]);
   });
 }
 
-for (const version of ['20260930152825', '20260930160740', '20260930161218']) {
-  test(`incorrect original77 migration name for ${version} is rejected`, () => {
+for (const version of ['20260930152825', '20260930160740', '20260930161218', '20261001001245']) {
+  test(`incorrect reviewed suffix migration name for ${version} is rejected`, () => {
     driftProbe(`UPDATE supabase_migrations.schema_migrations SET name='wrong_original77_name' WHERE version=${literal(version)};`, [0]);
   });
 }

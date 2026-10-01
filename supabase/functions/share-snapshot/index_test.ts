@@ -10,6 +10,8 @@ import { createPublicShareWorker } from "../../../src/cloudflare/public-share-wo
 
 const token = "a".repeat(64);
 const snapshotId = "10000000-0000-4000-8000-000000000001";
+const actorId = "20000000-0000-4000-8000-000000000002";
+const instanceId = "30000000-0000-4000-8000-000000000003";
 const env = (name: string) => ({
   PUBLIC_SITE_URL: "https://dominion.example",
   PUBLIC_SHARE_URL: "https://share.dominion.example/s",
@@ -37,14 +39,31 @@ function rpcClient(
   handler: (name: string, args?: Record<string, unknown>) => unknown,
 ) {
   return {
-    rpc: async (name: string, args?: Record<string, unknown>) => ({
-      data: handler(name, args),
-      error: null,
-    }),
+    rpc: async (name: string, args?: Record<string, unknown>) => {
+      const data = handler(name, args);
+      return {
+        data: name.endsWith("_v2") && data && typeof data === "object" &&
+            !Object.hasOwn(data, "context")
+          ? {
+            ...data,
+            context: {
+              schemaVersion: 2,
+              actorId,
+              instanceId: args?.target_kind === "progress" ? instanceId : null,
+            },
+          }
+          : data,
+        error: null,
+      };
+    },
   };
 }
 
-function request(method: string, body?: unknown, path = "share-snapshot") {
+function legacyRequest(
+  method: string,
+  body?: unknown,
+  path = "share-snapshot",
+) {
   return new Request(`https://functions.example/${path}`, {
     method,
     headers: {
@@ -56,9 +75,32 @@ function request(method: string, body?: unknown, path = "share-snapshot") {
   });
 }
 
+function request(method: string, body?: unknown, path = "share-snapshot") {
+  if (
+    body && typeof body === "object" &&
+    ["preview", "create"].includes((body as any).action)
+  ) {
+    body = {
+      ...body,
+      ...(!Object.hasOwn(body, "contractVersion")
+        ? { contractVersion: 2 }
+        : {}),
+      ...(!Object.hasOwn(body, "expectedUserId")
+        ? { expectedUserId: actorId }
+        : {}),
+    };
+  }
+  if (
+    body && typeof body === "object" && (body as any).action === "create" &&
+    (body as any).kind === "progress" &&
+    !Object.hasOwn(body, "expectedInstanceId")
+  ) body = { ...body, expectedInstanceId: instanceId };
+  return legacyRequest(method, body, path);
+}
+
 function testHandler(overrides: Record<string, unknown> = {}) {
   return createHandler({
-    requireUser: async () => ({ id: "user-1" }),
+    requireUser: async () => ({ id: actorId }),
     createUserClient: () => rpcClient(() => null),
     createAdminClient: () => rpcClient(() => null),
     env,
@@ -78,6 +120,124 @@ const streakSnapshot = {
   },
   expiresAt: "2026-08-19T00:00:00Z",
 };
+
+Deno.test("preview and create reject a changed actor before calling any RPC", async () => {
+  let calls = 0;
+  const handler = testHandler({
+    createUserClient: () =>
+      rpcClient(() => {
+        calls += 1;
+        return streakSnapshot;
+      }),
+  });
+  for (const action of ["preview", "create"]) {
+    for (const expectedUserId of [null, snapshotId]) {
+      const response = await handler(
+        request("POST", { action, kind: "streak", expectedUserId }),
+      );
+      assertEquals(response.status, 409);
+    }
+  }
+  assertEquals(calls, 0);
+});
+
+Deno.test("unversioned old clients use only the exact pre-instance preview and create RPCs", async () => {
+  const calls: Array<[string, Record<string, unknown> | undefined]> = [];
+  let authenticated = 0;
+  const handler = testHandler({
+    requireUser: async () => {
+      authenticated += 1;
+      return { id: actorId };
+    },
+    createUserClient: () =>
+      rpcClient((name, args) => {
+        calls.push([name, args]);
+        return name === "create_share_snapshot"
+          ? { ...streakSnapshot, snapshotId, token }
+          : streakSnapshot;
+      }),
+  });
+
+  const preview = await handler(legacyRequest("POST", {
+    action: "preview",
+    kind: "streak",
+  }));
+  const create = await handler(legacyRequest("POST", {
+    action: "create",
+    kind: "streak",
+  }));
+
+  assertEquals(preview.status, 200);
+  assertEquals(create.status, 201);
+  assertEquals(authenticated, 2);
+  assertEquals(calls, [["preview_share_snapshot", { target_kind: "streak" }], [
+    "create_share_snapshot",
+    { target_kind: "streak", target_expires_at: null },
+  ]]);
+});
+
+Deno.test("share request contract rejects unsupported versions and mixed legacy-instance shapes", async () => {
+  let calls = 0;
+  const handler = testHandler({
+    createUserClient: () =>
+      rpcClient(() => {
+        calls += 1;
+        return streakSnapshot;
+      }),
+  });
+  for (const contractVersion of [null, 0, 1, 3, "2", true, {}]) {
+    const response = await handler(legacyRequest("POST", {
+      action: "preview",
+      kind: "streak",
+      contractVersion,
+    }));
+    assertEquals(response.status, 400);
+  }
+  for (
+    const fields of [
+      { expectedUserId: actorId },
+      { expectedInstanceId: instanceId },
+      { expectedUserId: actorId, expectedInstanceId: instanceId },
+    ]
+  ) {
+    const response = await handler(legacyRequest("POST", {
+      action: "preview",
+      kind: "streak",
+      ...fields,
+    }));
+    assertEquals(response.status, 400);
+  }
+  assertEquals(calls, 0);
+});
+
+Deno.test("explicit instance contract failures never fall back to legacy RPCs", async () => {
+  for (
+    const [action, kind] of [["preview", "streak"], ["create", "progress"]]
+  ) {
+    const calls: string[] = [];
+    const response = await testHandler({
+      createUserClient: () => ({
+        rpc: async (name: string) => {
+          calls.push(name);
+          return {
+            data: null,
+            error: {
+              message: action === "preview"
+                ? "function preview_share_snapshot_v2 does not exist"
+                : "candidate V2 write failed",
+            },
+          };
+        },
+      }),
+    })(request("POST", { action, kind }));
+    assertEquals(response.status, 500);
+    assertEquals(calls, [
+      action === "preview"
+        ? "preview_share_snapshot_v2"
+        : "create_share_snapshot_v2",
+    ]);
+  }
+});
 
 Deno.test("share presentation distinguishes streak, progress, and general payloads", () => {
   assertEquals(sharePresentation(streakSnapshot as any).metric, "12");
@@ -237,6 +397,98 @@ Deno.test("V2 preview, create and public delivery preserve the same bounded pres
   );
 });
 
+Deno.test("V3 shares support each configured run without exposing private identifiers", async () => {
+  for (
+    const [challengeKey, title, target] of [
+      ["original_77", "77-Day Dominion Challenge", 77],
+      ["seven_day_reset", "7-Day Reset", 7],
+      ["twenty_one_day_prayer", "21-Day Prayer Track", 21],
+      ["thirty_day_strength", "30-Day Strength Intensive", 30],
+      ["forty_day_fast", "40-Day Fasting & Prayer Track", 40],
+      ["bible_in_a_year", "Bible in a Year", 365],
+    ] as const
+  ) {
+    const snapshot = {
+      schemaVersion: 3,
+      kind: "progress" as const,
+      snapshotId,
+      token,
+      payload: {
+        schemaVersion: 3,
+        kind: "progress",
+        challengeKey,
+        title,
+        submittedCheckIns: target,
+        targetCheckIns: target,
+      },
+    };
+    assertEquals(sharePresentation(snapshot).metric, `${target}/${target}`);
+    assertEquals(sharePresentation(snapshot).eyebrow, title);
+    const handler = testHandler({
+      createUserClient: () => rpcClient(() => snapshot),
+      createAdminClient: () => rpcClient(() => snapshot),
+    });
+    for (const action of ["preview", "create"]) {
+      const response = await handler(
+        request("POST", { action, kind: "progress" }),
+      );
+      assertEquals(response.status, action === "preview" ? 200 : 201);
+      assertEquals((await responseJson(response)).schemaVersion, 3);
+    }
+    const response = await handler(
+      request("GET", undefined, `share-snapshot/${token}`),
+    );
+    assertEquals(response.status, 200);
+    const html = await response.text();
+    assert(html.includes(`${target} of ${target} Dominion check-ins`));
+    for (
+      const privateTerm of ["instanceId", "actorId", "scopeKey", "Finisher"]
+    ) assert(!html.includes(privateTerm));
+  }
+});
+
+Deno.test("V3 public shares reject unknown definitions, false targets and private extra fields", async () => {
+  const valid = {
+    schemaVersion: 3,
+    kind: "progress",
+    challengeKey: "seven_day_reset",
+    title: "7-Day Reset",
+    submittedCheckIns: 6,
+    targetCheckIns: 7,
+  };
+  for (
+    const patch of [
+      { challengeKey: "unknown" },
+      { challengeKey: "__proto__" },
+      { title: "<script>bad</script>" },
+      { targetCheckIns: 77 },
+      { targetCheckIns: "7" },
+      { schemaVersion: 2 },
+      { kind: "streak" },
+      { submittedCheckIns: 8 },
+      { submittedCheckIns: -1 },
+      { submittedCheckIns: 1.5 },
+      { submittedCheckIns: "6" },
+      { submittedCheckIns: null },
+      { actorId: "private-owner" },
+      { instanceId: snapshotId },
+      { scopeKey: `instance:${snapshotId}` },
+      { completedAt: "2026-09-30T12:00:00Z" },
+      { currentChallengeDay: 6 },
+    ]
+  ) {
+    const response = await testHandler({
+      createAdminClient: () =>
+        rpcClient(() => ({
+          schemaVersion: 3,
+          kind: "progress",
+          payload: { ...valid, ...patch },
+        })),
+    })(request("GET", undefined, `share-snapshot/${token}`));
+    assertEquals(response.status, 404);
+  }
+});
+
 Deno.test("public GET resolves an opaque token and emits hardened no-store HTML", async () => {
   let receivedToken = "";
   const response = await testHandler({
@@ -258,6 +510,76 @@ Deno.test("public GET resolves an opaque token and emits hardened no-store HTML"
   const html = await response.text();
   assert(html.includes("12-day Dominion app streak"));
   assert(html.includes(`https://share.dominion.example/s/${token}`));
+});
+
+Deno.test("progress creation requires the preview run and rejects mismatched protected context", async () => {
+  let calls = 0;
+  const handler = testHandler({
+    createUserClient: () =>
+      rpcClient(() => {
+        calls++;
+        return null;
+      }),
+  });
+  for (const expectedInstanceId of [null, "bad", 1]) {
+    const response = await handler(
+      request("POST", {
+        action: "create",
+        kind: "progress",
+        expectedInstanceId,
+      }),
+    );
+    assertEquals(response.status, 400);
+  }
+  assertEquals(calls, 0);
+  const snapshot = {
+    schemaVersion: 3,
+    kind: "progress",
+    snapshotId,
+    token,
+    payload: {
+      schemaVersion: 3,
+      kind: "progress",
+      challengeKey: "seven_day_reset",
+      title: "7-Day Reset",
+      submittedCheckIns: 1,
+      targetCheckIns: 7,
+    },
+  };
+  for (
+    const context of [null, { schemaVersion: 1, actorId, instanceId }, {
+      schemaVersion: 2,
+      actorId: "another-actor",
+      instanceId,
+    }, { schemaVersion: 2, actorId, instanceId: snapshotId }]
+  ) {
+    const response = await testHandler({
+      createUserClient: () => rpcClient(() => ({ ...snapshot, context })),
+    })(
+      request("POST", {
+        action: "create",
+        kind: "progress",
+        expectedInstanceId: instanceId,
+      }),
+    );
+    assertEquals(response.status, 500);
+    const body = await responseJson(response);
+    assertEquals(body.url, undefined);
+    assertEquals(body.token, undefined);
+  }
+});
+
+Deno.test("preview and create reject a valid snapshot for a different requested kind", async () => {
+  for (const action of ["preview", "create"]) {
+    const response = await testHandler({
+      createUserClient: () =>
+        rpcClient(() => ({ ...streakSnapshot, snapshotId, token })),
+    })(request("POST", { action, kind: "progress" }));
+    assertEquals(response.status, 500);
+    const body = await responseJson(response);
+    assertEquals(body.url, undefined);
+    assertEquals(body.payload, undefined);
+  }
 });
 
 Deno.test("invalid, expired, and revoked public links fail with the same generic page", async () => {
@@ -287,8 +609,12 @@ Deno.test("preview requires authentication and returns the exact public presenta
   const preview = await testHandler({
     createUserClient: () =>
       rpcClient((name, args) => {
-        assertEquals(name, "preview_share_snapshot");
-        assertEquals(args, { target_kind: "streak" });
+        assertEquals(name, "preview_share_snapshot_v2");
+        assertEquals(args, {
+          target_kind: "streak",
+          target_expected_actor_id: actorId,
+          target_expected_instance_id: null,
+        });
         return streakSnapshot;
       }),
   })(request("POST", { action: "preview", kind: "streak" }));
@@ -303,10 +629,12 @@ Deno.test("create returns the public URL but never returns a standalone raw toke
   const response = await testHandler({
     createUserClient: () =>
       rpcClient((name, args) => {
-        assertEquals(name, "create_share_snapshot");
+        assertEquals(name, "create_share_snapshot_v2");
         assertEquals(args, {
           target_kind: "progress",
           target_expires_at: null,
+          target_expected_actor_id: actorId,
+          target_expected_instance_id: instanceId,
         });
         return {
           schemaVersion: 1,
@@ -333,10 +661,12 @@ Deno.test("configured public share route overrides internal HTTP URLs and forged
     createUserClient: () =>
       rpcClient((name, args) => {
         rpcCalls += 1;
-        assertEquals(name, "create_share_snapshot");
+        assertEquals(name, "create_share_snapshot_v2");
         assertEquals(args, {
           target_kind: "streak",
           target_expires_at: null,
+          target_expected_actor_id: actorId,
+          target_expected_instance_id: null,
         });
         return { ...streakSnapshot, snapshotId, token };
       }),
@@ -351,7 +681,12 @@ Deno.test("configured public share route overrides internal HTTP URLs and forged
           Authorization: "Bearer synthetic-test-token",
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({ action: "create", kind: "streak" }),
+        body: JSON.stringify({
+          action: "create",
+          kind: "streak",
+          contractVersion: 2,
+          expectedUserId: actorId,
+        }),
       }),
     );
 

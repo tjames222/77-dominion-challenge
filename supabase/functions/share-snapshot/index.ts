@@ -136,18 +136,54 @@ function validSubmittedProgress(payload: Record<string, unknown>) {
     payload.targetCheckIns === 77;
 }
 
+// V3 adds the current configured challenge, never its private run or owner ID.
+const publicChallenges: Record<string, readonly [string, number]> = {
+  original_77: ["77-Day Dominion Challenge", 77],
+  seven_day_reset: ["7-Day Reset", 7],
+  twenty_one_day_prayer: ["21-Day Prayer Track", 21],
+  thirty_day_strength: ["30-Day Strength Intensive", 30],
+  forty_day_fast: ["40-Day Fasting & Prayer Track", 40],
+  bible_in_a_year: ["Bible in a Year", 365],
+};
+
+function validInstanceProgress(payload: Record<string, unknown>) {
+  const keys = Object.keys(payload).sort();
+  const challenge = typeof payload.challengeKey === "string" &&
+      Object.hasOwn(publicChallenges, payload.challengeKey)
+    ? publicChallenges[payload.challengeKey]
+    : null;
+  return JSON.stringify(keys) === JSON.stringify([
+        "challengeKey",
+        "kind",
+        "schemaVersion",
+        "submittedCheckIns",
+        "targetCheckIns",
+        "title",
+      ]) &&
+    payload.schemaVersion === 3 && payload.kind === "progress" &&
+    challenge !== null && payload.title === challenge[0] &&
+    payload.targetCheckIns === challenge[1] &&
+    typeof payload.submittedCheckIns === "number" &&
+    Number.isInteger(payload.submittedCheckIns) &&
+    payload.submittedCheckIns >= 0 && payload.submittedCheckIns <= challenge[1];
+}
+
 function normalizeSnapshot(value: unknown): ShareSnapshot | null {
   if (!value || typeof value !== "object") return null;
   const record = value as Record<string, unknown>;
   const kind = String(record.kind || "") as ShareKind;
   if (
-    !shareKinds.has(kind) || ![1, 2].includes(record.schemaVersion as number)
+    !shareKinds.has(kind) || ![1, 2, 3].includes(record.schemaVersion as number)
   ) {
     return null;
   }
   if (
     !record.payload || typeof record.payload !== "object" ||
     Array.isArray(record.payload)
+  ) return null;
+  if (
+    record.schemaVersion === 3 && (kind !== "progress" ||
+      !validInstanceProgress(record.payload as Record<string, unknown>))
   ) return null;
   if (
     record.schemaVersion === 2 &&
@@ -166,10 +202,13 @@ function normalizeSnapshot(value: unknown): ShareSnapshot | null {
 
 export function sharePresentation(snapshot: ShareSnapshot) {
   if (
-    ![1, 2].includes(snapshot.schemaVersion) ||
+    ![1, 2, 3].includes(snapshot.schemaVersion) ||
     (snapshot.schemaVersion === 2 &&
       (snapshot.kind !== "progress" ||
-        !validSubmittedProgress(snapshot.payload)))
+        !validSubmittedProgress(snapshot.payload))) ||
+    (snapshot.schemaVersion === 3 &&
+      (snapshot.kind !== "progress" ||
+        !validInstanceProgress(snapshot.payload)))
   ) throw new Error("Share snapshot response was invalid.");
   if (snapshot.kind === "streak") {
     const appStreak = wholeNumber(snapshot.payload.appStreak, 100000);
@@ -189,6 +228,19 @@ export function sharePresentation(snapshot: ShareSnapshot) {
   }
 
   if (snapshot.kind === "progress") {
+    if (snapshot.schemaVersion === 3) {
+      const count = snapshot.payload.submittedCheckIns as number;
+      const target = snapshot.payload.targetCheckIns as number;
+      const title = snapshot.payload.title as string;
+      return {
+        eyebrow: title,
+        title: `${count} of ${target} Dominion check-ins`,
+        description:
+          `${title}: ${count} of ${target} check-ins submitted. Partial check-ins count.`,
+        metric: `${count}/${target}`,
+        metricLabel: "submitted check-ins",
+      };
+    }
     if (snapshot.schemaVersion === 2) {
       const count = snapshot.payload.submittedCheckIns as number;
       return {
@@ -295,6 +347,15 @@ function renderUnavailableHtml(publicSiteOrigin: string) {
 }
 
 function safeRpcError(message = "") {
+  if (
+    message.includes("challenge_instance") ||
+    message.includes("Challenge changed")
+  ) {
+    return new HttpError(
+      "Your challenge changed. Reopen the share preview and try again.",
+      409,
+    );
+  }
   if (message.includes("rate limit")) {
     return new HttpError(
       "Share link rate limit reached. Try again later.",
@@ -384,7 +445,7 @@ export function createHandler(overrides: Partial<Dependencies> = {}) {
     }
 
     try {
-      await dependencies.requireUser(req);
+      const user = await dependencies.requireUser(req);
       const body = await parseJson(req);
       const action = String(body.action || "");
       const client = dependencies.createUserClient(req);
@@ -394,16 +455,94 @@ export function createHandler(overrides: Partial<Dependencies> = {}) {
         if (!shareKinds.has(kind)) {
           throw new HttpError("Choose a supported share type.", 400);
         }
-        const rpcName = action === "preview"
-          ? "preview_share_snapshot"
-          : "create_share_snapshot";
-        const args = action === "preview"
-          ? { target_kind: kind }
-          : { target_kind: kind, target_expires_at: body.expiresAt || null };
+        const contractVersion = body.contractVersion;
+        if (contractVersion !== undefined && contractVersion !== 2) {
+          throw new HttpError(
+            "Choose a supported share request contract.",
+            400,
+          );
+        }
+        const usesInstanceContract = contractVersion === 2;
+        if (
+          !usesInstanceContract &&
+          (Object.hasOwn(body, "expectedUserId") ||
+            Object.hasOwn(body, "expectedInstanceId"))
+        ) {
+          throw new HttpError(
+            "Choose a supported share request contract.",
+            400,
+          );
+        }
+        let expectedInstanceId: unknown = null;
+        let rpcName: string;
+        let args: Record<string, unknown>;
+        if (usesInstanceContract) {
+          if (body.expectedUserId !== user.id) {
+            throw new HttpError(
+              "The signed-in account changed. Reopen the share preview.",
+              409,
+            );
+          }
+          expectedInstanceId = body.expectedInstanceId ?? null;
+          if (
+            (expectedInstanceId !== null &&
+              (typeof expectedInstanceId !== "string" ||
+                !uuidPattern.test(expectedInstanceId))) ||
+            (kind === "progress" && action === "create" &&
+              expectedInstanceId === null) ||
+            (kind !== "progress" && expectedInstanceId !== null)
+          ) {
+            throw new HttpError(
+              "Reopen the share preview before creating a link.",
+              400,
+            );
+          }
+          rpcName = action === "preview"
+            ? "preview_share_snapshot_v2"
+            : "create_share_snapshot_v2";
+          args = action === "preview"
+            ? {
+              target_kind: kind,
+              target_expected_actor_id: user.id,
+              target_expected_instance_id: expectedInstanceId,
+            }
+            : {
+              target_kind: kind,
+              target_expires_at: body.expiresAt || null,
+              target_expected_actor_id: user.id,
+              target_expected_instance_id: expectedInstanceId,
+            };
+        } else {
+          rpcName = action === "preview"
+            ? "preview_share_snapshot"
+            : "create_share_snapshot";
+          args = action === "preview"
+            ? { target_kind: kind }
+            : { target_kind: kind, target_expires_at: body.expiresAt || null };
+        }
         const { data, error } = await client.rpc(rpcName, args);
         if (error) throw safeRpcError(error.message);
         const snapshot = normalizeSnapshot(data);
-        if (!snapshot) throw new Error("Share snapshot response was invalid.");
+        if (!snapshot || (usesInstanceContract && snapshot.kind !== kind)) {
+          throw new Error("Share snapshot response was invalid.");
+        }
+        if (usesInstanceContract) {
+          const context = (data as Record<string, unknown>).context as
+            | Record<string, unknown>
+            | null;
+          if (
+            !context || context.schemaVersion !== 2 ||
+            context.actorId !== user.id ||
+            (kind === "progress"
+              ? typeof context.instanceId !== "string" ||
+                !uuidPattern.test(context.instanceId)
+              : context.instanceId !== null) ||
+            (expectedInstanceId !== null &&
+              context.instanceId !== expectedInstanceId)
+          ) {
+            throw new Error("Share snapshot context was invalid.");
+          }
+        }
         const presentation = sharePresentation(snapshot);
         if (action === "preview") {
           return jsonResponse(

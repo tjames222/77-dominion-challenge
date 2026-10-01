@@ -13,9 +13,11 @@ describe('challenge activation client integration', () => {
     );
 
     assert.equal(
-      (activationApi.match(/return normalizeChallengeActivationMutation\(data, \{ expectedUserId: capturedActorId \}\);/g) || []).length,
+      (activationApi.match(/return normalizeChallengeActivationMutation\((?:data|activation), \{ expectedUserId: capturedActorId \}\);/g) || []).length,
       3,
     );
+    assert.equal((activationApi.match(/const activation = await getChallengeActivation\(\{ expectedUserId: capturedActorId \}\);/g) || []).length, 2);
+    assert.match(activationApi, /set_challenge_start_date_v2'[\s\S]*target_expected_instance_id: expectedInstanceId/);
     assert.equal((activationApi.match(/expectedUserId,/g) || []).length, 3);
     assert.equal(
       (activationApi.match(/requireCapturedActivationActor\(expectedUserId\)/g) || []).length,
@@ -33,16 +35,23 @@ describe('challenge activation client integration', () => {
       (activationApi.match(/requestId = newChallengeActivationRequestId\(\)/g) || []).length,
       3,
     );
-    for (const action of ['solo_activate', 'group_activate']) {
-      assert.match(activationApi, new RegExp(`action: '${action}'`));
-    }
+    assert.equal((activationApi.match(/return withPreviewAggregate\(userId, aggregate => \{/g) || []).length, 3);
+    assert.equal((activationApi.match(/activatePreviewInitial\(aggregate\.runtime,/g) || []).length, 2);
+    assert.equal((activationApi.match(/aggregate\.runtime = result\.state;\s*return previewActivationFor\(aggregate\);/g) || []).length, 3);
+    assert.match(activationApi, /requireCapturedChallengeInstance\(expectedInstanceId\)/);
+    assert.match(activationApi, /updatePreviewChallengeStartDate\(aggregate\.runtime, \{ actorId: userId, instanceId: expectedInstanceId,[\s\S]*requestId, startDate, timeZone, expectedRevision/);
+    assert.match(activationApi, /data\?\.schemaVersion !== 2 \|\| data\.currentInstance\?\.id !== expectedInstanceId/);
     assert.equal(
       (activationApi.match(/if \(userId !== capturedActorId\)/g) || []).length,
       3,
     );
     assert.match(api, /if \(!actorId\) \{[\s\S]*captured signed-in account is required/);
     assert.doesNotMatch(activationApi, /return normalizeChallengeActivation\(data\);/);
-    assert.match(api, /const normalized = normalizeChallengeActivationMutation\(activation, \{ expectedUserId: getMockUserId\(\), preview: true \}\);[\s\S]*const userId = getMockUserId\(\);[\s\S]*states\[userId\] = normalized/);
+    assert.match(api, /function previewActivationFor\(aggregate\)[\s\S]*normalizeChallengeActivationMutation\(raw, \{ expectedUserId: aggregate\.actorId, preview: true \}\)/);
+    const transaction = api.slice(api.indexOf('async function withPreviewAggregate'), api.indexOf('const getMockSubscription'));
+    assert.match(transaction, /getPreviewBadgeBoundary\(\)\.run\(actorId,/);
+    assert.match(transaction, /assertPreviewDeliveryOwner\(owner\);[\s\S]*let aggregate = readPreviewAggregate\(actorId\)/);
+    assert.match(transaction, /assertPreviewDeliveryOwner\(owner\);\s*if \(previousState !== JSON\.stringify\(aggregate\)\) \{[\s\S]*localStorage\.setItem\(`\$\{PREVIEW_AGGREGATE_PREFIX\}\$\{actorId\}`, JSON\.stringify\(aggregate\)\)/);
   });
 
   test('rehydrates a Daily Standard after activation events and mutation authorization failures', async () => {
@@ -52,7 +61,12 @@ describe('challenge activation client integration', () => {
     assert.match(page, /function refreshAfterChallengeActivationEvent\(event\)[\s\S]*interactiveReady = false;[\s\S]*void hydrate\(\)/);
     assert.match(page, /if \(saving\) \{[\s\S]*activationRefreshPending = true;[\s\S]*return;/);
     assert.equal((page.match(/activationRefreshPending = true;[\s\S]*?getDailyStandardDraft\(entryDate,/g) || []).length, 2);
-    assert.match(page, /const activation = await getChallengeActivation\(\{ expectedUserId: snapshotOwner \}\);[\s\S]*readLocalDraft\([\s\S]*activation,/);
+    const hydration = page.slice(page.indexOf('async function hydrate('), page.indexOf('function invalidateDailyStandardOwner'));
+    assert.match(hydration, /if \(hasSupabaseAuth\(\) \|\| localDemoMode\) \{\s*const snapshot = await getDailyActionBootstrap\(\{ expectedUserId: requestedOwner, timeZone: browserTimeZone \}\)/);
+    assert.match(hydration, /snapshotOwner = snapshot\.actorId;\s*if \(requestId !== hydrationRequestId \|\| observedAuthOwner !== snapshotOwner\) return/);
+    assert.match(hydration, /nextActivation = snapshot\.activation;\s*nextDate = snapshot\.entryDate;\s*nextDraft = snapshot\.draft/);
+    assert.match(hydration, /hydratedAuthOwner = snapshotOwner;\s*challengeActivation = nextActivation/);
+    assert.doesNotMatch(hydration, /getChallengeActivation\(|readLocalDraft\(/);
   });
 
   test('applies an event timezone before resetting and rehydrating Dashboard date state', async () => {
@@ -66,7 +80,12 @@ describe('challenge activation client integration', () => {
     assert.match(eventHandler, /renderedDateKey = todayKey\(\)/);
     assert.match(eventHandler, /checkInStatusHydratedDate = hasSupabaseAuth\(\) \? '' : renderedDateKey/);
     assert.match(eventHandler, /void hydrateDashboardFromApi\(\)/);
-    assert.match(dashboard, /if \(localDemoMode\) \{[\s\S]*const activation = await getChallengeActivation\(\{ expectedUserId: dashboardOwner \}\)/);
+    const hydration = dashboard.slice(dashboard.indexOf('async function hydrateDashboardFromApi('), dashboard.indexOf('async function handleDashboardAuthOwnerChange('));
+    assert.match(hydration, /if \(!hasSupabaseAuth\(\) && !localDemoMode\) return/);
+    assert.match(hydration, /const dashboard = await getDashboard\(\);\s*if \(requestId !== dashboardHydrationRequestId\) return/);
+    assert.match(hydration, /requestedOwner !== dashboardOwner[\s\S]*observedAuthOwner !== dashboardOwner\)\) return/);
+    assert.match(hydration, /challengeActivation = dashboard\?\.activation \|\| createChallengeActivationState\('error'\)/);
+    assert.doesNotMatch(hydration, /getChallengeActivation\(/);
     assert.doesNotMatch(dashboard, /let challengeActivation = localDemoMode[\s\S]*canMutateDailyStandards: true/);
   });
 
@@ -78,9 +97,10 @@ describe('challenge activation client integration', () => {
       header.indexOf("streakButton.addEventListener('click'"),
     );
 
-    assert.match(header, /const activation = await getChallengeActivation\(\{ expectedUserId: currentUser\?\.userId \}\);[\s\S]*localHeaderSnapshot\([\s\S]*activation/);
-    assert.match(header, /function localHeaderSnapshot\(user, storage, activation\)/);
+    assert.match(header, /const expectedUserId = currentUser\?\.userId \|\| '';[\s\S]*getChallengeActivation\(\{ expectedUserId \}\),[\s\S]*getGameSummary\(\),[\s\S]*localHeaderSnapshot\([\s\S]*activation,[\s\S]*summary\?\.gameStats/);
+    assert.match(header, /function localHeaderSnapshot\(user, storage, activation, stats\)/);
     assert.match(header, /activation: effectiveActivation/);
+    assert.doesNotMatch(header, /migrateMockCheckInCache|PREVIEW_CHECK_IN_DATES_STORAGE_KEY|writePreviewUserValue/);
     assert.match(saveFlow, /await refresh\(\{ includeLockState: true \}\)/);
     assert.doesNotMatch(saveFlow, /void refresh\(\{ includeLockState: true \}\)/);
     assert.match(saveFlow, /const submitTimeZone = currentActivation\?\.timeZone \|\| ''/);
@@ -93,28 +113,31 @@ describe('challenge activation client integration', () => {
 
   test('stores exact mock request replays and rejects request reuse before another mutation', async () => {
     const api = await read('./api.js');
-    const requestRunner = api.slice(
-      api.indexOf('function runMockActivationRequest'),
-      api.indexOf('function readMockChallengeActivation'),
-    );
-
-    assert.match(requestRunner, /const prior = requests\[requestId\]/);
-    assert.match(requestRunner, /storedRequests && typeof storedRequests === 'object' && !Array\.isArray\(storedRequests\)/);
-    assert.match(requestRunner, /prior\.signature !== signature/);
-    assert.match(requestRunner, /return normalizeChallengeActivationMutation\(prior\.result, \{ expectedUserId: actorId, preview: true \}\)/);
-    assert.match(requestRunner, /requests\[requestId\] = \{ actorId, action, signature, result \}/);
-    assert.match(api, /expectedRevision,[\s\S]*buildMockChallengeActivation\(\{[\s\S]*expectedRevision/);
+    const runtime = await read('./preview-challenge-instances.mjs');
+    const validator = runtime.slice(runtime.indexOf('function validateActivationArgs'), runtime.indexOf('function stateWithRun'));
+    assert.match(validator, /const prior = state\.requests\.find\(request => request\.requestId === args\.requestId\)/);
+    assert.match(validator, /prior\.action !== action \|\| prior\.signature !== signature/);
+    assert.match(validator, /return \{ signature, prior \}/);
+    assert.match(validator, /args\.expectedRevision !== state\.revision/);
+    assert.match(runtime, /function activationMutationResult[\s\S]*instanceId !== state\.currentInstanceId[\s\S]*PREVIEW_INSTANCE_CHANGED/);
+    assert.match(runtime, /const state = stateForActor\(input, args\.actorId\);\s*const checked = validateActivationArgs[\s\S]*if \(checked\.prior\) return activationMutationResult\(state, checked\.prior\.instanceId, true, args\)/);
+    const activationApi = api.slice(api.indexOf('export async function activateSoloChallenge'), api.indexOf('export async function updateChallengeStartDate'));
+    assert.equal((activationApi.match(/const prior = aggregate\.runtime\.requests\.find\(row => row\.requestId === requestId\)/g) || []).length, 2);
+    assert.equal((activationApi.match(/instanceId: prior\?\.instanceId \|\| crypto\.randomUUID\(\)/g) || []).length, 2);
+    assert.equal((activationApi.match(/expectedRevision: prior \? prior\.revision - 1 : aggregate\.runtime\.revision/g) || []).length, 2);
+    assert.doesNotMatch(activationApi, /runMockActivationRequest\(|writeMockChallengeActivation\(/);
 
     const groupActivation = api.slice(
       api.indexOf('export async function activateGroupChallenge'),
       api.indexOf('export async function updateChallengeStartDate'),
     );
-    const requestRunnerIndex = groupActivation.indexOf('return runMockActivationRequest');
-    const mutateIndex = groupActivation.indexOf('mutate: () => {');
+    const transactionIndex = groupActivation.indexOf('return withPreviewAggregate(userId, aggregate => {');
     const crewLookupIndex = groupActivation.indexOf('const { crews, members } = ensureMockCrews()');
-    assert.ok(requestRunnerIndex >= 0);
-    assert.ok(mutateIndex > requestRunnerIndex);
-    assert.ok(crewLookupIndex > mutateIndex);
+    const mutationIndex = groupActivation.indexOf('activatePreviewInitial(aggregate.runtime,');
+    assert.ok(transactionIndex >= 0);
+    assert.ok(crewLookupIndex > transactionIndex);
+    assert.ok(mutationIndex > crewLookupIndex);
+    assert.match(groupActivation, /member\.userId === userId[\s\S]*if \(!membershipActive\)[\s\S]*groupMembershipActive: membershipActive/);
   });
 
   test('claims a legacy mock date only for an evidenced owner and locks out later accounts', async () => {

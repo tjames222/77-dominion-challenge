@@ -1,90 +1,149 @@
 # Dominion point economy contract
 
-Status: launch contract after the consolidated reward progression rebalance. The database,
-reward catalog, and user interface use the same thresholds.
+Release contract: **FOU-1498 V2, migration 20261001001245.** This document
+describes the implemented six-reward rebalance and UUID repeatable runs. Their
+production availability requires the successful guarded migration-71 cutover
+and matching frontend deployment; the earlier original77 prerequisite alone
+does not establish that release. See the release boundary below and the
+production release workflow evidence for deployment status.
 
-## Principles
+## Point sources stay unchanged
 
-1. A Daily Standard is worth exactly one point.
-2. A challenge day contains seven Daily Standards, so the Daily Standards award is capped at seven points per active challenge day.
-3. Workout difficulty describes the work performed. It never changes points.
-4. App visits and streak milestones are engagement and achievement signals, not point sources.
-5. The Sharing Bonus is a one-time lifetime bonus. It is deliberately outside the seven-point Daily Standards cap.
-6. Earned lifetime points and permanent entitlements are never reduced by a later catalog or threshold change.
-7. Levels are a display-only rhythm: a member enters a new level every 14 lifetime points. Reward ownership remains point-based and independent from the level number.
+1. A completed Daily Action (the internal `daily_standard` policy) is worth one point.
+2. A submitted Check-In awards between one and seven Daily Action points. A user
+   can submit only one scored Check-In per authoritative local date, across all runs.
+3. Workout difficulty, app visits, streak milestones and completion status do not
+   add points. Badges and app-streak tracking remain separate.
+4. The Sharing Bonus is 14 points once per user, outside the seven-point daily cap.
+5. Levels are display-only: `floor(lifetimePoints / 14) + 1`. A level never grants a reward.
+6. A catalog change does not subtract historical points or revoke a recorded grant.
 
-## Authoritative point sources
-
-| Source | Amount | Frequency | Counts toward lifetime total | Counts toward the seven-point Daily Standards cap |
+| Source | Amount | Frequency | Lifetime total | Daily Action cap |
 | --- | ---: | --- | --- | --- |
-| Daily Standard completion | 1 | Up to seven per active challenge day | Yes | Yes |
-| Sharing Bonus | 14 | Once per user | Yes | No |
-| App visit | 0 | Daily tracking continues | No | No |
-| App-streak milestone | 0 | Badges and display continue | No | No |
-| Full-standard-streak milestone | 0 | Badges and display continue | No | No |
-| Workout difficulty | 0 | Selection remains descriptive | No | No |
-| Administrative correction | Explicit signed delta | Exceptional, audited | Yes | No |
+| Submitted Daily Action | 1 | Up to seven in the user's one daily Check-In | Included | Included |
+| Sharing Bonus | 14 | Once per user | Included | Excluded |
+| App visit or streak milestone | 0 | Independent tracking/badges | No new points | Excluded |
+| Workout difficulty or Check-In status | 0 | Descriptive/achievement only | No new points | Excluded |
+| Administrative correction | Explicit audited delta | Exceptional | Included | Excluded |
 
-The backend ledger must use distinct source keys for `daily_standard`, `sharing_bonus`, and `admin_adjustment`. Retired `app_visit`, `full_day_streak_bonus`, status-bonus, and workout-difficulty events remain historical records but cannot be created after cutover.
+The existing immutable `game_point_events` ledger and cached
+`user_game_stats.total_points` remain authoritative. Daily Action scoring is
+recorded by the existing `check_in` event type with action/source metadata; the
+client policy label is not a new database event type. Old bonus events retain
+their original amounts but are not reissued by the V2 scoring path.
 
-## Challenge cycles and reachability
+## Six point-gated core rewards
 
-The original Dominion challenge is one 77-day challenge instance. A perfect instance awards `77 × 7 = 539` Daily Standards points. The one-time Sharing Bonus can raise the user's lifetime total by 14 points, but no reward may require sharing.
+The checked-in configuration is
+`src/static/reward-progression-catalog.v2.json`; the reviewed migration mirrors
+its rule, phase and order in the database. Consumers use the actor-bound catalog
+response, not a page-specific threshold list.
 
-After a challenge instance is completed, the user may start any available challenge definition. A completed definition may be started again as a new challenge instance. Each instance has its own dates, drafts, Check-Ins, completion state, and streak context; lifetime points and permanent rewards carry forward. Only one challenge instance may be active for a user at a time.
+| Order | Reward | Requirement | Perfect submitted Check-In without Sharing | With the one-time Sharing Bonus |
+| --- | --- | --- | ---: | ---: |
+| 1 | Gym Training Discount | 42 trusted Daily Action points | 6 | 6 |
+| 2 | Dominion Night theme | 112 lifetime points | 16 | 14 |
+| 3 | Nehemiah Leadership Handbook | 210 lifetime points | 30 | 28 |
+| 4 | Dominion Platinum theme | 308 lifetime points | 44 | 42 |
+| 5 | 7-Day Reset | 420 lifetime points | 60 | 58 |
+| 6 | Big God Energy T-Shirt Discount | 532 lifetime points | 76 | 74 |
 
-Levels and rewards intentionally move at different speeds. A perfect participant
-levels up every two days, while reward gaps expand through the challenge. Reward
-eligibility is evaluated from points, never from the displayed level. The first
-reward is the sole exception to the lifetime-point source: its 21 points must all
-come from trusted Daily Standards, so the Sharing Bonus and adjustments cannot
-unlock it.
+The Gym reward counts only trusted Check-In action points, capped at seven per
+source event. Sharing and administrative adjustments cannot unlock it. The
+remaining five core rewards use lifetime points. The shirt reward is independent
+of Reset completion; Platinum precedes Reset.
 
-| Reward | Eligible points | Displayed level at threshold | Perfect day without Sharing | Perfect day with the one-time Sharing Bonus |
-| --- | ---: | ---: | ---: | ---: |
-| Gym Training Discount | 21 Daily Standards | 2 | 3 | 3 |
-| Dominion Night theme | 56 lifetime | 5 | 8 | 6 |
-| Nehemiah Leadership Handbook | 98 lifetime | 8 | 14 | 12 |
-| 7-Day Reset | 140 lifetime | 11 | 20 | 18 |
-| Dominion Platinum theme | 210 lifetime | 16 | 30 | 28 |
-| Big God Energy T-Shirt Discount | 273 lifetime | 20 | 39 | 37 |
-| 21-Day Prayer Track | 336 lifetime | 25 | 48 | 46 |
-| 30-Day Strength Intensive | 406 lifetime | 30 | 58 | 56 |
-| 40-Day Fasting & Prayer Track | 469 lifetime | 34 | 67 | 65 |
-| Bible in a Year | 532 lifetime | 39 | 76 | 74 |
+A perfect original run awards `77 × 7 = 539` points, so all six core rewards are
+reachable without sharing. Four actions on each of 77 submissions award 308
+points and reach the first four core rewards. Completing the run below 420 points
+does not strand the user: they may explicitly start another original run and
+continue earning lifetime points. Sharing alone unlocks nothing.
 
-The Sharing Bonus accelerates lifetime-point dates but is never required and does
-not accelerate the Gym Training Discount. A consistent four-standard day reaches
-the first reward on day 6 and six rewards by day 77;
-sharing alone unlocks nothing. Repeatable challenge instances remain the
-long-term earning path after launch rewards have been earned.
+## Completion-gated tracks
 
-## Totals and consumers
+| Track | Submitted Check-Ins to finish | New-grant requirement |
+| --- | ---: | --- |
+| 7-Day Reset | 7 | 420 lifetime points |
+| 21-Day Prayer Track | 21 | Complete 7-Day Reset |
+| 30-Day Strength Intensive | 30 | Complete 21-Day Prayer Track |
+| 40-Day Fasting & Prayer Track | 40 | Complete 30-Day Strength Intensive |
+| Bible in a Year | 365 | Complete 40-Day Fasting & Prayer Track |
 
-`lifetime_points` is the sum of immutable ledger events and drives reward eligibility, next-unlock progress, goals, and lifetime leaderboards. Daily views display only Daily Standards points earned for that challenge day. Streak counters and badges are calculated independently from points.
+The four post-core tracks have **no point threshold**. A large balance, sharing,
+an adjustment, starting a prerequisite, or an incomplete run cannot satisfy a
+completion rule. A canonical completion persists its immediate successor's
+availability atomically and idempotently; availability is not itself completion
+and cannot cascade through the chain. Explicitly preserved legacy completion
+records can satisfy their corresponding prerequisite without inventing a new
+completion event or badge.
 
-Group leaderboards use lifetime points by default. A future time-boxed leaderboard must aggregate ledger events within its documented period rather than rewriting lifetime totals.
+Reset can become available during the original run, but cannot start until the
+open run finishes. Existing grandfathered later-track grants remain usable even
+when the new rule would not have granted them today. All Starts remain subject
+to server access checks and the one-open-run rule.
 
-## Migration policy
+## Runs, dates and completion
 
-* Preserve all historical point events and the lifetime total already shown to a user.
-* Stop issuing retired event types at the deployment cutover; do not subtract their historical value.
-* Backfill a source classification for legacy events without changing their amount.
-* Reconcile permanent reward ownership before changing thresholds. An already-owned reward stays owned.
-* Recalculate locked progress from the preserved lifetime total and current catalog.
-* Record future corrections as audited adjustment events; never edit an awarded ledger row in place.
+- The original target is **77 submitted Check-Ins**, including partial submissions.
+  Later tracks use the target in the table above, also counting partials.
+- Missed dates do not end a run. `calendarDay` is elapsed local-calendar position,
+  not submitted count; it may exceed the target. There is no automatic day77 expiry.
+- A user has at most one `scheduled` or `active` instance. A future scheduled run
+  also occupies that slot; no overlapping Start is allowed.
+- After completion, an explicit Start creates a fresh UUID instance for an
+  available track or another original run. No run auto-starts. The candidate's
+  repeat/later-track Start creates a solo run for today or a future date.
+- Each run keeps its own drafts, source Check-Ins, submitted count, completion
+  record and scoped badge/streak history. Lifetime points, permanent ownership,
+  earlier completed runs and acknowledged celebrations remain intact.
+- The `(user, local date)` submission barrier stays global. Completing a run and
+  starting another on the same date does not allow another scored Check-In that
+  date. Per-run calendar ordinals permit the next run's day1 without colliding
+  with an earlier run's day1.
+- The final canonical submission, point event, completion record and applicable
+  award/successor grant commit together. The new original-run Finisher is tied to
+  that run's actual completion event, not to a points total or calendar position.
+- Writes capture actor, current instance and the required version/revision.
+  An old page for the same account cannot write into a newly started run.
 
-## Release invariants
+## Preservation and preview parity
 
-* A Check-In can add at most seven `daily_standard` points.
-* Repeating a request cannot duplicate a ledger event.
-* A share can grant at most one 14-point bonus per user.
-* App visits, streaks, statuses, and workout difficulty cannot add points.
-* Every active point reward is reachable through repeatable challenge instances.
-* Every active point reward requires at least 21 eligible points and thresholds are strictly increasing.
-* The launch reward thresholds are 21, 56, 98, 140, 210, 273, 336, 406, 469, and 532 points.
-* Only trusted Daily Standards count toward the 21-point Gym Training Discount; all other launch rewards use lifetime points.
-* Level boundaries do not grant rewards and reward boundaries do not need to align with a level boundary.
+Preserve immutable source events and their IDs, amounts, dates and earned times.
+Keep explicit `owned`, `available`, `active` and `completed` reward grants and
+their seen timestamps. Snapshot the prior catalog version/reason for support;
+raising a threshold changes locked progress, not recorded ownership. Do not
+reconstruct grants from the retired point curve or mark a legacy completed
+record as a new canonical event. This release does not authorize historical
+badge backfill, invented Finisher times or replayed migration celebrations.
 
-The server/client shape that exposes these thresholds, lifecycle states, and
-permanent ownership is documented in [reward-catalog-contract.md](reward-catalog-contract.md).
+The local preview uses the same rule configuration and V2 response shape. Its
+actor-scoped aggregate commits run, scoring, badge and grant changes together;
+no-op reads must not rewrite storage. Preview data is not production authority.
+See [reward-catalog-contract.md](reward-catalog-contract.md) for configuration,
+pagination, lifecycle and Start details.
+
+## Release invariants and boundary
+
+- Test one-below/exact/one-above for 42/112/210/308/420/532, including 41/42 trusted
+  Gym points with sharing/adjustments excluded.
+- Test perfect, perfect-plus-sharing, four-action and irregular submission runs;
+  only six rewards are point-granted, regardless of a large balance.
+- Test each immediate successor, skipped prerequisites, preserved grants,
+  repeated runs, partial final submissions and missed dates beyond the target.
+- Retry/concurrent tabs/devices must not duplicate a Check-In, points, completion,
+  Finisher, successor grant or Start; an uncertain Start retains its request UUID.
+- Actor/run/CAS fences, global daily uniqueness, RLS/privileges and canonical
+  source links must hold independently of browser hints.
+- Dashboard, Rewards, Profile, celebrations, direct refresh and preview must
+  agree on the same typed requirements, order, ownership and allowed actions.
+- Configuration insertion/reordering/chain-extension tests must not require
+  route-specific grant logic. Preserve fulfillment authorization and theme gates.
+
+The reviewed historical-instance binding/activation integration and generic
+public-share SQL are included in the candidate with preservation, race, privacy,
+and rollback tests. Their presence locally does not prove hosted migration or
+release. Before production, take and verify the approved current backup,
+run the release gates, deploy compatible Edge readers before the database and
+the database before the V2 frontend, then verify the deployed contracts. No
+database reset, project switch, billing activation or historical award backfill
+is part of this contract.

@@ -26,7 +26,7 @@ const nightReward = (overrides = {}) => ({
   status: 'locked',
   currentPoints: 28,
   pointsRemaining: DOMINION_NIGHT_THEME_REWARD.pointsRequired - 28,
-  progressPercent: 50,
+  progressPercent: 25,
   ...overrides,
 });
 
@@ -63,10 +63,11 @@ test('builds accessible locked progress from the typed reward catalog definition
   assert.equal(night.available, false);
   assert.equal(night.locked, true);
   assert.equal(night.pointsRequired, DOMINION_NIGHT_THEME_REWARD.pointsRequired);
-  assert.equal(night.pointsRemaining, 28);
-  assert.equal(night.progressPercent, 50);
+  assert.equal(night.pointsRequired, 112);
+  assert.equal(night.pointsRemaining, 84);
+  assert.equal(night.progressPercent, 25);
   assert.equal(night.isLowestPointUnlock, true);
-  assert.equal(night.reason, '28 points to unlock.');
+  assert.equal(night.reason, '84 points to unlock.');
 });
 
 test('missing or mismatched ownership fails closed while preserving public themes', () => {

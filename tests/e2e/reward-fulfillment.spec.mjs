@@ -24,7 +24,7 @@ async function openRewardsWithFulfillment(page, app, fulfillments, { points = 1_
       challengePoints: totalPoints,
       dailyStandardsPoints: totalPoints,
     }));
-    if (totalPoints < 21) {
+    if (totalPoints < 42) {
       localStorage.setItem('dominion:mockRewardEntitlements', '[]');
       localStorage.setItem('dominion:mockChallengeThresholdsVersion', '4');
     }
@@ -103,7 +103,7 @@ const claimedShirtOffer = {
 test('locked gym reward shows exact progress and a safe configured partner link', async ({ page, app }) => {
   await openRewardsWithFulfillment(page, app, {
     gym_training_discount: gymOffer,
-  }, { points: 20 });
+  }, { points: 41 });
 
   const card = page.locator('[data-reward-key="gym_training_discount"]');
   await expect(card).toContainText('Locked');
@@ -111,7 +111,8 @@ test('locked gym reward shows exact progress and a safe configured partner link'
 
   const dialog = page.getByRole('dialog', { name: 'Gym Training Discount' });
   await expect(dialog).toBeVisible();
-  await expect(dialog.getByRole('progressbar')).toHaveAttribute('aria-valuenow', '20');
+  await expect(dialog.getByRole('progressbar')).toHaveAttribute('aria-valuenow', '41');
+  await expect(dialog.getByRole('progressbar')).toHaveAttribute('aria-valuemax', '42');
   await expect(dialog).toContainText('1 point remaining');
   await expect(dialog).toContainText('Test Training Club');
   await expect(dialog.getByRole('link', { name: 'Visit gym website' })).toHaveAttribute(

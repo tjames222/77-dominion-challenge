@@ -64,6 +64,10 @@ values
   ('$date_user', 'Date Conflict', 'activation-date@example.test', 'UTC'),
   ('$erasure_user', 'Erasure Race', 'activation-erasure@example.test', 'UTC');
 
+insert into public.entitlements (user_id, entitlement_key, status, source_type)
+values ('$date_user', 'membership_active', 'active', 'test'),
+       ('$erasure_user', 'membership_active', 'active', 'test');
+
 update public.profiles
 set challenge_start_date = current_date,
     challenge_activation_status = 'scheduled',
@@ -212,6 +216,9 @@ fi
 # Two stale date editors share revision 1. Only the first serialized update may
 # commit; the other must fail with no second date-update request.
 solo_call "$date_user" "$date_activation_request" "$test_directory/date-activate.log"
+date_instance="$(psql "$database_url" --set=ON_ERROR_STOP=1 --tuples-only --no-align --command "
+  select current_instance_id from private.challenge_runtime where user_id = '$date_user';
+")"
 date_update_call() {
   local request_id="$1" days_back="$2" output_file="$3"
   psql "$database_url" --set=ON_ERROR_STOP=1 --quiet --tuples-only --no-align --command "
@@ -219,12 +226,13 @@ date_update_call() {
     set local statement_timeout = '10s';
     set local role authenticated;
     set local \"request.jwt.claim.sub\" = '$date_user';
-    select public.set_challenge_start_date(
+    select public.set_challenge_start_date_v2(
       current_date - $days_back,
       'UTC',
       '$request_id',
       1,
-      '$date_user'
+      '$date_user',
+      '$date_instance'
     )::text;
     commit;
   " >"$output_file" 2>&1
@@ -244,8 +252,8 @@ fi
 read -r date_requests date_revision <<<"$(
   psql "$database_url" --set=ON_ERROR_STOP=1 --tuples-only --no-align --field-separator=' ' --command "
     select
-      (select count(*) from private.challenge_activation_requests
-       where actor_id = '$date_user' and action = 'date_update'),
+      (select count(*) from private.challenge_instance_requests
+       where user_id = '$date_user' and action = 'set_start'),
       challenge_activation_revision
     from public.profiles where user_id = '$date_user';
   "
@@ -261,6 +269,9 @@ fi
 # profile or insert auth-FK request evidence; otherwise these two sessions can
 # deadlock with each holding the row the other needs.
 solo_call "$erasure_user" "$erasure_activation_request" "$test_directory/erasure-activate.log"
+erasure_instance="$(psql "$database_url" --set=ON_ERROR_STOP=1 --tuples-only --no-align --command "
+  select current_instance_id from private.challenge_runtime where user_id = '$erasure_user';
+")"
 psql "$database_url" --set=ON_ERROR_STOP=1 --quiet --command "
   begin;
   set local statement_timeout = '10s';
@@ -299,12 +310,13 @@ psql "$database_url" --set=ON_ERROR_STOP=1 --quiet --tuples-only --no-align --co
   set local statement_timeout = '10s';
   set local role authenticated;
   set local \"request.jwt.claim.sub\" = '$erasure_user';
-  select public.set_challenge_start_date(
+  select public.set_challenge_start_date_v2(
     current_date - 1,
     'UTC',
     '$erasure_date_request',
     1,
-    '$erasure_user'
+    '$erasure_user',
+    '$erasure_instance'
   )::text;
   commit;
 " >"$test_directory/erasure-mutation.log" 2>&1 &
@@ -328,7 +340,10 @@ read -r erased_auth erased_profile erased_requests <<<"$(
     select
       exists (select 1 from auth.users where id = '$erasure_user'),
       exists (select 1 from public.profiles where user_id = '$erasure_user'),
-      exists (select 1 from private.challenge_activation_requests where actor_id = '$erasure_user');
+      exists (select 1 from private.challenge_activation_requests where actor_id = '$erasure_user')
+        or exists (select 1 from private.challenge_instance_requests where user_id = '$erasure_user')
+        or exists (select 1 from private.challenge_runtime where user_id = '$erasure_user')
+        or exists (select 1 from private.challenge_instances where user_id = '$erasure_user');
   "
 )"
 if [[ "$erased_auth $erased_profile $erased_requests" != "f f f" ]]; then

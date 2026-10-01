@@ -27,14 +27,14 @@ export function renderRewardCard(reward = {}, { pendingRewardKey = '' } = {}) {
   const pointsRequired = Math.max(0, Number(reward.pointsRequired || 0));
   const currentPoints = Math.max(0, Number(reward.currentPoints || 0));
   const progressValue = Math.min(currentPoints, pointsRequired);
-  const progress = reward.status === 'locked' && reward.active
+  const progress = reward.status === 'locked' && reward.active && !reward.completionBased
     ? `<div class="reward-row-progress" role="progressbar" aria-label="Progress toward ${escapeHtml(title)}" aria-valuemin="0" aria-valuemax="${pointsRequired}" aria-valuenow="${progressValue}" aria-valuetext="${escapeHtml(`${currentPoints} of ${pointsRequired} points`)}"><span style="--reward-progress:${Number(reward.progressPercent || 0)}%"></span></div>`
     : '';
 
   const contextualActions = [];
   if (reward.canStart) {
     const pending = pendingRewardKey === key;
-    contextualActions.push(`<button class="reward-action-button" type="button" data-start-reward="${escapeHtml(key)}"${pending ? ' disabled' : ''}>${pending ? 'Starting…' : 'Start challenge'}</button>`);
+    contextualActions.push(`<button class="reward-action-button" type="button" data-start-reward="${escapeHtml(key)}"${pendingRewardKey ? ' disabled' : ''}>${pending ? 'Starting…' : reward.status === 'completed' ? 'Start another run' : 'Start challenge'}</button>`);
   } else if (reward.selectionHref) {
     contextualActions.push(`<a class="reward-action-link" href="${escapeHtml(reward.selectionHref)}">${escapeHtml(reward.selectionLabel)}</a>`);
   }
@@ -47,7 +47,8 @@ export function renderRewardCard(reward = {}, { pendingRewardKey = '' } = {}) {
   const nextLabel = reward.isNext ? '<span class="reward-next-marker">Next unlock</span>' : '';
   const inactiveLabel = reward.active ? '' : '<span class="reward-inactive-marker">Unavailable for selection</span>';
   const classes = `reward-row is-${escapeHtml(reward.status)}${reward.isNext ? ' is-next' : ''}`;
-  const detail = `${String(reward.detail || '')} · ${formatRewardPoints(pointsRequired)} required`;
+  const detail = reward.completionBased ? String(reward.detail || reward.requirementLabel || '')
+    : `${String(reward.detail || '')} · ${reward.requirementLabel || `${formatRewardPoints(pointsRequired)} required`}`;
 
   return `<article class="${classes}" data-reward-key="${escapeHtml(key)}">${visual}<div class="reward-row-main"><div class="reward-row-topline"><span>${escapeHtml(rewardTypeLabel(reward))}</span><span class="reward-status">${escapeHtml(reward.statusLabel)}</span></div><h3>${escapeHtml(title)}</h3><p>${escapeHtml(reward.description)}</p>${progress}<div class="reward-row-footer"><small>${escapeHtml(detail)}</small><div class="reward-card-actions">${contextualActions.join('')}</div></div></div>${nextLabel}${inactiveLabel}</article>`;
 }

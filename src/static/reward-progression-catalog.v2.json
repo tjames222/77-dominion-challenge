@@ -1,0 +1,183 @@
+{
+  "schemaVersion": 1,
+  "manifestVersion": 2,
+  "lifecycle": "released",
+  "effectiveAt": "2026-10-01T00:12:45Z",
+  "source": "FOU-1498 catalog revision for repeatable challenge instances; server effectiveAt records the actual migration activation time",
+  "rewards": [
+    {
+      "key": "gym_training_discount",
+      "title": "Gym Training Discount",
+      "rewardType": "partner_discount",
+      "stateModel": "ownership",
+      "fulfillmentKey": "gym-training-discount",
+      "challengeKey": null,
+      "targetSubmittedCheckIns": null,
+      "phase": "core",
+      "sortOrder": 10,
+      "active": true,
+      "released": true,
+      "unlockRule": {
+        "type": "trusted_points",
+        "pointsRequired": 42
+      }
+    },
+    {
+      "key": "dominion_night_theme",
+      "title": "Dominion Night",
+      "rewardType": "cosmetic",
+      "stateModel": "ownership",
+      "fulfillmentKey": "dominion-night",
+      "challengeKey": null,
+      "targetSubmittedCheckIns": null,
+      "phase": "core",
+      "sortOrder": 20,
+      "active": true,
+      "released": true,
+      "unlockRule": {
+        "type": "lifetime_points",
+        "pointsRequired": 112
+      }
+    },
+    {
+      "key": "nehemiah_leadership_handbook",
+      "title": "Nehemiah Leadership Handbook",
+      "rewardType": "digital_download",
+      "stateModel": "ownership",
+      "fulfillmentKey": "nehemiah-leadership-handbook",
+      "challengeKey": null,
+      "targetSubmittedCheckIns": null,
+      "phase": "core",
+      "sortOrder": 30,
+      "active": true,
+      "released": true,
+      "unlockRule": {
+        "type": "lifetime_points",
+        "pointsRequired": 210
+      }
+    },
+    {
+      "key": "dominion_platinum",
+      "title": "Dominion Platinum",
+      "rewardType": "cosmetic",
+      "stateModel": "ownership",
+      "fulfillmentKey": "dominion-platinum",
+      "challengeKey": null,
+      "targetSubmittedCheckIns": null,
+      "phase": "core",
+      "sortOrder": 40,
+      "active": true,
+      "released": true,
+      "unlockRule": {
+        "type": "lifetime_points",
+        "pointsRequired": 308
+      }
+    },
+    {
+      "key": "seven_day_reset",
+      "title": "7-Day Reset",
+      "rewardType": "challenge",
+      "stateModel": "challenge_lifecycle",
+      "fulfillmentKey": "seven_day_reset",
+      "challengeKey": "seven_day_reset",
+      "targetSubmittedCheckIns": 7,
+      "phase": "core",
+      "sortOrder": 50,
+      "active": true,
+      "released": true,
+      "unlockRule": {
+        "type": "lifetime_points",
+        "pointsRequired": 420
+      }
+    },
+    {
+      "key": "big_god_energy_tshirt_discount",
+      "title": "Big God Energy T-Shirt Discount",
+      "rewardType": "merch_discount",
+      "stateModel": "ownership",
+      "fulfillmentKey": "big-god-energy-tshirt-discount",
+      "challengeKey": null,
+      "targetSubmittedCheckIns": null,
+      "phase": "core",
+      "sortOrder": 60,
+      "active": true,
+      "released": true,
+      "unlockRule": {
+        "type": "lifetime_points",
+        "pointsRequired": 532
+      }
+    },
+    {
+      "key": "twenty_one_day_prayer",
+      "title": "21-Day Prayer Track",
+      "rewardType": "challenge",
+      "stateModel": "challenge_lifecycle",
+      "fulfillmentKey": "twenty_one_day_prayer",
+      "challengeKey": "twenty_one_day_prayer",
+      "targetSubmittedCheckIns": 21,
+      "phase": "post_core",
+      "sortOrder": 70,
+      "active": true,
+      "released": true,
+      "unlockRule": {
+        "type": "challenge_completion",
+        "prerequisiteChallengeKey": "seven_day_reset",
+        "requiredState": "completed"
+      }
+    },
+    {
+      "key": "thirty_day_strength",
+      "title": "30-Day Strength Intensive",
+      "rewardType": "challenge",
+      "stateModel": "challenge_lifecycle",
+      "fulfillmentKey": "thirty_day_strength",
+      "challengeKey": "thirty_day_strength",
+      "targetSubmittedCheckIns": 30,
+      "phase": "post_core",
+      "sortOrder": 80,
+      "active": true,
+      "released": true,
+      "unlockRule": {
+        "type": "challenge_completion",
+        "prerequisiteChallengeKey": "twenty_one_day_prayer",
+        "requiredState": "completed"
+      }
+    },
+    {
+      "key": "forty_day_fast",
+      "title": "40-Day Fasting & Prayer Track",
+      "rewardType": "challenge",
+      "stateModel": "challenge_lifecycle",
+      "fulfillmentKey": "forty_day_fast",
+      "challengeKey": "forty_day_fast",
+      "targetSubmittedCheckIns": 40,
+      "phase": "post_core",
+      "sortOrder": 90,
+      "active": true,
+      "released": true,
+      "unlockRule": {
+        "type": "challenge_completion",
+        "prerequisiteChallengeKey": "thirty_day_strength",
+        "requiredState": "completed"
+      }
+    },
+    {
+      "key": "bible_in_a_year",
+      "title": "Bible in a Year",
+      "rewardType": "challenge",
+      "stateModel": "challenge_lifecycle",
+      "fulfillmentKey": "bible_in_a_year",
+      "challengeKey": "bible_in_a_year",
+      "targetSubmittedCheckIns": 365,
+      "phase": "post_core",
+      "sortOrder": 100,
+      "active": true,
+      "released": true,
+      "unlockRule": {
+        "type": "challenge_completion",
+        "prerequisiteChallengeKey": "forty_day_fast",
+        "requiredState": "completed"
+      }
+    }
+  ]
+}

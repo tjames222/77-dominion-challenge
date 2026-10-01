@@ -5,8 +5,8 @@ set local search_path = public, extensions;
 
 select plan(56);
 
--- Keep Bob as the boundary fixture even though the launch rebalance backfills
--- every existing user who already has at least 56 points.
+-- Keep Bob as the boundary fixture even though the current rule grants
+-- eligible users at 112 points; prior recorded ownership is preserved.
 delete from public.user_reward_entitlements
 where user_id = '20000000-0000-4000-8000-000000000002'
   and reward_key = 'dominion_night_theme';
@@ -14,7 +14,7 @@ update public.user_reward_entitlements
 set celebration_seen_at = coalesce(celebration_seen_at, now())
 where user_id = '20000000-0000-4000-8000-000000000002';
 update public.user_game_stats
-set total_points = 55
+set total_points = 111
 where user_id = '20000000-0000-4000-8000-000000000002';
 
 select ok(
@@ -37,8 +37,8 @@ select is(
 );
 select is(
   (select points_required from public.reward_definitions where reward_key = 'dominion_night_theme'),
-  56,
-  'the configured threshold is exactly 56 total points'
+  112,
+  'the configured threshold is exactly 112 total points'
 );
 select is(
   (select fulfillment_key from public.reward_definitions where reward_key = 'dominion_night_theme'),
@@ -71,7 +71,7 @@ select ok(
     select 1
     from public.reward_definitions
     where reward_key = 'nehemiah_leadership_handbook'
-      and points_required = 98
+      and points_required = 210
   ),
   'the handbook follows Dominion Night at the final launch threshold'
 );
@@ -105,8 +105,8 @@ select is(
     from public.reward_definitions
     where reward_type = 'challenge'
   ),
-  array[140, 336, 406, 469, 532],
-  'challenge thresholds are paced across the first challenge'
+  array[420, null, null, null, null]::integer[],
+  'only Reset is point-gated; four later challenge thresholds are null'
 );
 
 select is(
@@ -117,7 +117,7 @@ select is(
       and reward_key = 'dominion_night_theme'
   ),
   1,
-  'an existing user above 56 retains one permanent entitlement'
+  'an existing user above 112 retains one permanent entitlement'
 );
 select is(
   (
@@ -127,7 +127,7 @@ select is(
       and reward_key = 'dominion_night_theme'
   ),
   0,
-  'an existing user below 56 is not entitled'
+  'an existing user below 112 is not entitled'
 );
 select is(
   (
@@ -136,8 +136,8 @@ select is(
     where reward_key = 'dominion_night_theme'
       and event_type = 'reward_definition_configured'
   ),
-  4,
-  'the initial, launch, natural-language, and final configurations are audited once'
+  5,
+  'the initial, launch, natural-language, final, and V2 configurations are audited once'
 );
 select is(
   (
@@ -183,40 +183,40 @@ select is(
 );
 
 select is(
-  public.reward_catalog_for_user(
-    '20000000-0000-4000-8000-000000000002', 100, null, null
+  private.reward_catalog_v2(
+    '20000000-0000-4000-8000-000000000002', 100, null, null, null, null, null
   ) #>> '{items,1,status}',
   'locked',
   'the server reports the theme locked without an entitlement row'
 );
 select is(
   (
-    public.reward_catalog_for_user(
-      '20000000-0000-4000-8000-000000000002', 100, null, null
+    private.reward_catalog_v2(
+      '20000000-0000-4000-8000-000000000002', 100, null, null, null, null, null
     ) #>> '{items,1,currentPoints}'
   )::integer,
-  55,
+  111,
   'locked progress uses the authoritative overall point total'
 );
 select is(
   (
-    public.reward_catalog_for_user(
-      '20000000-0000-4000-8000-000000000002', 100, null, null
+    private.reward_catalog_v2(
+      '20000000-0000-4000-8000-000000000002', 100, null, null, null, null, null
     ) #>> '{items,1,pointsRemaining}'
   )::integer,
   1,
   'locked progress reports accurate points remaining'
 );
 select is(
-  public.reward_catalog_for_user(
-    '20000000-0000-4000-8000-000000000002', 100, null, null
+  private.reward_catalog_v2(
+    '20000000-0000-4000-8000-000000000002', 100, null, null, null, null, null
   ) #>> '{nextUnlock,key}',
   'gym_training_discount',
   'the lower-threshold gym reward remains the nearest locked reward'
 );
 
 update public.user_game_stats
-set total_points = 55
+set total_points = 111
 where user_id = '20000000-0000-4000-8000-000000000002';
 select is(
   (
@@ -226,20 +226,20 @@ select is(
       and reward_key = 'dominion_night_theme'
   ),
   0,
-  '55 points remains locked'
+  '111 points remains locked'
 );
 select is(
   (
-    public.reward_catalog_for_user(
-      '20000000-0000-4000-8000-000000000002', 100, null, null
+    private.reward_catalog_v2(
+      '20000000-0000-4000-8000-000000000002', 100, null, null, null, null, null
     ) #>> '{items,1,pointsRemaining}'
   )::integer,
   1,
-  'the boundary contract reports one point remaining at 55'
+  'the boundary contract reports one point remaining at 111'
 );
 
 update public.user_game_stats
-set total_points = 56
+set total_points = 112
 where user_id = '20000000-0000-4000-8000-000000000002';
 select is(
   (
@@ -249,7 +249,7 @@ select is(
       and reward_key = 'dominion_night_theme'
   ),
   1,
-  'crossing 56 automatically grants one permanent entitlement'
+  'crossing 112 automatically grants one permanent entitlement'
 );
 select ok(
   (
@@ -318,8 +318,8 @@ select is(
   'a membership lapse does not delete cosmetic ownership'
 );
 select is(
-  public.reward_catalog_for_user(
-    '20000000-0000-4000-8000-000000000002', 100, null, null
+  private.reward_catalog_v2(
+    '20000000-0000-4000-8000-000000000002', 100, null, null, null, null, null
   ) #>> '{items,1,status}',
   'owned',
   'the read contract trusts persisted ownership after point and membership changes'
@@ -348,7 +348,7 @@ select ok(
   public.add_game_points(
     '30000000-0000-4000-8000-000000000003',
     'migration_fixture',
-    35,
+    91,
     current_date,
     1,
     null,
@@ -376,7 +376,7 @@ select is(
     from public.user_game_stats
     where user_id = '30000000-0000-4000-8000-000000000003'
   ),
-  42,
+  98,
   'Daily Standards contribute their server-derived seven points'
 );
 select is(
@@ -408,7 +408,7 @@ select is(
     from public.user_game_stats
     where user_id = '30000000-0000-4000-8000-000000000003'
   ),
-  56,
+  112,
   'all valid sources contribute to the same authoritative total'
 );
 select is(
@@ -496,7 +496,7 @@ select is(
 );
 
 update public.reward_definitions
-set points_required = 70
+set points_required = 126
 where reward_key = 'dominion_night_theme';
 select is(
   (
@@ -513,7 +513,7 @@ select is(
   'raising the configured threshold never relocks prior owners'
 );
 update public.reward_definitions
-set points_required = 56
+set points_required = 112
 where reward_key = 'dominion_night_theme';
 select is(
   (
@@ -522,12 +522,12 @@ select is(
     where reward_key = 'dominion_night_theme'
       and event_type = 'reward_definition_configured'
   ),
-  5,
+  6,
   'configuration auditing is immutable and deduplicates a restored definition'
 );
 select is(
   (select points_required from public.reward_definitions where reward_key = 'dominion_night_theme'),
-  56,
+  112,
   'the theme returns to its rollout threshold after configuration testing'
 );
 
@@ -535,24 +535,24 @@ update public.reward_definitions
 set is_active = false
 where reward_key = 'dominion_night_theme';
 select is(
-  public.reward_catalog_for_user(
-    '10000000-0000-4000-8000-000000000001', 100, null, null
+  private.reward_catalog_v2(
+    '10000000-0000-4000-8000-000000000001', 100, null, null, null, null, null
   ) #>> '{items,1,active}',
   'false',
   'unavailable reward configuration fails closed for UI activation'
 );
 select is(
   jsonb_array_length(
-    public.reward_catalog_for_user(
-      '10000000-0000-4000-8000-000000000001', 100, null, null
+    private.reward_catalog_v2(
+      '10000000-0000-4000-8000-000000000001', 100, null, null, null, null, null
     ) #> '{items,1,allowedActions}'
   ),
   0,
   'a cosmetic never exposes a challenge Start action'
 );
 select is(
-  public.reward_catalog_for_user(
-    '10000000-0000-4000-8000-000000000001', 100, null, null
+  private.reward_catalog_v2(
+    '10000000-0000-4000-8000-000000000001', 100, null, null, null, null, null
   ) #>> '{items,1,status}',
   'owned',
   'temporary configuration unavailability preserves stored ownership'

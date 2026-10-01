@@ -321,3 +321,50 @@ release. The older 66 artifact is pre-inbox evidence, not a backup of the
 current database. A later migration cannot make it current, and this mode
 does not authorize hosted restore, reset, secret repair or replay of the old
 canary cutover.
+
+## Post-original-challenge 70-migration checkpoint
+
+Choose `post-original77-70` explicitly for production after the original
+77-submission completion release. It pins exactly 70 migrations through
+`20260930161218_share_submitted_progress_v2`; the SHA-256 of the ordered
+version array is
+`73f5e3b0395829ec93acf1454cd212a653c5edfa19d4be641c8de792f0777f46`.
+Migration files after that checkpoint are intentionally ignored by the backup
+selector, while a missing, changed, reordered or duplicate migration inside
+the first 70 is rejected. The source must still be PostgreSQL 17.6 and must
+match before and after capture.
+
+The three migrations after the admin inbox add the private original-77
+completion evidence, the live 77-submission runtime, and submitted-progress
+Share V2. They add no Vault name, Cron job, pg_net relation, Storage object or
+multipart upload. This mode therefore preserves the exact same five-name,
+three-worker, parameter-bound Vault proof and fresh-root reconstruction as the
+66/67 modes. It receives only the same three existing worker settings. It does
+not read the Vault root key, invitation-envelope key/version, Resend key,
+Linear key, or any recovery private key.
+
+The encrypted artifact keeps schema version 3 and contract
+`dominion-free-post-early-access-backup/v1`; `backupMode`, the exact 70-version
+array and the restored inventory distinguish this checkpoint. The manifest
+continues to record `applicationEnvelopeRecovery.decryptionVerified: false`.
+Invitation-envelope decryption remains dependent on separately retained owner
+custody and a separately reviewed recovery action. The exact-70 evidence
+verifier authenticates the encrypted bytes, RSA-4096 public recipient, run,
+attempt, protected-main commit, 24-hour freshness window, restored checkpoint,
+pg_net supplement and conditional recovery declarations without decrypting the
+archive or reading a private key.
+
+For the one-time repeatable-challenge cutover, capture this mode from the same
+reviewed protected `main` commit while production is still exactly at migration
+70. The release classifier accepts that cutover only with one successful,
+unexpired artifact from that exact commit and run attempt, verified before any
+mutable production job. Migration 71 must also have a finalized reviewed
+source-byte SHA-256 pin; any source-byte mismatch fails locally before the
+production history query. A 67 artifact, an exact-70 artifact from another
+commit, a failed or expired run, or an artifact captured after migration 71 is
+not valid cutover evidence.
+
+This mode does not authorize a hosted restore, database reset, worker pause,
+secret repair, migration, email, or release by itself. Production workers stay
+active during capture, so an inventory change safely stops the backup; inspect
+the boundary and retry unchanged rather than weakening the equality check.

@@ -24,18 +24,34 @@ function canonicalDateAt(timestamp, timeZone) {
   return `${parts.year.padStart(4, '0')}-${parts.month}-${parts.day}`;
 }
 export function normalizeDailyActionBootstrap(value, expectedActor, requestedDate = null) {
-  if (!value || value.schemaVersion !== 1 || value.actorId !== expectedActor
+  if (!value || ![1, 2].includes(value.schemaVersion) || value.actorId !== expectedActor
     || typeof value.appAccess !== 'boolean' || typeof value.asOf !== 'string'
     || !/^\d{4}-\d{2}-\d{2}T/.test(value.asOf) || !Number.isFinite(Date.parse(value.asOf))) {
     throw dailyActionBootstrapError();
   }
-  const base = { schemaVersion: 1, actorId: expectedActor, asOf: value.asOf, appAccess: value.appAccess };
+  const base = { schemaVersion: value.schemaVersion, actorId: expectedActor, asOf: value.asOf, appAccess: value.appAccess };
+  if (value.schemaVersion === 2) base.instanceId = value.instanceId;
   if (!value.appAccess) {
     if (['activation', 'timeZone', 'entryDate', 'draft'].some((key) => value[key] !== null)) throw dailyActionBootstrapError();
+    if (value.schemaVersion === 2 && value.instanceId !== null) throw dailyActionBootstrapError();
     return { ...base, activation: null, timeZone: null, entryDate: null, draft: null };
   }
   const activation = normalizeChallengeActivation(value.activation, { expectedUserId: expectedActor });
   const raw = value.draft;
+  if (value.schemaVersion === 2 && activation.contractValid && activation.schemaVersion === 2
+    && activation.currentInstance === null) {
+    if (value.instanceId !== null || raw !== null || !validTimeZone(value.timeZone)
+      || !dateKey(value.entryDate) || (requestedDate !== null && requestedDate !== value.entryDate)
+      || (requestedDate === null && canonicalDateAt(value.asOf, value.timeZone) !== value.entryDate)) throw dailyActionBootstrapError();
+    return { ...base, activation, timeZone: value.timeZone, entryDate: value.entryDate, draft: null };
+  }
+  if (value.schemaVersion === 2 && (activation.schemaVersion !== 2 || value.instanceId !== (activation.currentInstance?.id ?? null)
+    || raw?.schemaVersion !== 2 || raw?.actorId !== expectedActor || raw?.instanceId !== value.instanceId
+    || raw?.activation?.schemaVersion !== 2 || raw?.activation?.actorId !== expectedActor
+    || raw?.activation?.revision !== activation.revision
+    || (raw?.activation?.currentInstance?.id ?? null) !== value.instanceId)) throw dailyActionBootstrapError();
+  if (value.schemaVersion === 2 && JSON.stringify(normalizeChallengeActivation(raw.activation, { expectedUserId: expectedActor }))
+    !== JSON.stringify(activation)) throw dailyActionBootstrapError();
   if (!activation.contractValid || activation.readState !== 'ready' || !validTimeZone(value.timeZone)
     || !dateKey(value.entryDate) || (requestedDate !== null && requestedDate !== value.entryDate)
     || (requestedDate === null && canonicalDateAt(value.asOf, value.timeZone) !== value.entryDate)
@@ -100,12 +116,14 @@ export function createDailyActionBootstrapClient({ getSession, getUser, sessionI
     throw dailyActionBootstrapError();
   }
   return {
-    async read({ expectedUserId, timeZone, entryDate = null } = {}) {
+    async read({ expectedUserId, timeZone, entryDate = null, expectedInstanceId = null } = {}) {
       if (typeof expectedUserId !== 'string' || !expectedUserId.trim()
-        || !validTimeZone(timeZone) || (entryDate !== null && !dateKey(entryDate))) throw dailyActionBootstrapError('DAILY_ACTION_INVALID_INPUT');
+        || !validTimeZone(timeZone) || (entryDate !== null && !dateKey(entryDate))
+        || (expectedInstanceId !== null && (typeof expectedInstanceId !== 'string'
+          || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(expectedInstanceId)))) throw dailyActionBootstrapError('DAILY_ACTION_INVALID_INPUT');
       const actorId = expectedUserId.trim();
       const version = epoch;
-      const key = JSON.stringify([version, actorId, timeZone, entryDate]);
+      const key = JSON.stringify([version, actorId, timeZone, entryDate, expectedInstanceId]);
       let operation = pending.get(key);
       if (!operation) {
         operation = { controller: new AbortController(), promise: null };
@@ -120,10 +138,13 @@ export function createDailyActionBootstrapClient({ getSession, getUser, sessionI
           const owner = await verifyOwner(actorId, version, operation.controller.signal);
           if (operation.controller.signal.aborted) throw dailyActionBootstrapError('DAILY_ACTION_CHANGED');
           const raw = await request({ target_expected_actor_id: actorId,
-            target_time_zone: timeZone, target_entry_date: entryDate }, operation.controller.signal);
+            target_time_zone: timeZone, target_entry_date: entryDate,
+            target_expected_instance_id: expectedInstanceId }, operation.controller.signal);
           if (operation.controller.signal.aborted) throw dailyActionBootstrapError('DAILY_ACTION_CHANGED');
           const verified = await verifyOwner(actorId, version, operation.controller.signal, owner.identity);
-          return { value: normalizeDailyActionBootstrap(raw, actorId, entryDate), revision: verified.revision };
+          const value = normalizeDailyActionBootstrap(raw, actorId, entryDate);
+          if (expectedInstanceId !== null && value.instanceId !== expectedInstanceId) throw dailyActionBootstrapError('DAILY_ACTION_CHANGED');
+          return { value, revision: verified.revision };
         })();
         operation.promise = Promise.race([work, cancellation]).catch((error) => {
           assertEpoch(version);

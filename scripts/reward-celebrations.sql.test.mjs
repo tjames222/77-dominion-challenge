@@ -1,10 +1,8 @@
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { after, before, test } from 'node:test';
-import { DEFAULT_OWNERSHIP_REWARD_DEFINITIONS } from '../src/static/reward-catalog.mjs';
-import { DEFAULT_CHALLENGE_DEFINITIONS } from '../src/static/challenge-progression.mjs';
 
 // Deliberately cannot accept a database URL, port, or existing container name.
 const container = `77dc-reward-celebrations-sql-${randomUUID()}`;
@@ -38,6 +36,23 @@ const rejectSql = (sql, code) => `do $test$ begin begin ${sql} exception when sq
 let created = false;
 
 before(async () => {
+  // This harness executes the 20260913 delivery migration on its old schema,
+  // not migration71. Its launch-catalog evidence must not follow today's
+  // client defaults (whose completion-only point thresholds are now null).
+  const catalogSource = await readFile(new URL('../src/static/reward-progression-catalog.legacy-launch.v1.json', import.meta.url), 'utf8');
+  assert.equal(createHash('sha256').update(catalogSource).digest('hex'),
+    '1c82349e389bf2eeead6aa6af6338efece13a9608e6ad3992fbd0d0a18f0c1e7',
+    'The immutable pre-FOU-1498 launch catalog changed.');
+  const historicalCatalog = JSON.parse(catalogSource);
+  assert.equal(historicalCatalog.lifecycle, 'historical_reference');
+  assert.deepEqual(historicalCatalog.rewards.map(item => [item.key, item.unlockRule.pointsRequired]), [
+    ['gym_training_discount', 21], ['dominion_night_theme', 56], ['nehemiah_leadership_handbook', 98],
+    ['seven_day_reset', 140], ['dominion_platinum', 210], ['big_god_energy_tshirt_discount', 273],
+    ['twenty_one_day_prayer', 336], ['thirty_day_strength', 406], ['forty_day_fast', 469], ['bible_in_a_year', 532],
+  ]);
+  const definitions = historicalCatalog.rewards.map(item => ({ ...item,
+    pointsRequired: item.unlockRule.pointsRequired, metadata: { durationDays: item.targetSubmittedCheckIns },
+  }));
   const started = docker(['run', '--detach', '--name', container, '--network', 'none', '--user', 'postgres', '--tmpfs', '/tmp:rw', '--entrypoint', '/bin/sh', image, '-c',
     'initdb -D /tmp/reward-celebrations-pgdata -A trust && exec postgres -D /tmp/reward-celebrations-pgdata -k /tmp -h ""']);
   assert.equal(started.status, 0, started.stderr || started.error?.message); created = true;
@@ -60,10 +75,6 @@ before(async () => {
     grant usage on schema auth to authenticated; ${tables} ${functions}
     insert into public.reward_catalog_meta(catalog_key) values('primary');`);
   const quote = (value) => value == null ? 'null' : `'${String(value).replaceAll("'", "''")}'`;
-  const definitions = [...DEFAULT_OWNERSHIP_REWARD_DEFINITIONS, ...DEFAULT_CHALLENGE_DEFINITIONS.map((item) => ({
-    ...item, rewardType: 'challenge', stateModel: 'challenge_lifecycle', fulfillmentKey: item.key,
-    metadata: { durationDays: item.durationDays },
-  }))];
   for (const item of definitions) {
     if (item.stateModel === 'challenge_lifecycle') query(`insert into public.challenge_definitions(challenge_key,title,points_required,duration_days) values(${quote(item.key)},${quote(item.title)},${item.pointsRequired},${item.metadata.durationDays});`);
     query(`insert into public.reward_definitions(reward_key,reward_type,state_model,title,points_required,fulfillment_key,challenge_key,required_entitlement_key,sort_order)

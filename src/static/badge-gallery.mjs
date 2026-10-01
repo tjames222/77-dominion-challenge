@@ -1,5 +1,5 @@
 import { createDialog } from './dialog.mjs';
-import { badgeAwardIdentity, iconClass, normalizeEarnedBadges, validBadgeTimestamp } from './badges-rewards.mjs';
+import { badgeAwardIdentity, iconClass, normalizeEarnedBadges, validBadgeTimestamp } from './badge-data-contract.mjs';
 
 const sentence = (value, limit = 1200) => typeof value === 'string' ? value.trim().slice(0, limit) : '';
 const positiveInteger = (value, maximum = 10000) => Number.isInteger(value) && value > 0 && value <= maximum ? value : null;

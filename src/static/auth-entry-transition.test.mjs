@@ -68,7 +68,7 @@ for (const [name, next, invoke] of [
     assert.equal(f.requests[1].signal, undefined);
     owner.abort();
     // Even a transport that ignores abort and delivers a late result is fenced.
-    for (const request of f.requests) request.resolve({ data: { themeKey: 'dark' }, error: null });
+    for (const request of f.requests) request.resolve({ data: { themeKey: 'dark', schemaVersion: 2, actorId: 'A', snapshotVersion: 'a'.repeat(64) }, error: null });
     await rejection;
     assert.equal((await active).themeKey, 'dark');
     assert.equal(f.checks(), 3, 'Two prechecks and only the active caller\'s canonical postcheck.');

@@ -13908,3 +13908,4 @@ revoke execute on function public.grant_sharing_reward_after_invite_redemption()
 \ir migrations/20260930152825_add_original_77_completion_evidence_foundation.sql
 \ir migrations/20260930160740_wire_original_77_live_completion.sql
 \ir migrations/20260930161218_share_submitted_progress_v2.sql
+\ir migrations/20261001001245_repeatable_challenge_instances_v2.sql

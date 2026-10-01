@@ -1,4 +1,7 @@
 import { REWARD_POINT_THRESHOLDS } from './point-economy.mjs';
+import { isInstanceDate, normalizeChallengeInstance } from './challenge-instance-contract.mjs';
+// Shared pure validation; the preview grant reducer is loaded only on demand.
+export { ownDataRecord, validTimestamp, resolveTimestamp, safeKey };
 
 const CHALLENGE_STATES = new Set(['locked', 'available', 'active', 'completed']);
 const OWNERSHIP_STATES = new Set(['locked', 'owned']);
@@ -116,6 +119,12 @@ const safePercent = (value) => {
 };
 
 const safeKey = (value) => String(value || '').trim();
+const validTimestamp = value => typeof value === 'string' && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?(?:Z|[+-]\d{2}:\d{2})$/.test(value)
+  && isInstanceDate(value.slice(0, 10)) && Number(value.slice(11, 13)) <= 23
+  && Number(value.slice(14, 16)) <= 59 && Number(value.slice(17, 19)) <= 59 && Number.isFinite(Date.parse(value));
+const ownDataRecord = value => value !== null && typeof value === 'object' && !Array.isArray(value)
+  && [Object.prototype, null].includes(Object.getPrototypeOf(value))
+  && Reflect.ownKeys(value).every(key => typeof key === 'string' && Object.hasOwn(Object.getOwnPropertyDescriptor(value, key), 'value'));
 
 export function normalizeReward(reward = {}) {
   const stateModel = STATE_MODELS.has(reward.stateModel || reward.state_model)
@@ -123,16 +132,18 @@ export function normalizeReward(reward = {}) {
     : 'ownership';
   const validStates = stateModel === 'challenge_lifecycle' ? CHALLENGE_STATES : OWNERSHIP_STATES;
   const status = validStates.has(reward.status) ? reward.status : 'locked';
-  const currentPoints = safeWholeNumber(reward.currentPoints ?? reward.current_points);
-  const pointsRequired = safeWholeNumber(reward.pointsRequired ?? reward.points_required);
+  const rawRequirement = reward.requirement || reward.unlockRule;
+  const completionBased = rawRequirement?.type === 'challenge_completion';
+  const currentPoints = completionBased ? null : safeWholeNumber(rawRequirement?.currentPoints ?? reward.currentPoints ?? reward.current_points);
+  const pointsRequired = completionBased ? null : safeWholeNumber(rawRequirement?.pointsRequired ?? reward.pointsRequired ?? reward.points_required);
   const unlocked = status !== 'locked';
-  const pointsRemaining = unlocked
+  const pointsRemaining = completionBased ? null : unlocked
     ? 0
     : safeWholeNumber(
       reward.pointsRemaining ?? reward.points_remaining,
       Math.max(pointsRequired - currentPoints, 0),
     );
-  const progressPercent = unlocked
+  const progressPercent = completionBased ? null : unlocked
     ? 100
     : safePercent(
       reward.progressPercent ?? reward.progress_percent
@@ -142,8 +153,8 @@ export function normalizeReward(reward = {}) {
     ? [...new Set(reward.allowedActions || reward.allowed_actions)].filter((action) => typeof action === 'string')
     : [];
   const canAccess = reward.canAccess ?? reward.can_access ?? true;
-  const allowedActions = stateModel === 'challenge_lifecycle' && status === 'available' && canAccess
-    ? requestedActions
+  const allowedActions = stateModel === 'challenge_lifecycle' && ['available', 'completed'].includes(status) && canAccess
+    ? requestedActions.filter(action => action === 'start')
     : [];
 
   return {
@@ -157,6 +168,21 @@ export function normalizeReward(reward = {}) {
     currentPoints,
     pointsRemaining,
     progressPercent,
+    requirement: completionBased ? {
+      type: 'challenge_completion', prerequisiteChallengeKey: safeKey(rawRequirement.prerequisiteChallengeKey),
+      prerequisiteTitle: String(rawRequirement.prerequisiteTitle || reward.prerequisiteTitle || ''),
+      requiredState: 'completed', satisfied: rawRequirement.satisfied === true,
+    } : { type: rawRequirement?.type === 'trusted_points' ? 'trusted_points' : 'lifetime_points',
+      pointsRequired, currentPoints, pointsRemaining, progressPercent },
+    unlockRule: completionBased ? { type: 'challenge_completion', prerequisiteChallengeKey: safeKey(rawRequirement.prerequisiteChallengeKey), requiredState: 'completed' }
+      : { type: rawRequirement?.type === 'trusted_points' ? 'trusted_points' : 'lifetime_points', pointsRequired },
+    phase: reward.phase === 'post_core' ? 'post_core' : 'core',
+    released: reward.released !== false,
+    targetSubmittedCheckIns: reward.targetSubmittedCheckIns ?? reward.metadata?.durationDays ?? null,
+    grantCatalogVersion: reward.grantCatalogVersion ?? null,
+    grantReason: reward.grantReason ?? null,
+    grantProvenance: reward.grantProvenance && typeof reward.grantProvenance === 'object' ? { ...reward.grantProvenance } : null,
+    blockedReason: reward.blockedReason ?? null,
     fulfillmentKey: safeKey(reward.fulfillmentKey || reward.fulfillment_key),
     requiredEntitlementKey: reward.requiredEntitlementKey || reward.required_entitlement_key || null,
     icon: safeKey(reward.icon).replace(/[^a-z0-9-]/g, '') || 'gift',
@@ -178,7 +204,45 @@ export function normalizeReward(reward = {}) {
   };
 }
 
-export function normalizeRewardCatalog(payload = {}) {
+export function normalizeRewardCatalog(payload = {}, { preview = false } = {}) {
+  const isV2 = payload.schemaVersion === 2;
+  if (isV2 && (typeof payload.actorId !== 'string' || !payload.actorId
+    || !Number.isSafeInteger(payload.catalogVersion) || payload.catalogVersion < 1
+    || !Number.isSafeInteger(payload.revision) || payload.revision < 0
+    || typeof payload.snapshotVersion !== 'string' || !/^[a-f0-9]{64}$/.test(payload.snapshotVersion)
+    || !validTimestamp(payload.effectiveAt) || !Number.isSafeInteger(payload.totalPoints) || payload.totalPoints < 0
+    || (payload.currentInstance !== null && !normalizeChallengeInstance(payload.currentInstance, { preview }))
+    || !payload.originalRepeat || payload.originalRepeat.challengeKey !== 'original_77'
+    || payload.originalRepeat.targetCount !== 77 || typeof payload.originalRepeat.available !== 'boolean'
+    || typeof payload.originalRepeat.canStart !== 'boolean'
+    || !(payload.originalRepeat.reason === null || typeof payload.originalRepeat.reason === 'string')
+    || (payload.originalRepeat.canStart && (!payload.originalRepeat.available || payload.currentInstance?.status !== 'completed'
+      || payload.currentInstance.reviewRequired || payload.originalRepeat.reason !== null)))) {
+    throw new Error('Reward progress could not be verified. Refresh and try again.');
+  }
+  if (isV2) {
+    for (const reward of [...(Array.isArray(payload.items) ? payload.items : []), ...(payload.nextUnlock ? [payload.nextUnlock] : [])]) {
+      // A key-only nextUnlock is resolved from this page; full off-page nodes
+      // must carry the same discriminated requirement as every catalog item.
+      if (Object.keys(reward).length === 1 && reward.key) continue;
+      const requirement = reward.requirement;
+      if (!ownDataRecord(reward) || !ownDataRecord(requirement) || !/^[a-z0-9][a-z0-9_.:-]{0,99}$/.test(reward.key)
+        || !STATE_MODELS.has(reward.stateModel) || !(reward.stateModel === 'ownership' ? OWNERSHIP_STATES : CHALLENGE_STATES).has(reward.status)
+        || typeof reward.active !== 'boolean' || typeof reward.released !== 'boolean' || typeof reward.canAccess !== 'boolean'
+        || !Array.isArray(reward.allowedActions) || reward.allowedActions.some(action => action !== 'start')
+        || (reward.allowedActions.length > 0 && (reward.stateModel !== 'challenge_lifecycle' || !['available', 'completed'].includes(reward.status)
+          || !reward.active || !reward.released || !reward.canAccess || payload.currentInstance?.status !== 'completed' || payload.currentInstance.reviewRequired))
+        || !['trusted_points', 'lifetime_points', 'challenge_completion'].includes(requirement.type)
+        || (requirement.type === 'challenge_completion'
+          ? (!safeKey(requirement.prerequisiteChallengeKey) || requirement.requiredState !== 'completed' || typeof requirement.satisfied !== 'boolean'
+            || ['pointsRequired', 'currentPoints', 'pointsRemaining', 'progressPercent'].some(key => reward[key] !== null))
+          : (!['pointsRequired', 'currentPoints', 'pointsRemaining'].every(key => Number.isSafeInteger(requirement[key]) && requirement[key] >= 0)
+            || requirement.pointsRequired < 1 || !Number.isFinite(requirement.progressPercent) || requirement.progressPercent < 0 || requirement.progressPercent > 100
+            || ['pointsRequired', 'currentPoints', 'pointsRemaining', 'progressPercent'].some(key => requirement[key] !== reward[key])))) {
+        throw new Error('Reward requirements could not be verified. Refresh and try again.');
+      }
+    }
+  }
   const items = (Array.isArray(payload.items) ? payload.items : [])
     .map(normalizeReward)
     .filter((reward) => reward.key);
@@ -200,6 +264,9 @@ export function normalizeRewardCatalog(payload = {}) {
     schemaVersion: safeWholeNumber(payload.schemaVersion ?? payload.schema_version, 1) || 1,
     catalogVersion: safeWholeNumber(payload.catalogVersion ?? payload.catalog_version, 1) || 1,
     totalPoints: safeWholeNumber(payload.totalPoints ?? payload.total_points),
+    ...(isV2 ? { actorId: payload.actorId, effectiveAt: payload.effectiveAt, revision: payload.revision,
+      snapshotVersion: payload.snapshotVersion, currentInstance: payload.currentInstance === null ? null : normalizeChallengeInstance(payload.currentInstance, { preview }),
+      originalRepeat: Object.freeze({ ...payload.originalRepeat }) } : {}),
     items,
     nextUnlock,
     page: {
@@ -227,7 +294,7 @@ export function challengeProgressionToRewardCatalog(progression = {}) {
     },
     // Ownership/unlock thresholds remain intact; later-instance execution is
     // not implemented by the original-challenge completion release.
-    allowedActions: [],
+    allowedActions: challenge.allowedActions || [],
     canAccess: challenge.accessGranted ?? true,
     accessReason: challenge.accessReason || null,
   }));

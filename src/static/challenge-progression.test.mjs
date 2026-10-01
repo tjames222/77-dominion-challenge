@@ -16,28 +16,34 @@ const definitions = [
 const timestamp = '2026-07-16T00:00:00.000Z';
 
 describe('challenge point progression', () => {
-  it('uses the launch reward thresholds paced across one challenge', () => {
+  it('uses only the Reset point threshold and four completion requirements', () => {
     assert.deepEqual(
       DEFAULT_CHALLENGE_DEFINITIONS.map(({ key, pointsRequired }) => [key, pointsRequired]),
       [
-        ['seven_day_reset', 140],
-        ['twenty_one_day_prayer', 336],
-        ['thirty_day_strength', 406],
-        ['forty_day_fast', 469],
-        ['bible_in_a_year', 532],
+        ['seven_day_reset', 420],
+        ['twenty_one_day_prayer', null],
+        ['thirty_day_strength', null],
+        ['forty_day_fast', null],
+        ['bible_in_a_year', null],
       ],
     );
 
-    const below = buildChallengeProgression({ totalPoints: 139, now: timestamp });
-    const exact = buildChallengeProgression({ totalPoints: 140, now: timestamp });
+    const below = buildChallengeProgression({ totalPoints: 419, now: timestamp });
+    const exact = buildChallengeProgression({ totalPoints: 420, now: timestamp });
 
     assert.equal(below.nextUnlock.key, 'seven_day_reset');
     assert.equal(below.nextUnlock.pointsRemaining, 1);
-    assert.equal(below.nextUnlock.progressPercent, 139 / 140 * 100);
+    assert.equal(below.nextUnlock.progressPercent, 419 / 420 * 100);
     assert.equal(below.newlyUnlocked.length, 0);
     assert.deepEqual(exact.newlyUnlocked.map((challenge) => challenge.key), ['seven_day_reset']);
 
     DEFAULT_CHALLENGE_DEFINITIONS.forEach((definition) => {
+      if (definition.unlockRule.type === 'challenge_completion') {
+        const result = buildChallengeProgression({ definitions: [definition], totalPoints: Number.MAX_SAFE_INTEGER, now: timestamp });
+        assert.equal(result.challenges[0].status, 'locked');
+        assert.equal(result.challenges[0].pointsRemaining, null);
+        return;
+      }
       const justBelow = buildChallengeProgression({
         definitions: [definition],
         totalPoints: definition.pointsRequired - 1,

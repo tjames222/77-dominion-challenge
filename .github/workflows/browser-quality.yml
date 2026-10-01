@@ -56,6 +56,12 @@ jobs:
       - name: Production build
         run: pnpm build
 
+      - name: Verify mobile Share footer in WebKit
+        run: pnpm exec playwright test tests/e2e/share-composer-routes.spec.mjs --project=webkit-share-composer-mobile --grep 'composer retains branded accessible layout.*at 390px'
+
+      - name: Verify reward queue after Dashboard recovery
+        run: pnpm exec playwright test tests/e2e/reward-celebrations.spec.mjs tests/e2e/reward-celebrations-failure.spec.mjs --project=chromium-functional --project=webkit-reward-celebrations-mobile --grep 'check-in queues day complete|a failed permanent reward lookup'
+
       - name: Hybrid dev authentication regression
         run: pnpm test:e2e:auth
 
@@ -79,6 +85,9 @@ jobs:
 
       - name: Verify original challenge completion and session recovery
         run: pnpm test:e2e:original77
+
+      - name: Verify repeatable challenge and reward progression UI
+        run: pnpm test:e2e:reward-progression
 
       - name: Verify complete two-shard inventory
         id: plan
