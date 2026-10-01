@@ -14,6 +14,115 @@ test('compiled public and Security entries do not fetch the optional preview run
   expect(runtime).toEqual([]); expect(traffic.provider).toEqual([]);
 });
 
+test('compiled preview commits a check-in, points and badge evidence in one authoritative storage write', async ({ page }) => {
+  await openHarness(page); const owner = await signInMock(page);
+  const result = await page.evaluate(async ({ owner, fixedNow }) => {
+    const { api } = window.__previewBadgeTest; const NativeDate = Date; const at = Date.parse(fixedNow);
+    globalThis.Date = class extends NativeDate { constructor(...args) { super(...(args.length ? args : [at])); } static now() { return at; } };
+    const key = 'dominion:challengeAggregateV2:' + owner; const original = Storage.prototype.setItem; const writes = [];
+    try {
+      const bootstrap = await api.getDailyActionBootstrap({ expectedUserId: owner, timeZone: 'UTC' });
+      const expectedInstanceId = bootstrap.instanceId;
+      await api.mutateDailyStandardDraft({ date: '2026-02-14', actionId: 'walk', completed: true,
+        expectedVersion: bootstrap.draft.version, expectedUserId: owner, expectedInstanceId });
+      const before = JSON.parse(localStorage.getItem(key));
+      Storage.prototype.setItem = function (name, value) {
+        if (name === key) writes.push(JSON.parse(value));
+        return original.call(this, name, value);
+      };
+      await api.postCheckIn({ date: '2026-02-14', completed: ['walk'], timeZone: 'UTC' }, { expectedUserId: owner, expectedInstanceId });
+      return { before, writes, after: JSON.parse(localStorage.getItem(key)) };
+    } finally { Storage.prototype.setItem = original; globalThis.Date = NativeDate; }
+  }, { owner, fixedNow: FIXED_NOW });
+  expect(result.writes).toHaveLength(1); expect(result.writes[0]).toEqual(result.after);
+  expect(result.after.generation).toBe(result.before.generation + 1);
+  expect(result.after.runtime.checkIns).toHaveLength(1);
+  expect(result.after.runtime.lifetimePoints).toBe(result.before.runtime.lifetimePoints + 1);
+  expect(result.after.runtime.trustedDailyStandardPoints).toBe(result.before.runtime.trustedDailyStandardPoints + 1);
+  const badgeState = result.after.values['dominion:badgeState:v1'];
+  expect(badgeState.checkIns[0].sourceId).toBe(result.after.runtime.checkIns[0].id);
+  expect(badgeState.checkIns[0].instanceId).toBe(result.after.runtime.currentInstanceId);
+  expect(badgeState.awards.map(award => award.key)).toEqual(['faithful_start', 'honest_partial']);
+});
+
+test('compiled preview completes 77 partial submissions, preserves history on repeat and rejects same-date scoring', async ({ page }) => {
+  await openHarness(page); const owner = await signInMock(page);
+  const result = await page.evaluate(async ({ owner, fixedNow }) => {
+    const { api } = window.__previewBadgeTest; const NativeDate = Date;
+    let at = Date.parse(fixedNow);
+    globalThis.Date = class extends NativeDate { constructor(...args) { super(...(args.length ? args : [at])); } static now() { return at; } };
+    const key = 'dominion:challengeAggregateV2:' + owner;
+    const read = () => JSON.parse(localStorage.getItem(key));
+    const submit = async () => {
+      const date = new Date().toISOString().slice(0, 10);
+      const bootstrap = await api.getDailyActionBootstrap({ expectedUserId: owner, timeZone: 'UTC' });
+      const expectedInstanceId = bootstrap.instanceId;
+      await api.mutateDailyStandardDraft({ date, actionId: 'walk', completed: true,
+        expectedVersion: bootstrap.draft.version, expectedUserId: owner, expectedInstanceId });
+      return api.postCheckIn({ date, completed: ['walk'], timeZone: 'UTC' }, { expectedUserId: owner, expectedInstanceId });
+    };
+    try {
+      for (let index = 0; index < 77; index += 1) { if (index) at += 86400000; await submit(); }
+      const completed = read();
+      const catalog = await api.getAllRewardCatalog({ expectedUserId: owner });
+      const options = { expectedUserId: owner, expectedInstanceId: catalog.currentInstance.id,
+        expectedRevision: catalog.revision, startDate: null, timeZone: 'UTC', requestId: crypto.randomUUID() };
+      const first = await api.startChallenge('original_77', options);
+      const afterStart = read(); const replay = await api.startChallenge('original_77', options); const afterReplay = read();
+      let sameDayError;
+      try { await submit(); } catch (error) { sameDayError = error.message; }
+      const afterBlocked = read();
+      at += 86400000; await submit(); const afterNextDay = read();
+      return { completed, repeat: catalog.originalRepeat, first, replay, afterStart, afterReplay, sameDayError, afterBlocked, afterNextDay };
+    } finally { globalThis.Date = NativeDate; }
+  }, { owner, fixedNow: FIXED_NOW });
+  expect(result.completed.runtime.checkIns).toHaveLength(77);
+  expect(result.completed.runtime.runs).toHaveLength(1);
+  expect(result.completed.runtime.runs[0]).toMatchObject({ status: 'completed', submittedCount: 77, targetCount: 77 });
+  expect(result.completed.runtime.completionEvents).toHaveLength(1);
+  const finishers = result.completed.values['dominion:badgeState:v1'].awards.filter(award => award.key === 'original_77_completed');
+  expect(finishers).toHaveLength(1);
+  expect(result.repeat).toMatchObject({ available: true, canStart: true });
+  expect(result.replay.replayed).toBe(true); expect(result.replay.instanceId).toBe(result.first.instanceId);
+  expect(result.afterStart.runtime).toEqual(result.afterReplay.runtime);
+  expect(result.afterReplay.runtime.runs).toHaveLength(2);
+  expect(result.afterReplay.runtime.runs[0]).toEqual(result.completed.runtime.runs[0]);
+  expect(result.afterReplay.values['dominion:badgeState:v1'].awards).toEqual(result.completed.values['dominion:badgeState:v1'].awards);
+  expect(result.sameDayError).toBeTruthy();
+  expect(result.afterBlocked.runtime.checkIns).toHaveLength(77);
+  expect(result.afterBlocked.runtime.lifetimePoints).toBe(77);
+  expect(result.afterNextDay.runtime.checkIns).toHaveLength(78);
+  expect(result.afterNextDay.runtime.lifetimePoints).toBe(78);
+  expect(result.afterNextDay.runtime.runs[1]).toMatchObject({ status: 'active', submittedCount: 1, targetCount: 77 });
+});
+
+test('compiled preview read-only refreshes across tabs never rewrite unchanged aggregate state', async ({ page, context }) => {
+  await openHarness(page); const owner = await signInMock(page);
+  await startCheckIn(page, owner); expect((await finishOperation(page)).ok).toBe(true);
+  const other = await context.newPage(); await openHarness(other);
+  const observe = tab => tab.evaluate(owner => {
+    const key = 'dominion:challengeAggregateV2:' + owner; const original = Storage.prototype.setItem;
+    window.aggregateReadWrites = 0; window.aggregateReadBefore = localStorage.getItem(key);
+    Storage.prototype.setItem = function (name, value) {
+      if (name === key) window.aggregateReadWrites += 1;
+      return original.call(this, name, value);
+    };
+    window.restoreAggregateReadObserver = () => { Storage.prototype.setItem = original; };
+  }, owner);
+  await Promise.all([observe(page), observe(other)]);
+  const read = tab => tab.evaluate(async owner => {
+    const { api } = window.__previewBadgeTest;
+    for (let index = 0; index < 3; index += 1) {
+      await api.getDashboard(); await api.getBadgeCollection({ expectedUserId: owner });
+      await api.getAllRewardCatalog({ expectedUserId: owner });
+    }
+    return { writes: window.aggregateReadWrites,
+      unchanged: localStorage.getItem('dominion:challengeAggregateV2:' + owner) === window.aggregateReadBefore };
+  }, owner);
+  try { expect(await Promise.all([read(page), read(other)])).toEqual([{ writes: 0, unchanged: true }, { writes: 0, unchanged: true }]); }
+  finally { await Promise.all([page.evaluate(() => window.restoreAggregateReadObserver()), other.evaluate(() => window.restoreAggregateReadObserver())]); await other.close(); }
+});
+
 for (const roundTrip of [false, true]) test(`delayed compiled import cannot write after an account ${roundTrip ? 'round trip' : 'change'}`, async ({ page }) => {
   const entered = deferred(); const release = deferred();
   await page.route(RUNTIME, async route => { entered.resolve(); await release.promise; await route.fallback(); });
@@ -38,8 +147,9 @@ test('canonical check-in denies a not-started owner and an active owner without 
   const activation = () => page.evaluate(owner => window.__previewBadgeTest.api.getChallengeActivation({ expectedUserId: owner }), owner);
   expect((await activation()).status).toBe('not_started');
   await startCheckIn(page, owner);
-  expect(await finishOperation(page)).toEqual({ ok: false, error: 'The original challenge cannot accept another Check-In.' });
-  expect(await stateFor(page, owner)).toBeNull();
+  expect((await finishOperation(page)).ok).toBe(false);
+  expect((await stateFor(page, owner))?.checkIns || []).toEqual([]);
+  expect((await stateFor(page, owner))?.awards || []).toEqual([]);
 
   await activateFixtureChallenge(page, owner);
   await page.evaluate(owner => window.__previewBadgeTest.writePreviewUserValue(localStorage, owner, 'dominion:mockSubscription', null), owner);
@@ -47,8 +157,9 @@ test('canonical check-in denies a not-started owner and an active owner without 
   expect(withoutAccess.status).toBe('active');
   expect(withoutAccess.canMutateDailyStandards).toBe(false);
   await startCheckIn(page, owner);
-  expect(await finishOperation(page)).toEqual({ ok: false, error: 'The original challenge cannot accept another Check-In.' });
-  expect(await stateFor(page, owner)).toBeNull();
+  expect((await finishOperation(page)).ok).toBe(false);
+  expect((await stateFor(page, owner))?.checkIns || []).toEqual([]);
+  expect((await stateFor(page, owner))?.awards || []).toEqual([]);
 });
 
 test('failed compiled import grants nothing and recovers only after explicit reload and retry', async ({ page }) => {
@@ -91,7 +202,9 @@ test('same-actor tabs serialize duplicate events, exclusive claims, wrong-token 
   await openHarness(page); const owner = await signInMock(page);
   const other = await context.newPage(); await openHarness(other);
   await Promise.all([startCheckIn(page, owner, ['workoutTwo']), startCheckIn(other, owner, ['workoutTwo'])]);
-  expect((await finishOperation(page)).ok).toBe(true); expect((await finishOperation(other)).ok).toBe(true);
+  const outcomes = await Promise.all([finishOperation(page), finishOperation(other)]);
+  expect(outcomes.filter(result => result.ok)).toHaveLength(1);
+  expect(outcomes.filter(result => !result.ok)).toHaveLength(1);
   const state = await stateFor(page, owner);
   expect(state.checkIns).toHaveLength(1);
   expect(state.awards.map(award => award.key)).toEqual(['faithful_start', 'honest_partial', 'hard_path']);
@@ -128,6 +241,9 @@ test('late collection import rejects changed owner without writing a badge cache
 
 test('compiled Dashboard preserves canonical celebration copy, presentation and acknowledgment', async ({ page }) => {
   const storage = fixtureFor('member', 'dark');
+  storage.json['dominion:mockRewardEntitlements'] = DEFAULT_OWNERSHIP_REWARD_DEFINITIONS.map(reward => ({
+    key: reward.key, ownedAt: '2026-02-10T18:00:00.000Z', celebrationSeenAt: '2026-02-11T18:00:00.000Z',
+  }));
   await page.addInitScript(({ storage, fixedNow }) => {
     if (!sessionStorage.getItem('badge-dashboard-seeded')) {
       for (const [key, value] of Object.entries(storage.json)) localStorage.setItem(key, JSON.stringify(value));
@@ -173,7 +289,9 @@ async function seedOwnedPreviewReward(page, owner) {
 }
 async function previewRewardLegacyState(page, owner) {
   return page.evaluate(owner => {
-    const peek = key => window.__previewBadgeTest.peekPreviewUserValue(localStorage, owner, key, null);
+    const aggregate = JSON.parse(localStorage.getItem('dominion:challengeAggregateV2:' + owner) || 'null');
+    const peek = key => aggregate && Object.hasOwn(aggregate.values, key) ? aggregate.values[key]
+      : window.__previewBadgeTest.peekPreviewUserValue(localStorage, owner, key, null);
     return { ownership: peek('dominion:mockRewardEntitlements'), leases: peek('dominion:rewardCelebrationLeases') };
   }, owner);
 }
@@ -275,6 +393,13 @@ async function restoreBadgeCandidate(page, owner, state) {
     const write = window.__previewBadgeTest.writePreviewUserValue;
     write(localStorage, owner, 'dominion:badgeState:v1', state);
     write(localStorage, owner, 'dominion:badges', state.awards);
+    const key = 'dominion:challengeAggregateV2:' + owner;
+    const aggregate = JSON.parse(localStorage.getItem(key) || 'null');
+    if (aggregate) {
+      aggregate.values['dominion:badgeState:v1'] = state;
+      aggregate.values['dominion:badges'] = state.awards;
+      localStorage.setItem(key, JSON.stringify(aggregate));
+    }
   }, { owner, state });
 }
 async function restoreRewardCandidate(page, owner, state) {
@@ -282,6 +407,13 @@ async function restoreRewardCandidate(page, owner, state) {
     const write = window.__previewBadgeTest.writePreviewUserValue;
     write(localStorage, owner, 'dominion:mockRewardEntitlements', state.ownership);
     write(localStorage, owner, 'dominion:rewardCelebrationLeases', state.leases);
+    const key = 'dominion:challengeAggregateV2:' + owner;
+    const aggregate = JSON.parse(localStorage.getItem(key) || 'null');
+    if (aggregate) {
+      aggregate.values['dominion:mockRewardEntitlements'] = state.ownership;
+      aggregate.values['dominion:rewardCelebrationLeases'] = state.leases;
+      localStorage.setItem(key, JSON.stringify(aggregate));
+    }
   }, { owner, state });
 }
 const claimPreviewBadge = (page, owner, claimToken) => page.evaluate(({ owner, claimToken }) => (
@@ -423,7 +555,12 @@ test('delivery ledger: known seen retries survive omitted legacy sources without
   expect(await deliveryRowsFor(page, owner)).toEqual(confirmed);
   expect(await page.evaluate(owner => window.__previewBadgeTest.api.getEarnedBadges({ expectedUserId: owner }), owner)).toEqual([]);
   const catalog = await page.evaluate(owner => window.__previewBadgeTest.api.getRewardCatalog({ expectedUserId: owner }), owner);
-  expect(catalog.items.find(item => item.key === PREVIEW_REWARD.key)?.status).toBe('locked');
+  // Omitting the mutable candidate cannot erase the separately preserved
+  // typed historical grant. Its receipt still cannot mint unrelated ownership.
+  expect(catalog.items.find(item => item.key === PREVIEW_REWARD.key)).toMatchObject({
+    status: 'owned', ownedAt: PREVIEW_REWARD_OWNED_AT,
+    grantProvenance: { type: 'legacy_preserved', catalogVersion: 1 },
+  });
   expect((await claimPreviewBadge(page, owner, randomUUID())).badges).toEqual([]);
   expect((await claimPreviewReward(page, owner, randomUUID())).claimedUnlocks).toEqual([]);
   expect(await deliveryRowsFor(page, owner)).toEqual(confirmed);

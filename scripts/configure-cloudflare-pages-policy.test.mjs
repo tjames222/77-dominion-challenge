@@ -933,7 +933,7 @@ test('every protected release gates hosted work on the exact Cloudflare policy',
 
   const policyJob = deploy.slice(policyStart, canaryStart);
   const exactProjectGate = 'if [[ "${CLOUDFLARE_PAGES_PROJECT:-}" != "77-dominion-live" ]]';
-  assert.match(policyJob, /needs: validation/u);
+  assert.match(policyJob, /needs:\n      - validation\n      - repeatable-cutover-policy/u);
   assert.match(policyJob, /environment: production/u);
   assert.match(policyJob, /CLOUDFLARE_ACCOUNT_ID: \$\{\{ secrets\.CLOUDFLARE_ACCOUNT_ID \}\}/u);
   assert.match(policyJob, /CLOUDFLARE_API_TOKEN: \$\{\{ secrets\.CLOUDFLARE_API_TOKEN \}\}/u);

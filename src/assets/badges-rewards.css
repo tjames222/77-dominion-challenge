@@ -371,10 +371,10 @@
   justify-content: center;
   min-height: 44px;
   padding: 0 15px;
-  border: 1px solid var(--accent-strong);
+  border: 1px solid var(--button-primary-background);
   border-radius: 12px;
-  color: #211600;
-  background: var(--accent-strong);
+  color: var(--button-primary-text);
+  background: var(--button-primary-background);
   font: inherit;
   font-size: .78rem;
   font-weight: 950;
@@ -411,8 +411,8 @@
   right: 13px;
   padding: 5px 8px;
   border-radius: 999px;
-  color: #211600;
-  background: var(--accent-strong);
+  color: var(--button-primary-text);
+  background: var(--button-primary-background);
   font-size: .6rem;
   font-weight: 950;
   letter-spacing: .08em;

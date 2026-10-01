@@ -114,7 +114,7 @@ test('operator module has no SDK, database, account, workflow, filesystem write,
   assert.match(source, /console\.log\(JSON\.stringify\(result\)\)/);
   assert.equal((source.match(/await fetchImpl\(/g)||[]).length, 1);
 });
-test('release integration is explicit opt-in, defaults false, and only sends in the full backend job', () => {
+test('release integration is explicit opt-in, defaults false, and only sends in ordinary full releases', () => {
   const workflow = readFileSync(new URL('../.github/workflows/deploy.yml', import.meta.url), 'utf8');
   assert.match(workflow, /^on:\n  workflow_dispatch:\n    inputs:/m);
   const approvalInput = workflow.match(/^      send_test_email:\n(?:(?:        [^\n]*|)\n)*/m)?.[0];
@@ -124,8 +124,8 @@ test('release integration is explicit opt-in, defaults false, and only sends in 
   assert.match(approvalInput, /^        type: boolean$/m);
   const backend = workflow.match(/^  backend:\n[\s\S]*?(?=^  [a-z][a-z-]*:\n|$(?![\s\S]))/m)?.[0];
   assert(backend);
-  assert.match(backend, /^    if: inputs\.release_scope == 'full'$/m);
-  assert.match(backend, /^      - name: Send the single explicitly approved email-delivery test\n        if: inputs\.send_test_email == true\n        env:\n          RESEND_API_KEY: \$\{\{ secrets\.RESEND_API_KEY \}\}\n        run: node scripts\/send-approved-production-test-email\.mjs$/m);
+  assert.match(backend, /^    if: inputs\.release_scope == 'full' \|\| inputs\.release_scope == 'repeatable-challenge-cutover'$/m);
+  assert.match(backend, /^      - name: Send the single explicitly approved email-delivery test\n        if: inputs\.release_scope == 'full' && inputs\.send_test_email == true\n        env:\n          RESEND_API_KEY: \$\{\{ secrets\.RESEND_API_KEY \}\}\n        run: node scripts\/send-approved-production-test-email\.mjs$/m);
   assert(backend.indexOf('run: node scripts/configure-production-auth-email.mjs')
     < backend.indexOf('run: node scripts/send-approved-production-test-email.mjs'));
   assert.equal((workflow.match(/run: node scripts\/send-approved-production-test-email\.mjs/g) || []).length, 1);

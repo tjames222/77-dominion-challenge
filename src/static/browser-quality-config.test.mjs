@@ -58,7 +58,7 @@ const workflowJob = (id) => {
 
 test('two standard-runner shards preserve preliminary checks and the full main matrix', () => {
   const preflight = workflowJob('preflight');
-  for (const command of ['pnpm test', 'pnpm build', 'pnpm test:e2e:auth', 'pnpm test:e2e:mfa', 'pnpm test:e2e:admin', 'pnpm test:e2e:daily-bootstrap', 'pnpm test:e2e:preview-badges', 'pnpm test:e2e:app-streak', 'pnpm test:e2e:original77']) {
+  for (const command of ['pnpm test', 'pnpm build', 'pnpm test:e2e:auth', 'pnpm test:e2e:mfa', 'pnpm test:e2e:admin', 'pnpm test:e2e:daily-bootstrap', 'pnpm test:e2e:preview-badges', 'pnpm test:e2e:app-streak', 'pnpm test:e2e:original77', 'pnpm test:e2e:reward-progression']) {
     assert.ok(preflight.includes(`run: ${command}\n`), `Missing preliminary ${command}`);
   }
   const shards = workflowJob('browser-shards');
@@ -227,6 +227,21 @@ test('original completion runs in its compiled real-SDK gate instead of the gene
   assert.match(config.use.baseURL, /^http:\/\/127\.0\.0\.1:\d+$/);
   assert.equal(config.webServer.reuseExistingServer, false);
   assert.match(config.webServer.command, /\/tmp\/77dc-original77-dist-\d+/);
+  assert.deepEqual(config.projects.map(project => project.use.defaultBrowserType), ['chromium', 'webkit']);
+});
+
+test('reward progression has a compiled real-SDK gate for desktop and mobile without external providers', async () => {
+  const { default: config } = await import('../../playwright.reward-progression.config.mjs');
+  assert.equal(packageJson.scripts['test:e2e:reward-progression'], 'playwright test --config=playwright.reward-progression.config.mjs');
+  assert.match(workflowJob('preflight'), /- name: Verify repeatable challenge and reward progression UI\n\s+run: pnpm test:e2e:reward-progression/);
+  assert.ok(playwrightConfig.includes('/reward-progression-live\\.spec\\.mjs/'));
+  assert.equal(config.testMatch.source, 'reward-progression-live\\.spec\\.mjs');
+  assert.equal(config.webServer.env.VITE_ENABLE_MOCKS, 'false');
+  assert.equal(config.webServer.env.VITE_ENABLE_PRODUCTION_CONNECTIONS, 'true');
+  assert.equal(config.webServer.env.VITE_SUPABASE_URL, `${config.use.baseURL}/__admin_fixture__`);
+  assert.match(config.use.baseURL, /^http:\/\/127\.0\.0\.1:\d+$/);
+  assert.equal(config.webServer.reuseExistingServer, false);
+  assert.match(config.webServer.command, /\/tmp\/77dc-reward-progression-dist-\d+/);
   assert.deepEqual(config.projects.map(project => project.use.defaultBrowserType), ['chromium', 'webkit']);
 });
 

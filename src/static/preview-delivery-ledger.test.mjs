@@ -227,6 +227,7 @@ test('actual API compatibility selection overlays seen before reduction and neve
   const storedOwnership = [{ key: 'dominion_night_theme', unlockedAt: '2026-01-01T00:00:00Z', celebrationSeenAt: null }];
   let rawWrites = 0;
   const context = {
+    withPreviewAggregate: async () => undefined,
     isLocalDemoMode: () => true, usesSupabaseAuthentication: () => false, previewBadgeEpoch: 0,
     requireMockRewardActor: () => 'A', capturePreviewBadgeOwner: async () => owner,
     loadDelivery: async () => ({ ...ledgerModule, previewDeliveryLedger: f.ledger }),
@@ -252,6 +253,7 @@ test('actual API reward ack does not accept unknown seen legacy ownership as a r
   const owner = { actorId: 'A', sessionIdentity: 'preview:A', token: '', epoch: 0 };
   const ownershipRecords = [{ key: 'not_a_catalog_reward', celebrationSeenAt: 'legacy-forged' }];
   const context = {
+    withPreviewAggregate: async () => undefined,
     isLocalDemoMode: () => true, usesSupabaseAuthentication: () => false, previewBadgeEpoch: 0,
     requireMockRewardActor: () => 'A', capturePreviewBadgeOwner: async () => owner,
     loadDelivery: async () => ({ ...ledgerModule, previewDeliveryLedger: f.ledger }),

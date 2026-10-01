@@ -59,6 +59,7 @@ export function initShareComposer(ownerDocument = globalThis.document) {
   let previewRequest = 0;
   let actionRequest = 0;
   let working = false;
+  let previewContext = null;
 
   const content = element(ownerDocument, 'div', 'share-composer');
   const choices = element(ownerDocument, 'fieldset', 'share-flow-options');
@@ -126,7 +127,7 @@ export function initShareComposer(ownerDocument = globalThis.document) {
   status.setAttribute('role', 'status');
   status.setAttribute('aria-live', 'polite');
   status.setAttribute('aria-atomic', 'true');
-  content.append(choices, preview, crewField, rewardNote, actionRow, status);
+  content.append(choices, preview, crewField, rewardNote);
 
   const dialog = createDialog({
     id: 'shareComposerDialog',
@@ -138,9 +139,15 @@ export function initShareComposer(ownerDocument = globalThis.document) {
     initialFocus: (panel) => panel.querySelector('[data-share-flow]:checked'),
     onClose: () => {
       previewRequest += 1;
+      previewContext = null;
       status.textContent = '';
     },
   });
+
+  // Keep sharing controls visible while the longer preview scrolls on phones.
+  dialog.elements.footer.classList.add('share-composer-footer');
+  dialog.elements.footer.append(actionRow, status);
+  dialog.elements.footer.hidden = false;
 
   const setActionsDisabled = (disabled) => {
     [nativeButton, copyButton].forEach((button) => {
@@ -163,6 +170,7 @@ export function initShareComposer(ownerDocument = globalThis.document) {
 
   const refreshPreview = async () => {
     const requestId = ++previewRequest;
+    previewContext = null;
     const flow = SHARE_FLOWS[currentKind];
     status.textContent = '';
     dialog.clearError();
@@ -193,6 +201,7 @@ export function initShareComposer(ownerDocument = globalThis.document) {
       } else {
         const snapshot = await previewShareSnapshot(currentKind);
         if (requestId !== previewRequest) return;
+        previewContext = snapshot.context;
         const presentation = snapshot?.presentation || {};
         previewEyebrow.textContent = presentation.eyebrow || flow.label;
         previewMetric.textContent = presentation.metric || '77';
@@ -240,6 +249,7 @@ export function initShareComposer(ownerDocument = globalThis.document) {
     const requestId = ++actionRequest;
     const method = button.dataset.shareMethod;
     const actionKind = currentKind;
+    const actionContext = previewContext;
     const actionCrew = actionKind === 'invite'
       ? selectedManagedCrew(managedCrews, crewSelect)
       : null;
@@ -259,6 +269,8 @@ export function initShareComposer(ownerDocument = globalThis.document) {
         error.name = 'AbortError';
         throw error;
       }
+      if (actionKind !== 'invite' && (actionContext?.actorId !== expectedUserId
+        || actionContext?.schemaVersion !== 2)) throw new Error('Reopen the share preview before creating a link.');
       const shouldContinue = () => requestId === actionRequest;
       let result;
       if (actionKind === 'invite') {
@@ -279,7 +291,7 @@ export function initShareComposer(ownerDocument = globalThis.document) {
         result = await executeSnapshotShare({
           kind: actionKind,
           method,
-          createSnapshot: (kind) => createShareSnapshot(kind, { expectedUserId }),
+          createSnapshot: (kind) => createShareSnapshot(kind, { expectedUserId, expectedInstanceId: actionContext.instanceId }),
           createRewardIntent: (shareKind) => createSharingRewardIntent(shareKind, { expectedUserId }),
           completeReward: (completionToken) => completeSharingReward(completionToken, { expectedUserId }),
           nativeShare: navigator.share?.bind(navigator),

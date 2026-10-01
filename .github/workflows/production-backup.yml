@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       backup_mode:
-        description: Select the reviewed 13, 61, 66, or post-admin-inbox 67 migration checkpoint; Vault recovery remains conditional on protected settings.
+        description: Select a reviewed migration checkpoint through post-original77 70; Vault recovery remains conditional on protected settings.
         required: true
         default: legacy-thirteen-migration-cutover
         type: choice
@@ -13,6 +13,7 @@ on:
           - current-production-2026-09-27
           - post-early-access-66
           - post-admin-inbox-67
+          - post-original77-70
 
 permissions:
   contents: read
@@ -46,7 +47,7 @@ jobs:
         with:
           version: 2.109.0
       - name: Verify backup encryption and boundary checks
-        run: node --test scripts/free-production-backup.test.mjs scripts/free-backup-post-early-access-vault.test.mjs
+        run: node --test scripts/free-production-backup.test.mjs scripts/free-backup-post-early-access-vault.test.mjs scripts/verify-post-original77-backup-evidence.test.mjs
       - name: Capture and rehearse restore
         id: backup
         env:
@@ -54,9 +55,9 @@ jobs:
           SUPABASE_PROJECT_REF: ${{ vars.SUPABASE_PROJECT_REF }}
           PRODUCTION_BACKUP_PUBLIC_KEY: ${{ vars.PRODUCTION_BACKUP_PUBLIC_KEY }}
           BACKUP_MODE: ${{ inputs.backup_mode }}
-          PROFILE_PHOTO_WORKER_SECRET: ${{ (inputs.backup_mode == 'current-production-2026-09-27' || inputs.backup_mode == 'post-early-access-66' || inputs.backup_mode == 'post-admin-inbox-67') && secrets.PROFILE_PHOTO_WORKER_SECRET || '' }}
-          FEEDBACK_WORKER_SECRET: ${{ (inputs.backup_mode == 'post-early-access-66' || inputs.backup_mode == 'post-admin-inbox-67') && secrets.FEEDBACK_WORKER_SECRET || '' }}
-          EARLY_ACCESS_INVITATION_WORKER_SECRET: ${{ (inputs.backup_mode == 'post-early-access-66' || inputs.backup_mode == 'post-admin-inbox-67') && secrets.EARLY_ACCESS_INVITATION_WORKER_SECRET || '' }}
+          PROFILE_PHOTO_WORKER_SECRET: ${{ (inputs.backup_mode == 'current-production-2026-09-27' || inputs.backup_mode == 'post-early-access-66' || inputs.backup_mode == 'post-admin-inbox-67' || inputs.backup_mode == 'post-original77-70') && secrets.PROFILE_PHOTO_WORKER_SECRET || '' }}
+          FEEDBACK_WORKER_SECRET: ${{ (inputs.backup_mode == 'post-early-access-66' || inputs.backup_mode == 'post-admin-inbox-67' || inputs.backup_mode == 'post-original77-70') && secrets.FEEDBACK_WORKER_SECRET || '' }}
+          EARLY_ACCESS_INVITATION_WORKER_SECRET: ${{ (inputs.backup_mode == 'post-early-access-66' || inputs.backup_mode == 'post-admin-inbox-67' || inputs.backup_mode == 'post-original77-70') && secrets.EARLY_ACCESS_INVITATION_WORKER_SECRET || '' }}
         shell: bash
         run: |
           set +x
@@ -75,6 +76,14 @@ jobs:
             FEEDBACK_WORKER_SECRET="$FEEDBACK_WORKER_SECRET" \
             EARLY_ACCESS_INVITATION_WORKER_SECRET="$EARLY_ACCESS_INVITATION_WORKER_SECRET" \
             node scripts/free-production-backup.mjs
+      - name: Verify exact original challenge encrypted evidence
+        if: inputs.backup_mode == 'post-original77-70'
+        env:
+          BACKUP_RUN_ID: ${{ github.run_id }}
+          PRODUCTION_BACKUP_PUBLIC_KEY: ${{ vars.PRODUCTION_BACKUP_PUBLIC_KEY }}
+        run: >-
+          node scripts/verify-post-original77-backup-evidence.mjs
+          --directory "${{ steps.backup.outputs.artifact_directory }}"
       - name: Retain encrypted backup for seven days
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:

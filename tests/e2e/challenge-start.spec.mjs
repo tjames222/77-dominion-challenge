@@ -10,6 +10,14 @@ const TRAINING_STORAGE_KEY = 'dominion:soloTrainingLaunchRequests';
 const ACTIVATION_STORAGE_KEY = 'dominion:mockChallengeActivation';
 const REQUEST_STORAGE_KEY = 'dominion:mockChallengeActivationRequests';
 
+async function expectNoCanonicalActivation(page) {
+  const runtime = await page.evaluate((userId) => (
+    JSON.parse(localStorage.getItem(`dominion:challengeAggregateV2:${userId}`)).runtime
+  ), FIXED_USER_ID);
+  expect(runtime).toMatchObject({ actorId: FIXED_USER_ID, currentInstanceId: null,
+    runs: [], requests: [], drafts: [], checkIns: [] });
+}
+
 async function openStartDialog(page) {
   await page.getByRole('button', { name: 'Start Challenge' }).click();
   const dialog = page.getByRole('dialog', { name: 'Start Challenge' });
@@ -100,6 +108,7 @@ test('not-started Dashboard is a readable, zero-progress fail-closed gate', asyn
   await expect.poll(() => page.evaluate((key) => (
     Object.keys(JSON.parse(localStorage.getItem(key) || '{}')).length
   ), REQUEST_STORAGE_KEY)).toBe(0);
+  await expectNoCanonicalActivation(page);
 
   const targetSizes = await Promise.all([
     start.evaluate((element) => element.getBoundingClientRect().height),
@@ -136,6 +145,7 @@ test('chooser supports Escape, Back, and Cancel without activation writes', asyn
     JSON.parse(localStorage.getItem(key) || '{}')[userId]
   ), { key: ACTIVATION_STORAGE_KEY, userId: FIXED_USER_ID });
   expect(activation.status).toBe('not_started');
+  await expectNoCanonicalActivation(page);
   app.assertNoRuntimeErrors();
 });
 
@@ -171,6 +181,7 @@ test('an account change closes setup and cannot submit the stale owner', async (
     JSON.parse(localStorage.getItem(key) || '{}')
   ), ACTIVATION_STORAGE_KEY);
   expect(activations[FIXED_USER_ID].status).toBe('not_started');
+  await expectNoCanonicalActivation(page);
   app.assertNoRuntimeErrors();
 });
 
@@ -187,6 +198,7 @@ test('Group choice hands off only to canonical Community intent', async ({ page,
     JSON.parse(localStorage.getItem(key) || '{}')[userId]
   ), { key: ACTIVATION_STORAGE_KEY, userId: FIXED_USER_ID });
   expect(activation.status).toBe('not_started');
+  await expectNoCanonicalActivation(page);
   app.assertNoRuntimeErrors();
 });
 
@@ -228,20 +240,22 @@ test('Solo confirmation activates once, claims training, and resumes after refre
   await expect(page.locator('.check-row-details').first()).toHaveAttribute('href', /bible-reading\.html/);
   await expect(page.locator('.shared-header-share')).toBeEnabled();
 
-  const persisted = await page.evaluate(({ activationKey, requestKey, trainingKey, userId }) => {
-    const activation = JSON.parse(localStorage.getItem(activationKey) || '{}')[userId];
-    const requests = JSON.parse(localStorage.getItem(requestKey) || '{}');
+  const persisted = await page.evaluate(async ({ trainingKey, userId }) => {
+    const api = await import('/src/static/api.js');
+    const activation = await api.getChallengeActivation({ expectedUserId: userId });
+    const aggregate = JSON.parse(localStorage.getItem(`dominion:challengeAggregateV2:${userId}`));
+    const requests = aggregate.runtime.requests;
     const training = JSON.parse(localStorage.getItem(trainingKey) || '{}')[userId];
     return {
       activation,
-      requestCount: Object.keys(requests).length,
-      request: Object.values(requests)[0],
+      requestCount: requests.length,
+      request: requests[0],
+      runtimeActorId: aggregate.runtime.actorId,
+      runCount: aggregate.runtime.runs.length,
       training,
       events: window.__soloTrainingEvents,
     };
   }, {
-    activationKey: ACTIVATION_STORAGE_KEY,
-    requestKey: REQUEST_STORAGE_KEY,
     trainingKey: TRAINING_STORAGE_KEY,
     userId: FIXED_USER_ID,
   });
@@ -250,10 +264,12 @@ test('Solo confirmation activates once, claims training, and resumes after refre
     mode: 'solo',
     startDate: FIXED_TODAY,
     challengeDay: 1,
-    confirmedBy: FIXED_USER_ID,
+    actorId: FIXED_USER_ID,
   });
   expect(persisted.requestCount).toBe(1);
-  expect(persisted.request).toMatchObject({ actorId: FIXED_USER_ID, action: 'solo_activate' });
+  expect(persisted.runtimeActorId).toBe(FIXED_USER_ID);
+  expect(persisted.runCount).toBe(1);
+  expect(persisted.request).toMatchObject({ action: 'activate_initial', instanceId: persisted.activation.currentInstance.id });
   expect(persisted.training).toBeUndefined();
   expect(persisted.events).toHaveLength(1);
   expect(persisted.events[0]).toMatchObject({
@@ -312,7 +328,7 @@ test('Solo confirmation activates once, claims training, and resumes after refre
   await expect(page.locator('.site-training-layer')).toBeHidden();
   await page.getByRole('button', { name: 'Open menu' }).click();
   await expect(page.getByRole('button', { name: 'Resume Training' })).toBeVisible();
-  const afterRefresh = await page.evaluate(async ({ requestKey, trainingKey, userId }) => {
+  const afterRefresh = await page.evaluate(async ({ trainingKey, userId }) => {
     const [api, registryModule] = await Promise.all([
       import('/src/static/api.js'),
       import('/src/static/site-training-registry.mjs'),
@@ -326,13 +342,18 @@ test('Solo confirmation activates once, claims training, and resumes after refre
       trainingPage,
     );
     const state = await api.getSiteTrainingState({ page: trainingPage, program, expectedUserId: userId });
+    const runtime = JSON.parse(localStorage.getItem(`dominion:challengeAggregateV2:${userId}`)).runtime;
     return {
-    requestCount: Object.keys(JSON.parse(localStorage.getItem(requestKey) || '{}')).length,
+    requestCount: runtime.requests.length,
+    instanceId: runtime.currentInstanceId,
+    runCount: runtime.runs.length,
     training: JSON.parse(localStorage.getItem(trainingKey) || '{}')[userId],
       state,
     };
-  }, { requestKey: REQUEST_STORAGE_KEY, trainingKey: TRAINING_STORAGE_KEY, userId: FIXED_USER_ID });
+  }, { trainingKey: TRAINING_STORAGE_KEY, userId: FIXED_USER_ID });
   expect(afterRefresh.requestCount).toBe(1);
+  expect(afterRefresh.runCount).toBe(1);
+  expect(afterRefresh.instanceId).toBe(persisted.activation.currentInstance.id);
   expect(afterRefresh.training).toBeUndefined();
   expect(afterRefresh.state).toMatchObject({
     contractValid: true,
@@ -390,13 +411,14 @@ test('future Solo start schedules once, keeps participation locked, and launches
   await expect(page.locator('#siteTrainingTitle')).toHaveText('Sharing isn’t available yet');
   await expect(page.locator('#siteTrainingFallback')).toBeVisible();
 
-  const result = await page.evaluate(({ activationKey, requestKey, trainingKey, userId }) => ({
-    activation: JSON.parse(localStorage.getItem(activationKey) || '{}')[userId],
-    requestCount: Object.keys(JSON.parse(localStorage.getItem(requestKey) || '{}')).length,
-    training: JSON.parse(localStorage.getItem(trainingKey) || '{}')[userId],
-  }), {
-    activationKey: ACTIVATION_STORAGE_KEY,
-    requestKey: REQUEST_STORAGE_KEY,
+  const result = await page.evaluate(async ({ trainingKey, userId }) => {
+    const api = await import('/src/static/api.js');
+    return {
+      activation: await api.getChallengeActivation({ expectedUserId: userId }),
+      requestCount: JSON.parse(localStorage.getItem(`dominion:challengeAggregateV2:${userId}`)).runtime.requests.length,
+      training: JSON.parse(localStorage.getItem(trainingKey) || '{}')[userId],
+    };
+  }, {
     trainingKey: TRAINING_STORAGE_KEY,
     userId: FIXED_USER_ID,
   });
@@ -436,6 +458,7 @@ test('offline setup stays non-mutating and recovers when connectivity returns', 
   expect(disabledFocus.contained).toBe(true);
   await expectNoHorizontalOverflow(page);
   expect(await page.evaluate((key) => localStorage.getItem(key), REQUEST_STORAGE_KEY)).toBeNull();
+  await expectNoCanonicalActivation(page);
 
   await context.setOffline(false);
   await expect(start).toBeEnabled();

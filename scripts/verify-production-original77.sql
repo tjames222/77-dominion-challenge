@@ -1,12 +1,13 @@
 -- Source-fixed original77 release checkpoint. Catalogs/configuration only;
 -- never calls an application RPC or reads users, sessions, check-ins, awards,
 -- completion-event rows, Vault values, or any credential.
--- Contract digests are derived from the frozen actual 70-migration local replay
+-- Contract digests are derived from the frozen actual 71-migration local replay
 -- on PostgreSQL 17.6, never learned from the hosted database.
 -- Frozen migration source SHA-256:
 -- 20260930152825 a186bca6cfdecea14b696cc377c40fc3d2a83b13faeda7620369cd1949c81d02
 -- 20260930160740 76e1f82f852592c8f88fe65476880bec9059e034bd80e52f83669ce0e54508e0
 -- 20260930161218 01ff6fa1218766a5de3b246ab7abc0b030f5191c46cf150f23b322c71ec0db16
+-- 20261001001245 7e295a3708a3c241b60917fb16db00f27a39aa327f19c557595a5cbab2396bfc
 WITH canonical_deparse_context AS MATERIALIZED (
   SELECT pg_catalog.set_config('search_path','pg_catalog',true) AS pinned_search_path,
     pg_catalog.set_config('TimeZone','UTC',true) AS pinned_timezone,
@@ -148,27 +149,28 @@ WITH canonical_deparse_context AS MATERIALIZED (
         WHERE x.conrelid=pg_catalog.to_regclass('public.public_share_snapshots')))
     ELSE NULL END FROM canonical_deparse_context c
 ), expected_contracts(contract_name,definition_hash) AS (VALUES
-  ('functions','c6dfa7818f4df23f6f81606cf01000ce785620fc5a8fc67e2f27e8772be62a49'),
+  ('functions','d2666694f6514ce2fe6393e5a7dc260e04e34c264b26f9de8fe853433d5d4846'),
   ('triggers','6fb77c60423d6774420446045e693fd82df788953ff15ea31451d0d08e3b64f6'),
-  ('check_ins','4f5a8f37efbc6c7d15373fab4c1cde243298f50a6bb8619200a3613e96f5811c'),
+  ('check_ins','cdad4cc8397b543c5c6512de7da7cf05c078155517cf82ebf581cfe65a7d1172'),
   ('ledger','4933283e722a83b96e6b739a837cb737098429cdadf5cb72192471532b094fdc'),
   ('finisher','b5d8655ecb6a8c87481e6312ecb6185cc0c50b8248e55d3a95380ee9a4b28e5a'),
-  ('share','806806267b1158f37cf28aad140dca492238171e1cdf8b52c9a91a84e865e453')
+  ('share','06d56fc169b6657a46f4538e18868413a1839144fc20c17dd131232f04143ce7')
 ), contract_checks AS (
   SELECT e.contract_name,coalesce(d.document IS NOT NULL AND
     pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(d.document::text,'UTF8')),'hex')=e.definition_hash,false) AS ok
   FROM expected_contracts e LEFT JOIN contract_documents d USING(contract_name)
 )
 SELECT
-  coalesce((SELECT pg_catalog.count(*)=70 AND pg_catalog.count(DISTINCT version)=70
-    AND pg_catalog.max(version::text)='20260930161218'
+  coalesce((SELECT pg_catalog.count(*)=71 AND pg_catalog.count(DISTINCT version)=71
+    AND pg_catalog.max(version::text)='20261001001245'
     AND pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(pg_catalog.string_agg(version::text,',' ORDER BY version::text COLLATE "C"),'UTF8')),'hex')
-      ='09d7293ce15add9360f88a89337ea54822e64f015b1e6ef63eaba1543f36c872'
+      ='e6090c27e44dd678cab1b8178058f780bec2d0b4dcd99dee0d96407d24a5bb26'
     FROM supabase_migrations.schema_migrations),false)
-    AND (SELECT pg_catalog.count(*)=3 FROM supabase_migrations.schema_migrations WHERE (version,name) IN (
+    AND (SELECT pg_catalog.count(*)=4 FROM supabase_migrations.schema_migrations WHERE (version,name) IN (
       ('20260930152825','add_original_77_completion_evidence_foundation'),
       ('20260930160740','wire_original_77_live_completion'),
-      ('20260930161218','share_submitted_progress_v2'))) AS exact_migration_history_ok,
+      ('20260930161218','share_submitted_progress_v2'),
+      ('20261001001245','repeatable_challenge_instances_v2'))) AS exact_migration_history_ok,
   CASE WHEN c.pinned_search_path='pg_catalog' AND c.pinned_timezone='UTC' AND c.pinned_datestyle='ISO, YMD'
     AND c.pinned_timeout='15s' AND c.pinned_lock_timeout='5s'
     THEN pg_catalog.current_setting('transaction_read_only')='on' AND pg_catalog.current_setting('server_version_num')='170006'

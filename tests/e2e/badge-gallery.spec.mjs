@@ -1,5 +1,5 @@
 import { test, expect, expectNoHorizontalOverflow } from './support/app-test.mjs';
-import { GALLERY_BADGES, seedBadgeGallery } from './support/badge-gallery-fixtures.mjs';
+import { GALLERY_BADGES, seedBadgeGallery, replaceBadgeGalleryAwards } from './support/badge-gallery-fixtures.mjs';
 import { countApiFunctionCalls, deferApiFunction, injectApiFunctionFailureOnce } from './support/network-states.mjs';
 import { analyzeAccessibility, assertNoBlockingAxeViolations } from './support/quality-gates.mjs';
 
@@ -93,14 +93,9 @@ test('same-account insertion keeps selected badge and exact trigger identity', a
   const tile = page.locator('[data-badge-key="perfect_week"]');
   await tile.evaluate((node) => { window.__galleryOriginalTrigger = node; });
   await tile.click();
-  await page.evaluate(async (badges) => {
-    const { writePreviewUserValue } = await import('/src/static/preview-user-state.mjs');
-    const owner = localStorage.getItem('dominion:mockUserId');
-    writePreviewUserValue(localStorage, owner, 'dominion:badges', [
-      { ...badges[0], key: 'new_remote', name: 'New remote badge', earnedAt: '2026-02-14T20:00:00Z' }, ...badges,
-    ]);
-    window.dispatchEvent(new StorageEvent('storage', { key: 'dominion:badges' }));
-  }, GALLERY_BADGES);
+  await replaceBadgeGalleryAwards(page, [
+    { ...GALLERY_BADGES[0], key: 'new_remote', name: 'New remote badge', earnedAt: '2026-02-14T20:00:00Z' }, ...GALLERY_BADGES,
+  ]);
   await expect(page.locator('.badge-gallery-tile')).toHaveCount(4);
   const dialog = page.getByRole('dialog', { name: 'Seven for Seven' });
   await expect(dialog).toBeVisible();
@@ -121,14 +116,9 @@ test('same-definition awards retain their own evidence and exact trigger after a
   await current.evaluate((node) => { window.__galleryScopedTrigger = node; });
   await current.click();
   await expect(page.getByRole('dialog')).toContainText('Reaching a 7-day perfect streak.');
-  await page.evaluate(async (badges) => {
-    const { writePreviewUserValue } = await import('/src/static/preview-user-state.mjs');
-    const owner = localStorage.getItem('dominion:mockUserId');
-    writePreviewUserValue(localStorage, owner, 'dominion:badges', [
-      { ...badges[1], awardId: 'next-1', scopeKey: 'original77:2026-03-01', earnedAt: '2026-03-07T12:00:00Z' }, ...badges,
-    ]);
-    window.dispatchEvent(new StorageEvent('storage', { key: 'dominion:badges' }));
-  }, sameDefinition);
+  await replaceBadgeGalleryAwards(page, [
+    { ...sameDefinition[1], awardId: 'next-1', scopeKey: 'original77:2026-03-01', earnedAt: '2026-03-07T12:00:00Z' }, ...sameDefinition,
+  ]);
   await expect(page.locator('[data-badge-key="seven_sealed"]')).toHaveCount(3);
   await expect(page.getByRole('dialog')).toContainText('Earned January 7, 2026');
   await expect(current).toHaveAttribute('aria-expanded', 'true');

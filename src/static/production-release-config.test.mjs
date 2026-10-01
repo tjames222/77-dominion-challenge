@@ -94,7 +94,8 @@ describe('production release configuration', () => {
   });
 
   test('uses one protected Cloudflare deployment after backend verification', () => {
-    assert.match(workflow, /needs:\s*frontend[\s\S]*?environment: production/);
+    assert.match(workflow,
+      /deploy:\s*\n[\s\S]*?needs:\s*\n\s*- repeatable-cutover-policy\s*\n\s*- frontend[\s\S]*?needs\.repeatable-cutover-policy\.result == 'success'[\s\S]*?needs\.frontend\.result == 'success'[\s\S]*?environment: production/u);
     assert.match(workflow, /cloudflare\/wrangler-action@[0-9a-f]{40} # v3/);
     assert.match(
       workflow,
@@ -117,7 +118,8 @@ describe('production release configuration', () => {
     const frontendStart = workflow.indexOf('\n  frontend:');
     assert.ok(frontendStart >= 0 && deployStart > frontendStart);
     const deployJob = workflow.slice(deployStart);
-    assert.match(deployJob, /needs: frontend\n\s*if: \$\{\{ always\(\) && !cancelled\(\) && needs\.frontend\.result == 'success' \}\}\n\s*environment: production/u);
+    assert.match(deployJob,
+      /needs:\s*\n\s*- repeatable-cutover-policy\s*\n\s*- frontend\s*\n\s*if: \$\{\{ always\(\) && !cancelled\(\) && needs\.repeatable-cutover-policy\.result == 'success' && needs\.frontend\.result == 'success' \}\}\n\s*environment: production/u);
     assert.match(deployJob, /name: production-frontend-\$\{\{ github\.sha \}\}/u);
     assert.match(deployJob, /--commit-hash=\$\{\{ github\.sha \}\}/u);
     assert.match(deployJob, /name: Create keyed one-time compatibility attestation/u);
@@ -127,9 +129,11 @@ describe('production release configuration', () => {
     const frontendCondition = compileFixedJobCondition(extractedJobCondition(frontendJob));
     const publishCondition = compileFixedJobCondition(extractedJobCondition(deployJob));
     const outcomes = ['success', 'failure', 'skipped', 'cancelled', undefined];
-    const shared = { validation: 'success', 'canary-policy': 'success', 'cloudflare-policy': 'success' };
+    const shared = { validation: 'success', 'repeatable-cutover-policy': 'success',
+      'canary-policy': 'success', 'cloudflare-policy': 'success' };
     const expectedByScope = {
       full: { ...shared, 'frontend-rollback-history': 'skipped', backend: 'success', 'compatibility-guards': 'skipped' },
+      'repeatable-challenge-cutover': { ...shared, 'frontend-rollback-history': 'skipped', backend: 'success', 'compatibility-guards': 'skipped' },
       'compatibility-cutover': { ...shared, 'frontend-rollback-history': 'skipped', backend: 'skipped', 'compatibility-guards': 'success' },
       'frontend-only': { ...shared, 'frontend-rollback-history': 'success', backend: 'skipped', 'compatibility-guards': 'skipped' },
     };
@@ -145,7 +149,9 @@ describe('production release configuration', () => {
             // If the frontend cannot run, its DAG result is skipped regardless
             // of which hypothetical build completion we are checking.
             const actualResult = willBuild ? frontendResult : 'skipped';
-            assert.equal(publishCondition({ needs: { frontend: actualResult }, releaseScope, cancelled }),
+            assert.equal(publishCondition({ needs: {
+              'repeatable-cutover-policy': needs['repeatable-cutover-policy'], frontend: actualResult,
+            }, releaseScope, cancelled }),
               shouldBuild && frontendResult === 'success' && !cancelled,
               `${releaseScope} publishing result/cancellation matrix`);
           }
@@ -153,7 +159,7 @@ describe('production release configuration', () => {
         combinations++;
       }
     }
-    assert.equal(combinations, 3 * (outcomes.length ** 6));
+    assert.equal(combinations, 4 * (outcomes.length ** 7));
     for (const releaseScope of ['unknown', undefined]) {
       for (const needs of Object.values(expectedByScope)) {
         assert.equal(frontendCondition({ needs, releaseScope, cancelled: false }), false);

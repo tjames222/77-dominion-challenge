@@ -2,16 +2,27 @@ import { expect, test } from './support/app-test.mjs';
 import { analyzeAccessibility, assertNoBlockingAxeViolations } from './support/quality-gates.mjs';
 import { ROUTE_BY_ID } from './support/routes.mjs';
 
+async function replaceScopedAwards(page, awards) {
+  await page.evaluate((records) => {
+    const owner = localStorage.getItem('dominion:mockUserId');
+    const key = `dominion:challengeAggregateV2:${owner}`;
+    const aggregate = JSON.parse(localStorage.getItem(key));
+    if (aggregate.actorId !== owner) throw new Error('Scoped badge fixture owner changed.');
+    aggregate.values['dominion:badges'] = records;
+    aggregate.values['dominion:badgeState:v1'].awards = records;
+    aggregate.generation += 1;
+    localStorage.setItem(key, JSON.stringify(aggregate));
+  }, awards);
+}
+
 async function seedScopedAwards(page) {
-  await page.evaluate(() => {
-    localStorage.setItem('dominion:badges', JSON.stringify(Array.from({ length: 13 }, (_, index) => ({
+  await replaceScopedAwards(page, Array.from({ length: 13 }, (_, index) => ({
       awardId: `c2500000-0000-4000-8000-${String(index + 1).padStart(12, '0')}`,
       key: 'seven_sealed', name: '7-Day Perfect Streak', description: 'Public badge description',
       tier: 'silver', icon: 'shield', earnedAt: '2026-02-07T12:00:00.000Z',
       scopeKey: index === 0 ? 'lifetime' : `original77:fixture-${index}`,
       metadata: { privateNote: 'Never display this' },
-    }))));
-  });
+    })));
   await page.locator('.member-progress-trigger[aria-label="View Jordan Test’s level and badges"]').click();
   const dialog = page.getByRole('dialog', { name: 'Member progress' });
   await expect(dialog.locator('.member-progress-badge')).toHaveCount(12);
@@ -32,9 +43,8 @@ test('scoped badge pages retain identical-key awards and never reveal provenance
 
 test('crew display preserves grandfathered gold and newer scoped silver presentation', async ({ page, app }) => {
   await app.open(ROUTE_BY_ID.community);
-  await page.evaluate(() => {
-    const definition = { name: '7-Day Perfect Streak', description: 'Current description', tier: 'silver', icon: 'repeat' };
-    localStorage.setItem('dominion:badges', JSON.stringify([
+  const definition = { name: '7-Day Perfect Streak', description: 'Current description', tier: 'silver', icon: 'repeat' };
+  await replaceScopedAwards(page, [
       { id: 'c2500000-0000-4000-8000-000000000101', badge_key: 'seven_sealed', scope_key: 'lifetime',
         earned_at: '2026-02-07T12:00:00Z', badge_definitions: definition,
         metadata: { legacy: true, privateNote: 'Never display', awardDefinition: {
@@ -42,8 +52,7 @@ test('crew display preserves grandfathered gold and newer scoped silver presenta
         } } },
       { id: 'c2500000-0000-4000-8000-000000000102', badge_key: 'seven_sealed', scope_key: 'original77:2026-02-01',
         earned_at: '2026-02-07T11:00:00Z', badge_definitions: definition, metadata: { awardDefinition: definition } },
-    ]));
-  });
+    ]);
   await page.reload({ waitUntil: 'networkidle' });
   await app.stable();
   const leaderboard = page.locator('.leaderboard-row').filter({ has: page.locator('[aria-label="View Jordan Test’s level and badges"]') });
@@ -63,10 +72,17 @@ for (const theme of ['light', 'dark', 'dominion-night']) {
     await app.open(ROUTE_BY_ID.community, { theme });
     const dialog = await seedScopedAwards(page);
     await page.evaluate(() => {
-      const badges = JSON.parse(localStorage.getItem('dominion:badges'));
+      const owner = localStorage.getItem('dominion:mockUserId');
+      const key = `dominion:challengeAggregateV2:${owner}`;
+      const aggregate = JSON.parse(localStorage.getItem(key));
+      const badges = aggregate.values['dominion:badges'];
       // Simulate another valid data version between pages, without firing an
       // unrelated foreground event which would already revalidate page one.
-      localStorage.setItem('dominion:badges', JSON.stringify(badges.filter(b => !b.awardId.endsWith('000000000012'))));
+      const remaining = badges.filter(b => !b.awardId.endsWith('000000000012'));
+      aggregate.values['dominion:badges'] = remaining;
+      aggregate.values['dominion:badgeState:v1'].awards = remaining;
+      aggregate.generation += 1;
+      localStorage.setItem(key, JSON.stringify(aggregate));
     });
     await dialog.getByRole('button', { name: 'Load more badges' }).click();
     const reload = dialog.getByRole('button', { name: 'Reload badges' });

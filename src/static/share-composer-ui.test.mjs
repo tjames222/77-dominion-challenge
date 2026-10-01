@@ -18,8 +18,11 @@ const inviteDialog = read('./crew-invite-dialog.js');
 describe('sharing composer browser integration', () => {
   test('uses the authoritative snapshot and lifetime reward APIs', () => {
     assert.match(api, /functions\.invoke\(name, \{ body \}\)/);
-    assert.match(api, /invokeSupabaseAction\('share-snapshot', \{ action: 'preview', kind \}\)/);
-    assert.match(api, /invokeSupabaseAction\('share-snapshot', \{ action: 'create', kind \}\)/);
+    assert.match(api, /invokeSupabaseAction\('share-snapshot', \{\s*action: 'preview', kind, contractVersion: 2, expectedUserId: actorId,\s*\}\)/);
+    assert.match(api, /invokeSupabaseAction\('share-snapshot', \{\s*action: 'create', kind, contractVersion: 2, expectedUserId, expectedInstanceId,\s*\}\)/);
+    assert.match(composer, /previewContext = snapshot.context/);
+    assert.match(composer, /expectedInstanceId: actionContext.instanceId/);
+    assert.match(composer, /actionContext\?\.actorId !== expectedUserId/);
     assert.match(api, /client\.rpc\('create_sharing_reward_intent'/);
     assert.match(api, /client\.rpc\('complete_sharing_reward'/);
   });
@@ -81,6 +84,10 @@ describe('sharing composer browser integration', () => {
     assert.match(composer, /data-share-method/);
     assert.match(composer, /Share from this device/);
     assert.match(composer, /Copy share link/);
+    assert.match(composer, /content\.append\(choices, preview, crewField, rewardNote\)/);
+    assert.match(composer, /dialog\.elements\.footer\.append\(actionRow, status\)/);
+    assert.match(composer, /dialog\.elements\.footer\.hidden = false/);
+    assert.match(css, /\.share-composer-footer\s*\{\s*display: grid/);
   });
 
   test('force-closes and clears account-scoped state across authentication changes', () => {

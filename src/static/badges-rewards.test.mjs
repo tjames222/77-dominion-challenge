@@ -20,6 +20,14 @@ const dashboardSource = readFileSync(new URL('./dashboard.js', import.meta.url),
 const menuSource = readFileSync(new URL('./menu.js', import.meta.url), 'utf8');
 
 describe('Badges & Rewards page model', () => {
+  it('uses semantic contrasting button tokens for reward actions and the next-unlock marker in every theme', () => {
+    for (const selector of ['.reward-action-button,', '.reward-next-marker,']) {
+      const rule = pageCss.slice(pageCss.indexOf(selector), pageCss.indexOf('}', pageCss.indexOf(selector)));
+      assert.match(rule, /color: var\(--button-primary-text\)/);
+      assert.match(rule, /background: var\(--button-primary-background\)/);
+    }
+  });
+
   it('preserves the Sharing badge icon instead of falling back', () => {
     assert.equal(iconClass('share'), 'icon-share');
   });
@@ -245,7 +253,8 @@ describe('Badges & Rewards route integration', () => {
     assert.match(pageSource, /await openRewardDetail\(deepLinkKey, trigger\)/);
     assert.match(pageSource, /claimChallengeUnlocks\(\{ expectedUserId \}\)/);
     assert.match(rewardCardSource, /data-start-reward/);
-    assert.match(pageSource, /await startChallenge\(pendingRewardKey, \{ expectedUserId \}\)/);
+    assert.match(pageSource, /await startChallenge\(challengeKey, \{ expectedUserId, expectedInstanceId, expectedRevision,/);
+    assert.match(pageSource, /requestId: request\.requestId/);
   });
 
   it('renders every reward through one accessible shared card contract', () => {

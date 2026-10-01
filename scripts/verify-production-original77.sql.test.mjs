@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { after, before, test } from 'node:test';
 import { createOriginal77FullchainFixture } from './fixtures/original77-fullchain-fixture.mjs';
@@ -10,7 +11,11 @@ import { createOriginal77FullchainFixture } from './fixtures/original77-fullchai
 let fixture;
 let checkpoint;
 let inboxCheckpoint;
+let migrationSourceHash;
+let releaseHistory;
 const allTrue = Array(8).fill('t').join('|');
+const q = value => `'${String(value).replaceAll("'", "''")}'`;
+const digest = value => createHash('sha256').update(value).digest('hex');
 
 function readOnly(query = checkpoint, searchPath = 'public') {
   assert(['public', 'private', 'pg_catalog'].includes(searchPath));
@@ -36,18 +41,33 @@ before(async () => {
   checkpoint = await readFile(new URL('./verify-production-original77.sql', import.meta.url), 'utf8');
   inboxCheckpoint = await readFile(new URL('./verify-production-account-request-inbox.sql', import.meta.url), 'utf8');
   assert(!checkpoint.includes('0000000000000000000000000000000000000000000000000000000000000000'),
-    'Canonical hashes must come from a successful frozen actual70 local replay before these tests run.');
+    'Canonical hashes must come from a successful frozen actual71 local replay before these tests run.');
   fixture = await createOriginal77FullchainFixture();
   assert.equal(fixture.appliedFiles.length, 70);
   assert.equal(fixture.history.length, 70);
+  releaseHistory = [...fixture.history,
+    { version: '20261001001245', name: 'repeatable_challenge_instances_v2' }];
+  const migrationSource = await readFile(new URL('../supabase/migrations/20261001001245_repeatable_challenge_instances_v2.sql', import.meta.url), 'utf8');
+  migrationSourceHash = digest(migrationSource);
+  assert.equal(migrationSourceHash, '7e295a3708a3c241b60917fb16db00f27a39aa327f19c557595a5cbab2396bfc');
+  fixture.query(`begin;set local check_function_bodies=on;set local search_path=public,extensions;
+    ${migrationSource}
+    insert into supabase_migrations.schema_migrations(version,name,statements)
+      values('20261001001245','repeatable_challenge_instances_v2',array[${q(migrationSource)}]::text[]);commit;`);
+  assert.equal(fixture.query('select count(*) from supabase_migrations.schema_migrations;'), '71');
   assert.equal(readOnly(inboxCheckpoint), Array(11).fill('t').join('|'),
     'The fullchain fixture must retain the independent eleven-field inbox contract.');
   assert.equal(readOnly(), allTrue);
 });
 
-after(() => { fixture?.close(); });
+after(async () => {
+  try {
+    assert.equal(digest(await readFile(new URL('../supabase/migrations/20261001001245_repeatable_challenge_instances_v2.sql', import.meta.url), 'utf8')),
+      migrationSourceHash, 'Migration 71 changed during original77 catalog verification.');
+  } finally { fixture?.close(); }
+});
 
-test('actual70 replay passes source-fixed catalog proof in each caller deparse context', () => {
+test('actual71 replay passes source-fixed catalog proof in each caller deparse context', () => {
   for (const path of ['public', 'private', 'pg_catalog']) assert.equal(readOnly(checkpoint, path), allTrue);
 });
 
@@ -56,8 +76,8 @@ test('a read-only catalog role can evaluate the contract without application exe
     ${checkpoint} ROLLBACK;`), allTrue);
 });
 
-for (const count of [67, 68, 69]) test(`incomplete ${count}-migration history is refused`, () => {
-  const versions = fixture.history.slice(count).map(row => `'${row.version}'`).join(',');
+for (const count of [67, 68, 69, 70]) test(`incomplete ${count}-migration history is refused`, () => {
+  const versions = releaseHistory.slice(count).map(row => `'${row.version}'`).join(',');
   driftProbe(`DELETE FROM supabase_migrations.schema_migrations WHERE version IN (${versions});`, [0]);
 });
 

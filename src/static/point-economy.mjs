@@ -1,3 +1,5 @@
+import progressionCatalog from './reward-progression-catalog.v2.json' with { type: 'json' };
+
 export const DAILY_STANDARD_COUNT = 7;
 export const POINTS_PER_DAILY_STANDARD = 1;
 export const MAX_DAILY_STANDARD_POINTS = DAILY_STANDARD_COUNT * POINTS_PER_DAILY_STANDARD;
@@ -5,18 +7,14 @@ export const DEFAULT_CHALLENGE_DURATION_DAYS = 77;
 export const PERFECT_CHALLENGE_POINTS = MAX_DAILY_STANDARD_POINTS * DEFAULT_CHALLENGE_DURATION_DAYS;
 export const SHARING_BONUS_POINTS = 14;
 export const POINTS_PER_LEVEL = 14;
-export const REWARD_POINT_THRESHOLDS = Object.freeze({
-  gym_training_discount: 21,
-  dominion_night_theme: 56,
-  nehemiah_leadership_handbook: 98,
-  seven_day_reset: 140,
-  dominion_platinum: 210,
-  big_god_energy_tshirt_discount: 273,
-  twenty_one_day_prayer: 336,
-  thirty_day_strength: 406,
-  forty_day_fast: 469,
-  bible_in_a_year: 532,
-});
+// This projection is for scoring simulations and display only. Grants are
+// persisted by the server (or the isolated preview transaction), never pages.
+export const REWARD_POINT_THRESHOLDS = Object.freeze(Object.fromEntries(
+  progressionCatalog.rewards.filter(reward => reward.active && reward.phase === 'core'
+    && ['trusted_points', 'lifetime_points'].includes(reward.unlockRule.type))
+    .sort((left, right) => left.sortOrder - right.sortOrder)
+    .map(reward => [reward.key, reward.unlockRule.pointsRequired]),
+));
 export const REWARD_CURVE = Object.freeze(Object.entries(REWARD_POINT_THRESHOLDS).map(
   ([key, pointsRequired], sortOrder) => Object.freeze({ key, pointsRequired, sortOrder }),
 ));

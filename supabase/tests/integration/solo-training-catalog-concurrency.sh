@@ -6,9 +6,14 @@ case "$database_url" in
   postgresql://*@127.0.0.1:54322/*|postgres://*@127.0.0.1:54322/*|postgresql://*@localhost:54322/*|postgres://*@localhost:54322/*) ;;
   *) echo "Refusing to run Solo training races against a non-local database." >&2; exit 2 ;;
 esac
-psql_bin="${PSQL_BIN:-$(command -v psql || true)}"
-[[ -x "$psql_bin" ]] || { echo "psql is required." >&2; exit 2; }
-psql() { "$psql_bin" "$@"; }
+if [[ -n "${PSQL_BIN:-}" ]]; then
+  psql_bin="$PSQL_BIN"
+  [[ -x "$psql_bin" ]] || { echo "psql is required." >&2; exit 2; }
+  psql() { "$psql_bin" "$@"; }
+else
+  # Also honor the fixed Unix-socket psql adapter supplied by the owned fixture.
+  command -v psql >/dev/null 2>&1 || { echo "psql is required." >&2; exit 2; }
+fi
 
 test_directory="$(mktemp -d)"
 primary_user="f3000000-0000-4000-8000-000000000003"

@@ -19,10 +19,11 @@ describe('authenticated mutation owner binding', () => {
     assert.match(draftApi, /bootstrap_daily_standard_time_zone'[\s\S]*target_expected_actor_id: userId/);
     assert.match(draftApi, /const user = await requireUser\(expectedUserId\)/);
     assert.match(draftApi, /mutation[\s\S]*target_expected_actor_id: user\.id/);
-    assert.match(draftApi, /getDailyStandardDraft\(entryDate, \{ expectedUserId = '' \} = \{\}\)/);
+    assert.match(draftApi, /getDailyStandardDraft\(entryDate, \{ expectedUserId = '', expectedInstanceId \} = \{\}\)/);
     assert.match(draftApi, /mutateDailyStandardDraft\([\s\S]*expectedUserId = ''[\s\S]*mutation: true/);
     assert.match(draftApi, /setDailyStandardWorkoutDifficulty\([\s\S]*expectedUserId = ''[\s\S]*mutation: true/);
-    assert.match(draftApi, /postCheckIn\(checkIn, \{ expectedUserId = '' \} = \{\}\)[\s\S]*target_expected_actor_id: user\.id/);
+    assert.match(draftApi, /postCheckIn\(checkIn, \{ expectedUserId = '', expectedInstanceId \} = \{\}\)[\s\S]*target_expected_actor_id: user\.id/);
+    assert.match(draftApi, /target_expected_instance_id: expectedInstanceId/);
     assert.match(visitApi, /recordAppVisit\(\{ expectedUserId = '' \} = \{\}\)[\s\S]*requireUser\(expectedUserId\)[\s\S]*target_expected_actor_id: user\.id/);
 
     const readCall = draftApi.slice(
@@ -70,7 +71,16 @@ describe('authenticated mutation owner binding', () => {
     assert.doesNotMatch(dashboard, /save\('dominion:startDate'/);
     assert.match(dashboard, /if \(hasSupabaseAuth\(\) \|\| localDemoMode\) void hydrateDashboardFromApi\(observedAuthOwner\)/);
     assert.match(dashboard, /!previewChallengeMode\(\) && challengeActivation\.status === 'not_started'/);
-    assert.match(dashboard, /checkInCacheOwner = mockCheckInOwnerForUser\(dashboardOwner\)/);
+    assert.match(dashboard, /hydratedAuthOwner = dashboardOwner;[\s\S]*challengeActivation = dashboard\?\.activation[\s\S]*checkInCacheOwner = dashboardOwner;\s*const ownerCache = checkInCacheForOwner\(load\(CHECK_IN_DATES_STORAGE_KEY, \{\}\), checkInCacheOwner,\s*challengeActivation\.currentInstance\?\.id \?\? null\)/);
+    const api = await read('./api.js');
+    const dashboardApi = api.slice(api.indexOf('export async function getDashboard()'), api.indexOf('function mockGroupMembershipIsActive'));
+    assert.match(dashboardApi, /return withPreviewAggregate\(actorId, aggregate => \{[\s\S]*const activation = previewActivationFor\(aggregate\)/);
+    assert.match(dashboardApi, /checkIns: aggregate\.runtime\.checkIns\.filter\(row => row\.instanceId === activation\.currentInstance\?\.id\)/);
+    assert.match(dashboardApi, /globalSubmittedDates: aggregate\.runtime\.scoredDates/);
+    const bootstrapApi = api.slice(api.indexOf('export async function getDailyActionBootstrap('), api.indexOf('const rpcDraft'));
+    assert.match(bootstrapApi, /return withPreviewAggregate\(actorId, aggregate => \{/);
+    assert.match(bootstrapApi, /expectedInstanceId !== null && expectedInstanceId !== activation\.currentInstance\?\.id/);
+    assert.match(bootstrapApi, /getPreviewChallengeDraft\(aggregate\.runtime, \{ actorId, instanceId: activation\.currentInstance\.id/);
   });
 
   test('carries a valid legacy Solo date forward only when its legacy ID is adopted', async () => {

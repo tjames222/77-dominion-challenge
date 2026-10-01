@@ -148,17 +148,23 @@ test('request, parsing and cleanup guards remain identical to the reviewed inbox
   assert.equal(withoutFields(normalized), withoutFields(inbox));
 });
 
-test('query is source-fixed single SELECT with canonical deparsing, exact70 history and no account/RPC reads', async () => {
+test('query is source-fixed single SELECT with canonical deparsing, exact71 history and no account/RPC reads', async () => {
   const files = (await readdir(new URL('../supabase/migrations/', import.meta.url))).filter(name => name.endsWith('.sql')).sort();
-  const versions = files.map(name => name.split('_')[0]);
-  assert.equal(versions.length, 70); assert.equal(new Set(versions).size, 70); assert.equal(versions.at(-1), '20260930161218');
+  assert(files.every(name => /^[0-9]{14}_[a-z0-9_]+\.sql$/u.test(name)));
+  assert.equal(new Set(files.map(name => name.split('_')[0])).size, files.length);
+  const frozen = files.slice(0, 71);
+  assert.equal(frozen.length, 71);
+  assert(files.slice(71).every(name => name > '20261001001245_repeatable_challenge_instances_v2.sql'));
+  const versions = frozen.map(name => name.split('_')[0]);
+  assert.equal(versions.at(-1), '20261001001245');
   const hash = createHash('sha256').update(versions.join(',')).digest('hex');
-  assert.equal(hash, '09d7293ce15add9360f88a89337ea54822e64f015b1e6ef63eaba1543f36c872');
+  assert.equal(hash, 'e6090c27e44dd678cab1b8178058f780bec2d0b4dcd99dee0d96407d24a5bb26');
   assert(ORIGINAL77_CATALOG_QUERY.includes(hash));
   for (const [version, name] of [
     ['20260930152825', 'add_original_77_completion_evidence_foundation'],
     ['20260930160740', 'wire_original_77_live_completion'],
     ['20260930161218', 'share_submitted_progress_v2'],
+    ['20261001001245', 'repeatable_challenge_instances_v2'],
   ]) assert(ORIGINAL77_CATALOG_QUERY.includes(`('${version}','${name}')`));
   const executable = ORIGINAL77_CATALOG_QUERY.replace(/^--.*$/gm, '');
   assert.equal(executable.split(';').filter(part => part.trim()).length, 1);
@@ -174,7 +180,8 @@ test('query is source-fixed single SELECT with canonical deparsing, exact70 hist
   assert.deepEqual(contracts.map(match => match[1]), ['functions', 'triggers', 'check_ins', 'ledger', 'finisher', 'share']);
   assert(contracts.every(match => !/^0+$/.test(match[2])));
   const sourcePins = [...ORIGINAL77_CATALOG_QUERY.matchAll(/^-- (\d{14}) ([a-f0-9]{64})$/gm)];
-  assert.deepEqual(sourcePins.map(match => match[1]), ['20260930152825', '20260930160740', '20260930161218']);
+  assert.deepEqual(sourcePins.map(match => match[1]), ['20260930152825', '20260930160740', '20260930161218',
+    '20261001001245']);
   for (const [, version, expectedHash] of sourcePins) {
     const name = files.find(file => file.startsWith(version + '_'));
     assert(name);

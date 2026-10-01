@@ -35,7 +35,8 @@ function setup({ load, update, timer } = {}) {
   document.defaultView.location = { reload() { calls.reloads++; } };
   document.defaultView.dispatchEvent = () => {};
   const activation = { readState: 'ready', contractValid: true, mode: 'solo', status: 'active', canParticipate: true,
-    canEditStartDate: true, startDate: '2026-09-01', timeZone: 'America/Los_Angeles', revision: 4 };
+    canEditStartDate: true, startDate: '2026-09-01', timeZone: 'America/Los_Angeles', revision: 4,
+    currentInstance: { id: '11111111-1111-4111-8111-111111111111' } };
   const module = { createAppStreakDialog: options => { calls.factories++; return createAppStreakDialog(options); } };
   const runtime = {
     ...{ buildStreakSummary, streakIndicatorLabel, normalizeChallengeStartDate },
@@ -97,9 +98,21 @@ test('date save remains in eager owner, preserves actor/revision/timezone and ca
   const gate = deferred(); const ui = setup({ update: () => gate.promise }); await tick();
   await ui.button().dispatch('click'); await tick(); ui.field().value = '2026-09-02';
   await ui.form().dispatch('submit'); await ui.form().dispatch('submit'); assert.equal(ui.calls.mutations.length, 1);
-  assert.deepEqual(JSON.parse(JSON.stringify(ui.calls.mutations[0])), { startDate: '2026-09-02', timeZone: 'America/Los_Angeles', expectedRevision: 4, expectedUserId: 'A' });
+  assert.deepEqual(JSON.parse(JSON.stringify(ui.calls.mutations[0])), { startDate: '2026-09-02', timeZone: 'America/Los_Angeles', expectedRevision: 4, expectedUserId: 'A', expectedInstanceId: ui.activation.currentInstance.id });
   gate.resolve({ ...ui.activation, startDate: '2026-09-02', revision: 5 }); await tick();
   assert.match(ui.text(), /Challenge start date saved/); ui.controller.destroy();
+});
+test('a start-date response cannot overwrite a different current run in the same account', async () => {
+  const gate = deferred(); const ui = setup({ update: () => gate.promise }); await tick();
+  await ui.button().dispatch('click'); await tick(); ui.field().value = '2026-09-02';
+  await ui.form().dispatch('submit');
+  const prior = { ...ui.activation, currentInstance: { ...ui.activation.currentInstance } };
+  ui.activation.currentInstance = { id: '22222222-2222-4222-8222-222222222222' };
+  ui.activation.startDate = '2026-09-29'; ui.activation.canEditStartDate = false;
+  await ui.controller.refresh();
+  gate.resolve({ ...prior, startDate: '2026-09-02', revision: 5 }); await tick();
+  assert.doesNotMatch(ui.text(), /Challenge start date saved/);
+  assert.equal(ui.activation.startDate, '2026-09-29'); ui.controller.destroy();
 });
 test('locked timeline remains disabled and cannot mutate even through a synthetic submit', async () => {
   const ui = setup(); ui.activation.canEditStartDate = false; await tick();

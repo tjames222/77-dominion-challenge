@@ -106,13 +106,15 @@ describe('typed reward catalog', () => {
     assert.equal(catalog.items[0].metadata.durationDays, 7);
   });
 
-  it('preserves unlocked later-track ownership without enabling its incomplete runtime', () => {
+  it('never invents a Start action from a legacy unlock and requires V2 Start authority', () => {
     const catalog = challengeProgressionToRewardCatalog({ totalPoints: 140, challenges: [{ key: 'seven_day_reset',
       status: 'available', pointsRequired: 140, accessGranted: true, unlockedAt: '2026-01-01T00:00:00Z' }] });
     assert.equal(catalog.items[0].status, 'available'); assert.equal(catalog.items[0].unlockedAt, '2026-01-01T00:00:00Z');
     assert.deepEqual(catalog.items[0].allowedActions, []);
     const start = api.slice(api.indexOf('export async function startChallenge'), api.indexOf('export async function getDashboard'));
-    assert.match(start, /Later challenge tracks are not available to start yet/);
+    assert.match(start, /start_challenge_instance_v2/);
+    assert.match(start, /target_expected_instance_id: expectedInstanceId/);
+    assert.match(start, /target_expected_revision: expectedRevision/);
     assert.doesNotMatch(start, /transitionChallengeRecord|writeMockUserValue/);
   });
 
@@ -120,7 +122,8 @@ describe('typed reward catalog', () => {
     const getRewardCatalog = api.match(
       /export async function getRewardCatalog\([^]*?\n\}/,
     )?.[0] || '';
-    assert.match(getRewardCatalog, /client\.rpc\('get_reward_catalog'/);
+    assert.match(getRewardCatalog, /client\.rpc\('get_reward_catalog_v2'/);
+    assert.match(getRewardCatalog, /target_expected_snapshot_version: expectedSnapshotVersion/);
     assert.match(getRewardCatalog, /target_after_sort_order: cursor\?\.sortOrder \?\? null/);
     assert.match(getRewardCatalog, /target_after_reward_key: cursor\?\.key \|\| null/);
     assert.doesNotMatch(getRewardCatalog, /target_user_id/);
@@ -129,22 +132,22 @@ describe('typed reward catalog', () => {
   it('uses stable Dominion Night reward and fulfillment identities', () => {
     assert.equal(DOMINION_NIGHT_THEME_REWARD.key, 'dominion_night_theme');
     assert.equal(DOMINION_NIGHT_THEME_REWARD.fulfillmentKey, 'dominion-night');
-    assert.equal(DOMINION_NIGHT_THEME_REWARD.pointsRequired, 56);
+    assert.equal(DOMINION_NIGHT_THEME_REWARD.pointsRequired, 112);
     assert.equal(DOMINION_NIGHT_THEME_REWARD.stateModel, 'ownership');
     assert.equal(DOMINION_NIGHT_THEME_REWARD.metadata.themeKey, 'dominion-night');
   });
 
   it('represents preview users below, at, and above the theme threshold', () => {
     const below = buildMockRewardCatalog({
-      progression: { totalPoints: 55, challenges: [] },
+      progression: { totalPoints: 111, challenges: [] },
       now: '2026-07-20T01:00:00Z',
     });
     const at = buildMockRewardCatalog({
-      progression: { totalPoints: 56, challenges: [] },
+      progression: { totalPoints: 112, challenges: [] },
       now: '2026-07-20T01:00:00Z',
     });
     const above = buildMockRewardCatalog({
-      progression: { totalPoints: 57, challenges: [] },
+      progression: { totalPoints: 113, challenges: [] },
       now: '2026-07-20T01:00:00Z',
     });
 
@@ -162,24 +165,24 @@ describe('typed reward catalog', () => {
 
   it('uses eligible Daily Standards points only for the first gym reward', () => {
     const sharingInflated = buildMockRewardCatalog({
-      progression: { totalPoints: 34, eligibleDailyStandardPoints: 20, challenges: [] },
+      progression: { totalPoints: 55, eligibleDailyStandardPoints: 41, challenges: [] },
       now: '2026-07-20T01:00:00Z',
     });
     const earned = buildMockRewardCatalog({
-      progression: { totalPoints: 35, eligibleDailyStandardPoints: 21, challenges: [] },
+      progression: { totalPoints: 56, eligibleDailyStandardPoints: 42, challenges: [] },
       now: '2026-07-20T01:00:00Z',
     });
     const gymBefore = sharingInflated.catalog.items.find((reward) => reward.key === GYM_TRAINING_DISCOUNT_REWARD.key);
     const gymAt = earned.catalog.items.find((reward) => reward.key === GYM_TRAINING_DISCOUNT_REWARD.key);
 
     assert.equal(gymBefore.status, 'locked');
-    assert.equal(gymBefore.currentPoints, 20);
+    assert.equal(gymBefore.currentPoints, 41);
     assert.equal(gymAt.status, 'owned');
   });
 
   it('keeps mock ownership after a correction and claims its celebration once', () => {
     const earned = buildMockRewardCatalog({
-      progression: { totalPoints: 56, challenges: [] },
+      progression: { totalPoints: 112, challenges: [] },
       rewardDefinitions: [DOMINION_NIGHT_THEME_REWARD],
       now: '2026-07-20T01:00:00Z',
     });
@@ -209,16 +212,16 @@ describe('typed reward catalog', () => {
     assert.deepEqual(retriedClaim.claimedUnlocks, []);
   });
 
-  it('silently backfills only newly eligible preview ownership during the v4 economy migration', () => {
+  it('retains compatibility helper acknowledgements without making it the V2 grant path', () => {
     const migratedAt = '2026-07-30T12:00:00Z';
     const newlyEligible = backfillMockRewardEntitlements({
-      progression: { totalPoints: 56, challenges: [] },
+      progression: { totalPoints: 112, challenges: [] },
       ownershipRecords: [],
       rewardDefinitions: [DOMINION_NIGHT_THEME_REWARD],
       now: migratedAt,
     });
     const existingPending = backfillMockRewardEntitlements({
-      progression: { totalPoints: 56, challenges: [] },
+      progression: { totalPoints: 112, challenges: [] },
       ownershipRecords: [{
         key: 'dominion_night_theme',
         ownedAt: '2026-07-30T11:00:00Z',
@@ -230,9 +233,10 @@ describe('typed reward catalog', () => {
 
     assert.equal(newlyEligible[0].celebrationSeenAt, migratedAt);
     assert.equal(existingPending[0].celebrationSeenAt, null);
-    assert.match(api, /MOCK_CHALLENGE_THRESHOLDS_VERSION = 4/);
-    assert.match(api, /previousDefinitions: DEFAULT_CHALLENGE_DEFINITIONS/);
-    assert.match(api, /backfillMockRewardEntitlements/);
+    const source = readFileSync(new URL('./preview-reward-catalog.mjs', import.meta.url), 'utf8');
+    const v2 = source.slice(source.indexOf('export function buildMockRewardCatalogV2'));
+    assert.match(v2, /^export function buildMockRewardCatalogV2/);
+    assert.doesNotMatch(v2, /backfillMockRewardEntitlements|migrateChallengeUnlockRecords/);
     assert.doesNotMatch(api, /pointsRequired: definition\.pointsRequired \/ 2/);
   });
 
@@ -244,17 +248,21 @@ describe('typed reward catalog', () => {
         reward.pointsRequired,
       ]),
       [
-        ['gym_training_discount', 'partner_discount', 21],
-        ['dominion_night_theme', 'cosmetic', 56],
-        ['nehemiah_leadership_handbook', 'digital_download', 98],
-        ['dominion_platinum', 'cosmetic', 210],
-        ['big_god_energy_tshirt_discount', 'merch_discount', 273],
+        ['gym_training_discount', 'partner_discount', 42],
+        ['dominion_night_theme', 'cosmetic', 112],
+        ['nehemiah_leadership_handbook', 'digital_download', 210],
+        ['dominion_platinum', 'cosmetic', 308],
+        ['big_god_energy_tshirt_discount', 'merch_discount', 532],
       ],
     );
   });
 
-  it('persists mock ownership instead of trusting point totals as proof', () => {
+  it('persists mock ownership with the same atomic aggregate as challenge progress', () => {
     assert.match(api, /dominion:mockRewardEntitlements/);
-    assert.match(api, /writeMockUserValue\(MOCK_REWARD_ENTITLEMENTS_KEY, result\.ownershipRecords\)/);
+    const transaction = api.slice(api.indexOf('async function withPreviewAggregate('), api.indexOf('const getMockSubscription'));
+    assert.match(transaction, /aggregate\.values\[MOCK_REWARD_ENTITLEMENTS_KEY\] = grants\.ownershipRecords/);
+    assert.match(transaction, /aggregate\.values\[MOCK_CHALLENGE_STATES_KEY\] = grants\.challengeRecords/);
+    assert.equal((transaction.match(/localStorage\.setItem\(/g) || []).length, 1);
+    assert.doesNotMatch(transaction, /writeMockUserValue|backfillMockRewardEntitlements/);
   });
 });

@@ -50,30 +50,36 @@ export async function signInMock(page, email = 'alpha.badges@example.test') {
   return owner;
 }
 export async function activateFixtureChallenge(page, owner) {
-  const activation = await page.evaluate(async ({ owner, subscription, fixedTime, startDate }) => {
-    // These canonical events deliberately retain their February date/day pair.
-    // Exercise the real activation API at that fixture date, then restore the
-    // wall clock before any delivery lease or session-switch assertion runs.
+  await page.evaluate(async ({ owner, subscription, fixedTime, startDate, legacy }) => {
+    // Seed historical activation without warming the optional runtime. Cold
+    // import/session-race cases must reach the actual first import themselves.
     const NativeDate = globalThis.Date;
     const fixedNow = NativeDate.parse(fixedTime);
     window.__previewBadgeTest.writePreviewUserValue(localStorage, owner, 'dominion:mockSubscription', subscription);
+    if (!localStorage.getItem('dominion:challengeAggregateV2:' + owner)) {
+      const states = JSON.parse(localStorage.getItem('dominion:mockChallengeActivation') || '{}');
+      states[owner] ||= { ...legacy, mode: 'solo', crewId: null, groupMembershipActive: false,
+        actorId: owner, activatedBy: owner, confirmedBy: owner };
+      localStorage.setItem('dominion:mockChallengeActivation', JSON.stringify(states));
+      return;
+    }
     globalThis.Date = class extends NativeDate {
       constructor(...args) { super(...(args.length ? args : [fixedNow])); }
       static now() { return fixedNow; }
     };
     try {
-      return await window.__previewBadgeTest.api.activateSoloChallenge({
-        startDate, timeZone: 'UTC', expectedUserId: owner,
-      });
+      const activation = await window.__previewBadgeTest.api.getChallengeActivation({ expectedUserId: owner });
+      if (activation.status === 'not_started') await window.__previewBadgeTest.api.activateSoloChallenge({ startDate, timeZone: 'UTC', expectedUserId: owner });
     } finally { globalThis.Date = NativeDate; }
   }, { owner, subscription: fixtureFor('member').json['dominion:mockSubscription'],
-    fixedTime: FIXED_NOW, startDate: FIXED_CHALLENGE_START });
-  expect(activation.contractValid).toBe(true);
-  expect(activation.startDate).toBe(FIXED_CHALLENGE_START);
-  expect(activation.canMutateDailyStandards).toBe(true);
+    fixedTime: FIXED_NOW, startDate: FIXED_CHALLENGE_START,
+    legacy: Object.values(fixtureFor('member').json['dominion:mockChallengeActivation'])[0] });
 }
 export async function stateFor(page, owner) {
-  return page.evaluate(owner => window.__previewBadgeTest.peekPreviewUserValue(localStorage, owner, 'dominion:badgeState:v1', null), owner);
+  return page.evaluate(owner => {
+    const aggregate = JSON.parse(localStorage.getItem('dominion:challengeAggregateV2:' + owner) || 'null');
+    return aggregate?.values['dominion:badgeState:v1'] ?? window.__previewBadgeTest.peekPreviewUserValue(localStorage, owner, 'dominion:badgeState:v1', null);
+  }, owner);
 }
 // Inspect actual native receipts without calling a claim implementation or
 // importing the optional application module through the test harness. If the
@@ -140,12 +146,29 @@ export async function releaseDeliveryStore(page) {
   });
 }
 export async function startCheckIn(page, owner, completed = ['walk']) {
-  await page.evaluate(({ owner, completed }) => {
-    window.pendingBadgeOperation = window.__previewBadgeTest.api.recordPreviewCheckInBadges({
-      date: '2026-02-14', day: 14, completed, createdAt: '2026-02-14T17:30:00Z',
-      workoutDifficultySelections: { two: 'hard' },
-    }, { expectedUserId: owner }).then(value => ({ ok: true, value }), error => ({ ok: false, error: error.message }));
-  }, { owner, completed });
+  await page.evaluate(({ owner, completed, fixedNow }) => {
+    const NativeDate = globalThis.Date; const at = NativeDate.parse(fixedNow);
+    globalThis.Date = class extends NativeDate {
+      constructor(...args) { super(...(args.length ? args : [at])); }
+      static now() { return at; }
+    };
+    window.pendingBadgeOperation = (async () => {
+      const { api } = window.__previewBadgeTest;
+      const bootstrap = await api.getDailyActionBootstrap({ expectedUserId: owner, timeZone: 'UTC' });
+      const expectedInstanceId = bootstrap.activation?.currentInstance?.id;
+      let draft = bootstrap.draft;
+      for (const actionId of completed) {
+        if (draft?.completed.includes(actionId)) continue;
+        draft = await api.mutateDailyStandardDraft({ date: '2026-02-14', actionId, completed: true,
+          expectedVersion: draft?.version ?? 0, expectedUserId: owner, expectedInstanceId });
+      }
+      if (completed.includes('workoutTwo')) draft = await api.setDailyStandardWorkoutDifficulty({
+        date: '2026-02-14', workoutId: 'two', difficulty: 'hard', expectedVersion: draft.version,
+        expectedUserId: owner, expectedInstanceId });
+      return api.postCheckIn({ date: '2026-02-14', completed, timeZone: 'UTC' }, { expectedUserId: owner, expectedInstanceId });
+    })().then(value => ({ ok: true, value }), error => ({ ok: false, error: error.message }))
+      .finally(() => { globalThis.Date = NativeDate; });
+  }, { owner, completed, fixedNow: FIXED_NOW });
 }
 export async function finishOperation(page) {
   return page.evaluate(() => window.pendingBadgeOperation);

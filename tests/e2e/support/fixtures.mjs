@@ -56,13 +56,23 @@ export const BASE_BADGES = Object.freeze([
   },
 ]);
 
+// General route fixtures represent an existing member whose point-earned
+// rewards have already been acknowledged. Reward-delivery tests explicitly
+// replace these records when an unseen award is the behavior under test.
 const BASE_REWARD_ENTITLEMENTS = Object.freeze([
-  {
-    key: 'dominion_night_theme',
+  'dominion_night_theme', 'nehemiah_leadership_handbook',
+  'dominion_platinum', 'big_god_energy_tshirt_discount',
+].map(key => ({
+    key,
     ownedAt: '2026-02-10T18:00:00.000Z',
     celebrationSeenAt: '2026-02-10T18:05:00.000Z',
-  },
-]);
+  })));
+
+const BASE_CHALLENGE_GRANTS = Object.freeze([{
+  key: 'seven_day_reset', status: 'available', unlockPoints: 420,
+  unlockedAt: '2026-02-10T18:00:00.000Z', startedAt: null, completedAt: null,
+  celebrationSeenAt: '2026-02-10T18:05:00.000Z',
+}]);
 
 const BASE_CREWS = Object.freeze([
   {
@@ -212,7 +222,7 @@ function baseMemberJson() {
     'dominion:mockCrewMembers': json(BASE_CREW_MEMBERS),
     'dominion:mockCrewInvites': {},
     'dominion:mockJournalEntries': [],
-    'dominion:mockChallengeStates': [],
+    'dominion:mockChallengeStates': json(BASE_CHALLENGE_GRANTS),
     'dominion:mockChallengeActivation': {
       [FIXED_USER_ID]: json(BASE_CHALLENGE_ACTIVATION),
     },
@@ -242,6 +252,10 @@ export const APP_STATES = Object.freeze({
     raw: baseMemberRaw(),
   },
   member: {
+    json: baseMemberJson(),
+    raw: baseMemberRaw(),
+  },
+  memberRewardsAcknowledged: {
     json: baseMemberJson(),
     raw: baseMemberRaw(),
   },
@@ -460,6 +474,18 @@ export const APP_STATES = Object.freeze({
   submitted: {
     json: {
       ...baseMemberJson(),
+      'dominion:badgeState:v1': {
+        schemaVersion: 1,
+        awards: BASE_BADGES.map(badge => ({ ...json(badge), legacy: true,
+          scopeKey: 'lifetime', awardId: `fixture:${badge.key}:lifetime`,
+          celebrationSeenAt: badge.earnedAt })),
+        visits: [],
+        completionEvents: [],
+        checkIns: [{ source: 'check_in', sourceId: 'preview-check-in:' + FIXED_TODAY,
+          localDate: FIXED_TODAY, occurredAt: FIXED_NOW, challengeDay: FIXED_CHALLENGE_DAY,
+          completed: ['bible', 'morningPrayer', 'worshipOnly', 'workoutOne', 'walk', 'workoutTwo', 'eveningPrayer'],
+          workoutDifficultySelections: {} }],
+      },
       'dominion:entries': [
         {
           date: FIXED_TODAY,
@@ -483,6 +509,7 @@ export const APP_STATES = Object.freeze({
         ...json(BASE_GAME_STATS),
         totalPoints: 757,
         challengePoints: 757,
+        dailyStandardsPoints: 7,
         currentFullDayStreak: 5,
       },
     },

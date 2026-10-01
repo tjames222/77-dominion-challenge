@@ -61,10 +61,10 @@ test('locked challenge progression has a deterministic visual contract', async (
   const nightReward = page.locator('[data-reward-key="dominion_night_theme"]');
   await expect(nightReward).toContainText('Dominion Night');
   await expect(nightReward).toContainText('Locked');
-  await expect(nightReward).toContainText('28 points remaining');
+  await expect(nightReward).toContainText('84 points remaining');
   await expect(nightReward.getByRole('progressbar')).toHaveAttribute(
     'aria-valuetext',
-    '28 of 56 points',
+    '28 of 112 points',
   );
   await expectStableScreenshot(page, app, 'state-rewards-locked.png');
 });
@@ -75,8 +75,8 @@ test('unlocked challenge progression has a deterministic visual contract', async
   const resetReward = page.locator('[data-reward-key="seven_day_reset"]');
   await expect(resetReward).toContainText('7-Day Reset');
   await expect(resetReward).toContainText('Available');
-  // Availability is preserved, but the legacy Start API stays disabled until
-  // the validated repeatable-instance lifecycle is deployed.
+  // Availability is preserved, but another run cannot begin while the original
+  // instance is still active.
   await expect(resetReward.getByRole('button', { name: 'Start challenge' })).toHaveCount(0);
   await expect(resetReward.getByRole('button', { name: 'View progress for 7-Day Reset' })).toBeVisible();
   for (const badge of BASE_BADGES) {

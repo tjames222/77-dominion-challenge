@@ -5,7 +5,7 @@ import {
   PRODUCTION_ROUTES,
   ROUTE_BY_ID,
 } from './support/routes.mjs';
-import { FIXED_TODAY } from './support/fixtures.mjs';
+import { FIXED_TODAY, FIXED_USER_ID } from './support/fixtures.mjs';
 
 test.describe('production route smoke coverage', () => {
   for (const route of PRODUCTION_ROUTES) {
@@ -457,10 +457,12 @@ test('daily action controls toggle by keyboard and persist the dated fixture', a
   await page.keyboard.press('Space');
   await expect(prayerAction).toHaveAttribute('aria-pressed', 'true');
 
-  const entries = await page.evaluate(() => JSON.parse(localStorage.getItem('dominion:entries') || '[]'));
-  expect(entries).toEqual(expect.arrayContaining([
+  await expect.poll(() => page.evaluate((userId) => {
+    const aggregate = JSON.parse(localStorage.getItem(`dominion:challengeAggregateV2:${userId}`));
+    return aggregate.runtime.drafts.filter((draft) => draft.instanceId === aggregate.runtime.currentInstanceId);
+  }, FIXED_USER_ID)).toEqual(expect.arrayContaining([
     expect.objectContaining({
-      date: FIXED_TODAY,
+      localDate: FIXED_TODAY,
       completed: expect.arrayContaining(['morningPrayer']),
     }),
   ]));
@@ -505,14 +507,20 @@ test('Dashboard places tracking and the scorecard around the countdown in docume
 
 test('Rewards uses zero-point glass only outside the private-group podium', async ({ page, app }) => {
   await app.open(ROUTE_BY_ID.badgesRewards);
-  await page.evaluate(() => {
-    const stats = JSON.parse(localStorage.getItem('dominion:gameStats') || '{}');
-    localStorage.setItem('dominion:gameStats', JSON.stringify({
+  await page.evaluate((userId) => {
+    const key = `dominion:challengeAggregateV2:${userId}`;
+    const aggregate = JSON.parse(localStorage.getItem(key));
+    const stats = aggregate.values['dominion:gameStats'];
+    aggregate.values['dominion:gameStats'] = {
       ...stats,
       totalPoints: 0,
       challengePoints: 0,
-    }));
-  });
+      dailyStandardsPoints: 0,
+    };
+    aggregate.runtime.lifetimePoints = 0;
+    aggregate.runtime.trustedDailyStandardPoints = 0;
+    localStorage.setItem(key, JSON.stringify(aggregate));
+  }, FIXED_USER_ID);
   await page.reload();
   await app.stable();
 
@@ -633,18 +641,18 @@ test('a completed share grants +14 and the Sharing badge only once', async ({ pa
   await nativeShare.click();
   await expect(dialog.locator('.share-composer-status')).toContainText('You earned +14 points and the Sharing badge.');
 
-  const firstGrant = await page.evaluate(() => ({
-    stats: JSON.parse(localStorage.getItem('dominion:gameStats') || '{}'),
-    badges: JSON.parse(localStorage.getItem('dominion:badges') || '[]'),
-  }));
+  const firstGrant = await page.evaluate((userId) => {
+    const aggregate = JSON.parse(localStorage.getItem(`dominion:challengeAggregateV2:${userId}`));
+    return { stats: aggregate.values['dominion:gameStats'], badges: aggregate.values['dominion:badges'] };
+  }, FIXED_USER_ID);
   expect(firstGrant.stats.totalPoints).toBe(764);
   expect(firstGrant.badges.filter((badge) => badge.key === 'sharing')).toHaveLength(1);
 
   await nativeShare.click();
   await expect(dialog.locator('.share-composer-status')).toContainText('already earned');
-  const secondTotal = await page.evaluate(() => (
-    JSON.parse(localStorage.getItem('dominion:gameStats') || '{}').totalPoints
-  ));
+  const secondTotal = await page.evaluate((userId) => (
+    JSON.parse(localStorage.getItem(`dominion:challengeAggregateV2:${userId}`)).runtime.lifetimePoints
+  ), FIXED_USER_ID);
   expect(secondTotal).toBe(764);
 
   await page.goto(ROUTE_BY_ID.badgesRewards.path);
@@ -670,13 +678,13 @@ test('profile form saves through Enter and announces success', async ({ page, ap
   await expect(page.locator('#profileName')).toHaveText('Jordan Keyboard');
 });
 
-test('Profile locks Dominion Night below 56 points and persists it after unlock', async ({ page, app }) => {
+test('Profile locks Dominion Night below 112 points and shows exact progress', async ({ page, app }) => {
   await app.open(ROUTE_BY_ID.profile, { state: 'rewardsLocked' });
   const nightOption = page.locator('[data-theme-mode="dominion-night"]');
   await expect(nightOption).toHaveAttribute('aria-disabled', 'true');
-  await expect(page.locator('#dominionNightStatus')).toContainText('28 of 56 points');
+  await expect(page.locator('#dominionNightStatus')).toContainText('28 of 112 points');
   await expect(page.locator('#dominionNightProgressLabel')).toHaveText(
-    '50% complete. 28 points to unlock.',
+    '25% complete. 84 points to unlock.',
   );
 });
 

@@ -1,5 +1,5 @@
 import { installAdminStub } from './admin-supabase-stub.mjs';
-import { dailyBootstrapFixture } from '../../fixtures/daily-action-bootstrap.mjs';
+import { dailyBootstrapV2Fixture, rewardCatalogV2Fixture } from '../../fixtures/daily-action-bootstrap-v2.mjs';
 const json = (route, value, status = 200) => route.fulfill({ status, contentType: 'application/json', headers: { 'Cache-Control': 'private, no-store' }, body: JSON.stringify(value) });
 // Same real SDK/Auth transport as the established Admin suite. Only these two
 // new RPCs are modeled; this is not a claim about SQL's independently tested
@@ -8,19 +8,21 @@ export async function installFeedbackStub(context, { active = true, malformed = 
   const auth = await installAdminStub(context, { role: 'member', aal });
   const tokens = new Map([[auth.firstSession.access_token, auth.A]]);
   const calls = [], receipts = new Map(); let mode = ''; let hold = null;
-  if (memberPages) await context.route(/\/__admin_fixture__\/rest\/v1\/(?:entitlements|rpc\/(?:get_daily_action_bootstrap|get_challenge_activation|get_daily_standard_draft|bootstrap_daily_standard_time_zone))(?:\?|$)/, async route => {
+  if (memberPages) await context.route(/\/__admin_fixture__\/rest\/v1\/(?:entitlements|rpc\/(?:get_daily_action_bootstrap_v2|get_challenge_activation_v2|get_daily_standard_draft_v2|get_challenge_check_ins_v2|get_reward_catalog_v2|bootstrap_daily_standard_time_zone))(?:\?|$)/, async route => {
     const actor = tokens.get(route.request().headers().authorization?.replace(/^Bearer /, ''));
     if (!actor) return json(route, { code: 'PT401', message: 'member_authentication_required' }, 401);
     const path = new URL(route.request().url()).pathname;
     // Keep the authenticated member-page fixture current. A stale canonical
     // day causes the real controller to rehydrate repeatedly while scrolling.
     const now = new Date();
-    const data = dailyBootstrapFixture({ actorId: actor, status: 'active', appAccess: true,
+    const data = dailyBootstrapV2Fixture({ actorId: actor, status: 'active', appAccess: true,
       entryDate: now.toISOString().slice(0, 10), timeZone: 'UTC' });
     data.asOf = now.toISOString();
     if (path.endsWith('/entitlements')) return json(route, [{ entitlement_key: 'membership_active', status: 'active', ends_at: null }]);
-    if (path.endsWith('/get_challenge_activation')) return json(route, data.activation);
-    if (path.endsWith('/get_daily_standard_draft')) return json(route, data.draft);
+    if (path.endsWith('/get_challenge_activation_v2')) return json(route, data.activation);
+    if (path.endsWith('/get_daily_standard_draft_v2')) return json(route, data.draft);
+    if (path.endsWith('/get_reward_catalog_v2')) return json(route, rewardCatalogV2Fixture(data.activation));
+    if (path.endsWith('/get_challenge_check_ins_v2')) return json(route, {schemaVersion:2,actorId:actor,instanceId:data.instanceId,checkIns:[]});
     if (path.endsWith('/bootstrap_daily_standard_time_zone')) return json(route, 'UTC');
     return json(route, data);
   });

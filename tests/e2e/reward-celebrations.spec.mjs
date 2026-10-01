@@ -7,7 +7,7 @@ import { FIXED_NOW, FIXED_USER_ID } from './support/fixtures.mjs';
 import { deliveryRowsFor } from './support/preview-badge-browser-support.mjs';
 
 const themes = ['light', 'dark', 'dominion-night', 'dominion-platinum'];
-async function seedRewards(page, app, { unseen = ['dominion_night_theme'], missing = [], theme = 'dark', points = 1200 } = {}) {
+async function seedRewards(page, app, { unseen = ['dominion_night_theme'], missing = [], theme = 'dark', points = 1200, milestones = {} } = {}) {
   await app.seed('rewardsUnlocked', theme);
   await page.addInitScript(({ ownership, challenges, totalPoints }) => {
     if (sessionStorage.getItem('reward-celebration-fixture')) return;
@@ -20,10 +20,12 @@ async function seedRewards(page, app, { unseen = ['dominion_night_theme'], missi
   }, {
     ownership: DEFAULT_OWNERSHIP_REWARD_DEFINITIONS.filter((item) => !missing.includes(item.key)).map((item) => ({ key: item.key, ownedAt: '2026-02-10T18:00:00Z',
       celebrationSeenAt: unseen.includes(item.key) ? null : '2026-02-10T18:01:00Z',
-      celebrationMilestonePoints: item.pointsRequired, celebrationSourceType: 'point_threshold',
+      celebrationMilestonePoints: milestones[item.key] ?? item.pointsRequired, celebrationSourceType: 'point_threshold',
+      metadata: { source: 'synthetic-original-award', retained: true },
     })),
     challenges: DEFAULT_CHALLENGE_DEFINITIONS.map((item) => ({ key: item.key, status: 'available', unlockPoints: item.pointsRequired,
-      unlockedAt: '2026-02-10T18:00:00Z', celebrationSeenAt: '2026-02-10T18:01:00Z' })),
+      unlockedAt: '2026-02-10T18:00:00Z', celebrationSeenAt: '2026-02-10T18:01:00Z',
+      metadata: { source: 'synthetic-original-grant', retained: true } })),
     totalPoints: points,
   });
 }
@@ -33,6 +35,8 @@ const ownedRecords = async (page) => {
   // Ownership remains in its source records; delivery truth is the native
   // ledger, including explicit null (never a truthy-only legacy fallback).
   const ownership = await page.evaluate(owner => {
+    const aggregate = JSON.parse(localStorage.getItem('dominion:challengeAggregateV2:' + owner) || 'null');
+    if (aggregate) return aggregate.values['dominion:mockRewardEntitlements'];
     const records = JSON.parse(localStorage.getItem('dominion:previewUserStateByOwner') || '{}');
     return records[owner]?.['dominion:mockRewardEntitlements']
       || JSON.parse(localStorage.getItem('dominion:mockRewardEntitlements') || '[]');
@@ -55,7 +59,7 @@ for (const theme of themes) {
       }
       await expect(stage(page)).toContainText('Reward unlocked');
       await expect(stage(page).getByRole('dialog')).toHaveAccessibleName('Reward unlocked Dominion Night');
-      await expect(stage(page)).toContainText('56-point milestone');
+      await expect(stage(page)).toContainText('112-point milestone');
       await expect(stage(page).getByRole('link', { name: 'View Reward', exact: true })).toBeFocused();
       await expect(page.locator('main')).toHaveAttribute('inert', '');
       await stage(page).getByRole('heading', { name: 'Dominion Night', exact: true }).click();
@@ -82,6 +86,32 @@ test('reload before acknowledgement recovers the same unseen reward; backdrop di
   await page.reload(); await expect(stage(page)).toBeVisible();
   await stage(page).click({ position: { x: 3, y: 3 } }); await expect(stage(page)).toHaveCount(0);
   await page.reload(); await app.stable(); await expect(stage(page)).toHaveCount(0);
+  app.assertNoRuntimeErrors();
+});
+
+test('V2 import preserves an old award milestone and original ownership/challenge metadata across reload', async ({ page, app }) => {
+  await seedRewards(page, app, { milestones: { dominion_night_theme: 56 } });
+  await page.goto(ROUTE_BY_ID.dashboard.path); await expect(stage(page)).toBeVisible();
+  await expect(stage(page)).toContainText('56-point milestone');
+  await expect(stage(page)).not.toContainText('112-point milestone');
+  const sourceGrants = () => page.evaluate(owner => {
+    const aggregate = JSON.parse(localStorage.getItem('dominion:challengeAggregateV2:' + owner));
+    return {
+      ownership: aggregate.values['dominion:mockRewardEntitlements'].find(row => row.key === 'dominion_night_theme'),
+      challenge: aggregate.values['dominion:mockChallengeStates'].find(row => row.key === 'seven_day_reset'),
+    };
+  }, FIXED_USER_ID);
+  const first = await sourceGrants();
+  expect(first.ownership.celebrationMilestonePoints).toBe(56);
+  expect(first.ownership.celebrationSourceType).toBe('point_threshold');
+  expect(first.ownership.celebrationSeenAt).toBeNull();
+  expect(first.ownership.metadata).toEqual({ source: 'synthetic-original-award', retained: true });
+  expect(first.challenge.metadata).toEqual({ source: 'synthetic-original-grant', retained: true });
+  await page.reload(); await expect(stage(page)).toContainText('56-point milestone');
+  expect(await sourceGrants()).toEqual(first);
+  await stage(page).getByRole('button', { name: 'Continue' }).click();
+  await expect(stage(page)).toHaveCount(0);
+  await expect.poll(async () => (await ownedRecords(page)).find(row => row.key === 'dominion_night_theme').celebrationSeenAt).toBeTruthy();
   app.assertNoRuntimeErrors();
 });
 
@@ -206,12 +236,17 @@ test('a duplicated tab cannot share an active reward delivery token', async ({ p
 });
 
 test('check-in queues day complete, every badge, permanent reward, then a concurrent challenge without overlap', async ({ page, app }) => {
-  await seedRewards(page, app, { unseen: [], missing: ['dominion_night_theme'], points: 49 });
+  await seedRewards(page, app, { unseen: [], missing: ['dominion_night_theme'], points: 105 });
   await page.goto(ROUTE_BY_ID.dashboard.path); await app.stable(); await expect(stage(page)).toHaveCount(0);
-  await page.evaluate(() => {
-    const records = JSON.parse(localStorage.getItem('dominion:mockChallengeStates'));
+  await page.evaluate(owner => {
+    const key = 'dominion:challengeAggregateV2:' + owner;
+    const aggregate = JSON.parse(localStorage.getItem(key));
+    if (aggregate?.schemaVersion !== 2 || aggregate.actorId !== owner) throw new Error('Expected owner-bound V2 reward fixture.');
+    const records = aggregate.values['dominion:mockChallengeStates'];
     records.find((item) => item.key === 'seven_day_reset').celebrationSeenAt = null;
-    localStorage.setItem('dominion:mockChallengeStates', JSON.stringify(records));
+    aggregate.generation += 1;
+    aggregate.updatedAt = new Date().toISOString();
+    localStorage.setItem(key, JSON.stringify(aggregate));
     const active = () => ['rewardToast','badgeCelebration','permanentRewardCelebration','challengeUnlockCelebration']
       .filter((id) => {
         const node = document.getElementById(id);
@@ -220,7 +255,7 @@ test('check-in queues day complete, every badge, permanent reward, then a concur
     window.__rewardQueueMaxOverlap = 0;
     new MutationObserver(() => { window.__rewardQueueMaxOverlap = Math.max(window.__rewardQueueMaxOverlap, active().length); })
       .observe(document.body, { childList: true, subtree: true, attributes: true });
-  });
+  }, FIXED_USER_ID);
   await page.locator('#selectAllActionsButton').click(); await page.locator('#checkInButton').click();
   await expect(page.locator('#rewardToast')).toBeVisible();
   await expect(stage(page)).toHaveCount(0); await expect(page.locator('#challengeUnlockCelebration')).not.toBeVisible();
@@ -250,13 +285,18 @@ test('check-in queues day complete, every badge, permanent reward, then a concur
 test('a remote owned grant is recovered on a storage/foreground refresh without a local point guess', async ({ page, app }) => {
   await seedRewards(page, app, { unseen: [], missing: ['dominion_night_theme'], points: 0 });
   await page.goto(ROUTE_BY_ID.dashboard.path); await app.stable(); await expect(stage(page)).toHaveCount(0);
-  await page.evaluate(() => {
-    const key = 'dominion:mockRewardEntitlements';
-    const records = JSON.parse(localStorage.getItem(key));
+  await page.evaluate(owner => {
+    const key = 'dominion:challengeAggregateV2:' + owner;
+    const aggregate = JSON.parse(localStorage.getItem(key));
+    if (aggregate?.schemaVersion !== 2 || aggregate.actorId !== owner) throw new Error('Expected owner-bound V2 reward fixture.');
+    const records = aggregate.values['dominion:mockRewardEntitlements'];
     records.push({ key: 'dominion_night_theme', ownedAt: new Date().toISOString(), celebrationSeenAt: null });
-    localStorage.setItem(key, JSON.stringify(records));
-    window.dispatchEvent(new StorageEvent('storage', { key }));
-  });
+    aggregate.generation += 1;
+    aggregate.updatedAt = new Date().toISOString();
+    const newValue = JSON.stringify(aggregate);
+    localStorage.setItem(key, newValue);
+    window.dispatchEvent(new StorageEvent('storage', { key, newValue }));
+  }, FIXED_USER_ID);
   await expect(stage(page)).toContainText('Dominion Night');
   await expect(stage(page).locator('.permanent-reward-celebration__milestone')).toHaveCount(0);
   await stage(page).getByRole('button', { name: 'Continue' }).click(); await expect(stage(page)).toHaveCount(0);

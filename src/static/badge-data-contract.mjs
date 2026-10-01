@@ -1,5 +1,32 @@
 import { BADGE_DISPLAY_ORDER } from './badge-display-order.generated.mjs';
 
+const ALLOWED_ICONS = new Set([
+  'book',
+  'calendar',
+  'check',
+  'crown',
+  'dumbbell',
+  'eye',
+  'flag',
+  'flame',
+  'gift',
+  'mountain',
+  'palette',
+  'repeat',
+  'run',
+  'share',
+  'shield',
+  'spark',
+  'star',
+  'target',
+]);
+
+export function iconClass(icon, fallback = 'target') {
+  const normalized = String(icon || '').toLowerCase().replace(/[^a-z-]/g, '');
+  return `icon-${ALLOWED_ICONS.has(normalized) ? normalized : fallback}`;
+}
+
+
 export const PREVIEW_BADGE_STATE_KEY = 'dominion:badgeState:v1';
 const BADGE_TIERS = new Set(['bronze', 'silver', 'gold']);
 const difficulties = new Set(['easy', 'medium', 'hard', 'extreme']);

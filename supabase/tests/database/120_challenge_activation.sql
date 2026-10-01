@@ -3,7 +3,7 @@ begin;
 create extension if not exists pgtap with schema extensions;
 set local search_path = public, extensions;
 
-select plan(73);
+select plan(78);
 
 create temporary table activation_test_clock (
   user_date date not null
@@ -247,6 +247,14 @@ values
     pg_catalog.statement_timestamp() - interval '1 day'
   );
 
+-- Synthetic due schedules retain the state they held before the clock moved.
+-- The first-run binder correctly makes today's newly activated runs active.
+update private.challenge_instances set status='scheduled'
+where user_id in ('c5000000-0000-4000-8000-000000000005',
+  'c6000000-0000-4000-8000-000000000006','c7000000-0000-4000-8000-000000000007');
+insert into public.entitlements(user_id,entitlement_key,status,source_type)
+values('c7000000-0000-4000-8000-000000000007','membership_active','active','test');
+
 set local session_replication_role = replica;
 insert into private.retired_community_dr_quarantined_crews (
   crew_id,
@@ -338,7 +346,7 @@ select ok(
 select ok(
   has_function_privilege(
     'authenticated',
-    'public.set_challenge_start_date(date,text,uuid,bigint,uuid)',
+    'public.set_challenge_start_date_v2(date,text,uuid,bigint,uuid,uuid)',
     'execute'
   )
   and to_regprocedure('public.set_challenge_start_date(date,text,uuid,bigint)') is null,
@@ -408,17 +416,17 @@ select ok(
   )
   and has_function_privilege(
     'authenticated',
-    'public.mutate_daily_standard_draft(date,text,boolean,bigint,uuid)',
+    'public.mutate_daily_standard_draft_v2(date,text,boolean,bigint,uuid,uuid)',
     'execute'
   )
   and has_function_privilege(
     'authenticated',
-    'public.set_daily_standard_workout_difficulty(date,text,text,bigint,uuid)',
+    'public.set_daily_standard_workout_difficulty_v2(date,text,text,bigint,uuid,uuid)',
     'execute'
   )
   and has_function_privilege(
     'authenticated',
-    'public.submit_daily_check_in(text,text[],jsonb,text,date,uuid)',
+    'public.submit_daily_check_in_v2(text,text[],jsonb,text,date,uuid,uuid)',
     'execute'
   )
   and has_function_privilege(
@@ -498,7 +506,7 @@ select ok(
       'public.get_challenge_activation(uuid)'::regprocedure,
       'public.activate_solo_challenge(date,text,uuid,uuid)'::regprocedure,
       'public.activate_group_challenge(uuid,text,uuid,uuid)'::regprocedure,
-      'public.set_challenge_start_date(date,text,uuid,bigint,uuid)'::regprocedure
+      'public.set_challenge_start_date_v2(date,text,uuid,bigint,uuid,uuid)'::regprocedure
     )
   ),
   'activation RPCs are hardened security-definer boundaries'
@@ -542,12 +550,13 @@ select throws_ok(
   'Group activation rejects a stale expected actor'
 );
 select throws_ok(
-  $$select public.set_challenge_start_date(
+  $$select public.set_challenge_start_date_v2(
     (select user_date from activation_test_clock),
     'UTC',
     'd0100000-0000-4000-8000-000000000003',
     0,
-    'c4000000-0000-4000-8000-000000000004'
+    'c4000000-0000-4000-8000-000000000004',
+    (public.get_challenge_activation_v2(auth.uid()) #>> '{currentInstance,id}')::uuid
   )$$,
   '40001',
   'The signed-in account changed. Refresh and try again.',
@@ -563,37 +572,40 @@ select throws_ok(
   'Daily Standards timezone bootstrap rejects a stale expected actor'
 );
 select throws_ok(
-  $$select public.mutate_daily_standard_draft(
+  $$select public.mutate_daily_standard_draft_v2(
     (select user_date from activation_test_clock),
     'bible',
     true,
     null,
-    'c4000000-0000-4000-8000-000000000004'
+    'c4000000-0000-4000-8000-000000000004',
+    (public.get_challenge_activation_v2(auth.uid()) #>> '{currentInstance,id}')::uuid
   )$$,
   '40001',
   'The signed-in account changed. Refresh and try again.',
   'Daily Standards completion rejects a stale expected actor'
 );
 select throws_ok(
-  $$select public.set_daily_standard_workout_difficulty(
+  $$select public.set_daily_standard_workout_difficulty_v2(
     (select user_date from activation_test_clock),
     'one',
     'medium',
     null,
-    'c4000000-0000-4000-8000-000000000004'
+    'c4000000-0000-4000-8000-000000000004',
+    (public.get_challenge_activation_v2(auth.uid()) #>> '{currentInstance,id}')::uuid
   )$$,
   '40001',
   'The signed-in account changed. Refresh and try again.',
   'workout difficulty rejects a stale expected actor'
 );
 select throws_ok(
-  $$select public.submit_daily_check_in(
+  $$select public.submit_daily_check_in_v2(
     'complete',
     '{}'::text[],
     '{}'::jsonb,
     'UTC',
     (select user_date from activation_test_clock),
-    'c4000000-0000-4000-8000-000000000004'
+    'c4000000-0000-4000-8000-000000000004',
+    (public.get_challenge_activation_v2(auth.uid()) #>> '{currentInstance,id}')::uuid
   )$$,
   '40001',
   'The signed-in account changed. Refresh and try again.',
@@ -615,6 +627,12 @@ values (
 );
 
 -- A new account is inert, typed, fail closed, and still earns App Streak.
+select ok(
+  public.get_challenge_activation_v2(auth.uid()) @> jsonb_build_object(
+    'schemaVersion',2,'actorId',auth.uid(),'status','not_started',
+    'currentInstance',null,'canParticipate',false,'canActivateSolo',true),
+  'the current V2 read is actor-bound and has no invented run before activation'
+);
 select is(
   (select payload ->> 'status'
    from activation_test_results where key = 'solo-before'),
@@ -696,37 +714,40 @@ select is(
   'the Daily Standards read is explicitly locked before activation'
 );
 select throws_ok(
-  $$select public.mutate_daily_standard_draft(
+  $$select public.mutate_daily_standard_draft_v2(
     (select user_date from activation_test_clock),
     'bible',
     true,
     null,
-    'c1000000-0000-4000-8000-000000000001'
+    'c1000000-0000-4000-8000-000000000001',
+    (public.get_challenge_activation_v2(auth.uid()) #>> '{currentInstance,id}')::uuid
   )$$,
-  '55000',
-  'An active challenge is required before changing Daily Standards.',
+  '40001',
+  'The challenge instance changed. Refresh and try again.',
   'Daily Standards completion fails closed before activation'
 );
 select throws_ok(
-  $$select public.set_daily_standard_workout_difficulty(
+  $$select public.set_daily_standard_workout_difficulty_v2(
     (select user_date from activation_test_clock),
     'one',
     'medium',
     null,
-    'c1000000-0000-4000-8000-000000000001'
+    'c1000000-0000-4000-8000-000000000001',
+    (public.get_challenge_activation_v2(auth.uid()) #>> '{currentInstance,id}')::uuid
   )$$,
-  '55000',
-  'An active challenge is required before changing Daily Standards.',
+  '40001',
+  'The challenge instance changed. Refresh and try again.',
   'workout difficulty fails closed before activation'
 );
 select throws_ok(
-  $$select public.submit_daily_check_in(
+  $$select public.submit_daily_check_in_v2(
     'complete', '{}'::text[], '{}'::jsonb, 'UTC',
     (select user_date from activation_test_clock),
-    'c1000000-0000-4000-8000-000000000001'
+    'c1000000-0000-4000-8000-000000000001',
+    (public.get_challenge_activation_v2(auth.uid()) #>> '{currentInstance,id}')::uuid
   )$$,
-  '55000',
-  'An active challenge is required before posting a check-in.',
+  '40001',
+  'The challenge instance changed. Refresh and try again.',
   'check-in submission fails closed before activation'
 );
 select lives_ok(
@@ -787,6 +808,14 @@ values (
 );
 
 -- Solo activation is authoritative, retry-safe, and conflict-safe.
+select ok(
+  (public.get_challenge_activation_v2(auth.uid()) #>> '{currentInstance,id}')::uuid is not null
+    and public.get_challenge_activation_v2(auth.uid()) @> jsonb_build_object(
+      'schemaVersion',2,'actorId',auth.uid(),'revision',1,'status','active',
+      'currentInstance',jsonb_build_object('challengeKey','original_77',
+        'targetCount',77,'submittedCount',0,'provenance','live')),
+  'Solo activation atomically binds a real first-run UUID for the V2 client'
+);
 select is(
   (select payload ->> 'status'
    from activation_test_results where key = 'solo-active'),
@@ -879,13 +908,27 @@ select throws_ok(
 );
 
 -- Active mutations work, editable dates use revisions, and check-in locks win.
+select throws_ok(
+  $$select public.mutate_daily_standard_draft_v2(
+    (select user_date from activation_test_clock),'bible',true,0,
+    'c1000000-0000-4000-8000-000000000001','cd000000-0000-4000-8000-000000000099')$$,
+  '40001','The challenge instance changed. Refresh and try again.',
+  'a stale run UUID cannot mutate a current same-account draft'
+);
+select throws_ok(
+  $$select public.submit_daily_check_in('partial',array['bible'],'{}','UTC',
+    (select user_date from activation_test_clock),'c1000000-0000-4000-8000-000000000001')$$,
+  '55000','Refresh to use instance-bound check-ins.',
+  'the retired unfenced submit cannot silently write into the current run'
+);
 select lives_ok(
-  $$select public.mutate_daily_standard_draft(
+  $$select public.mutate_daily_standard_draft_v2(
     (select user_date from activation_test_clock),
     'bible',
     true,
     null,
-    'c1000000-0000-4000-8000-000000000001'
+    'c1000000-0000-4000-8000-000000000001',
+    (public.get_challenge_activation_v2(auth.uid()) #>> '{currentInstance,id}')::uuid
   )$$,
   'an active challenge can mutate Daily Standards'
 );
@@ -893,12 +936,13 @@ select lives_ok(
 insert into activation_test_results (key, payload)
 values (
   'solo-date-edit',
-  public.set_challenge_start_date(
+  public.set_challenge_start_date_v2(
     (select user_date - 1 from activation_test_clock),
     'UTC',
     'd1100000-0000-4000-8000-000000000001',
     1,
-    'c1000000-0000-4000-8000-000000000001'
+    'c1000000-0000-4000-8000-000000000001',
+    (public.get_challenge_activation_v2(auth.uid()) #>> '{currentInstance,id}')::uuid
   )
 );
 
@@ -907,7 +951,7 @@ select ok(
     select payload ->> 'startDate' =
         (select (user_date - 1)::text from activation_test_clock)
       and (payload ->> 'revision')::bigint = 2
-      and (payload ->> 'challengeDay')::integer = 2
+      and (payload #>> '{currentInstance,calendarDay}')::integer = 2
       and (payload ->> 'canEditStartDate')::boolean
     from activation_test_results where key = 'solo-date-edit'
   ),
@@ -917,12 +961,13 @@ select ok(
 insert into activation_test_results (key, payload)
 values (
   'solo-date-replay',
-  public.set_challenge_start_date(
+  public.set_challenge_start_date_v2(
     (select user_date - 1 from activation_test_clock),
     'UTC',
     'd1100000-0000-4000-8000-000000000001',
     1,
-    'c1000000-0000-4000-8000-000000000001'
+    'c1000000-0000-4000-8000-000000000001',
+    (public.get_challenge_activation_v2(auth.uid()) #>> '{currentInstance,id}')::uuid
   )
 );
 
@@ -931,37 +976,39 @@ select ok(
   (
     select count(*) = 1
       and min((result ->> 'revision')::bigint) = 2
-    from private.challenge_activation_requests
-    where actor_id = 'c1000000-0000-4000-8000-000000000001'
-      and action = 'date_update'
+    from private.challenge_instance_requests
+    where user_id = 'c1000000-0000-4000-8000-000000000001'
+      and action = 'set_start'
   ),
   'a matching date-edit replay returns one persisted result'
 );
 set local role authenticated;
 set local "request.jwt.claim.sub" = 'c1000000-0000-4000-8000-000000000001';
 select throws_ok(
-  $$select public.set_challenge_start_date(
+  $$select public.set_challenge_start_date_v2(
     (select user_date from activation_test_clock),
     'UTC',
     'd1100000-0000-4000-8000-000000000002',
     1,
-    'c1000000-0000-4000-8000-000000000001'
+    'c1000000-0000-4000-8000-000000000001',
+    (public.get_challenge_activation_v2(auth.uid()) #>> '{currentInstance,id}')::uuid
   )$$,
   '40001',
-  'The challenge timeline changed in another session. Refresh and try again.',
+  'The challenge timeline changed. Refresh and try again.',
   'a stale revision cannot overwrite a changed Solo timeline'
 );
 
 insert into activation_test_results (key, payload)
 values (
   'solo-check-in',
-  public.submit_daily_check_in(
+  public.submit_daily_check_in_v2(
     'complete',
     array['bible'],
     '{}'::jsonb,
     'UTC',
     (select user_date from activation_test_clock),
-    'c1000000-0000-4000-8000-000000000001'
+    'c1000000-0000-4000-8000-000000000001',
+    (public.get_challenge_activation_v2(auth.uid()) #>> '{currentInstance,id}')::uuid
   )
 );
 
@@ -987,15 +1034,16 @@ select is(
   'the first check-in removes date-edit capability'
 );
 select throws_ok(
-  $$select public.set_challenge_start_date(
+  $$select public.set_challenge_start_date_v2(
     (select user_date from activation_test_clock),
     'UTC',
     'd1100000-0000-4000-8000-000000000003',
-    2,
-    'c1000000-0000-4000-8000-000000000001'
+    3,
+    'c1000000-0000-4000-8000-000000000001',
+    (public.get_challenge_activation_v2(auth.uid()) #>> '{currentInstance,id}')::uuid
   )$$,
   '55000',
-  'The challenge start date is locked after the first check-in.',
+  'The challenge start date is locked.',
   'the date-edit RPC fails closed after the first check-in'
 );
 select throws_ok(
@@ -1038,17 +1086,35 @@ select ok(
   'a future Solo start is scheduled without opening participation'
 );
 select throws_ok(
-  $$select public.mutate_daily_standard_draft(
+  $$select public.mutate_daily_standard_draft_v2(
     (select user_date from activation_test_clock),
     'bible',
     true,
     null,
-    'c2000000-0000-4000-8000-000000000002'
+    'c2000000-0000-4000-8000-000000000002',
+    (public.get_challenge_activation_v2(auth.uid()) #>> '{currentInstance,id}')::uuid
   )$$,
-  '55000',
-  'An active challenge is required before changing Daily Standards.',
+  '42501',
+  'An active membership is required.',
   'scheduled challenges remain mutation-locked'
 );
+
+-- Membership must not bypass a scheduled run's own date boundary.
+reset role;
+insert into public.entitlements(user_id,entitlement_key,status,source_type)
+values('c2000000-0000-4000-8000-000000000002','membership_active','active','test');
+set local role authenticated;
+select throws_ok(
+  $$select public.mutate_daily_standard_draft_v2(
+    (select user_date from activation_test_clock),'bible',true,0,
+    'c2000000-0000-4000-8000-000000000002',
+    (public.get_challenge_activation_v2(auth.uid()) #>> '{currentInstance,id}')::uuid)$$,
+  '55000','An active challenge is required.',
+  'an entitled scheduled run still rejects Daily Standards before its start'
+);
+reset role;
+delete from public.entitlements where user_id='c2000000-0000-4000-8000-000000000002'
+  and entitlement_key='membership_active';
 
 -- Simulate the calendar reaching the confirmed date without changing any
 -- lifecycle metadata; the next authoritative read must perform the promotion.
@@ -1172,12 +1238,13 @@ set local "request.jwt.claims" =
 insert into activation_test_results (key, payload)
 values (
   'due-date-no-op',
-  public.set_challenge_start_date(
+  public.set_challenge_start_date_v2(
     (select user_date from activation_test_clock),
     'UTC',
     'd7000000-0000-4000-8000-000000000007',
-    1,
-    'c7000000-0000-4000-8000-000000000007'
+    2,
+    'c7000000-0000-4000-8000-000000000007',
+    (public.get_challenge_activation_v2(auth.uid()) #>> '{currentInstance,id}')::uuid
   )
 );
 
@@ -1185,13 +1252,12 @@ select ok(
   (
     select payload @> '{
       "status": "active",
-      "storedStatus": "active",
       "mode": "solo",
       "revision": 2,
       "canParticipate": true
     }'::jsonb
-      and payload ->> 'activatedAt' is not null
-      and payload ->> 'activatedBy' = 'c7000000-0000-4000-8000-000000000007'
+      and payload #>> '{currentInstance,status}' = 'active'
+      and payload ->> 'actorId' = 'c7000000-0000-4000-8000-000000000007'
     from activation_test_results where key = 'due-date-no-op'
   ),
   'a no-op date update returns one persisted active contract when its schedule is due'
@@ -1366,15 +1432,16 @@ select ok(
 set local role authenticated;
 set local "request.jwt.claim.sub" = 'c3000000-0000-4000-8000-000000000003';
 select throws_ok(
-  $$select public.set_challenge_start_date(
+  $$select public.set_challenge_start_date_v2(
     (select user_date from activation_test_clock),
     'UTC',
     'd3100000-0000-4000-8000-000000000001',
     1,
-    'c3000000-0000-4000-8000-000000000003'
+    'c3000000-0000-4000-8000-000000000003',
+    (public.get_challenge_activation_v2(auth.uid()) #>> '{currentInstance,id}')::uuid
   )$$,
   '55000',
-  'A Group challenge start date is owned by the crew.',
+  'The challenge start date is locked.',
   'a member cannot rewrite the crew-owned Group date'
 );
 select throws_ok(

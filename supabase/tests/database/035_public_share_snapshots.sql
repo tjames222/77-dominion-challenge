@@ -3,7 +3,7 @@ begin;
 create extension if not exists pgtap with schema extensions;
 set local search_path = public, extensions;
 
-select plan(43);
+select plan(45);
 
 select ok(
   exists (
@@ -31,8 +31,14 @@ select ok(
   'anonymous recipients can resolve an opaque public token'
 );
 
--- Fixture Check-Ins obey the same actor and completed-action contract as a
--- submitted member Check-In; the downstream reward triggers remain enabled.
+-- Fixture Check-Ins obey the same actor, run and completed-action contract as
+-- a submitted member Check-In; all downstream reward triggers remain enabled.
+-- Keep calendar day ten independent of the day this regression suite runs.
+update public.profiles set challenge_start_date = current_date - 9, time_zone = 'UTC'
+where user_id = '10000000-0000-4000-8000-000000000001';
+update private.challenge_instances set start_date = current_date - 9, time_zone = 'UTC',
+  scope_key = 'original77:' || (current_date - 9)::text
+where user_id = '10000000-0000-4000-8000-000000000001' and sequence_no = 0;
 set local "request.jwt.claim.sub" = '10000000-0000-4000-8000-000000000001';
 set local "request.jwt.claims" = '{"sub":"10000000-0000-4000-8000-000000000001","role":"authenticated","email":"alice@example.test"}';
 
@@ -43,7 +49,7 @@ insert into public.challenge_entries (
   workout_difficulty
 ) values (
   '10000000-0000-4000-8000-000000000001',
-  '2026-07-10',
+  current_date,
   array['bible', 'workoutOne', 'walk'],
   '{}'::jsonb
 ) on conflict (user_id, entry_date) do update set
@@ -59,17 +65,19 @@ insert into public.check_ins (
   completed_count,
   completed,
   points_awarded,
+  challenge_instance_id,
   created_at
 ) values (
   '51000000-0000-4000-8000-000000000001',
   '10000000-0000-4000-8000-000000000001',
-  '2026-07-10',
+  current_date,
   10,
   'partial',
   3,
   array['bible', 'workoutOne', 'walk'],
   3,
-  '2026-07-10 12:00:00+00'
+  (select current_instance_id from private.challenge_runtime where user_id = '10000000-0000-4000-8000-000000000001'),
+  clock_timestamp()
 ) on conflict (user_id, entry_date) do nothing;
 
 update public.user_game_stats
@@ -90,24 +98,24 @@ set local role authenticated;
 set local "request.jwt.claim.sub" = '10000000-0000-4000-8000-000000000001';
 set local "request.jwt.claims" = '{"sub":"10000000-0000-4000-8000-000000000001","role":"authenticated","email":"alice@example.test"}';
 
-select is(public.preview_share_snapshot('streak') ->> 'kind', 'streak', 'streak preview uses a typed payload');
-select is((public.preview_share_snapshot('streak') #>> '{payload,appStreak}')::integer, 12, 'streak preview uses server app-streak state');
-select is((public.preview_share_snapshot('streak') #>> '{payload,fullStandardStreak}')::integer, 5, 'streak preview uses server full-standard state');
-select is((public.preview_share_snapshot('streak') #>> '{privacy,includesIdentity}')::boolean, false, 'the preview declares that identity is excluded');
-select ok(public.preview_share_snapshot('streak')::text not ilike '%alice%', 'the preview does not expose a name or email');
-select is((public.preview_share_snapshot('progress') #>> '{payload,submittedCheckIns}')::integer, 1, 'progress counts the one submitted check-in rather than calendar day ten');
-select is((public.preview_share_snapshot('progress') #>> '{payload,targetCheckIns}')::integer, 77, 'progress includes the submitted check-in target');
-select is((public.preview_share_snapshot('progress') ->> 'schemaVersion')::integer, 2, 'new progress previews declare version two');
+select is(public.preview_share_snapshot_v2('streak', auth.uid()) ->> 'kind', 'streak', 'streak preview uses a typed payload');
+select is((public.preview_share_snapshot_v2('streak', auth.uid()) #>> '{payload,appStreak}')::integer, 12, 'streak preview uses server app-streak state');
+select is((public.preview_share_snapshot_v2('streak', auth.uid()) #>> '{payload,fullStandardStreak}')::integer, 5, 'streak preview uses server full-standard state');
+select is((public.preview_share_snapshot_v2('streak', auth.uid()) #>> '{privacy,includesIdentity}')::boolean, false, 'the preview declares that identity is excluded');
+select ok(public.preview_share_snapshot_v2('streak', auth.uid())::text not ilike '%alice%', 'the preview does not expose a name or email');
+select is((public.preview_share_snapshot_v2('progress', auth.uid()) #>> '{payload,submittedCheckIns}')::integer, 1, 'progress counts the one submitted check-in rather than calendar day ten');
+select is((public.preview_share_snapshot_v2('progress', auth.uid()) #>> '{payload,targetCheckIns}')::integer, 77, 'progress includes the submitted check-in target');
+select is((public.preview_share_snapshot_v2('progress', auth.uid()) ->> 'schemaVersion')::integer, 3, 'new current-run progress previews declare version three');
 select is(
-  (select array_agg(key order by key) from jsonb_object_keys(public.preview_share_snapshot('progress') -> 'payload') key),
-  array['kind','schemaVersion','submittedCheckIns','targetCheckIns']::text[],
-  'new progress payloads have exactly four public fields'
+  (select array_agg(key order by key) from jsonb_object_keys(public.preview_share_snapshot_v2('progress', auth.uid()) -> 'payload') key),
+  array['challengeKey','kind','schemaVersion','submittedCheckIns','targetCheckIns','title']::text[],
+  'new progress payloads have exactly six public fields'
 );
-select ok(public.preview_share_snapshot('progress')::text !~ 'currentChallengeDay|percentComplete|userId|instanceId|canonicalEvent', 'progress hides calendar and private source identities');
-select is((public.preview_share_snapshot('general') #>> '{payload,dailyStandards}')::integer, 7, 'general shares contain only fixed product facts');
+select ok((public.preview_share_snapshot_v2('progress', auth.uid())->'payload')::text !~ 'currentChallengeDay|percentComplete|userId|instanceId|canonicalEvent', 'progress hides calendar and private source identities');
+select is((public.preview_share_snapshot_v2('general', auth.uid()) #>> '{payload,dailyStandards}')::integer, 7, 'general shares contain only fixed product facts');
 
 with created as (
-  select public.create_share_snapshot('streak') as result
+  select public.create_share_snapshot_v2('streak', null, auth.uid(), null) as result
 )
 insert into share_test_values (label, snapshot_id, token)
 select 'alice-streak', (result ->> 'snapshotId')::uuid, result ->> 'token' from created;
@@ -143,6 +151,16 @@ insert into public.public_share_snapshots (
 );
 select is((public.get_public_share_snapshot(repeat('a',64)) ->> 'schemaVersion')::integer, 1, 'stored progress links retain version one');
 select is((public.get_public_share_snapshot(repeat('a',64)) #>> '{payload,currentChallengeDay}')::integer, 10, 'stored version one still means calendar position');
+
+insert into public.public_share_snapshots (
+  user_id, public_token_digest, snapshot_version, share_kind, snapshot_payload, expires_at
+) values (
+  '10000000-0000-4000-8000-000000000001', digest(repeat('b',64),'sha256'), 2, 'progress',
+  '{"schemaVersion":2,"kind":"progress","submittedCheckIns":4,"targetCheckIns":77}'::jsonb,
+  now()+interval '30 days'
+);
+select is((public.get_public_share_snapshot(repeat('b',64)) ->> 'schemaVersion')::integer, 2, 'stored progress links retain version two');
+select is((public.get_public_share_snapshot(repeat('b',64)) #>> '{payload,submittedCheckIns}')::integer, 4, 'stored version two retains its immutable original submitted count');
 
 select is(
   public.get_public_share_snapshot((select token from share_test_values where label = 'alice-streak')) ->> 'kind',
@@ -186,8 +204,8 @@ select is(
 
 set local role authenticated;
 select throws_ok(
-  $$ select public.create_share_snapshot('general', now() + interval '91 days') $$,
-  'P0001',
+  $$ select public.create_share_snapshot_v2('general', now() + interval '91 days', auth.uid(), null) $$,
+  '22023',
   'Share expiration must be between one hour and 90 days.',
   'client-selected expiration is bounded'
 );
@@ -212,7 +230,7 @@ from generate_series(1, 10) as series;
 
 set local role authenticated;
 select throws_ok(
-  $$ select public.create_share_snapshot('general') $$,
+  $$ select public.create_share_snapshot_v2('general', null, auth.uid(), null) $$,
   'P0001',
   'Share link rate limit reached. Try again later.',
   'creation is rate limited under a per-user advisory lock'
@@ -226,19 +244,19 @@ set local role authenticated;
 set local "request.jwt.claim.sub" = '30000000-0000-4000-8000-000000000003';
 set local "request.jwt.claims" = '{"sub":"30000000-0000-4000-8000-000000000003","role":"authenticated","email":"carol@example.test"}';
 with created as (
-  select public.create_share_snapshot('progress') as result
+  select public.create_share_snapshot_v2('progress', null, auth.uid(), (public.get_challenge_activation_v2(auth.uid()) #>> '{currentInstance,id}')::uuid) as result
 )
 insert into share_test_values (label, snapshot_id, token)
 select 'carol-progress', (result ->> 'snapshotId')::uuid, result ->> 'token' from created;
 with created as (
-  select public.create_share_snapshot('general') as result
+  select public.create_share_snapshot_v2('general', null, auth.uid(), null) as result
 )
 insert into share_test_values (label, snapshot_id, token)
 select 'carol-general', (result ->> 'snapshotId')::uuid, result ->> 'token' from created;
 reset role;
 
-select is((select snapshot_version from public.public_share_snapshots where id=(select snapshot_id from share_test_values where label='carol-progress')), 2, 'new progress links store version two');
-select is((public.get_public_share_snapshot((select token from share_test_values where label='carol-progress')) ->> 'schemaVersion')::integer, 2, 'public reads return the stored version two');
+select is((select snapshot_version from public.public_share_snapshots where id=(select snapshot_id from share_test_values where label='carol-progress')), 3, 'new progress links store version three');
+select is((public.get_public_share_snapshot((select token from share_test_values where label='carol-progress')) ->> 'schemaVersion')::integer, 3, 'public reads return the stored version three');
 select is((public.get_public_share_snapshot((select token from share_test_values where label='carol-progress')) #>> '{payload,submittedCheckIns}')::integer, 0, 'another owner receives only her own submitted count');
 
 update public.profiles
@@ -301,8 +319,8 @@ select ok(
   'clients cannot enumerate snapshots through the table API'
 );
 select ok(
-  has_function_privilege('authenticated', 'public.preview_share_snapshot(text)', 'execute')
-  and has_function_privilege('authenticated', 'public.create_share_snapshot(text,timestamp with time zone)', 'execute')
+  has_function_privilege('authenticated', 'public.preview_share_snapshot_v2(text,uuid,uuid)', 'execute')
+  and has_function_privilege('authenticated', 'public.create_share_snapshot_v2(text,timestamp with time zone,uuid,uuid)', 'execute')
   and has_function_privilege('authenticated', 'public.revoke_share_snapshot(uuid)', 'execute'),
   'only the documented authenticated snapshot lifecycle is exposed'
 );

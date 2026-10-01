@@ -9,7 +9,8 @@ import { CURRENT_BACKUP_MODE, LEGACY_BACKUP_MODE, currentBackupVaultProofSql, cu
   requireCurrentBackupVaultProof, requireCurrentBackupLocalVaultRecovery, currentBackupVaultRecoveryManifest } from './free-backup-current-vault.mjs';
 import { verifyBackupManifest } from './verify-free-production-backup-evidence.mjs';
 import { POST_EARLY_ACCESS_BACKUP_MODE, postEarlyAccessVaultRecoveryManifest } from './free-backup-post-early-access-vault.mjs';
-import { POST_ADMIN_INBOX_BACKUP_MODE } from './free-production-backup.mjs';
+import { POST_ADMIN_INBOX_BACKUP_MODE, POST_ORIGINAL77_BACKUP_MODE } from './free-production-backup.mjs';
+import { POST_ORIGINAL77_VAULT_RECOVERY } from './production-backup-public-contract.mjs';
 
 const { publicKey, privateKey } = generateKeyPairSync('rsa', {
   modulusLength: 4096,
@@ -546,6 +547,54 @@ test('post-admin-inbox inventory requires exactly67 and retains every recovery b
   }
 });
 
+test('post-original77 mode pins exactly70 and ignores only later migration suffixes', async () => {
+  const files = await readdir(new URL('../supabase/migrations/', import.meta.url));
+  const expected = selectBackupMigrationCheckpoint(files, POST_ORIGINAL77_BACKUP_MODE);
+  assert.equal(POST_ORIGINAL77_BACKUP_MODE, 'post-original77-70');
+  assert.equal(expected.length, 70); assert.equal(expected.at(-1), '20260930161218');
+  assert.deepEqual(postEarlyAccessVaultRecoveryManifest(), POST_ORIGINAL77_VAULT_RECOVERY);
+  assert.equal(expected.includes('20261001001245'), false);
+  assert.deepEqual(selectBackupMigrationCheckpoint([...files, '99999999999999_future.sql'], POST_ORIGINAL77_BACKUP_MODE), expected);
+  assert.deepEqual(selectBackupMigrationCheckpoint(files.filter(name => name.slice(0, 14) <= '20260930161218'), POST_ORIGINAL77_BACKUP_MODE), expected);
+  for (const names of [files.filter(name => name.slice(0, 14) < '20260930161218'),
+    files.filter(name => !name.startsWith('20260930161218_')),
+    [...files, '20260930161218_duplicate.sql'],
+    files.map(name => name.startsWith('20260930161218_') ? '20260930161219_changed.sql' : name),
+    files.map(name => name.startsWith('20260707170000_') ? '20260707170001_changed.sql' : name)]) {
+    assert.throws(() => selectBackupMigrationCheckpoint(names, POST_ORIGINAL77_BACKUP_MODE));
+  }
+});
+
+test('post-original77 inventory requires exactly70 and preserves every encrypted recovery boundary', async () => {
+  const expected = selectBackupMigrationCheckpoint(await readdir(new URL('../supabase/migrations/', import.meta.url)), POST_ORIGINAL77_BACKUP_MODE);
+  const records = fixture(); records.find(r => r.kind === 'history').versions = expected;
+  records.find(r => r.schema === 'vault').count = 5;
+  assert.deepEqual(parseInventory(serialized(records), expected, POST_ORIGINAL77_BACKUP_MODE), records);
+  for (const mode of [LEGACY_BACKUP_MODE, CURRENT_BACKUP_MODE, POST_EARLY_ACCESS_BACKUP_MODE, POST_ADMIN_INBOX_BACKUP_MODE]) {
+    assert.throws(() => parseInventory(serialized(records), expected, mode));
+  }
+  for (const mutate of [
+    ...[0, 2, 4, 6].map(count => values => { values.find(r => r.schema === 'vault').count = count; }),
+    values => { values.find(r => r.schema === 'pgsodium').count = 1; },
+    ...['objects', 's3_multipart_uploads', 's3_multipart_uploads_parts'].map(name => values => {
+      values.find(r => r.schema === 'storage' && r.name === name).count = 1;
+    }),
+    values => { values.find(r => r.kind === 'boundary').foreignTables = 1; },
+    values => { values.find(r => r.kind === 'boundary').serverVersion = '170011'; },
+    values => { values.find(r => r.kind === 'boundary').reservedRoleExists = true; },
+    values => { values.find(r => r.kind === 'history').versions.pop(); },
+    values => { values.find(r => r.kind === 'history').versions.push('99999999999999'); },
+    values => { values.find(r => r.kind === 'history').versions[0] = '20260707170001'; },
+  ]) {
+    const changed = structuredClone(records); mutate(changed);
+    assert.throws(() => parseInventory(serialized(changed), expected, POST_ORIGINAL77_BACKUP_MODE));
+  }
+  assert.throws(() => parseInventory(serialized(records.filter(r => r.schema !== 'vault')), expected, POST_ORIGINAL77_BACKUP_MODE));
+  for (const wrong of [expected.slice(0, 69), [...expected, '99999999999999'], ['20260707170001', ...expected.slice(1)]]) {
+    assert.throws(() => parseInventory(serialized(records), wrong, POST_ORIGINAL77_BACKUP_MODE));
+  }
+});
+
 test('current inventory still rejects external data, unknown history and unbounded encrypted data', async () => {
   const expected = selectBackupMigrationCheckpoint(await readdir(new URL('../supabase/migrations/', import.meta.url)), CURRENT_BACKUP_MODE);
   const records = fixture(); records.find(r => r.kind === 'history').versions = expected;
@@ -671,21 +720,21 @@ test('workflow currentmode is explicitly selected and only then receives the exi
   const workflow = await readFile(new URL('../.github/workflows/production-backup.yml', import.meta.url), 'utf8');
   assert.match(workflow, /default: legacy-thirteen-migration-cutover/);
   assert.match(workflow, /type: choice\n        options:\n          - legacy-thirteen-migration-cutover\n          - current-production-2026-09-27/);
-  assert(workflow.includes("PROFILE_PHOTO_WORKER_SECRET: ${{ (inputs.backup_mode == 'current-production-2026-09-27' || inputs.backup_mode == 'post-early-access-66' || inputs.backup_mode == 'post-admin-inbox-67') && secrets.PROFILE_PHOTO_WORKER_SECRET || '' }}"));
+  assert(workflow.includes("PROFILE_PHOTO_WORKER_SECRET: ${{ (inputs.backup_mode == 'current-production-2026-09-27' || inputs.backup_mode == 'post-early-access-66' || inputs.backup_mode == 'post-admin-inbox-67' || inputs.backup_mode == 'post-original77-70') && secrets.PROFILE_PHOTO_WORKER_SECRET || '' }}"));
   assert.match(workflow, /PROFILE_PHOTO_WORKER_SECRET="\$PROFILE_PHOTO_WORKER_SECRET"/);
   assert.doesNotMatch(workflow, /root_key|VAULT_KEY|PGSODIUM_KEY/);
 });
 
-test('only exact66/67 modes receive fixed Early Access worker bindings; invitation envelope keys are never read', async () => {
+test('only exact66/67/70 modes receive fixed Early Access worker bindings; invitation envelope keys are never read', async () => {
   const workflow = await readFile(new URL('../.github/workflows/production-backup.yml', import.meta.url), 'utf8');
   for (const key of ['FEEDBACK_WORKER_SECRET', 'EARLY_ACCESS_INVITATION_WORKER_SECRET']) {
-    assert(workflow.includes(key + ": ${{ (inputs.backup_mode == 'post-early-access-66' || inputs.backup_mode == 'post-admin-inbox-67') && secrets." + key + " || '' }}"));
+    assert(workflow.includes(key + ": ${{ (inputs.backup_mode == 'post-early-access-66' || inputs.backup_mode == 'post-admin-inbox-67' || inputs.backup_mode == 'post-original77-70') && secrets." + key + " || '' }}"));
     assert(workflow.includes(key + '="$' + key + '"'));
   }
-  assert.match(workflow, /- current-production-2026-09-27\n          - post-early-access-66\n          - post-admin-inbox-67/);
+  assert.match(workflow, /- current-production-2026-09-27\n          - post-early-access-66\n          - post-admin-inbox-67\n          - post-original77-70/);
   assert.doesNotMatch(workflow, /secrets\.(?:EARLY_ACCESS_INVITATION_KEY|EARLY_ACCESS_INVITATION_KEY_VERSION|RESEND_API_KEY|LINEAR_FEEDBACK_API_KEY)\b/);
   const source = await readFile(new URL('./free-production-backup.mjs', import.meta.url), 'utf8');
-  assert.match(source, /const usesFiveSettingVault = \(mode\) => mode === POST_EARLY_ACCESS_BACKUP_MODE \|\| mode === POST_ADMIN_INBOX_BACKUP_MODE;/);
+  assert.match(source, /const usesFiveSettingVault = \(mode\) => mode === POST_EARLY_ACCESS_BACKUP_MODE\s*\|\| mode === POST_ADMIN_INBOX_BACKUP_MODE\s*\|\| mode === POST_ORIGINAL77_BACKUP_MODE;/);
   assert.match(source, /const usesPostEarlyAccessRecovery = usesFiveSettingVault\(backupMode\);/);
   assert.match(source, /const usesPgNetSupplement = backupMode === CURRENT_BACKUP_MODE \|\| usesPostEarlyAccessRecovery;/);
   assert.match(source, /const postEarlyAccessSecrets = usesPostEarlyAccessRecovery \?/);
@@ -705,6 +754,20 @@ test('only exact66/67 modes receive fixed Early Access worker bindings; invitati
   assert.match(source, /encryptedInvitationPayloadsPreserved: true,\s*decryptionVerified: false/);
   assert.match(source, /requiredExternalSettings: \['EARLY_ACCESS_INVITATION_KEY', 'EARLY_ACCESS_INVITATION_KEY_VERSION'\]/);
   assert.doesNotMatch(source, /process\.env\.(?:EARLY_ACCESS_INVITATION_KEY|EARLY_ACCESS_INVITATION_KEY_VERSION)\b/);
+});
+
+test('exact70 encrypted evidence is verified before upload without private recovery authority', async () => {
+  const workflow = await readFile(new URL('../.github/workflows/production-backup.yml', import.meta.url), 'utf8');
+  const capture = workflow.indexOf('node scripts/free-production-backup.mjs');
+  const verify = workflow.indexOf('node scripts/verify-post-original77-backup-evidence.mjs');
+  const upload = workflow.indexOf('actions/upload-artifact@');
+  assert(capture >= 0 && capture < verify && verify < upload);
+  const section = workflow.slice(workflow.indexOf('- name: Verify exact original challenge encrypted evidence'), upload);
+  assert.match(section, /if: inputs\.backup_mode == 'post-original77-70'/u);
+  assert.match(section, /BACKUP_RUN_ID: \$\{\{ github\.run_id \}\}/u);
+  assert.match(section, /PRODUCTION_BACKUP_PUBLIC_KEY: \$\{\{ vars\.PRODUCTION_BACKUP_PUBLIC_KEY \}\}/u);
+  assert.match(section, /--directory "\$\{\{ steps\.backup\.outputs\.artifact_directory \}\}"/u);
+  assert.doesNotMatch(section, /secrets\.|PRIVATE|decrypt|SUPABASE_ACCESS_TOKEN/u);
 });
 
 test('cleanup attempts every owned boundary and suppresses artifacts after any cleanup failure', async () => {

@@ -80,6 +80,9 @@ jobs:
       - name: Verify original challenge completion and session recovery
         run: pnpm test:e2e:original77
 
+      - name: Verify repeatable challenge and reward progression UI
+        run: pnpm test:e2e:reward-progression
+
       - name: Verify complete two-shard inventory
         id: plan
         env:

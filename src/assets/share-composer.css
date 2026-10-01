@@ -155,6 +155,15 @@
   background: color-mix(in srgb, var(--accent) 8%, transparent);
 }
 
+.share-composer-footer {
+  display: grid;
+  gap: 10px;
+}
+
+.share-composer-status:empty {
+  display: none;
+}
+
 .share-composer-actions {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));

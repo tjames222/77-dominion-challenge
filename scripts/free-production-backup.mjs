@@ -16,12 +16,21 @@ import { CURRENT_PGNET_TABLES, currentBackupPgNetCaptureSql, currentBackupPgNetL
 import { POST_EARLY_ACCESS_BACKUP_MODE, postEarlyAccessVaultProofSql, postEarlyAccessLocalVaultRecoverySql,
   requirePostEarlyAccessVaultProof, requirePostEarlyAccessLocalVaultRecovery,
   postEarlyAccessVaultRecoveryManifest } from './free-backup-post-early-access-vault.mjs';
+import { MAX_ENCRYPTED_BYTES, POSTGRES_IMAGE, POST_ORIGINAL77_BACKUP_MODE, PROJECT_REF,
+  requirePostOriginal77MigrationVersions } from './production-backup-public-contract.mjs';
 
-export const PROJECT_REF = 'mimolwojppbtsbvtqwpo';
-export const POSTGRES_IMAGE = 'public.ecr.aws/supabase/postgres:17.6.1.141';
-export const MAX_ENCRYPTED_BYTES = 49 * 1024 * 1024;
+export { MAX_ENCRYPTED_BYTES, POSTGRES_IMAGE, POST_ORIGINAL77_BACKUP_MODE, PROJECT_REF };
 export const POST_ADMIN_INBOX_BACKUP_MODE = 'post-admin-inbox-67';
-const usesFiveSettingVault = (mode) => mode === POST_EARLY_ACCESS_BACKUP_MODE || mode === POST_ADMIN_INBOX_BACKUP_MODE;
+const reviewedBackupModes = Object.freeze([
+  LEGACY_BACKUP_MODE,
+  CURRENT_BACKUP_MODE,
+  POST_EARLY_ACCESS_BACKUP_MODE,
+  POST_ADMIN_INBOX_BACKUP_MODE,
+  POST_ORIGINAL77_BACKUP_MODE,
+]);
+const usesFiveSettingVault = (mode) => mode === POST_EARLY_ACCESS_BACKUP_MODE
+  || mode === POST_ADMIN_INBOX_BACKUP_MODE
+  || mode === POST_ORIGINAL77_BACKUP_MODE;
 export const REMOTE_BACKUP_ROLE_SQL = 'SET SESSION ROLE postgres';
 export const REMOTE_BACKUP_PREFLIGHT_SQL = `${REMOTE_BACKUP_ROLE_SQL}; BEGIN READ ONLY; SELECT (current_user = 'postgres')::text, (current_setting('transaction_read_only') = 'on')::text; ROLLBACK;`;
 export const LOCAL_RESTORE_ROLE_SNAPSHOT_SQL = "SELECT coalesce(jsonb_agg(to_jsonb(r) ORDER BY r.oid), '[]'::jsonb)::text FROM pg_catalog.pg_roles AS r;";
@@ -78,14 +87,17 @@ export async function decryptBackup(input, output, manifest, privatePem) {
 }
 
 export function selectBackupMigrationCheckpoint(filenames, mode = LEGACY_BACKUP_MODE) {
-  assert([LEGACY_BACKUP_MODE, CURRENT_BACKUP_MODE, POST_EARLY_ACCESS_BACKUP_MODE, POST_ADMIN_INBOX_BACKUP_MODE].includes(mode), 'Unknown backup mode');
+  assert(reviewedBackupModes.includes(mode), 'Unknown backup mode');
   assert(Array.isArray(filenames));
   const versions = filenames.filter(name => typeof name === 'string' && name.endsWith('.sql')).sort().map(name => {
     assert.match(name, /^[0-9]{14}_[a-z0-9_]+\.sql$/u, 'Invalid migration filename');
     return name.split('_')[0];
   });
   assert.equal(new Set(versions).size, versions.length, 'Duplicate migration version');
-  const checkpointLength = mode === POST_ADMIN_INBOX_BACKUP_MODE ? 67 : mode === POST_EARLY_ACCESS_BACKUP_MODE ? 66 : mode === CURRENT_BACKUP_MODE ? 61 : 13;
+  const checkpointLength = mode === POST_ORIGINAL77_BACKUP_MODE ? 70
+    : mode === POST_ADMIN_INBOX_BACKUP_MODE ? 67
+    : mode === POST_EARLY_ACCESS_BACKUP_MODE ? 66
+    : mode === CURRENT_BACKUP_MODE ? 61 : 13;
   const expected = versions.slice(0, checkpointLength);
   assert.equal(expected.length, checkpointLength, 'Incomplete migration checkpoint');
   if (mode === CURRENT_BACKUP_MODE) {
@@ -100,11 +112,14 @@ export function selectBackupMigrationCheckpoint(filenames, mode = LEGACY_BACKUP_
     assert.equal(expected.at(-1), '20260929000950', 'Unexpected post-admin-inbox migration checkpoint');
     assert.equal(sha256(JSON.stringify(expected)), 'fea508a9d28234417a250bfd23825eb418265957c8c1e11b7365750acafb1358', 'Post-admin-inbox migration prefix changed');
   }
+  if (mode === POST_ORIGINAL77_BACKUP_MODE) {
+    requirePostOriginal77MigrationVersions(expected);
+  }
   return expected;
 }
 
 export function parseInventory(text, expectedVersions, mode = LEGACY_BACKUP_MODE) {
-  assert([LEGACY_BACKUP_MODE, CURRENT_BACKUP_MODE, POST_EARLY_ACCESS_BACKUP_MODE, POST_ADMIN_INBOX_BACKUP_MODE].includes(mode), 'Unknown backup mode');
+  assert(reviewedBackupModes.includes(mode), 'Unknown backup mode');
   if (mode === CURRENT_BACKUP_MODE) {
     assert.equal(expectedVersions.length, 61, 'Incomplete current migration checkpoint');
     assert.equal(sha256(JSON.stringify(expectedVersions)), '579aa73501df0b4b746f9128869f2fa6ea8208b560a4cf179df2893574ad5cff', 'Current migration checkpoint changed');
@@ -116,6 +131,9 @@ export function parseInventory(text, expectedVersions, mode = LEGACY_BACKUP_MODE
   if (mode === POST_ADMIN_INBOX_BACKUP_MODE) {
     assert.equal(expectedVersions.length, 67, 'Incomplete post-admin-inbox migration checkpoint');
     assert.equal(sha256(JSON.stringify(expectedVersions)), 'fea508a9d28234417a250bfd23825eb418265957c8c1e11b7365750acafb1358', 'Post-admin-inbox migration checkpoint changed');
+  }
+  if (mode === POST_ORIGINAL77_BACKUP_MODE) {
+    requirePostOriginal77MigrationVersions(expectedVersions);
   }
   const records = text.trim().split('\n').filter(Boolean).map((line) => JSON.parse(line));
   const tables = records.filter((r) => r.kind === 'table');

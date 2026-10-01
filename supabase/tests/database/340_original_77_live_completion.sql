@@ -13,7 +13,7 @@ select has_function('private','original_77_submission_evidence',array['uuid','da
 select has_function('private','original_77_progress_for_user',array['uuid','date']);
 select has_function('private','record_live_original_77_completion','{}'::text[]);
 select has_function('public','start_challenge',array['text','uuid']);
-select has_function('public','submit_daily_check_in',array['text','text[]','jsonb','text','date','uuid']);
+select has_function('public','submit_daily_check_in_v2',array['text','text[]','jsonb','text','date','uuid','uuid']);
 select ok((select attnotnull from pg_attribute
   where attrelid='private.original_77_completion_events'::regclass and attname='source_local_date'),
   'source local date copy is required');
@@ -41,12 +41,12 @@ select ok(not has_function_privilege('authenticated','private.original_77_progre
 select ok(not has_function_privilege('authenticated','private.record_live_original_77_completion()','execute'),
   'live completion writer remains private');
 select ok(has_function_privilege('authenticated','public.start_challenge(text,uuid)','execute'),
-  'current actor-checked Start signature is present while it is fail-closed');
+  'retired actor-checked Start signature remains callable only to fail closed');
 select ok(not has_function_privilege('anon','public.start_challenge(text,uuid)','execute'),
   'anonymous Start remains denied');
-select ok(has_function_privilege('authenticated','public.submit_daily_check_in(text,text[],jsonb,text,date,uuid)','execute'),
-  'actor-checked check-in submission remains available');
-select ok(not has_function_privilege('service_role','public.submit_daily_check_in(text,text[],jsonb,text,date,uuid)','execute'),
+select ok(has_function_privilege('authenticated','public.submit_daily_check_in_v2(text,text[],jsonb,text,date,uuid,uuid)','execute'),
+  'actor-and-instance-checked check-in submission is available');
+select ok(not has_function_privilege('service_role','public.submit_daily_check_in_v2(text,text[],jsonb,text,date,uuid,uuid)','execute'),
   'service role cannot impersonate a member check-in');
 select is((select blocked from public.badge_definitions where badge_key='original_77_completed'),false,
   'Finisher rule is active');

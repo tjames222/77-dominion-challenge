@@ -19,6 +19,12 @@ const checkpoints = Object.freeze({
 });
 const sha256 = value => createHash('sha256').update(value).digest('hex');
 const literal = value => `'${String(value).replaceAll("'", "''")}'`;
+export const ISOLATED_RPC_INTEGRATIONS = Object.freeze([
+  'rpc-concurrency.sh', 'profile-photo-concurrency.sh', 'crew-lifecycle-concurrency.sh',
+  'crew-invite-code-concurrency.sh', 'crew-training-concurrency.sh', 'challenge-activation-concurrency.sh',
+  'site-training-concurrency.sh', 'group-challenge-start-concurrency.sh',
+  'solo-training-catalog-concurrency.sh', 'member-progress-profile-concurrency.sh',
+]);
 const docker = (args, input) => spawnSync('docker', args, {
   input, encoding: 'utf8', timeout: 30_000, maxBuffer: 4 * 1024 * 1024,
 });
@@ -29,10 +35,13 @@ export async function createOriginal77FullchainFixture({ through = 70 } = {}) {
   const names = (await readdir(migrationsDirectory)).filter(name => name.endsWith('.sql')).sort();
   assert(names.every(name => /^[0-9]{14}_[a-z0-9_]+\.sql$/.test(name)), 'Unexpected migration filename.');
   assert.equal(new Set(names.map(name => name.slice(0, 14))).size, names.length, 'Duplicate migration version.');
-  if (through === 70) assert.equal(names.length, 70, 'Full-chain fixture requires the exact reviewed 70-migration inventory.');
   const appliedFiles = names.slice(0, through);
   assert.equal(appliedFiles.length, through); assert.equal(appliedFiles.at(-1), checkpoint.last);
   assert.equal(sha256(JSON.stringify(appliedFiles)), checkpoint.filenamesSha256, 'Pinned migration filenames changed.');
+  if (through === 70) {
+    assert(names.slice(through).every(name => name > checkpoint.last),
+      'A later migration may not be ordered inside the frozen original77 prefix.');
+  }
   const history = appliedFiles.map(name => Object.freeze({ version: name.slice(0, 14), name: name.slice(15, -4) }));
   assert.equal(sha256(JSON.stringify(history.map(row => row.version))), checkpoint.versionsSha256, 'Pinned migration prefix changed.');
   // Read only the selected bodies: through67 never reads or executes the three
@@ -84,6 +93,17 @@ export async function createOriginal77FullchainFixture({ through = 70 } = {}) {
   }
   const query = statement => sql(statement, 'postgres');
   const queryAsBootstrap = statement => sql(statement, 'supabase_admin');
+  function captureCustomArchive() {
+    const result = spawnSync('docker', ['exec', owned(), 'pg_dump', '--host=/fixture', '--username=postgres',
+      '--dbname=postgres', '--format=custom', '--compress=0', '--lock-wait-timeout=15000', '--role=postgres'], {
+      encoding: null, timeout: 30_000, maxBuffer: 16 * 1024 * 1024,
+    });
+    assert.equal(result.error, undefined, 'Owned full-chain archive command failed to launch.');
+    assert.equal(result.signal, null, 'Owned full-chain archive command exceeded its execution boundary.');
+    assert.equal(result.status, 0, `Owned full-chain archive capture failed: ${result.stderr?.toString() || 'output unavailable'}`);
+    assert(Buffer.isBuffer(result.stdout) && result.stdout.length > 0, 'Owned full-chain archive is empty.');
+    return Buffer.from(result.stdout);
+  }
   function sqlAsync(statement, role) {
     assert.equal(typeof statement, 'string'); assert(Buffer.byteLength(statement) <= 2 * 1024 * 1024, 'Fixture SQL exceeds its byte cap.');
     const args = ['exec', '-i', owned(), 'psql', '-X', '-qAt', '-v', 'ON_ERROR_STOP=1',
@@ -114,6 +134,35 @@ export async function createOriginal77FullchainFixture({ through = 70 } = {}) {
   }
   const queryAsync = statement => sqlAsync(statement, 'postgres');
   const queryAsBootstrapAsync = statement => sqlAsync(statement, 'supabase_admin');
+
+  async function runIsolatedIntegration(name) {
+    assert(ISOLATED_RPC_INTEGRATIONS.includes(name), 'Only the reviewed non-reset RPC integration scripts are supported.');
+    const source = await readFile(new URL(`../../supabase/tests/integration/${name}`, import.meta.url), 'utf8');
+    assert(Buffer.byteLength(source) <= 128 * 1024, 'Integration fixture exceeds its byte cap.');
+    // Execute the exact repository script inside this owned no-network cluster.
+    // Its unchanged local-URL guard remains active; only psql's transport is
+    // adapted to the fixed Unix socket. No host stack, URL, port or credential
+    // can be selected by the caller. Runtime SET ROLE assertions remain intact.
+    const adapter = `set -euo pipefail
+      export SUPABASE_DB_URL='postgresql://postgres:postgres@127.0.0.1:54322/postgres'
+      psql() {
+        [[ "$1" == "$SUPABASE_DB_URL" ]] || return 2
+        shift
+        PGOPTIONS='-c search_path=public,extensions' command psql -X --host=/fixture --username=supabase_admin --dbname=postgres "$@"
+      }
+      export -f psql
+    `;
+    const result = docker(['exec', '-i', owned(), 'bash', '-s'], adapter + '\n' + source);
+    if (result.error || result.signal) {
+      close();
+      throw new Error('Owned RPC integration exceeded its execution boundary.');
+    }
+    assert.equal(result.status, 0, `Owned RPC integration ${name} failed:\n${result.stdout}\n${result.stderr}`);
+    const completion = [...source.matchAll(/^echo "([^"$]+)"$/gm)].at(-1)?.[1];
+    assert(completion, `Missing fixed completion marker in ${name}.`);
+    assert.equal(result.stdout.trim().split('\n').at(-1), completion, `Missing completion evidence for ${name}.`);
+    return result.stdout.trim();
+  }
 
   try {
     const launched = docker(['run', '--detach', '--pull', 'never', '--name', fixture, '--label', `77dc.fixture=${fixture}`,
@@ -172,7 +221,7 @@ export async function createOriginal77FullchainFixture({ through = 70 } = {}) {
     for (const file of appliedFiles) {
       assert.equal(sha256(await readFile(new URL(file, migrationsDirectory), 'utf8')), sourceHashes[file], `Migration changed during fixture replay: ${file}`);
     }
-    return Object.freeze({ query, queryAsBootstrap, queryAsync, queryAsBootstrapAsync, close, history: Object.freeze(history),
+    return Object.freeze({ query, queryAsBootstrap, queryAsync, queryAsBootstrapAsync, captureCustomArchive, runIsolatedIntegration, close, history: Object.freeze(history),
       appliedFiles: Object.freeze(appliedFiles), sourceHashes });
   } catch (error) {
     close();
