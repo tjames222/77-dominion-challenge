@@ -2267,6 +2267,7 @@ export async function startChallenge(challengeKey, { expectedUserId = '', expect
   expectedRevision = null, startDate = null, timeZone = browserTimeZone(), requestId = newChallengeActivationRequestId() } = {}) {
   requireCapturedChallengeInstance(expectedInstanceId);
   if (!Number.isSafeInteger(expectedRevision) || expectedRevision < 0) throw new Error('Reload challenge progress before starting another run.');
+  if (!isSupportedChallengeActivationDate(startDate)) throw new Error('Reload challenge progress to choose a valid start date.');
   if (isLocalDemoMode()) {
     await requireHybridPreviewUser(expectedUserId);
     requireMockRewardActor(expectedUserId);
@@ -2288,8 +2289,26 @@ export async function startChallenge(challengeKey, { expectedUserId = '', expect
   }
 
   const client = requireSupabase();
-  const actor = await requireUser(expectedUserId);
-  const { data, error } = await invalidateReadsAroundMutation(() => client.rpc('start_challenge_instance_v2', {
+  const startEpoch = previewBadgeEpoch;
+  const startSession = await getAuthSession();
+  const startIdentity = authSessionIdentity(startSession);
+  const startActorId = startSession?.user?.id;
+  const startAccessToken = startSession?.access_token;
+  const verifyStartOwner = async () => {
+    const actor = await requireUser(expectedUserId);
+    if (!startIdentity || !startAccessToken || actor.id !== startActorId || startEpoch !== previewBadgeEpoch) {
+      throw new Error('The signed-in account changed. Try again.');
+    }
+    if (await sessionRequiresMfa(client.auth)) throw new Error('Complete account verification before continuing.');
+    const currentSession = await getAuthSession();
+    if (startEpoch !== previewBadgeEpoch || authSessionIdentity(currentSession) !== startIdentity
+      || currentSession?.access_token !== startAccessToken) throw new Error('The signed-in account changed. Try again.');
+    return actor;
+  };
+  const actor = await verifyStartOwner();
+  invalidateDailyActionBootstrap();
+  let response;
+  try { response = await invalidateReadsAroundMutation(() => client.rpc('start_challenge_instance_v2', {
     target_challenge_key: challengeKey,
     target_start_date: startDate,
     target_time_zone: timeZone,
@@ -2297,13 +2316,15 @@ export async function startChallenge(challengeKey, { expectedUserId = '', expect
     target_expected_actor_id: actor.id,
     target_expected_instance_id: expectedInstanceId,
     target_expected_revision: expectedRevision,
-  }));
-  await requireUser(actor.id);
+  })); } finally { invalidateDailyActionBootstrap(); }
+  await verifyStartOwner();
+  const { data, error } = response;
   if (error) throw error;
   const activation = normalizeChallengeActivationMutation(data?.activation, { expectedUserId: actor.id });
   if (data?.schemaVersion !== 2 || data.actorId !== actor.id || data.instanceId !== activation.currentInstance?.id
+    || data.instanceId === expectedInstanceId || activation.currentInstance?.challengeKey !== challengeKey
+    || activation.revision !== expectedRevision + 1
     || typeof data.replayed !== 'boolean') throw new Error('The challenge start response could not be verified. Reload your progress.');
-  invalidateDailyActionBootstrap();
   return { ...data, activation };
 }
 

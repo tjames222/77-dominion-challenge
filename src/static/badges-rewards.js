@@ -8,6 +8,7 @@ import {
   getAllRewardCatalog,
   getBillingState,
   getBadgeCollection,
+  getChallengeActivation,
   getLeaderboardPrestige,
   getLocalOrSessionUser,
   getRewardFulfillment,
@@ -579,28 +580,22 @@ rewardsList?.addEventListener('click', async (event) => {
       : catalog.items.some(reward => reward.key === challengeKey && reward.allowedActions.includes('start')));
   if (!allowed) return;
   const expectedUserId = pageActorId;
-  const expectedInstanceId = catalog.currentInstance?.id ?? null;
-  const expectedRevision = catalog.revision;
-  try {
-    let timeZone = 'UTC';
-    try { timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'; } catch { /* UTC is a valid fallback. */ }
-    retryableStart = prepareRewardStartRequest({ catalog, actorId: expectedUserId, challengeKey,
-      previous: retryableStart, createRequestId: newChallengeActivationRequestId, timeZone });
-  } catch (error) {
-    const feedback = $('rewardsCatalogFeedback');
-    if (feedback) feedback.textContent = error.message;
-    return;
-  }
-  const request = { ...retryableStart };
-  loadRequestId += 1;
+  const startCatalog = catalog;
+  const requestSequence = ++loadRequestId;
   pendingRewardKey = challengeKey;
   renderPage();
   const feedback = $('rewardsCatalogFeedback');
   if (feedback) feedback.textContent = `Starting ${button.closest('[data-reward-key]')?.querySelector('h3')?.textContent || 'challenge'}…`;
   try {
+    const activation = await getChallengeActivation({ expectedUserId });
+    if (actorInvalidated || pageActorId !== expectedUserId || requestSequence !== loadRequestId) return;
+    retryableStart = prepareRewardStartRequest({ catalog: startCatalog, activation, actorId: expectedUserId, challengeKey,
+      previous: retryableStart, createRequestId: newChallengeActivationRequestId });
+    const request = { ...retryableStart };
+    const { expectedInstanceId, expectedRevision } = request;
     await startChallenge(challengeKey, { expectedUserId, expectedInstanceId, expectedRevision,
-      requestId: request.requestId, timeZone: request.timeZone, startDate: null });
-    if (pageActorId !== expectedUserId) return;
+      requestId: request.requestId, timeZone: request.timeZone, startDate: request.startDate });
+    if (actorInvalidated || pageActorId !== expectedUserId || requestSequence !== loadRequestId) return;
     retryableStart = null;
     catalog = await getAllRewardCatalog({ expectedUserId });
     if (pageActorId !== expectedUserId) return;
