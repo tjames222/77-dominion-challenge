@@ -26,13 +26,17 @@ async function fixture(context, { state = 'in_progress', malformed = false, defe
   const calls = []; let posted = false; let hold = null; let readHold = null; let readResponses = 0;
   await context.route('**/__admin_fixture__/functions/v1/share-snapshot', route => {
     const body = route.request().postDataJSON(); calls.push({ name: 'share-snapshot', body });
-    expect(body).toEqual({ action: 'preview', kind: 'progress', expectedUserId: auth.A });
+    expect(body).toEqual({ action: 'preview', kind: 'progress', contractVersion: 2, expectedUserId: auth.A });
     expect(route.request().headers().authorization).toBe(`Bearer ${auth.firstSession.access_token}`);
-    const count = activation.currentInstance.submittedCount;
-    return json(route, { schemaVersion: 2, kind: 'progress',
+    const instance = activation.currentInstance; const count = instance.submittedCount;
+    return json(route, { schemaVersion: 3, kind: 'progress', defaultExpirationDays: 30,
       context: { schemaVersion: 2, actorId: auth.A, instanceId: DAILY_INSTANCE_ID },
-      payload: { schemaVersion: 2, kind: 'progress', submittedCheckIns: count, targetCheckIns: 77 },
-      presentation: { title: `${count} of 77 Dominion check-ins`, metric: `${count}/77`, metricLabel: 'submitted check-ins' } });
+      privacy: { includesIdentity: false, includesGroup: false, includesActivityHistory: false },
+      payload: { schemaVersion: 3, kind: 'progress', challengeKey: instance.challengeKey,
+        title: instance.title, submittedCheckIns: count, targetCheckIns: instance.targetCount },
+      presentation: { eyebrow: instance.title, title: `${count} of ${instance.targetCount} Dominion check-ins`,
+        description: `${instance.title}: ${count} of ${instance.targetCount} check-ins submitted. Partial check-ins count.`,
+        metric: `${count}/${instance.targetCount}`, metricLabel: 'submitted check-ins' } });
   });
   await context.route(/\/__admin_fixture__\/rest\/v1\/(?:profiles|challenge_entries|check_ins|user_game_stats|rpc\/(?:get_challenge_activation_v2|get_daily_action_bootstrap_v2|get_daily_standard_draft_v2|get_challenge_check_ins_v2|get_reward_catalog_v2|submit_daily_check_in_v2|claim_reward_celebrations))(?:\?|$)/, async route => {
     const request = route.request(), name = new URL(request.url()).pathname.split('/').at(-1);
