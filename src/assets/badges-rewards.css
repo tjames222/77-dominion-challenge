@@ -278,6 +278,12 @@
   background: color-mix(in srgb, var(--accent) 7%, transparent);
 }
 
+:root[data-theme="light"] .reward-row.is-next {
+  /* Small text needs contrast headroom on the highlighted, tinted surface. */
+  --accent-strong: #805914;
+  --text-muted: #625c54;
+}
+
 .reward-row-icon {
   color: var(--accent-strong);
 }
