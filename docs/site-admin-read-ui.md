@@ -57,18 +57,33 @@ memory. Changing filters clears old rows immediately; Apply filters makes a new
 authorized request. Page counts describe only the current page, never all users.
 An empty result is distinct from loading or failure. Failures clear old rows.
 
-The Users list presents the existing account payload in five columns: Member,
-Account, Crew, Stored snapshots, and Details. Account groups the site role/status
-with created, email-confirmed, and last-sign-in timestamps in UTC. Crew-local
-roles are labeled separately. Stored points and subscription status are explicitly
-historical; a keyboard-native disclosure reveals the returned progress counters,
-local last-seen date, period end/cancellation flag and each snapshot's recorded
-timestamp. Expanding it makes no request and performs no mutation. Missing records
-stay "Not recorded", zero counters stay zero, and unknown subscription states are
-not relabeled as active or expired. No effective-access/current-day/current-streak
-calculation is introduced. Users becomes labeled cards at tablet/mobile widths;
-Audit and Early Access retain their existing layout. All expanded data is removed
-with the existing row scrub on filters, refresh or authorization invalidation.
+The Users list presents five concise columns: Member (name and email), Site role,
+Account status, Last sign-in, and Details. Status labels do not infer membership
+or paid/test/Early Access entitlement. Last sign-in is a recorded Auth timestamp
+in UTC, not a claim of current app activity. Role and status filters live in the
+keyboard-native More filters disclosure; active filter values and Reset filters
+are visible together. Reset restores that view's defaults and makes one fresh
+authorized list request. Filters and their summary are scrubbed on invalidation.
+
+Opening Details makes the existing authorized detail read. Account history and
+identifiers, crew information, and stored snapshots are then available through
+native disclosures without additional reads or mutations. Stored points,
+subscription status, progress counters, local last-seen date, cancellation flag,
+and each snapshot timestamp remain explicitly historical. Missing records stay
+"Not recorded", zero counters stay zero, and unknown subscription states are not
+relabeled as active or expired. No effective-access/current-day/current-streak
+calculation is introduced. Users becomes labeled cards at tablet/mobile widths.
+All detail data is removed with the existing dialog scrub on filters, refresh or
+authorization invalidation.
+
+The FOU-1832 presentation pass applies to the implemented Users, Audit, Early
+Access and Account requests views. It uses shared theme tokens, concise view
+headings, status labels, disclosure-based secondary metadata, and a request
+history timeline. Early Access decisions and their consequences stay visible;
+only identifiers and historical delivery/event metadata are collapsed. Role and
+invitation confirmation, MFA and safe-retry logic are unchanged. No Overview
+metrics, testing-grant controls or other unimplemented admin capability is
+fabricated by this UI pass.
 
 Details render only fixed fields with DOM text nodes. Stored activation,
 progress and subscription values are labeled snapshots with recorded timestamps,
@@ -137,5 +152,6 @@ separate exact-SQL foundation/read tests, not inferred from the browser stub.
 This does **not** complete all of FOU-1502. Remaining work includes broader
 admin mutation/recovery flows, testing-grant management and effective
 access, operational queues, canonical metrics/retention, broader Users fields,
-and final production/first-admin verification after manual MFA enrollment. No
-hosted role grant or database mutation is part of this UI change.
+and the remaining authenticated production acceptance matrix. The initial owner
+admin and MFA setup were completed earlier; this UI pass neither repeats that
+bootstrap nor changes a hosted role or database record.

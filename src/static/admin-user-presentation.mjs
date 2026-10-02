@@ -16,6 +16,20 @@ const subscriptionStatuses = {
 };
 const label = (labels, value) => value == null ? missing : Object.hasOwn(labels, value) ? labels[value] : 'Unknown';
 
+export function adminUserSummary(item) {
+  const restrictions = [];
+  if (item.deletedAt) restrictions.push('Deleted Auth record');
+  if (item.isSuspended) restrictions.push('Suspended');
+  if (item.deletionPending) restrictions.push('Deletion pending');
+  return {
+    role: label(roles, item.role),
+    status: restrictions.length ? restrictions.join(' · ') : item.emailConfirmedAt ? 'Email confirmed' : 'Email unconfirmed',
+    confirmation: restrictions.length ? (item.emailConfirmedAt ? 'Email confirmed' : 'Email unconfirmed') : '',
+    attention: restrictions.length > 0 || !item.emailConfirmedAt,
+    lastSignIn: timestamp(item.lastSignInAt),
+  };
+}
+
 export function adminUserListFacts(item) {
   const progress = item.statsSnapshot;
   const subscription = item.subscriptionSnapshot;

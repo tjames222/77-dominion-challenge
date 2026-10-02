@@ -48,12 +48,15 @@ export function mountEarlyAccessDetail({ container, item, owner, permissions, is
   };
   const section = node('section'); section.append(node('h3', 'Request details'));
   const facts = node('dl');
+  const metadata = node('details'); metadata.className = 'admin-disclosure';
+  metadata.append(node('summary', 'Request identifiers and delivery history'));
+  const metadataFacts = node('dl'); metadata.append(metadataFacts);
   for (const [label, value, id] of [
     ['Request ID', item.id], ['Name', item.name], ['Email', item.email], ['Status', item.status, 'earlyAccessRequestStatus'],
     ['Revision', item.revision, 'earlyAccessRequestRevision'], ['Requested', time(item.requestedAt)], ['Updated', time(item.updatedAt)],
     ['Account match', item.account.status], ['Account ID', item.account.userId || 'Not recorded'],
     ['Invitation sent', time(item.invitationSentAt)], ['Invitation expires', time(item.invitationExpiresAt)], ['Accepted', time(item.acceptedAt)],
-  ]) facts.append(node('dt', label), node('dd', value, id));
+  ]) (['Name', 'Email', 'Status', 'Requested', 'Account match', 'Invitation expires'].includes(label) ? facts : metadataFacts).append(node('dt', label), node('dd', value, id));
   section.append(facts, node('p', 'Delivery and acceptance remain “Not recorded” without actual evidence. Approval queues email; it does not grant access. Denial or invitation revocation does not revoke an existing account or app access.', 'earlyAccessScope'));
   container.append(section);
 
@@ -85,7 +88,7 @@ export function mountEarlyAccessDetail({ container, item, owner, permissions, is
   const startActions = node('div'); startActions.className = 'admin-actions'; startActions.append(...Object.values(starts));
   review.append(reviewStatus, startActions, stepUp, refresh, form,
     node('p', 'Direct account access provisioning and invitation acceptance are not available here. Queued email is not evidence of delivery or acceptance.', 'earlyAccessUnavailable'));
-  container.append(review);
+  container.append(review, metadata);
   const toggleConfirm = () => { confirm.disabled = sending || !intent || reason.value !== EARLY_ACCESS_REASON || !acknowledgement.checked; };
   reason.addEventListener('change', toggleConfirm); acknowledgement.addEventListener('change', toggleConfirm);
   const resetReview = () => { version += 1; intent = null; sending = false; form.reset(); form.hidden = true; form.removeAttribute('aria-busy'); resetStarts(); toggleConfirm(); };
@@ -178,7 +181,8 @@ export function mountEarlyAccessDetail({ container, item, owner, permissions, is
         const values = node('dl');
         for (const [key, value] of [['Event ID', event.id], ['Actor ID', event.actorId || 'System lifecycle'], ['Before', event.beforeStatus || 'Not recorded'], ['After', event.afterStatus || 'Not recorded'],
           ['Reason', event.reasonCode === EARLY_ACCESS_REASON ? 'Early-access review' : event.reasonCode === 'invitation_acceptance' ? 'Invitation acceptance' : 'Invitation expiry'], ['Outcome', event.outcome], ['Recorded result', event.errorCode || 'Success'], ['Operation ID', event.operationId], ['Correlation ID', event.correlationId], ['Environment', event.environment]]) values.append(node('dt', key), node('dd', value));
-        entry.append(values); events.append(entry);
+        const metadata = node('details'); metadata.className = 'admin-disclosure';
+        metadata.append(node('summary', 'Event details'), values); entry.append(metadata); events.append(entry);
       }
       nextCursor = result.nextCursor; historyStatus.textContent = result.items.length ? `${result.items.length} recorded events. Dates shown in UTC.` : 'No administrative events are recorded for this request.';
       label.textContent = `History page ${page + 1}`;
