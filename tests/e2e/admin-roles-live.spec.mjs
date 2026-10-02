@@ -26,7 +26,7 @@ test('explicit role/reason/impact acknowledgement makes one write and refreshes 
   await page.locator('#adminRoleAcknowledgement').check(); await page.locator('#adminRoleConfirm').click();
   await expect(page.locator('#adminRoleStatus')).toContainText('Confirmed original operation: Site admin at revision 1');
   await expect(page.locator('#adminRoleRefreshStatus')).toContainText('Account details and latest role audit refreshed');
-  await expect(page.locator('#adminUserFacts')).toContainText('site_admin');
+  await expect(page.locator('#adminUserFacts dt').filter({ hasText: /^Site role$/ }).locator('+ dd')).toHaveText('Site admin');
   expect(auth.assignments()).toHaveLength(1); expect(auth.roleEvents).toHaveLength(1); await expect(page.locator('#adminRoleAudit')).toContainText(auth.assignments()[0].body.target_request_id);
   await page.locator('#adminDetailClose').click(); await expect(page.getByRole('row').filter({ hasText: 'Preview Member 28' })).toContainText('Site admin'); await noStoredDecision(page);
 });
@@ -54,7 +54,7 @@ test('uncertain committed response retries exact IDs and receipt does not overwr
   const original = structuredClone(auth.assignments()[0].body); expect(auth.assignments()).toHaveLength(1);
   auth.roleTarget(target, { role: 'member', roleRevision: 2 }); await page.locator('#adminRoleConfirm').click();
   await expect(page.locator('#adminRoleStatus')).toContainText('Site admin at revision 1'); await expect(page.locator('#adminRoleRefreshStatus')).toContainText('refreshed');
-  await expect(page.locator('#adminUserFacts')).not.toContainText('site_admin');
+  await expect(page.locator('#adminUserFacts dt').filter({ hasText: /^Site role$/ }).locator('+ dd')).toHaveText('Member');
   await page.locator('#adminRoleStatus').scrollIntoViewIfNeeded(); await page.screenshot({ path: `/tmp/77dc-admin-role-${testInfo.project.name}-receipt.png` });
   expect(auth.assignments()).toHaveLength(2); expect(auth.assignments()[1].body).toEqual(original); expect(auth.roleEvents).toHaveLength(1); await noStoredDecision(page);
 });
@@ -102,7 +102,7 @@ for (const change of ['actor round trip', 'replacement session', 'pagehide']) te
 test('closing during a submitted write ignores late completion and only a fresh read shows current state', async ({ page, context }) => {
   const auth = await installAdminStub(context, { permissions }); await ready(page); await review(page); const release = auth.hold(['site_admin_assign_role']); await confirm(page); await expect.poll(() => auth.assignments().length).toBe(1);
   await page.locator('#adminDetailClose').click(); release(); await expect(page.locator('#adminDetailBody')).toBeEmpty(); await expect.poll(() => auth.roleEvents.length).toBe(1);
-  await detail(page); await expect(page.locator('#adminUserFacts')).toContainText('site_admin'); expect(auth.assignments()).toHaveLength(1); await noStoredDecision(page);
+  await detail(page); await expect(page.locator('#adminUserFacts dt').filter({ hasText: /^Site role$/ }).locator('+ dd')).toHaveText('Site admin'); expect(auth.assignments()).toHaveLength(1); await noStoredDecision(page);
 });
 test('failed post-success reads retain a truthful receipt without stale account facts or automatic writes', async ({ page, context }) => {
   const auth = await installAdminStub(context, { permissions }); await ready(page); await review(page);

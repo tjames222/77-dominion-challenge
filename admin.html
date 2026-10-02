@@ -17,7 +17,7 @@
   <body>
     <main class="admin-shell">
       <header class="topbar"><a class="back-link" href="./dashboard.html">Dashboard</a></header>
-      <section class="admin-heading" data-section-surface="plain" aria-labelledby="adminTitle"><p class="eyebrow">Dominion</p><h1 id="adminTitle">Administration</h1><p>Account records, audit history, and early-access request review.</p></section>
+      <section class="admin-heading" data-section-surface="plain" aria-labelledby="adminTitle"><p class="eyebrow">Dominion · Admin</p><h1 id="adminTitle">Administration</h1><p>Manage requests. Find people. Review activity.</p></section>
       <p class="admin-preview" id="adminPreview" hidden>Preview only · Synthetic records. This does not grant production admin access or change any account.</p>
       <section class="admin-gate" data-section-surface="accent" id="adminGate" aria-labelledby="adminGateTitle">
         <h2 id="adminGateTitle">Checking access</h2><p id="adminGateMessage" role="status">Verifying your account and session…</p>
@@ -32,18 +32,23 @@
           <button id="adminRequestsTab" type="button" role="tab" aria-selected="false" aria-controls="adminRequestsPanel" tabindex="-1" data-admin-tab="requests" hidden>Account requests</button>
         </nav>
         <p class="admin-status" id="adminStatus" role="status" aria-live="polite"></p>
+        <div class="admin-filter-state" id="adminFilterState" hidden><span id="adminFilterSummary"></span><button id="adminResetFilters" type="button">Reset filters</button></div>
         <section id="adminUsersPanel" role="tabpanel" aria-labelledby="adminUsersTab" data-admin-panel="users">
+          <div class="admin-view-heading"><h2>People</h2><p>Open an account for history and available actions.</p></div>
           <form id="adminUsersFilters" class="admin-filters" autocomplete="off">
             <label class="admin-search">Name or email prefix<input name="search" type="search" maxlength="80" placeholder="Starts with…" autocomplete="off" /></label>
-            <label>Role<select name="role"><option value="all">All roles</option><option value="member">Member</option><option value="site_admin">Site admin</option></select></label>
-            <label>Account status<select name="status"><option value="all">All statuses</option><option value="confirmed">Email confirmed</option><option value="unconfirmed">Email unconfirmed</option><option value="suspended">Suspended</option><option value="deletion_pending">Deletion pending</option><option value="deleted">Deleted Auth record</option></select></label>
             <label>Sort<select name="sort"><option value="newest">Newest first</option><option value="oldest">Oldest first</option></select></label>
+            <details class="admin-filter-options"><summary>More filters</summary><div>
+              <label>Role<select name="role"><option value="all">All roles</option><option value="member">Member</option><option value="site_admin">Site admin</option></select></label>
+              <label>Account status<select name="status"><option value="all">All statuses</option><option value="confirmed">Email confirmed</option><option value="unconfirmed">Email unconfirmed</option><option value="suspended">Suspended</option><option value="deletion_pending">Deletion pending</option><option value="deleted">Deleted Auth record</option></select></label>
+            </div></details>
             <button type="submit">Apply filters</button>
           </form>
-          <p class="admin-footnote" id="adminUsersSnapshotNote">Stored snapshots are historical records, not current streak, access, or completion decisions. Crew-local roles are separate from site roles.</p>
-          <div class="admin-table-wrap" tabindex="0" aria-label="Account records"><table class="admin-table" role="table" aria-describedby="adminUsersSnapshotNote"><caption>Account records · Timestamps shown in UTC; last-seen dates retain the member's local date</caption><thead role="rowgroup"><tr role="row"><th role="columnheader" scope="col">Member</th><th role="columnheader" scope="col">Account</th><th role="columnheader" scope="col">Crew</th><th role="columnheader" scope="col">Stored snapshots</th><th role="columnheader" scope="col">Details</th></tr></thead><tbody id="adminUsersRows" role="rowgroup"></tbody></table></div>
+          <p class="admin-footnote admin-context-note" id="adminUsersSnapshotNote">Account status and site role are separate from app access. Stored history is not current streak, access, or completion evidence.</p>
+          <div class="admin-table-wrap" tabindex="0" aria-label="Account records"><table class="admin-table" role="table" aria-describedby="adminUsersSnapshotNote"><caption>Account records · Last sign-in shown in UTC</caption><thead role="rowgroup"><tr role="row"><th role="columnheader" scope="col">Member</th><th role="columnheader" scope="col">Site role</th><th role="columnheader" scope="col">Account</th><th role="columnheader" scope="col">Last sign-in</th><th role="columnheader" scope="col">Details</th></tr></thead><tbody id="adminUsersRows" role="rowgroup"></tbody></table></div>
         </section>
         <section id="adminAuditPanel" role="tabpanel" aria-labelledby="adminAuditTab" data-admin-panel="audit" hidden>
+          <div class="admin-view-heading"><h2>Audit trail</h2><p>Recorded administrative decisions and outcomes.</p></div>
           <form id="adminAuditFilters" class="admin-filters" autocomplete="off">
             <label class="admin-search">Target user ID<input name="target" type="text" maxlength="36" placeholder="Any user" autocomplete="off" spellcheck="false" /></label>
             <label>Action<select name="action"><option value="all">All actions</option><option value="roles.assign">Role assignment</option><option value="roles.bootstrap">Initial admin activation</option></select></label>
@@ -53,6 +58,7 @@
           <div class="admin-table-wrap" tabindex="0" aria-label="Audit records"><table class="admin-table"><caption>Administrative audit · Dates shown in UTC</caption><thead><tr><th scope="col">Recorded</th><th scope="col">Action</th><th scope="col">Outcome</th><th scope="col">Target user</th><th scope="col">Details</th></tr></thead><tbody id="adminAuditRows"></tbody></table></div>
         </section>
         <section id="adminEarlyPanel" role="tabpanel" aria-labelledby="adminEarlyTab" data-admin-panel="early" hidden>
+          <div class="admin-view-heading"><h2>Early Access</h2><p>Review an applicant and choose the next step.</p></div>
           <form id="adminEarlyFilters" class="admin-filters" autocomplete="off">
             <label class="admin-search">Applicant prefix (name or email)<input name="search" type="search" maxlength="80" placeholder="Starts with…" autocomplete="off" /></label>
             <label>Request status<select name="status"><option value="all">All statuses</option><option value="pending">Pending</option><option value="approved">Approved</option><option value="invited">Invited</option><option value="accepted">Accepted</option><option value="denied">Denied</option><option value="expired">Expired</option><option value="revoked">Revoked</option></select></label>
@@ -60,9 +66,10 @@
             <button type="submit">Apply filters</button>
           </form>
           <div class="admin-table-wrap" tabindex="0" aria-label="Early-access request records"><table class="admin-table"><caption>Early-access requests · Dates shown in UTC</caption><thead><tr><th scope="col">Applicant</th><th scope="col">Status</th><th scope="col">Account match</th><th scope="col">Requested</th><th scope="col">Review</th></tr></thead><tbody id="adminEarlyRows"></tbody></table></div>
-          <p class="admin-footnote">Review requests individually. Authorized reviewers can approve and queue an invitation email, deny a pending request, or manage an existing invitation. Approval does not confirm email delivery or grant access; Early Access begins after a valid invitation is accepted.</p>
+          <p class="admin-footnote">Approval queues an invitation; it does not confirm delivery or grant access. Early Access begins when a valid invitation is accepted.</p>
         </section>
         <section id="adminRequestsPanel" role="tabpanel" aria-labelledby="adminRequestsTab" data-admin-panel="requests" hidden>
+          <div class="admin-view-heading"><h2>Account requests</h2><p>Track recorded export and deletion requests.</p></div>
           <form id="adminRequestsFilters" class="admin-filters" autocomplete="off">
             <label>Request type<select name="type"><option value="all">All request types</option><option value="data_export">Data export</option><option value="account_deletion">Account deletion</option></select></label>
             <label>Recorded request status<select name="status"><option value="active">Active requests</option><option value="all">All recorded statuses</option><option value="requested">Requested</option><option value="in_progress">In progress</option><option value="fulfilled">Recorded fulfilled</option><option value="cancelled">Cancelled</option><option value="declined">Declined</option></select></label>
@@ -73,7 +80,7 @@
           <div class="admin-table-wrap" tabindex="0" aria-label="Account request records"><table class="admin-table admin-requests-table" role="table" aria-describedby="adminRequestsNote"><caption>Account requests · Recorded timestamps shown in UTC</caption><thead role="rowgroup"><tr role="row"><th scope="col" role="columnheader">Request and requester IDs</th><th scope="col" role="columnheader">Type</th><th scope="col" role="columnheader">Recorded status</th><th scope="col" role="columnheader">Timeline</th></tr></thead><tbody id="adminRequestsRows" role="rowgroup"></tbody></table></div>
         </section>
         <div class="admin-pagination" aria-label="Record pages"><button id="adminFirstPage" type="button" disabled>First page</button><button id="adminPreviousPage" type="button" disabled>Previous</button><span id="adminPageLabel">Page 1</span><button id="adminNextPage" type="button" disabled>Next</button><button id="adminRefresh" type="button">Refresh</button></div>
-        <p class="admin-footnote">Account details and Audit are read-only. Separately authorized role changes require explicit review and confirmation. Other account changes, testing grants, and metrics are not available here. Stored progress and subscription snapshots are not live access or completion decisions.</p>
+        <details class="admin-help"><summary>About this console</summary><p>Account details and Audit are read-only. Separately authorized role changes require explicit review and confirmation. Other account changes, testing grants, and metrics are not available here. Stored progress and subscription snapshots are not live access or completion decisions. Timestamps are UTC; last-seen dates retain the member's local date.</p></details>
       </section>
     </main>
     <dialog id="adminDetail" class="admin-detail" aria-labelledby="adminDetailTitle"><div class="admin-detail-header"><h2 id="adminDetailTitle">Record details</h2><button id="adminDetailClose" type="button" aria-label="Close record details">Close</button></div><div id="adminDetailBody"></div></dialog>

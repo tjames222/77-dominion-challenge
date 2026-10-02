@@ -145,7 +145,7 @@ test('queue footnote distinguishes available invitation review from delivery and
   assert.ok(panel);
   const footnotes = [...panel.matchAll(/<p class="admin-footnote">([^<]*)<\/p>/g)];
   assert.equal(footnotes.length, 1);
-  assert.equal(footnotes[0][1], 'Review requests individually. Authorized reviewers can approve and queue an invitation email, deny a pending request, or manage an existing invitation. Approval does not confirm email delivery or grant access; Early Access begins after a valid invitation is accepted.');
+  assert.equal(footnotes[0][1], 'Approval queues an invitation; it does not confirm delivery or grant access. Early Access begins when a valid invitation is accepted.');
 });
 test('only approval and denial use semantic colors, including the reused confirmation control', () => {
   const detail = readFileSync(new URL('./admin-early-access-detail.mjs', import.meta.url), 'utf8');

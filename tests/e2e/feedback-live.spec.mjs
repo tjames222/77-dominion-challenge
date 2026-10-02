@@ -161,7 +161,8 @@ test('profile feedback stays reachable when content arrives during the first scr
   await expect(widget(page)).not.toHaveAttribute('data-obstructed');
   const trigger = await widget(page).boundingBox();
   const action = await page.getByRole('button', { name: 'Synthetic late profile action', exact: true }).boundingBox();
-  expect(action.x + action.width <= trigger.x || action.y >= trigger.y + trigger.height).toBe(true);
+  expect(action.x + action.width <= trigger.x || trigger.x + trigger.width <= action.x
+    || action.y + action.height <= trigger.y || trigger.y + trigger.height <= action.y).toBe(true);
   expect(auth.writes()).toEqual([]);
 });
 
@@ -177,6 +178,10 @@ async function launcherPlacement(page) {
     const hits = points.every(([x, y]) => { const hit = document.elementFromPoint(x, y); return hit === node || node.contains(hit); });
     const header = node.closest('.topbar');
     const headerBottom = header?.getBoundingClientRect().bottom || 0;
+    const style = getComputedStyle(node);
+    const inset = Number.parseFloat(style.getPropertyValue('--feedback-inset')) || 0;
+    const safeRight = Number.parseFloat(style.getPropertyValue('--feedback-safe-right')) || 0;
+    const safeBottom = Number.parseFloat(style.getPropertyValue('--feedback-safe-bottom')) || 0;
     const overlaps = [...document.querySelectorAll('main button, main a, main input, main select, main textarea, main summary, main [role="button"]')]
       .filter(control => {
         if (control === node || getComputedStyle(control).visibility !== 'visible') return false;
@@ -192,7 +197,13 @@ async function launcherPlacement(page) {
       inViewport: rect.left >= left && rect.top >= top && rect.right <= left + (viewport?.width || innerWidth)
         && rect.bottom <= top + (viewport?.height || innerHeight),
       overflow: document.documentElement.scrollWidth > innerWidth + 1,
-      position: { x: rect.x, y: rect.y } };
+      fixed: getComputedStyle(node).position === 'fixed', bodyChild: node.parentElement === document.body,
+      rightGap: left + (viewport?.width || innerWidth) - rect.right,
+      bottomGap: top + (viewport?.height || innerHeight) - rect.bottom,
+      inset, safeRight, safeBottom,
+      rightSafe: left + (viewport?.width || innerWidth) - rect.right + .5 >= inset + safeRight,
+      bottomSafe: top + (viewport?.height || innerHeight) - rect.bottom + .5 >= inset + safeBottom,
+      obstructed: node.hasAttribute('data-obstructed'), position: { x: rect.x, y: rect.y } };
   });
 }
 for (const width of [320, 375, 440, 600, 601, 768, 1440]) test(`launcher never disappears or covers actions while Dashboard scrolls at ${width}px`, async ({ context, page }, testInfo) => {
@@ -214,10 +225,13 @@ for (const width of [320, 375, 440, 600, 601, 768, 1440]) test(`launcher never d
     }, fraction);
     await expect.poll(async () => {
       const result = await launcherPlacement(page);
-      return { visible: result.visible, hits: result.hits, overlaps: result.overlaps, target: result.target, inViewport: result.inViewport, overflow: result.overflow };
-    }).toEqual({ visible: true, hits: true, overlaps: 0, target: true, inViewport: true, overflow: false });
+      return { visible: result.visible, hits: result.hits, overlaps: result.overlaps, target: result.target,
+        inViewport: result.inViewport, overflow: result.overflow, fixed: result.fixed, bodyChild: result.bodyChild,
+        rightSafe: result.rightSafe, bottomSafe: result.bottomSafe, obstructed: result.obstructed };
+    }).toEqual({ visible: true, hits: true, overlaps: 0, target: true, inViewport: true, overflow: false,
+      fixed: true, bodyChild: true, rightSafe: true, bottomSafe: true, obstructed: false });
     const current = (await launcherPlacement(page)).position;
-    position ||= current; expect(current).toEqual(position);
+    position ||= current; expect(current.x).toBe(position.x);
   }
   await page.screenshot({ path: testInfo.outputPath(`dashboard-launcher-${width}.png`) });
   expect(auth.writes()).toEqual([]);
@@ -306,6 +320,79 @@ for (const width of [320, 601, 1440]) test(`all fourteen routes keep feedback re
   });
   expect(auth.writes()).toEqual([]);
 });
+test('floating launcher clears a sticky footer and yields to reward or training overlays', async ({ context, page }, testInfo) => {
+  const auth = await installFeedbackStub(context, { memberPages: true });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto('/dashboard.html'); await expect(widget(page)).toBeVisible();
+  const baseline = await launcherPlacement(page);
+  expect(Math.abs(baseline.rightGap - baseline.inset - baseline.safeRight)).toBeLessThan(1);
+  expect(Math.abs(baseline.bottomGap - baseline.inset - baseline.safeBottom)).toBeLessThan(1);
+  await page.evaluate(() => {
+    const footer = document.createElement('footer'); footer.id = 'synthetic-sticky-footer';
+    footer.dataset.feedbackObstruction = '';
+    Object.assign(footer.style, { position: 'fixed', right: '0', bottom: '0', width: '220px', height: '76px', zIndex: '30' });
+    const action = document.createElement('button'); action.type = 'button'; action.textContent = 'Sticky test action';
+    action.addEventListener('click', () => { document.body.dataset.stickyActionClicked = 'true'; });
+    Object.assign(action.style, { width: '100%', height: '100%' }); footer.append(action); document.body.append(footer);
+  });
+  await expect.poll(async () => {
+    const trigger = await widget(page).boundingBox(); const footer = await page.locator('#synthetic-sticky-footer').boundingBox();
+    return { clear: trigger.y + trigger.height + 8 <= footer.y, placement: await launcherPlacement(page) };
+  }).toMatchObject({ clear: true, placement: { fixed: true, bodyChild: true, obstructed: false } });
+  await page.getByRole('button', { name: 'Sticky test action', exact: true }).click();
+  await expect(page.locator('body')).toHaveAttribute('data-sticky-action-clicked', 'true');
+  await page.locator('#synthetic-sticky-footer').evaluate(node => { node.style.height = '180px'; });
+  await expect.poll(async () => {
+    const trigger = await widget(page).boundingBox(); const footer = await page.locator('#synthetic-sticky-footer').boundingBox();
+    return trigger.y + trigger.height + 8 <= footer.y;
+  }).toBe(true);
+  await page.screenshot({ path: testInfo.outputPath('floating-feedback-sticky-clearance.png') });
+  await page.locator('#synthetic-sticky-footer').evaluate(node => node.remove());
+  await expect.poll(async () => (await launcherPlacement(page)).bottomGap).toBe(baseline.bottomGap);
+  await page.evaluate(() => {
+    const obstruction = document.createElement('div'); obstruction.id = 'synthetic-full-obstruction';
+    obstruction.dataset.feedbackObstruction = '';
+    Object.assign(obstruction.style, { position: 'fixed', inset: '0', zIndex: '30' }); document.body.append(obstruction);
+  });
+  await expect(widget(page)).toBeHidden();
+  await expect(widget(page)).toHaveAttribute('data-obstructed');
+  await page.locator('#synthetic-full-obstruction').evaluate(node => node.remove());
+  await expect(widget(page)).toBeVisible();
+  await expect(widget(page)).not.toHaveAttribute('data-obstructed');
+  await expect.poll(async () => (await launcherPlacement(page)).bottomGap).toBe(baseline.bottomGap);
+  await page.evaluate(() => document.body.classList.add('challenge-finished'));
+  await widget(page).click();
+  const feedbackLayer = page.locator('.app-dialog-layer[data-pattern="feedback"]');
+  await expect(feedbackLayer).toBeVisible();
+  expect(await feedbackLayer.evaluate(node => getComputedStyle(node).zIndex)).toBe('1185');
+  expect(await feedbackLayer.locator('.app-dialog-panel').evaluate(node => {
+    const rect = node.getBoundingClientRect(); const hit = document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2);
+    return hit === node || node.contains(hit);
+  })).toBe(true);
+  await page.getByRole('button', { name: 'Cancel', exact: true }).click();
+  await page.evaluate(() => document.body.classList.remove('challenge-finished'));
+  for (const className of ['permanent-reward-celebration', 'reward-backdrop active', 'reward-toast active',
+    'badge-celebration active', 'crew-training-layer', 'site-training-layer']) {
+    await test.step(className, async () => {
+      await page.evaluate(value => {
+        const layer = document.createElement('div'); layer.id = 'synthetic-feedback-overlay'; layer.className = value; document.body.append(layer);
+      }, className);
+      await expect(widget(page)).toBeHidden();
+      await page.locator('#synthetic-feedback-overlay').evaluate(node => node.remove());
+      await expect(widget(page)).toBeVisible();
+    });
+  }
+  await test.step('native modal dialog', async () => {
+    await page.evaluate(() => {
+      const layer = document.createElement('dialog'); layer.id = 'synthetic-native-dialog'; document.body.append(layer); layer.showModal();
+    });
+    await expect(widget(page)).toBeHidden();
+    await page.locator('#synthetic-native-dialog').evaluate(node => node.close());
+    await expect(widget(page)).toBeVisible();
+    await page.locator('#synthetic-native-dialog').evaluate(node => node.remove());
+  });
+  expect(auth.writes()).toEqual([]);
+});
 test('rotation preserves one launcher, and menu/dialog closing restores the original scroll position', async ({ context, page, isMobile }) => {
   const auth = await installFeedbackStub(context, { memberPages: true });
   await page.setViewportSize({ width: 320, height: 568 });
@@ -328,7 +415,9 @@ test('rotation preserves one launcher, and menu/dialog closing restores the orig
   for (const width of [320, 768, 440]) {
     await page.setViewportSize({ width, height: 764 });
     await expect(widget(page)).toHaveCount(1);
-    await expect(page.locator('.topbar .feedback-header-slot')).toHaveCount(width <= 600 ? 1 : 0);
+    await expect(page.locator('.feedback-header-slot')).toHaveCount(0);
+    await expect.poll(async () => ({ fixed: (await launcherPlacement(page)).fixed,
+      bodyChild: (await launcherPlacement(page)).bodyChild })).toEqual({ fixed: true, bodyChild: true });
     await page.evaluate(async () => {
       scrollTo({ top: 900, behavior: 'instant' });
       await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
@@ -348,7 +437,7 @@ test('rotation preserves one launcher, and menu/dialog closing restores the orig
   }
   expect(auth.writes()).toEqual([]);
 });
-test('rotation and eligibility or owner teardown release the header row back to fresh-width geometry', async ({ context, page }) => {
+test('rotation and eligibility or owner teardown never change fresh header geometry', async ({ context, page }) => {
   const auth = await installFeedbackStub(context, { memberPages: true, active: false });
   const headerGeometry = target => target.locator('.topbar').evaluate(node => ({
     height: node.getBoundingClientRect().height,
@@ -374,12 +463,9 @@ test('rotation and eligibility or owner teardown release the header row back to 
   await expect(widget(page)).toBeVisible();
   for (const width of [440, 768, 440, 768, 440]) {
     await page.setViewportSize({ width, height: 764 });
-    await expect(page.locator('.feedback-header-slot')).toHaveCount(width === 440 ? 1 : 0);
-    if (width === 768) await expect.poll(geometry).toEqual(baseline.get(width));
-    else {
-      await expect.poll(async () => (await geometry()).height).toBeGreaterThan(baseline.get(width).height);
-      await expect.poll(async () => { const value = await geometry(); return Math.abs(value.height - value.offset) < .1; }).toBe(true);
-    }
+    await expect(page.locator('.feedback-header-slot')).toHaveCount(0);
+    await expect.poll(geometry).toEqual(baseline.get(width));
+    expect((await launcherPlacement(page)).fixed).toBe(true);
   }
   auth.active(false); await page.evaluate(() => window.dispatchEvent(new Event('focus')));
   await expect(widget(page)).toBeHidden();
@@ -405,6 +491,8 @@ test('phone launcher label remains visible at 200% text with reduced motion and 
     return text.left >= control.left && text.right <= control.right && text.top >= control.top && text.bottom <= control.bottom;
   })).toBe(true);
   expect((await page.locator('main').boundingBox()).width).toBe(320);
+  expect((await launcherPlacement(page)).fixed).toBe(true);
+  await expect(page.locator('.feedback-header-slot')).toHaveCount(0);
   await expect(widget(page)).toHaveAccessibleName('Send Feedback');
   await widget(page).focus(); await expect(widget(page)).toBeFocused();
   expect(await widget(page).evaluate(node => getComputedStyle(node).outlineStyle)).not.toBe('none');

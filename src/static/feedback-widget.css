@@ -1,17 +1,16 @@
 body[data-feedback-mounted] {
   --feedback-size: 3.5rem;
   --feedback-inset: 16px;
-  --feedback-edge: calc(var(--feedback-size) + 2 * var(--feedback-inset) + env(safe-area-inset-right, 0px));
-  box-sizing: border-box;
-  /* The widest admitted shell is 1240px. Use existing outside space first;
-   * otherwise reserve only the edge needed by the (text-resizable) control. */
-  padding-inline-end: min(var(--feedback-edge), max(0px, calc(1240px + 2 * var(--feedback-edge) - 100vw)));
+  --feedback-safe-top: env(safe-area-inset-top, 0px);
+  --feedback-safe-right: env(safe-area-inset-right, 0px);
+  --feedback-safe-bottom: env(safe-area-inset-bottom, 0px);
 }
 .feedback-widget {
   position: fixed;
-  right: calc(var(--feedback-inset, 16px) + env(safe-area-inset-right, 0px));
-  bottom: calc(var(--feedback-inset, 16px) + env(safe-area-inset-bottom, 0px));
-  z-index: 35;
+  right: calc(var(--feedback-inset, 16px) + var(--feedback-safe-right, 0px) + var(--feedback-viewport-right, 0px));
+  bottom: calc(var(--feedback-inset, 16px) + var(--feedback-safe-bottom, 0px) + var(--feedback-viewport-bottom, 0px) + var(--feedback-lift, 0px));
+  /* Above the primary header, below the menu and application overlays. */
+  z-index: 150;
   width: var(--feedback-size, 3.5rem);
   height: var(--feedback-size, 3.5rem);
   min-width: 44px;
@@ -32,19 +31,23 @@ body[data-feedback-mounted] {
 }
 .feedback-widget:focus-visible { outline: 3px solid var(--focus-ring); outline-offset: 3px; }
 .feedback-widget svg { width: 1.4rem; height: 1.4rem; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
-.feedback-widget[hidden], body.menu-open .feedback-widget,
-body[data-dialog-open] .feedback-widget { visibility: hidden; pointer-events: none; }
+.feedback-widget[hidden], .feedback-widget[data-obstructed], body.menu-open .feedback-widget,
+body[data-dialog-open] .feedback-widget,
+body:has(dialog:modal) .feedback-widget,
+body:has(.permanent-reward-celebration) .feedback-widget,
+body:has(.reward-backdrop.active) .feedback-widget,
+body:has(.reward-toast.active) .feedback-widget,
+body:has(.badge-celebration.active) .feedback-widget,
+body:has(.crew-training-layer:not([hidden])) .feedback-widget,
+body:has(.site-training-layer:not([hidden])) .feedback-widget { visibility: hidden; pointer-events: none; }
+/* The finished Dashboard shell intentionally rises above normal navigation,
+ * while its reward backdrop remains the interaction owner at layer 1190. */
+body.challenge-finished .feedback-widget { z-index: 1180; }
+body.challenge-finished .app-dialog-layer[data-pattern="feedback"] { z-index: 1185; }
 @media (prefers-reduced-motion: no-preference) {
   .feedback-widget:hover { transform: translateY(-1px); }
 }
 @media (max-width: 600px) {
-  body[data-feedback-mounted] { --feedback-size: 3.25rem; --feedback-inset: 8px; padding-inline-end: 0; }
-  body[data-feedback-mounted] .topbar { flex-wrap: wrap; row-gap: 8px; }
-  .topbar > .feedback-header-slot { display: flex; flex: 1 0 100%; justify-content: flex-end; }
-  .topbar > .feedback-header-slot[hidden] { display: none; }
-  .feedback-header-slot .feedback-widget { position: static; flex: 0 0 var(--feedback-size); }
-  /* Keep the reserved row inside the existing header surface while scrolling. */
-  body[data-feedback-mounted] .topbar.topbar-collapsed::before { transform: none; }
-  body[data-feedback-mounted] .topbar > .feedback-header-slot { opacity: 1; }
+  body[data-feedback-mounted] { --feedback-size: 3.25rem; --feedback-inset: 10px; }
   .feedback-widget svg { width: 22px; height: 22px; }
 }
