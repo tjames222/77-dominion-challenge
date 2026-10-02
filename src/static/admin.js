@@ -9,7 +9,7 @@ import { adminReadError } from './admin-read-client.mjs';
 import { normalizeEarlyAccessRequest } from './admin-early-access-contract.mjs';
 import { mountEarlyAccessDetail } from './admin-early-access-detail.mjs';
 import { mountRoleDetail } from './admin-role-detail.mjs';
-import { adminUserListFacts } from './admin-user-presentation.mjs';
+import { adminUserListFacts, adminUserSummary } from './admin-user-presentation.mjs';
 import { normalizeAdminAccountRequestPage, accountRequestTypeLabel, accountRequestRecordedStatus } from './admin-account-requests.mjs';
 import { readAdminAccountRequests } from './admin-account-request-transport.mjs';
 import { mfaChallengeHref } from './mfa-navigation.mjs';
@@ -60,6 +60,7 @@ function gate(title, message, action = '') {
 function scrub(reason = '') {
   epoch += 1; checking = false; owner = null; permissions = []; cursors = [null]; page = 0;
   clearRows(); for (const value of Object.values(tabs)) byId(`${value.prefix}Filters`).reset();
+  updateFilterState();
   byId('adminPreview').hidden = true;
   gate('Access needs verification', reason === 'ADMIN_SIGNED_OUT' ? 'Log in to continue. Private records have been cleared.' : 'Private records have been cleared. Check access again to continue.', reason === 'ADMIN_SIGNED_OUT' ? 'adminLogin' : 'adminRetryAccess');
 }
@@ -90,17 +91,14 @@ function userFacts(pairs, className = 'admin-user-facts') {
   for (const [label, value] of pairs) { const pair = element('div'); pair.append(element('dt', label), element('dd', value)); list.append(pair); }
   return list;
 }
-function userSnapshots(facts, accountLabel) {
-  const content = element('div'); content.append(userFacts(facts.snapshotSummary));
-  const disclosure = element('details', undefined, 'admin-user-snapshots');
-  const summary = element('summary', 'View stored snapshots');
-  summary.setAttribute('aria-label', `View stored snapshots for ${accountLabel}`); disclosure.append(summary);
-  for (const snapshot of facts.snapshots) {
-    const section = element('section'); section.append(element('h2', snapshot.title));
-    section.append(snapshot.fields ? userFacts(snapshot.fields) : element('p', 'Not recorded'));
-    disclosure.append(section);
-  }
-  content.append(disclosure); return content;
+function badge(value, attention = false) {
+  const node = element('span', value, 'admin-badge');
+  if (attention) node.dataset.attention = 'true';
+  return node;
+}
+function disclosure(title, container) {
+  const node = element('details', undefined, 'admin-disclosure');
+  node.append(element('summary', title)); container.append(node); return node;
 }
 function renderRows(items) {
   if (!Array.isArray(items) || items.length > 50 || items.some((item) => !item || typeof item.id !== 'string')) throw adminReadError();
@@ -113,7 +111,7 @@ function renderRows(items) {
       row.setAttribute('role', 'row');
       cell(row, 'Request and requester IDs', userFacts([['Request ID', item.id], ['Requester ID', item.userId ?? 'Account reference removed']], 'admin-request-facts'));
       cell(row, 'Type', accountRequestTypeLabel(item.requestType));
-      cell(row, 'Recorded status', accountRequestRecordedStatus(item.status));
+      cell(row, 'Recorded status', badge(accountRequestRecordedStatus(item.status)));
       cell(row, 'Timeline', userFacts([['Requested', date(item.requestedAt)], ['Updated', date(item.updatedAt)], ['Resolved', item.resolvedAt === null ? 'Not resolved' : date(item.resolvedAt)]], 'admin-request-facts'));
       for (const node of row.children) node.setAttribute('role', 'cell');
       fragment.append(row); continue;
@@ -121,21 +119,21 @@ function renderRows(items) {
     if (tab === 'users') {
       // Explicit roles retain table relationships when Users becomes cards.
       row.setAttribute('role', 'row');
-      const facts = adminUserListFacts(item);
+      const summary = adminUserSummary(item);
       const person = element('div'); person.append(element('strong', item.name || 'Unnamed member'), element('span', item.email, 'admin-secondary'));
-      const account = element('div'); account.append(element('p', userStatus(item), 'admin-user-status'), userFacts(facts.account));
-      cell(row, 'Member', person); cell(row, 'Account', account);
-      cell(row, 'Crew', facts.crew ? userFacts(facts.crew) : 'Not recorded');
-      cell(row, 'Stored snapshots', userSnapshots(facts, `${text(item.name || 'Unnamed member')} (${text(item.email)})`));
+      const account = element('div'); account.append(badge(summary.status, summary.attention));
+      if (summary.confirmation) account.append(element('span', summary.confirmation, 'admin-secondary'));
+      cell(row, 'Member', person); cell(row, 'Site role', summary.role); cell(row, 'Account', account);
+      cell(row, 'Last sign-in', summary.lastSignIn);
     } else if (tab === 'early') {
       row.dataset.earlyRequest = item.id;
       const person = element('div'); person.append(element('strong', item.name), element('span', item.email, 'admin-secondary'));
-      cell(row, 'Applicant', person); cell(row, 'Status', item.status); row.lastElementChild.dataset.earlyStatus = '';
+      cell(row, 'Applicant', person); cell(row, 'Status', badge(item.status)); row.lastElementChild.querySelector('.admin-badge').dataset.earlyStatus = '';
       cell(row, 'Account match', item.account.status); cell(row, 'Requested', date(item.requestedAt));
     } else {
-      cell(row, 'Recorded', date(item.occurredAt)); cell(row, 'Action', item.action); cell(row, 'Outcome', item.outcome); cell(row, 'Target user', item.targetUserId);
+      cell(row, 'Recorded', date(item.occurredAt)); cell(row, 'Action', item.action); cell(row, 'Outcome', badge(item.outcome, item.outcome === 'failure')); cell(row, 'Target user', item.targetUserId);
     }
-    const button = element('button', 'View details'); button.type = 'button';
+    const button = element('button', tab === 'early' ? 'Review request' : 'View details'); button.type = 'button';
     button.setAttribute('aria-label', tab === 'audit' ? `View audit event ${text(item.id)}` : `${tab === 'early' ? 'Review request' : 'View details'} for ${text(item.name || item.email)}`);
     const kind = tab; button.addEventListener('click', () => void openDetail(kind, item.id, button));
     cell(row, 'Details', button);
@@ -151,9 +149,21 @@ function listArgs() {
   return tab === 'users' ? { target_limit: 25, target_cursor: cursors[page], target_search: data.get('search').trim(), target_role: data.get('role'), target_status: data.get('status'), target_sort: data.get('sort') }
     : { target_limit: 25, target_cursor: cursors[page], target_user_id: data.get('target').trim() || null, target_action: data.get('action'), target_outcome: data.get('outcome') };
 }
+function updateFilterState() {
+  const form = byId(`${tabs[tab].prefix}Filters`);
+  const choices = [...form.elements].flatMap((control) => {
+    if (control.tagName === 'SELECT') {
+      const original = [...control.options].find(option => option.defaultSelected) || control.options[0];
+      return control.value !== original.value ? [control.selectedOptions[0].textContent] : [];
+    }
+    return control.tagName === 'INPUT' && control.value.trim() ? [`Search: ${control.value.trim()}`] : [];
+  });
+  byId('adminFilterSummary').textContent = choices.join(' · ');
+  byId('adminFilterState').hidden = !choices.length;
+}
 async function loadPage() {
   if (!owner || suspended) return;
-  clearRows(); loading = true; workspace.setAttribute('aria-busy', 'true'); updatePagination();
+  clearRows(); updateFilterState(); loading = true; workspace.setAttribute('aria-busy', 'true'); updatePagination();
   byId('adminStatus').textContent = 'Loading records…';
   const captured = epoch; const query = queryEpoch; const actorId = owner.actorId;
   listController = new AbortController(); const signal = listController.signal;
@@ -174,16 +184,20 @@ function addSection(title, pairs, container = byId('adminDetailBody')) {
   section.append(list); container.append(section);
 }
 function renderUser(item, container = byId('adminDetailBody')) {
-  const section = (title, pairs) => addSection(title, pairs, container);
-  section('Account', [['User ID', item.id], ['Name', item.name], ['Email', item.email], ['Role', item.role], ['Role revision', item.roleRevision], ['Status', userStatus(item)], ['Created', date(item.createdAt)], ['Email confirmed', date(item.emailConfirmedAt)], ['Last sign-in', date(item.lastSignInAt)], ['Suspended until', date(item.suspendedUntil)], ['Deleted', date(item.deletedAt)], ['Deletion request state', item.deletionRequestStatus]]);
-  if (item.crew) section('Crew (separate from site role)', [['ID', item.crew.id], ['Name', item.crew.name], ['Crew role', item.crew.role]]);
-  if (item.activationSnapshot) { const s = item.activationSnapshot; section('Stored activation snapshot', [['Stored status', s.storedStatus], ['Mode', s.mode], ['Start date', s.startDate], ['Review required', s.reviewRequired ? 'Yes' : 'No'], ['Recorded', date(s.recordedAt)]]); }
-  if (item.statsSnapshot) { const s = item.statsSnapshot; section('Stored progress snapshot', [['Total points', s.totalPoints], ['Stored app streak', s.storedAppStreak], ['Stored perfect-day streak', s.storedPerfectDayStreak], ['Last seen local date', s.lastSeenLocalDate], ['Recorded', date(s.recordedAt)]]); }
-  if (item.subscriptionSnapshot) { const s = item.subscriptionSnapshot; section('Stored subscription snapshot', [['Stored status', s.status], ['Current period end', date(s.currentPeriodEnd)], ['Cancel at period end', s.cancelAtPeriodEnd ? 'Yes' : 'No'], ['Recorded', date(s.recordedAt)]]); }
-  container.append(element('p', 'Snapshots are historical stored values, not current effective access, challenge day, or completion decisions.', 'admin-footnote'));
+  const facts = adminUserListFacts(item);
+  addSection('Account', [['Name', item.name], ['Email', item.email], ['Site role', adminUserSummary(item).role], ['Status', userStatus(item)]], container);
+  const history = disclosure('Account history and identifiers', container);
+  addSection('Recorded account details', [['User ID', item.id], ['Role revision', item.roleRevision], ...facts.account.slice(1), ['Suspended until', date(item.suspendedUntil)], ['Deleted', date(item.deletedAt)], ['Deletion request state', item.deletionRequestStatus]], history);
+  const stored = disclosure('Crew and stored snapshots', container);
+  stored.append(element('p', 'Snapshots are historical stored values, not current effective access, challenge day, or completion decisions. Crew-local roles are separate from site roles.', 'admin-footnote'));
+  addSection('Crew (separate from site role)', item.crew ? [['ID', item.crew.id], ...facts.crew] : [['Crew', 'Not recorded']], stored);
+  if (item.activationSnapshot) { const s = item.activationSnapshot; addSection('Stored activation snapshot', [['Stored status', s.storedStatus], ['Mode', s.mode], ['Start date', s.startDate], ['Review required', s.reviewRequired ? 'Yes' : 'No'], ['Recorded', date(s.recordedAt)]], stored); }
+  for (const snapshot of facts.snapshots) addSection(snapshot.title, snapshot.fields || [['Snapshot', 'Not recorded']], stored);
 }
 function renderAudit(item) {
-  addSection('Administrative event', [['Event ID', item.id], ['Recorded', date(item.occurredAt)], ['Actor ID', item.actorId], ['Target user ID', item.targetUserId], ['Action', item.action], ['Permission', item.permission], ['Outcome', item.outcome], ['Reason code', item.reasonCode], ['Before role', item.beforeRole], ['After role', item.afterRole], ['Request ID', item.requestId], ['Correlation ID', item.correlationId], ['Environment', item.environment], ['Error code', item.errorCode]]);
+  addSection('Administrative event', [['Recorded', date(item.occurredAt)], ['Action', item.action], ['Outcome', item.outcome], ['Reason code', item.reasonCode], ['Before role', item.beforeRole], ['After role', item.afterRole], ['Error code', item.errorCode]]);
+  const identifiers = disclosure('Event identifiers and permission', byId('adminDetailBody'));
+  addSection('Audit reference', [['Event ID', item.id], ['Actor ID', item.actorId], ['Target user ID', item.targetUserId], ['Permission', item.permission], ['Request ID', item.requestId], ['Correlation ID', item.correlationId], ['Environment', item.environment]], identifiers);
 }
 async function openDetail(kind, id, button) {
   if (!owner || suspended) return;
@@ -293,8 +307,13 @@ for (const node of document.querySelectorAll('[data-admin-tab]')) {
 }
 for (const id of ['adminUsersFilters', 'adminAuditFilters', 'adminEarlyFilters', 'adminRequestsFilters']) {
   byId(id).addEventListener('submit', (event) => { event.preventDefault(); cursors = [null]; page = 0; void loadPage(); });
-  byId(id).addEventListener('input', () => { clearRows(); cursors = [null]; page = 0; updatePagination(); byId('adminStatus').textContent = 'Filters changed. Apply filters to load records.'; });
+  byId(id).addEventListener('input', () => { clearRows(); cursors = [null]; page = 0; updatePagination(); updateFilterState(); byId('adminStatus').textContent = 'Filters changed. Apply filters to load records.'; });
 }
+byId('adminResetFilters').addEventListener('click', () => {
+  const form = byId(`${tabs[tab].prefix}Filters`); form.reset();
+  cursors = [null]; page = 0; updateFilterState();
+  form.querySelector('input, select, button').focus(); void loadPage();
+});
 byId('adminNextPage').addEventListener('click', () => { if (loading || !nextCursor) return; cursors = cursors.slice(0, page + 1); cursors.push(nextCursor); page += 1; void loadPage(); });
 byId('adminPreviousPage').addEventListener('click', () => { if (!loading && page > 0) { page -= 1; void loadPage(); } });
 byId('adminFirstPage').addEventListener('click', () => { cursors = [null]; page = 0; void loadPage(); });

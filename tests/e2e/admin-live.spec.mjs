@@ -229,29 +229,43 @@ test('server pagination, filters, snapshots and audit detail work without member
   expect(auth.reads().every((item) => item.actor === auth.A && item.aal === 'aal2' && item.method === 'POST')).toBe(true);
   await noStoredPayload(page);
 });
-test('Users presents existing account facts and historical snapshots without extra reads or writes', async ({ context, page }) => {
+test('Users keeps compact rows and loads all account history once, with read-free keyboard disclosures', async ({ context, page }) => {
   const auth = await installAdminStub(context); presentationFixture(auth); await ready(page);
   const row = page.locator('#adminUsersRows tr').first();
-  await expect(row.locator('[data-label="Account"]')).toContainText('Site roleMember');
-  await expect(row).toContainText('2026-01-28 12:00:00 UTC');
-  await expect(row).toContainText('2026-01-01 12:00:00 UTC');
-  await expect(row).toContainText('2026-02-03 09:08:07 UTC');
-  await expect(row.locator('[data-label="Crew"]')).toHaveText('NameSynthetic Cedar CrewCrew-local roleAdmin');
-  await expect(row.locator('[data-label="Stored snapshots"]')).toContainText('Stored points0Stored subscriptionActive');
+  await expect(page.locator('#adminUsersPanel [role="columnheader"]')).toHaveText(['Member', 'Site role', 'Account', 'Last sign-in', 'Details']);
+  await expect(row.getByRole('cell')).toHaveCount(5);
+  await expect(row.locator('[data-label="Site role"]')).toHaveText('Member');
+  await expect(row.locator('[data-label="Account"]')).toHaveText('Email confirmed');
+  await expect(row.locator('[data-label="Last sign-in"]')).toHaveText('2026-02-03 09:08:07 UTC');
+  await expect(row.locator('details')).toHaveCount(0);
+  await expect(row).not.toContainText('Stored app streak'); await expect(row).not.toContainText('Synthetic Cedar Crew');
   const count = auth.reads().length;
-  const summary = row.locator('summary'); await summary.focus(); await page.keyboard.press('Enter');
-  await expect(summary).toHaveAccessibleName('View stored snapshots for Preview Member 28 (member28@example.invalid)');
-  await expect(row.locator('details')).toHaveAttribute('open', '');
-  await expect(row.locator('details')).toContainText('Stored app streak7');
-  await expect(row.locator('details')).toContainText('Stored perfect-day streak0');
-  await expect(row.locator('details')).toContainText('Last seen local date2026-01-20');
-  await expect(row.locator('details')).toContainText('Recorded2026-01-21 10:11:12 UTC');
-  await expect(row.locator('details')).toContainText('Period end2026-02-01 00:00:00 UTC');
-  await expect(row.locator('details')).toContainText('Cancel at period endNo');
-  await expect(row.locator('details')).toContainText('Recorded2026-01-22 12:13:14 UTC');
+  const button = row.getByRole('button', { name: 'View details for Preview Member 28', exact: true });
+  await button.focus(); await page.keyboard.press('Enter');
+  const facts = page.locator('#adminUserFacts'); await expect(facts).toContainText('member28@example.invalid');
+  expect(auth.reads()).toHaveLength(count + 1); expect(auth.reads().at(-1).path).toMatch(/\/site_admin_get_user$/);
+  await expect(facts.locator('details[open]')).toHaveCount(0);
+  const history = facts.locator('details').filter({ has: page.locator('summary', { hasText: 'Account history and identifiers' }) });
+  await history.locator('summary').focus(); await page.keyboard.press('Enter');
+  await expect(history).toHaveAttribute('open', '');
+  await expect(history).toContainText('Created2026-01-28 12:00:00 UTC');
+  await expect(history).toContainText('Email confirmed2026-01-01 12:00:00 UTC');
+  await expect(history).toContainText('Last sign-in2026-02-03 09:08:07 UTC');
+  const stored = facts.locator('details').filter({ has: page.locator('summary', { hasText: 'Crew and stored snapshots' }) });
+  const summary = stored.locator('summary'); await summary.focus(); await page.keyboard.press('Enter');
+  await expect(stored).toHaveAttribute('open', '');
+  await expect(stored).toContainText('NameSynthetic Cedar CrewCrew-local roleAdmin');
+  await expect(stored).toContainText('Stored total points0Stored app streak7Stored perfect-day streak0');
+  await expect(stored).toContainText('Last seen local date2026-01-20');
+  await expect(stored).toContainText('Recorded2026-01-21 10:11:12 UTC');
+  await expect(stored).toContainText('Period end2026-02-01 00:00:00 UTC');
+  await expect(stored).toContainText('Cancel at period endNo');
+  await expect(stored).toContainText('Recorded2026-01-22 12:13:14 UTC');
+  await expect(stored).toContainText('not current effective access, challenge day, or completion decisions');
   await expect(page.locator('#adminUsersSnapshotNote')).toContainText('not current streak, access, or completion');
-  await page.keyboard.press('Space'); await expect(row.locator('details')).not.toHaveAttribute('open');
-  expect(auth.reads()).toHaveLength(count); expect(auth.assignments()).toHaveLength(0); expect(auth.denials()).toHaveLength(0);
+  await page.keyboard.press('Space'); await expect(stored).not.toHaveAttribute('open'); await expect(summary).toBeFocused();
+  expect(auth.reads()).toHaveLength(count + 1); expect(auth.assignments()).toHaveLength(0); expect(auth.denials()).toHaveLength(0);
+  await page.keyboard.press('Escape'); await expect(button).toBeFocused(); await expect(page.locator('#adminDetailBody')).toBeEmpty();
   await noStoredPayload(page);
 });
 test('Users keeps missing, zero and unknown records distinct and renders only allowlisted text', async ({ context, page }) => {
@@ -263,17 +277,26 @@ test('Users keeps missing, zero and unknown records distinct and renders only al
     subscriptionSnapshot: { status: 'unknown', currentPeriodEnd: null, cancelAtPeriodEnd: null, recordedAt: null, privatePayload: 'PRIVATE_SUBSCRIPTION_SENTINEL' } });
   await ready(page);
   const missing = page.locator('#adminUsersRows tr').first();
-  await expect(missing.locator('[data-label="Account"]')).toHaveText('Email unconfirmedSite roleMemberCreatedNot recordedEmail confirmedNot recordedLast sign-inNot recorded');
-  await expect(missing.locator('[data-label="Crew"]')).toHaveText('Not recorded');
-  await expect(missing.locator('[data-label="Stored snapshots"]')).toContainText('Stored pointsNot recordedStored subscriptionNot recorded');
-  await missing.locator('summary').click();
-  await expect(missing.locator('details section')).toHaveText(['Stored progress snapshotNot recorded', 'Stored subscription snapshotNot recorded']);
-  const unusual = page.locator('#adminUsersRows tr').nth(1); await unusual.locator('summary').click();
-  await expect(unusual.locator('[data-label="Crew"]')).toHaveText('Name<img src=x onerror=alert(1)>Crew-local roleOwner');
-  await expect(unusual.locator('img')).toHaveCount(0);
-  await expect(unusual.locator('details')).toContainText('Stored total points0Stored app streak0Stored perfect-day streak0');
-  await expect(unusual.locator('details')).toContainText('Stored statusUnknownPeriod endNot recordedCancel at period endNot recorded');
-  expect(await page.locator('#adminUsersRows').textContent()).not.toMatch(/PRIVATE_(?:CREW|PROGRESS|SUBSCRIPTION)_SENTINEL/);
+  await expect(missing.locator('[data-label="Account"]')).toHaveText('Email unconfirmed');
+  await expect(missing.locator('[data-label="Site role"]')).toHaveText('Member');
+  await expect(missing.locator('[data-label="Last sign-in"]')).toHaveText('Not recorded');
+  await missing.locator('button').click();
+  const facts = page.locator('#adminUserFacts'); await expect(facts).toContainText('member28@example.invalid');
+  await facts.locator('summary', { hasText: 'Account history and identifiers' }).click();
+  await expect(facts).toContainText('CreatedNot recordedEmail confirmedNot recordedLast sign-inNot recorded');
+  await facts.locator('summary', { hasText: 'Crew and stored snapshots' }).click();
+  await expect(facts).toContainText('Crew (separate from site role)CrewNot recorded');
+  await expect(facts).toContainText('Stored progress snapshotSnapshotNot recorded');
+  await expect(facts).toContainText('Stored subscription snapshotSnapshotNot recorded');
+  await page.keyboard.press('Escape');
+  const unusual = page.locator('#adminUsersRows tr').nth(1); await unusual.locator('button').click();
+  await expect(facts).toContainText('member27@example.invalid');
+  await facts.locator('summary', { hasText: 'Crew and stored snapshots' }).click();
+  await expect(facts).toContainText('Name<img src=x onerror=alert(1)>Crew-local roleOwner');
+  await expect(facts.locator('img')).toHaveCount(0);
+  await expect(facts).toContainText('Stored total points0Stored app streak0Stored perfect-day streak0');
+  await expect(facts).toContainText('Stored statusUnknownPeriod endNot recordedCancel at period endNot recorded');
+  expect(await page.content()).not.toMatch(/PRIVATE_(?:CREW|PROGRESS|SUBSCRIPTION)_SENTINEL/);
   await noStoredPayload(page);
 });
 test('denied role or network failure clears rendered private records and closes details', async ({ context, page }) => {
@@ -284,6 +307,54 @@ test('denied role or network failure clears rendered private records and closes 
   auth.role('member'); await page.locator('#adminUsersRows button').first().click();
   await expect(page.locator('#adminWorkspace')).toBeHidden(); await expect(page.locator('#adminDetail')).not.toBeVisible();
   expect(await page.content()).not.toContain('member28@example.invalid'); await noStoredPayload(page);
+});
+test('Users filter disclosure is keyboard-operable and Reset filters restores default server results', async ({ context, page }) => {
+  const auth = await installAdminStub(context); await ready(page);
+  await expect(page.locator('#adminFilterState')).toBeHidden();
+  const more = page.locator('#adminUsersFilters summary');
+  await expect(page.locator('#adminUsersFilters details')).not.toHaveAttribute('open');
+  const count = auth.reads().length;
+  await more.focus(); await page.keyboard.press('Enter');
+  await expect(page.locator('#adminUsersFilters details')).toHaveAttribute('open');
+  await page.keyboard.press('Tab'); await expect(page.getByRole('combobox', { name: 'Role', exact: true })).toBeFocused();
+  await page.getByRole('combobox', { name: 'Role', exact: true }).selectOption('member');
+  await page.getByRole('combobox', { name: 'Account status', exact: true }).selectOption('confirmed');
+  await page.getByRole('combobox', { name: 'Sort', exact: true }).selectOption('oldest');
+  await page.getByLabel('Name or email prefix').fill('member28');
+  await expect(page.locator('#adminUsersRows tr')).toHaveCount(0);
+  await expect(page.locator('#adminStatus')).toHaveText('Filters changed. Apply filters to load records.');
+  await expect(page.locator('#adminFilterState')).toBeVisible();
+  for (const text of ['member28', 'Member', 'Email confirmed', 'Oldest']) await expect(page.locator('#adminFilterSummary')).toContainText(text);
+  expect(auth.reads()).toHaveLength(count);
+  await page.locator('#adminUsersFilters button').click(); await expect(page.locator('#adminUsersRows tr')).toHaveCount(1);
+  expect(auth.reads().at(-1).body).toMatchObject({ target_search: 'member28', target_role: 'member', target_status: 'confirmed', target_sort: 'oldest', target_cursor: null });
+  await more.focus(); await page.keyboard.press('Space'); await expect(page.locator('#adminUsersFilters details')).not.toHaveAttribute('open');
+  await page.getByRole('button', { name: 'Reset filters', exact: true }).click();
+  await expect(page.locator('#adminUsersRows tr')).toHaveCount(25); await expect(page.locator('#adminFilterState')).toBeHidden();
+  await expect(page.getByLabel('Name or email prefix')).toBeFocused(); await expect(page.getByLabel('Name or email prefix')).toHaveValue('');
+  await expect(page.locator('#adminPageLabel')).toHaveText('Page 1');
+  expect(auth.reads().at(-1).body).toMatchObject({ target_search: '', target_role: 'all', target_status: 'all', target_sort: 'newest', target_cursor: null });
+  await noStoredPayload(page);
+});
+test('Users makes loading, empty and failed reads explicit without retaining private rows', async ({ context, page }) => {
+  const auth = await installAdminStub(context); await ready(page);
+  const count = auth.reads().length; const release = auth.hold(['site_admin_list_users']);
+  try {
+    await page.locator('#adminRefresh').click(); await expect.poll(() => auth.reads().length).toBe(count + 1);
+    await expect(page.locator('#adminWorkspace')).toHaveAttribute('aria-busy', 'true');
+    await expect(page.locator('#adminStatus')).toHaveText('Loading records…'); await expect(page.locator('#adminUsersRows tr')).toHaveCount(0);
+    await expect(page.locator('#adminRefresh')).toBeDisabled(); await expect(page.locator('#adminNextPage')).toBeDisabled();
+  } finally { release(); }
+  await expect(page.locator('#adminUsersRows tr')).toHaveCount(25); await expect(page.locator('#adminWorkspace')).not.toHaveAttribute('aria-busy');
+  await page.getByLabel('Name or email prefix').fill('no-synthetic-member-matches'); await page.locator('#adminUsersFilters button').click();
+  await expect(page.locator('#adminStatus')).toHaveText('No records match these filters.'); await expect(page.locator('#adminUsersRows tr')).toHaveCount(0);
+  await expect(page.locator('#adminNextPage')).toBeDisabled(); await expect(page.locator('#adminFilterState')).toBeVisible();
+  auth.fail(); await page.locator('#adminResetFilters').click();
+  await expect(page.locator('#adminStatus')).toContainText('temporarily unavailable'); await expect(page.locator('#adminUsersRows tr')).toHaveCount(0);
+  await expect(page.locator('#adminWorkspace')).not.toHaveAttribute('aria-busy'); await expect(page.locator('#adminRefresh')).toBeEnabled();
+  expect(await page.content()).not.toMatch(/PRIVATE RAW ERROR|member28@example.invalid/);
+  auth.fail(false); await page.locator('#adminRefresh').click(); await expect(page.locator('#adminUsersRows tr')).toHaveCount(25);
+  await noStoredPayload(page);
 });
 test('audit-only permission never loads account summaries', async ({ context, page }) => {
   const auth = await installAdminStub(context); auth.permissions(['audit.read']);
@@ -328,8 +399,10 @@ test('wrong-actor response is rejected and explicit logout scrubs before navigat
 for (const replacement of ['A→B→A', 'same actor, new immutable session']) {
   test(`${replacement} clears old records and rejects a delayed previous-session response`, async ({ context, page }) => {
     const auth = await installAdminStub(context); await ready(page);
-    await page.locator('#adminUsersRows summary').first().click();
-    await expect(page.locator('#adminUsersRows details[open]')).toHaveCount(1);
+    const opener = page.locator('#adminUsersRows button').first(); await opener.click();
+    await page.locator('#adminUserFacts summary', { hasText: 'Crew and stored snapshots' }).click();
+    await expect(page.locator('#adminUserFacts details[open]')).toHaveCount(1);
+    await page.keyboard.press('Escape'); await expect(opener).toBeFocused();
     const count = auth.reads().length; const release = auth.hold();
     await page.locator('#adminRefresh').click(); await expect.poll(() => auth.reads().length).toBe(count + 1);
     const finalSession = replacement === 'A→B→A' ? auth.firstSession : auth.session(auth.A, 'aal2', '22222222-2222-4222-8222-222222222222');
@@ -348,7 +421,8 @@ for (const replacement of ['A→B→A', 'same actor, new immutable session']) {
       channel.close();
     }, transitions);
     release(); await expect(page.locator('#adminWorkspace')).toBeHidden();
-    await expect(page.locator('#adminUsersRows details')).toHaveCount(0);
+    await expect(page.locator('#adminUsersRows tr')).toHaveCount(0);
+    await expect(page.locator('#adminDetail')).not.toBeVisible(); await expect(page.locator('#adminDetailBody')).toBeEmpty();
     expect(await page.content()).not.toContain('STALE PREVIOUS SESSION SNAPSHOT');
     await page.locator('#adminRetryAccess').click(); await expect(page.locator('#adminUsersRows tr')).toHaveCount(25);
     expect(await page.content()).not.toContain('STALE PREVIOUS SESSION SNAPSHOT'); await noStoredPayload(page);
@@ -360,16 +434,18 @@ for (const theme of ['light', 'dark', 'dominion-night', 'dominion-platinum']) {
     // Visual-only theme override: no entitlement decision is inferred or stored.
     await page.evaluate((value) => { document.documentElement.dataset.theme = value; }, theme);
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
+    await page.locator('#adminUsersFilters summary').focus(); await page.keyboard.press('Enter');
     for (const select of await page.locator('#adminUsersFilters select').all()) expect((await select.boundingBox()).height).toBeGreaterThanOrEqual(48);
     const detailButton = page.locator('#adminUsersRows button').first();
     expect((await detailButton.boundingBox()).height).toBeLessThan(60);
     const axe = await new AxeBuilder({ page }).analyze(); expect(axe.violations).toEqual([]);
     await page.screenshot({ path: testInfo.outputPath(`${theme}-users.png`), fullPage: false });
-    await page.locator('#adminUsersRows summary').first().click();
+    await detailButton.click(); await page.locator('#adminUserFacts summary', { hasText: 'Crew and stored snapshots' }).click();
     expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
-    await page.locator('#adminUsersRows tr').first().screenshot({ path: testInfo.outputPath(`${theme}-user-expanded.png`) });
+    await page.locator('#adminDetail').screenshot({ path: testInfo.outputPath(`${theme}-user-expanded.png`) });
     const configuredWidth = page.viewportSize().width;
     expect(await page.evaluate(() => document.documentElement.getBoundingClientRect().width)).toBeLessThanOrEqual(configuredWidth + 1);
+    await page.keyboard.press('Escape'); await expect(detailButton).toBeFocused();
     await page.getByRole('tab', { name: 'Users', exact: true }).focus(); await page.keyboard.press('ArrowRight');
     await expect(page.getByRole('tab', { name: 'Audit', exact: true })).toBeFocused();
     await expect(page.locator('#adminAuditRows tr')).toHaveCount(25);
@@ -385,7 +461,7 @@ for (const theme of ['light', 'dark', 'dominion-night', 'dominion-platinum']) {
     await noStoredPayload(page);
 });
 }
-test('Users tablet cards preserve fields, keyboard disclosure and 200% text without viewport expansion', async ({ context, page }) => {
+test('Users tablet cards and detail disclosures preserve fields and 200% text without viewport expansion', async ({ context, page }) => {
   const auth = await installAdminStub(context); presentationFixture(auth);
   await page.setViewportSize({ width: 768, height: 1024 }); await ready(page);
   const row = page.locator('#adminUsersRows tr').first();
@@ -393,35 +469,48 @@ test('Users tablet cards preserve fields, keyboard disclosure and 200% text with
   await expect(table.getByRole('row')).toHaveCount(26); await expect(table.getByRole('columnheader')).toHaveCount(5);
   await expect(row.getByRole('cell')).toHaveCount(5);
   expect(await row.evaluate((node) => getComputedStyle(node).display)).toBe('block');
-  await row.locator('summary').focus(); await page.keyboard.press('Enter'); await expect(row.locator('details')).toHaveAttribute('open', '');
+  await row.locator('button').focus(); await page.keyboard.press('Enter');
+  const stored = page.locator('#adminUserFacts details').filter({ has: page.locator('summary', { hasText: 'Crew and stored snapshots' }) });
+  await stored.locator('summary').focus(); await page.keyboard.press('Enter'); await expect(stored).toHaveAttribute('open', '');
   for (const scale of ['100%', '200%']) {
     await page.evaluate((value) => { document.documentElement.style.fontSize = value; }, scale);
     expect(await page.evaluate(() => document.documentElement.getBoundingClientRect().width)).toBeLessThanOrEqual(769);
     expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(769);
-    await expect(row.locator('details')).toContainText('Stored app streak7');
-    await expect(row.locator('[data-label="Crew"]')).toContainText('Crew-local roleAdmin');
+    await expect(stored).toContainText('Stored app streak7');
+    await expect(stored).toContainText('Crew-local roleAdmin');
+    expect(await page.locator('#adminDetail').evaluate(node => node.scrollWidth <= node.clientWidth + 1)).toBe(true);
     expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
   }
+  await page.keyboard.press('Escape'); await expect(row.locator('button')).toBeFocused();
   await noStoredPayload(page);
 });
 test('Users long fields wrap across the card breakpoint without losing disclosure or table semantics', async ({ context, page }, testInfo) => {
   const auth = await installAdminStub(context); presentationFixture(auth);
   const name = 'LongSyntheticMemberName'.repeat(5); const email = `${'member'.repeat(30)}@example.invalid`;
   auth.roleTarget(PRESENTATION_USER, { name, email, crew: { id: '90000000-0000-4000-8000-000000000001', name: 'LongSyntheticCrew'.repeat(4), role: 'owner' } });
-  await ready(page); const row = page.locator('#adminUsersRows tr').first(); const summary = row.locator('summary');
-  await summary.focus(); await page.keyboard.press('Enter');
-  await expect(summary).toHaveAccessibleName(`View stored snapshots for ${name} (${email})`);
-  for (const width of [390, 768, 1050, 1051, 1440]) {
+  await ready(page); const row = page.locator('#adminUsersRows tr').first(); const button = row.locator('button');
+  await expect(button).toHaveAccessibleName(`View details for ${name}`);
+  for (const width of [320, 390, 768, 1050, 1051, 1440]) {
     await page.setViewportSize({ width, height: 1000 });
     for (const scale of ['100%', '200%']) {
       await page.evaluate((value) => { document.documentElement.style.fontSize = value; }, scale);
       const geometry = await page.evaluate(() => ({ layout: document.documentElement.getBoundingClientRect().width, scroll: document.documentElement.scrollWidth }));
       expect(geometry.layout).toBeLessThanOrEqual(width + 1); expect(geometry.scroll).toBeLessThanOrEqual(width + 1);
-      await expect(row.getByRole('cell')).toHaveCount(5); await expect(page.getByRole('columnheader', { name: 'Stored snapshots', exact: true })).toHaveCount(1);
-      await expect(summary).toBeVisible(); await expect(row).toContainText(email);
+      await expect(row.getByRole('cell')).toHaveCount(5); await expect(page.getByRole('columnheader', { name: 'Last sign-in', exact: true })).toHaveCount(1);
+      await expect(button).toBeVisible(); await expect(row).toContainText(email);
       if (scale === '100%') await row.screenshot({ path: testInfo.outputPath(`long-user-${width}.png`) });
+      await button.focus(); await page.keyboard.press('Enter');
+      const stored = page.locator('#adminUserFacts details').filter({ has: page.locator('summary', { hasText: 'Crew and stored snapshots' }) });
+      const summary = stored.locator('summary'); await summary.focus(); await page.keyboard.press('Enter');
+      await expect(stored).toHaveAttribute('open', ''); await expect(stored).toContainText('LongSyntheticCrew'.repeat(4));
+      await expect(page.locator('#adminUserFacts')).toContainText(name); await expect(page.locator('#adminUserFacts')).toContainText(email);
+      expect(await page.locator('#adminDetail').evaluate(node => node.scrollWidth <= node.clientWidth + 1)).toBe(true);
+      const title = await page.locator('#adminDetailTitle').evaluate(node => ({ height: node.getBoundingClientRect().height, lineHeight: parseFloat(getComputedStyle(node).lineHeight) }));
+      expect(title.height, `${width}px / ${scale}: the two-word title must not collapse into a column of letters`).toBeLessThanOrEqual(title.lineHeight * 3 + 1);
+      expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width + 1);
+      await summary.focus(); await page.keyboard.press('Space'); await expect(stored).not.toHaveAttribute('open');
+      await page.keyboard.press('Escape'); await expect(button).toBeFocused();
     }
   }
-  await summary.focus(); await page.keyboard.press('Space'); await expect(row.locator('details')).not.toHaveAttribute('open');
   await noStoredPayload(page);
 });

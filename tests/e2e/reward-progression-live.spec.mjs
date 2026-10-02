@@ -102,10 +102,16 @@ for (const theme of ['light', 'dark', 'dominion-night', 'dominion-platinum']) {
     await page.keyboard.press('Escape');
     await expect(prayer.getByRole('button', { name: 'View progress for 21-Day Prayer Track' })).toBeFocused();
     await expect(page.locator('html')).toHaveAttribute('data-theme', theme);
-    // Focus restoration scrolls the sticky navigation into its collapsed
-    // state. Audit the settled UI, not partially faded transition labels.
+    // Focus restoration scrolls the sticky navigation and reveal section.
+    // WebKit can report no running animations before the composited reveal
+    // opacity has settled. Require the actual section styles as well; never
+    // exempt contrast findings or disable motion to conceal a transient UI.
     await expect.poll(() => page.evaluate(() => document.getAnimations().filter(animation =>
       animation.playState === 'running' && Number.isFinite(animation.effect?.getTiming().iterations)).length)).toBe(0);
+    const catalogSection = page.locator('.rewards-catalog-section');
+    await expect(catalogSection).toHaveClass(/is-visible/);
+    await expect(catalogSection).toHaveCSS('opacity', '1');
+    await expect(catalogSection).toHaveCSS('filter', 'blur(0px)');
     const dimensions = await page.evaluate(() => ({ body: document.documentElement.scrollWidth, viewport: innerWidth }));
     expect(dimensions.body).toBeLessThanOrEqual(dimensions.viewport + 1);
     assertNoBlockingAxeViolations(await analyzeAccessibility(page)); expect(state.requests).toEqual([]);
