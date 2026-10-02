@@ -393,6 +393,70 @@ test('floating launcher clears a sticky footer and yields to reward or training 
   });
   expect(auth.writes()).toEqual([]);
 });
+test('reduced-motion launcher settles without feeding its own placement transitions back into layout', async ({ context, page }) => {
+  const auth = await installFeedbackStub(context, { memberPages: true });
+  await page.setViewportSize({ width: 320, height: 764 });
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  await ready(page);
+  await page.waitForLoadState('networkidle');
+  await page.evaluate(() => {
+    document.documentElement.style.fontSize = '200%';
+    const footer = document.createElement('footer'); footer.id = 'synthetic-reduced-motion-obstruction';
+    footer.dataset.feedbackObstruction = '';
+    Object.assign(footer.style, { position: 'fixed', right: '0', bottom: '0', width: '220px', height: '76px', zIndex: '30' });
+    document.body.append(footer);
+  });
+  await expect.poll(() => widget(page).evaluate(node => Number.parseFloat(node.style.getPropertyValue('--feedback-lift')))).toBeGreaterThan(0);
+  const idlePlacement = () => widget(page).evaluate(async node => {
+    const frame = () => new Promise(resolve => requestAnimationFrame(resolve));
+    for (let index = 0; index < 12; index += 1) await frame();
+    let styleWrites = 0; let selfTransitions = 0;
+    const observer = new MutationObserver(records => { styleWrites += records.length; });
+    observer.observe(node, { attributes: true, attributeFilter: ['style'] });
+    const transition = event => { if (event.target === node && event.propertyName === 'bottom') selfTransitions += 1; };
+    node.addEventListener('transitionend', transition);
+    const position = () => {
+      const rect = node.getBoundingClientRect();
+      return [scrollX, scrollY, rect.x, rect.y, rect.width, rect.height];
+    };
+    const original = position(); let geometryChanged = false;
+    for (let index = 0; index < 24; index += 1) {
+      await frame();
+      if (position().some((value, offset) => value !== original[offset])) geometryChanged = true;
+    }
+    observer.disconnect(); node.removeEventListener('transitionend', transition);
+    return { styleWrites, selfTransitions, geometryChanged };
+  });
+  for (const height of [76, 180, 112, 76]) {
+    await page.locator('#synthetic-reduced-motion-obstruction').evaluate((node, value) => { node.style.height = `${value}px`; }, height);
+    await expect.poll(() => widget(page).evaluate(node => {
+      const style = getComputedStyle(node), rect = node.getBoundingClientRect();
+      const value = name => Number.parseFloat(style.getPropertyValue(name)) || 0;
+      const bottom = Number.parseFloat(style.bottom);
+      const expected = value('--feedback-inset') + value('--feedback-safe-bottom')
+        + value('--feedback-viewport-bottom') + value('--feedback-lift');
+      const footer = document.querySelector('#synthetic-reduced-motion-obstruction').getBoundingClientRect();
+      return { noPlacementTransition: style.transitionProperty === 'none',
+        bottomMatchesLift: bottom === expected, rectMatchesBottom: innerHeight - rect.bottom === bottom,
+        clearsFooter: rect.bottom + 8 <= footer.top };
+    })).toEqual({ noPlacementTransition: true, bottomMatchesLift: true, rectMatchesBottom: true, clearsFooter: true });
+    expect(await idlePlacement()).toEqual({ styleWrites: 0, selfTransitions: 0, geometryChanged: false });
+  }
+  const placement = await launcherPlacement(page);
+  expect(placement).toMatchObject({ visible: true, target: true, inViewport: true, obstructed: false });
+  // At 200% text, four-pixel corner probes sit outside the enlarged rounded
+  // corners. Probe the center and inset edge midpoints inside the painted shape.
+  expect(await widget(page).evaluate(node => {
+    const rect = node.getBoundingClientRect();
+    const x = rect.left + rect.width / 2, y = rect.top + rect.height / 2;
+    return [[x, y], [rect.left + 4, y], [rect.right - 4, y], [x, rect.top + 4], [x, rect.bottom - 4]]
+      .every(([left, top]) => { const hit = document.elementFromPoint(left, top); return hit === node || node.contains(hit); });
+  })).toBe(true);
+  const trigger = await widget(page).boundingBox();
+  const footer = await page.locator('#synthetic-reduced-motion-obstruction').boundingBox();
+  expect(trigger.y + trigger.height + 8).toBeLessThanOrEqual(footer.y);
+  expect(auth.writes()).toEqual([]);
+});
 for (const motion of ['transition', 'animation']) test(`floating launcher recovers after transform-only ${motion} without scrolling or resizing`, async ({ context, page }, testInfo) => {
   const auth = await installFeedbackStub(context, { memberPages: true });
   await page.setViewportSize({ width: 320, height: 764 });

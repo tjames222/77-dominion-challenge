@@ -28,6 +28,9 @@ body[data-feedback-mounted] {
   box-shadow: 0 3px 14px rgb(0 0 0 / .18);
   font: 700 .65rem/1.2 var(--font-sans, sans-serif);
   cursor: pointer;
+  /* Placement removes its lift before measuring the base anchor. Even the
+   * shared reduced-motion duration must not interpolate that geometry. */
+  transition-property: none;
 }
 .feedback-widget:focus-visible { outline: 3px solid var(--focus-ring); outline-offset: 3px; }
 .feedback-widget svg { width: 1.4rem; height: 1.4rem; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }

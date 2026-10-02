@@ -113,6 +113,12 @@ export function mountFeedbackWidget({ client, owner, beforeOpen = () => {}, buil
     if (destroyed || placementFrame) return;
     placementFrame = ownerWindow.requestAnimationFrame(settlePlacement);
   }
+  function handleMotionSettlement(event) {
+    // Placement can itself transition bottom under shared reduced-motion
+    // styles. Only surrounding content may schedule a settlement recheck.
+    if (event.target === button || button.contains(event.target)) return;
+    schedulePlacement();
+  }
   function update() {
     if (destroyed) return;
     const retry = Boolean(dialog?.hasPendingIntent());
@@ -131,7 +137,7 @@ export function mountFeedbackWidget({ client, owner, beforeOpen = () => {}, buil
     dialog?.destroy(); dialog = null; button.remove();
     if (placementFrame) ownerWindow.cancelAnimationFrame(placementFrame);
     ownerDocument.removeEventListener('scroll', schedulePlacement, true);
-    for (const event of FEEDBACK_SETTLEMENT_EVENTS) ownerDocument.removeEventListener(event, schedulePlacement, true);
+    for (const event of FEEDBACK_SETTLEMENT_EVENTS) ownerDocument.removeEventListener(event, handleMotionSettlement, true);
     ownerWindow.removeEventListener('resize', schedulePlacement);
     ownerWindow.visualViewport?.removeEventListener('resize', schedulePlacement);
     ownerWindow.visualViewport?.removeEventListener('scroll', schedulePlacement);
@@ -150,7 +156,7 @@ export function mountFeedbackWidget({ client, owner, beforeOpen = () => {}, buil
   ownerDocument.addEventListener('scroll', schedulePlacement, { passive: true, capture: true });
   // Transform motion does not resize its box or mutate styles as it settles.
   // Recheck once at its boundary so a temporarily obstructed launcher recovers.
-  for (const event of FEEDBACK_SETTLEMENT_EVENTS) ownerDocument.addEventListener(event, schedulePlacement, { passive: true, capture: true });
+  for (const event of FEEDBACK_SETTLEMENT_EVENTS) ownerDocument.addEventListener(event, handleMotionSettlement, { passive: true, capture: true });
   ownerWindow.addEventListener('resize', schedulePlacement, { passive: true });
   ownerWindow.visualViewport?.addEventListener('resize', schedulePlacement, { passive: true });
   ownerWindow.visualViewport?.addEventListener('scroll', schedulePlacement, { passive: true });
