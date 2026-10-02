@@ -429,6 +429,42 @@ test('floating launcher clears a sticky footer and yields to reward or training 
   });
   expect(auth.writes()).toEqual([]);
 });
+for (const motion of ['transition', 'animation']) test(`floating launcher recovers after transform-only ${motion} without scrolling or resizing`, async ({ context, page }, testInfo) => {
+  const auth = await installFeedbackStub(context, { memberPages: true });
+  await page.setViewportSize({ width: 320, height: 764 });
+  await ready(page);
+  await page.waitForLoadState('networkidle');
+  await page.evaluate(() => Promise.all(document.getAnimations()
+    .filter(animation => Number.isFinite(animation.effect?.getTiming().iterations))
+    .map(animation => animation.finished.catch(() => undefined))));
+  const originalScroll = await page.evaluate(() => scrollY);
+  await page.addStyleTag({ content: '@keyframes synthetic-feedback-clear { from { transform: translateY(0); } to { transform: translateY(110vh); } }' });
+  await page.evaluate(() => {
+    const obstruction = document.createElement('div'); obstruction.id = 'synthetic-moving-obstruction';
+    obstruction.dataset.feedbackObstruction = '';
+    Object.assign(obstruction.style, { position: 'fixed', inset: '0', zIndex: '30', transition: 'transform 250ms linear' });
+    document.body.append(obstruction);
+  });
+  await expect(widget(page)).toHaveAttribute('data-obstructed');
+  await expect(widget(page)).toBeHidden();
+  await page.evaluate(kind => new Promise(resolve => {
+    const obstruction = document.querySelector('#synthetic-moving-obstruction');
+    obstruction.addEventListener(`${kind}end`, resolve, { once: true });
+    if (kind === 'transition') obstruction.style.transform = 'translateY(110vh)';
+    else obstruction.style.animation = 'synthetic-feedback-clear 250ms linear forwards';
+  }), motion);
+  // No DOM removal, scroll, resize, or synthetic event may rescue placement.
+  // The connected obstruction is now outside the viewport solely via motion.
+  expect(await page.locator('#synthetic-moving-obstruction').evaluate(node =>
+    node.isConnected && node.getBoundingClientRect().top > innerHeight)).toBe(true);
+  await expect.poll(async () => {
+    const result = await launcherPlacement(page);
+    return result.visible && result.hits && result.target && result.inViewport && result.overlaps === 0 && !result.obstructed;
+  }).toBe(true);
+  expect(await page.evaluate(() => scrollY)).toBe(originalScroll);
+  await page.screenshot({ path: testInfo.outputPath(`floating-feedback-${motion}-settled.png`) });
+  expect(auth.writes()).toEqual([]);
+});
 test('rotation preserves one launcher, and menu/dialog closing restores the original scroll position', async ({ context, page, isMobile }) => {
   const auth = await installFeedbackStub(context, { memberPages: true });
   await page.setViewportSize({ width: 320, height: 568 });

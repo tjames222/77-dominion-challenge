@@ -6,6 +6,7 @@ import './feedback-widget.css';
 const FEEDBACK_GAP = 8;
 const FEEDBACK_HIT_GRID = 5;
 const FEEDBACK_PLACEMENT_PASSES = 10;
+const FEEDBACK_SETTLEMENT_EVENTS = ['transitionend', 'transitioncancel', 'animationend', 'animationcancel'];
 const FEEDBACK_OBSTRUCTIONS = [
   'a[href]', 'button', 'input', 'select', 'textarea', 'summary', '[role="button"]',
   'footer', '[data-sticky-secondary-tabs]', '[data-feedback-obstruction]',
@@ -130,6 +131,7 @@ export function mountFeedbackWidget({ client, owner, beforeOpen = () => {}, buil
     dialog?.destroy(); dialog = null; button.remove();
     if (placementFrame) ownerWindow.cancelAnimationFrame(placementFrame);
     ownerDocument.removeEventListener('scroll', schedulePlacement, true);
+    for (const event of FEEDBACK_SETTLEMENT_EVENTS) ownerDocument.removeEventListener(event, schedulePlacement, true);
     ownerWindow.removeEventListener('resize', schedulePlacement);
     ownerWindow.visualViewport?.removeEventListener('resize', schedulePlacement);
     ownerWindow.visualViewport?.removeEventListener('scroll', schedulePlacement);
@@ -146,6 +148,9 @@ export function mountFeedbackWidget({ client, owner, beforeOpen = () => {}, buil
   mutationObserver?.observe(ownerDocument.body, { subtree: true, childList: true, attributes: true,
     attributeFilter: ['class', 'style', 'open', 'hidden', 'inert', 'aria-hidden', 'data-dialog-open', 'data-feedback-obstruction'] });
   ownerDocument.addEventListener('scroll', schedulePlacement, { passive: true, capture: true });
+  // Transform motion does not resize its box or mutate styles as it settles.
+  // Recheck once at its boundary so a temporarily obstructed launcher recovers.
+  for (const event of FEEDBACK_SETTLEMENT_EVENTS) ownerDocument.addEventListener(event, schedulePlacement, { passive: true, capture: true });
   ownerWindow.addEventListener('resize', schedulePlacement, { passive: true });
   ownerWindow.visualViewport?.addEventListener('resize', schedulePlacement, { passive: true });
   ownerWindow.visualViewport?.addEventListener('scroll', schedulePlacement, { passive: true });
