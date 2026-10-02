@@ -303,6 +303,10 @@ for (const width of [320, 601, 1440]) test(`all fourteen routes keep feedback re
   const auth = await installFeedbackStub(context, { memberPages: true });
   for (const route of FEEDBACK_ROUTES) await test.step(route, async () => {
     await page.goto(`/${route}`); await expect(widget(page)).toHaveCount(1);
+    if (route === 'private-journal.html') {
+      await expect(page.locator('#journalForm button[type=submit]')).toBeEnabled();
+      await expect(page.locator('#journalPageError')).toBeHidden();
+    }
     await page.evaluate(() => {
       const button = document.createElement('button'); button.id = 'synthetic-overlap-action'; button.textContent = 'Private synthetic action';
       Object.assign(button.style, { width: '100%', minHeight: '52px' });
@@ -318,6 +322,38 @@ for (const width of [320, 601, 1440]) test(`all fourteen routes keep feedback re
     await page.locator('#synthetic-overlap-action').click();
     await expect(widget(page)).toBeVisible();
   });
+  expect(auth.writes()).toEqual([]);
+});
+test('journal outage keeps feedback clear and explicit retry restores the ready form at 320px', async ({ context, page }) => {
+  await page.setViewportSize({ width: 320, height: 764 });
+  const auth = await installFeedbackStub(context, { memberPages: true });
+  let unavailable = true;
+  await context.route('**/__admin_fixture__/rest/v1/rpc/get_journal_date_policy', route => unavailable
+    ? route.fulfill({ status: 503, contentType: 'application/json', headers: { 'Cache-Control': 'private, no-store' }, body: JSON.stringify({ message: 'Synthetic journal policy unavailable' }) })
+    : route.fallback());
+  await page.goto('/private-journal.html');
+  await expect(widget(page)).toHaveCount(1);
+  await expect(page.locator('#journalPageRetry')).toBeVisible();
+  await expect(page.locator('#journalForm button[type=submit]')).toBeDisabled();
+  for (const fraction of [0, .5, 1]) {
+    await page.evaluate(value => scrollTo({ top: (document.documentElement.scrollHeight - innerHeight) * value, behavior: 'instant' }), fraction);
+    await expect.poll(async () => {
+      const result = await launcherPlacement(page);
+      if (result.visible) return result.hits && result.target && result.inViewport && result.overlaps === 0;
+      return result.obstructed && await widget(page).evaluate(node => getComputedStyle(node).pointerEvents === 'none');
+    }).toBe(true);
+  }
+  unavailable = false;
+  await page.locator('#journalPageRetry').click();
+  await expect(page.locator('#journalForm button[type=submit]')).toBeEnabled();
+  await expect(page.locator('#journalPageError')).toBeHidden();
+  for (const fraction of [0, .5, 1]) {
+    await page.evaluate(value => scrollTo({ top: (document.documentElement.scrollHeight - innerHeight) * value, behavior: 'instant' }), fraction);
+    await expect.poll(async () => {
+      const result = await launcherPlacement(page);
+      return result.visible && result.hits && result.target && result.inViewport && result.overlaps === 0;
+    }).toBe(true);
+  }
   expect(auth.writes()).toEqual([]);
 });
 test('floating launcher clears a sticky footer and yields to reward or training overlays', async ({ context, page }, testInfo) => {

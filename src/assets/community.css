@@ -819,6 +819,14 @@
   gap: 10px;
 }
 .journal-pagination button { flex: 1 1 10rem; min-height: 44px; }
+@media (max-width: 768px) {
+  /* A dense, single-column form otherwise leaves no safe vertical slot for
+   * the floating launcher. Keep only its controls clear of that right edge;
+   * the card, headings, history, and modal editor retain their full widths. */
+  body[data-feedback-mounted] #journalCreateFormMount {
+    margin-inline-end: calc(44px + var(--feedback-safe-right, 0px));
+  }
+}
 .journal-date-group,
 .journal-date-entries {
   display: grid;
