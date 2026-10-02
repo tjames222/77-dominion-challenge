@@ -420,19 +420,25 @@ test('rotation preserves one launcher, and menu/dialog closing restores the orig
       bodyChild: (await launcherPlacement(page)).bodyChild })).toEqual({ fixed: true, bodyChild: true });
     await page.evaluate(async () => {
       scrollTo({ top: 900, behavior: 'instant' });
+      await Promise.all(document.getAnimations().filter(animation =>
+        Number.isFinite(animation.effect?.getTiming().iterations)).map(animation => animation.finished.catch(() => {})));
       await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
     });
-    await expect.poll(() => page.evaluate(() => scrollY)).toBe(900);
+    // Resize/scroll anchoring can settle a few pixels from the requested
+    // coordinate before either overlay opens. Restoration must match the
+    // actual original position exactly, not an assumed scrollTo result.
+    const originalScroll = await page.evaluate(() => scrollY);
+    expect(originalScroll).toBeGreaterThan(800);
     await expect(widget(page)).toBeVisible();
     await pressVisible(widget(page)); await expect(dialog(page)).toBeVisible();
     await expect(widget(page)).toBeHidden();
     await page.keyboard.press('Escape'); await expect(widget(page)).toBeFocused();
-    await expect.poll(() => page.evaluate(() => scrollY)).toBe(900);
+    await expect.poll(() => page.evaluate(() => scrollY)).toBe(originalScroll);
     await pressVisible(page.locator('.global-menu-button'));
     await expect(page.locator('.global-menu')).toBeVisible(); await expect(widget(page)).toBeHidden();
     await page.keyboard.press('Escape'); await expect(page.locator('.global-menu')).toBeHidden();
     await expect(widget(page)).toBeVisible();
-    await expect.poll(() => page.evaluate(() => scrollY)).toBe(900);
+    await expect.poll(() => page.evaluate(() => scrollY)).toBe(originalScroll);
     expect((await launcherPlacement(page)).hits).toBe(true);
   }
   expect(auth.writes()).toEqual([]);
