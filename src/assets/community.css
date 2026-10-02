@@ -822,9 +822,13 @@
 @media (max-width: 768px) {
   /* A dense, single-column form otherwise leaves no safe vertical slot for
    * the floating launcher. Keep only its controls clear of that right edge;
-   * the card, headings, history, and modal editor retain their full widths. */
+   * scale the reserve when text enlarges the launcher. The card, headings,
+   * history, and modal editor retain their full widths. */
   body[data-feedback-mounted] #journalCreateFormMount {
-    margin-inline-end: calc(44px + var(--feedback-safe-right, 0px));
+    margin-inline-end: calc(44px + max(0px, var(--feedback-size, 3.5rem) - 56px) + var(--feedback-safe-right, 0px));
+  }
+  body[data-feedback-mounted] #journalCreateFormMount > form {
+    overflow-wrap: anywhere;
   }
 }
 .journal-date-group,

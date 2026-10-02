@@ -324,6 +324,56 @@ for (const width of [320, 601, 1440]) test(`all fourteen routes keep feedback re
   });
   expect(auth.writes()).toEqual([]);
 });
+for (const width of [320, 601]) test(`journal form and floating launcher stay usable at 200% text at ${width}px`, async ({ context, page }, testInfo) => {
+  await page.setViewportSize({ width, height: 764 });
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  const auth = await installFeedbackStub(context, { memberPages: true });
+  await page.goto('/private-journal.html');
+  await expect(widget(page)).toHaveCount(1);
+  await expect(page.locator('#journalForm button[type=submit]')).toBeEnabled();
+  await expect(page.locator('#journalPageError')).toBeHidden();
+  expect(await page.locator('#journalCreateFormMount').evaluate(node => getComputedStyle(node).marginInlineEnd)).toBe('44px');
+  await page.evaluate(async () => { await document.fonts.ready; document.documentElement.style.fontSize = '200%'; });
+  await page.waitForLoadState('networkidle');
+  const form = page.locator('#journalForm');
+  await form.getByLabel('Mood').selectOption('Focused');
+  await form.getByLabel('Energy').selectOption('High');
+  await form.getByLabel('What did today reveal?', { exact: true }).fill('Synthetic large-text journal draft.');
+  await expect.poll(() => form.evaluate(node => {
+    const mount = node.parentElement.getBoundingClientRect(), bounds = node.getBoundingClientRect();
+    return bounds.left >= mount.left && bounds.right <= mount.right + 1
+      && [...node.children].every(child => child.scrollWidth <= child.clientWidth + 1)
+      && [...node.querySelectorAll('input, select, textarea, button')].every(control => {
+        const rect = control.getBoundingClientRect(); return rect.left >= bounds.left && rect.right <= bounds.right + 1;
+      })
+      && document.documentElement.scrollWidth <= innerWidth + 1;
+  })).toBe(true);
+  for (const fraction of [0, .25, .5, .75, 1]) {
+    await page.evaluate(value => scrollTo({ top: (document.documentElement.scrollHeight - innerHeight) * value, behavior: 'instant' }), fraction);
+    await expect.poll(() => widget(page).evaluate(async node => {
+      const geometry = () => { const rect = node.getBoundingClientRect(); return [scrollY, rect.x, rect.y, rect.width, rect.height, node.style.getPropertyValue('--feedback-lift')]; };
+      const before = JSON.stringify(geometry());
+      for (let frame = 0; frame < 6; frame += 1) await new Promise(requestAnimationFrame);
+      return before === JSON.stringify(geometry());
+    })).toBe(true);
+    await expect.poll(async () => {
+      const result = await launcherPlacement(page);
+      // At 200% text the 24px rounded corners exclude the standard 4px
+      // corner points. Sample the painted edge midpoints and center instead;
+      // retain the complete control-overlap, viewport, and target checks.
+      const hits = await widget(page).evaluate(node => {
+        const rect = node.getBoundingClientRect(), x = rect.left + rect.width / 2, y = rect.top + rect.height / 2;
+        return [[rect.left + 4, y], [rect.right - 4, y], [x, rect.top + 4], [x, rect.bottom - 4], [x, y]]
+          .every(([left, top]) => { const hit = document.elementFromPoint(left, top); return hit === node || node.contains(hit); });
+      });
+      return result.visible && hits && result.target && result.inViewport && result.overlaps === 0
+        && !result.obstructed && !result.overflow;
+    }).toBe(true);
+    if (fraction === .5 || fraction === 1) await page.screenshot({ path: testInfo.outputPath(`journal-200-percent-${width}-${fraction}.png`) });
+  }
+  await expect(form.getByLabel('What did today reveal?', { exact: true })).toHaveValue('Synthetic large-text journal draft.');
+  expect(auth.writes()).toEqual([]);
+});
 test('journal outage keeps feedback clear and explicit retry restores the ready form at 320px', async ({ context, page }) => {
   await page.setViewportSize({ width: 320, height: 764 });
   const auth = await installFeedbackStub(context, { memberPages: true });
