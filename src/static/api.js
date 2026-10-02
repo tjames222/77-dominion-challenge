@@ -161,7 +161,7 @@ const MOCK_INVITE_SESSIONS_KEY = 'dominion:mockCrewInviteSessions';
 const MOCK_INVITE_ATTRIBUTIONS_KEY = 'dominion:mockCrewInviteAttributions';
 const MOCK_CREW_TRAINING_KEY = 'dominion:crewTraining';
 const MOCK_POSTS_KEY = 'dominion:mockCommunityPosts';
-const MOCK_JOURNAL_KEY = 'dominion:mockJournalEntries';
+export const MOCK_JOURNAL_KEY = 'dominion:mockJournalEntries';
 const MOCK_CHALLENGE_STATES_KEY = 'dominion:mockChallengeStates';
 const MOCK_CHALLENGE_ACTIVATION_KEY = 'dominion:mockChallengeActivation';
 const MOCK_CHALLENGE_ACTIVATION_REQUESTS_KEY = 'dominion:mockChallengeActivationRequests';
@@ -244,7 +244,7 @@ const getMockUser = () => readJson('dominion:user', {
   authenticated: true,
 });
 
-const mockIdentityHash = (value) => {
+export const mockIdentityHash = (value) => {
   let hash = 2166136261;
   for (const character of String(value || '')) {
     hash ^= character.codePointAt(0);
@@ -266,7 +266,7 @@ const preserveAdoptedMockLegacyActivation = (resolution) => {
   claimPreviewLegacyOwner(localStorage, resolution.userId);
 };
 
-const getMockUserId = () => {
+export const getMockUserId = () => {
   if (isHybridAuthPreview()) {
     const ownerId = readPreviewAuthOwner(localStorage);
     if (!ownerId) throw new Error('You need to log in again.');
@@ -301,7 +301,7 @@ async function loadPreviewChallengeRuntime() {
   ({ buildMockRewardCatalogV2 } = rewards);
 }
 let previewAggregateTransaction = null;
-function readPreviewAggregate(actorId) {
+export function readPreviewAggregate(actorId) {
   if (previewAggregateTransaction?.actorId === actorId) return previewAggregateTransaction;
   const raw = localStorage.getItem(`${PREVIEW_AGGREGATE_PREFIX}${actorId}`);
   if (raw === null) return null;
@@ -464,7 +464,7 @@ const requireSupabaseAuthentication = () => {
   return supabase;
 };
 
-function persistHybridAuthUser(authUser, fallbackName) {
+export function persistHybridAuthUser(authUser, fallbackName) {
   const ownerId = bindPreviewAuthOwner(localStorage, authUser?.id);
   const profile = readPreviewUserValue(
     localStorage,

@@ -795,6 +795,30 @@
   gap: 28px;
   padding-block: 8px;
 }
+.journal-history,
+.journal-history-heading,
+.journal-page-error {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+}
+.journal-history { gap: 20px; }
+.journal-history-heading h3,
+.journal-history-heading p,
+.journal-page-error p { margin: 0; }
+.journal-history-heading p { color: var(--text-muted); }
+.journal-page-error[hidden] { display: none; }
+.journal-page-error {
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+}
+.journal-pagination {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+.journal-pagination button { flex: 1 1 10rem; min-height: 44px; }
 .journal-date-group,
 .journal-date-entries {
   display: grid;

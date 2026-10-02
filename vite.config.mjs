@@ -39,6 +39,13 @@ export function resolveTrainingModulePreloads(filename, dependencies, { hostType
     // Preloading it again is redundant and WebKit may fetch it twice.
     return dependencies.filter((dependency) => !optionalTrainingJs.test(dependency));
   }
+  // Journal has the same explicit, draft-aware reload recovery. Its own
+  // redundant JS preload also survives a failed no-store response in WebKit;
+  // preserve every other dependency and let native import fetch this module.
+  const journalApplicationJs = /(?:^|\/)journal-api-application(?:-[\w-]+)?\.js$/;
+  if (hostType === 'js' && journalApplicationJs.test(filename)) {
+    return dependencies.filter((dependency) => !journalApplicationJs.test(dependency));
+  }
   return dependencies;
 }
 
