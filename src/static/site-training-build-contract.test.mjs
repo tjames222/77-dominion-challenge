@@ -28,6 +28,18 @@ test(`only the dynamically imported ${chunk} skips its redundant JavaScript prel
 });
 }
 
+test('the dynamic Journal application omits only its own redundant JS preload for explicit reload recovery', () => {
+  const target = 'assets/journal-api-application-hash.js';
+  const dependencies = [target, 'assets/auth-shared-hash.js', 'assets/public-shell-hash.js',
+    'assets/journal-api-application-hash.css', 'assets/site-training-ui-hash.js'];
+  assert.deepEqual(resolveTrainingModulePreloads(target, dependencies, { hostType: 'js' }), dependencies.slice(1));
+  assert.equal(dependencies.length, 5, 'the input remains unchanged');
+  assert.equal(resolveTrainingModulePreloads(target, dependencies, { hostType: 'html' }), dependencies);
+  for (const other of ['assets/privateJournal-hash.js', 'assets/journal-api-adapter-hash.js', 'assets/journal-reader-hash.js']) {
+    assert.equal(resolveTrainingModulePreloads(other, dependencies, { hostType: 'js' }), dependencies);
+  }
+});
+
 test('shared menu grouping includes only its existing shell and leaves feature modules optional', () => {
   assert.equal(isSharedMenuModule('/project/src/static/menu.js'), true);
   assert.equal(isSharedMenuModule('\0vite/modulepreload-polyfill.js'), false);

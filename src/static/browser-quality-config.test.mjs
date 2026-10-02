@@ -58,7 +58,7 @@ const workflowJob = (id) => {
 
 test('two standard-runner shards preserve preliminary checks and the full main matrix', () => {
   const preflight = workflowJob('preflight');
-  for (const command of ['pnpm test', 'pnpm build', 'pnpm test:e2e:auth', 'pnpm test:e2e:mfa', 'pnpm test:e2e:admin', 'pnpm test:e2e:daily-bootstrap', 'pnpm test:e2e:preview-badges', 'pnpm test:e2e:app-streak', 'pnpm test:e2e:original77', 'pnpm test:e2e:reward-progression']) {
+  for (const command of ['pnpm test', 'pnpm build', 'pnpm test:e2e:auth', 'pnpm test:e2e:mfa', 'pnpm test:e2e:admin', 'pnpm test:e2e:journal', 'pnpm test:e2e:daily-bootstrap', 'pnpm test:e2e:preview-badges', 'pnpm test:e2e:app-streak', 'pnpm test:e2e:original77', 'pnpm test:e2e:reward-progression']) {
     assert.ok(preflight.includes(`run: ${command}\n`), `Missing preliminary ${command}`);
   }
   const shards = workflowJob('browser-shards');
@@ -231,6 +231,53 @@ test('deferred App Streak is a required compiled Chromium and WebKit gate using 
   assert.match(config, /name: 'streak-webkit'.*devices\['iPhone 13'\]/);
   assert.match(config, /outputFolder: 'playwright-report'/);
   assert.doesNotMatch(config, /supabase\.co|SUPABASE_ACCESS_TOKEN|SERVICE_ROLE_KEY|CLOUDFLARE_API_TOKEN/);
+});
+
+test('bounded Journal history is an unconditional compiled local-provider gate without removing mock coverage', async () => {
+  const { default: config } = await import('../../playwright.journal.config.mjs');
+  const { default: standard } = await import('../../playwright.config.mjs');
+  const configSource = readFileSync(new URL('../../playwright.journal.config.mjs', import.meta.url), 'utf8');
+  const browserSpec = readFileSync(new URL('../../tests/e2e/journal-history-live.spec.mjs', import.meta.url), 'utf8');
+  const preflight = workflowJob('preflight');
+  const step = preflight.split('      - name: Verify bounded journal history and session isolation\n')[1]?.split('\n      - name:')[0];
+  assert.ok(step, 'Missing required Journal preflight step');
+  assert.equal(packageJson.scripts['test:e2e:journal'], 'playwright test --config=playwright.journal.config.mjs');
+  assert.match(step, /^\s+run: pnpm test:e2e:journal\s*$/);
+  assert.doesNotMatch(step, /\bif:|continue-on-error|--grep|--project/);
+  assert.doesNotMatch(preflight, /^    if:/m, 'The Journal preflight job must not be conditional');
+
+  assert.equal(config.testMatch.source, 'journal-history-live\\.spec\\.mjs');
+  assert.equal(config.retries, 0);
+  assert.equal(config.webServer.reuseExistingServer, false);
+  assert.equal(config.use.serviceWorkers, 'block');
+  assert.match(config.use.baseURL, /^http:\/\/127\.0\.0\.1:\d+$/);
+  assert.match(config.webServer.command, /^pnpm exec vite build --outDir \/tmp\/77dc-journal-e2e-dist-\d+ && pnpm exec vite preview --outDir \/tmp\/77dc-journal-e2e-dist-\d+ --host 127\.0\.0\.1 --port \d+ --strictPort$/);
+  assert.equal(config.webServer.env.VITE_ENABLE_MOCKS, 'false');
+  assert.equal(config.webServer.env.VITE_ENABLE_PRODUCTION_CONNECTIONS, 'true');
+  assert.equal(config.webServer.env.VITE_ENABLE_SUPABASE_AUTH_IN_MOCKS, 'false');
+  assert.equal(config.webServer.env.VITE_ENABLE_E2E_FIXTURES, 'false');
+  assert.equal(config.webServer.env.VITE_SUPABASE_URL, `${config.use.baseURL}/__admin_fixture__`);
+  assert.match(config.webServer.env.VITE_SUPABASE_PUBLISHABLE_KEY, /^sb_publishable_synthetic_journal_/);
+  assert.deepEqual(config.projects.map(project => project.use.defaultBrowserType), ['chromium', 'webkit']);
+  assert.doesNotMatch(configSource, /supabase\.co|SUPABASE_ACCESS_TOKEN|SERVICE_ROLE_KEY|CLOUDFLARE_API_TOKEN/);
+
+  const isolation = browserSpec.split('test.beforeEach(')[1]?.split('test.afterEach(')[0] || '';
+  assert.match(isolation, /context\.route\('\*\*\/\*',/);
+  assert.match(isolation, /if \(url\.origin === new URL\(baseURL\)\.origin\) return route\.fallback\(\)/);
+  assert.match(isolation, /external\.push\(url\.origin\); return route\.abort\(\)/);
+  assert.match(isolation, /context\.routeWebSocket\(\/\.\*\/, socket => \{ external\.push\('WebSocket'\); socket\.close\(\); \}\)/);
+  assert.match(browserSpec, /expect\(pageErrors\.get\(page\)\)\.toEqual\(\[\]\)/);
+  assert.match(browserSpec, /expect\(externalRequests\.get\(page\)\)\.toEqual\(\[\]\)/);
+
+  const chromium = standard.projects.find(project => project.name === 'chromium-functional');
+  assert.ok(chromium);
+  const journalExclusions = chromium.testIgnore.filter(pattern => pattern.test('journal-history-live.spec.mjs'));
+  assert.deepEqual(journalExclusions.map(pattern => pattern.source), ['journal-history-live\\.spec\\.mjs']);
+  assert.equal(chromium.testIgnore.some(pattern => pattern.test('journal-entries.spec.mjs')), false);
+  const mobile = standard.projects.find(project => project.name === 'webkit-journal-mobile');
+  assert.ok(mobile);
+  assert.equal(mobile.testMatch.source, 'journal-entries\\.spec\\.mjs');
+  assert.equal(mobile.use.browserName, 'webkit');
 });
 
 test('original completion runs in its compiled real-SDK gate instead of the general mock matrix', async () => {

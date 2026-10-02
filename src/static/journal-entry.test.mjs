@@ -82,6 +82,17 @@ describe('text-only private journal', () => {
     assert.deepEqual(entries.map((entry) => entry.id), ['morning', 'yesterday', 'evening']);
   });
 
+  test('retains exact server tuple ordering when grouping a bounded history page', () => {
+    const entries = [
+      { id: 'a', date: '2026-08-13', createdAt: '2026-08-13T08:00:00.000002Z' },
+      { id: 'z', date: '2026-08-13', createdAt: '2026-08-13T08:00:00.000001Z' },
+      { id: 'b', date: '2026-08-12', createdAt: '2026-08-12T08:00:00.000000Z' },
+    ];
+    const groups = groupJournalEntriesByDate(entries, { preserveOrder: true });
+    assert.deepEqual(groups.map((group) => group.entries.map((entry) => entry.id)), [['a', 'z'], ['b']]);
+    assert.deepEqual(entries.map((entry) => entry.id), ['a', 'z', 'b']);
+  });
+
   test('preserves all six journal fields and their text-only API path', () => {
     ['date', 'mood', 'energy', 'note', 'win', 'prayer']
       .forEach((name) => assert.match(privateJournalHtml, new RegExp(`name=["']${name}["']`)));
@@ -131,8 +142,8 @@ describe('text-only private journal', () => {
     assert.match(privateJournalJs, /createJournalForm\(journalFormTemplate,[\s\S]*?formId: 'journalForm'/);
     assert.match(privateJournalJs, /createJournalForm\(journalFormTemplate,[\s\S]*?formId: 'journalEditForm'/);
     assert.match(privateJournalJs, /createDialog\(\{[\s\S]*?id: 'journalEditDialog'/);
-    assert.match(privateJournalJs, /updateJournalEntry\(\s*entryId/);
-    assert.match(privateJournalJs, /groupJournalEntriesByDate\(state\.journalEntries\)/);
+    assert.match(privateJournalJs, /ticket\.session\.updateEntry\(\s*entryId/);
+    assert.match(privateJournalJs, /groupJournalEntriesByDate\(state\.journalEntries, \{ preserveOrder: true \}\)/);
     assert.doesNotMatch(privateJournalJs, /fillJournalFormForDate|addEventListener\('change', fill/);
   });
 
@@ -141,8 +152,8 @@ describe('text-only private journal', () => {
     const initialLock = privateJournalJs.indexOf(
       "setJournalFormBusy(createForm, true, 'Loading journal…')",
     );
-    const boot = privateJournalJs.indexOf('async function bootPrivateJournal()');
-    const policyLoad = privateJournalJs.indexOf('getJournalDatePolicy({');
+    const boot = privateJournalJs.indexOf('async function bootPrivateJournal(');
+    const policyLoad = privateJournalJs.indexOf('session.getDatePolicy({');
     const finalReset = privateJournalJs.indexOf('resetJournalForm(createForm, todayKey());', policyLoad);
     const unlock = privateJournalJs.indexOf('setJournalFormBusy(createForm, false);', finalReset);
 
@@ -154,6 +165,19 @@ describe('text-only private journal', () => {
         && finalReset > policyLoad
         && unlock > finalReset,
     );
+  });
+
+  test('pages keep only cursor metadata and use explicit loading, retry and owner fences', () => {
+    assert.match(privateJournalHtml, /id="journalPageStatus" role="status" aria-live="polite"/);
+    for (const id of ['journalPageNewer', 'journalPageOlder', 'journalPageNewest', 'journalPageRetry']) {
+      assert.match(privateJournalHtml, new RegExp(`id="${id}"`));
+    }
+    assert.match(privateJournalJs, /state\.journalEntries = \[\];\s*renderPaging\(\);/);
+    assert.match(privateJournalJs, /state\.pageCursors\.length = pageIndex \+ 1/);
+    assert.match(privateJournalJs, /session\.readPage\(\{ cursor, signal: controller\.signal \}\)/);
+    assert.match(privateJournalJs, /request !== state\.pageRequest\s*\|\| !await currentView\(ticket, \(\) => request === state\.pageRequest/);
+    assert.match(privateJournalJs, /on this page/);
+    assert.doesNotMatch(privateJournalJs, /getJournalEntries|state\.journalEntries\.push|localStorage\.setItem/);
   });
 
   test('removes every supported photo hook while retaining responsive layout', () => {

@@ -49,9 +49,26 @@
         <section class="composer-card card" data-section-surface="accent">
           <p class="eyebrow">New Entry</p>
           <div id="journalCreateFormMount" data-training-target="private-journal-entry"></div>
+          <button class="secondary" id="journalReconcile" type="button" hidden>Review entries before saving again</button>
         </section>
 
-        <div class="journey-timeline" id="journalTimeline" data-section-surface="plain" data-training-target="private-journal-timeline"></div>
+        <section class="journal-history" data-section-surface="plain" aria-labelledby="journalHistoryTitle">
+          <header class="journal-history-heading">
+            <h3 id="journalHistoryTitle" tabindex="-1">Recent entries</h3>
+            <p id="journalPageStatus" role="status" aria-live="polite">Loading journal entries…</p>
+          </header>
+          <div id="journalPageError" class="journal-page-error" hidden>
+            <p role="alert">Your entries couldn’t load. Retry to load this page.</p>
+            <button class="secondary" id="journalPageRetry" type="button">Retry loading entries</button>
+            <button class="secondary" id="journalPageReload" type="button" hidden>Reload journal</button>
+          </div>
+          <div class="journey-timeline" id="journalTimeline" aria-busy="true" data-section-surface="plain" data-training-target="private-journal-timeline"></div>
+          <nav class="journal-pagination" aria-label="Journal history pages">
+            <button class="secondary" id="journalPageNewer" type="button" disabled>Newer entries</button>
+            <button class="secondary" id="journalPageNewest" type="button" disabled>Back to newest</button>
+            <button class="secondary" id="journalPageOlder" type="button" disabled>Older entries</button>
+          </nav>
+        </section>
       </section>
     </main>
 

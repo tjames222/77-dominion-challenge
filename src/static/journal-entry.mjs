@@ -32,9 +32,11 @@ export function sortJournalEntries(entries) {
   return [...entries].sort(compareJournalEntries);
 }
 
-export function groupJournalEntriesByDate(entries) {
+export function groupJournalEntriesByDate(entries, { preserveOrder = false } = {}) {
   const groups = [];
-  for (const entry of sortJournalEntries(entries)) {
+  // Paged responses already carry the exact PostgreSQL tuple order, including
+  // microseconds that JavaScript Date cannot represent. Do not re-sort them.
+  for (const entry of preserveOrder ? entries : sortJournalEntries(entries)) {
     const lastGroup = groups.at(-1);
     if (lastGroup?.date === entry.date) {
       lastGroup.entries.push(entry);
