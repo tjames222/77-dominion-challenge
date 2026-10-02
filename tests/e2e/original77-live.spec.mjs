@@ -116,6 +116,28 @@ async function ready(page) {
   // listener registration. Wait for boot's final reveal before dispatching
   // a synthetic focus event, otherwise the test can race an absent listener.
   await expect(page.locator('.dashboard-hero')).toHaveClass(/is-visible/);
+  // On mobile, implicit click scrolling can still move the page between
+  // pointer-down and pointer-up while the scorecard reveals. Settle that
+  // setup first, without bypassing the normal click or submission assertions.
+  const postButton = page.locator('#checkInButton');
+  await postButton.evaluate(button => button.scrollIntoView({ behavior: 'instant', block: 'center' }));
+  await expect(page.locator('#check-in')).toHaveClass(/is-visible/);
+  await expect.poll(() => postButton.evaluate(async button => {
+    const geometry = () => {
+      const rect = button.getBoundingClientRect();
+      return [window.scrollX, window.scrollY, rect.x, rect.y, rect.width, rect.height];
+    };
+    const before = geometry();
+    for (let frame = 0; frame < 3; frame += 1) {
+      await new Promise(resolve => requestAnimationFrame(resolve));
+    }
+    const after = geometry();
+    const moving = document.getAnimations().some(animation => (
+      Number.isFinite(animation.effect?.getComputedTiming().iterations)
+      && animation.playState !== 'finished'
+    ));
+    return !moving && before.every((value, index) => value === after[index]);
+  }), { timeout: 10000, message: 'Check-in scroll and reveal geometry must settle before clicking' }).toBe(true);
 }
 async function complete(page) {
   await expect(page.locator('#challengeDay')).toHaveText('77 of 77 check-ins');
