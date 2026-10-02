@@ -59,3 +59,10 @@ test('feedback launcher is always a safe-area fixed control and never a header s
     assert.ok(css.includes(selector), `missing overlay guard: ${selector}`);
   }
 });
+
+test('motion settlement uses the bounded scheduler and removes every captured listener on teardown', () => {
+  assert.match(source, /FEEDBACK_SETTLEMENT_EVENTS = \['transitionend', 'transitioncancel', 'animationend', 'animationcancel'\]/u);
+  assert.match(source, /for \(const event of FEEDBACK_SETTLEMENT_EVENTS\) ownerDocument\.addEventListener\(event, schedulePlacement, \{ passive: true, capture: true \}\)/u);
+  assert.match(source, /for \(const event of FEEDBACK_SETTLEMENT_EVENTS\) ownerDocument\.removeEventListener\(event, schedulePlacement, true\)/u);
+  assert.match(source, /function schedulePlacement\(\) \{\s*if \(destroyed \|\| placementFrame\) return;/u);
+});
