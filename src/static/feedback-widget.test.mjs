@@ -50,6 +50,7 @@ test('feedback launcher is always a safe-area fixed control and never a header s
   assert.match(css, /bottom:[^;]*--feedback-safe-bottom[^;]*--feedback-viewport-bottom[^;]*--feedback-lift/u);
   assert.match(css, /--feedback-safe-top:\s*env\(safe-area-inset-top,\s*0px\)/u);
   assert.match(css, /min-width:\s*44px;[\s\S]*?min-height:\s*44px;/u);
+  assert.match(css, /\.feedback-widget\s*\{[\s\S]*?transition-property:\s*none;/u);
   assert.match(css, /\.feedback-widget\[data-obstructed\][\s\S]*?visibility:\s*hidden;\s*pointer-events:\s*none;/u);
   assert.match(css, /body\.challenge-finished \.feedback-widget\s*\{\s*z-index:\s*1180;/u);
   assert.match(css, /body\.challenge-finished \.app-dialog-layer\[data-pattern="feedback"\]\s*\{\s*z-index:\s*1185;/u);
@@ -62,7 +63,26 @@ test('feedback launcher is always a safe-area fixed control and never a header s
 
 test('motion settlement uses the bounded scheduler and removes every captured listener on teardown', () => {
   assert.match(source, /FEEDBACK_SETTLEMENT_EVENTS = \['transitionend', 'transitioncancel', 'animationend', 'animationcancel'\]/u);
-  assert.match(source, /for \(const event of FEEDBACK_SETTLEMENT_EVENTS\) ownerDocument\.addEventListener\(event, schedulePlacement, \{ passive: true, capture: true \}\)/u);
-  assert.match(source, /for \(const event of FEEDBACK_SETTLEMENT_EVENTS\) ownerDocument\.removeEventListener\(event, schedulePlacement, true\)/u);
+  assert.match(source, /for \(const event of FEEDBACK_SETTLEMENT_EVENTS\) ownerDocument\.addEventListener\(event, handleMotionSettlement, \{ passive: true, capture: true \}\)/u);
+  assert.match(source, /for \(const event of FEEDBACK_SETTLEMENT_EVENTS\) ownerDocument\.removeEventListener\(event, handleMotionSettlement, true\)/u);
   assert.match(source, /function schedulePlacement\(\) \{\s*if \(destroyed \|\| placementFrame\) return;/u);
+});
+
+test('launcher and descendant motion never feeds placement back into itself', () => {
+  const handler = source.match(/function handleMotionSettlement\(event\) \{[\s\S]*?\n  \}/u)?.[0];
+  assert.ok(handler, 'motion settlement must retain its source-visible event boundary');
+  const icon = {}, path = {}, label = {}, obstruction = {}, unrelated = {};
+  const descendants = new Set([icon, path, label]);
+  const button = { contains: node => descendants.has(node) };
+  let scheduled = 0;
+  const settle = new Function('button', 'schedulePlacement', `return (${handler});`)(button, () => { scheduled += 1; });
+  for (const type of ['transitionend', 'transitioncancel', 'animationend', 'animationcancel']) {
+    for (const target of [button, icon, path, label]) settle({ type, target });
+    assert.equal(scheduled, 0);
+  }
+  for (const type of ['transitionend', 'transitioncancel', 'animationend', 'animationcancel']) {
+    settle({ type, target: obstruction });
+    settle({ type, target: unrelated });
+  }
+  assert.equal(scheduled, 8, 'all surrounding motion boundaries still reach the coalesced scheduler');
 });
