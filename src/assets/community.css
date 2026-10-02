@@ -795,6 +795,42 @@
   gap: 28px;
   padding-block: 8px;
 }
+.journal-history,
+.journal-history-heading,
+.journal-page-error {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+}
+.journal-history { gap: 20px; }
+.journal-history-heading h3,
+.journal-history-heading p,
+.journal-page-error p { margin: 0; }
+.journal-history-heading p { color: var(--text-muted); }
+.journal-page-error[hidden] { display: none; }
+.journal-page-error {
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+}
+.journal-pagination {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+.journal-pagination button { flex: 1 1 10rem; min-height: 44px; }
+@media (max-width: 768px) {
+  /* A dense, single-column form otherwise leaves no safe vertical slot for
+   * the floating launcher. Keep only its controls clear of that right edge;
+   * scale the reserve when text enlarges the launcher. The card, headings,
+   * history, and modal editor retain their full widths. */
+  body[data-feedback-mounted] #journalCreateFormMount {
+    margin-inline-end: calc(44px + max(0px, var(--feedback-size, 3.5rem) - 56px) + var(--feedback-safe-right, 0px));
+  }
+  body[data-feedback-mounted] #journalCreateFormMount > form {
+    overflow-wrap: anywhere;
+  }
+}
 .journal-date-group,
 .journal-date-entries {
   display: grid;

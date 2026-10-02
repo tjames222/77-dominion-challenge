@@ -109,6 +109,7 @@ export default defineConfig({
         /recovery-mfa\.spec\.mjs/,
         /admin-live\.spec\.mjs/,
         /feedback-live\.spec\.mjs/,
+        /journal-history-live\.spec\.mjs/,
         /app-streak-live\.spec\.mjs/,
         /original77-live\.spec\.mjs/,
         /reward-progression-live\.spec\.mjs/,
@@ -144,6 +145,12 @@ export default defineConfig({
     {
       name: 'webkit-admin-mobile',
       testMatch: /admin-preview\.spec\.mjs/,
+      metadata: { breakpoint: 'mobile', theme: 'dark', colorScheme: 'dark' },
+      use: { ...devices['iPhone 13'], browserName: 'webkit', viewport: { width: 390, height: 844 } },
+    },
+    {
+      name: 'webkit-journal-mobile',
+      testMatch: /journal-entries\.spec\.mjs/,
       metadata: { breakpoint: 'mobile', theme: 'dark', colorScheme: 'dark' },
       use: { ...devices['iPhone 13'], browserName: 'webkit', viewport: { width: 390, height: 844 } },
     },

@@ -1,20 +1,26 @@
 import { installAdminStub } from './admin-supabase-stub.mjs';
 import { dailyBootstrapV2Fixture, rewardCatalogV2Fixture } from '../../fixtures/daily-action-bootstrap-v2.mjs';
 const json = (route, value, status = 200) => route.fulfill({ status, contentType: 'application/json', headers: { 'Cache-Control': 'private, no-store' }, body: JSON.stringify(value) });
-// Same real SDK/Auth transport as the established Admin suite. Only these two
-// new RPCs are modeled; this is not a claim about SQL's independently tested
-// authorization or delivery. Actors/tokens must be explicitly issued here.
+// Same real SDK/Auth transport as the established Admin suite. Feedback RPCs
+// and read-only member-page fixtures are modeled here; this is not a claim
+// about SQL authorization or delivery. Actors/tokens must be explicitly issued.
 export async function installFeedbackStub(context, { active = true, malformed = false, aal = 'aal2', memberPages = false } = {}) {
   const auth = await installAdminStub(context, { role: 'member', aal });
   const tokens = new Map([[auth.firstSession.access_token, auth.A]]);
   const calls = [], receipts = new Map(); let mode = ''; let hold = null;
-  if (memberPages) await context.route(/\/__admin_fixture__\/rest\/v1\/(?:entitlements|rpc\/(?:get_daily_action_bootstrap_v2|get_challenge_activation_v2|get_daily_standard_draft_v2|get_challenge_check_ins_v2|get_reward_catalog_v2|bootstrap_daily_standard_time_zone))(?:\?|$)/, async route => {
+  if (memberPages) await context.route(/\/__admin_fixture__\/rest\/v1\/(?:entitlements|rpc\/(?:get_daily_action_bootstrap_v2|get_challenge_activation_v2|get_daily_standard_draft_v2|get_challenge_check_ins_v2|get_reward_catalog_v2|bootstrap_daily_standard_time_zone|get_journal_date_policy))(?:\?|$)/, async route => {
     const actor = tokens.get(route.request().headers().authorization?.replace(/^Bearer /, ''));
     if (!actor) return json(route, { code: 'PT401', message: 'member_authentication_required' }, 401);
     const path = new URL(route.request().url()).pathname;
     // Keep the authenticated member-page fixture current. A stale canonical
     // day causes the real controller to rehydrate repeatedly while scrolling.
     const now = new Date();
+    if (path.endsWith('/get_journal_date_policy')) {
+      if (route.request().method() !== 'POST' || route.request().postDataJSON().target_expected_actor_id !== actor) {
+        return json(route, { code: 'PT401', message: 'member_authentication_required' }, 401);
+      }
+      return json(route, { time_zone: 'UTC', today: now.toISOString().slice(0, 10) });
+    }
     const data = dailyBootstrapV2Fixture({ actorId: actor, status: 'active', appAccess: true,
       entryDate: now.toISOString().slice(0, 10), timeZone: 'UTC' });
     data.asOf = now.toISOString();

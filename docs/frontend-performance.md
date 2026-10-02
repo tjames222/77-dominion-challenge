@@ -402,6 +402,77 @@ all-chunk accounting, and interim budgets remain unchanged.
 This is a local incremental reduction, not deployed timing evidence or the
 40%/25% completion target. FOU-1501 remains open.
 
+## Bounded Private Journal history (FOU-1501 slice)
+
+The journal route requests at most 26 rows: 25 displayed entries and one
+lookahead indicating whether an older page exists. It does not request an exact
+count or prefetch older pages. Only the current page's note bodies remain in the
+view; Newer navigation retains cursor metadata rather than prior page contents.
+Same-day counts explicitly describe entries **on this page**, not a daily total.
+
+Production reads retain the explicit actor filter and existing owner/membership
+RLS. The ordering is `entry_date DESC, created_at DESC, id DESC`, using the existing
+`journal_entries_user_date_created_id_idx` index. A continuation uses the raw
+date/timestamp/UUID tuple from displayed entry 25, not the lookahead row. Timestamp
+comparison preserves PostgreSQL microseconds and timezone offsets; grouping does
+not re-sort that order through JavaScript's millisecond-only `Date` conversion.
+Existing future-dated historical entries remain readable. The write-date policy
+is separate and unchanged. No schema, grant, index, or RPC change is included.
+
+The route opens a private session handle through a lazy adapter and reuses the
+existing Auth runtime. Canonical user/MFA checks, the exact captured bearer and
+synchronous lifecycle epoch fence reads and writes before and after transport.
+Account replacement, sign-out and A-to-B-to-A changes scrub entries and drafts;
+a benign same-session token refresh preserves the draft but invalidates old reads.
+Only identical in-flight page reads coalesce. Settled page bodies are not cached,
+and preview reads use the captured actor's aggregate or side-effect-free storage
+peek without migrating or rewriting stored journal data.
+
+An unconfirmed dispatched save is never automatically retried or described as
+rolled back. The UI requires an explicit read-only review and warns that the
+earlier save may exist on an older page and another save can create a duplicate.
+Paging is not a database snapshot: concurrent edits can change the ordered
+history between page requests. These safeguards do not add mutation idempotency.
+
+A failed journal-code download offers an explicit, draft-aware reload confirmation
+rather than retrying a browser-cached failed module. Only the Journal application
+chunk's redundant dynamic JavaScript preload is omitted; CSS, shared dependencies
+and HTML preloads remain unchanged. Compiled Chromium/WebKit tests verify a
+503/no-store failure, cancel-with-draft-preserved, and recovery after confirmation.
+
+Paired local main/mock-preview builds at the same embedded source SHA
+`4c9d0bc935af9b954f88c4a895521489d58a24c7` retain all 29 routes' initial request
+counts and keep the new reader, adapter and application bridge lazy. The small
+entry module belongs only to Private Journal. Canonical preview Rewards changed
+from 146720 to 146779 gzip bytes, below the unchanged 146842 ceiling; all interim
+preview budgets pass. Main-mode graphs were measured separately and are not the
+canonical mock-preview budget gate. These are working-tree build measurements,
+not deployed timing evidence or completion of the final reduction targets.
+
+### Query-plan limit: this is not constant-work deep pagination
+
+A PostgreSQL 17.6 diagnostic used a fresh isolated fixture of released schema 71,
+actual authenticated RLS, and 400,000 synthetic rows. It compared spread dates,
+dense same-day entries, and identical date/timestamp ties, with a separate actor's
+rows present. All 21 cases returned the same 26 rows as the tuple-comparison
+reference. No customer data or hosted database was used.
+
+| Query at depth 90,000 | Rows returned | Prior rows removed by filter |
+| --- | ---: | ---: |
+| REST-compatible OR continuation, all three distributions | 26 | 90,000 |
+| OR plus redundant date bound, spread dates | 26 | 1 |
+| OR plus redundant date bound, dense dates | 26 | 90,000 |
+| Tuple-comparison reference, all three distributions | 26 | 0 |
+
+The first page used the existing owner/order index and returned 26 rows without
+filtering prior history. The actual REST OR continuation still scans preceding
+rows at deep positions. The tuple-comparison reference is **not** the emitted
+REST query and is not evidence that the deployed API has constant database work.
+This change bounds startup, transferred row count, and rendered history. Journal
+text fields have no existing length cap, so it does not establish an absolute
+response-byte ceiling. Further server-side query work and all remaining
+FOU-1501 bundle, round-trip, and deployed timing targets remain open.
+
 ## Interim automated budgets
 
 `pnpm run check:frontend-performance` audits a freshly built canonical mock preview
