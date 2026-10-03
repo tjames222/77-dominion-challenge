@@ -1,16 +1,16 @@
 body[data-feedback-mounted] {
   --feedback-size: 3.5rem;
   --feedback-inset: 16px;
-  --feedback-safe-top: env(safe-area-inset-top, 0px);
   --feedback-safe-right: env(safe-area-inset-right, 0px);
   --feedback-safe-bottom: env(safe-area-inset-bottom, 0px);
 }
 .feedback-widget {
   position: fixed;
   right: calc(var(--feedback-inset, 16px) + var(--feedback-safe-right, 0px) + var(--feedback-viewport-right, 0px));
-  bottom: calc(var(--feedback-inset, 16px) + var(--feedback-safe-bottom, 0px) + var(--feedback-viewport-bottom, 0px) + var(--feedback-lift, 0px));
-  /* Above the primary header, below the menu and application overlays. */
-  z-index: 150;
+  bottom: calc(var(--feedback-inset, 16px) + var(--feedback-safe-bottom, 0px) + var(--feedback-viewport-bottom, 0px));
+  /* Above normal content, including the finished Dashboard. Overlay guards
+   * below yield interaction to menus, dialogs, training and celebrations. */
+  z-index: 1180;
   width: var(--feedback-size, 3.5rem);
   height: var(--feedback-size, 3.5rem);
   min-width: 44px;
@@ -28,13 +28,12 @@ body[data-feedback-mounted] {
   box-shadow: 0 3px 14px rgb(0 0 0 / .18);
   font: 700 .65rem/1.2 var(--font-sans, sans-serif);
   cursor: pointer;
-  /* Placement removes its lift before measuring the base anchor. Even the
-   * shared reduced-motion duration must not interpolate that geometry. */
+  /* Keep viewport inset changes immediate, including under shared motion CSS. */
   transition-property: none;
 }
 .feedback-widget:focus-visible { outline: 3px solid var(--focus-ring); outline-offset: 3px; }
 .feedback-widget svg { width: 1.4rem; height: 1.4rem; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
-.feedback-widget[hidden], .feedback-widget[data-obstructed], body.menu-open .feedback-widget,
+.feedback-widget[hidden], body.menu-open .feedback-widget,
 body[data-dialog-open] .feedback-widget,
 body:has(dialog:modal) .feedback-widget,
 body:has(.permanent-reward-celebration) .feedback-widget,
@@ -43,13 +42,9 @@ body:has(.reward-toast.active) .feedback-widget,
 body:has(.badge-celebration.active) .feedback-widget,
 body:has(.crew-training-layer:not([hidden])) .feedback-widget,
 body:has(.site-training-layer:not([hidden])) .feedback-widget { visibility: hidden; pointer-events: none; }
-/* The finished Dashboard shell intentionally rises above normal navigation,
- * while its reward backdrop remains the interaction owner at layer 1190. */
-body.challenge-finished .feedback-widget { z-index: 1180; }
-body.challenge-finished .app-dialog-layer[data-pattern="feedback"] { z-index: 1185; }
-@media (prefers-reduced-motion: no-preference) {
-  .feedback-widget:hover { transform: translateY(-1px); }
-}
+/* Opening the foreground launcher must also put its dialog above page content,
+ * while the finished Dashboard reward backdrop retains its layer 1190. */
+.app-dialog-layer[data-pattern="feedback"] { z-index: 1185; }
 @media (max-width: 600px) {
   body[data-feedback-mounted] { --feedback-size: 3.25rem; --feedback-inset: 10px; }
   .feedback-widget svg { width: 22px; height: 22px; }

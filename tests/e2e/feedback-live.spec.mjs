@@ -143,8 +143,8 @@ test('profile feedback stays reachable when content arrives during the first scr
     function addLateContent() {
       if (!window.scrollY || !document.querySelector('[data-feedback-widget]')) return;
       window.removeEventListener('scroll', addLateContent);
-      // Model late hydration after the first scroll target was measured. The
-      // reserved placement keeps this new action separate without hiding feedback.
+      // Model late hydration after the first scroll target was measured. New
+      // page content must pass behind the fixed launcher without moving it.
       const section = document.createElement('section');
       section.id = 'synthetic-late-profile-content'; section.style.height = '144px';
       const action = document.createElement('button');
@@ -159,10 +159,9 @@ test('profile feedback stays reachable when content arrives during the first scr
   await expect.poll(() => page.evaluate(() => Math.abs(document.documentElement.scrollHeight - (window.scrollY + window.innerHeight)))).toBeLessThanOrEqual(1);
   await expect(widget(page)).toBeVisible();
   await expect(widget(page)).not.toHaveAttribute('data-obstructed');
-  const trigger = await widget(page).boundingBox();
-  const action = await page.getByRole('button', { name: 'Synthetic late profile action', exact: true }).boundingBox();
-  expect(action.x + action.width <= trigger.x || trigger.x + trigger.width <= action.x
-    || action.y + action.height <= trigger.y || trigger.y + trigger.height <= action.y).toBe(true);
+  expect(await launcherPlacement(page)).toMatchObject({ visible: true, hits: true, anchored: true, fixed: true, bodyChild: true });
+  await page.getByRole('button', { name: 'Synthetic late profile action', exact: true }).click();
+  expect(await launcherPlacement(page)).toMatchObject({ visible: true, hits: true, anchored: true });
   expect(auth.writes()).toEqual([]);
 });
 
@@ -172,41 +171,112 @@ async function launcherPlacement(page) {
     const viewport = window.visualViewport;
     const left = viewport?.offsetLeft || 0, top = viewport?.offsetTop || 0;
     const visible = getComputedStyle(node).visibility === 'visible' && !node.hidden;
-    const points = [[rect.left + 4, rect.top + 4], [rect.right - 4, rect.top + 4],
-      [rect.left + 4, rect.bottom - 4], [rect.right - 4, rect.bottom - 4],
-      [rect.left + rect.width / 2, rect.top + rect.height / 2]];
+    // Painted midpoints remain inside the rounded corners at 200% text.
+    const x = rect.left + rect.width / 2, y = rect.top + rect.height / 2;
+    const points = [[rect.left + 4, y], [rect.right - 4, y], [x, rect.top + 4], [x, rect.bottom - 4], [x, y]];
     const hits = points.every(([x, y]) => { const hit = document.elementFromPoint(x, y); return hit === node || node.contains(hit); });
-    const header = node.closest('.topbar');
-    const headerBottom = header?.getBoundingClientRect().bottom || 0;
     const style = getComputedStyle(node);
     const inset = Number.parseFloat(style.getPropertyValue('--feedback-inset')) || 0;
     const safeRight = Number.parseFloat(style.getPropertyValue('--feedback-safe-right')) || 0;
     const safeBottom = Number.parseFloat(style.getPropertyValue('--feedback-safe-bottom')) || 0;
-    const overlaps = [...document.querySelectorAll('main button, main a, main input, main select, main textarea, main summary, main [role="button"]')]
-      .filter(control => {
-        if (control === node || getComputedStyle(control).visibility !== 'visible') return false;
-        // Scrolled content behind the existing sticky header is outside the
-        // exposed page area. Every other header control must remain separate.
-        return [...control.getClientRects()].some(other => {
-          const exposedTop = header && !header.contains(control) ? Math.max(other.top, headerBottom) : other.top;
-          return other.width > 0 && other.bottom > exposedTop && other.left < rect.right
-            && other.right > rect.left && exposedTop < rect.bottom && other.bottom > rect.top;
-        });
-      }).length;
-    return { visible, hits, overlaps, target: rect.width >= 44 && rect.height >= 44,
+    const rightGap = left + (viewport?.width || innerWidth) - rect.right;
+    const bottomGap = top + (viewport?.height || innerHeight) - rect.bottom;
+    return { visible, hits, target: rect.width >= 44 && rect.height >= 44,
       inViewport: rect.left >= left && rect.top >= top && rect.right <= left + (viewport?.width || innerWidth)
         && rect.bottom <= top + (viewport?.height || innerHeight),
       overflow: document.documentElement.scrollWidth > innerWidth + 1,
       fixed: getComputedStyle(node).position === 'fixed', bodyChild: node.parentElement === document.body,
-      rightGap: left + (viewport?.width || innerWidth) - rect.right,
-      bottomGap: top + (viewport?.height || innerHeight) - rect.bottom,
+      rightGap, bottomGap,
       inset, safeRight, safeBottom,
       rightSafe: left + (viewport?.width || innerWidth) - rect.right + .5 >= inset + safeRight,
       bottomSafe: top + (viewport?.height || innerHeight) - rect.bottom + .5 >= inset + safeBottom,
+      anchored: Math.abs(rightGap - inset - safeRight) < 1 && Math.abs(bottomGap - inset - safeBottom) < 1,
       obstructed: node.hasAttribute('data-obstructed'), position: { x: rect.x, y: rect.y } };
   });
 }
-for (const width of [320, 375, 440, 600, 601, 768, 1440]) test(`launcher never disappears or covers actions while Dashboard scrolls at ${width}px`, async ({ context, page }, testInfo) => {
+for (const width of [320, 1440]) test(`fixed-corner foreground launcher never follows page content during continuous scrolling at ${width}px`, async ({ context, page }, testInfo) => {
+  await page.setViewportSize({ width, height: width === 320 ? 764 : 1000 });
+  const auth = await installFeedbackStub(context, { memberPages: true });
+  await page.goto('/dashboard.html'); await expect(widget(page)).toBeVisible();
+  await expect(page.locator('#selectAllActionsButton')).toBeEnabled();
+  await page.evaluate(async () => {
+    await document.fonts.ready;
+    await Promise.all(document.getAnimations().filter(animation => Number.isFinite(animation.effect?.getTiming().iterations))
+      .map(animation => animation.finished.catch(() => undefined)));
+    scrollTo({ top: 0, behavior: 'instant' });
+  });
+  const baseline = await widget(page).boundingBox();
+  await page.evaluate(() => {
+    const footer = document.createElement('footer'); footer.id = 'synthetic-fixed-foreground-footer';
+    footer.dataset.feedbackObstruction = '';
+    Object.assign(footer.style, { position: 'fixed', bottom: '0', right: '0', width: '240px', height: '180px', zIndex: '1100', background: '#246' });
+    const action = document.createElement('button'); action.textContent = 'Underlying footer action';
+    Object.assign(action.style, { width: '100%', height: '100%' }); footer.append(action); document.body.append(footer);
+  });
+  await page.screenshot({ path: testInfo.outputPath(`fixed-corner-foreground-${width}-before-scroll.png`) });
+  await expect.poll(async () => {
+    const result = await launcherPlacement(page), box = await widget(page).boundingBox();
+    return result.visible && result.hits && !result.obstructed && box.x === baseline.x && box.y === baseline.y;
+  }).toBe(true);
+  const scrolling = await widget(page).evaluate(async node => {
+    const positions = [];
+    let styleWrites = 0;
+    const observer = new MutationObserver(records => { styleWrites += records.length; });
+    observer.observe(node, { attributes: true, attributeFilter: ['style'] });
+    const sample = () => {
+      const rect = node.getBoundingClientRect(), style = getComputedStyle(node);
+      const hit = document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2);
+      positions.push({ scroll: scrollY, x: rect.x, y: rect.y, visible: style.visibility === 'visible',
+        hit: hit === node || node.contains(hit), obstructed: node.hasAttribute('data-obstructed') });
+    };
+    // Actual document scroll positions across consecutive animation frames,
+    // not dispatched scroll events or measurements only after a final settle.
+    for (const direction of [1, -1]) for (let frame = 0; frame <= 60; frame += 1) {
+      const fraction = direction === 1 ? frame / 60 : 1 - frame / 60;
+      scrollTo({ top: (document.documentElement.scrollHeight - innerHeight) * fraction, behavior: 'instant' });
+      if (direction === 1 && frame === 20) {
+        const late = document.createElement('section'); late.style.height = '400px';
+        late.textContent = 'Late normal-flow content'; document.querySelector('main').append(late);
+      }
+      await new Promise(requestAnimationFrame); sample();
+    }
+    const continuousCount = positions.length;
+    // Also exercise native smooth scrolling. Inspect every rendered frame so
+    // transient sticking cannot be hidden by a passing final geometry check.
+    let smoothReached = true;
+    for (const target of [document.documentElement.scrollHeight - innerHeight, 0]) {
+      scrollTo({ top: target, behavior: 'smooth' });
+      let stable = 0;
+      for (let frame = 0; frame < 240 && stable < 3; frame += 1) {
+        await new Promise(requestAnimationFrame); sample();
+        stable = Math.abs(scrollY - target) <= 1 ? stable + 1 : 0;
+      }
+      smoothReached &&= stable === 3;
+    }
+    observer.disconnect();
+    return { positions, continuousCount, smoothReached, styleWrites };
+  });
+  const samples = scrolling.positions;
+  await testInfo.attach('fixed-corner-scroll-geometry', { contentType: 'application/json',
+    body: JSON.stringify({ viewport: page.viewportSize(), baseline, ...scrolling }, null, 2) });
+  expect(scrolling.smoothReached).toBe(true);
+  expect(scrolling.styleWrites).toBe(0);
+  expect(new Set(samples.slice(scrolling.continuousCount).map(sample => sample.scroll)).size).toBeGreaterThan(2);
+  expect(new Set(samples.map(sample => sample.scroll)).size).toBeGreaterThan(50);
+  for (const sample of samples) expect(sample).toMatchObject({ x: baseline.x, y: baseline.y, visible: true, hit: true, obstructed: false });
+  await page.screenshot({ path: testInfo.outputPath(`fixed-corner-foreground-${width}-after-scroll.png`) });
+  await widget(page).click(); await expect(dialog(page)).toBeVisible(); await expect(widget(page)).toBeHidden();
+  await expect.poll(() => dialog(page).evaluate(node => {
+    const rect = node.getBoundingClientRect(), x = rect.left + rect.width / 2, y = rect.top + rect.height / 2;
+    return [[x, y], [x, rect.top + 8], [x, rect.bottom - 8], [rect.left + 8, y], [rect.right - 8, y]]
+      .every(([left, top]) => { const hit = document.elementFromPoint(left, top); return hit === node || node.contains(hit); });
+  })).toBe(true);
+  await page.keyboard.press('Escape'); await expect(widget(page)).toBeFocused();
+  await widget(page).click(); await expect(dialog(page)).toBeVisible();
+  await page.keyboard.press('Escape'); await expect(widget(page)).toBeFocused();
+  expect(auth.writes()).toEqual([]);
+});
+for (const width of [320, 375, 440, 600, 601, 768, 1440]) test(`launcher stays fixed and foreground while Dashboard scrolls at ${width}px`, async ({ context, page }, testInfo) => {
   await page.setViewportSize({ width, height: width === 320 ? 568 : width === 1440 ? 1000 : 764 });
   const auth = await installFeedbackStub(context, { memberPages: true });
   await page.goto('/dashboard.html'); await expect(widget(page)).toBeVisible();
@@ -225,13 +295,13 @@ for (const width of [320, 375, 440, 600, 601, 768, 1440]) test(`launcher never d
     }, fraction);
     await expect.poll(async () => {
       const result = await launcherPlacement(page);
-      return { visible: result.visible, hits: result.hits, overlaps: result.overlaps, target: result.target,
+      return { visible: result.visible, hits: result.hits, anchored: result.anchored, target: result.target,
         inViewport: result.inViewport, overflow: result.overflow, fixed: result.fixed, bodyChild: result.bodyChild,
         rightSafe: result.rightSafe, bottomSafe: result.bottomSafe, obstructed: result.obstructed };
-    }).toEqual({ visible: true, hits: true, overlaps: 0, target: true, inViewport: true, overflow: false,
+    }).toEqual({ visible: true, hits: true, anchored: true, target: true, inViewport: true, overflow: false,
       fixed: true, bodyChild: true, rightSafe: true, bottomSafe: true, obstructed: false });
     const current = (await launcherPlacement(page)).position;
-    position ||= current; expect(current.x).toBe(position.x);
+    position ||= current; expect(current).toEqual(position);
   }
   await page.screenshot({ path: testInfo.outputPath(`dashboard-launcher-${width}.png`) });
   expect(auth.writes()).toEqual([]);
@@ -316,7 +386,7 @@ for (const width of [320, 601, 1440]) test(`all fourteen routes keep feedback re
       await page.evaluate(fraction => scrollTo({ top: (document.documentElement.scrollHeight - innerHeight) * fraction, behavior: 'instant' }), fraction);
       await expect.poll(async () => {
         const result = await launcherPlacement(page);
-        return result.visible && result.hits && result.target && result.inViewport && result.overlaps === 0;
+        return result.visible && result.hits && result.target && result.inViewport && result.anchored;
       }).toBe(true);
     }
     await page.locator('#synthetic-overlap-action').click();
@@ -351,22 +421,14 @@ for (const width of [320, 601]) test(`journal form and floating launcher stay us
   for (const fraction of [0, .25, .5, .75, 1]) {
     await page.evaluate(value => scrollTo({ top: (document.documentElement.scrollHeight - innerHeight) * value, behavior: 'instant' }), fraction);
     await expect.poll(() => widget(page).evaluate(async node => {
-      const geometry = () => { const rect = node.getBoundingClientRect(); return [scrollY, rect.x, rect.y, rect.width, rect.height, node.style.getPropertyValue('--feedback-lift')]; };
+      const geometry = () => { const rect = node.getBoundingClientRect(); return [scrollY, rect.x, rect.y, rect.width, rect.height]; };
       const before = JSON.stringify(geometry());
       for (let frame = 0; frame < 6; frame += 1) await new Promise(requestAnimationFrame);
       return before === JSON.stringify(geometry());
     })).toBe(true);
     await expect.poll(async () => {
       const result = await launcherPlacement(page);
-      // At 200% text the 24px rounded corners exclude the standard 4px
-      // corner points. Sample the painted edge midpoints and center instead;
-      // retain the complete control-overlap, viewport, and target checks.
-      const hits = await widget(page).evaluate(node => {
-        const rect = node.getBoundingClientRect(), x = rect.left + rect.width / 2, y = rect.top + rect.height / 2;
-        return [[rect.left + 4, y], [rect.right - 4, y], [x, rect.top + 4], [x, rect.bottom - 4], [x, y]]
-          .every(([left, top]) => { const hit = document.elementFromPoint(left, top); return hit === node || node.contains(hit); });
-      });
-      return result.visible && hits && result.target && result.inViewport && result.overlaps === 0
+      return result.visible && result.hits && result.target && result.inViewport && result.anchored
         && !result.obstructed && !result.overflow;
     }).toBe(true);
     if (fraction === .5 || fraction === 1) await page.screenshot({ path: testInfo.outputPath(`journal-200-percent-${width}-${fraction}.png`) });
@@ -374,7 +436,7 @@ for (const width of [320, 601]) test(`journal form and floating launcher stay us
   await expect(form.getByLabel('What did today reveal?', { exact: true })).toHaveValue('Synthetic large-text journal draft.');
   expect(auth.writes()).toEqual([]);
 });
-test('journal outage keeps feedback clear and explicit retry restores the ready form at 320px', async ({ context, page }) => {
+test('journal outage keeps feedback anchored and explicit retry restores the ready form at 320px', async ({ context, page }) => {
   await page.setViewportSize({ width: 320, height: 764 });
   const auth = await installFeedbackStub(context, { memberPages: true });
   let unavailable = true;
@@ -389,8 +451,7 @@ test('journal outage keeps feedback clear and explicit retry restores the ready 
     await page.evaluate(value => scrollTo({ top: (document.documentElement.scrollHeight - innerHeight) * value, behavior: 'instant' }), fraction);
     await expect.poll(async () => {
       const result = await launcherPlacement(page);
-      if (result.visible) return result.hits && result.target && result.inViewport && result.overlaps === 0;
-      return result.obstructed && await widget(page).evaluate(node => getComputedStyle(node).pointerEvents === 'none');
+      return result.visible && result.hits && result.target && result.inViewport && result.anchored && !result.obstructed;
     }).toBe(true);
   }
   unavailable = false;
@@ -401,12 +462,12 @@ test('journal outage keeps feedback clear and explicit retry restores the ready 
     await page.evaluate(value => scrollTo({ top: (document.documentElement.scrollHeight - innerHeight) * value, behavior: 'instant' }), fraction);
     await expect.poll(async () => {
       const result = await launcherPlacement(page);
-      return result.visible && result.hits && result.target && result.inViewport && result.overlaps === 0;
+      return result.visible && result.hits && result.target && result.inViewport && result.anchored;
     }).toBe(true);
   }
   expect(auth.writes()).toEqual([]);
 });
-test('floating launcher clears a sticky footer and yields to reward or training overlays', async ({ context, page }, testInfo) => {
+test('floating launcher stays in front of a sticky footer and yields to reward or training overlays', async ({ context, page }, testInfo) => {
   const auth = await installFeedbackStub(context, { memberPages: true });
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto('/dashboard.html'); await expect(widget(page)).toBeVisible();
@@ -416,32 +477,33 @@ test('floating launcher clears a sticky footer and yields to reward or training 
   await page.evaluate(() => {
     const footer = document.createElement('footer'); footer.id = 'synthetic-sticky-footer';
     footer.dataset.feedbackObstruction = '';
-    Object.assign(footer.style, { position: 'fixed', right: '0', bottom: '0', width: '220px', height: '76px', zIndex: '30' });
+    Object.assign(footer.style, { position: 'fixed', right: '0', bottom: '0', width: '220px', height: '76px', zIndex: '1100' });
     const action = document.createElement('button'); action.type = 'button'; action.textContent = 'Sticky test action';
     action.addEventListener('click', () => { document.body.dataset.stickyActionClicked = 'true'; });
     Object.assign(action.style, { width: '100%', height: '100%' }); footer.append(action); document.body.append(footer);
   });
   await expect.poll(async () => {
     const trigger = await widget(page).boundingBox(); const footer = await page.locator('#synthetic-sticky-footer').boundingBox();
-    return { clear: trigger.y + trigger.height + 8 <= footer.y, placement: await launcherPlacement(page) };
-  }).toMatchObject({ clear: true, placement: { fixed: true, bodyChild: true, obstructed: false } });
+    return { overlapsFooter: trigger.y + trigger.height > footer.y, placement: await launcherPlacement(page) };
+  }).toMatchObject({ overlapsFooter: true, placement: { visible: true, hits: true, anchored: true, fixed: true, bodyChild: true, obstructed: false } });
   await page.getByRole('button', { name: 'Sticky test action', exact: true }).click();
   await expect(page.locator('body')).toHaveAttribute('data-sticky-action-clicked', 'true');
   await page.locator('#synthetic-sticky-footer').evaluate(node => { node.style.height = '180px'; });
   await expect.poll(async () => {
-    const trigger = await widget(page).boundingBox(); const footer = await page.locator('#synthetic-sticky-footer').boundingBox();
-    return trigger.y + trigger.height + 8 <= footer.y;
-  }).toBe(true);
-  await page.screenshot({ path: testInfo.outputPath('floating-feedback-sticky-clearance.png') });
+    const placement = await launcherPlacement(page);
+    return { position: placement.position, visible: placement.visible, hits: placement.hits, anchored: placement.anchored };
+  }).toEqual({ position: baseline.position, visible: true, hits: true, anchored: true });
+  await page.screenshot({ path: testInfo.outputPath('floating-feedback-sticky-foreground.png') });
   await page.locator('#synthetic-sticky-footer').evaluate(node => node.remove());
   await expect.poll(async () => (await launcherPlacement(page)).bottomGap).toBe(baseline.bottomGap);
   await page.evaluate(() => {
     const obstruction = document.createElement('div'); obstruction.id = 'synthetic-full-obstruction';
     obstruction.dataset.feedbackObstruction = '';
-    Object.assign(obstruction.style, { position: 'fixed', inset: '0', zIndex: '30' }); document.body.append(obstruction);
+    Object.assign(obstruction.style, { position: 'fixed', inset: '0', zIndex: '1100' }); document.body.append(obstruction);
   });
-  await expect(widget(page)).toBeHidden();
-  await expect(widget(page)).toHaveAttribute('data-obstructed');
+  await expect(widget(page)).toBeVisible();
+  await expect(widget(page)).not.toHaveAttribute('data-obstructed');
+  expect(await launcherPlacement(page)).toMatchObject({ visible: true, hits: true, anchored: true, position: baseline.position });
   await page.locator('#synthetic-full-obstruction').evaluate(node => node.remove());
   await expect(widget(page)).toBeVisible();
   await expect(widget(page)).not.toHaveAttribute('data-obstructed');
@@ -479,7 +541,7 @@ test('floating launcher clears a sticky footer and yields to reward or training 
   });
   expect(auth.writes()).toEqual([]);
 });
-test('reduced-motion launcher settles without feeding its own placement transitions back into layout', async ({ context, page }) => {
+test('reduced-motion launcher has no placement writes or movement when surrounding content resizes', async ({ context, page }) => {
   const auth = await installFeedbackStub(context, { memberPages: true });
   await page.setViewportSize({ width: 320, height: 764 });
   await page.emulateMedia({ reducedMotion: 'reduce' });
@@ -489,10 +551,11 @@ test('reduced-motion launcher settles without feeding its own placement transiti
     document.documentElement.style.fontSize = '200%';
     const footer = document.createElement('footer'); footer.id = 'synthetic-reduced-motion-obstruction';
     footer.dataset.feedbackObstruction = '';
-    Object.assign(footer.style, { position: 'fixed', right: '0', bottom: '0', width: '220px', height: '76px', zIndex: '30' });
+    Object.assign(footer.style, { position: 'fixed', right: '0', bottom: '0', width: '220px', height: '76px', zIndex: '1100' });
     document.body.append(footer);
   });
-  await expect.poll(() => widget(page).evaluate(node => Number.parseFloat(node.style.getPropertyValue('--feedback-lift')))).toBeGreaterThan(0);
+  await expect.poll(async () => (await launcherPlacement(page)).anchored).toBe(true);
+  const baseline = (await launcherPlacement(page)).position;
   const idlePlacement = () => widget(page).evaluate(async node => {
     const frame = () => new Promise(resolve => requestAnimationFrame(resolve));
     for (let index = 0; index < 12; index += 1) await frame();
@@ -520,13 +583,13 @@ test('reduced-motion launcher settles without feeding its own placement transiti
       const value = name => Number.parseFloat(style.getPropertyValue(name)) || 0;
       const bottom = Number.parseFloat(style.bottom);
       const expected = value('--feedback-inset') + value('--feedback-safe-bottom')
-        + value('--feedback-viewport-bottom') + value('--feedback-lift');
-      const footer = document.querySelector('#synthetic-reduced-motion-obstruction').getBoundingClientRect();
+        + value('--feedback-viewport-bottom');
       return { noPlacementTransition: style.transitionProperty === 'none',
-        bottomMatchesLift: bottom === expected, rectMatchesBottom: innerHeight - rect.bottom === bottom,
-        clearsFooter: rect.bottom + 8 <= footer.top };
-    })).toEqual({ noPlacementTransition: true, bottomMatchesLift: true, rectMatchesBottom: true, clearsFooter: true });
+        bottomMatchesAnchor: bottom === expected, rectMatchesBottom: innerHeight - rect.bottom === bottom,
+        noLift: !node.style.getPropertyValue('--feedback-lift') };
+    })).toEqual({ noPlacementTransition: true, bottomMatchesAnchor: true, rectMatchesBottom: true, noLift: true });
     expect(await idlePlacement()).toEqual({ styleWrites: 0, selfTransitions: 0, geometryChanged: false });
+    expect(await launcherPlacement(page)).toMatchObject({ position: baseline, visible: true, hits: true, anchored: true });
   }
   const placement = await launcherPlacement(page);
   expect(placement).toMatchObject({ visible: true, target: true, inViewport: true, obstructed: false });
@@ -540,10 +603,10 @@ test('reduced-motion launcher settles without feeding its own placement transiti
   })).toBe(true);
   const trigger = await widget(page).boundingBox();
   const footer = await page.locator('#synthetic-reduced-motion-obstruction').boundingBox();
-  expect(trigger.y + trigger.height + 8).toBeLessThanOrEqual(footer.y);
+  expect(trigger.y + trigger.height).toBeGreaterThan(footer.y);
   expect(auth.writes()).toEqual([]);
 });
-for (const motion of ['transition', 'animation']) test(`floating launcher recovers after transform-only ${motion} without scrolling or resizing`, async ({ context, page }, testInfo) => {
+for (const motion of ['transition', 'animation']) test(`floating launcher ignores surrounding ${motion} and stays anchored in front`, async ({ context, page }, testInfo) => {
   const auth = await installFeedbackStub(context, { memberPages: true });
   await page.setViewportSize({ width: 320, height: 764 });
   await ready(page);
@@ -552,28 +615,40 @@ for (const motion of ['transition', 'animation']) test(`floating launcher recove
     .filter(animation => Number.isFinite(animation.effect?.getTiming().iterations))
     .map(animation => animation.finished.catch(() => undefined))));
   const originalScroll = await page.evaluate(() => scrollY);
+  const baseline = (await launcherPlacement(page)).position;
   await page.addStyleTag({ content: '@keyframes synthetic-feedback-clear { from { transform: translateY(0); } to { transform: translateY(110vh); } }' });
   await page.evaluate(() => {
     const obstruction = document.createElement('div'); obstruction.id = 'synthetic-moving-obstruction';
     obstruction.dataset.feedbackObstruction = '';
-    Object.assign(obstruction.style, { position: 'fixed', inset: '0', zIndex: '30', transition: 'transform 250ms linear' });
+    Object.assign(obstruction.style, { position: 'fixed', inset: '0', zIndex: '1100', transition: 'transform 250ms linear' });
     document.body.append(obstruction);
   });
-  await expect(widget(page)).toHaveAttribute('data-obstructed');
-  await expect(widget(page)).toBeHidden();
-  await page.evaluate(kind => new Promise(resolve => {
+  expect(await launcherPlacement(page)).toMatchObject({ position: baseline, visible: true, hits: true, anchored: true });
+  const positions = await page.evaluate(async kind => {
     const obstruction = document.querySelector('#synthetic-moving-obstruction');
-    obstruction.addEventListener(`${kind}end`, resolve, { once: true });
+    const node = document.querySelector('[data-feedback-widget]');
+    let settled = false; const samples = [];
+    obstruction.addEventListener(`${kind}end`, () => { settled = true; }, { once: true });
     if (kind === 'transition') obstruction.style.transform = 'translateY(110vh)';
     else obstruction.style.animation = 'synthetic-feedback-clear 250ms linear forwards';
-  }), motion);
-  // No DOM removal, scroll, resize, or synthetic event may rescue placement.
-  // The connected obstruction is now outside the viewport solely via motion.
+    for (let frame = 0; frame < 90 && !settled; frame += 1) {
+      await new Promise(requestAnimationFrame);
+      const rect = node.getBoundingClientRect();
+      const hit = document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2);
+      samples.push({ x: rect.x, y: rect.y, visible: getComputedStyle(node).visibility === 'visible', hit: hit === node || node.contains(hit) });
+    }
+    return { settled, samples };
+  }, motion);
+  expect(positions.settled).toBe(true);
+  expect(positions.samples.length).toBeGreaterThan(1);
+  for (const sample of positions.samples) expect(sample).toEqual({ ...baseline, visible: true, hit: true });
+  // Foreground placement remains unchanged throughout and after page motion;
+  // no motion-event rescheduling or recovery is necessary.
   expect(await page.locator('#synthetic-moving-obstruction').evaluate(node =>
     node.isConnected && node.getBoundingClientRect().top > innerHeight)).toBe(true);
   await expect.poll(async () => {
     const result = await launcherPlacement(page);
-    return result.visible && result.hits && result.target && result.inViewport && result.overlaps === 0 && !result.obstructed;
+    return result.visible && result.hits && result.target && result.inViewport && result.anchored && !result.obstructed;
   }).toBe(true);
   expect(await page.evaluate(() => scrollY)).toBe(originalScroll);
   await page.screenshot({ path: testInfo.outputPath(`floating-feedback-${motion}-settled.png`) });
