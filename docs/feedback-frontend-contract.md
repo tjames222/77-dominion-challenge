@@ -45,21 +45,21 @@ does not reserve a header row or narrow the page content. The target is at least
 44px and scales with enlarged text. Safe-area and visual-viewport offsets are
 preserved. Rotation repositions the same button, not a second controller or owner.
 
-The launcher lifts just enough to clear underlying page actions, sticky tabs or
-footers. A fixed 5-by-5 hit-test grid inspects only the candidate rectangle and
-its small clearance margin, with at most ten relocation passes; work does not
-grow with the length of the page or its history. If no safe position is found,
-the launcher hides until the obstruction clears. It also remains hidden while
-menus, native/shared dialogs, training or reward overlays own interaction.
+The launcher stays at the same viewport corner, above normal page content,
+including sticky tabs, footers and the finished Dashboard. Content scrolls
+behind it; it never lifts, jumps or hides because a page control passes beneath
+it. Its feedback dialog also opens above normal content. The launcher remains
+hidden while menus, native/shared dialogs, training or reward overlays own interaction.
 Closing feedback restores its original scroll position and focus; it does not
 jump the document to find an unoccupied rectangle.
 
-Scroll, viewport, resize and relevant DOM changes coalesce into one animation
-frame. Encountered obstructions are observed for resize, including fixed footers;
-the launcher's own positioning writes do not schedule another frame. Owner
-teardown cancels the frame, disconnects observers and removes listeners and the
-button. Geometry reads never collect text or field values and do not change
-feedback eligibility, payloads, receipts, retry authority or service calls.
+Only window resize and visual-viewport resize/scroll events schedule an inset
+update, coalesced into one animation frame. Identical insets cause no style
+writes. There are no document-scroll listeners, content observers, collision
+scans or element geometry reads. Owner teardown cancels the frame and removes
+the same viewport listeners and button. Placement never collects text or field
+values and does not change feedback eligibility, payloads, receipts, retry
+authority or service calls.
 
 ## Fixed input and context
 
@@ -146,9 +146,10 @@ turn an already-verified receipt into an uncertain retry.
 ## Widget placement and verification
 
 The square message-icon launcher has the accessible name “Send Feedback”. It
-uses safe-area offsets without reserving page space. It hides while a menu or
-dialog is active and lifts above detected page controls; when no safe position
-is available, it hides and returns when the obstruction is gone.
+uses safe-area offsets without reserving page space. It stays fixed in the
+bottom-right foreground during scrolling, content hydration and page animation.
+It hides while a menu, dialog, training or reward overlay owns interaction, not
+because ordinary page controls pass behind it.
 Placement does not read text or field values. Editing/uncertain drafts survive
 benign same-session refresh, while owner/session loss synchronously scrubs them.
 
