@@ -195,6 +195,9 @@ async function launcherPlacement(page) {
   });
 }
 for (const width of [320, 1440]) test(`fixed-corner foreground launcher never follows page content during continuous scrolling at ${width}px`, async ({ context, page }, testInfo) => {
+  // Linux WebKit took 57s to deliver the required real-frame samples while
+  // every placement invariant passed. Leave room for setup and dialog checks.
+  test.setTimeout(90_000);
   await page.setViewportSize({ width, height: width === 320 ? 764 : 1000 });
   const auth = await installFeedbackStub(context, { memberPages: true });
   await page.goto('/dashboard.html'); await expect(widget(page)).toBeVisible();
@@ -261,8 +264,11 @@ for (const width of [320, 1440]) test(`fixed-corner foreground launcher never fo
     body: JSON.stringify({ viewport: page.viewportSize(), baseline, ...scrolling }, null, 2) });
   expect(scrolling.smoothReached).toBe(true);
   expect(scrolling.styleWrites).toBe(0);
-  expect(new Set(samples.slice(scrolling.continuousCount).map(sample => sample.scroll)).size).toBeGreaterThan(2);
-  expect(new Set(samples.map(sample => sample.scroll)).size).toBeGreaterThan(50);
+  // Native smooth interpolation is browser-defined and may jump directly to
+  // its endpoints. Actual continuous scrolling is proved by the forced-frame
+  // leg; both native endpoints and every observed frame still must be safe.
+  expect(scrolling.continuousCount).toBe(122);
+  expect(new Set(samples.slice(0, scrolling.continuousCount).map(sample => sample.scroll)).size).toBeGreaterThan(50);
   for (const sample of samples) expect(sample).toMatchObject({ x: baseline.x, y: baseline.y, visible: true, hit: true, obstructed: false });
   await page.screenshot({ path: testInfo.outputPath(`fixed-corner-foreground-${width}-after-scroll.png`) });
   await widget(page).click(); await expect(dialog(page)).toBeVisible(); await expect(widget(page)).toBeHidden();
