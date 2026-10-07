@@ -109,6 +109,43 @@ removing all network work. This is a working-tree checkpoint, not deployed timin
 or final merged-artifact evidence; remeasure the final SHA after integration.
 The final40% public/25% authenticated targets remain unmet, and no ceiling changed.
 
+## Deferred profile-photo preparation (October 6 checkpoint)
+
+Image validation, decoding, cropping, canvas drawing and WebP/JPEG encoding now
+load only after choosing a Profile photo. The initial shared API retains the
+same prepared-photo checks, trusted upload-response checks, owner paths and
+compare-and-swap behavior. No upload/RPC contract, Auth client or database change
+is included. The loader caches code only; selected files and prepared images
+remain page-owned. A changed account or newer selection fences delayed results
+and errors before they can render or re-enable controls.
+
+An import failure or 30-second timeout produces explicit save-and-reload guidance
+without an automatic retry or upload. Only the optional encoder's redundant JS
+preload is omitted, so a real HTTP 503 can recover after reload in WebKit; other
+preloads are preserved. Encoding failures retain the existing actionable copy.
+
+Comparable local Node 26.4.0 canonical mock builds used the same build-SHA input
+`488c74f1bf45cd5b89e772f43acf67a39d6662f2`, unchanged flags and unchanged budgets:
+
+| Initial JS gzip bytes | Before | After |
+| --- | ---: | ---: |
+| Landing | 137082 | 135826 |
+| Login | 141181 | 139925 |
+| Dashboard | 155840 | 154584 |
+| Rewards | 146781 | 145521 |
+| Community | 154546 | 153292 |
+| Profile | 142924 | 142028 |
+| Bible reading | 142255 | 141002 |
+
+All 29 routes retain their CSS bytes and initial request counts. The invitation
+capability-cleanup shell is unchanged. The shared Auth chunk falls from 116669
+to 115404 gzip bytes; the new optional encoder is 1706 gzip bytes (3881 raw).
+Actual-build tests keep processing outside all 29 initial graphs with both mock
+and production wiring, preserving the single Auth runtime. Browser tests exercise
+real thumbnail encoding/save, superseded selection, and real HTTP failure/reload
+recovery in Chromium and WebKit. These are local graph/functional results, not
+deployed timing or RUM. The broad FOU-1501 completion targets remain unmet.
+
 ## Changes in the first asset phase
 
 - Hashed `/assets/*` files receive one-year immutable freshness. Root HTML and

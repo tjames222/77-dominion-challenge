@@ -111,3 +111,14 @@ test('interim graph budgets prevent regressions without reporting incomplete JS 
   measured.assets.push({ path: 'assets/lazy-A1234567.js', gzip: 101 });
   assert.equal(checkFrontendPerformance(measured, budgets).violations.length, 5);
 });
+
+test('photo preparation cannot silently re-enter a budgeted initial graph', () => {
+  const budgets = { maximumSingleJsChunkGzip: 100, routes: {
+    profilePage: { maximumJsGzip: 100, targetJsGzip: 100, maximumCssGzip: 30, maximumInitialRequests: 2 },
+  } };
+  const measured = { routes: { profilePage: { js: { gzip: 80 }, css: { gzip: 20 }, requestCount: 2,
+    assets: ['assets/profile-photo-preparation-Abcd1234.js'] } }, assets: [] };
+  assert.deepEqual(checkFrontendPerformance(measured, budgets).violations, ['profilePage: optional presentation entered the initial graph']);
+  measured.routes.profilePage.assets = ['assets/profile-photo-preparation-loader-Abcd1234.js'];
+  assert.equal(checkFrontendPerformance(measured, budgets).pass, true);
+});
