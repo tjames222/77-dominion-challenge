@@ -71,6 +71,8 @@ jobs:
         run: pnpm run test:profile-photo-cleanup-cron
       - name: Test production profile-photo cleanup Cron policy
         run: pnpm run test:production-profile-photo-cleanup-cron
+      - name: Test local-only Cron lint fixture boundaries
+        run: node --test scripts/prepare-ci-cron-lint.test.mjs
       - name: Validate migration execution compatibility
         run: pnpm run check:migrations
       - name: Test the migration compatibility gate
@@ -208,7 +210,18 @@ jobs:
       - name: Check local database security and performance advisors
         run: supabase db advisors --local --type all --level info --fail-on error
       - name: Lint canonical application SQL
-        run: supabase db lint --local --schema public,private --level warning --fail-on error
+        run: |
+          node scripts/prepare-ci-cron-lint.mjs --prepare
+          cleanup_cron_lint() {
+            lint_status=$?
+            trap - EXIT
+            if ! node scripts/prepare-ci-cron-lint.mjs --cleanup; then
+              exit 1
+            fi
+            exit "$lint_status"
+          }
+          trap cleanup_cron_lint EXIT
+          supabase db lint --local --schema public,private --level warning --fail-on error
       - name: Prove migration SQL and history roll back together
         run: pnpm run test:migration-atomicity
       - name: Rehearse the production baseline reconciliation

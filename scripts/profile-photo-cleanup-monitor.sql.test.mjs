@@ -3,6 +3,7 @@ import { spawnSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { after, before, test } from 'node:test';
+import { PREPARE_CI_CRON_LINT_SQL, CLEANUP_CI_CRON_LINT_SQL } from './prepare-ci-cron-lint.mjs';
 
 // Exact cached image; newly owned tmpfs-only database, no ports/network,
 // no mounts/credentials, Cron launcher and all background workers disabled.
@@ -29,6 +30,9 @@ function sql(input) {
   return result.stdout.trim();
 }
 const health = () => JSON.parse(sql('set role service_role; select public.profile_photo_cleanup_monitor_health();'));
+const lintErrors = () => JSON.parse(sql(`select coalesce(jsonb_agg(to_jsonb(result)), '[]'::jsonb)
+  from extensions.plpgsql_check_function_tb('public.profile_photo_cleanup_monitor_health()'::regprocedure) result
+  where result.level = 'error';`));
 const migrationName = '20261007060519_profile_photo_cleanup_monitor_health.sql';
 let jobId;
 let cronAcl;
@@ -75,7 +79,30 @@ test('missing native Cron extension is explicit unhealthy metadata, not a migrat
   assert.equal(result.cleanup.ready, 0);
 });
 test('real pg_cron extension remains worker-disabled and missing job is explicit', () => {
-  sql('create extension pg_cron with schema pg_catalog;');
+  sql('create extension plpgsql_check with schema extensions;');
+  const missingCronErrors = lintErrors();
+  assert.equal(missingCronErrors.length, 1);
+  assert.equal(missingCronErrors[0].sqlstate, '42P01');
+  assert.match(missingCronErrors[0].message, /relation "cron\.job" does not exist/);
+  const inventorySql = `select jsonb_build_object(
+    'extensions', (select array_agg(extname order by extname) from pg_extension),
+    'cronSchema', to_regnamespace('cron'),
+    'applicationFunctions', (select md5(string_agg(pg_get_functiondef(p.oid), '' order by p.oid))
+      from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+      where n.nspname in ('public','private')));`;
+  const originalInventory = sql(inventorySql);
+  // The runtime guard above is valid; static lint additionally needs the real
+  // optional provider catalog. Exercise exactly CI's setup/owned-cleanup SQL.
+  sql(PREPARE_CI_CRON_LINT_SQL);
+  assert.deepEqual(lintErrors(), []);
+  assert.equal(sql('select count(*) from cron.job;'), '0');
+  assert.notEqual(execute(PREPARE_CI_CRON_LINT_SQL).status, 0, 'Never adopt a pre-existing extension.');
+  sql(CLEANUP_CI_CRON_LINT_SQL);
+  assert.equal(sql("select count(*) from pg_extension where extname = 'pg_cron';"), '0');
+  assert.equal(sql(inventorySql), originalInventory, 'Restore provider inventory and preserve application functions for later reconciliation.');
+  assert.equal(health().cron.catalogAvailable, false);
+  sql(PREPARE_CI_CRON_LINT_SQL);
+  assert.deepEqual(lintErrors(), []);
   assert.equal(sql('show max_worker_processes; show cron.launch_active_jobs;'), '0\noff');
   assert.equal(sql("select count(*) from pg_stat_activity where backend_type like '%cron%';"), '0');
   cronAcl = sql("select coalesce(relacl::text,'') from pg_class where oid in ('cron.job'::regclass,'cron.job_run_details'::regclass) order by oid;");
@@ -85,6 +112,8 @@ test('real pg_cron extension remains worker-disabled and missing job is explicit
 test('real native schedule is visible without leaking command or connection identity', () => {
   jobId = sql("select cron.schedule('process-profile-photo-cleanup','*/5 * * * *','select 987654321 /* SYNTHETIC_PRIVATE_COMMAND */');");
   assert.match(jobId, /^\d+$/);
+  assert.notEqual(execute(CLEANUP_CI_CRON_LINT_SQL).status, 0, 'Never remove a fixture with scheduled jobs.');
+  assert.equal(sql('select count(*) from cron.job;'), '1');
   const result = health();
   assert.equal(result.cron.active, true); assert.equal(result.cron.scheduleMatches, true);
   assert.equal(result.cron.historyAvailable, false); assert.equal(result.cron.stale, true);
