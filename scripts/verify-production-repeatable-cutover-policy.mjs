@@ -7,6 +7,7 @@ import { authoritativeMigrationHistoryQuery, parseRawMigrationHistoryResponse,
 import { REPEATABLE_CHALLENGE_MIGRATION_FILENAME, REPEATABLE_CHALLENGE_MIGRATION_SHA256,
   REPEATABLE_CHALLENGE_MIGRATION_VERSION, verifyRepeatableChallengeCutoverPlan,
   verifyRepeatableChallengeMigrationSource } from './verify-repeatable-challenge-cutover-plan.mjs';
+import { verifyPost71ReleasePlan, verifyPost71ReleaseSources } from './verify-post71-release-plan.mjs';
 
 const migrationsDirectory = new URL('../supabase/migrations/', import.meta.url);
 const repeatableChallengeMigration = new URL(
@@ -21,6 +22,7 @@ export function verifyProductionRepeatableCutoverPolicy({
   rawResponse,
   migrationFilenames,
   migrationSourceSha256,
+  migrationSourceHashes,
   reviewedMigrationSha256 = REPEATABLE_CHALLENGE_MIGRATION_SHA256,
 } = {}) {
   if (!allowedScopes.has(releaseScope)) fail('release scope is invalid');
@@ -28,6 +30,9 @@ export function verifyProductionRepeatableCutoverPolicy({
   let remote;
   try { remote = parseRawMigrationHistoryResponse(rawResponse); }
   catch { fail('authoritative migration history is invalid'); }
+  if (migrationFilenames.filter(name => typeof name === 'string' && name.endsWith('.sql')).length > 71) {
+    return verifyPost71ReleasePlan({ releaseScope, remote, migrationFilenames, migrationSourceHashes });
+  }
   const local = migrationFilenames.filter(name => typeof name === 'string' && name.endsWith('.sql')).sort()
     .map(name => name.slice(0, 14));
   let plan;
@@ -59,10 +64,19 @@ async function main() {
     .update(await readFile(repeatableChallengeMigration))
     .digest('hex');
   verifyRepeatableChallengeMigrationSource({ migrationSourceSha256 });
+  let migrationSourceHashes;
+  if (migrationFilenames.filter(name => name.endsWith('.sql')).length > 71) {
+    migrationSourceHashes = Object.fromEntries(await Promise.all(migrationFilenames.filter(name => name.endsWith('.sql'))
+      .map(async name => [name, createHash('sha256').update(await readFile(new URL(name, migrationsDirectory))).digest('hex')])));
+    verifyPost71ReleaseSources({ migrationFilenames, migrationSourceHashes });
+    // Fail closed until the exact protected-workflow evidence gate is approved
+    // and integrated. The legacy workflow does not consume the new receipt.
+    fail('post71 protected-workflow wiring is not yet approved');
+  }
   const rawResponse = await runReadOnlyManagementQuery({ projectRef: process.env.SUPABASE_PROJECT_REF,
     accessToken: process.env.SUPABASE_ACCESS_TOKEN, query: authoritativeMigrationHistoryQuery });
   const result = verifyProductionRepeatableCutoverPolicy({ releaseScope: process.env.RELEASE_SCOPE,
-    rawResponse, migrationFilenames, migrationSourceSha256 });
+    rawResponse, migrationFilenames, migrationSourceSha256, migrationSourceHashes });
   console.log(JSON.stringify(result));
 }
 

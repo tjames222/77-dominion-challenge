@@ -8,7 +8,9 @@ import { REPEATABLE_CHALLENGE_MIGRATION_FILENAME, REPEATABLE_CHALLENGE_MIGRATION
   verifyRepeatableChallengeMigrationSource,
 } from './verify-repeatable-challenge-cutover-plan.mjs';
 
-const migrationFilenames = await readdir(new URL('../supabase/migrations/', import.meta.url));
+// This legacy policy remains frozen at71; post71 has separate source-pinned tests.
+const migrationFilenames = (await readdir(new URL('../supabase/migrations/', import.meta.url)))
+  .filter(name => name.endsWith('.sql')).sort().slice(0,71);
 const exact70 = selectPostOriginal77MigrationVersions(migrationFilenames);
 const exact71 = [...exact70, REPEATABLE_CHALLENGE_MIGRATION_VERSION];
 const reviewedMigrationSha256 = 'a'.repeat(64);

@@ -6,7 +6,9 @@ import { REPEATABLE_CHALLENGE_MIGRATION_FILENAME, REPEATABLE_CHALLENGE_MIGRATION
   REPEATABLE_CHALLENGE_MIGRATION_VERSION } from './verify-repeatable-challenge-cutover-plan.mjs';
 import { verifyProductionRepeatableCutoverPolicy } from './verify-production-repeatable-cutover-policy.mjs';
 
-const migrationFilenames = await readdir(new URL('../supabase/migrations/', import.meta.url));
+// Exercise the unchanged historical70-to71 release path with its frozen local inventory.
+const migrationFilenames = (await readdir(new URL('../supabase/migrations/', import.meta.url)))
+  .filter(name => name.endsWith('.sql')).sort().slice(0,71);
 const exact70 = selectPostOriginal77MigrationVersions(migrationFilenames);
 const exact71 = [...exact70, REPEATABLE_CHALLENGE_MIGRATION_VERSION];
 const rows = versions => versions.map(version => ({ version }));
