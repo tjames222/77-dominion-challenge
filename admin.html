@@ -70,6 +70,12 @@
         </section>
         <section id="adminRequestsPanel" role="tabpanel" aria-labelledby="adminRequestsTab" data-admin-panel="requests" hidden>
           <div class="admin-view-heading"><h2>Account requests</h2><p>Track recorded export and deletion requests.</p></div>
+          <section id="adminQueueHealth" class="admin-queue-health" aria-labelledby="adminQueueHealthTitle" aria-describedby="adminQueueHealthNote">
+            <div class="admin-actions"><h3 id="adminQueueHealthTitle">Active queue overview</h3><button id="adminQueueHealthRefresh" type="button">Refresh queue overview</button></div>
+            <p id="adminQueueHealthNote">All active requests, independent of the list filters below. Counts stop at 1000+; oldest dates use the original request time. This is recorded intake, not delivery or erasure verification.</p>
+            <p id="adminQueueHealthStatus" role="status"></p>
+            <div id="adminQueueHealthBuckets" class="admin-queue-buckets"></div>
+          </section>
           <form id="adminRequestsFilters" class="admin-filters" autocomplete="off">
             <label>Request type<select name="type"><option value="all">All request types</option><option value="data_export">Data export</option><option value="account_deletion">Account deletion</option></select></label>
             <label>Recorded request status<select name="status"><option value="active">Active requests</option><option value="all">All recorded statuses</option><option value="requested">Requested</option><option value="in_progress">In progress</option><option value="fulfilled">Recorded fulfilled</option><option value="cancelled">Cancelled</option><option value="declined">Declined</option></select></label>

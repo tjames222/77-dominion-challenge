@@ -7,6 +7,7 @@ import { after, before, test } from 'node:test';
 const name = `77dc-account-requests-${randomUUID()}`;
 const image = 'public.ecr.aws/supabase/postgres:17.6.1.141';
 const migrationName = '20260929000950_site_admin_account_requests_inbox.sql';
+const healthMigrationName = '20261007055555_site_admin_account_request_queue_health.sql';
 const actor = '10000000-0000-4000-8000-000000000001';
 const member = '10000000-0000-4000-8000-000000000002';
 const reserveAdmin = '10000000-0000-4000-8000-000000000003';
@@ -18,7 +19,8 @@ const sentinel = 'DO_NOT_EXPOSE_NOTE_EMAIL_CREDENTIAL';
 const types = ['all', 'data_export', 'account_deletion'];
 const statuses = ['active', 'all', 'requested', 'in_progress', 'fulfilled', 'cancelled', 'declined'];
 const concreteStatuses = statuses.slice(2);
-let container; let migration; let originalBoundary; let baselinePlans; let indexedPlans;
+let container; let migration; let healthMigration; let healthPlan; let originalBoundary; let baselinePlans; let indexedPlans;
+const health = (expected = actor) => `select public.site_admin_get_account_request_queue_health(${literal(expected)});`;
 const literal = value => value === null ? 'null' : `'${String(value).replaceAll("'", "''")}'`;
 const json = value => value === null ? 'null' : `${literal(JSON.stringify(value))}::jsonb`;
 const docker = (args, input) => spawnSync('docker', args, { input, encoding: 'utf8', timeout: 30000, maxBuffer: 8 * 1024 * 1024 });
@@ -81,6 +83,7 @@ function plans() {
 
 before(async () => {
   migration = await readFile(new URL(`../supabase/migrations/${migrationName}`, import.meta.url), 'utf8');
+  healthMigration = await readFile(new URL(`../supabase/migrations/${healthMigrationName}`, import.meta.url), 'utf8');
   const inspected = docker(['image', 'inspect', image, '--format', '{{.Id}}']);
   assert.equal(inspected.status, 0, 'Pinned PostgreSQL image must already be cached.');
   const id = inspected.stdout.trim(); assert.match(id, /^sha256:[a-f0-9]{64}$/);
@@ -140,6 +143,11 @@ before(async () => {
   raw(`set role fixture_migration;begin;${migration}commit;reset role;
     alter function ${signature} owner to fixture_reader;analyze public.account_lifecycle_requests;`);
   indexedPlans = plans();
+  raw(`set role fixture_migration;begin;${healthMigration}commit;reset role;
+    alter function public.site_admin_get_account_request_queue_health(uuid) owner to fixture_reader;`);
+  const healthQuery = healthMigration.match(/  select jsonb_agg([\s\S]*?)\n  return/)?.[0].replace(/\n  return$/, '').replace(' into buckets', '');
+  assert.ok(healthQuery);
+  healthPlan = JSON.parse(raw(`set role fixture_reader;explain(analyze,buffers,format json) ${healthQuery}`))[0];
   raw(`truncate public.account_lifecycle_requests;${fixtureRows()}`);
 });
 after(() => { if (container) assert.equal(docker(['rm', '--force', owned()]).status, 0, 'Only owned fixture removed.'); });
@@ -258,7 +266,58 @@ test('every fresh page rechecks native session, factor, account health, role and
     ["delete from private.site_role_permissions where permission_key='operations.read';", 'PT403'],
     [`insert into private.site_admin_session_blocks(session_id,user_id,request_id) values('${session}','${actor}',gen_random_uuid());`, 'PT403'],
   ];
-  for (const [change, state] of changes) raw(`begin;${change}${asActor(denied(inbox({ cursor }), state))}rollback;`);
+  for (const [change, state] of changes) for (const read of [inbox({ cursor }), health()]) raw(`begin;${change}${asActor(denied(read, state))}rollback;`);
+});
+
+test('queue health reuses exactly four bounded index scans over50000 rows, without a new index', t => {
+  const all = nodes(healthPlan.Plan);
+  assert.doesNotMatch(healthMigration, /create\s+(index|table|role|policy)|alter\s+(table|role)|insert\s+into|update\s+public|delete\s+from/i);
+  assert.ok(!all.some(n => n['Node Type'] === 'Seq Scan' && n['Relation Name'] === 'account_lifecycle_requests'));
+  const scans = all.filter(n => n['Index Name'] === 'account_lifecycle_requests_admin_bucket_idx');
+  assert.equal(scans.length, 1); assert.equal(scans[0]['Actual Loops'], 4); assert.equal(scans[0]['Actual Rows'], 1001);
+  assert.equal(scans[0]['Rows Removed by Filter'] || 0, 0);
+  assert.ok(!all.some(n => n['Node Type'] === 'Sort' && n.Plans[0]['Actual Rows'] > 4));
+  t.diagnostic(JSON.stringify({ seededRows: 50000, bucketScans: 4, visibleEntriesPerBucket: 1001,
+    executionMs: healthPlan['Execution Time'], sharedBlocks: healthPlan.Plan['Shared Hit Blocks'] + healthPlan.Plan['Shared Read Blocks'] }));
+});
+
+test('queue summary permissions, native actor, AAL2 and no-store fail closed', () => {
+  for (const role of ['anon', 'service_role']) raw(`set role ${role};${denied(health(), '42501')}`);
+  raw(asActor(denied(health(member), 'PT401')));
+  raw(asActor(denied(health(null), 'PT401')));
+  raw(asActor(denied(health(member), 'PT403'), { id: member, sid: memberSession }));
+  raw(asActor(denied(health(), 'PT403'), { aal: 'aal1' }));
+  raw(asActor(denied(health(), 'PT401'), { sid: randomUUID() }));
+  raw(asActor(denied(health(), 'PT403'), { origin: 'https://attacker.invalid' }));
+  const result = sql(`begin read only;${asActor(health())}select current_setting('response.headers')::jsonb;rollback;`);
+  assert.deepEqual(result[1], [{ 'Cache-Control': 'private, no-store' }, { Pragma: 'no-cache' }]);
+});
+
+test('queue summary only projects four buckets, never identities or notes, and needs only operations.read', () => {
+  const before = sql('select jsonb_agg(to_jsonb(r) order by id) from public.account_lifecycle_requests r;')[0];
+  const result = sql(`begin;delete from private.site_role_permissions where role_key='site_admin' and permission_key<>'operations.read';${asActor(health())}rollback;`)[0];
+  assert.deepEqual(Object.keys(result).sort(), ['actorId', 'buckets', 'observedAt', 'schemaVersion']);
+  assert.equal(result.actorId, actor); assert.equal(result.buckets.length, 4);
+  for (const bucket of result.buckets) {
+    assert.deepEqual(Object.keys(bucket).sort(), ['count', 'hasMore', 'oldestRequestedAt', 'requestType', 'status']);
+    assert.equal(bucket.count, 3); assert.equal(bucket.hasMore, false); assert.ok(Date.parse(bucket.oldestRequestedAt) <= Date.parse(result.observedAt));
+  }
+  assert.doesNotMatch(JSON.stringify(result), /DO_NOT_EXPOSE|operator_note|email|password|token|secret|profile|userId|name/i);
+  assert.deepEqual(sql('select jsonb_agg(to_jsonb(r) order by id) from public.account_lifecycle_requests r;')[0], before);
+});
+
+test('queue counts distinguish empty, exact1000 and1000+ with correct oldest original request', () => {
+  for (const amount of [0, 1, 999, 1000, 1001, 5000]) {
+    const result = sql(`begin;truncate public.account_lifecycle_requests;
+      insert into public.account_lifecycle_requests(request_type,status,requested_at,updated_at,operator_note)
+      select rt,st,'2026-01-01'::timestamptz+n*interval '1 second',now(),'${sentinel}'
+      from unnest(array['data_export','account_deletion'])rt cross join unnest(array['requested','in_progress'])st cross join generate_series(1,${amount})n;
+      ${asActor(health())}rollback;`)[0];
+    for (const bucket of result.buckets) {
+      assert.equal(bucket.count, Math.min(amount, 1000)); assert.equal(bucket.hasMore, amount > 1000);
+      assert.equal(bucket.oldestRequestedAt, amount ? '2026-01-01T00:00:01+00:00' : null);
+    }
+  }
 });
 
 test('empty pages, orphaned requesters and mutable status between pages remain honest', () => {
@@ -281,8 +340,8 @@ test('reads preserve all requests and cache-control is private no-store', () => 
 
 test('pgTAP ACL/schema checks run against the actual migrated FORCE-RLS fixture', async () => {
   const output = raw(await readFile(new URL('../supabase/tests/database/330_site_admin_account_requests.sql', import.meta.url), 'utf8'));
-  assert.doesNotMatch(output, /^not ok/m); assert.match(output, /1\.\.16/);
-  assert.equal((output.match(/^ok \d+/gm) || []).length, 16);
+  assert.doesNotMatch(output, /^not ok/m); assert.match(output, /1\.\.23/);
+  assert.equal((output.match(/^ok \d+/gm) || []).length, 23);
 });
 
 test('CI runs this native fixture only after the exact fixture-image cache step', async () => {

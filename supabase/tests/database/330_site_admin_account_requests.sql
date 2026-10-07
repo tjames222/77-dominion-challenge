@@ -1,7 +1,7 @@
 begin;
 create extension if not exists pgtap with schema extensions;
 set local search_path=public,extensions;
-select plan(16);
+select plan(23);
 
 select has_function('public','site_admin_list_account_requests',array['uuid','integer','text','text','text','jsonb'],'metadata inbox has one fixed read RPC');
 select ok(has_function_privilege('authenticated','public.site_admin_list_account_requests(uuid,integer,text,text,text,jsonb)','execute'),'authenticated callers may enter the native admin guard');
@@ -18,10 +18,17 @@ select has_index('public','account_lifecycle_requests','account_lifecycle_reques
 select has_index('public','account_lifecycle_requests','account_lifecycle_requests_one_active_kind_idx','existing one-active-kind member constraint remains');
 select has_index('public','account_lifecycle_requests','account_lifecycle_requests_user_requested_idx','existing member history index remains');
 select ok(not has_function_privilege('authenticated','private.require_site_admin(text,uuid,boolean)','execute'),'the private authority helper is not exposed');
+select has_function('public','site_admin_get_account_request_queue_health',array['uuid'],'active queue summary has one fixed actor-bound read');
+select ok(has_function_privilege('authenticated','public.site_admin_get_account_request_queue_health(uuid)','execute'),'authenticated callers may enter the queue guard');
+select ok(not has_function_privilege('anon','public.site_admin_get_account_request_queue_health(uuid)','execute'),'anonymous cannot read queue counts');
+select ok(not has_function_privilege('service_role','public.site_admin_get_account_request_queue_health(uuid)','execute'),'service key cannot substitute for native admin');
+select ok((select prosecdef and provolatile='s' and proconfig=array['search_path=""'] from pg_proc where oid='public.site_admin_get_account_request_queue_health(uuid)'::regprocedure),'queue reader is stable with empty search path');
+select is((select pronargs::integer from pg_proc where oid='public.site_admin_get_account_request_queue_health(uuid)'::regprocedure),1,'callers cannot change queue buckets or read cap');
 grant usage on schema extensions to authenticated;
 set local request.jwt.claims='{}';
 set local role authenticated;
 select throws_ok($$select public.site_admin_list_account_requests('15020000-0000-4000-8000-000000000001')$$,'PT401','admin_authentication_required','missing live actor is rejected before any inbox data');
+select throws_ok($$select public.site_admin_get_account_request_queue_health('15020000-0000-4000-8000-000000000001')$$,'PT401','admin_authentication_required','missing live actor is rejected before any queue data');
 reset role;
 select * from finish();
 rollback;

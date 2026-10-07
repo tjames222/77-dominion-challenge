@@ -13,10 +13,11 @@ export async function readAdminAccountRequests(read, args, options = {}, timeout
   finally { clearTimeout(timer); options.signal?.removeEventListener('abort', stop); }
 }
 
-// This one read has its own finite native transport; existing admin operations
-// keep their reviewed transport unchanged. No provider SDK can replace bearer.
+// These two account-request reads share a finite native transport; other admin
+// operations keep their transport unchanged. No provider SDK replaces bearer.
 export async function requestAdminAccountRequests({ baseUrl, apiKey, token, args, signal,
-  fetcher = fetch, timeoutMs = 10000 }) {
+  fetcher = fetch, timeoutMs = 10000, name = 'site_admin_list_account_requests' }) {
+  if (!['site_admin_list_account_requests', 'site_admin_get_account_request_queue_health'].includes(name)) throw adminReadError('ADMIN_INVALID_INPUT');
   if (!Number.isInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 10000 || signal?.aborted) throw adminReadError();
   const controller = new AbortController(); let reader; let reject;
   const stopped = new Promise((_, fail) => { reject = fail; });
@@ -29,7 +30,7 @@ export async function requestAdminAccountRequests({ baseUrl, apiKey, token, args
   signal?.addEventListener('abort', stop, { once: true });
   async function run() {
     if (controller.signal.aborted || signal?.aborted) throw adminReadError();
-    const response = await fetcher(`${baseUrl}/rest/v1/rpc/site_admin_list_account_requests`, {
+    const response = await fetcher(`${baseUrl}/rest/v1/rpc/${name}`, {
       method: 'POST', cache: 'no-store', credentials: 'omit', redirect: 'error', signal: controller.signal,
       headers: { apikey: apiKey, Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }, body: JSON.stringify(args),
     });

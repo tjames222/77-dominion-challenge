@@ -644,9 +644,9 @@ async function getAdminReadClient() {
     sessionIdentity: authSessionIdentity,
     subscribe: subscribeToAuthStateChanges,
     request: async (name, args, { token, signal }) => {
-      if (name === 'site_admin_list_account_requests') {
+      if (name === 'site_admin_list_account_requests' || name === 'site_admin_get_account_request_queue_health') {
         const { requestAdminAccountRequests } = await import('./admin-account-request-transport.mjs');
-        return requestAdminAccountRequests({ baseUrl: SUPABASE_URL, apiKey: SUPABASE_KEY, token, args, signal });
+        return requestAdminAccountRequests({ baseUrl: SUPABASE_URL, apiKey: SUPABASE_KEY, token, args, signal, name });
       }
       const invitation = name === 'admin-early-access-invitation';
       const response = await fetch(`${SUPABASE_URL}/${invitation ? 'functions/v1' : 'rest/v1/rpc'}/${name}`, {
@@ -676,6 +676,7 @@ export const getAdminSessionOwner = async () => (await getAdminReadClient()).own
 export const getSiteAdminContext = async (options = {}) => (await getAdminReadClient()).read('get_site_admin_context', {}, options);
 export const listSiteAdminUsers = async (args, options = {}) => (await getAdminReadClient()).read('site_admin_list_users', args, options);
 export const listSiteAdminAccountRequests = async (args, options = {}) => (await getAdminReadClient()).read('site_admin_list_account_requests', args, options);
+export const getSiteAdminAccountRequestQueueHealth = async (args = {}, options = {}) => (await getAdminReadClient()).read('site_admin_get_account_request_queue_health', args, options);
 export const getSiteAdminUser = async (id, options = {}) => (await getAdminReadClient()).read('site_admin_get_user', { target_user_id: id }, options);
 export const listSiteAdminAudit = async (args, options = {}) => (await getAdminReadClient()).read('site_admin_list_audit', args, options);
 export const getSiteAdminAuditEvent = async (id, options = {}) => (await getAdminReadClient()).read('site_admin_get_audit_event', { target_event_id: id }, options);
