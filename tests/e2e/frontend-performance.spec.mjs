@@ -7,12 +7,93 @@ import { createServer } from 'node:http';
 import { fileURLToPath } from 'node:url';
 import { build } from 'vite';
 import { resolveTrainingModulePreloads } from '../../vite.config.mjs';
+import { readFileSync } from 'node:fs';
 
 const EXPECTED_ABORT_ERRORS = [
   /Failed to load resource: net::ERR_FAILED/,
   /Failed to load resource: (?:The operation couldn’t be completed|Load failed|cancelled)/,
   /Failed to load resource: the server responded with a status of 503/,
 ];
+
+const photoFile = () => ({ name: 'avatar.webp', mimeType: 'image/webp',
+  buffer: readFileSync(new URL('../../src/assets/hero/hero-dark-480.webp', import.meta.url)) });
+const photoModulePattern = /\/profile-photo-preparation(?!-loader)(?:-[\w-]+)?\.(?:mjs|js)(?:\?|$)/;
+
+test('profile photo preparation loads only after selection, then prepares and saves a thumbnail', async ({ page, app }) => {
+  const requests = [];
+  page.on('request', (request) => { if (photoModulePattern.test(request.url())) requests.push(request.url()); });
+  await app.open(ROUTE_BY_ID.profile);
+  expect(requests).toEqual([]);
+  await page.locator('#profilePhotoInput').setInputFiles(photoFile());
+  await expect(page.locator('#profileFeedback')).toContainText('is ready as a 256×256 thumbnail');
+  expect(requests).toHaveLength(1);
+  await expect(page.locator('#profileAvatarImage')).toHaveAttribute('src', /^blob:/);
+  await page.locator('#profileForm button[type="submit"]').click();
+  await expect(page.locator('#profileFeedback')).toHaveText('Profile saved.');
+  await expect(page.locator('#profileAvatarImage')).toHaveAttribute('src', /^data:image\/(?:webp|jpeg);base64,/);
+  await expect(page.locator('#profilePhotoFilename')).toHaveText('No new photo selected');
+  app.assertNoRuntimeErrors();
+});
+
+test('profile photo preparation ignores superseded file selection while its module is delayed', async ({ page, app }) => {
+  let release;
+  const blocked = new Promise((resolve) => { release = resolve; });
+  let requests = 0;
+  await page.route(photoModulePattern, async (route) => { requests += 1; await blocked; await route.continue(); });
+  await app.open(ROUTE_BY_ID.profile);
+  try {
+    await page.locator('#profilePhotoInput').setInputFiles(photoFile());
+    await expect.poll(() => requests).toBe(1);
+    await expect(page.locator('#profileFeedback')).toContainText('Preparing');
+    await page.locator('#profilePhotoInput').setInputFiles({ name: 'invalid.txt', mimeType: 'text/plain', buffer: Buffer.from('invalid') });
+  } finally { release(); }
+  await expect(page.locator('#profileFeedback')).toHaveText('Choose a JPG, PNG, WebP, HEIC, or HEIF image.');
+  await expect(page.locator('#profileAvatarImage')).toBeHidden();
+  await expect(page.locator('#profilePhotoFilename')).toHaveText('No new photo selected');
+  await expect(page.locator('#profileForm button[type="submit"]')).toBeEnabled();
+  expect(requests).toBe(1);
+  app.assertNoRuntimeErrors();
+});
+
+test('profile photo preparation HTTP failure recovers only after reload without a failed JS preload', async ({ page, app }) => {
+  const artifact = await build({ configFile: false,
+    root: fileURLToPath(new URL('../..', import.meta.url)), base: './', logLevel: 'silent',
+    build: { write: false, modulePreload: { resolveDependencies: resolveTrainingModulePreloads },
+      rollupOptions: { input: { loader: fileURLToPath(new URL('../../src/static/profile-photo-preparation-loader.mjs', import.meta.url)) },
+        preserveEntrySignatures: 'strict', output: { entryFileNames: 'loader.js' } } },
+  });
+  const assets = new Map(artifact.output.map((asset) => [`/${asset.fileName}`, asset.type === 'chunk' ? asset.code : asset.source]));
+  let failing = true;
+  let attempts = 0;
+  const server = createServer((request, response) => {
+    response.setHeader('Cache-Control', 'no-store');
+    const pathname = new URL(request.url, 'http://localhost').pathname;
+    if (photoModulePattern.test(pathname)) {
+      attempts += 1;
+      if (failing) { response.writeHead(503); response.end('Temporarily unavailable'); return; }
+    }
+    if (assets.has(pathname)) {
+      response.setHeader('Content-Type', 'text/javascript'); response.end(assets.get(pathname));
+    } else if (pathname === '/') {
+      response.setHeader('Content-Type', 'text/html');
+      response.end('<!doctype html><title>Photo load recovery</title><script type="module">import { loadProfilePhotoPreparation } from "/loader.js"; window.loadPhoto = loadProfilePhotoPreparation;</script>');
+    } else { response.writeHead(404); response.end(); }
+  });
+  await new Promise((resolve, reject) => { server.once('error', reject); server.listen(0, '127.0.0.1', resolve); });
+  try {
+    await page.goto(`http://127.0.0.1:${server.address().port}/`);
+    expect(await page.evaluate(() => window.loadPhoto().then(() => '', (error) => error.message))).toContain('reload this page');
+    expect(attempts).toBe(1);
+    await expect(page.locator('link[rel="modulepreload"][href*="profile-photo-preparation"]')).toHaveCount(0);
+    failing = false;
+    expect(await page.evaluate(() => window.loadPhoto().then(() => true, () => false))).toBe(false);
+    expect(attempts).toBe(1);
+    await page.reload();
+    expect(await page.evaluate(async () => typeof (await window.loadPhoto()).prepareProfilePhoto)).toBe('function');
+    expect(attempts).toBe(2);
+    app.assertNoRuntimeErrors(EXPECTED_ABORT_ERRORS);
+  } finally { await new Promise((resolve) => server.close(resolve)); }
+});
 
 test('real HTTP 503 training module failure recovers after reload without a failed JavaScript preload', async ({ page, app }) => {
   // Build the actual loader/UI in memory so this regression also runs with the

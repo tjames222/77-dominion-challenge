@@ -46,6 +46,12 @@ export function resolveTrainingModulePreloads(filename, dependencies, { hostType
   if (hostType === 'js' && journalApplicationJs.test(filename)) {
     return dependencies.filter((dependency) => !journalApplicationJs.test(dependency));
   }
+  // Photo preparation also offers explicit document-reload recovery. Preserve
+  // other preloads, but do not let WebKit retain a failed optional JS preload.
+  const photoPreparationJs = /(?:^|\/)profile-photo-preparation(?!-loader)(?:-[\w-]+)?\.js$/;
+  if (hostType === 'js' && photoPreparationJs.test(filename)) {
+    return dependencies.filter((dependency) => !photoPreparationJs.test(dependency));
+  }
   return dependencies;
 }
 

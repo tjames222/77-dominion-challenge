@@ -24,7 +24,7 @@ import {
   isActiveAccountRequest,
   latestAccountRequestsByType,
 } from './account-lifecycle.mjs';
-import { prepareProfilePhoto } from './profile-photo.mjs';
+import { loadProfilePhotoPreparation } from './profile-photo-preparation-loader.mjs';
 import {
   clearThemeEntitlementState,
   hydrateThemeEntitlementState,
@@ -283,6 +283,7 @@ const isCurrentProfileOwner = (owner) => Boolean(
 
 function invalidateProfileOwner(nextOwner = '') {
   profileOwnerEpoch += 1;
+  photoPreparationSequence += 1;
   profileHydrationRequestId += 1;
   observedProfileOwner = String(nextOwner || '');
   hydratedProfileOwner = '';
@@ -789,19 +790,25 @@ profilePhotoInput?.addEventListener('change', async () => {
     return;
   }
 
+  const preparationOwner = captureProfileOwner();
+  if (!preparationOwner) return;
+  const isCurrentPreparation = () => preparationId === photoPreparationSequence
+    && selectedPhotoFile === file && isCurrentProfileOwner(preparationOwner);
   selectedPhotoFile = file;
   renderPhotoSelection(file);
   setProfileFormBusy(true, 'Preparing...');
   setProfileFeedback(`Preparing “${file.name}” as a secure avatar thumbnail...`);
   try {
+    const { prepareProfilePhoto } = await loadProfilePhotoPreparation();
+    if (!isCurrentPreparation()) return;
     const preparedPhoto = await prepareProfilePhoto(file);
-    if (preparationId !== photoPreparationSequence || selectedPhotoFile !== file) return;
+    if (!isCurrentPreparation()) return;
     selectedPreparedPhoto = preparedPhoto;
     selectedPreviewUrl = URL.createObjectURL(preparedPhoto.blob);
     renderAvatar({ ...currentProfile, avatarUrl: selectedPreviewUrl });
     setProfileFeedback(`“${file.name}” is ready as a ${preparedPhoto.width}×${preparedPhoto.height} thumbnail.`);
   } catch (error) {
-    if (preparationId !== photoPreparationSequence) return;
+    if (!isCurrentPreparation()) return;
     selectedPhotoFile = null;
     selectedPreparedPhoto = null;
     profilePhotoInput.value = '';
@@ -809,7 +816,7 @@ profilePhotoInput?.addEventListener('change', async () => {
     renderAvatar(currentProfile);
     setProfileFeedback(error?.message || 'Unable to prepare that profile picture.', 'error');
   } finally {
-    if (preparationId === photoPreparationSequence) setProfileFormBusy(false);
+    if (preparationId === photoPreparationSequence && isCurrentProfileOwner(preparationOwner)) setProfileFormBusy(false);
   }
 });
 

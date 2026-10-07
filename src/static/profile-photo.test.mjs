@@ -4,19 +4,21 @@ import test from 'node:test';
 import {
   PROFILE_PHOTO_MAX_INPUT_BYTES,
   PROFILE_PHOTO_MAX_OUTPUT_BYTES,
-  calculateProfilePhotoCrop,
   canonicalProfilePhotoUrl,
   commitProfileUpdateWithCompareAndSwap,
   createProfilePhotoStoragePath,
-  decodeProfilePhoto,
   isNewProfilePhotoPath,
   isPreparedProfilePhoto,
   normalizeTrustedProfilePhotoUploadResponse,
   ownedProfilePhotoPathFromUrl,
-  prepareProfilePhoto,
   replaceProfilePhoto,
-  validateProfilePhotoInput,
 } from './profile-photo.mjs';
+import {
+  calculateProfilePhotoCrop,
+  decodeProfilePhoto,
+  prepareProfilePhoto,
+  validateProfilePhotoInput,
+} from './profile-photo-preparation.mjs';
 
 const fakeFile = ({ name = 'photo.jpg', type = 'image/jpeg', size = 4096 } = {}) => ({
   name,
