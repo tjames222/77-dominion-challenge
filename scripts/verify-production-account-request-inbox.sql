@@ -1,6 +1,6 @@
 -- Fixed read-only production release checkpoint; never accepts caller SQL.
 -- Inbox catalog source: A 93610a9d28dd36073407fb052199f8973d954c97, PostgreSQL 17.6.
--- Exact history includes the reviewed original-77 suffix and repeatable-instance cutover.
+-- Exact history accepts the frozen71 checkpoint or the reviewed two-migration73 suffix.
 -- Catalog metadata only: no RPC invocation, Auth/session rows, ledger rows,
 -- key/decrypted-value reads, canary grant, stored helper, or mutation.
 WITH canonical_deparse_context AS MATERIALIZED (
@@ -111,11 +111,20 @@ WITH canonical_deparse_context AS MATERIALIZED (
   CROSS JOIN canonical_deparse_context
 )
 SELECT
-  coalesce((SELECT pg_catalog.count(*)=71 AND pg_catalog.count(DISTINCT version)=71
+  (coalesce((SELECT pg_catalog.count(*)=71 AND pg_catalog.count(DISTINCT version)=71
     AND pg_catalog.max(version::text)='20261001001245'
     AND pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(pg_catalog.string_agg(version::text,',' ORDER BY version::text COLLATE "C"),'UTF8')),'hex')
       ='e6090c27e44dd678cab1b8178058f780bec2d0b4dcd99dee0d96407d24a5bb26'
     FROM supabase_migrations.schema_migrations),false)
+    OR (coalesce((SELECT pg_catalog.count(*)=73 AND pg_catalog.count(DISTINCT version)=73
+      AND pg_catalog.max(version::text)='20261007060519'
+      AND pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(
+        pg_catalog.string_agg(version::text,',' ORDER BY version::text COLLATE "C"),'UTF8')),'hex')
+          ='d9e099e1d3c7646aab3c72d0b0263030343557c4280923048e268f0c95bb963b'
+      FROM supabase_migrations.schema_migrations),false)
+      AND (SELECT pg_catalog.count(*)=2 FROM supabase_migrations.schema_migrations WHERE (version,name) IN (
+        ('20261007055555','site_admin_account_request_queue_health'),
+        ('20261007060519','profile_photo_cleanup_monitor_health')))))
     AND EXISTS(SELECT 1 FROM supabase_migrations.schema_migrations
       WHERE version='20260929000950' AND name='site_admin_account_requests_inbox')
     AND (SELECT pg_catalog.count(*)=4 FROM supabase_migrations.schema_migrations

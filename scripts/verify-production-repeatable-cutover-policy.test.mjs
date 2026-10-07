@@ -1,10 +1,12 @@
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import { readFile, readdir } from 'node:fs/promises';
 import test from 'node:test';
 import { selectPostOriginal77MigrationVersions } from './production-backup-public-contract.mjs';
 import { REPEATABLE_CHALLENGE_MIGRATION_FILENAME, REPEATABLE_CHALLENGE_MIGRATION_SHA256,
   REPEATABLE_CHALLENGE_MIGRATION_VERSION } from './verify-repeatable-challenge-cutover-plan.mjs';
-import { verifyProductionRepeatableCutoverPolicy } from './verify-production-repeatable-cutover-policy.mjs';
+import { verifyProductionRepeatableCutoverPolicy, productionReleaseBoundaryReceipt,
+  parseExpectedProductionReleaseBoundary, verifyUnchangedProductionReleaseBoundary } from './verify-production-repeatable-cutover-policy.mjs';
 
 // Exercise the unchanged historical70-to71 release path with its frozen local inventory.
 const migrationFilenames = (await readdir(new URL('../supabase/migrations/', import.meta.url)))
@@ -137,14 +139,119 @@ test('repeatable cutover validates one fresh exact-commit exact70 backup before 
   assert.match(block, /run-id: \$\{\{ inputs\.backup_run_id \}\}/u);
   assert.match(block, /read -r artifact_id backup_run_attempt[\s\S]*printf 'run_attempt=%s\\n'/u);
   assert.match(block, /BACKUP_RUN_ATTEMPT: \$\{\{ steps\.repeatable-backup\.outputs\.run_attempt \}\}/u);
-  const verification = block.slice(block.indexOf('- name: Verify encrypted exact-70 bytes and restored checkpoint'));
+  const verification = block.slice(block.indexOf('- name: Verify encrypted exact-70 bytes and restored checkpoint'),
+    block.indexOf('- name: Select the fresh exact-71 encrypted backup artifact'));
   assert.match(verification, /BACKUP_RUN_ATTEMPT="\$BACKUP_RUN_ATTEMPT"/u);
   assert.match(verification, /PRODUCTION_BACKUP_PUBLIC_KEY="\$PRODUCTION_BACKUP_PUBLIC_KEY"[\s\S]*verify-post-original77-backup-evidence\.mjs[\s\S]*--directory/u);
-  assert.equal(block.match(/PRODUCTION_BACKUP_PUBLIC_KEY: \$\{\{ vars\.PRODUCTION_BACKUP_PUBLIC_KEY \}\}/gu)?.length, 1,
-    'the public recovery key is exposed only to the artifact verification step');
+  assert.equal(verification.match(/PRODUCTION_BACKUP_PUBLIC_KEY: \$\{\{ vars\.PRODUCTION_BACKUP_PUBLIC_KEY \}\}/gu)?.length, 1,
+    'the historical exact70 public recovery key remains confined to its artifact verification step');
   assert.doesNotMatch(block, /secrets\.(?:PRODUCTION_BACKUP_PRIVATE_KEY|BACKUP_PRIVATE_KEY)|privateDecrypt|pg_restore/iu);
   const firstMutable = Math.min(workflow.indexOf('  cloudflare-policy:'), workflow.indexOf('  canary-policy:'),
     workflow.indexOf('  compatibility-guards:'), workflow.indexOf('  frontend-rollback-history:'),
     workflow.indexOf('  backend:'));
   assert(workflow.indexOf('  repeatable-cutover-policy:') < firstMutable);
+});
+
+const receiptCases = [
+  { mode:'repeatable-challenge-cutover', requiresExact70Backup:true, requiresExact71Backup:false, migrationVersion:'20261001001245' },
+  { mode:'post-repeatable-challenge-cutover', requiresExact70Backup:false, requiresExact71Backup:false, migrationVersion:'20261001001245' },
+  { mode:'post71-additive-release', requiresExact70Backup:false, requiresExact71Backup:true, migrationVersion:'20261007060519' },
+  { mode:'post73-reviewed-release', requiresExact70Backup:false, requiresExact71Backup:false, migrationVersion:'20261007060519' },
+];
+
+test('every repeated boundary must equal the initial full fixed receipt; no73-to71 backup bypass or concurrent apply', () => {
+  for (const expected of receiptCases) for (const actual of receiptCases) {
+    const expectedReceipt=JSON.stringify(expected);
+    if (expected.mode===actual.mode) {
+      assert.deepEqual(verifyUnchangedProductionReleaseBoundary({expectedReceipt,actual}),expected);
+      assert(Object.isFrozen(productionReleaseBoundaryReceipt(actual)));
+    } else assert.throws(()=>verifyUnchangedProductionReleaseBoundary({expectedReceipt,actual}),/changed after the approved backup gate/u);
+  }
+  const { requiresExact71Backup, ...legacy }=receiptCases[0];
+  assert.deepEqual(productionReleaseBoundaryReceipt(legacy),receiptCases[0]);
+});
+
+test('missing, malformed, oversized, noncanonical or forged receipts fail without echoing caller data', () => {
+  const valid=receiptCases[2];
+  const privateValue='PRIVATE_SYNTHETIC_RECEIPT';
+  for (const value of [undefined,'',' ',privateValue,'x'.repeat(513),JSON.stringify({...valid,extra:privateValue}),
+    JSON.stringify({...valid,mode:privateValue}),JSON.stringify({...valid,requiresExact70Backup:true}),
+    JSON.stringify({...valid,requiresExact71Backup:false}),JSON.stringify({...valid,requiresExact71Backup:'true'}),
+    JSON.stringify({...valid,migrationVersion:'20261008000000'}),JSON.stringify({...valid,migrationVersion:73}),
+    JSON.stringify(valid)+'\n',JSON.stringify(valid,null,2),JSON.stringify({mode:valid.mode})]) {
+    assert.throws(()=>parseExpectedProductionReleaseBoundary(value),error=>
+      error.message==='Production repeatable challenge release policy failed: expected release boundary receipt is invalid');
+  }
+});
+
+test('post71 release selects one fresh same-commit exact71 artifact and gates every mutable job', async () => {
+  const workflow=await readFile(new URL('../.github/workflows/deploy.yml',import.meta.url),'utf8');
+  const policy=jobBlock(workflow,'repeatable-cutover-policy');
+  assert.match(policy,/receipt: \$\{\{ steps\.release-boundary\.outputs\.receipt \}\}/u);
+  assert.match(policy,/requires_exact71_backup: \$\{\{ steps\.release-boundary\.outputs\.requires_exact71_backup \}\}/u);
+  assert.match(policy,/backup_artifact_id: \$\{\{ steps\.post71-backup\.outputs\.artifact_id \}\}/u);
+  assert.match(policy,/backup_run_attempt: \$\{\{ steps\.post71-backup\.outputs\.run_attempt \}\}/u);
+  const gates=policy.slice(policy.indexOf('- name: Select the fresh exact-71 encrypted backup artifact'));
+  assert.equal(gates.match(/if: steps\.release-boundary\.outputs\.requires_exact71_backup == 'true'/gu)?.length,3);
+  assert.match(gates,/GITHUB_SHA="\$GITHUB_SHA"[\s\S]*verify-post-repeatable-backup-evidence\.mjs --select/u);
+  assert.match(gates,/artifact-ids: \$\{\{ steps\.post71-backup\.outputs\.artifact_id \}\}/u);
+  assert.match(gates,/run-id: \$\{\{ inputs\.backup_run_id \}\}/u);
+  assert.match(gates,/BACKUP_RUN_ATTEMPT: \$\{\{ steps\.post71-backup\.outputs\.run_attempt \}\}/u);
+  assert.match(gates,/PRODUCTION_BACKUP_PUBLIC_KEY="\$PRODUCTION_BACKUP_PUBLIC_KEY"[\s\S]*verify-post-repeatable-backup-evidence\.mjs[\s\S]*--directory "\$RUNNER_TEMP\/post71-backup-evidence"/u);
+  assert.doesNotMatch(policy,/privateDecrypt|pg_restore|secrets\.(?:PRODUCTION_BACKUP_PRIVATE_KEY|BACKUP_PRIVATE_KEY|PROFILE_PHOTO_HEALTH_SECRET)/u);
+  for (const name of ['cloudflare-policy','canary-policy','compatibility-guards','frontend-rollback-history','backend','frontend','deploy']) {
+    assert.match(jobBlock(workflow,name),/repeatable-cutover-policy/u);
+  }
+});
+
+test('backend requires the same approved receipt and fresh exact71 artifact again directly before migration', async () => {
+  const workflow=await readFile(new URL('../.github/workflows/deploy.yml',import.meta.url),'utf8');
+  const backend=jobBlock(workflow,'backend');
+  assert.match(backend,/EXPECTED_RELEASE_BOUNDARY: \$\{\{ needs\.repeatable-cutover-policy\.outputs\.receipt \}\}/u);
+  assert.equal(backend.match(/EXPECTED_RELEASE_BOUNDARY="\$EXPECTED_RELEASE_BOUNDARY"/gu)?.length,2);
+  const first=backend.indexOf('Recheck the exact repeatable-challenge release boundary');
+  assert(first>0 && first<backend.indexOf('Configure verified native password-reset email'));
+  const repeated=backend.indexOf('Reverify fresh exact-71 evidence immediately before migration');
+  const boundary=backend.indexOf('Recheck the approved exact migration boundary immediately before apply');
+  const migration=backend.indexOf('Apply database migrations');
+  assert(repeated>first && boundary>repeated && migration>boundary);
+  assert.equal((backend.slice(boundary,migration).match(/- name:/gu)||[]).length,1,
+    'no intervening step may separate the final exact boundary check from migration');
+  assert.match(backend,/artifact-ids: \$\{\{ needs\.repeatable-cutover-policy\.outputs\.backup_artifact_id \}\}/u);
+  const fresh=backend.slice(repeated,boundary);
+  assert.match(fresh,/if: needs\.repeatable-cutover-policy\.outputs\.requires_exact71_backup == 'true'/u);
+  assert.match(fresh,/BACKUP_RUN_ATTEMPT: \$\{\{ needs\.repeatable-cutover-policy\.outputs\.backup_run_attempt \}\}/u);
+  assert.match(fresh,/GITHUB_SHA="\$GITHUB_SHA"[\s\S]*verify-post-repeatable-backup-evidence\.mjs/u);
+  const policySource=await readFile(new URL('./verify-production-repeatable-cutover-policy.mjs',import.meta.url),'utf8');
+  assert.doesNotMatch(policySource,/post71 protected-workflow wiring is not yet approved/u);
+  assert(policySource.indexOf('if (expectedReceipt !== undefined) parseExpectedProductionReleaseBoundary')
+    <policySource.indexOf('await runReadOnlyManagementQuery'));
+  assert.match(policySource,/verifyUnchangedProductionReleaseBoundary\(\{ expectedReceipt, actual: result \}\)/u);
+});
+
+test('dedicated health credential is validated before writes and synchronized only in protected backend', async () => {
+  const workflow=await readFile(new URL('../.github/workflows/deploy.yml',import.meta.url),'utf8');
+  const backend=jobBlock(workflow,'backend');
+  assert.equal(workflow.match(/PROFILE_PHOTO_HEALTH_SECRET: \$\{\{ secrets\.PROFILE_PHOTO_HEALTH_SECRET \}\}/gu)?.length,1);
+  assert.match(backend,/PROFILE_PHOTO_HEALTH_SECRET: \$\{\{ secrets\.PROFILE_PHOTO_HEALTH_SECRET \}\}/u);
+  const validation=backend.indexOf('run: node scripts/verify-profile-photo-health-runtime-config.mjs');
+  assert(validation>0 && validation<backend.indexOf('Configure verified native password-reset email'));
+  assert(validation<backend.indexOf('Apply database migrations'));
+  const sync=backend.slice(backend.indexOf('- name: Synchronize Edge Function secrets'),backend.indexOf('- name: Synchronize enabled Stripe Function secrets'));
+  assert.match(sync,/"PROFILE_PHOTO_HEALTH_SECRET=\$\{PROFILE_PHOTO_HEALTH_SECRET\}"/u);
+  for (const name of ['repeatable-cutover-policy','backup-evidence','frontend','deploy']) assert.doesNotMatch(jobBlock(workflow,name),/PROFILE_PHOTO_HEALTH_SECRET/u);
+  const backup=await readFile(new URL('../.github/workflows/production-backup.yml',import.meta.url),'utf8');
+  assert.doesNotMatch(backup,/PROFILE_PHOTO_HEALTH_SECRET/u);
+});
+
+test('all literal release workflow shell bodies retain valid Bash syntax', async () => {
+  const workflow=await readFile(new URL('../.github/workflows/deploy.yml',import.meta.url),'utf8');
+  let checked=0;
+  for (const match of workflow.matchAll(/^        run: \|\n((?:          .*\n|\n)+)/gmu)) {
+    const shell=match[1].split('\n').map(line=>line.slice(10)).join('\n').replaceAll(/\$\{\{[^}]+\}\}/gu,'synthetic-value');
+    const result=spawnSync('bash',['-n'],{input:shell,encoding:'utf8'});
+    assert.equal(result.status,0,result.stderr);
+    checked++;
+  }
+  assert(checked>25,'The shell syntax inventory unexpectedly shrank.');
 });

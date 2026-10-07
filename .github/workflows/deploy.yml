@@ -14,7 +14,7 @@ on:
           - compatibility-cutover
           - frontend-only
       backup_run_id:
-        description: Successful encrypted backup run for this exact commit (required by either one-time database cutover).
+        description: Successful encrypted backup run for this exact commit (required for a one-time cutover or pending reviewed post71 migrations).
         required: false
         default: ""
         type: string
@@ -54,6 +54,12 @@ jobs:
 
   repeatable-cutover-policy:
     name: Require exact repeatable-challenge release boundary
+    outputs:
+      receipt: ${{ steps.release-boundary.outputs.receipt }}
+      mode: ${{ steps.release-boundary.outputs.mode }}
+      requires_exact71_backup: ${{ steps.release-boundary.outputs.requires_exact71_backup }}
+      backup_artifact_id: ${{ steps.post71-backup.outputs.artifact_id }}
+      backup_run_attempt: ${{ steps.post71-backup.outputs.run_attempt }}
     needs: validation
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -69,6 +75,7 @@ jobs:
         with:
           node-version: 22
       - name: Classify the exact read-only production migration boundary
+        id: release-boundary
         env:
           RELEASE_SCOPE: ${{ inputs.release_scope }}
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
@@ -77,12 +84,21 @@ jobs:
         run: |
           set -euo pipefail
           set +x
-          /usr/bin/env -i \
+          boundary="$(/usr/bin/env -i \
             PATH="$PATH" \
             RELEASE_SCOPE="$RELEASE_SCOPE" \
             SUPABASE_ACCESS_TOKEN="$SUPABASE_ACCESS_TOKEN" \
             SUPABASE_PROJECT_REF="$SUPABASE_PROJECT_REF" \
-            node scripts/verify-production-repeatable-cutover-policy.mjs
+            node scripts/verify-production-repeatable-cutover-policy.mjs)"
+          mode="$(jq -er '.mode' <<<"$boundary")"
+          requires_exact71_backup="$(jq -er '.requiresExact71Backup | tostring' <<<"$boundary")"
+          case "$mode:$requires_exact71_backup" in
+            repeatable-challenge-cutover:false|post-repeatable-challenge-cutover:false|post71-additive-release:true|post73-reviewed-release:false) ;;
+            *) echo "::error::The release boundary receipt is invalid."; exit 1 ;;
+          esac
+          printf 'receipt=%s\n' "$boundary" >> "$GITHUB_OUTPUT"
+          printf 'mode=%s\n' "$mode" >> "$GITHUB_OUTPUT"
+          printf 'requires_exact71_backup=%s\n' "$requires_exact71_backup" >> "$GITHUB_OUTPUT"
       - name: Select the fresh exact-70 encrypted backup artifact
         if: inputs.release_scope == 'repeatable-challenge-cutover'
         id: repeatable-backup
@@ -132,6 +148,56 @@ jobs:
             PRODUCTION_BACKUP_PUBLIC_KEY="$PRODUCTION_BACKUP_PUBLIC_KEY" \
             node scripts/verify-post-original77-backup-evidence.mjs \
               --directory "$RUNNER_TEMP/repeatable-challenge-backup-evidence"
+
+      - name: Select the fresh exact-71 encrypted backup artifact
+        if: steps.release-boundary.outputs.requires_exact71_backup == 'true'
+        id: post71-backup
+        env:
+          BACKUP_RUN_ID: ${{ inputs.backup_run_id }}
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          read -r artifact_id backup_run_attempt < <(/usr/bin/env -i \
+            BACKUP_RUN_ID="$BACKUP_RUN_ID" \
+            GH_TOKEN="$GH_TOKEN" \
+            GITHUB_SHA="$GITHUB_SHA" \
+            PATH="$PATH" \
+            node scripts/verify-post-repeatable-backup-evidence.mjs --select)
+          if [[ ! "$artifact_id" =~ ^[1-9][0-9]*$ || ! "$backup_run_attempt" =~ ^[1-9][0-9]*$ ]]; then
+            echo "::error::Selected backup identity is malformed."
+            exit 1
+          fi
+          printf 'artifact_id=%s\n' "$artifact_id" >> "$GITHUB_OUTPUT"
+          printf 'run_attempt=%s\n' "$backup_run_attempt" >> "$GITHUB_OUTPUT"
+      - name: Download only the selected exact-71 encrypted backup artifact
+        if: steps.release-boundary.outputs.requires_exact71_backup == 'true'
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          artifact-ids: ${{ steps.post71-backup.outputs.artifact_id }}
+          path: ${{ runner.temp }}/post71-backup-evidence
+          merge-multiple: true
+          github-token: ${{ github.token }}
+          repository: tjames222/77-dominion-challenge
+          run-id: ${{ inputs.backup_run_id }}
+      - name: Verify encrypted exact-71 bytes and restored checkpoint
+        if: steps.release-boundary.outputs.requires_exact71_backup == 'true'
+        env:
+          BACKUP_RUN_ATTEMPT: ${{ steps.post71-backup.outputs.run_attempt }}
+          BACKUP_RUN_ID: ${{ inputs.backup_run_id }}
+          PRODUCTION_BACKUP_PUBLIC_KEY: ${{ vars.PRODUCTION_BACKUP_PUBLIC_KEY }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          set +x
+          /usr/bin/env -i \
+            BACKUP_RUN_ATTEMPT="$BACKUP_RUN_ATTEMPT" \
+            BACKUP_RUN_ID="$BACKUP_RUN_ID" \
+            GITHUB_SHA="$GITHUB_SHA" \
+            PATH="$PATH" \
+            PRODUCTION_BACKUP_PUBLIC_KEY="$PRODUCTION_BACKUP_PUBLIC_KEY" \
+            node scripts/verify-post-repeatable-backup-evidence.mjs \
+              --directory "$RUNNER_TEMP/post71-backup-evidence"
 
   backup-evidence:
     name: Verify restored encrypted production backup
@@ -593,6 +659,7 @@ jobs:
       SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
       SUPABASE_PROJECT_REF: ${{ vars.SUPABASE_PROJECT_REF }}
       RELEASE_SCOPE: ${{ inputs.release_scope }}
+      EXPECTED_RELEASE_BOUNDARY: ${{ needs.repeatable-cutover-policy.outputs.receipt }}
       BILLING_ENABLED: "false"
       INTEGRATION_WORKER_SECRET: ${{ secrets.INTEGRATION_WORKER_SECRET }}
       INTEGRATION_CREDENTIAL_KEYS: ${{ secrets.INTEGRATION_CREDENTIAL_KEYS }}
@@ -600,6 +667,7 @@ jobs:
       RETIRED_COMMUNITY_WORKER_SECRET: ${{ secrets.RETIRED_COMMUNITY_WORKER_SECRET }}
       RETIRED_COMMUNITY_DR_HMAC_SECRET: ${{ secrets.RETIRED_COMMUNITY_DR_HMAC_SECRET }}
       PROFILE_PHOTO_WORKER_SECRET: ${{ secrets.PROFILE_PHOTO_WORKER_SECRET }}
+      PROFILE_PHOTO_HEALTH_SECRET: ${{ secrets.PROFILE_PHOTO_HEALTH_SECRET }}
       FEEDBACK_WORKER_SECRET: ${{ secrets.FEEDBACK_WORKER_SECRET }}
       EARLY_ACCESS_INVITATION_WORKER_SECRET: ${{ secrets.EARLY_ACCESS_INVITATION_WORKER_SECRET }}
       EARLY_ACCESS_INVITATION_KEY: ${{ secrets.EARLY_ACCESS_INVITATION_KEY }}
@@ -641,9 +709,12 @@ jobs:
           /usr/bin/env -i \
             PATH="$PATH" \
             RELEASE_SCOPE="$RELEASE_SCOPE" \
+            EXPECTED_RELEASE_BOUNDARY="$EXPECTED_RELEASE_BOUNDARY" \
             SUPABASE_ACCESS_TOKEN="$SUPABASE_ACCESS_TOKEN" \
             SUPABASE_PROJECT_REF="$SUPABASE_PROJECT_REF" \
             node scripts/verify-production-repeatable-cutover-policy.mjs
+      - name: Validate dedicated profile-photo health credential
+        run: node scripts/verify-profile-photo-health-runtime-config.mjs
       - name: Validate the production release gate
         shell: bash
         run: |
@@ -1098,6 +1169,46 @@ jobs:
       - name: Deploy compatible integration reader before migrations
         if: steps.function-secrets.outputs.integration_runtime_enabled == 'true'
         run: supabase functions deploy process-integration-outbox --project-ref "$SUPABASE_PROJECT_REF" --no-verify-jwt
+      - name: Download only the selected exact-71 encrypted backup artifact
+        if: needs.repeatable-cutover-policy.outputs.requires_exact71_backup == 'true'
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          artifact-ids: ${{ needs.repeatable-cutover-policy.outputs.backup_artifact_id }}
+          path: ${{ runner.temp }}/post71-backup-evidence
+          merge-multiple: true
+          github-token: ${{ github.token }}
+          repository: tjames222/77-dominion-challenge
+          run-id: ${{ inputs.backup_run_id }}
+      - name: Reverify fresh exact-71 evidence immediately before migration
+        if: needs.repeatable-cutover-policy.outputs.requires_exact71_backup == 'true'
+        env:
+          BACKUP_RUN_ATTEMPT: ${{ needs.repeatable-cutover-policy.outputs.backup_run_attempt }}
+          BACKUP_RUN_ID: ${{ inputs.backup_run_id }}
+          PRODUCTION_BACKUP_PUBLIC_KEY: ${{ vars.PRODUCTION_BACKUP_PUBLIC_KEY }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          set +x
+          /usr/bin/env -i \
+            BACKUP_RUN_ATTEMPT="$BACKUP_RUN_ATTEMPT" \
+            BACKUP_RUN_ID="$BACKUP_RUN_ID" \
+            GITHUB_SHA="$GITHUB_SHA" \
+            PATH="$PATH" \
+            PRODUCTION_BACKUP_PUBLIC_KEY="$PRODUCTION_BACKUP_PUBLIC_KEY" \
+            node scripts/verify-post-repeatable-backup-evidence.mjs \
+              --directory "$RUNNER_TEMP/post71-backup-evidence"
+      - name: Recheck the approved exact migration boundary immediately before apply
+        shell: bash
+        run: |
+          set -euo pipefail
+          set +x
+          /usr/bin/env -i \
+            PATH="$PATH" \
+            RELEASE_SCOPE="$RELEASE_SCOPE" \
+            EXPECTED_RELEASE_BOUNDARY="$EXPECTED_RELEASE_BOUNDARY" \
+            SUPABASE_ACCESS_TOKEN="$SUPABASE_ACCESS_TOKEN" \
+            SUPABASE_PROJECT_REF="$SUPABASE_PROJECT_REF" \
+            node scripts/verify-production-repeatable-cutover-policy.mjs
       - name: Apply database migrations
         shell: bash
         run: |
@@ -1328,6 +1439,7 @@ jobs:
             "BILLING_ENABLED=${BILLING_ENABLED}"
             "PUBLIC_SITE_URL=${PUBLIC_SITE_URL}"
             "PROFILE_PHOTO_WORKER_SECRET=${PROFILE_PHOTO_WORKER_SECRET}"
+            "PROFILE_PHOTO_HEALTH_SECRET=${PROFILE_PHOTO_HEALTH_SECRET}"
             "RESEND_API_KEY=${RESEND_API_KEY}"
             "LINEAR_FEEDBACK_API_KEY=${LINEAR_FEEDBACK_API_KEY}"
             "TRANSACTIONAL_EMAIL_FROM=${TRANSACTIONAL_EMAIL_FROM}"

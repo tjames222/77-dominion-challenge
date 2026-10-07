@@ -50,12 +50,12 @@ test('production authoritative wrapper uses the same exact source-pinned73 contr
     rawResponse:versions.slice(0,72).map(version=>({version})) }), /partial72/u);
 });
 
-test('post71 CLI remains disabled before any remote query until the protected workflow is approved', () => {
+test('post71 CLI rejects an explicitly bound missing gate receipt before any remote query', () => {
   const result = spawnSync(process.execPath, ['scripts/verify-production-repeatable-cutover-policy.mjs'], {
     cwd: new URL('..', import.meta.url), encoding:'utf8',
-    env: { PATH:process.env.PATH, SUPABASE_PROJECT_REF:'mimolwojppbtsbvtqwpo' },
+    env: { PATH:process.env.PATH, SUPABASE_PROJECT_REF:'mimolwojppbtsbvtqwpo', EXPECTED_RELEASE_BOUNDARY:'' },
   });
   assert.equal(result.status,1);
   assert.equal(result.stdout,'');
-  assert.match(result.stderr,/post71 protected-workflow wiring is not yet approved/u);
+  assert.match(result.stderr,/expected release boundary receipt is invalid/u);
 });

@@ -82,20 +82,22 @@ database backoff; do not delete it manually or bypass the exact-object trigger.
 ### Independent read-only monitor boundary (FOU-802)
 
 The additive `profile_photo_cleanup_monitor_health()` RPC and
-`mode=monitor-health` Function path supply a narrow health boundary. This source
-change alone **does not install an alert monitor, provision a credential,
-configure a provider, or send an email**. Scheduling, incident deduplication,
-recovery notifications and actual destination receipt remain separate release
-work. The existing worker/Cron credential and `mode=health` call above continue
-to work without the new setting.
+`mode=monitor-health` Function path supply a narrow health boundary. The approved
+protected backend release now includes synchronization of the independent health
+secret. The inert monitor Worker and protected secret are provisioned, but the
+backend migration/secret synchronization, mail verification, and monitor
+activation remain pending. **Monitoring and notifications are not active.** The
+existing worker/Cron credential and `mode=health` call above continue to work
+without the new setting.
 
 The monitor path requires a separate `PROFILE_PHOTO_HEALTH_SECRET`: exactly 32
 random bytes encoded as canonical unpadded base64url (43 characters), different
 from `PROFILE_PHOTO_WORKER_SECRET` and every other integration credential. Keep
 it only in protected server/monitor secret stores. Do not give a monitor the
 destructive worker key, service-role key, Management API token, or Vault access.
-Provisioning and synchronization of this new secret are **not** added to the
-release workflow in this slice.
+The approved release workflow reads it from the GitHub `production` environment,
+validates it, and synchronizes it to Supabase Edge Function secrets only in the
+protected backend job; frontend-only releases do not synchronize it.
 
 The request contract is `POST`, `Content-Type: application/json`, header
 `x-dominion-health-key`, and the exact object `{"mode":"monitor-health"}`.
@@ -161,11 +163,12 @@ worker rehearsal or prove alert delivery.
 `workers/profile-photo-cleanup-monitor/` contains the independent Worker and
 SQLite-backed Durable Object. Its checked-in configuration pins the existing
 Dominion account, disables HTTP/preview URLs and routes, leaves Cron triggers
-empty, and sets `ALERTS_ENABLED=false`. Deployment, the new health secret,
-provider eligibility, and received email evidence remain release steps; this
-source change is not evidence that monitoring is active.
+empty, and sets `ALERTS_ENABLED=false`. The Worker and protected health secret
+have been provisioned in this inert state. Backend migration/secret
+synchronization, provider/mail verification, received email evidence, and
+activation remain release steps; provisioning is not evidence of active alerts.
 
-The proposed resource is `dominion-profile-photo-cleanup-monitor`, with one
+The provisioned resource is `dominion-profile-photo-cleanup-monitor`, with one
 private object named `profile-photo-cleanup-v1`. Its eventual offset schedule is
 `2,7,12,17,22,27,32,37,42,47,52,57 * * * *`. Health requests are pinned to the
 existing Supabase Function, forbid redirects, have an eight-second deadline and
