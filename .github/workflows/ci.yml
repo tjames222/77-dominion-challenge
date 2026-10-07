@@ -35,6 +35,9 @@ jobs:
           cache: pnpm
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
+      - name: Test private cleanup monitor with local SQLite and synthetic email
+        timeout-minutes: 3
+        run: node --test workers/profile-photo-cleanup-monitor/*.test.mjs
       - name: Run frontend tests and build
         run: pnpm run check:frontend
 
@@ -107,6 +110,9 @@ jobs:
       - name: Cache verified exact-version fixture images without ECR downloads
         timeout-minutes: 10
         run: node scripts/prepare-ci-fixture-images.mjs
+      - name: Verify isolated read-only profile-photo monitor health
+        timeout-minutes: 5
+        run: node --test scripts/profile-photo-cleanup-monitor.sql.test.mjs
       - name: Verify isolated account-request inbox authority
         timeout-minutes: 5
         run: node --test scripts/site-admin-account-requests.sql.test.mjs

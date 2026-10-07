@@ -36,8 +36,8 @@ const supabaseConfigPath = path.join(
 );
 // Update alongside each reviewed pgTAP addition; these exact inventory checks
 // must not silently accept missing files or fewer planned assertions.
-const expectedFileCount = 45;
-const expectedAssertionCount = 1923;
+const expectedFileCount = 46;
+const expectedAssertionCount = 1935;
 
 const fakeCliSource = `#!/usr/bin/env bash
 set -euo pipefail

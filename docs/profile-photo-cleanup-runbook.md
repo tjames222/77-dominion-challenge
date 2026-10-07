@@ -79,6 +79,159 @@ Investigate Edge Function structured events, Storage availability, database
 health, and `cron.job_run_details`. A failed object is released to exponential
 database backoff; do not delete it manually or bypass the exact-object trigger.
 
+### Independent read-only monitor boundary (FOU-802)
+
+The additive `profile_photo_cleanup_monitor_health()` RPC and
+`mode=monitor-health` Function path supply a narrow health boundary. This source
+change alone **does not install an alert monitor, provision a credential,
+configure a provider, or send an email**. Scheduling, incident deduplication,
+recovery notifications and actual destination receipt remain separate release
+work. The existing worker/Cron credential and `mode=health` call above continue
+to work without the new setting.
+
+The monitor path requires a separate `PROFILE_PHOTO_HEALTH_SECRET`: exactly 32
+random bytes encoded as canonical unpadded base64url (43 characters), different
+from `PROFILE_PHOTO_WORKER_SECRET` and every other integration credential. Keep
+it only in protected server/monitor secret stores. Do not give a monitor the
+destructive worker key, service-role key, Management API token, or Vault access.
+Provisioning and synchronization of this new secret are **not** added to the
+release workflow in this slice.
+
+The request contract is `POST`, `Content-Type: application/json`, header
+`x-dominion-health-key`, and the exact object `{"mode":"monitor-health"}`.
+Do not send `x-dominion-worker-key` alongside it. The health credential cannot
+authorize the old health mode, default processing, or any batch limit; the
+worker credential cannot authorize the new monitor mode. Requests with invalid
+JSON, duplicate/escaped/unknown keys, extra fields, unknown modes, encoded
+bodies, more than 256 body bytes, or an incomplete body after one second fail
+before creating an admin client. Existing supported worker objects remain
+`{}`, `{"limit":25}` (integer 1–100), and `{"mode":"health"}`. Previously
+malformed requests must not be relied on to default to cleanup.
+
+A successful response is `{status:"ok",health:{schemaVersion:1,...}}` with
+`Cache-Control: no-store`. This means the snapshot was read, **not** that the
+operational state is healthy. It contains:
+
+- `generatedAt` and the existing `cleanup` aggregate, including its own
+  `generatedAt`, queue/lease/failure counts and `oldestReadyAt`;
+- `cron.extensionAvailable`, `catalogAvailable`, and `jobState` (`unavailable`,
+  `missing`, `present`, or `ambiguous`) for only the fixed cleanup job;
+- nullable `active` and `scheduleMatches` (the exact `*/5 * * * *` schedule);
+- `historyAvailable`, `stale`, `staleAfterSeconds:900`, and at most the exact
+  last two runs, newest first, each limited to `runId`, fixed-label `status`,
+  `startedAt`, and `endedAt`;
+- `transportEvidence:"enqueue-only"`. A successful Cron run proves only that
+  its SQL finished enqueueing the asynchronous pg_net request. It does not
+  prove an HTTP response, Storage deletion, or successful cleanup.
+
+Treat run IDs as canonical decimal **strings**, never JavaScript numbers:
+PostgreSQL bigint IDs can exceed the safe-number range. They are operational
+deduplication identities, not member IDs or Cron connection identities. Unknown
+native statuses reduce to `unknown`; returned statuses never include raw error
+text. No recent start time (or one outside the previous 15 minutes, including a
+future timestamp) marks the schedule stale. An absent/ambiguous job supplies no
+run history or borrowed status from another owner's job. Consumers must also
+reject stale/invalid HTTP snapshots and apply the separate queue thresholds;
+they must not interpret an HTTP 200 or `stale:false` alone as healthy.
+
+The new SQL helper is stable, security-definer with an empty search path, and
+executable only by `service_role`, with an additional rejection of any non-null
+`auth.uid()`. It grants no direct Cron or private lifecycle-table access. The
+Function validates and projects a fixed response allowlist; it does not expose
+Cron commands, usernames, databases, `return_message`, HTTP bodies, Vault values,
+member IDs, object paths or image content. No health call claims, retries,
+expires, deletes, repairs, or changes a schedule.
+
+Verification without touching the shared local Supabase stack:
+
+```bash
+node --test scripts/profile-photo-cleanup-monitor.sql.test.mjs
+```
+
+This creates and removes only a uniquely labeled, cached-image PostgreSQL
+fixture with no network/ports/host mounts, tmpfs data, read-only root and all
+background workers disabled. It executes the real pg_cron extension, additive
+migration, and `320_profile_photo_cleanup_monitor_health.sql` ACL tests.
+The ordinary Function test suite also executes the credential/body/response
+reject matrix. This isolated health proof does not replace the destructive
+worker rehearsal or prove alert delivery.
+
+### Private scheduled monitor implementation (not yet activated)
+
+`workers/profile-photo-cleanup-monitor/` contains the independent Worker and
+SQLite-backed Durable Object. Its checked-in configuration pins the existing
+Dominion account, disables HTTP/preview URLs and routes, leaves Cron triggers
+empty, and sets `ALERTS_ENABLED=false`. Deployment, the new health secret,
+provider eligibility, and received email evidence remain release steps; this
+source change is not evidence that monitoring is active.
+
+The proposed resource is `dominion-profile-photo-cleanup-monitor`, with one
+private object named `profile-photo-cleanup-v1`. Its eventual offset schedule is
+`2,7,12,17,22,27,32,37,42,47,52,57 * * * *`. Health requests are pinned to the
+existing Supabase Function, forbid redirects, have an eight-second deadline and
+an 8 KiB decoded-body ceiling. No URL/body/recipient override is accepted.
+Runtime authority is only the independent health credential plus the email
+binding restricted to `alerts@77dominion.com` and `tjames@cablueprinting.com`.
+
+Each poll is serialized, and state is reloaded from physical storage. Both the
+frozen notification intent and daily budget are committed before invoking email
+once. Thresholds above are combined into one incident, with at most one update
+for newly appearing conditions and recovery after two consecutive fresh healthy
+observations. The global ceiling is six reserved notifications per UTC day,
+including rejected and uncertain sends. State is bounded, not reset on deploy,
+and contains no member data, object paths, response bodies or credentials.
+
+Email `accepted` means only that the binding returned a valid message ID; it does
+not claim destination delivery or recipient acknowledgment. A timeout, malformed
+result or interrupted `sending` becomes `delivery_unknown`, blocks all further
+mail, and is never automatically retried. A known pre-acceptance provider
+rejection is recorded as `provider_rejected`. Logs contain fixed status/condition
+codes, timestamps, the bounded notification identity and provider message ID.
+Unknown stored schemas or malformed records fail closed instead of resetting.
+
+For uncertain mail, Tim reviews the exact notification ID, provider evidence and
+recipient inbox. Only a protected Worker configuration change may set
+`MONITOR_RECONCILE_NOTIFICATION` to that exact ID. The next poll records
+`resume_without_retry` and allows future distinct notifications. It does **not**
+retry the uncertain message, assert receipt, clear its uncertain status, erase
+history, or reset quota. Remove the configuration value after acknowledgment;
+leaving it set cannot acknowledge a later notification. No public reconciliation
+or reset route exists. Disabling alerts or the schedule must preserve the object
+and its migration identity; never delete state as an incident workaround.
+
+The approved two-message acceptance canary is selected only with the exact
+private configuration `MONITOR_SELF_TEST=owner-acceptance-2026-10-07` while
+`ALERTS_ENABLED=false`. It uses separate persisted synthetic state: one test
+incident then two fresh healthy synthetic observations on later scheduled polls.
+Both messages say `TEST ONLY`; they use the same fixed binding and recipient and
+share the six-notification budget. Real health is still read without injecting
+synthetic conditions into its incident state. The canary never changes Supabase,
+leases, photos, Cron jobs, DNS, or billing. Its completion record survives flag
+removal/redeploy/restart, so the same identity cannot send again.
+
+An uncertain test send also blocks future real mail even after removing the
+canary flag. Its reconciliation ID is qualified with
+`owner-acceptance-2026-10-07/`, followed by the recorded notification ID. Do not
+substitute an unqualified ID or create a new canary identity to resend. Completion
+and provider acceptance remain separate from the required two recipient receipts.
+After those receipts and healthy real observations, remove the canary flag and
+enable ordinary alerts in the reviewed deployment. Never activate a paid plan or
+change sending DNS to make the test pass without new approval.
+
+Local verification uses only synthetic transport/email and an owned temporary
+SQLite directory; it makes no hosted health or mail request:
+
+```bash
+node --test workers/profile-photo-cleanup-monitor/*.test.mjs
+```
+
+The native tests use the lockfile-pinned Miniflare/Workerd package and actual
+SQLite files, destroy/restart the runtime, and prove overlap serialization,
+uncertain-send recovery and one-shot replay suppression. They remove only their
+owned temporary fixture directories. Native test timing is not production CPU
+measurement; confirm Workers Free entitlement, available Cron/DO quota and CPU
+before activation. A monitor cannot detect its own complete platform outage.
+
 ## Local rehearsal and closed-canary proof
 
 Run the deterministic proof only against the pinned local full stack. It has an

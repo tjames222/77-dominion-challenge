@@ -13910,3 +13910,4 @@ revoke execute on function public.grant_sharing_reward_after_invite_redemption()
 \ir migrations/20260930161218_share_submitted_progress_v2.sql
 \ir migrations/20261001001245_repeatable_challenge_instances_v2.sql
 \ir migrations/20261007055555_site_admin_account_request_queue_health.sql
+\ir migrations/20261007060519_profile_photo_cleanup_monitor_health.sql

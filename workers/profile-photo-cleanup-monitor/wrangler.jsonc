@@ -1,0 +1,19 @@
+{
+  "$schema": "../../node_modules/wrangler/config-schema.json",
+  "name": "dominion-profile-photo-cleanup-monitor",
+  "account_id": "458dff367f845e8295be4cfb1af8633a",
+  "main": "index.mjs",
+  "compatibility_date": "2026-07-01",
+  "workers_dev": false,
+  "preview_urls": false,
+  "routes": [],
+  "triggers": { "crons": [] },
+  "vars": { "ALERTS_ENABLED": "false", "MONITOR_RECONCILE_NOTIFICATION": "", "MONITOR_SELF_TEST": "" },
+  "durable_objects": { "bindings": [{ "name": "MONITOR", "class_name": "CleanupMonitor" }] },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["CleanupMonitor"] }],
+  "send_email": [{
+    "name": "EMAIL",
+    "allowed_destination_addresses": ["tjames@cablueprinting.com"],
+    "allowed_sender_addresses": ["alerts@77dominion.com"]
+  }]
+}
