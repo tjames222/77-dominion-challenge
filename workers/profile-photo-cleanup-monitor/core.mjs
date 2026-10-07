@@ -243,7 +243,12 @@ export function renderNotification(intent, testRun = null) {
 }
 
 export function scheduledSlot(scheduledTime, now) {
-  if (!integer(scheduledTime) || !integer(now) || scheduledTime % INTERVAL_MS !== 120_000 ||
+  if (!integer(scheduledTime) || !integer(now) ||
     scheduledTime > now + MAX_FUTURE_MS || now - scheduledTime > MAX_SNAPSHOT_AGE_MS) throw invalid();
+  // Cloudflare may supply seconds/milliseconds within the configured minute.
+  // Validate raw freshness first, then accept only that minute; normalization
+  // must not widen the future/stale windows or create another durable slot.
+  const scheduledMinute = Math.floor(scheduledTime / 60_000) * 60_000;
+  if (scheduledMinute % INTERVAL_MS !== 120_000) throw invalid();
   return Math.floor(scheduledTime / INTERVAL_MS);
 }
