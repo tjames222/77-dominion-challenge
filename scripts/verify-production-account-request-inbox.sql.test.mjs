@@ -3,6 +3,7 @@ import { spawnSync } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
 import { readFile, readdir } from 'node:fs/promises';
 import { after, before, test } from 'node:test';
+import { selectPostRepeatableMigrationVersions } from './production-backup-public-contract.mjs';
 
 // Definition/catalog-only fixture. Existing site-admin-account-requests.sql.test.mjs
 // remains the independent behavioral/Auth test. No real actors or guards are used.
@@ -70,7 +71,12 @@ function driftProbe(mutation, falseColumns) {
 
 before(async () => {
   checkpoint = await readFile(new URL('./verify-production-account-request-inbox.sql', import.meta.url), 'utf8');
-  const names = (await readdir(migrationDirectory)).filter(name => /^\d{14}_[a-z0-9_]+\.sql$/.test(name)).sort();
+  const filenames = await readdir(migrationDirectory);
+  // This definition-only fixture continues to exercise the frozen71 contract.
+  // The independent full-chain post71 fixture applies and verifies the exact73
+  // extension; later files must not silently redefine this historical baseline.
+  const frozenVersions = selectPostRepeatableMigrationVersions(filenames);
+  const names = filenames.filter(name => name.endsWith('.sql')).sort().slice(0, frozenVersions.length);
   history = names.map(name => ({ version: name.slice(0, 14), name: name.slice(15, -4) }));
   assert.equal(history.length, 71, 'This release checkpoint is pinned to exactly 71 source migrations.');
   assert.equal(new Set(history.map(row => row.version)).size, 71);

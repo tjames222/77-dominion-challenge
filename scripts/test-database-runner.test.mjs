@@ -36,8 +36,8 @@ const supabaseConfigPath = path.join(
 );
 // Update alongside each reviewed pgTAP addition; these exact inventory checks
 // must not silently accept missing files or fewer planned assertions.
-const expectedFileCount = 45;
-const expectedAssertionCount = 1916;
+const expectedFileCount = 46;
+const expectedAssertionCount = 1935;
 
 const fakeCliSource = `#!/usr/bin/env bash
 set -euo pipefail
@@ -190,6 +190,24 @@ test("the database inventory and latest lifecycle foundations stay complete", as
   assert.ok(inventory.includes("310_early_access_account_bootstrap.sql"));
   assert.ok(inventory.includes("330_site_admin_account_requests.sql"));
   assert.ok(inventory.includes("340_original_77_live_completion.sql"));
+
+  const canonicalSchema = await readFile(
+    path.join(repositoryRoot, "supabase", "schema.sql"),
+    "utf8",
+  );
+  const schemaMigrations = [...canonicalSchema.matchAll(/^\\ir migrations\/(.+\.sql)$/gm)]
+    .map((match) => match[1]);
+  const queueHealthMigration = "20261007055555_site_admin_account_request_queue_health.sql";
+  assert.equal(
+    schemaMigrations.filter((filename) => filename === queueHealthMigration).length,
+    1,
+    "the canonical schema must include the account-request queue-health migration exactly once",
+  );
+  assert.ok(
+    schemaMigrations.indexOf(queueHealthMigration)
+      > schemaMigrations.indexOf("20261001001245_repeatable_challenge_instances_v2.sql"),
+    "the queue-health migration must follow the existing lifecycle foundations",
+  );
 
   let plannedAssertions = 0;
   for (const filename of inventory) {

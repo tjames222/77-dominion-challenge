@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { readFileSync } from 'node:fs';
-import { normalizeAdminAccountRequest, normalizeAdminAccountRequestPage, accountRequestRecordedStatus } from './admin-account-requests.mjs';
-import { previewAccountRequests } from './admin-account-request-preview.mjs';
+import { normalizeAdminAccountRequest, normalizeAdminAccountRequestPage, normalizeAdminAccountRequestQueueHealth, accountRequestRecordedStatus } from './admin-account-requests.mjs';
+import { previewAccountRequests, previewAccountRequestQueueHealth } from './admin-account-request-preview.mjs';
 import { createAdminPreview } from './admin-preview.mjs';
 import { createAdminReadClient } from './admin-read-client.mjs';
 import { requestAdminAccountRequests, readAdminAccountRequests } from './admin-account-request-transport.mjs';
@@ -117,6 +117,47 @@ test('request projection stays deferred and the view exposes no fulfillment cont
   assert.doesNotMatch(api, /^import.*admin-account-request/m);
   assert.match(api, /await import\('\.\/admin-account-request-transport\.mjs'\)/);
   const html = read('../../admin.html').split('id="adminRequestsPanel"')[1].split('class="admin-pagination"')[0];
-  assert.equal((html.match(/<button/g) || []).length, 1); assert.match(html, /Read-only intake/);
+  assert.equal((html.match(/<button/g) || []).length, 2); assert.match(html, /Read-only intake/);
   assert.doesNotMatch(read('./admin-account-requests.mjs'), /localStorage|sessionStorage|innerHTML|console\./);
+});
+
+const health = () => ({ schemaVersion: 1, actorId: A, observedAt: '2026-02-01T12:00:00Z', ...previewAccountRequestQueueHealth() });
+test('queue summary requires exactly four unique active buckets and preserves only safe capped facts', () => {
+  const value = health();
+  assert.deepEqual(normalizeAdminAccountRequestQueueHealth({ ...value, email: 'PRIVATE', buckets: value.buckets.map(b => ({ ...b, userId: B, note: 'PRIVATE' })) }), value);
+  assert.deepEqual(value.buckets.map(b => b.count), [14, 0, 0, 14]);
+  for (const patch of [{ buckets: [] }, { buckets: value.buckets.slice(1) }, { buckets: [...value.buckets, value.buckets[0]] },
+    { buckets: [value.buckets[0], ...value.buckets.slice(0, 3)] }, { schemaVersion: 2 }, { actorId: '' }, { observedAt: 'bad' }])
+    assert.throws(() => normalizeAdminAccountRequestQueueHealth({ ...value, ...patch }), { code: 'ADMIN_UNAVAILABLE' });
+  for (const patch of [{ count: -1 }, { count: 1001 }, { count: 1.5 }, { count: '1' }, { hasMore: true }, { hasMore: null },
+    { requestType: 'other' }, { status: 'fulfilled' }, { count: 0 }, { oldestRequestedAt: null }, { oldestRequestedAt: '2099-01-01T00:00:00Z' }])
+    assert.throws(() => normalizeAdminAccountRequestQueueHealth({ ...value, buckets: [{ ...value.buckets[0], ...patch }, ...value.buckets.slice(1)] }), { code: 'ADMIN_UNAVAILABLE' });
+  for (const hasMore of [false, true]) assert.equal(normalizeAdminAccountRequestQueueHealth({ ...value,
+    buckets: [{ ...value.buckets[0], count: 1000, hasMore }, ...value.buckets.slice(1)] }).buckets[0].hasMore, hasMore);
+});
+test('queue transport is exact and finite; other RPC names cannot be passed through it', async () => {
+  const name = 'site_admin_get_account_request_queue_health'; let calls = 0;
+  assert.deepEqual(await requestAdminAccountRequests({ ...input, name, fetcher: async (url, options) => {
+    calls++; assert.equal(url, `https://fixture.invalid/rest/v1/rpc/${name}`);
+    assert.equal(options.headers.Authorization, 'Bearer captured-only'); assert.equal(options.cache, 'no-store'); return json(health());
+  } }), health());
+  assert.equal(calls, 1);
+  await assert.rejects(requestAdminAccountRequests({ ...input, name: 'site_admin_assign_role', fetcher: () => { throw Error('must not dispatch'); } }), { code: 'ADMIN_INVALID_INPUT' });
+  await assert.rejects(requestAdminAccountRequests({ ...input, name, timeoutMs: 5, fetcher: () => new Promise(() => {}) }), { code: 'ADMIN_UNAVAILABLE' });
+});
+test('queue summary pins actor and drops changed session or malformed actor responses', async () => {
+  for (const mode of ['replacement', 'ABA', 'wrong actor']) {
+    let session = { user: { id: A }, access_token: 'A:1' }; let observe;
+    const held = defer(), sent = defer();
+    const client = createAdminReadClient({ getSession: async () => session, getUser: async () => session.user,
+      sessionIdentity: s => s.access_token, subscribe: fn => { observe = fn; }, request: async (name, args, options) => {
+        assert.equal(name, 'site_admin_get_account_request_queue_health'); assert.equal(args.target_expected_actor_id, A);
+        assert.equal(options.token, 'A:1'); sent.resolve(); return held.promise;
+      } });
+    const pending = client.read('site_admin_get_account_request_queue_health', { target_expected_actor_id: B }); await sent.promise;
+    if (mode === 'replacement') session = { ...session, access_token: 'A:2' };
+    if (mode === 'ABA') { observe({ event: 'SIGNED_IN', sessionIdentity: 'B:1' }); observe({ event: 'SIGNED_IN', sessionIdentity: 'A:1' }); }
+    held.resolve({ ...health(), actorId: mode === 'wrong actor' ? B : A });
+    await assert.rejects(pending, { code: mode === 'wrong actor' ? 'ADMIN_UNAVAILABLE' : 'ADMIN_CHANGED' }); client.destroy();
+  }
 });

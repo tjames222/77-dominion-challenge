@@ -63,7 +63,7 @@ test('integration preserves all inventory equality, current-only startup/replay 
   assert.match(replay,/assert.deepEqual\(currentBackupPgNetManifest/); assert.match(replay,/await local\(/); assert.doesNotMatch(replay,/remote\(/);
   assert.match(source,/assert.equal\(await readFile\(after, 'utf8'\), beforeText/);
   assert.match(source,/assert.equal\(comparableInventory\(restoredText\), comparableInventory\(beforeText\)/);
-  assert.match(source,/const usesFiveSettingVault = \(mode\) => mode === POST_EARLY_ACCESS_BACKUP_MODE\s*\|\| mode === POST_ADMIN_INBOX_BACKUP_MODE\s*\|\| mode === POST_ORIGINAL77_BACKUP_MODE;/);
+  assert.match(source,/const usesFiveSettingVault = \(mode\) => mode === POST_EARLY_ACCESS_BACKUP_MODE\s*\|\| mode === POST_ADMIN_INBOX_BACKUP_MODE\s*\|\| mode === POST_ORIGINAL77_BACKUP_MODE\s*\|\| mode === POST_REPEATABLE_BACKUP_MODE;/);
   assert.match(source,/const usesPostEarlyAccessRecovery = usesFiveSettingVault\(backupMode\);/);
   assert.match(source,/const usesPgNetSupplement = backupMode === CURRENT_BACKUP_MODE \|\| usesPostEarlyAccessRecovery;/);
   assert.match(source,/usesPgNetSupplement \? \['-e', 'DOMINION_BACKUP_CURRENT_PG_NET=1'\] : \[\]/);

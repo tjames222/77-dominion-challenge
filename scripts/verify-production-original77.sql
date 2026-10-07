@@ -161,7 +161,7 @@ WITH canonical_deparse_context AS MATERIALIZED (
   FROM expected_contracts e LEFT JOIN contract_documents d USING(contract_name)
 )
 SELECT
-  coalesce((SELECT pg_catalog.count(*)=71 AND pg_catalog.count(DISTINCT version)=71
+  (coalesce((SELECT pg_catalog.count(*)=71 AND pg_catalog.count(DISTINCT version)=71
     AND pg_catalog.max(version::text)='20261001001245'
     AND pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(pg_catalog.string_agg(version::text,',' ORDER BY version::text COLLATE "C"),'UTF8')),'hex')
       ='e6090c27e44dd678cab1b8178058f780bec2d0b4dcd99dee0d96407d24a5bb26'
@@ -170,7 +170,17 @@ SELECT
       ('20260930152825','add_original_77_completion_evidence_foundation'),
       ('20260930160740','wire_original_77_live_completion'),
       ('20260930161218','share_submitted_progress_v2'),
-      ('20261001001245','repeatable_challenge_instances_v2'))) AS exact_migration_history_ok,
+      ('20261001001245','repeatable_challenge_instances_v2')))
+    OR (coalesce((SELECT pg_catalog.count(*)=73 AND pg_catalog.count(DISTINCT version)=73
+      AND pg_catalog.max(version::text)='20261007060519'
+      AND pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(
+        pg_catalog.string_agg(version::text,',' ORDER BY version::text COLLATE "C"),'UTF8')),'hex')
+          ='d9e099e1d3c7646aab3c72d0b0263030343557c4280923048e268f0c95bb963b'
+      FROM supabase_migrations.schema_migrations),false)
+      AND (SELECT pg_catalog.count(*)=4 FROM supabase_migrations.schema_migrations WHERE (version,name) IN (('20260930152825','add_original_77_completion_evidence_foundation'),('20260930160740','wire_original_77_live_completion'),('20260930161218','share_submitted_progress_v2'),('20261001001245','repeatable_challenge_instances_v2')))
+      AND (SELECT pg_catalog.count(*)=2 FROM supabase_migrations.schema_migrations WHERE (version,name) IN (
+        ('20261007055555','site_admin_account_request_queue_health'),
+        ('20261007060519','profile_photo_cleanup_monitor_health'))))) AS exact_migration_history_ok,
   CASE WHEN c.pinned_search_path='pg_catalog' AND c.pinned_timezone='UTC' AND c.pinned_datestyle='ISO, YMD'
     AND c.pinned_timeout='15s' AND c.pinned_lock_timeout='5s'
     THEN pg_catalog.current_setting('transaction_read_only')='on' AND pg_catalog.current_setting('server_version_num')='170006'

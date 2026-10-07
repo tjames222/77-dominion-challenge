@@ -167,8 +167,9 @@ descending and greater/less operators enter dynamic SQL text.
 
 ### Inbox validation evidence
 
-`node --test scripts/site-admin-account-requests.sql.test.mjs` passes 13 native
-tests, including the 16 pgTAP assertions in `330_site_admin_account_requests.sql`.
+`node --test scripts/site-admin-account-requests.sql.test.mjs` covers the inbox
+and queue summary with 17 native tests, including the 23 pgTAP assertions in
+`330_site_admin_account_requests.sql`.
 It uses the exact cached PostgreSQL 17.6.1.141 image in a newly owned no-network,
 no-port, read-only-root, nonroot tmpfs container with background workers disabled.
 The fixture loads the actual request-table migration, including FORCE RLS, its
@@ -194,6 +195,40 @@ SQL was executed only in the disposable fixture. Shared-stack reset and hosted
 database/advisor calls were not used. Normal full-chain CI remains required before
 release. This completes only the metadata inbox part of FOU-1502, not fulfillment,
 account recovery, dashboard metrics or other remaining admin capabilities.
+
+## Active account-request queue health
+
+`site_admin_get_account_request_queue_health(target_expected_actor_id uuid)` is
+a separate stable, read-only RPC guarded first by `operations.read`, native live
+session, verified same-session TOTP/AAL2, healthy account and expected actor. It
+does not need `users.read` and cannot be called by anon or service_role. It adds
+no table grant, role/policy change, index or data mutation. Only the guarded
+public RPC is exposed; the private authorization helper remains inaccessible.
+
+The envelope is `{schemaVersion:1, actorId, observedAt, buckets}`. Exactly four
+buckets cover `data_export`/`account_deletion` × `requested`/`in_progress`.
+Each bucket is `{requestType,status,count,hasMore,oldestRequestedAt}`. Counts are
+exact through 1000; an additional visible entry sets `hasMore:true` and caps count
+at 1000. An empty bucket has count zero, hasMore false and oldestRequestedAt null.
+All buckets share the statement snapshot and original requested time, not the
+last update. There are no request/user identifiers, notes, delivery payloads or
+client-selectable filters/caps. The authenticated caller's actorId is solely the
+response ownership fence. This is intake state, never processing-success proof.
+
+The query reuses `account_lifecycle_requests_admin_bucket_idx` and reads up to
+1001 ordered entries from each of four fixed index prefixes before aggregation.
+It never counts the whole ledger. Exact-query EXPLAIN ANALYZE over 50,000 rows
+measured four index scans of 1001 visible rows each, no sequential ledger scan,
+708 shared blocks and 1.195 ms in the isolated fixture. These are local evidence,
+not a hosted latency guarantee; PostgreSQL still resolves MVCC visibility.
+Boundary tests cover 0, 1, 999, 1000, 1001 and 5000 entries per bucket, both types
+and active statuses, no-store/read-only behavior, private-field sentinels, denied
+roles, changed sessions, missing MFA and revoked current permissions.
+
+CLI-created migration: `20261007055555_site_admin_account_request_queue_health.sql`.
+Its SQL was tested only in the existing isolated native fixture. Release still
+requires full-chain database verification, normal review and production approval;
+this local work is not evidence that the migration has been deployed.
 
 ## Validation and intentionally omitted fields
 

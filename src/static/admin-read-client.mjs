@@ -1,5 +1,5 @@
 const READS = new Set(['get_site_admin_context', 'site_admin_list_users', 'site_admin_get_user', 'site_admin_list_audit', 'site_admin_get_audit_event',
-  'site_admin_list_early_access_requests', 'site_admin_get_early_access_request', 'site_admin_list_early_access_history', 'site_admin_list_account_requests']);
+  'site_admin_list_early_access_requests', 'site_admin_get_early_access_request', 'site_admin_list_early_access_history', 'site_admin_list_account_requests', 'site_admin_get_account_request_queue_health']);
 const PERMISSIONS = new Set(['users.read', 'users.manage', 'roles.manage', 'testing.manage', 'metrics.read', 'operations.read', 'operations.manage', 'audit.read']);
 
 export function adminReadError(code = 'ADMIN_UNAVAILABLE') {

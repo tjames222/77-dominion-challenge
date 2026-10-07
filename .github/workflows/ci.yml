@@ -35,6 +35,9 @@ jobs:
           cache: pnpm
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
+      - name: Test private cleanup monitor with local SQLite and synthetic email
+        timeout-minutes: 3
+        run: node --test workers/profile-photo-cleanup-monitor/*.test.mjs
       - name: Run frontend tests and build
         run: pnpm run check:frontend
 
@@ -68,6 +71,8 @@ jobs:
         run: pnpm run test:profile-photo-cleanup-cron
       - name: Test production profile-photo cleanup Cron policy
         run: pnpm run test:production-profile-photo-cleanup-cron
+      - name: Test local-only Cron lint fixture boundaries
+        run: node --test scripts/prepare-ci-cron-lint.test.mjs
       - name: Validate migration execution compatibility
         run: pnpm run check:migrations
       - name: Test the migration compatibility gate
@@ -100,6 +105,8 @@ jobs:
         run: node --test scripts/verify-production-account-request-inbox.test.mjs scripts/verify-production-original77.test.mjs scripts/verify-production-repeatable-challenge.test.mjs
       - name: Test repeatable challenge cutover and exact backup release boundary
         run: node --test scripts/verify-repeatable-challenge-cutover-plan.test.mjs scripts/verify-production-repeatable-cutover-policy.test.mjs scripts/verify-post-original77-backup-evidence.test.mjs
+      - name: Test exact post71 release sources and isolated health credential validation
+        run: node --test scripts/verify-post71-release-plan.test.mjs scripts/verify-post-repeatable-backup-evidence.test.mjs scripts/verify-profile-photo-health-runtime-config.test.mjs
       - name: Start local Supabase
         run: pnpm run supabase:start
       - name: Verify exact isolated-fixture image cache preparation
@@ -107,6 +114,9 @@ jobs:
       - name: Cache verified exact-version fixture images without ECR downloads
         timeout-minutes: 10
         run: node scripts/prepare-ci-fixture-images.mjs
+      - name: Verify isolated read-only profile-photo monitor health
+        timeout-minutes: 5
+        run: node --test scripts/profile-photo-cleanup-monitor.sql.test.mjs
       - name: Verify isolated account-request inbox authority
         timeout-minutes: 5
         run: node --test scripts/site-admin-account-requests.sql.test.mjs
@@ -119,6 +129,9 @@ jobs:
       - name: Verify deterministic repeatable challenge catalog after two exact replays
         timeout-minutes: 5
         run: node --test scripts/verify-production-repeatable-challenge.sql.test.mjs
+      - name: Verify frozen catalogs at the exact reviewed post71 boundary
+        timeout-minutes: 5
+        run: node --test scripts/verify-post71-catalog-history.sql.test.mjs
       - name: Verify isolated fresh-key Vault backup reconstruction
         timeout-minutes: 5
         env:
@@ -136,6 +149,9 @@ jobs:
       - name: Verify exact original challenge backup and full custom archive restore
         timeout-minutes: 5
         run: node --test scripts/free-backup-post-original77.sql.test.mjs
+      - name: Verify exact71 challenge-instance backup and full custom archive restore
+        timeout-minutes: 5
+        run: node --test scripts/free-backup-post-repeatable.sql.test.mjs
       - name: Verify original challenge submission evidence and atomic completion
         timeout-minutes: 5
         run: node --test scripts/original-77-completion-evidence.sql.test.mjs scripts/original-77-live-completion.sql.test.mjs scripts/original-77-fullchain-runtime.sql.test.mjs scripts/original77-legacy-range.sql.test.mjs
@@ -194,7 +210,18 @@ jobs:
       - name: Check local database security and performance advisors
         run: supabase db advisors --local --type all --level info --fail-on error
       - name: Lint canonical application SQL
-        run: supabase db lint --local --schema public,private --level warning --fail-on error
+        run: |
+          node scripts/prepare-ci-cron-lint.mjs --prepare
+          cleanup_cron_lint() {
+            lint_status=$?
+            trap - EXIT
+            if ! node scripts/prepare-ci-cron-lint.mjs --cleanup; then
+              exit 1
+            fi
+            exit "$lint_status"
+          }
+          trap cleanup_cron_lint EXIT
+          supabase db lint --local --schema public,private --level warning --fail-on error
       - name: Prove migration SQL and history roll back together
         run: pnpm run test:migration-atomicity
       - name: Rehearse the production baseline reconciliation

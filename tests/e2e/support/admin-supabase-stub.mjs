@@ -58,7 +58,7 @@ export async function installAdminStub(context, { role = 'site_admin', aal = 'aa
       }
       const denial = name === 'site_admin_deny_early_access_request';
       const assignment = name === 'site_admin_assign_role';
-      const capability = assignment ? 'roles.manage' : denial ? 'operations.manage' : name.includes('early_access') || name === 'site_admin_list_account_requests' ? 'operations.read' : name.includes('audit') ? 'audit.read' : 'users.read';
+      const capability = assignment ? 'roles.manage' : denial ? 'operations.manage' : name.includes('early_access') || ['site_admin_list_account_requests', 'site_admin_get_account_request_queue_health'].includes(name) ? 'operations.read' : name.includes('audit') ? 'audit.read' : 'users.read';
       if (!ready || !permissions.includes(capability) || ((denial || assignment) && recentMfaRequired)) return json(route, { message: 'admin_permission_or_step_up_required' }, 403);
       const held = !holdNames || holdNames.includes(name) ? hold : null;
       if (held) await held;
@@ -127,6 +127,6 @@ export async function installAdminStub(context, { role = 'site_admin', aal = 'aa
     denials() { return requests.filter((item) => item.path.endsWith('/site_admin_deny_early_access_request')); },
     async seedEarlyHistory(id, count) { for (let n = 0; n < count; n += 1) await provider.denyEarlyAccess({ actorId: A, sessionIdentity: `preview:${A}`, requestId: id,
       revision: '999', operationId: crypto.randomUUID(), correlationId: crypto.randomUUID(), reasonCode: 'early_access_review' }); },
-    reads() { return requests.filter((item) => /site_admin_(list|get_user|get_audit)/.test(item.path)); },
+    reads() { return requests.filter((item) => /site_admin_(list|get_user|get_audit|get_account_request_queue_health)/.test(item.path)); },
   };
 }

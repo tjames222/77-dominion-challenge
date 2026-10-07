@@ -9,7 +9,7 @@ import { parseRepeatableChallengeCatalogResult, REPEATABLE_CHALLENGE_CATALOG_FIE
 const migrationUrl = new URL('../supabase/migrations/20261001001245_repeatable_challenge_instances_v2.sql', import.meta.url);
 const hash = value => createHash('sha256').update(value).digest('hex');
 const q = value => `'${String(value).replaceAll("'", "''")}'`;
-const finalSelectMarker = '\nSELECT\n  coalesce((SELECT pg_catalog.count(*)=71';
+const finalSelectMarker = '\nSELECT\n  (coalesce((SELECT pg_catalog.count(*)=71';
 const instanceBadgeKeys = ['streak_flame','seven_sealed','full_streak_14','full_streak_28','full_streak_56','full_streak_70',
   'check_ins_7','check_ins_14','check_ins_21','check_ins_26','check_ins_39','check_ins_50','check_ins_60','check_ins_70'];
 

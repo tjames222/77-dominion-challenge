@@ -10,6 +10,15 @@ const rows = Array.from({ length: 36 }, (_, index) => {
     updatedAt: stamp, resolvedAt: index < 28 ? null : '2026-02-01T12:00:00Z' };
 });
 
+export function previewAccountRequestQueueHealth() {
+  return { buckets: ['data_export', 'account_deletion'].flatMap(requestType => ['requested', 'in_progress'].map(status => {
+    const matches = rows.filter(row => row.requestType === requestType && row.status === status)
+      .sort((a, b) => Date.parse(a.requestedAt) - Date.parse(b.requestedAt)).slice(0, 1001);
+    return { requestType, status, count: Math.min(matches.length, 1000), hasMore: matches.length > 1000,
+      oldestRequestedAt: matches[0]?.requestedAt ?? null };
+  })) };
+}
+
 export async function previewAccountRequests(args, actorId) {
   const { target_limit: limit = 25, target_request_type: type = 'all', target_status: status = 'active', target_sort: sort = 'oldest' } = args;
   if (!Number.isInteger(limit) || limit < 1 || limit > 50 || !['all', 'data_export', 'account_deletion'].includes(type)

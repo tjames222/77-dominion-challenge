@@ -9,6 +9,8 @@ export const POSTGRES_IMAGE = 'public.ecr.aws/supabase/postgres:17.6.1.141';
 export const MAX_ENCRYPTED_BYTES = 49 * 1024 * 1024;
 export const POST_ORIGINAL77_BACKUP_MODE = 'post-original77-70';
 export const POST_ORIGINAL77_VERSIONS_SHA256 = '73f5e3b0395829ec93acf1454cd212a653c5edfa19d4be641c8de792f0777f46';
+export const POST_REPEATABLE_BACKUP_MODE = 'post-repeatable-challenge-71';
+export const POST_REPEATABLE_VERSIONS_SHA256 = 'b8318e559a4d78b3f0c3d498c4970e4151fe1651ccbde3c8dc1153897b0c096f';
 export const POST_ORIGINAL77_VAULT_RECOVERY = Object.freeze({
   selfContained: false,
   source: 'protected-github-production-settings',
@@ -45,4 +47,22 @@ export function selectPostOriginal77MigrationVersions(filenames) {
   const versions = names.map(name => name.slice(0, 14));
   assert.equal(new Set(versions).size, versions.length, 'Duplicate migration version');
   return requirePostOriginal77MigrationVersions(versions.slice(0, 70));
+}
+
+export function requirePostRepeatableMigrationVersions(versions) {
+  assert(Array.isArray(versions));
+  assert.equal(versions.length, 71, 'Incomplete post-repeatable migration checkpoint');
+  requirePostOriginal77MigrationVersions(versions.slice(0, 70));
+  assert.equal(versions.at(-1), '20261001001245', 'Unexpected post-repeatable migration checkpoint');
+  assert.equal(sha256(JSON.stringify(versions)), POST_REPEATABLE_VERSIONS_SHA256,
+    'Post-repeatable migration checkpoint changed');
+  return versions;
+}
+
+export function selectPostRepeatableMigrationVersions(filenames) {
+  // Retain every filename/uniqueness guard of the prior public contract.
+  selectPostOriginal77MigrationVersions(filenames);
+  const names = filenames.filter(name => typeof name === 'string' && name.endsWith('.sql')).sort();
+  assert.equal(names[70], '20261001001245_repeatable_challenge_instances_v2.sql');
+  return requirePostRepeatableMigrationVersions(names.slice(0, 71).map(name => name.slice(0, 14)));
 }
