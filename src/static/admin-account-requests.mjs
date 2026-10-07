@@ -29,3 +29,21 @@ export function normalizeAdminAccountRequestPage(value) {
 export const accountRequestTypeLabel = value => ({ data_export: 'Data export', account_deletion: 'Account deletion' })[value];
 export const accountRequestRecordedStatus = value => ({ requested: 'Requested', in_progress: 'In progress',
   fulfilled: 'Recorded fulfilled', cancelled: 'Cancelled', declined: 'Declined' })[value];
+
+export function normalizeAdminAccountRequestQueueHealth(value) {
+  if (!value || value.schemaVersion !== 1 || !uuid(value.actorId) || !timestamp(value.observedAt)
+    || !Array.isArray(value.buckets) || value.buckets.length !== 4) throw adminReadError();
+  const seen = new Set();
+  const buckets = value.buckets.map(bucket => {
+    if (!bucket || !TYPES.has(bucket.requestType) || !['requested', 'in_progress'].includes(bucket.status)
+      || !Number.isInteger(bucket.count) || bucket.count < 0 || bucket.count > 1000
+      || typeof bucket.hasMore !== 'boolean' || (bucket.hasMore && bucket.count !== 1000)
+      || (bucket.count === 0 ? bucket.oldestRequestedAt !== null : !timestamp(bucket.oldestRequestedAt))
+      || (bucket.count > 0 && Date.parse(bucket.oldestRequestedAt) > Date.parse(value.observedAt))) throw adminReadError();
+    const key = `${bucket.requestType}:${bucket.status}`;
+    if (seen.has(key)) throw adminReadError(); seen.add(key);
+    return { requestType: bucket.requestType, status: bucket.status, count: bucket.count,
+      hasMore: bucket.hasMore, oldestRequestedAt: bucket.oldestRequestedAt };
+  });
+  return { schemaVersion: 1, actorId: value.actorId, observedAt: value.observedAt, buckets };
+}

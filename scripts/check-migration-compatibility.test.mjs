@@ -490,7 +490,24 @@ test("package, CI, and production deploy run the gate before migrations", async 
     deployWorkflow.match(
       /SUPABASE_ACCESS_TOKEN="\$SUPABASE_ACCESS_TOKEN"/gu,
     )?.length,
-    20, // Includes both release-boundary checks plus all three bounded catalog postflights.
+    21, // Includes all three release-boundary checks plus three bounded catalog postflights.
+  );
+  const cleanReleaseBoundaryChecks = deployWorkflow.match(
+    /\/usr\/bin\/env -i \\\n\s+PATH="\$PATH" \\\n\s+RELEASE_SCOPE="\$RELEASE_SCOPE" \\\n(?:\s+EXPECTED_RELEASE_BOUNDARY="\$EXPECTED_RELEASE_BOUNDARY" \\\n)?\s+SUPABASE_ACCESS_TOKEN="\$SUPABASE_ACCESS_TOKEN" \\\n\s+SUPABASE_PROJECT_REF="\$SUPABASE_PROJECT_REF" \\\n\s+node scripts\/verify-production-repeatable-cutover-policy\.mjs/gu,
+  ) ?? [];
+  assert.equal(cleanReleaseBoundaryChecks.length, 3);
+  assert.equal(
+    cleanReleaseBoundaryChecks.filter((check) =>
+      check.includes('EXPECTED_RELEASE_BOUNDARY="$EXPECTED_RELEASE_BOUNDARY"')
+    ).length,
+    2,
+    "Both backend rechecks must bind the initial protected policy receipt.",
+  );
+  assert.equal(
+    deployWorkflow.match(
+      /EXPECTED_RELEASE_BOUNDARY: \$\{\{ needs\.repeatable-cutover-policy\.outputs\.receipt \}\}/gu,
+    )?.length,
+    1,
   );
   const cleanCatalogPostflights = deployWorkflow.match(
     /\/usr\/bin\/env -i \\\n\s+PATH="\$PATH" \\\n\s+SUPABASE_ACCESS_TOKEN="\$SUPABASE_ACCESS_TOKEN" \\\n\s+SUPABASE_PROJECT_REF="\$SUPABASE_PROJECT_REF" \\\n\s+node scripts\/verify-production-(?:account-request-inbox|original77|repeatable-challenge)\.mjs/gu,

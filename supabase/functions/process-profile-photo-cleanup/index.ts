@@ -1,5 +1,10 @@
 import { createAdminClient } from "../_shared/supabase.ts";
 import { type EnvReader, readEnv } from "../_shared/http.ts";
+import {
+  monitorSnapshot,
+  readCleanupRequest,
+  validHealthSecret,
+} from "./monitor.ts";
 
 type AdminClient = ReturnType<typeof createAdminClient>;
 type StorageFile = { id?: string | null; name?: string | null };
@@ -59,7 +64,10 @@ function constantTimeEqual(left: Uint8Array, right: Uint8Array) {
 async function validWorkerSecret(req: Request, env: EnvReader) {
   const expected = env("PROFILE_PHOTO_WORKER_SECRET") || "";
   const provided = req.headers.get("x-dominion-worker-key") || "";
-  if (expected.length < 32 || !provided) return false;
+  if (
+    expected.length < 32 || expected.length > 4096 || !provided ||
+    provided.length > 4096
+  ) return false;
   const [left, right] = await Promise.all([digest(expected), digest(provided)]);
   return constantTimeEqual(left, right);
 }
@@ -188,25 +196,6 @@ async function withRetries(
   throw lastError;
 }
 
-function boundedLimit(value: unknown) {
-  const parsed = Number(value ?? 25);
-  if (!Number.isInteger(parsed) || parsed < 1 || parsed > 100) {
-    throw new Error("Invalid cleanup batch limit.");
-  }
-  return parsed;
-}
-
-async function body(req: Request) {
-  try {
-    const value = await req.json();
-    return value && typeof value === "object" && !Array.isArray(value)
-      ? value as Record<string, unknown>
-      : {};
-  } catch {
-    return {};
-  }
-}
-
 export function createHandler(overrides: Partial<Dependencies> = {}) {
   const dependencies = { ...defaultDependencies, ...overrides };
 
@@ -214,19 +203,41 @@ export function createHandler(overrides: Partial<Dependencies> = {}) {
     if (req.method !== "POST") {
       return response({ error: "Method not allowed." }, 405);
     }
-    if (!await validWorkerSecret(req, dependencies.env)) {
+    const healthCredential = req.headers.has("x-dominion-health-key");
+    const workerCredential = req.headers.has("x-dominion-worker-key");
+    if (
+      healthCredential === workerCredential ||
+      !(healthCredential
+        ? await validHealthSecret(req, dependencies.env)
+        : await validWorkerSecret(req, dependencies.env))
+    ) {
+      return response({ error: "Not authorized." }, 401);
+    }
+
+    let requestBody;
+    try {
+      requestBody = await readCleanupRequest(req);
+    } catch {
+      return response({ error: "Invalid cleanup request." }, 400);
+    }
+    if (healthCredential !== (requestBody.mode === "monitor-health")) {
       return response({ error: "Not authorized." }, 401);
     }
 
     try {
-      const requestBody = await body(req);
       const admin = dependencies.createAdminClient();
+      if (healthCredential) {
+        const health = monitorSnapshot(
+          await rpc(admin, "profile_photo_cleanup_monitor_health"),
+        );
+        return response({ status: "ok", health });
+      }
       if (requestBody.mode === "health") {
         const health = await rpc(admin, "profile_photo_cleanup_health");
         return response({ status: "ok", health });
       }
 
-      const limit = boundedLimit(requestBody.limit);
+      const limit = requestBody.limit ?? 25;
       const claims = (await rpc<unknown[]>(
         admin,
         "claim_profile_photo_cleanup_service",

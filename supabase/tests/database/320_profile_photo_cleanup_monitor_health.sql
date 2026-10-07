@@ -1,0 +1,26 @@
+begin;
+create extension if not exists pgtap with schema extensions;
+set local search_path = public, extensions;
+select plan(12);
+select ok(not has_function_privilege('anon', 'public.profile_photo_cleanup_monitor_health()', 'execute'), 'anonymous callers cannot read monitor health');
+select ok(not has_function_privilege('authenticated', 'public.profile_photo_cleanup_monitor_health()', 'execute'), 'members cannot read monitor health');
+select ok(has_function_privilege('service_role', 'public.profile_photo_cleanup_monitor_health()', 'execute'), 'service callers receive the single RPC');
+select ok(not exists (select 1 from pg_proc p, lateral aclexplode(p.proacl) a
+  where p.oid='public.profile_photo_cleanup_monitor_health()'::regprocedure and a.grantee=0), 'PUBLIC has no default execute');
+select ok((select prosecdef and provolatile='s' from pg_proc where oid='public.profile_photo_cleanup_monitor_health()'::regprocedure), 'reader is stable security definer');
+select ok((select proconfig @> array['search_path=""'] from pg_proc where oid='public.profile_photo_cleanup_monitor_health()'::regprocedure), 'reader has empty search path');
+select ok(not has_table_privilege('service_role', 'private.profile_photo_objects', 'select'), 'service role gets no direct lifecycle data');
+set local role anon;
+select throws_ok('select public.profile_photo_cleanup_monitor_health()', '42501', 'permission denied for function profile_photo_cleanup_monitor_health', 'anonymous invocation is rejected');
+reset role;
+set local role authenticated;
+select throws_ok('select public.profile_photo_cleanup_monitor_health()', '42501', 'permission denied for function profile_photo_cleanup_monitor_health', 'member invocation is rejected');
+reset role;
+set local role service_role;
+select is((public.profile_photo_cleanup_monitor_health()->>'schemaVersion')::integer, 1, 'service invocation returns versioned snapshot');
+select is(public.profile_photo_cleanup_monitor_health() #>> '{cron,transportEvidence}', 'enqueue-only', 'Cron success never claims HTTP delivery');
+set local request.jwt.claim.sub='10000000-0000-4000-8000-000000000001';
+select throws_ok('select public.profile_photo_cleanup_monitor_health()', '42501', 'Service identity required.', 'service role carrying member identity is rejected');
+reset role;
+select * from finish();
+rollback;

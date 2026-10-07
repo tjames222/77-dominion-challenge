@@ -23,6 +23,69 @@ test.describe('Account requests inbox', () => {
     await page.goto('/admin.html#account-requests'); await expect(page.locator('#adminRequestsRows tr')).toHaveCount(25);
     return auth;
   }
+  test('queue overview covers all active buckets independently of filters, with manual refresh and no writes', async ({ context, page }, testInfo) => {
+    const auth = await inbox(context, page);
+    const cards = page.locator('.admin-queue-bucket'); await expect(cards).toHaveCount(4);
+    const counts = () => cards.locator('dl > div:first-child dd');
+    await expect(counts()).toHaveText(['14', '0', '0', '14']);
+    await expect(page.locator('#adminQueueHealthStatus')).toContainText('Observed');
+    await expect(page.locator('#adminQueueHealthNote')).toContainText('independent of the list filters');
+    const reads = () => auth.reads().filter(r => r.path.endsWith('/site_admin_get_account_request_queue_health'));
+    const before = reads().length;
+    await page.getByRole('combobox', { name: 'Recorded request status', exact: true }).selectOption('fulfilled');
+    await page.locator('#adminRequestsFilters button').click();
+    await expect(page.locator('#adminRequestsRows')).toContainText('Recorded fulfilled');
+    await expect(counts()).toHaveText(['14', '0', '0', '14']); expect(reads().length).toBe(before);
+    await page.getByRole('button', { name: 'Refresh queue overview', exact: true }).click();
+    await expect.poll(() => reads().length).toBe(before + 1); await expect(cards).toHaveCount(4);
+    expect(reads().every(r => JSON.stringify(r.body) === JSON.stringify({ target_expected_actor_id: auth.A }))).toBe(true);
+    await expect(cards.locator('button,a')).toHaveCount(0);
+    expect(await page.locator('#adminQueueHealth').textContent()).not.toMatch(/80000000|70000000|example.test|PRIVATE/);
+    await page.evaluate(() => document.fonts.ready.then(() => undefined));
+    await page.locator('#adminQueueHealth').screenshot({ path: testInfo.outputPath('active-queue-overview.png') });
+    await page.evaluate(() => { document.documentElement.style.fontSize = '200%'; });
+    expect(await page.locator('#adminQueueHealth').evaluate(node => node.scrollWidth <= node.clientWidth)).toBe(true);
+    await page.locator('#adminQueueHealth').screenshot({ path: testInfo.outputPath('active-queue-overview-200-percent.png') });
+  });
+  test('queue caps at1000+ and malformed data becomes unknown, never a false zero', async ({ context, page }) => {
+    await installAdminStub(context, { permissions: ['operations.read'] }); let malformed = false;
+    await page.route('**/site_admin_get_account_request_queue_health', route => {
+      const buckets = ['data_export', 'account_deletion'].flatMap(requestType => ['requested', 'in_progress'].map(status => ({
+        requestType, status, count: 1000, hasMore: status === 'requested', oldestRequestedAt: '2026-01-01T00:00:00Z', privateNote: 'PRIVATE_QUEUE_NOTE' })));
+      if (malformed) buckets[1].count = null;
+      return route.fulfill({ contentType: 'application/json', body: JSON.stringify({ schemaVersion: 1,
+        actorId: route.request().postDataJSON().target_expected_actor_id, observedAt: '2026-02-01T00:00:00Z', buckets }) });
+    });
+    await page.goto('/admin.html#account-requests');
+    await expect(page.locator('.admin-queue-bucket dl > div:first-child dd')).toHaveText(['1000+', '1000', '1000+', '1000']);
+    expect(await page.content()).not.toContain('PRIVATE_QUEUE_NOTE');
+    malformed = true; await page.locator('#adminQueueHealthRefresh').click();
+    await expect(page.locator('.admin-queue-bucket')).toHaveCount(0);
+    await expect(page.locator('#adminQueueHealthStatus')).toContainText('Counts are unknown');
+    await expect(page.locator('#adminRequestsRows tr')).toHaveCount(25);
+  });
+  for (const mode of ['pagehide', 'replacement', 'ABA', 'permission revoked']) test(`queue ${mode} removes prior counts and rejects held results`, async ({ context, page }) => {
+    const auth = await inbox(context, page); await expect(page.locator('.admin-queue-bucket')).toHaveCount(4);
+    if (mode === 'permission revoked') {
+      auth.permissions([]); await page.locator('#adminQueueHealthRefresh').click();
+      await expect(page.locator('#adminWorkspace')).toBeHidden(); await expect(page.locator('.admin-queue-bucket')).toHaveCount(0); return;
+    }
+    const release = auth.hold(['site_admin_get_account_request_queue_health']);
+    try {
+      const before = auth.reads().length; await page.locator('#adminQueueHealthRefresh').click();
+      await expect.poll(() => auth.reads().length).toBeGreaterThan(before);
+      await expect(page.locator('.admin-queue-bucket')).toHaveCount(0);
+      if (mode === 'pagehide') await page.evaluate(() => window.dispatchEvent(new PageTransitionEvent('pagehide')));
+      else {
+        const replacement = auth.session(mode === 'ABA' ? auth.B : auth.A, 'aal2', '22222222-2222-4222-8222-222222222222');
+        const switchSession = value => { localStorage.setItem('sb-127-auth-token', JSON.stringify(value)); window.dispatchEvent(new StorageEvent('storage', { key: 'sb-127-auth-token', newValue: JSON.stringify(value) })); };
+        await page.evaluate(switchSession, replacement);
+        if (mode === 'ABA') await page.evaluate(switchSession, auth.firstSession);
+      }
+      await expect(page.locator('#adminWorkspace')).toBeHidden(); release();
+      await expect(page.locator('.admin-queue-bucket')).toHaveCount(0); await expect(page.locator('#adminQueueHealthStatus')).toHaveText('');
+    } finally { release(); }
+  });
   test('Operations-only reads are paginated, metadata-only and have no account or fulfillment actions', async ({ context, page }) => {
     const auth = await inbox(context, page);
     await expect(page.locator('#adminUsersTab')).toBeHidden(); await expect(page.locator('#adminAuditTab')).toBeHidden();
@@ -38,7 +101,7 @@ test.describe('Account requests inbox', () => {
     await page.getByRole('combobox', { name: 'Account request sort', exact: true }).selectOption('newest');
     await page.locator('#adminRequestsFilters button').click();
     await expect(page.locator('#adminRequestsRows tr').first()).not.toHaveText(first);
-    expect(auth.reads().every(r => r.path.endsWith('/site_admin_list_account_requests'))).toBe(true);
+    expect(auth.reads().every(r => /\/(?:site_admin_list_account_requests|site_admin_get_account_request_queue_health)$/.test(r.path))).toBe(true);
     expect(auth.requests.filter(r => r.method !== 'GET' && !r.path.includes('/rpc/'))).toEqual([]);
     await expect(page.locator('#adminRequestsNote')).toContainText('not proof of export delivery or complete erasure');
   });
@@ -63,7 +126,7 @@ test.describe('Account requests inbox', () => {
       if (name === 'missing permission') await expect(page.locator('#adminUsersRows tr')).toHaveCount(25);
       else await expect(page.locator('#adminGateTitle')).not.toHaveText('Checking access');
       await expect(page.locator('#adminRequestsTab')).toBeHidden(); await expect(page.locator('#adminRequestsRows tr')).toHaveCount(0);
-      expect(auth.requests.some(r => r.path.endsWith('/site_admin_list_account_requests'))).toBe(false);
+      expect(auth.requests.some(r => /\/(?:site_admin_list_account_requests|site_admin_get_account_request_queue_health)$/.test(r.path))).toBe(false);
     });
   }
   for (const mode of ['failure', 'wrong actor', 'permission revoked']) test(`${mode} clears all previously displayed request metadata`, async ({ context, page }) => {

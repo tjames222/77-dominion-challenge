@@ -108,8 +108,25 @@ role or sent to a hosted service.
 The Account requests tab (`/admin.html#account-requests`) independently requires
 `operations.read`. It lists the existing export/deletion intake, initially active
 (`requested` or `in_progress`) and oldest first. Type, recorded-status and sort
-filters use the new bounded server keyset read; page size is 25. There is no total
-count, client-side aggregate, fulfillment control or automatic status transition.
+filters use the new bounded server keyset read; page size is 25. The list has no
+total count, client-side aggregate, fulfillment control or automatic transition.
+
+The independent Active queue overview shows exactly four buckets: data export
+and account deletion, each requested/in progress. It always covers the active
+queue, not the current list filters. Each bucket has a bounded count, displayed
+as `1000+` only when an additional entry was found, and its oldest original
+request timestamp. Empty buckets display zero and “No active requests”; missing,
+malformed or failed responses display unknown/unavailable, never fabricated zero.
+The server observation time is visible in UTC. Entering this tab loads the
+summary once; its separate Refresh queue overview button obtains a new snapshot.
+List filtering/paging does not refetch it, and there is no background polling.
+
+Summary responses have the same Operations/AAL2/actor/session guards, finite
+ten-second transport and invalidation scrub as the inbox. They are never stored,
+logged or derived from the visible rows. Only count/status/type/timestamps are
+rendered, with no requester identity or private content. This is recorded intake,
+not export delivery or complete-erasure verification. It adds no fulfillment
+actions, cleanup/integration health, SLA promise, metrics, or role permissions.
 
 Only request UUID, nullable requester UUID, request type/status, and requested,
 updated and resolved UTC timestamps are rendered. No notes, names, email
@@ -151,7 +168,7 @@ separate exact-SQL foundation/read tests, not inferred from the browser stub.
 
 This does **not** complete all of FOU-1502. Remaining work includes broader
 admin mutation/recovery flows, testing-grant management and effective
-access, operational queues, canonical metrics/retention, broader Users fields,
+access, other operational queues, canonical metrics/retention, broader Users fields,
 and the remaining authenticated production acceptance matrix. The initial owner
 admin and MFA setup were completed earlier; this UI pass neither repeats that
 bootstrap nor changes a hosted role or database record.
