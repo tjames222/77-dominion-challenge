@@ -41,22 +41,38 @@ test.describe('Account-linked administrative history', () => {
     await page.locator('#adminUserHistoryRefresh').click(); await expect.poll(() => historyReads(auth).length).toBe(3); await waitRows(page);
     expect(auth.assignments()).toHaveLength(0); expect(auth.denials()).toHaveLength(0); expect(auth.invitations()).toHaveLength(0);
   });
-  test('collapsed and expanded history reflows inside a 320px dialog at settled 200% text', async ({ context, page }, testInfo) => {
+  for (const face of ['platform', 'wide-fallback']) test(`${face} collapsed and expanded history reflows inside a 320px dialog at settled 200% text`, async ({ context, page }, testInfo) => {
     await installAdminStub(context); await page.setViewportSize({ width: 320, height: 1000 });
     await page.goto('/admin.html'); await openAccount(page);
     const summary = page.locator('#adminUserHistory > summary');
     const normalFont = await summary.evaluate(element => parseFloat(getComputedStyle(element).fontSize));
+    // Font metrics differ across platforms even at an identical computed size.
+    // Keep platform coverage and exercise a wider available fallback separately.
+    if (face === 'wide-fallback') await page.locator('#adminUserHistory').evaluate(element => { element.style.fontFamily = 'Verdana, sans-serif'; });
     await page.evaluate(() => { document.documentElement.style.fontSize = '200%'; });
     await expect.poll(() => summary.evaluate(element => parseFloat(getComputedStyle(element).fontSize))).toBe(normalFont * 2);
     for (const state of ['collapsed', 'expanded']) {
       if (state === 'expanded') { await summary.focus(); await page.keyboard.press('Enter'); await waitRows(page); }
       else await expect(page.locator('#adminUserHistory')).not.toHaveAttribute('open', '');
       for (const selector of ['#adminDetail', '#adminUserHistory', '#adminUserHistory > summary']) {
-        const geometry = await page.locator(selector).evaluate(element => ({ width: element.clientWidth, scroll: element.scrollWidth }));
+        const geometry = await page.locator(selector).evaluate(element => ({ width: element.clientWidth, scroll: element.scrollWidth,
+          descendants: [...element.querySelectorAll('*')].filter(node => node.getClientRects().length).map(node => {
+            const rect = node.getBoundingClientRect(); const style = getComputedStyle(node);
+            return { tag: node.tagName, id: node.id, width: node.clientWidth, scroll: node.scrollWidth, rectWidth: rect.width,
+              right: rect.right, text: node.textContent?.slice(0, 50), font: style.font, padding: style.padding,
+              minWidth: style.minWidth, maxWidth: style.maxWidth, wrap: style.overflowWrap };
+          }).filter(item => item.tag === 'BUTTON' || item.scroll > item.width + 1 || item.right > element.getBoundingClientRect().right + 1),
+        }));
+        await testInfo.attach(`${state}-${selector}`, { body: JSON.stringify(geometry), contentType: 'application/json' });
         expect(geometry.scroll, `${state} ${selector}: ${JSON.stringify(geometry)}`).toBeLessThanOrEqual(geometry.width + 1);
       }
       await summary.screenshot({ path: testInfo.outputPath(`history-320px-200pct-${state}.png`) });
     }
+    const refresh = page.locator('#adminUserHistoryRefresh');
+    await refresh.focus(); await page.keyboard.press('Enter'); await waitRows(page);
+    await expect(refresh).toBeFocused(); await expect(refresh).toBeInViewport();
+    await refresh.click(); await waitRows(page); await expect(refresh).toBeInViewport();
+    await page.locator('#adminDetail').screenshot({ path: testInfo.outputPath(`history-${face}-320px-200pct-dialog.png`) });
     expect((await new AxeBuilder({ page }).include('#adminDetail').analyze()).violations).toEqual([]);
     await page.keyboard.press('Escape'); await expect(page.locator('#adminUsersRows button').first()).toBeFocused();
   });

@@ -127,6 +127,7 @@
 .admin-user-history li { border-inline-start: 2px solid var(--border); padding: .25rem 0 1rem 1rem; margin: 0 0 .75rem .25rem; overflow-wrap: anywhere; }
 .admin-user-history h4, .admin-user-history li p { margin: .5rem 0; line-height: 1.5; }
 .admin-user-history li .admin-disclosure { border: 0; }
+.admin-user-history button { min-inline-size: 0; max-inline-size: 100%; overflow-wrap: anywhere; }
 .admin-user-history button[aria-disabled="true"] { opacity: .45; cursor: default; }
 @media (max-width: 1050px) { .admin-filters, #adminUsersFilters { grid-template-columns: repeat(2, minmax(0, 1fr)); } .admin-search { grid-column: 1 / -1; } #adminUsersFilters > :is(button, details) { margin-top: 0; } #adminUsersFilters > button { align-self: end; } }
 @media (max-width: 700px) {
