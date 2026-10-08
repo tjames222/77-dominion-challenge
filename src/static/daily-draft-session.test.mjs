@@ -30,7 +30,7 @@ function fixture(operation) {
   let bootstrap = async () => undefined; let userRead = async () => current?.user;
   const requests = [];
   const globals = {
-    isLocalDemoMode: () => false, previewBadgeEpoch: 0,
+    BUILD_SUPPORTS_LOCAL_DEMO: true, isLocalDemoMode: () => false, previewBadgeEpoch: 0,
     getAuthSession: async () => current,
     authSessionIdentity, sessionRequiresMfa: async () => needsMfa,
     requireCapturedChallengeInstance: value => assert.equal(value, instanceId),

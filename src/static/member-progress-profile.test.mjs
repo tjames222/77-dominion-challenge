@@ -101,7 +101,7 @@ describe('member progress presentation contract', () => {
     const dependencies = {
       MEMBER_PROGRESS_BADGE_PAGE_SIZE, MEMBER_PROGRESS_UNAVAILABLE, normalizeMemberProgressCursor,
       normalizeMemberProgressProfile, mapMemberProgressRpcError,
-      isLocalDemoMode: () => false,
+      BUILD_SUPPORTS_LOCAL_DEMO: true, isLocalDemoMode: () => false,
       requireSupabase: () => ({ rpc: async (name, args) => { calls.push({ name, args }); return response; } }),
       requireUser: async id => { calls.push(id); return { id: 'actor-a' }; },
       canonicalProfilePhotoUrl: () => '', SUPABASE_ORIGIN: '', PROFILE_PHOTO_BUCKET: '',

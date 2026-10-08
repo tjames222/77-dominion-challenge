@@ -510,6 +510,48 @@ text fields have no existing length cap, so it does not establish an absolute
 response-byte ceiling. Further server-side query work and all remaining
 FOU-1501 bundle, round-trip, and deployed timing targets remain open.
 
+## Real-production preview pruning (October 8 checkpoint)
+
+The API facade now makes its existing local-demo checks statically unreachable
+only when `import.meta.env.DEV` is false and `VITE_ENABLE_MOCKS` is exactly the
+string `false`. That is the existing real-main policy, and in that case the
+runtime demo predicate already always returns false. Other flag spellings,
+undefined flags and every DEV build conservatively retain the original predicate.
+Mock-only develop and local loopback/hybrid previews therefore keep their behavior.
+The guarded Supabase client, Auth observers, session fences and all real API calls
+remain unchanged; no feature is moved behind an asynchronous import.
+
+Paired Node 26.4.0 / Vite 8.1.5 in-memory builds used the same source and embedded
+SHA `3bbc589a0b2e9dac0ef9a69e648697ecbd3a0201`, a synthetic publishable key, Night
+enabled, and billing/signup/integrations disabled. The baseline removes only this
+build guard in memory. These are **real-main to real-main** comparisons, not a
+comparison against the original mock-preview completion baseline:
+
+| Initial JS gzip bytes | Before | After |
+| --- | ---: | ---: |
+| Landing | 136032 | 120670 |
+| Login | 140132 | 124768 |
+| Dashboard | 154793 | 139431 |
+| Rewards | 145754 | 130389 |
+| Community | 153504 | 138139 |
+| Profile | 142246 | 126881 |
+| Bible reading | 141212 | 125847 |
+
+The shared Auth chunk decreases from 115622 to 100251 gzip bytes. All 29 routes
+retain their CSS bytes and initial request counts. The pre-Auth invitation entry
+changes from 4906 to 4908 gzip bytes because deferred content-hashed filenames
+change; its code is identical after normalizing only emitted asset filenames,
+and it still executes neither Auth nor menu code before capability cleanup.
+All 29 paired mock-develop graphs remain byte-identical. No budgets are changed.
+
+`node scripts/measure-production-preview-pruning.mjs <40-character-build-sha>`
+reproduces both paired modes without writing build output or making provider
+requests. The focused compiled flag matrix covers 180 combinations of DEV,
+host, hybrid setting and normalized/non-normalized flag values. Existing
+compiled Chromium/WebKit MFA, recovery and invitation tests and the DEV hybrid
+Auth suite also pass. This is a local bundle/behavior checkpoint, not deployed
+timing, round-trip, RUM or final 40%/25% completion evidence. FOU-1501 remains open.
+
 ## Interim automated budgets
 
 `pnpm run check:frontend-performance` audits a freshly built canonical mock preview

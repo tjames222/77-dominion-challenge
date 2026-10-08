@@ -228,7 +228,7 @@ test('actual API compatibility selection overlays seen before reduction and neve
   let rawWrites = 0;
   const context = {
     withPreviewAggregate: async () => undefined,
-    isLocalDemoMode: () => true, usesSupabaseAuthentication: () => false, previewBadgeEpoch: 0,
+    BUILD_SUPPORTS_LOCAL_DEMO: true, isLocalDemoMode: () => true, usesSupabaseAuthentication: () => false, previewBadgeEpoch: 0,
     requireMockRewardActor: () => 'A', capturePreviewBadgeOwner: async () => owner,
     loadDelivery: async () => ({ ...ledgerModule, previewDeliveryLedger: f.ledger }),
     getMockRewardCatalog: () => ({ ...buildMockRewardCatalog({ progression, ownershipRecords: copy(storedOwnership) }), progression }),
@@ -254,7 +254,7 @@ test('actual API reward ack does not accept unknown seen legacy ownership as a r
   const ownershipRecords = [{ key: 'not_a_catalog_reward', celebrationSeenAt: 'legacy-forged' }];
   const context = {
     withPreviewAggregate: async () => undefined,
-    isLocalDemoMode: () => true, usesSupabaseAuthentication: () => false, previewBadgeEpoch: 0,
+    BUILD_SUPPORTS_LOCAL_DEMO: true, isLocalDemoMode: () => true, usesSupabaseAuthentication: () => false, previewBadgeEpoch: 0,
     requireMockRewardActor: () => 'A', capturePreviewBadgeOwner: async () => owner,
     loadDelivery: async () => ({ ...ledgerModule, previewDeliveryLedger: f.ledger }),
     getMockRewardCatalog: () => ({ ...buildMockRewardCatalog({ progression: {}, ownershipRecords: copy(ownershipRecords) }), progression: {} }),
