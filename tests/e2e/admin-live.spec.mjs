@@ -76,6 +76,33 @@ test.describe('Account-linked administrative history', () => {
     expect((await new AxeBuilder({ page }).include('#adminDetail').analyze()).violations).toEqual([]);
     await page.keyboard.press('Escape'); await expect(page.locator('#adminUsersRows button').first()).toBeFocused();
   });
+  for (const face of ['platform', 'wide-fallback']) for (const state of ['loading', 'empty', 'unavailable']) test(`${face} ${state} history status fits at 320px and settled 200% text`, async ({ context, page }) => {
+    const auth = await installAdminStub(context); await page.setViewportSize({ width: 320, height: 1000 });
+    const release = state === 'loading' ? auth.hold(['site_admin_list_audit']) : () => {};
+    if (state !== 'loading') await page.route('**/site_admin_list_audit', route => state === 'unavailable'
+      ? route.fulfill({ status: 503, contentType: 'application/json', body: '{}' })
+      : route.fulfill({ contentType: 'application/json', body: JSON.stringify({ schemaVersion: 1, actorId: auth.A,
+        observedAt: '2026-10-08T00:00:00Z', items: [], nextCursor: null }) }));
+    try {
+      await page.goto('/admin.html'); await openAccount(page);
+      const summary = page.locator('#adminUserHistory > summary');
+      const normalFont = await summary.evaluate(element => parseFloat(getComputedStyle(element).fontSize));
+      if (face === 'wide-fallback') await page.locator('#adminUserHistory').evaluate(element => { element.style.fontFamily = 'Verdana, sans-serif'; });
+      await page.evaluate(() => { document.documentElement.style.fontSize = '200%'; });
+      await expect.poll(() => summary.evaluate(element => parseFloat(getComputedStyle(element).fontSize))).toBe(normalFont * 2);
+      await summary.focus(); await page.keyboard.press('Enter');
+      const expected = state === 'loading' ? 'Loading account history…' : state === 'empty'
+        ? 'No recorded events linked to this account. Observed 2026-10-08 00:00:00 UTC.'
+        : 'Account history unavailable. Refresh to try again; no history is inferred from this error.';
+      await expect(page.locator('#adminUserHistoryStatus')).toHaveText(expected); await waitRows(page, 0);
+      for (const selector of ['#adminDetail', '#adminUserHistory', '#adminUserHistoryScope', '#adminUserHistoryStatus']) {
+        const geometry = await page.locator(selector).evaluate(element => ({ width: element.clientWidth, scroll: element.scrollWidth,
+          font: getComputedStyle(element).font, wrap: getComputedStyle(element).overflowWrap }));
+        expect(geometry.scroll, `${face} ${state} ${selector}: ${JSON.stringify(geometry)}`).toBeLessThanOrEqual(geometry.width + 1);
+      }
+      await page.keyboard.press('Escape'); await expect(page.locator('#adminUsersRows button').first()).toBeFocused();
+    } finally { release(); }
+  });
   test('bounded older pages, linked acceptance, safe failure labels and private projection', async ({ context, page }) => {
     const auth = await installAdminStub(context); const requests = [];
     await page.route('**/site_admin_list_audit', route => {

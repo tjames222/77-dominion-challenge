@@ -122,7 +122,7 @@
 #earlyAccessHistoryRows article h4 { margin: .4rem 0; }
 #earlyAccessHistoryRows .admin-disclosure { border: 0; }
 .admin-user-history > summary { overflow-wrap: anywhere; }
-.admin-user-history > p { color: var(--text-muted); line-height: 1.6; }
+.admin-user-history > p { color: var(--text-muted); line-height: 1.6; overflow-wrap: anywhere; }
 .admin-user-history ol { list-style: none; padding: 0; }
 .admin-user-history li { border-inline-start: 2px solid var(--border); padding: .25rem 0 1rem 1rem; margin: 0 0 .75rem .25rem; overflow-wrap: anywhere; }
 .admin-user-history h4, .admin-user-history li p { margin: .5rem 0; line-height: 1.5; }
