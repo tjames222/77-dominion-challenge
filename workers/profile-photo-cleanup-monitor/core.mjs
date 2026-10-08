@@ -1,5 +1,6 @@
 import { CONDITIONS, CONDITION_TEXT, DAILY_LIMIT, INTERVAL_MS, MAX_FUTURE_MS,
   MAX_GAP_MS, MAX_SNAPSHOT_AGE_MS, RECIPIENT, SENDER, SELF_TEST_ID } from './constants.mjs';
+import { validProviderMessageId } from './provider-message-id.mjs';
 
 const invalid = () => new Error('Monitor data is invalid.');
 const integer = value => Number.isSafeInteger(value) && value >= 0;
@@ -105,7 +106,7 @@ export function validState(value) {
       !integer(n.incident) || n.incident < 1 || n.incident > value.incidentNumber || !integer(n.createdAt) || n.id !== `cleanup-${n.incident}-${n.kind}` ||
       !['sending','accepted','rejected','delivery_unknown'].includes(n.status) ||
       (n.completedAt !== null && !integer(n.completedAt)) ||
-      (n.providerMessageId !== null && !/^[A-Za-z0-9_-]{8,128}$/.test(n.providerMessageId)) ||
+      (n.providerMessageId !== null && !validProviderMessageId(n.providerMessageId)) ||
       ![null,'accepted','provider_rejected','provider_unknown','interrupted'].includes(n.code)) throw invalid();
     codes(n.codes);
     if (n.codes.length === 0 ||
@@ -213,7 +214,7 @@ export function settleNotification(value, outcome, now) {
   const state = validState(value);
   if (!state.notification || state.notification.status !== 'sending' || !integer(now)) throw invalid();
   const n = state.notification;
-  if (outcome.status === 'accepted' && typeof outcome.messageId === 'string' && /^[A-Za-z0-9_-]{8,128}$/.test(outcome.messageId)) {
+  if (outcome.status === 'accepted' && validProviderMessageId(outcome.messageId)) {
     n.status = 'accepted'; n.providerMessageId = outcome.messageId; n.code = 'accepted';
   } else if (outcome.status === 'rejected') {
     n.status = 'rejected'; n.code = 'provider_rejected';

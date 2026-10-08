@@ -1,5 +1,6 @@
 import { HEALTH_URL } from './constants.mjs';
 import { parseHealth, renderNotification } from './core.mjs';
+import { validProviderMessageId } from './provider-message-id.mjs';
 
 const MAX_BYTES = 8192;
 const HEALTH_TIMEOUT_MS = 8000;
@@ -62,7 +63,7 @@ export async function sendNotification(binding, intent, { timeoutMs = MAIL_TIMEO
       Promise.resolve().then(() => binding.send(mail)),
       new Promise((_, reject) => { timer = setTimeout(() => reject(new Error('mail_timeout')), timeoutMs); }),
     ]);
-    if (typeof result?.messageId === 'string' && /^[A-Za-z0-9_-]{8,128}$/.test(result.messageId)) {
+    if (validProviderMessageId(result?.messageId)) {
       return { status: 'accepted', messageId: result.messageId };
     }
     return { status: 'delivery_unknown' };

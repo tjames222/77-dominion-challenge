@@ -6,7 +6,8 @@ import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import { BASE, SECRET, healthBody } from './test-fixtures.mjs';
-import { HEALTH_URL, SELF_TEST_ID } from './constants.mjs';
+import { HEALTH_URL, RECIPIENT, SENDER, SELF_TEST_ID } from './constants.mjs';
+import { validState } from './core.mjs';
 
 const require = createRequire(import.meta.url);
 const wranglerRoot = dirname(require.resolve('wrangler/package.json'));
@@ -35,6 +36,7 @@ export default {
 const injected = `
 import { runTick as actualRunTick } from './runner.mjs';
 import { parseHealth } from './core.mjs';
+import { sendNotification } from './transport.mjs';
 import { healthBody } from './test-fixtures.mjs';
 export function runTick(storage, env, scheduledTime) {
   return actualRunTick(storage, env, scheduledTime, {
@@ -49,6 +51,7 @@ export function runTick(storage, env, scheduledTime) {
       await storage.put('fixture-sends', ((await storage.get('fixture-sends')) || 0) + 1);
       await storage.sync();
       if (env.TEST_CRASH) throw new Error('Synthetic post-send interruption');
+      if (env.TEST_NATIVE_EMAIL) return sendNotification(env.EMAIL, intent, options);
       return { status: 'accepted', messageId: 'native-fixture-message' };
     },
   });
@@ -61,12 +64,14 @@ async function options(persist, bindings = {}) {
     { type: 'ESModule', path: join(root, 'production-index.mjs'),
       contents: production.replace("from './runner.mjs'", "from './injected-runner.mjs'") },
     { type: 'ESModule', path: join(root, 'injected-runner.mjs'), contents: injected },
-    ...['constants.mjs','core.mjs','runner.mjs','transport.mjs','self-test.mjs','test-fixtures.mjs'].map(path => ({ type: 'ESModule', path: join(root, path) })),
+    ...['constants.mjs','core.mjs','provider-message-id.mjs','runner.mjs','transport.mjs','self-test.mjs','test-fixtures.mjs'].map(path => ({ type: 'ESModule', path: join(root, path) })),
   ];
   return { name: 'cleanup-monitor-native-fixture', modules, modulesRoot: root,
     compatibilityDate: '2026-07-01', durableObjectsPersist: persist,
     durableObjects: { MONITOR: { className: 'TestMonitor', useSQLite: true, unsafeUniqueKey: 'cleanup-monitor-native-fixture' } },
     bindings: { ALERTS_ENABLED: 'true', TEST_READY: 101, TEST_CRASH: false, ...bindings },
+    ...(bindings.TEST_NATIVE_EMAIL ? { email: { send_email: [{ name: 'EMAIL',
+      allowed_sender_addresses: [SENDER], allowed_destination_addresses: [RECIPIENT] }] } } : {}),
     serviceBindings: { TEST_BOUNDARY: async () => {
       await new Promise(resolve => setTimeout(resolve, 15));
       return new Response('local fixture only');
@@ -111,7 +116,7 @@ export default {
     const mf = new Miniflare({ modulesRoot: root,
       modules: [
         { type: 'ESModule', path: join(root, 'native-transport-harness.mjs'), contents: entry },
-        ...['constants.mjs','core.mjs','transport.mjs','test-fixtures.mjs'].map(path => ({ type: 'ESModule', path: join(root, path) })),
+        ...['constants.mjs','core.mjs','provider-message-id.mjs','transport.mjs','test-fixtures.mjs'].map(path => ({ type: 'ESModule', path: join(root, path) })),
       ], compatibilityDate: '2026-07-01',
       outboundService: async request => {
         requests.push({ url: request.url, method: request.method,
@@ -166,6 +171,35 @@ test('actual SQLite DO survives full runtime restart, serializes duplicate sched
     assert.equal(inspected.state.incident, null);
     await object.tick(BASE + 900000);
     assert.equal((await object.inspect()).sends, 2);
+  } finally {
+    if (mf) await mf.dispose();
+    assert.ok(persist.startsWith(join(tmpdir(), '77dc-monitor-native-')));
+    await rm(persist, { recursive: true, force: true });
+  }
+});
+
+test('native local email acceptance receipt survives SQLite restart without a repeated send', async () => {
+  const persist = await mkdtemp(join(tmpdir(), '77dc-monitor-native-'));
+  let mf;
+  try {
+    mf = new Miniflare(await options(persist, { TEST_NATIVE_EMAIL: true }));
+    let object = await stub(mf);
+    const result = await object.tick(BASE + 35_000);
+    assert.equal(result.notificationStatus, 'accepted'); assert.equal(result.status, 'observed');
+    assert.match(result.providerMessageId, /^<[A-Za-z0-9]{36}@77dominion\.com>$/);
+    const messageId = result.providerMessageId;
+    let inspected = await object.inspect();
+    assert.equal(inspected.sends, 1); assert.equal(inspected.state.daily.count, 1);
+    assert.equal(validState(JSON.parse(JSON.stringify(inspected.state))).notification.providerMessageId, messageId);
+    await mf.dispose(); mf = null;
+    mf = new Miniflare(await options(persist, { TEST_NATIVE_EMAIL: true }));
+    object = await stub(mf);
+    assert.equal((await object.tick(BASE + 55_000)).ignored, true);
+    await object.tick(BASE + 300_000 + 35_000);
+    inspected = await object.inspect();
+    assert.equal(inspected.sends, 1); assert.equal(inspected.state.daily.count, 1);
+    assert.equal(inspected.state.needsReview, false);
+    assert.equal(inspected.state.notification.providerMessageId, messageId);
   } finally {
     if (mf) await mf.dispose();
     assert.ok(persist.startsWith(join(tmpdir(), '77dc-monitor-native-')));
