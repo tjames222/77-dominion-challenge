@@ -273,12 +273,36 @@ test('state rejects unknown versions/fields, overlarge records and false deliver
   assert.ok(JSON.stringify(state).length < 8192); assert.ok(state.lastCodes.every(c => CONDITIONS.includes(c)));
 });
 
-test('schedule times are pinned to the offset five-minute slots and bounded delay/future windows', () => {
-  assert.equal(scheduledSlot(BASE, BASE), Math.floor(BASE / 300_000));
-  assert.doesNotThrow(() => scheduledSlot(BASE, BASE + 120_000));
-  assert.doesNotThrow(() => scheduledSlot(BASE, BASE - 5_000));
-  for (const [scheduled, now] of [[BASE + 1,BASE], [BASE,BASE + 120_001], [BASE,BASE - 5_001], ['invalid',BASE]]) {
-    assert.throws(() => scheduledSlot(scheduled, now));
+test('Cloudflare second/millisecond offsets map only approved cron minutes to the unchanged durable slot', () => {
+  const observed = 1791405155000;
+  assert.equal(iso(observed), '2026-10-07T20:32:35.000Z');
+  assert.equal(scheduledSlot(observed, observed), Math.floor(observed / 300_000));
+  for (let tick = 0; tick < 12; tick++) {
+    const minute = BASE + tick * 300_000;
+    for (const offset of [0,1,35_000,55_000,59_999]) {
+      assert.equal(scheduledSlot(minute + offset, minute + offset), Math.floor(minute / 300_000));
+    }
+  }
+  const hour = BASE - 120_000;
+  for (let minute = 0; minute < 60; minute++) {
+    if (minute % 5 === 2) continue;
+    for (const offset of [0,59_999]) {
+      const at = hour + minute * 60_000 + offset;
+      assert.throws(() => scheduledSlot(at, at), { message: 'Monitor data is invalid.' });
+    }
+  }
+});
+
+test('raw scheduled timestamps retain exact delay/future bounds before minute normalization', () => {
+  for (const scheduled of [BASE,BASE + 35_000,BASE + 59_999]) {
+    assert.doesNotThrow(() => scheduledSlot(scheduled, scheduled + 120_000));
+    assert.doesNotThrow(() => scheduledSlot(scheduled, scheduled - 5_000));
+    assert.throws(() => scheduledSlot(scheduled, scheduled + 120_001));
+    assert.throws(() => scheduledSlot(scheduled, scheduled - 5_001));
+  }
+  for (const invalid of [undefined,null,true,String(BASE),NaN,Infinity,-1,BASE + 0.5,Number.MAX_SAFE_INTEGER + 1]) {
+    assert.throws(() => scheduledSlot(invalid, BASE));
+    assert.throws(() => scheduledSlot(BASE, invalid));
   }
 });
 
