@@ -65,9 +65,11 @@ keyboard-native More filters disclosure; active filter values and Reset filters
 are visible together. Reset restores that view's defaults and makes one fresh
 authorized list request. Filters and their summary are scrubbed on invalidation.
 
-Opening Details makes the existing authorized detail read. Account history and
-identifiers, crew information, and stored snapshots are then available through
-native disclosures without additional reads or mutations. Stored points,
+Opening Details makes the existing authorized detail read. Stored account facts
+and identifiers, crew information, and stored snapshots are then available through
+native fact disclosures without additional reads or mutations. The separate
+Administrative history disclosure performs its own authorized read on expansion,
+as described below. Stored points,
 subscription status, progress counters, local last-seen date, cancellation flag,
 and each snapshot timestamp remain explicitly historical. Missing records stay
 "Not recorded", zero counters stay zero, and unknown subscription states are not
@@ -84,6 +86,40 @@ only identifiers and historical delivery/event metadata are collapsed. Role and
 invitation confirmation, MFA and safe-retry logic are unchanged. No Overview
 metrics, testing-grant controls or other unimplemented admin capability is
 fabricated by this UI pass.
+
+### Account-linked administrative history
+
+Users → Details includes a collapsed Administrative history disclosure only for
+an operator with both `users.read` and `audit.read`. Expanding it makes the
+existing guarded audit read for that exact account, ten events per page, newest
+sequence first. Older account events replaces the visible page; Refresh account
+history returns to the newest page. Collapsing, closing or invalidating clears
+all rows/cursors and aborts outstanding work. Reopening makes a fresh read.
+Nothing loads before expansion or polls in the background.
+
+This is **recorded events linked to this account**, not complete account history.
+The current ledger links role bootstrap/assignment and Early Access invitation
+acceptance to user IDs. Invitation approval, resend and revocation records remain
+linked to the request and are available in Early Access history instead. No
+missing events, effective role/access decisions, or lifecycle completion are
+inferred. Each page shows its server observation time in UTC; a failure is
+unavailable, never an empty history.
+
+The view projects fixed labels, recorded role changes, success/failure categories,
+UTC timestamps and an optional event reference. Raw request payloads, arbitrary
+error text, identifiers beyond the event reference and private fields are not
+rendered. Entire pages validate before publication, including exact actor/target,
+supported action/permission/reason combinations, bigint-string event order and
+bounded actor-bound cursors. The whole client/Auth/read operation has a ten-second
+deadline, explicit cancellation and before/after owner/session checks in addition
+to the existing bearer/epoch guards. Its cleanup composes with role controls.
+No SQL, API contract, permission or mutation changes are introduced.
+
+Pure tests cover safe projection, malformed pages/rows/cursors, deadlines and
+owner changes. The production-built Chromium/WebKit suite covers lazy reads,
+paging/refresh, permission denial, A→B→A and same-user session replacement,
+close/reopen, private-field sentinels, four themes, keyboard focus, 200% text and
+axe. Build graph tests keep both history modules out of non-Admin initial graphs.
 
 Details render only fixed fields with DOM text nodes. Stored activation,
 progress and subscription values are labeled snapshots with recorded timestamps,

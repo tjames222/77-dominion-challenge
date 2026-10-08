@@ -2,6 +2,263 @@ import { test, expect } from '@playwright/test';
 import AxeBuilder from '@axe-core/playwright';
 import { installAdminStub } from './support/admin-supabase-stub.mjs';
 
+test.describe('Account-linked administrative history', () => {
+  const historyReads = auth => auth.reads().filter(entry => entry.path.endsWith('/site_admin_list_audit'));
+  const openAccount = async page => {
+    await page.locator('#adminUsersRows button').first().click();
+    await expect(page.locator('#adminDetailTitle')).toHaveText('Account details');
+    await expect(page.locator('#adminUserFacts')).toBeVisible();
+  };
+  const expand = async page => { await page.locator('#adminUserHistory > summary').click(); };
+  const waitRows = async (page, count = 1) => { await expect(page.locator('#adminUserHistoryRows > li')).toHaveCount(count); };
+  test.beforeEach(async ({ page, baseURL }) => {
+    page.__historyEvidence = { external: [], errors: [] };
+    page.on('pageerror', error => page.__historyEvidence.errors.push(error.message));
+    await page.route('**/*', route => {
+      if (new URL(route.request().url()).origin !== new URL(baseURL).origin) {
+        page.__historyEvidence.external.push(new URL(route.request().url()).origin); return route.abort();
+      }
+      return route.fallback();
+    });
+  });
+  test.afterEach(async ({ page }) => {
+    expect(page.__historyEvidence.external).toEqual([]); expect(page.__historyEvidence.errors).toEqual([]);
+    const stored = await page.evaluate(() => JSON.stringify({ ...localStorage, ...sessionStorage })).catch(() => '');
+    expect(stored).not.toMatch(/PRIVATE_HISTORY|reasonCode|beforeRole|afterRole/);
+  });
+  test('history loads only on expansion, reads the exact account and clears on collapse', async ({ context, page }) => {
+    const auth = await installAdminStub(context); await page.goto('/admin.html'); await openAccount(page);
+    expect(historyReads(auth)).toHaveLength(0); await expect(page.locator('#adminUserHistory')).not.toHaveAttribute('open', '');
+    await expand(page); await waitRows(page);
+    const first = historyReads(auth)[0];
+    expect(first.body).toEqual({ target_expected_actor_id: auth.A, target_user_id: '70000000-0000-4000-8000-000000000028',
+      target_action: 'all', target_outcome: 'all', target_limit: 10, target_cursor: null });
+    await expect(page.locator('#adminUserHistoryScope')).toContainText('not a complete account history');
+    await expect(page.locator('#adminUserHistoryStatus')).toContainText('Observed');
+    await expect(page.locator('#adminUserHistoryOlder')).toBeDisabled();
+    await expand(page); await waitRows(page, 0); expect(historyReads(auth)).toHaveLength(1);
+    await expand(page); await waitRows(page); expect(historyReads(auth)).toHaveLength(2);
+    await page.locator('#adminUserHistoryRefresh').click(); await expect.poll(() => historyReads(auth).length).toBe(3); await waitRows(page);
+    expect(auth.assignments()).toHaveLength(0); expect(auth.denials()).toHaveLength(0); expect(auth.invitations()).toHaveLength(0);
+  });
+  for (const face of ['platform', 'wide-fallback']) test(`${face} collapsed and expanded history reflows inside a 320px dialog at settled 200% text`, async ({ context, page }, testInfo) => {
+    await installAdminStub(context); await page.setViewportSize({ width: 320, height: 1000 });
+    await page.goto('/admin.html'); await openAccount(page);
+    const summary = page.locator('#adminUserHistory > summary');
+    const normalFont = await summary.evaluate(element => parseFloat(getComputedStyle(element).fontSize));
+    // Font metrics differ across platforms even at an identical computed size.
+    // Keep platform coverage and exercise a wider available fallback separately.
+    if (face === 'wide-fallback') await page.locator('#adminUserHistory').evaluate(element => { element.style.fontFamily = 'Verdana, sans-serif'; });
+    await page.evaluate(() => { document.documentElement.style.fontSize = '200%'; });
+    await expect.poll(() => summary.evaluate(element => parseFloat(getComputedStyle(element).fontSize))).toBe(normalFont * 2);
+    for (const state of ['collapsed', 'expanded']) {
+      if (state === 'expanded') { await summary.focus(); await page.keyboard.press('Enter'); await waitRows(page); }
+      else await expect(page.locator('#adminUserHistory')).not.toHaveAttribute('open', '');
+      for (const selector of ['#adminDetail', '#adminUserHistory', '#adminUserHistory > summary']) {
+        const geometry = await page.locator(selector).evaluate(element => ({ width: element.clientWidth, scroll: element.scrollWidth,
+          descendants: [...element.querySelectorAll('*')].filter(node => node.getClientRects().length).map(node => {
+            const rect = node.getBoundingClientRect(); const style = getComputedStyle(node);
+            return { tag: node.tagName, id: node.id, width: node.clientWidth, scroll: node.scrollWidth, rectWidth: rect.width,
+              right: rect.right, text: node.textContent?.slice(0, 50), font: style.font, padding: style.padding,
+              minWidth: style.minWidth, maxWidth: style.maxWidth, wrap: style.overflowWrap };
+          }).filter(item => item.tag === 'BUTTON' || item.scroll > item.width + 1 || item.right > element.getBoundingClientRect().right + 1),
+        }));
+        await testInfo.attach(`${state}-${selector}`, { body: JSON.stringify(geometry), contentType: 'application/json' });
+        expect(geometry.scroll, `${state} ${selector}: ${JSON.stringify(geometry)}`).toBeLessThanOrEqual(geometry.width + 1);
+      }
+      await summary.screenshot({ path: testInfo.outputPath(`history-320px-200pct-${state}.png`) });
+    }
+    const refresh = page.locator('#adminUserHistoryRefresh');
+    await refresh.focus(); await page.keyboard.press('Enter'); await waitRows(page);
+    await expect(refresh).toBeFocused(); await expect(refresh).toBeInViewport();
+    await refresh.click(); await waitRows(page); await expect(refresh).toBeInViewport();
+    await page.locator('#adminDetail').screenshot({ path: testInfo.outputPath(`history-${face}-320px-200pct-dialog.png`) });
+    expect((await new AxeBuilder({ page }).include('#adminDetail').analyze()).violations).toEqual([]);
+    await page.keyboard.press('Escape'); await expect(page.locator('#adminUsersRows button').first()).toBeFocused();
+  });
+  for (const face of ['platform', 'wide-fallback']) for (const state of ['loading', 'empty', 'unavailable']) test(`${face} ${state} history status fits at 320px and settled 200% text`, async ({ context, page }) => {
+    const auth = await installAdminStub(context); await page.setViewportSize({ width: 320, height: 1000 });
+    const release = state === 'loading' ? auth.hold(['site_admin_list_audit']) : () => {};
+    if (state !== 'loading') await page.route('**/site_admin_list_audit', route => state === 'unavailable'
+      ? route.fulfill({ status: 503, contentType: 'application/json', body: '{}' })
+      : route.fulfill({ contentType: 'application/json', body: JSON.stringify({ schemaVersion: 1, actorId: auth.A,
+        observedAt: '2026-10-08T00:00:00Z', items: [], nextCursor: null }) }));
+    try {
+      await page.goto('/admin.html'); await openAccount(page);
+      const summary = page.locator('#adminUserHistory > summary');
+      const normalFont = await summary.evaluate(element => parseFloat(getComputedStyle(element).fontSize));
+      if (face === 'wide-fallback') await page.locator('#adminUserHistory').evaluate(element => { element.style.fontFamily = 'Verdana, sans-serif'; });
+      await page.evaluate(() => { document.documentElement.style.fontSize = '200%'; });
+      await expect.poll(() => summary.evaluate(element => parseFloat(getComputedStyle(element).fontSize))).toBe(normalFont * 2);
+      await summary.focus(); await page.keyboard.press('Enter');
+      const expected = state === 'loading' ? 'Loading account history…' : state === 'empty'
+        ? 'No recorded events linked to this account. Observed 2026-10-08 00:00:00 UTC.'
+        : 'Account history unavailable. Refresh to try again; no history is inferred from this error.';
+      await expect(page.locator('#adminUserHistoryStatus')).toHaveText(expected); await waitRows(page, 0);
+      for (const selector of ['#adminDetail', '#adminUserHistory', '#adminUserHistoryScope', '#adminUserHistoryStatus']) {
+        const geometry = await page.locator(selector).evaluate(element => ({ width: element.clientWidth, scroll: element.scrollWidth,
+          font: getComputedStyle(element).font, wrap: getComputedStyle(element).overflowWrap }));
+        expect(geometry.scroll, `${face} ${state} ${selector}: ${JSON.stringify(geometry)}`).toBeLessThanOrEqual(geometry.width + 1);
+      }
+      await page.keyboard.press('Escape'); await expect(page.locator('#adminUsersRows button').first()).toBeFocused();
+    } finally { release(); }
+  });
+  test('bounded older pages, linked acceptance, safe failure labels and private projection', async ({ context, page }) => {
+    const auth = await installAdminStub(context); const requests = [];
+    await page.route('**/site_admin_list_audit', route => {
+      const body = route.request().postDataJSON(); requests.push(body);
+      const ids = body.target_cursor ? ['20', '19'] : Array.from({ length: 10 }, (_, i) => String(30 - i));
+      const items = ids.map(id => ({ id, actorId: auth.A, targetUserId: body.target_user_id, action: 'roles.assign', permission: 'roles.manage',
+        reasonCode: 'staff_access_review', beforeRole: 'member', afterRole: 'site_admin', outcome: 'success', errorCode: null,
+        occurredAt: '2026-10-08T00:00:00Z', privateNote: 'PRIVATE_HISTORY_NOTE', rawRequest: 'PRIVATE_HISTORY_REQUEST' }));
+      if (body.target_cursor) {
+        Object.assign(items[0], { actorId: body.target_user_id, action: 'early_access.accept', permission: 'early_access.accept',
+          reasonCode: 'invitation_acceptance', beforeRole: null, afterRole: null });
+        Object.assign(items[1], { outcome: 'failure', afterRole: 'member', errorCode: 'revision_conflict' });
+      }
+      return route.fulfill({ contentType: 'application/json', body: JSON.stringify({ schemaVersion: 1, actorId: auth.A,
+        observedAt: '2026-10-08T01:00:00Z', items, nextCursor: body.target_cursor ? null : { v: 1, actorId: auth.A, query: 'a'.repeat(64), id: '21' } }) });
+    });
+    await page.goto('/admin.html'); await openAccount(page); await expand(page); await waitRows(page, 10);
+    expect(await page.content()).not.toContain('PRIVATE_HISTORY');
+    await page.locator('#adminUserHistoryOlder').focus(); await page.keyboard.press('Enter'); await waitRows(page, 2);
+    await expect(page.locator('#adminUserHistoryRefresh')).toBeFocused();
+    await expect(page.locator('#adminUserHistoryStatus')).toContainText('Page 2: 2 recorded events');
+    await expect(page.locator('#adminUserHistoryRows')).toContainText('Early Access invitation acceptance');
+    await expect(page.locator('#adminUserHistoryRows')).toContainText('Account changed during review');
+    await expect(page.locator('#adminUserHistoryRows')).toContainText('Not applied');
+    expect(requests[1].target_cursor.id).toBe('21'); expect(requests[1].target_user_id).toBe(requests[0].target_user_id);
+    await page.keyboard.press('Enter'); await waitRows(page, 10);
+    await expect(page.locator('#adminUserHistoryRefresh')).toBeFocused();
+    expect(requests[2].target_cursor).toBe(null); await expect(page.locator('#adminUserHistoryStatus')).toContainText('Page 1');
+  });
+  test('real operator-bootstrap shape renders its null actor as a recorded assignment', async ({ context, page }) => {
+    const auth = await installAdminStub(context);
+    await page.route('**/site_admin_list_audit', route => {
+      const body = route.request().postDataJSON();
+      return route.fulfill({ contentType: 'application/json', body: JSON.stringify({ schemaVersion: 1, actorId: auth.A,
+        observedAt: '2026-10-08T01:00:00Z', nextCursor: null, items: [{ id: '1', actorId: null, targetUserId: body.target_user_id,
+          action: 'roles.bootstrap', permission: 'roles.manage', reasonCode: 'initial_admin_bootstrap', beforeRole: 'member', afterRole: 'site_admin',
+          occurredAt: '2026-10-08T00:00:00Z', outcome: 'success', errorCode: null }] }) });
+    });
+    await page.goto('/admin.html'); await openAccount(page); await expand(page); await waitRows(page);
+    await expect(page.locator('#adminUserHistoryRows')).toContainText('Initial site-admin assignment');
+    await expect(page.locator('#adminUserHistoryRows')).toContainText('Member → Site admin');
+    await expect(page.locator('#adminUserHistoryRows')).toContainText('Succeeded');
+  });
+  for (const failure of ['wrong target', 'malformed timestamp', 'unknown action', 'wrong cursor', 'server failure', 'empty']) {
+    test(`history ${failure} is truthful and exposes no raw/private fields`, async ({ context, page }) => {
+      const auth = await installAdminStub(context);
+      await page.route('**/site_admin_list_audit', route => {
+        if (failure === 'server failure') return route.fulfill({ status: 500, contentType: 'application/json', body: '{"message":"PRIVATE_HISTORY_ERROR"}' });
+        const body = route.request().postDataJSON();
+        const item = { id: '42', actorId: auth.A, targetUserId: failure === 'wrong target' ? auth.B : body.target_user_id,
+          action: failure === 'unknown action' ? 'PRIVATE_HISTORY_ACTION' : 'roles.assign', permission: 'roles.manage', reasonCode: 'staff_access_review',
+          beforeRole: 'member', afterRole: 'site_admin', outcome: 'success', errorCode: null,
+          occurredAt: failure === 'malformed timestamp' ? 'not a timestamp' : '2026-10-08T00:00:00Z', privateNote: 'PRIVATE_HISTORY_NOTE' };
+        return route.fulfill({ contentType: 'application/json', body: JSON.stringify({ schemaVersion: 1, actorId: auth.A,
+          observedAt: '2026-10-08T01:00:00Z', items: failure === 'empty' ? [] : [item],
+          nextCursor: failure === 'wrong cursor' ? { v: 1, actorId: auth.B, query: 'a'.repeat(64), id: '42' } : null }) });
+      });
+      await page.goto('/admin.html'); await openAccount(page); await expand(page);
+      await expect(page.locator('#adminUserHistoryStatus')).toContainText(failure === 'empty' ? 'No recorded events linked' : 'Account history unavailable');
+      await waitRows(page, 0); expect(await page.content()).not.toContain('PRIVATE_HISTORY');
+    });
+  }
+  test('Users read alone never exposes or requests history', async ({ context, page }) => {
+    const auth = await installAdminStub(context, { permissions: ['users.read'] });
+    await page.goto('/admin.html'); await openAccount(page);
+    await expect(page.locator('#adminUserHistory')).toHaveCount(0); expect(historyReads(auth)).toHaveLength(0);
+  });
+  test('live audit permission denial scrubs the complete account dialog', async ({ context, page }) => {
+    const auth = await installAdminStub(context); await page.goto('/admin.html'); await openAccount(page); await expand(page); await waitRows(page);
+    auth.permissions(['users.read']); await page.locator('#adminUserHistoryRefresh').click();
+    await expect(page.locator('#adminWorkspace')).toBeHidden(); await expect(page.locator('#adminDetail')).not.toBeVisible();
+    await expect(page.locator('#adminUserHistoryRows')).toHaveCount(0);
+  });
+  for (const mode of ['ABA', 'replacement', 'pagehide']) test(`${mode} rejects held account history and scrubs prior rows`, async ({ context, page }) => {
+    const auth = await installAdminStub(context); await page.goto('/admin.html'); await openAccount(page); await expand(page); await waitRows(page);
+    const release = auth.hold(['site_admin_list_audit']);
+    try {
+      await page.locator('#adminUserHistoryRefresh').click(); await expect.poll(() => historyReads(auth).length).toBe(2); await waitRows(page, 0);
+      if (mode === 'pagehide') await page.evaluate(() => window.dispatchEvent(new PageTransitionEvent('pagehide')));
+      else {
+        const replacement = auth.session(mode === 'ABA' ? auth.B : auth.A, 'aal2', '22222222-2222-4222-8222-222222222222');
+        const switchSession = value => { localStorage.setItem('sb-127-auth-token', JSON.stringify(value)); window.dispatchEvent(new StorageEvent('storage', { key: 'sb-127-auth-token', newValue: JSON.stringify(value) })); };
+        await page.evaluate(switchSession, replacement); if (mode === 'ABA') await page.evaluate(switchSession, auth.firstSession);
+      }
+      await expect(page.locator('#adminWorkspace')).toBeHidden(); release();
+      await expect(page.locator('#adminUserHistory')).toHaveCount(0); await expect(page.locator('#adminDetailBody')).toBeEmpty();
+    } finally { release(); }
+  });
+  test('closing then opening another account discards late history and preserves role-panel cleanup', async ({ context, page }) => {
+    const auth = await installAdminStub(context, { permissions: ['users.read', 'audit.read', 'roles.manage'] });
+    await page.goto('/admin.html'); await openAccount(page); await expect(page.locator('#adminRoleReview')).toBeVisible();
+    const release = auth.hold(['site_admin_list_audit']);
+    try {
+      await expand(page); await expect.poll(() => historyReads(auth).length).toBe(1);
+      await page.locator('#adminDetailClose').click(); await expect(page.locator('#adminUsersRows button').first()).toBeFocused();
+      await expect(page.locator('#adminUserHistory')).toHaveCount(0); await expect(page.locator('#adminRoleReview')).toHaveCount(0);
+      await page.locator('#adminUsersRows button').nth(1).click(); await expect(page.locator('#adminUserHistory')).toBeVisible();
+      release(); await expect(page.locator('#adminUserHistoryRows')).toBeEmpty();
+      await expand(page); await waitRows(page);
+      expect(historyReads(auth).at(-1).body.target_user_id).not.toBe(historyReads(auth)[0].body.target_user_id);
+      await expect(page.locator('#adminUserHistoryRows')).toContainText('Site role review'); expect(auth.assignments()).toHaveLength(0);
+    } finally { release(); }
+  });
+  for (const theme of ['light', 'dark', 'dominion-night', 'dominion-platinum']) test(`${theme} account history supports keyboard, zoom and accessible semantics`, async ({ context, page }, testInfo) => {
+    await installAdminStub(context); await page.emulateMedia({ reducedMotion: 'reduce' });
+    await page.goto('/admin.html'); await openAccount(page);
+    await page.locator('#adminUserHistory > summary').focus(); await page.keyboard.press('Enter'); await waitRows(page);
+    // Mirror both visual properties changed by the real theme runtime, without
+    // inventing an entitlement or persisting this synthetic visual override.
+    // Changing only data-theme leaves the runtime's inline dark colorScheme.
+    await page.evaluate(value => {
+      document.documentElement.dataset.theme = value;
+      document.documentElement.style.colorScheme = window.DominionThemeRuntime.getTheme(value).colorScheme;
+    }, theme);
+    await expect(page.locator('html')).toHaveAttribute('data-theme', theme);
+    expect(await page.evaluate(() => document.documentElement.style.colorScheme)).toBe(await page.evaluate(value => window.DominionThemeRuntime.getTheme(value).colorScheme, theme));
+    // The existing reduced-motion rule leaves a nonzero .001ms transition on
+    // every element. WebKit settles inherited colors over several frames.
+    // Wait for the actual target colors, with a bounded assertion, before axe.
+    // A one-value RGB-channel readiness tolerance does not waive the unchanged
+    // zero-violation contrast check below or admit stale light/dark colors.
+    await expect.poll(() => page.evaluate(() => {
+      const hex = getComputedStyle(document.documentElement).getPropertyValue('--text').trim().replace('#', '');
+      if (!/^[a-f\d]{6}$/i.test(hex)) throw new Error('Unexpected fixture text color');
+      const expected = [0, 2, 4].map(offset => parseInt(hex.slice(offset, offset + 2), 16));
+      return [...document.querySelectorAll('#adminDetail, #adminUserFacts h3, #adminUserFacts dd, #adminUserFacts summary, #adminUserHistory h4, #adminUserHistory li p, #adminUserHistory summary')]
+        .filter(element => element.getClientRects().length > 0)
+        .flatMap(element => {
+          const color = getComputedStyle(element).color;
+          const channels = /^rgb\((\d+), (\d+), (\d+)\)$/.exec(color)?.slice(1).map(Number);
+          return channels?.every((value, index) => Math.abs(value - expected[index]) <= 1) ? [] : [{ tag: element.tagName, color, expected }];
+        });
+    })).toEqual([]);
+    expect((await new AxeBuilder({ page }).include('#adminDetail').analyze()).violations).toEqual([]);
+    const normalFont = await page.locator('#adminUserHistoryRefresh').evaluate(element => parseFloat(getComputedStyle(element).fontSize));
+    await page.evaluate(() => { document.documentElement.style.fontSize = '200%'; });
+    await expect.poll(() => page.locator('#adminUserHistoryRefresh').evaluate(element => parseFloat(getComputedStyle(element).fontSize))).toBe(normalFont * 2);
+    expect(await page.locator('#adminUserHistory').evaluate(element => element.scrollWidth <= element.clientWidth)).toBe(true);
+    // Verify keyboard activation and a real, non-forced pointer action at 200%.
+    // Mobile WebKit's native Tab preference does not traverse every button.
+    if (testInfo.project.name === 'admin-live-chromium') {
+      await page.locator('#adminUserHistory > summary').focus(); await page.keyboard.press('Tab'); await page.keyboard.press('Tab');
+    } else await page.locator('#adminUserHistoryRefresh').focus();
+    await expect(page.locator('#adminUserHistoryRefresh')).toBeFocused();
+    await page.keyboard.press('Enter'); await waitRows(page);
+    await page.locator('#adminUserHistoryRefresh').click(); await waitRows(page);
+    await expect(page.locator('#adminUserHistoryRefresh')).toBeInViewport();
+    await page.locator('#adminDetail').screenshot({ path: testInfo.outputPath(`${theme}-account-history-200pct.png`) });
+    await page.evaluate(() => { document.documentElement.style.fontSize = ''; });
+    await expect.poll(() => page.locator('#adminUserHistoryRefresh').evaluate(element => parseFloat(getComputedStyle(element).fontSize))).toBe(normalFont);
+    await page.locator('#adminUserHistory > summary').focus();
+    await page.locator('#adminDetail').screenshot({ path: testInfo.outputPath(`${theme}-account-history.png`) });
+    await page.keyboard.press('Escape'); await expect(page.locator('#adminUsersRows button').first()).toBeFocused();
+  });
+});
+
 test.describe('Account requests inbox', () => {
   test.beforeEach(async ({ page, baseURL }) => {
     page.__inboxEvidence = { external: [], errors: [] };
@@ -292,7 +549,7 @@ test('server pagination, filters, snapshots and audit detail work without member
   expect(auth.reads().every((item) => item.actor === auth.A && item.aal === 'aal2' && item.method === 'POST')).toBe(true);
   await noStoredPayload(page);
 });
-test('Users keeps compact rows and loads all account history once, with read-free keyboard disclosures', async ({ context, page }) => {
+test('Users keeps compact rows and loads stored account facts once, with read-free fact disclosures', async ({ context, page }) => {
   const auth = await installAdminStub(context); presentationFixture(auth); await ready(page);
   const row = page.locator('#adminUsersRows tr').first();
   await expect(page.locator('#adminUsersPanel [role="columnheader"]')).toHaveText(['Member', 'Site role', 'Account', 'Last sign-in', 'Details']);
@@ -567,7 +824,15 @@ test('Users long fields wrap across the card breakpoint without losing disclosur
       const summary = stored.locator('summary'); await summary.focus(); await page.keyboard.press('Enter');
       await expect(stored).toHaveAttribute('open', ''); await expect(stored).toContainText('LongSyntheticCrew'.repeat(4));
       await expect(page.locator('#adminUserFacts')).toContainText(name); await expect(page.locator('#adminUserFacts')).toContainText(email);
-      expect(await page.locator('#adminDetail').evaluate(node => node.scrollWidth <= node.clientWidth + 1)).toBe(true);
+      const detailGeometry = await page.locator('#adminDetail').evaluate(node => ({
+        width: node.clientWidth, scroll: node.scrollWidth,
+        historySummary: (() => { const element = document.querySelector('#adminUserHistory > summary'); return { width: element.clientWidth, scroll: element.scrollWidth, font: getComputedStyle(element).font, wrap: getComputedStyle(element).overflowWrap }; })(),
+        overflowing: [...node.querySelectorAll('*')].filter(element => element.getClientRects().length && element.scrollWidth > element.clientWidth + 1)
+          .map(element => ({ tag: element.tagName, id: element.id, width: element.clientWidth, scroll: element.scrollWidth,
+            text: element.textContent?.slice(0, 80), font: getComputedStyle(element).font, wrap: getComputedStyle(element).overflowWrap })),
+      }));
+      await testInfo.attach(`detail-geometry-${width}-${scale}`, { body: JSON.stringify(detailGeometry), contentType: 'application/json' });
+      expect(await page.locator('#adminDetail').evaluate(node => node.scrollWidth <= node.clientWidth + 1), `${width}px / ${scale}: ${JSON.stringify(detailGeometry)}`).toBe(true);
       const title = await page.locator('#adminDetailTitle').evaluate(node => ({ height: node.getBoundingClientRect().height, lineHeight: parseFloat(getComputedStyle(node).lineHeight) }));
       expect(title.height, `${width}px / ${scale}: the two-word title must not collapse into a column of letters`).toBeLessThanOrEqual(title.lineHeight * 3 + 1);
       expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width + 1);

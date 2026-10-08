@@ -9,6 +9,7 @@ import { adminReadError } from './admin-read-client.mjs';
 import { normalizeEarlyAccessRequest } from './admin-early-access-contract.mjs';
 import { mountEarlyAccessDetail } from './admin-early-access-detail.mjs';
 import { mountRoleDetail } from './admin-role-detail.mjs';
+import { mountAdminUserHistory } from './admin-user-history-detail.mjs';
 import { adminUserListFacts, adminUserSummary } from './admin-user-presentation.mjs';
 import { normalizeAdminAccountRequestPage, normalizeAdminAccountRequestQueueHealth, accountRequestTypeLabel, accountRequestRecordedStatus } from './admin-account-requests.mjs';
 import { readAdminAccountRequests } from './admin-account-request-transport.mjs';
@@ -253,7 +254,12 @@ async function openDetail(kind, id, button) {
       } });
     else if (kind === 'users') {
       const facts = element('div'); facts.id = 'adminUserFacts'; byId('adminDetailBody').append(facts); renderUser(result.item, facts);
-      detailCleanup = mountRoleDetail({ container: byId('adminDetailBody'), item: result.item, owner: detailOwner, permissions: [...permissions],
+      const clearHistory = mountAdminUserHistory({ container: byId('adminDetailBody'), targetUserId: id, owner: detailOwner, permissions: [...permissions],
+        isCurrent: () => captured === epoch && detail === detailEpoch && !suspended, onError: showError });
+      // Install cleanup before mounting the independent mutation panel so any
+      // exception or later invalidation also removes the read-only history.
+      detailCleanup = clearHistory;
+      const clearRole = mountRoleDetail({ container: byId('adminDetailBody'), item: result.item, owner: detailOwner, permissions: [...permissions],
         isCurrent: () => captured === epoch && detail === detailEpoch && !suspended,
         onError: showError, reload: () => void openDetail(kind, id, button),
         onFacts: (item) => { facts.replaceChildren(); renderUser(item, facts); },
@@ -286,6 +292,7 @@ async function openDetail(kind, id, button) {
           } });
         },
       });
+      detailCleanup = () => { clearHistory(); clearRole(); };
     } else renderAudit(result.item);
   } catch (error) {
     if (captured !== epoch || detail !== detailEpoch) return;
