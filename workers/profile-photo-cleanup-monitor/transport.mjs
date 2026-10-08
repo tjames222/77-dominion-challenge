@@ -18,7 +18,9 @@ export async function readHealth(secret, previousSnapshotAt, {
   });
   try {
     const response = await Promise.race([fetcher(HEALTH_URL, {
-      method: 'POST', redirect: 'error', signal: controller.signal,
+      // Workerd supports manual/follow only. Never follow a redirect carrying
+      // the health credential; the exact-200 check below rejects every 3xx.
+      method: 'POST', redirect: 'manual', signal: controller.signal,
       headers: { 'content-type': 'application/json', 'x-dominion-health-key': secret },
       body: '{"mode":"monitor-health"}',
     }), deadline]);

@@ -16,7 +16,7 @@ function intent() {
 }
 test('health request pins URL, tiny mode and credential header, with no cleanup authority or redirects', async () => {
   const got = await readHealth(SECRET, null, { now: () => BASE, fetcher: async (url, init) => {
-    assert.equal(url, HEALTH_URL); assert.equal(init.method, 'POST'); assert.equal(init.redirect, 'error');
+    assert.equal(url, HEALTH_URL); assert.equal(init.method, 'POST'); assert.equal(init.redirect, 'manual');
     assert.deepEqual(init.headers, { 'content-type': 'application/json', 'x-dominion-health-key': SECRET });
     assert.equal(init.body, '{"mode":"monitor-health"}');
     return response();

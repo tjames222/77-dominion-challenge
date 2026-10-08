@@ -5,8 +5,8 @@ import { dirname, join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
-import { BASE } from './test-fixtures.mjs';
-import { SELF_TEST_ID } from './constants.mjs';
+import { BASE, SECRET, healthBody } from './test-fixtures.mjs';
+import { HEALTH_URL, SELF_TEST_ID } from './constants.mjs';
 
 const require = createRequire(import.meta.url);
 const wranglerRoot = dirname(require.resolve('wrangler/package.json'));
@@ -92,6 +92,49 @@ async function sqliteFiles(directory) {
   }
   return output;
 }
+
+test('native health fetch accepts the pinned 200 response and never follows redirect credentials to another hop', async () => {
+  const entry = `
+import { readHealth } from './transport.mjs';
+import { BASE, SECRET } from './test-fixtures.mjs';
+export default {
+  async fetch() {
+    const health = await readHealth(SECRET, null, { now: () => BASE });
+    return Response.json({ accepted: health !== null, health });
+  }
+};
+`;
+  const cases = [{ status: 200 }, ...[301,302,303,307,308].flatMap(status =>
+    [HEALTH_URL, 'https://untrusted-redirect.invalid/health'].map(location => ({ status, location })))];
+  for (const { status, location } of cases) {
+    const requests = [];
+    const mf = new Miniflare({ modulesRoot: root,
+      modules: [
+        { type: 'ESModule', path: join(root, 'native-transport-harness.mjs'), contents: entry },
+        ...['constants.mjs','core.mjs','transport.mjs','test-fixtures.mjs'].map(path => ({ type: 'ESModule', path: join(root, path) })),
+      ], compatibilityDate: '2026-07-01',
+      outboundService: async request => {
+        requests.push({ url: request.url, method: request.method,
+          healthKey: request.headers.get('x-dominion-health-key'), body: await request.text() });
+        // Every outbound call is handled locally. A followed Location can never
+        // escape to the network, and its presence still fails the assertion.
+        if (request.url !== HEALTH_URL) return new Response('Unexpected second hop', { status: 418 });
+        return new Response(JSON.stringify(healthBody()), { status, headers: {
+          'content-type': 'application/json',
+          ...(location ? { location } : {}),
+        } });
+      }, log: new Log(LogLevel.NONE),
+    });
+    try {
+      const result = await (await mf.dispatchFetch('https://fixture.invalid/')).json();
+      assert.equal(result.accepted, status === 200, `Native HTTP ${status}`);
+      if (status === 200) assert.equal(result.health.cleanup.ready, 0);
+      else assert.equal(result.health, null);
+      assert.deepEqual(requests, [{ url: HEALTH_URL, method: 'POST', healthKey: SECRET,
+        body: '{"mode":"monitor-health"}' }], `HTTP ${status} must make exactly one fixed-origin request`);
+    } finally { await mf.dispose(); }
+  }
+});
 
 test('actual SQLite DO survives full runtime restart, serializes duplicate schedules, and sends one recovery', async () => {
   const persist = await mkdtemp(join(tmpdir(), '77dc-monitor-native-'));
