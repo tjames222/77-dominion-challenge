@@ -16,7 +16,7 @@ function activationFixture() {
   const response = new Promise((yes) => { resolve = yes; });
   const globals = { inflightActorReads: scope,
     requireCapturedActivationActor: (id) => { assert.ok(id); return id; },
-    isLocalDemoMode: () => false,
+    BUILD_SUPPORTS_LOCAL_DEMO: true, isLocalDemoMode: () => false,
     requireSupabase: () => ({ rpc: async (name, parameters) => {
       assert.equal(name, 'get_challenge_activation_v2');
       assert.equal(parameters.target_expected_actor_id, 'A');

@@ -27,6 +27,11 @@ const environmentFlagEnabled = (value) => (
   String(value || '').trim().toLowerCase() === 'true'
 );
 export const ENABLE_MOCKS = environmentFlagEnabled(import.meta.env.VITE_ENABLE_MOCKS);
+// Only the exact production flag can prove local demo branches unreachable.
+// Other spellings retain the existing runtime parser; DEV keeps its loopback
+// fallback and hybrid fixtures even when VITE_ENABLE_MOCKS is exactly 'false'.
+export const BUILD_SUPPORTS_LOCAL_DEMO = import.meta.env.DEV
+  || import.meta.env.VITE_ENABLE_MOCKS !== 'false';
 const ENABLE_PRODUCTION_CONNECTIONS = environmentFlagEnabled(
   import.meta.env.VITE_ENABLE_PRODUCTION_CONNECTIONS,
 );

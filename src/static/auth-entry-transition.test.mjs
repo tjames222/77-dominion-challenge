@@ -44,7 +44,7 @@ for (const [name, next, invoke] of [
   const fixture = () => {
     const requests = []; let checks = 0;
     const scope = {
-      isLocalDemoMode: () => false,
+      BUILD_SUPPORTS_LOCAL_DEMO: true, isLocalDemoMode: () => false,
       requireUser: async expected => { checks += 1; assert.equal(expected, 'A'); return { id: 'A' }; },
       requireSupabase: () => ({ rpc: () => {
         const held = deferred();

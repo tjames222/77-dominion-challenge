@@ -23,7 +23,7 @@ function postFixture(data, error = null) {
   let currentSession = session();
   let respond = async () => ({ data, error });
   const globals = {
-    isLocalDemoMode: () => false,
+    BUILD_SUPPORTS_LOCAL_DEMO: true, isLocalDemoMode: () => false,
     previewBadgeEpoch: 0,
     getAuthSession: async () => currentSession,
     authSessionIdentity,

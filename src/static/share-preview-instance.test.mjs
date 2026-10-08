@@ -14,7 +14,7 @@ function fixture() {
   const context = {
     URL, Date,
     getLocalOrSessionUser: async () => ({ authenticated: true, userId: currentActor }),
-    isLocalDemoMode: () => true,
+    BUILD_SUPPORTS_LOCAL_DEMO: true, isLocalDemoMode: () => true,
     withPreviewAggregate: async (owner, operation) => {
       calls.push(owner);
       if (owner !== currentActor) throw new Error('The signed-in account changed. Try again.');
