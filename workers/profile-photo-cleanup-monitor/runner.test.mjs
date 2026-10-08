@@ -52,6 +52,31 @@ test('duplicate schedule skips health and mail; malformed persisted data fails c
   await assert.rejects(runTick(f.storage, f.env, BASE, deps));
   assert.deepEqual(f.storage.value(), { corrupt: true });
 });
+test('different second offsets in one scheduled minute never repeat health reads or reserve another notice', async () => {
+  const f = fixture(); let reads = 0, sends = 0;
+  for (const [index, offset] of [35_000,55_000,59_999,1,0].entries()) {
+    const at = BASE + offset;
+    const result = await runTick(f.storage, f.env, at, { now: () => BASE + 60_000,
+      healthReader: async () => { reads++; return parseHealth(healthBody(BASE + 60_000, 101), BASE + 60_000); },
+      sender: async () => { sends++; return { status: 'accepted', messageId: 'fixture-message-1' }; } });
+    assert.equal(result.ignored, index > 0);
+    assert.equal(result.dailyCount, 1);
+    assert.equal(f.storage.value().lastSlot, Math.floor(BASE / 300_000));
+    assert.equal(reads, 1); assert.equal(sends, 1);
+  }
+});
+test('jittered duplicate schedules cannot supply the second consecutive health failure', async () => {
+  const f = fixture(); let reads = 0, sends = 0;
+  const tick = at => runTick(f.storage, f.env, at, { now: () => at,
+    healthReader: async () => { reads++; return null; },
+    sender: async () => { sends++; return { status: 'accepted', messageId: 'fixture-message-1' }; } });
+  assert.equal((await tick(BASE + 35_000)).notificationId, null);
+  assert.equal((await tick(BASE + 55_000)).ignored, true);
+  assert.equal(reads, 1); assert.equal(sends, 0);
+  const second = await tick(BASE + 300_000 + 35_000);
+  assert.deepEqual(second.conditionCodes, ['health_unavailable']);
+  assert.equal(reads, 2); assert.equal(sends, 1);
+});
 test('observe-only state still evaluates incidents but never invokes email', async () => {
   const f = fixture();
   const result = await runTick(f.storage, { ...f.env, ALERTS_ENABLED: 'false' }, BASE, { now: () => BASE,

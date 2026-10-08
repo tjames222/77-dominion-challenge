@@ -99,7 +99,7 @@ test('actual SQLite DO survives full runtime restart, serializes duplicate sched
   try {
     mf = new Miniflare(await options(persist));
     let object = await stub(mf);
-    const results = await Promise.all([object.tick(BASE), object.tick(BASE), object.tick(BASE)]);
+    const results = await Promise.all([35_000,55_000,59_999].map(offset => object.tick(BASE + offset)));
     assert.equal(results.filter(r => r.ignored).length, 2);
     let inspected = await object.inspect();
     assert.equal(inspected.sends, 1); assert.equal(inspected.sqlite, 1);
@@ -112,11 +112,11 @@ test('actual SQLite DO survives full runtime restart, serializes duplicate sched
     for (const file of files) assert.equal((await readFile(file)).subarray(0, 15).toString(), 'SQLite format 3');
     mf = new Miniflare(await options(persist, { TEST_READY: 0 }));
     object = await stub(mf);
-    assert.equal((await object.tick(BASE)).ignored, true);
+    assert.equal((await object.tick(BASE + 59_999)).ignored, true);
     assert.equal((await object.inspect()).sends, 1);
-    await object.tick(BASE + 300000);
+    await object.tick(BASE + 300000 + 35_000);
     assert.equal((await object.inspect()).sends, 1);
-    const recovered = await object.tick(BASE + 600000);
+    const recovered = await object.tick(BASE + 600000 + 55_000);
     assert.equal(recovered.notificationId, 'cleanup-1-recovery');
     inspected = await object.inspect();
     assert.equal(inspected.sends, 2); assert.equal(inspected.state.daily.count, 2);
@@ -163,10 +163,10 @@ test('one-shot test completion and duplicate suppression survive successive comp
   let mf;
   try {
     const config = { MONITOR_SELF_TEST: SELF_TEST_ID, ALERTS_ENABLED: 'false', TEST_READY: 0 };
-    for (const tick of [0,0,1,2,2,3,288]) {
+    for (const [tick, offset] of [[0,35_000],[0,55_000],[1,59_999],[2,35_000],[2,55_000],[3,1],[288,0]]) {
       mf = new Miniflare(await options(persist, config));
       const object = await stub(mf);
-      await object.tick(BASE + tick * 300000);
+      await object.tick(BASE + tick * 300000 + offset);
       const observed = await object.inspect();
       assert.equal(observed.sends, tick < 2 ? 1 : 2);
       assert.equal(observed.state.incident, null);
