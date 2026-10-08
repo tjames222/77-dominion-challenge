@@ -145,7 +145,7 @@ test('actual collection cannot rebind an older earned snapshot after an actor/se
     });
     const context = {
       withPreviewAggregate: async () => undefined,
-      isLocalDemoMode: () => true, usesSupabaseAuthentication: () => false,
+      BUILD_SUPPORTS_LOCAL_DEMO: true, isLocalDemoMode: () => true, usesSupabaseAuthentication: () => false,
       get previewBadgeEpoch() { return currentOwner.epoch; },
       requireMockRewardActor: () => {
         actorChecks += 1;

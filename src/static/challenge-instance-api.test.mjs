@@ -18,7 +18,7 @@ function fixture() {
   const query = { then: resolve => resolve({ data: [], error: null, count: 0 }) };
   for (const method of ['select', 'eq', 'neq', 'order', 'limit', 'gte', 'lt', 'maybeSingle']) query[method] = () => query;
   const globals = {
-    isLocalDemoMode: () => false,
+    BUILD_SUPPORTS_LOCAL_DEMO: true, isLocalDemoMode: () => false,
     requireSupabase: () => ({ from: name => { tables.push(name); return query; },
       rpc: async (name, args) => { requests.push({ name, args }); return { data: history, error: null }; } }),
     requireUser: async expected => { if (expected && expected !== currentActor) throw new Error('Account changed'); return { id: currentActor }; },

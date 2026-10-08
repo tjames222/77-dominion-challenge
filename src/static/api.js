@@ -3,6 +3,7 @@ import {
   SUPABASE_ORIGIN,
   SUPABASE_KEY,
   ENABLE_MOCKS,
+  BUILD_SUPPORTS_LOCAL_DEMO,
   ENABLE_E2E_FIXTURES,
   supabaseAuthStorageKey,
   supabase,
@@ -331,7 +332,7 @@ const writeMockUserValue = (key, value, userId = getMockUserId()) => {
 
 function previewRunDate(runtime, actorId) {
   const simulation = normalizePreviewChallengeState(readMockUserValue('dominion:previewChallengeSimulation', {}, actorId), dateKeyForTimeZone());
-  return isPreviewChallengeActive(isLocalDemoMode(), simulation) ? previewChallengeDate(simulation)
+  return isPreviewChallengeActive((BUILD_SUPPORTS_LOCAL_DEMO && isLocalDemoMode()), simulation) ? previewChallengeDate(simulation)
     : dateKeyForTimeZone(new Date(), runtime.runs.at(-1)?.timeZone || browserTimeZone());
 }
 
@@ -452,7 +453,7 @@ const localDayBounds = (now = new Date()) => {
 };
 
 const requireSupabase = () => {
-  if (isLocalDemoMode()) throw new Error('Supabase is disabled in preview mock mode.');
+  if ((BUILD_SUPPORTS_LOCAL_DEMO && isLocalDemoMode())) throw new Error('Supabase is disabled in preview mock mode.');
   if (!supabase) throw new Error('Supabase is not configured.');
   return supabase;
 };
@@ -541,7 +542,7 @@ export function sessionToUser(session, fallbackName = 'Member') {
   return { userId: user.id || '', name, email, avatarUrl: '', authenticated: Boolean(session?.access_token) };
 }
 
-export const hasSupabaseAuth = () => Boolean(supabase) && !isLocalDemoMode();
+export const hasSupabaseAuth = () => Boolean(supabase) && !(BUILD_SUPPORTS_LOCAL_DEMO && isLocalDemoMode());
 export const hasSupabaseAuthentication = () => usesSupabaseAuthentication();
 
 export async function getAuthSession() {
@@ -754,7 +755,7 @@ export async function clearAuthSession({ redirectToLanding = false } = {}) {
       } finally {
         if (isHybridAuthPreview()) clearLocalAuthenticatedIdentity();
       }
-    } else if (isLocalDemoMode() && readJson('dominion:user', null)?.email) {
+    } else if ((BUILD_SUPPORTS_LOCAL_DEMO && isLocalDemoMode()) && readJson('dominion:user', null)?.email) {
       // Adopt a legacy install's active ID before clearing the account pointer.
       claimPreviewLegacyOwner(localStorage, getMockUserId());
     }
@@ -775,7 +776,7 @@ export async function clearAuthSession({ redirectToLanding = false } = {}) {
 }
 
 export function saveLocalMockUser(user) {
-  if (!isLocalDemoMode()) throw new Error('Preview login is unavailable outside local demo mode.');
+  if (!(BUILD_SUPPORTS_LOCAL_DEMO && isLocalDemoMode())) throw new Error('Preview login is unavailable outside local demo mode.');
   invalidatePreviewBadgeOwner();
   cancelAdminReads();
   inflightActorReads.invalidate();
@@ -824,7 +825,7 @@ export async function getLocalOrSessionUser() {
     try { if (await sessionRequiresMfa(supabase.auth)) return null; }
     catch { return null; }
   }
-  if (isLocalDemoMode()) {
+  if ((BUILD_SUPPORTS_LOCAL_DEMO && isLocalDemoMode())) {
     if (isHybridAuthPreview()) {
       try {
         return await getVerifiedHybridUser();
@@ -848,7 +849,7 @@ export async function submitEarlyAccessRequest(input, { expectedUserId = '' } = 
   if (actor?.authenticated && actor.email?.trim().toLowerCase() !== request.email) {
     throw new Error('Use the email for your signed-in account.');
   }
-  if (isLocalDemoMode()) {
+  if ((BUILD_SUPPORTS_LOCAL_DEMO && isLocalDemoMode())) {
     // Preview receipts store no submitted name/email and never call production.
     const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(request.email));
     const key = [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, '0')).join('');
@@ -884,7 +885,7 @@ const normalizeThemePreference = (preference = {}) => ({
 
 export async function getThemePreference({ expectedUserId = '', signal } = {}) {
   signal?.throwIfAborted();
-  if (isLocalDemoMode()) {
+  if ((BUILD_SUPPORTS_LOCAL_DEMO && isLocalDemoMode())) {
     const actorId = requireMockRewardActor(expectedUserId);
     const preference = normalizeThemePreference(readJson(MOCK_THEME_PREFERENCES_KEY, {})[actorId]);
     requireMockRewardActor(actorId);
@@ -912,7 +913,7 @@ export async function setThemePreference(themeKey, { expectedUserId = '', signal
     throw new Error('The requested theme is unavailable.');
   }
 
-  if (isLocalDemoMode()) {
+  if ((BUILD_SUPPORTS_LOCAL_DEMO && isLocalDemoMode())) {
     await requireHybridPreviewUser(expectedUserId);
     signal?.throwIfAborted();
     const actorId = requireMockRewardActor(expectedUserId);
@@ -1004,7 +1005,7 @@ export async function requestPasswordRecovery(email) {
   const normalizedEmail = String(email || '').trim();
   if (!normalizedEmail) throw new TypeError('Enter your email address.');
 
-  if (isLocalDemoMode() && !usesSupabaseAuthentication()) {
+  if ((BUILD_SUPPORTS_LOCAL_DEMO && isLocalDemoMode()) && !usesSupabaseAuthentication()) {
     return { requested: true, preview: true };
   }
 
@@ -1069,7 +1070,7 @@ const activeMockAccountRequest = (requests, userId, requestType) => requests.fin
 ));
 
 export async function getAccountLifecycleRequests({ expectedUserId = '' } = {}) {
-  if (isLocalDemoMode()) {
+  if ((BUILD_SUPPORTS_LOCAL_DEMO && isLocalDemoMode())) {
     await requireHybridPreviewUser(expectedUserId);
     const userId = getMockUserId();
     if (expectedUserId && userId !== expectedUserId) {
@@ -1095,7 +1096,7 @@ export async function getAccountLifecycleRequests({ expectedUserId = '' } = {}) 
 export async function createAccountLifecycleRequest({ requestType, expectedUserId = '' }) {
   const normalizedType = assertAccountRequestType(requestType);
 
-  if (isLocalDemoMode()) {
+  if ((BUILD_SUPPORTS_LOCAL_DEMO && isLocalDemoMode())) {
     await requireHybridPreviewUser(expectedUserId);
     const userId = getMockUserId();
     if (expectedUserId && userId !== expectedUserId) {
@@ -1319,7 +1320,7 @@ export async function updateProfile(profile, { expectedUserId = '' } = {}) {
   if (profile.challengeStartDate !== undefined) {
     throw new Error('Challenge start dates must be changed through the challenge activation service.');
   }
-  if (isLocalDemoMode()) {
+  if ((BUILD_SUPPORTS_LOCAL_DEMO && isLocalDemoMode())) {
     const verifiedUser = await requireHybridPreviewUser(expectedUserId);
     const currentUserId = getMockUserId();
     if (expectedUserId && currentUserId !== expectedUserId) {
@@ -1532,7 +1533,7 @@ function isUnavailableProfilePhotoCleanupRpc(error) {
 
 export async function drainProfilePhotoCleanupQueue({ maxBatches = 8, expectedUserId = '' } = {}) {
   void maxBatches;
-  if (!isLocalDemoMode()) await requireUser(expectedUserId);
+  if (!(BUILD_SUPPORTS_LOCAL_DEMO && isLocalDemoMode())) await requireUser(expectedUserId);
   // Cleanup is service-only and scheduled. Browsers never receive a delete
   // lease or Storage DELETE permission.
   return { removed: 0, available: true, scheduled: true };
@@ -1542,7 +1543,7 @@ export async function uploadProfilePhoto(preparedPhoto, { expectedUserId = '' } 
   if (!isPreparedProfilePhoto(preparedPhoto)) {
     throw new Error('Prepare the profile picture before uploading it.');
   }
-  if (isLocalDemoMode()) {
+  if ((BUILD_SUPPORTS_LOCAL_DEMO && isLocalDemoMode())) {
     await requireHybridPreviewUser(expectedUserId);
     if (expectedUserId && getMockUserId() !== expectedUserId) {
       throw new Error('The signed-in account changed. Try again.');
@@ -1599,7 +1600,7 @@ export async function replaceProfilePhoto({ preparedPhoto, profile }, { expected
 }
 
 export async function getBillingState() {
-  if (isLocalDemoMode()) {
+  if ((BUILD_SUPPORTS_LOCAL_DEMO && isLocalDemoMode())) {
     if (!isHybridAuthPreview()) return getMockBillingState();
     try {
       const user = await getVerifiedHybridUser();
@@ -1666,7 +1667,7 @@ export async function createCheckoutSession(productKey) {
     enabled: RELEASE_GATES.billingEnabled,
     message: BILLING_CLOSED_MESSAGE,
     action: async () => {
-      if (isLocalDemoMode()) {
+      if ((BUILD_SUPPORTS_LOCAL_DEMO && isLocalDemoMode())) {
         await requireHybridPreviewUser();
         if (productKey !== MEMBERSHIP_PRODUCT_KEY) throw new Error('Unsupported preview product selection.');
         const now = new Date();
@@ -1699,7 +1700,7 @@ export async function createCustomerPortalSession(options = {}) {
     action: async () => {
       const flow = options?.flow || '';
       const returnPath = options?.returnPath || '';
-      if (isLocalDemoMode()) {
+      if ((BUILD_SUPPORTS_LOCAL_DEMO && isLocalDemoMode())) {
         await requireHybridPreviewUser();
         const url = flow === 'payment_method_update'
           ? './billing.html?payment=updated&preview=1'
@@ -1716,7 +1717,7 @@ export async function cancelMembership() {
     enabled: RELEASE_GATES.billingEnabled,
     message: BILLING_CLOSED_MESSAGE,
     action: async () => {
-      if (isLocalDemoMode()) {
+      if ((BUILD_SUPPORTS_LOCAL_DEMO && isLocalDemoMode())) {
         await requireHybridPreviewUser();
         writeMockUserValue(MOCK_SUBSCRIPTION_KEY, null);
         return { canceled: true, accessRemoved: true, preview: true };
@@ -1727,7 +1728,7 @@ export async function cancelMembership() {
 }
 
 export async function manageGroupIntegration(action, values = {}) {
-  if (isLocalDemoMode()) {
+  if ((BUILD_SUPPORTS_LOCAL_DEMO && isLocalDemoMode())) {
     await requireHybridPreviewUser();
     if (action === 'list') return { destinations: [], preview: true };
     throw new Error('Connect Slack or Discord from a signed-in staging or production account.');
@@ -1810,7 +1811,7 @@ export async function previewShareSnapshot(kind, { expectedUserId = '' } = {}) {
   const user = await getLocalOrSessionUser();
   const actorId = expectedUserId || user?.userId;
   if (!user?.authenticated || !actorId || user.userId !== actorId) throw new Error('The signed-in account changed. Try again.');
-  if (isLocalDemoMode()) {
+  if ((BUILD_SUPPORTS_LOCAL_DEMO && isLocalDemoMode())) {
     return withPreviewAggregate(actorId, () => {
       const snapshot = mockSharePresentation(kind);
       return { ...snapshot, context: { schemaVersion: 2, actorId,
@@ -1826,7 +1827,7 @@ export async function previewShareSnapshot(kind, { expectedUserId = '' } = {}) {
 
 export async function createShareSnapshot(kind, { expectedUserId = '', expectedInstanceId = null } = {}) {
   if (!expectedUserId || (kind === 'progress' && !expectedInstanceId)) throw new Error('Reopen the share preview before creating a link.');
-  if (isLocalDemoMode()) {
+  if ((BUILD_SUPPORTS_LOCAL_DEMO && isLocalDemoMode())) {
     return withPreviewAggregate(expectedUserId, () => {
       const preview = mockSharePresentation(kind);
       const context = { schemaVersion: 2, actorId: expectedUserId,
@@ -1853,7 +1854,7 @@ export async function createShareSnapshot(kind, { expectedUserId = '', expectedI
 }
 
 export async function createSharingRewardIntent(shareKind, { expectedUserId = '' } = {}) {
-  if (isLocalDemoMode()) {
+  if ((BUILD_SUPPORTS_LOCAL_DEMO && isLocalDemoMode())) {
     await requireHybridPreviewUser(expectedUserId);
     if (expectedUserId && getMockUserId() !== expectedUserId) {
       throw new Error('The signed-in account changed. Try again.');
@@ -1880,7 +1881,7 @@ export async function createSharingRewardIntent(shareKind, { expectedUserId = ''
 }
 
 export async function completeSharingReward(completionToken, { expectedUserId = '' } = {}) {
-  if (isLocalDemoMode()) {
+  if ((BUILD_SUPPORTS_LOCAL_DEMO && isLocalDemoMode())) {
     await requireHybridPreviewUser(expectedUserId);
     if (expectedUserId && getMockUserId() !== expectedUserId) {
       throw new Error('The signed-in account changed. Try again.');
@@ -1930,7 +1931,7 @@ function getMockRewardCatalog({ snapshot = false } = {}) {
 }
 
 export async function getChallengeProgression() {
-  if (isLocalDemoMode()) { await withPreviewAggregate(requireMockRewardActor(), () => null); return getMockChallengeProgression(); }
+  if ((BUILD_SUPPORTS_LOCAL_DEMO && isLocalDemoMode())) { await withPreviewAggregate(requireMockRewardActor(), () => null); return getMockChallengeProgression(); }
   const actor = await requireUser();
   const catalog = await getAllRewardCatalog({ expectedUserId: actor.id });
   return { challenges: catalog.items.filter(item => item.stateModel === 'challenge_lifecycle'), totalPoints: catalog.totalPoints };
@@ -1938,7 +1939,7 @@ export async function getChallengeProgression() {
 
 export async function getRewardCatalog({ limit = 50, cursor = null, expectedUserId = '', expectedRevision = null, expectedCatalogVersion = null, expectedSnapshotVersion = null, signal } = {}) {
   signal?.throwIfAborted();
-  if (isLocalDemoMode()) {
+  if ((BUILD_SUPPORTS_LOCAL_DEMO && isLocalDemoMode())) {
     const owner = Object.freeze({ ...await capturePreviewBadgeOwner(expectedUserId) });
     const result = await withPreviewRewardDelivery(expectedUserId, ({ catalog }) => catalog, [], signal);
     const bytes = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(JSON.stringify(result)));
@@ -1979,7 +1980,7 @@ export async function getRewardCatalog({ limit = 50, cursor = null, expectedUser
 }
 
 export async function getAllRewardCatalog({ pageSize = 100, expectedUserId = '' } = {}) {
-  const actorId = isLocalDemoMode()
+  const actorId = (BUILD_SUPPORTS_LOCAL_DEMO && isLocalDemoMode())
     ? requireMockRewardActor(expectedUserId)
     : (await requireUser(expectedUserId)).id;
   const normalizedPageSize = Math.floor(Math.min(Math.max(Number(pageSize) || 100, 1), 100));
@@ -2010,7 +2011,7 @@ export async function getAllRewardCatalog({ pageSize = 100, expectedUserId = '' 
   }
 
   const items = [...itemsByKey.values()];
-  if (isLocalDemoMode()) requireMockRewardActor(actorId);
+  if ((BUILD_SUPPORTS_LOCAL_DEMO && isLocalDemoMode())) requireMockRewardActor(actorId);
   else await requireUser(actorId);
   return normalizeRewardCatalog({
     ...(firstPage || {}),
@@ -2021,13 +2022,13 @@ export async function getAllRewardCatalog({ pageSize = 100, expectedUserId = '' 
       hasMore: false,
       nextCursor: null,
     },
-  }, { preview: isLocalDemoMode() });
+  }, { preview: (BUILD_SUPPORTS_LOCAL_DEMO && isLocalDemoMode()) });
 }
 
 const MOCK_REWARD_CELEBRATION_LEASES_KEY = 'dominion:rewardCelebrationLeases';
 
 export async function claimRewardCelebrations({ expectedUserId = '', claimToken } = {}) {
-  if (isLocalDemoMode()) {
+  if ((BUILD_SUPPORTS_LOCAL_DEMO && isLocalDemoMode())) {
     if (globalThis.navigator?.onLine === false) throw new Error('Reward delivery will retry when you are back online.');
     return withPreviewRewardDelivery(expectedUserId, ({ catalog, leases, rows, module, now }) => {
       const result = claimPreviewRewardCelebrations({ catalog, leases, claimToken, now });
@@ -2046,7 +2047,7 @@ export async function claimRewardCelebrations({ expectedUserId = '', claimToken 
 }
 
 export async function acknowledgeRewardCelebrations({ expectedUserId = '', claimToken, rewardKeys = [] } = {}) {
-  if (isLocalDemoMode()) {
+  if ((BUILD_SUPPORTS_LOCAL_DEMO && isLocalDemoMode())) {
     if (globalThis.navigator?.onLine === false) throw new Error('Reward acknowledgement will retry when you are back online.');
     return withPreviewRewardDelivery(expectedUserId, ({ ownershipRecords, leases, rows, module, now }) => {
       const result = acknowledgePreviewRewardCelebrations({ ownershipRecords, leases, claimToken, rewardKeys, now });
@@ -2066,7 +2067,7 @@ export async function acknowledgeRewardCelebrations({ expectedUserId = '', claim
 }
 
 export async function claimRewardEntitlementUnlocks({ expectedUserId = '' } = {}) {
-  if (isLocalDemoMode()) {
+  if ((BUILD_SUPPORTS_LOCAL_DEMO && isLocalDemoMode())) {
     return withPreviewRewardDelivery(expectedUserId, ({ catalog, ownershipRecords, leases, rows, module, now }) => {
       const claimedKeys = new Set(ownershipRecords.filter(record => !record.celebrationSeenAt).map(record => record.key));
       const claimedUnlocks = catalog.items.filter(reward => claimedKeys.has(reward.key));
@@ -2160,7 +2161,7 @@ const requireMockRewardActor = (expectedUserId = '') => {
 };
 
 export async function getRewardFulfillment(rewardKey, { expectedUserId = '' } = {}) {
-  if (isLocalDemoMode()) {
+  if ((BUILD_SUPPORTS_LOCAL_DEMO && isLocalDemoMode())) {
     const actorId = requireMockRewardActor(expectedUserId);
     const result = await previewRewardFulfillment(actorId, rewardKey);
     requireMockRewardActor(actorId);
@@ -2178,7 +2179,7 @@ export async function getRewardFulfillment(rewardKey, { expectedUserId = '' } = 
 }
 
 export async function claimRewardOffer(rewardKey, { expectedUserId = '' } = {}) {
-  if (isLocalDemoMode()) {
+  if ((BUILD_SUPPORTS_LOCAL_DEMO && isLocalDemoMode())) {
     const actorId = requireMockRewardActor(expectedUserId);
     const result = await previewRewardFulfillment(actorId, rewardKey, 'claim');
     requireMockRewardActor(actorId);
@@ -2196,7 +2197,7 @@ export async function claimRewardOffer(rewardKey, { expectedUserId = '' } = {}) 
 }
 
 export async function downloadRewardAsset(rewardKey, { expectedUserId = '' } = {}) {
-  if (isLocalDemoMode()) {
+  if ((BUILD_SUPPORTS_LOCAL_DEMO && isLocalDemoMode())) {
     const actorId = requireMockRewardActor(expectedUserId);
     const result = await previewRewardFulfillment(actorId, rewardKey, 'download');
     requireMockRewardActor(actorId);
@@ -2237,7 +2238,7 @@ export async function downloadRewardAsset(rewardKey, { expectedUserId = '' } = {
 }
 
 export async function claimChallengeUnlocks({ expectedUserId = '' } = {}) {
-  if (isLocalDemoMode()) {
+  if ((BUILD_SUPPORTS_LOCAL_DEMO && isLocalDemoMode())) {
     return withPreviewAggregate(requireMockRewardActor(expectedUserId), aggregate => {
       const { catalog, challengeRecords } = previewCatalogFor(aggregate);
       const claimed = new Set(challengeRecords.filter(record => !record.celebrationSeenAt).map(record => record.key));
@@ -2269,7 +2270,7 @@ export async function startChallenge(challengeKey, { expectedUserId = '', expect
   requireCapturedChallengeInstance(expectedInstanceId);
   if (!Number.isSafeInteger(expectedRevision) || expectedRevision < 0) throw new Error('Reload challenge progress before starting another run.');
   if (!isSupportedChallengeActivationDate(startDate)) throw new Error('Reload challenge progress to choose a valid start date.');
-  if (isLocalDemoMode()) {
+  if ((BUILD_SUPPORTS_LOCAL_DEMO && isLocalDemoMode())) {
     await requireHybridPreviewUser(expectedUserId);
     requireMockRewardActor(expectedUserId);
     return withPreviewAggregate(expectedUserId, aggregate => {
@@ -2330,7 +2331,7 @@ export async function startChallenge(challengeKey, { expectedUserId = '', expect
 }
 
 export async function getDashboard() {
-  if (isLocalDemoMode()) {
+  if ((BUILD_SUPPORTS_LOCAL_DEMO && isLocalDemoMode())) {
     const actorId = (await getLocalOrSessionUser())?.userId;
     return withPreviewAggregate(actorId, aggregate => {
       const activation = previewActivationFor(aggregate);
@@ -2542,7 +2543,7 @@ function readLegacyMockChallengeActivation() {
   const userId = getMockUserId();
   const hasEntitlement = getMockBillingState().appAccess;
   const preview = normalizePreviewChallengeState(readMockUserValue('dominion:previewChallengeSimulation', {}, userId), dateKeyForTimeZone());
-  if (isPreviewChallengeActive(isLocalDemoMode(), preview)) {
+  if (isPreviewChallengeActive((BUILD_SUPPORTS_LOCAL_DEMO && isLocalDemoMode()), preview)) {
     return buildMockLegacyChallengeActivation({ startDate: preview.anchorDate, timeZone: 'UTC', actorId: userId,
       now: new Date(`${previewChallengeDate(preview)}T12:00:00Z`), hasEntitlement,
       hasCheckIns: true, originalProgress: previewOriginal77Progress(readMockUserValue(PREVIEW_BADGE_STATE_KEY, null, userId), { userId, startDate: preview.anchorDate }) });
@@ -2611,7 +2612,7 @@ function requireCapturedChallengeInstance(instanceId) {
 
 export async function getChallengeActivation({ expectedUserId } = {}) {
   const capturedActorId = requireCapturedActivationActor(expectedUserId);
-  if (isLocalDemoMode()) {
+  if ((BUILD_SUPPORTS_LOCAL_DEMO && isLocalDemoMode())) {
     await requireHybridPreviewUser(capturedActorId);
     if (getMockUserId() !== capturedActorId) {
       throw new Error('The signed-in account changed. Try again.');
@@ -2640,7 +2641,7 @@ export async function activateSoloChallenge({
   expectedUserId,
 } = {}) {
   const capturedActorId = requireCapturedActivationActor(expectedUserId);
-  if (isLocalDemoMode()) {
+  if ((BUILD_SUPPORTS_LOCAL_DEMO && isLocalDemoMode())) {
     await requireHybridPreviewUser(capturedActorId);
     const userId = getMockUserId();
     if (userId !== capturedActorId) {
@@ -2677,7 +2678,7 @@ export async function activateGroupChallenge({
   expectedUserId,
 } = {}) {
   const capturedActorId = requireCapturedActivationActor(expectedUserId);
-  if (isLocalDemoMode()) {
+  if ((BUILD_SUPPORTS_LOCAL_DEMO && isLocalDemoMode())) {
     await requireHybridPreviewUser(capturedActorId);
     const userId = getMockUserId();
     if (userId !== capturedActorId) {
@@ -2731,7 +2732,7 @@ export async function updateChallengeStartDate({
 } = {}) {
   const capturedActorId = requireCapturedActivationActor(expectedUserId);
   requireCapturedChallengeInstance(expectedInstanceId);
-  if (isLocalDemoMode()) {
+  if ((BUILD_SUPPORTS_LOCAL_DEMO && isLocalDemoMode())) {
     await requireHybridPreviewUser(capturedActorId);
     const userId = getMockUserId();
     if (userId !== capturedActorId) {
@@ -2790,7 +2791,7 @@ const invokeSiteTraining = createSiteTrainingApiLoader({
       return { actorId: session?.user?.id || '', sessionIdentity: authSessionIdentity(session),
         bearer: session?.access_token || '', preview: false };
     }
-    if (!isLocalDemoMode() || !getMockUser().authenticated) return null;
+    if (!(BUILD_SUPPORTS_LOCAL_DEMO && isLocalDemoMode()) || !getMockUser().authenticated) return null;
     return { actorId: getMockUserId(), sessionIdentity: 'preview', bearer: '', preview: true };
   },
   dependencies: { isLocalDemoMode, requireHybridPreviewUser, getMockUserId,
@@ -2810,7 +2811,7 @@ export async function transitionSiteTraining(args = {}) {
 let dailyActionBootstrapClient = null;
 export function invalidateDailyActionBootstrap() { dailyActionBootstrapClient?.invalidate(); }
 export async function getDailyActionBootstrap({ expectedUserId, timeZone = browserTimeZone(), entryDate = null, expectedInstanceId = null } = {}) {
-  if (isLocalDemoMode()) {
+  if ((BUILD_SUPPORTS_LOCAL_DEMO && isLocalDemoMode())) {
     const actorId = expectedUserId || (await getLocalOrSessionUser())?.userId;
     return withPreviewAggregate(actorId, aggregate => {
       const appAccess = getMockBillingState().appAccess;
@@ -2851,7 +2852,7 @@ if (typeof window !== 'undefined') {
 const rpcDraft = async (name, parameters, { expectedUserId = '', expectedInstanceId, mutation = false } = {}) => {
   try {
     requireCapturedChallengeInstance(expectedInstanceId);
-    if (isLocalDemoMode()) return await withPreviewAggregate(expectedUserId, aggregate => {
+    if ((BUILD_SUPPORTS_LOCAL_DEMO && isLocalDemoMode())) return await withPreviewAggregate(expectedUserId, aggregate => {
       const activation = previewActivationFor(aggregate);
       if (!getMockBillingState().appAccess || (mutation && !activation.canMutateDailyStandards)) throw new Error('Today’s Daily Actions are locked.');
       const args = { actorId: expectedUserId, instanceId: expectedInstanceId, localDate: parameters.target_entry_date,
@@ -2986,7 +2987,7 @@ export async function saveChallengeEntry(entry, { expectedUserId = '', expectedI
 
 export async function postCheckIn(checkIn, { expectedUserId = '', expectedInstanceId } = {}) {
   requireCapturedChallengeInstance(expectedInstanceId);
-  if (isLocalDemoMode()) {
+  if ((BUILD_SUPPORTS_LOCAL_DEMO && isLocalDemoMode())) {
     try { return await withPreviewAggregate(expectedUserId, (aggregate, badgeRuntime) => {
       const activation = previewActivationFor(aggregate);
       if (!activation.canMutateDailyStandards) throw new Error('This challenge cannot accept another check-in.');
@@ -3215,13 +3216,13 @@ async function withPreviewBadgeDelivery(expectedUserId, operation, { receiptIds 
 }
 
 export async function recordPreviewCheckInBadges(entry, { expectedUserId = '', expectedInstanceId } = {}) {
-  if (!isLocalDemoMode()) throw new Error('Preview badge events cannot be submitted to production.');
+  if (!(BUILD_SUPPORTS_LOCAL_DEMO && isLocalDemoMode())) throw new Error('Preview badge events cannot be submitted to production.');
   await postCheckIn(entry, { expectedUserId, expectedInstanceId });
   return (await getGameSummary()).badges;
 }
 
 export async function claimBadgeCelebrations({ expectedUserId = '', claimToken = crypto.randomUUID() } = {}) {
-  if (isLocalDemoMode()) return withPreviewBadgeDelivery(expectedUserId, (state, { claimPreviewBadgeCelebrations }, now) => ({ claimToken,
+  if ((BUILD_SUPPORTS_LOCAL_DEMO && isLocalDemoMode())) return withPreviewBadgeDelivery(expectedUserId, (state, { claimPreviewBadgeCelebrations }, now) => ({ claimToken,
     badges: claimPreviewBadgeCelebrations(state, claimToken, now).map(mapBadge) }));
   const client = requireSupabase();
   const user = await requireUser(expectedUserId);
@@ -3236,7 +3237,7 @@ export async function acknowledgeBadgeCelebrations({ expectedUserId = '', claimT
     if (!Array.isArray(ids) || awardIds.some((id) => !ids.includes(id))) throw new Error('Badge acknowledgment is still pending.');
     return ids;
   };
-  if (isLocalDemoMode()) return verify(await withPreviewBadgeDelivery(expectedUserId, (state, { acknowledgePreviewBadgeCelebrations }, now, rows) => {
+  if ((BUILD_SUPPORTS_LOCAL_DEMO && isLocalDemoMode())) return verify(await withPreviewBadgeDelivery(expectedUserId, (state, { acknowledgePreviewBadgeCelebrations }, now, rows) => {
     const acknowledged = acknowledgePreviewBadgeCelebrations(state, claimToken, awardIds, now);
     return [...new Set([...acknowledged, ...awardIds.filter(id => rows.get(id)?.seenAt)])];
   }, { receiptIds: awardIds }));
@@ -3251,7 +3252,7 @@ export async function acknowledgeBadgeCelebrations({ expectedUserId = '', claimT
 }
 
 export async function recordAppVisit({ expectedUserId = '' } = {}) {
-  if (isLocalDemoMode()) return withPreviewBadgeState(expectedUserId, (state, { recordPreviewBadgeEvent }) => {
+  if ((BUILD_SUPPORTS_LOCAL_DEMO && isLocalDemoMode())) return withPreviewBadgeState(expectedUserId, (state, { recordPreviewBadgeEvent }) => {
     const activation = readMockChallengeActivation();
     const occurredAt = new Date().toISOString();
     const date = dateKeyForTimeZone(new Date(occurredAt), activation.timeZone || browserTimeZone());
@@ -3281,7 +3282,7 @@ export async function recordAppVisit({ expectedUserId = '' } = {}) {
 }
 
 export async function getGameSummary() {
-  if (isLocalDemoMode()) {
+  if ((BUILD_SUPPORTS_LOCAL_DEMO && isLocalDemoMode())) {
     const actorId = (await getLocalOrSessionUser())?.userId;
     return withPreviewAggregate(actorId, aggregate => ({
       gameStats: mapGameStats({ ...aggregate.values['dominion:gameStats'], totalPoints: aggregate.runtime.lifetimePoints }),
@@ -3315,10 +3316,10 @@ export async function getGameSummary() {
 
 export async function getBadgeCollection({ expectedUserId = '' } = {}) {
   let actorId;
-  if (isLocalDemoMode()) {
+  if ((BUILD_SUPPORTS_LOCAL_DEMO && isLocalDemoMode())) {
     actorId = requireMockRewardActor(expectedUserId);
   } else actorId = (await requireUser(expectedUserId)).id;
-  if (isLocalDemoMode()) {
+  if ((BUILD_SUPPORTS_LOCAL_DEMO && isLocalDemoMode())) {
     return readPreviewBadgeHistory(actorId, (state, { previewBadgeCollection }, earnedBadges) => {
       const activation = readMockChallengeActivation();
       const today = dateKeyForTimeZone(new Date(), activation.timeZone || browserTimeZone());
@@ -3336,7 +3337,7 @@ export async function getBadgeCollection({ expectedUserId = '' } = {}) {
 }
 
 export async function getEarnedBadges({ pageSize = 100, expectedUserId = '' } = {}) {
-  if (isLocalDemoMode()) {
+  if ((BUILD_SUPPORTS_LOCAL_DEMO && isLocalDemoMode())) {
     const actorId = requireMockRewardActor(expectedUserId);
     return readPreviewBadgeHistory(actorId, (_state, _runtime, earnedBadges) => earnedBadges);
   }
@@ -3380,7 +3381,7 @@ async function queryLeaderboard(client, { crewId, window = 'week' } = {}) {
 }
 
 export async function getLeaderboard({ crewId = null, window = 'week' } = {}) {
-  if (isLocalDemoMode()) return getMockLeaderboard({ crewId, window });
+  if ((BUILD_SUPPORTS_LOCAL_DEMO && isLocalDemoMode())) return getMockLeaderboard({ crewId, window });
   const client = requireSupabase();
   await requireUser();
   return queryLeaderboard(client, { crewId, window });
@@ -3391,7 +3392,7 @@ export async function getLeaderboardPrestige({ crewId = null, window = 'week', e
   let currentUserId;
   let crews;
 
-  if (isLocalDemoMode()) {
+  if ((BUILD_SUPPORTS_LOCAL_DEMO && isLocalDemoMode())) {
     await requireHybridPreviewUser(expectedUserId);
     currentUserId = requireMockRewardActor(expectedUserId);
     crews = await getCrews();
@@ -3405,7 +3406,7 @@ export async function getLeaderboardPrestige({ crewId = null, window = 'week', e
   const selectedCrew = crews.find((crew) => crew.id === crewId) || crews[0] || null;
   let privateRows = [];
   if (selectedCrew) {
-    privateRows = isLocalDemoMode()
+    privateRows = (BUILD_SUPPORTS_LOCAL_DEMO && isLocalDemoMode())
       ? getMockLeaderboard({ crewId: selectedCrew.id, window: rankingWindow })
       : await queryLeaderboard(requireSupabase(), {
           crewId: selectedCrew.id,
@@ -3416,7 +3417,7 @@ export async function getLeaderboardPrestige({ crewId = null, window = 'week', e
     rows.find((row) => row.userId === currentUserId)?.rank,
   );
 
-  if (isLocalDemoMode()) {
+  if ((BUILD_SUPPORTS_LOCAL_DEMO && isLocalDemoMode())) {
     await requireHybridPreviewUser(currentUserId);
     requireMockRewardActor(currentUserId);
   } else {
@@ -3692,7 +3693,7 @@ function getMockCrewMemberProgressProfile({ crewId, userId, cursor, limit }) {
 }
 
 async function getCurrentCommunityIdentity() {
-  if (isLocalDemoMode()) {
+  if ((BUILD_SUPPORTS_LOCAL_DEMO && isLocalDemoMode())) {
     const user = getMockUser();
     return {
       name: user.name || 'Preview Member',
@@ -3719,7 +3720,7 @@ async function queryCrewsForUser(client, userId) {
 }
 
 export async function getCrews() {
-  if (isLocalDemoMode()) {
+  if ((BUILD_SUPPORTS_LOCAL_DEMO && isLocalDemoMode())) {
     await requireHybridPreviewUser();
     const userId = getMockUserId();
     const { crews, members } = ensureMockCrews();
@@ -3733,7 +3734,7 @@ export async function getCrews() {
 export async function getOutboundUpdateConsent(crewId) {
   if (!crewId) throw new Error('Choose a group to review update privacy.');
 
-  if (isLocalDemoMode()) {
+  if ((BUILD_SUPPORTS_LOCAL_DEMO && isLocalDemoMode())) {
     await requireHybridPreviewUser();
     const userId = getMockUserId();
     const user = getMockUser();
@@ -3764,7 +3765,7 @@ export async function updateOutboundUpdateConsent(crewId, preferences) {
   if (!crewId) throw new Error('Choose a group before saving update privacy.');
   const settings = outboundConsentWritePayload(preferences);
 
-  if (isLocalDemoMode()) {
+  if ((BUILD_SUPPORTS_LOCAL_DEMO && isLocalDemoMode())) {
     await requireHybridPreviewUser();
     const userId = getMockUserId();
     const user = getMockUser();
@@ -3826,7 +3827,7 @@ export async function createCrew({
   challengeStartDate = null,
   requestId = newCrewLifecycleRequestId(),
 }) {
-  if (isLocalDemoMode()) {
+  if ((BUILD_SUPPORTS_LOCAL_DEMO && isLocalDemoMode())) {
     await requireHybridPreviewUser();
     const { crews, members } = ensureMockCrews();
     const userId = getMockUserId();
@@ -3902,7 +3903,7 @@ export async function createCrewAndActivateGroup({
 } = {}) {
   const capturedActorId = requireCapturedActivationActor(expectedUserId);
 
-  if (isLocalDemoMode()) {
+  if ((BUILD_SUPPORTS_LOCAL_DEMO && isLocalDemoMode())) {
     await requireHybridPreviewUser(capturedActorId);
     const actorId = getMockUserId();
     if (actorId !== capturedActorId) {
@@ -4038,7 +4039,7 @@ export async function getCrewTrainingProgress(
   crewId,
   contentVersion = CREW_TRAINING_VERSION,
 ) {
-  if (isLocalDemoMode()) {
+  if ((BUILD_SUPPORTS_LOCAL_DEMO && isLocalDemoMode())) {
     await requireHybridPreviewUser();
     contentVersion = requireMockCrewTrainingVersion(contentVersion);
     const { userId } = requireMockCrewTrainingAccess(crewId);
@@ -4063,7 +4064,7 @@ export async function claimCrewTraining(
   crewId,
   contentVersion = CREW_TRAINING_VERSION,
 ) {
-  if (isLocalDemoMode()) {
+  if ((BUILD_SUPPORTS_LOCAL_DEMO && isLocalDemoMode())) {
     await requireHybridPreviewUser();
     contentVersion = requireMockCrewTrainingVersion(contentVersion);
     const { userId } = requireMockCrewTrainingAccess(crewId);
@@ -4102,7 +4103,7 @@ export async function advanceCrewTraining({
   action,
   targetStep = 0,
 }) {
-  if (isLocalDemoMode()) {
+  if ((BUILD_SUPPORTS_LOCAL_DEMO && isLocalDemoMode())) {
     await requireHybridPreviewUser();
     contentVersion = requireMockCrewTrainingVersion(contentVersion);
     const { userId } = requireMockCrewTrainingAccess(crewId);
@@ -4182,7 +4183,7 @@ export async function advanceCrewTraining({
 }
 
 export async function deleteCrew({ crewId, requestId = newCrewLifecycleRequestId() }) {
-  if (isLocalDemoMode()) {
+  if ((BUILD_SUPPORTS_LOCAL_DEMO && isLocalDemoMode())) {
     await requireHybridPreviewUser();
     const userId = getMockUserId();
     const { crews, members } = ensureMockCrews();
@@ -4214,7 +4215,7 @@ export async function deleteCrew({ crewId, requestId = newCrewLifecycleRequestId
 }
 
 export async function leaveCrew({ crewId, requestId = newCrewLifecycleRequestId() }) {
-  if (isLocalDemoMode()) {
+  if ((BUILD_SUPPORTS_LOCAL_DEMO && isLocalDemoMode())) {
     await requireHybridPreviewUser();
     const userId = getMockUserId();
     const { crews, members } = ensureMockCrews();
@@ -4240,7 +4241,7 @@ export async function leaveCrew({ crewId, requestId = newCrewLifecycleRequestId(
 }
 
 export async function getCrewMembers(crewId) {
-  if (isLocalDemoMode()) {
+  if ((BUILD_SUPPORTS_LOCAL_DEMO && isLocalDemoMode())) {
     await requireHybridPreviewUser();
     const billing = getMockBillingState();
     const currentUserId = getMockUserId();
@@ -4293,7 +4294,7 @@ export async function getCrewMemberProgressProfile({
     throw new Error(MEMBER_PROGRESS_UNAVAILABLE);
   }
 
-  if (isLocalDemoMode()) {
+  if ((BUILD_SUPPORTS_LOCAL_DEMO && isLocalDemoMode())) {
     await requireHybridPreviewUser(expectedUserId);
     const actorId = getMockUserId();
     if (expectedUserId && actorId !== expectedUserId) {
@@ -4341,7 +4342,7 @@ export async function getOrCreateCrewInvite(crewId, { expectedUserId = '' } = {}
 }
 
 export async function issueCrewInviteBundle(crewId, { expectedUserId = '' } = {}) {
-  if (isLocalDemoMode()) {
+  if ((BUILD_SUPPORTS_LOCAL_DEMO && isLocalDemoMode())) {
     const initialActor = await getLocalOrSessionUser();
     if (!initialActor?.authenticated || !initialActor.userId) {
       throw new Error('Log in again before creating an invitation.');
@@ -4411,7 +4412,7 @@ export async function issueCrewInviteBundle(crewId, { expectedUserId = '' } = {}
 }
 
 export async function getActiveCrewInvite(crewId, { expectedUserId = '' } = {}) {
-  if (isLocalDemoMode()) {
+  if ((BUILD_SUPPORTS_LOCAL_DEMO && isLocalDemoMode())) {
     const currentActor = await getLocalOrSessionUser();
     if (!currentActor?.authenticated || !currentActor.userId) {
       throw new Error('Log in again before viewing invitations.');
@@ -4456,7 +4457,7 @@ export async function getActiveCrewInvite(crewId, { expectedUserId = '' } = {}) 
 }
 
 export async function revokeCrewInvite(inviteId, { expectedUserId = '' } = {}) {
-  if (isLocalDemoMode()) {
+  if ((BUILD_SUPPORTS_LOCAL_DEMO && isLocalDemoMode())) {
     const currentActor = await getLocalOrSessionUser();
     if (!currentActor?.authenticated || !currentActor.userId) {
       throw new Error('Log in again before revoking an invitation.');
@@ -4517,7 +4518,7 @@ export async function previewCrewInvite({ token = '', code = '', continuationTok
   if (sourceCount !== 1) return { status: 'invalid' };
   const normalizedCode = code ? normalizeCrewInviteCode(code) : '';
   if (code && !normalizedCode) return { status: 'invalid' };
-  if (isLocalDemoMode()) {
+  if ((BUILD_SUPPORTS_LOCAL_DEMO && isLocalDemoMode())) {
     const crews = readJson(MOCK_CREWS_KEY, []);
     const members = readJson(MOCK_CREW_MEMBERS_KEY, {});
     const invites = readJson(MOCK_INVITES_KEY, {});
@@ -4590,7 +4591,7 @@ export async function previewCrewInvite({ token = '', code = '', continuationTok
 }
 
 export async function confirmCrewInvite(continuationToken, { expectedUserId = '' } = {}) {
-  if (isLocalDemoMode()) {
+  if ((BUILD_SUPPORTS_LOCAL_DEMO && isLocalDemoMode())) {
     await requireHybridPreviewUser(expectedUserId);
     const mockUser = readJson('dominion:user', null);
     if (!mockUser?.authenticated) return { status: 'authentication_required' };
@@ -4674,7 +4675,7 @@ export async function confirmCrewInvite(continuationToken, { expectedUserId = ''
 }
 
 export async function getJournalEntries() {
-  if (isLocalDemoMode()) {
+  if ((BUILD_SUPPORTS_LOCAL_DEMO && isLocalDemoMode())) {
     await requireHybridPreviewUser();
     const entries = sortJournalEntries(
       readMockUserValue(MOCK_JOURNAL_KEY, []).map(normalizeJournalEntry),
@@ -4697,7 +4698,7 @@ export async function getJournalEntries() {
 }
 
 export async function getJournalDatePolicy({ expectedUserId = '' } = {}) {
-  if (isLocalDemoMode()) {
+  if ((BUILD_SUPPORTS_LOCAL_DEMO && isLocalDemoMode())) {
     await requireHybridPreviewUser(expectedUserId);
     const actorId = getMockUserId();
     if (expectedUserId && actorId !== expectedUserId) {
@@ -4743,10 +4744,10 @@ export async function createJournalEntry(entry, {
 } = {}) {
   const maximumDate = isJournalDateKey(userDate)
     ? userDate
-    : (isLocalDemoMode() ? dateKeyForTimeZone(new Date(), browserTimeZone()) : '');
+    : ((BUILD_SUPPORTS_LOCAL_DEMO && isLocalDemoMode()) ? dateKeyForTimeZone(new Date(), browserTimeZone()) : '');
   if (maximumDate) assertJournalDateAllowed(entry.date, maximumDate);
 
-  if (isLocalDemoMode()) {
+  if ((BUILD_SUPPORTS_LOCAL_DEMO && isLocalDemoMode())) {
     await requireHybridPreviewUser(expectedUserId);
     if (expectedUserId && getMockUserId() !== expectedUserId) {
       throw new Error('The signed-in account changed. Try again.');
@@ -4804,10 +4805,10 @@ export async function updateJournalEntry(entryId, entry, {
   if (!targetId) throw new TypeError('A journal entry id is required.');
   const maximumDate = isJournalDateKey(userDate)
     ? userDate
-    : (isLocalDemoMode() ? dateKeyForTimeZone(new Date(), browserTimeZone()) : '');
+    : ((BUILD_SUPPORTS_LOCAL_DEMO && isLocalDemoMode()) ? dateKeyForTimeZone(new Date(), browserTimeZone()) : '');
   if (maximumDate) assertJournalDateAllowed(entry.date, maximumDate);
 
-  if (isLocalDemoMode()) {
+  if ((BUILD_SUPPORTS_LOCAL_DEMO && isLocalDemoMode())) {
     await requireHybridPreviewUser(expectedUserId);
     if (expectedUserId && getMockUserId() !== expectedUserId) {
       throw new Error('The signed-in account changed. Try again.');
