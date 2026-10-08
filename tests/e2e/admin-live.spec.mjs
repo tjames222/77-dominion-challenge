@@ -41,6 +41,25 @@ test.describe('Account-linked administrative history', () => {
     await page.locator('#adminUserHistoryRefresh').click(); await expect.poll(() => historyReads(auth).length).toBe(3); await waitRows(page);
     expect(auth.assignments()).toHaveLength(0); expect(auth.denials()).toHaveLength(0); expect(auth.invitations()).toHaveLength(0);
   });
+  test('collapsed and expanded history reflows inside a 320px dialog at settled 200% text', async ({ context, page }, testInfo) => {
+    await installAdminStub(context); await page.setViewportSize({ width: 320, height: 1000 });
+    await page.goto('/admin.html'); await openAccount(page);
+    const summary = page.locator('#adminUserHistory > summary');
+    const normalFont = await summary.evaluate(element => parseFloat(getComputedStyle(element).fontSize));
+    await page.evaluate(() => { document.documentElement.style.fontSize = '200%'; });
+    await expect.poll(() => summary.evaluate(element => parseFloat(getComputedStyle(element).fontSize))).toBe(normalFont * 2);
+    for (const state of ['collapsed', 'expanded']) {
+      if (state === 'expanded') { await summary.focus(); await page.keyboard.press('Enter'); await waitRows(page); }
+      else await expect(page.locator('#adminUserHistory')).not.toHaveAttribute('open', '');
+      for (const selector of ['#adminDetail', '#adminUserHistory', '#adminUserHistory > summary']) {
+        const geometry = await page.locator(selector).evaluate(element => ({ width: element.clientWidth, scroll: element.scrollWidth }));
+        expect(geometry.scroll, `${state} ${selector}: ${JSON.stringify(geometry)}`).toBeLessThanOrEqual(geometry.width + 1);
+      }
+      await summary.screenshot({ path: testInfo.outputPath(`history-320px-200pct-${state}.png`) });
+    }
+    expect((await new AxeBuilder({ page }).include('#adminDetail').analyze()).violations).toEqual([]);
+    await page.keyboard.press('Escape'); await expect(page.locator('#adminUsersRows button').first()).toBeFocused();
+  });
   test('bounded older pages, linked acceptance, safe failure labels and private projection', async ({ context, page }) => {
     const auth = await installAdminStub(context); const requests = [];
     await page.route('**/site_admin_list_audit', route => {
@@ -762,7 +781,15 @@ test('Users long fields wrap across the card breakpoint without losing disclosur
       const summary = stored.locator('summary'); await summary.focus(); await page.keyboard.press('Enter');
       await expect(stored).toHaveAttribute('open', ''); await expect(stored).toContainText('LongSyntheticCrew'.repeat(4));
       await expect(page.locator('#adminUserFacts')).toContainText(name); await expect(page.locator('#adminUserFacts')).toContainText(email);
-      expect(await page.locator('#adminDetail').evaluate(node => node.scrollWidth <= node.clientWidth + 1)).toBe(true);
+      const detailGeometry = await page.locator('#adminDetail').evaluate(node => ({
+        width: node.clientWidth, scroll: node.scrollWidth,
+        historySummary: (() => { const element = document.querySelector('#adminUserHistory > summary'); return { width: element.clientWidth, scroll: element.scrollWidth, font: getComputedStyle(element).font, wrap: getComputedStyle(element).overflowWrap }; })(),
+        overflowing: [...node.querySelectorAll('*')].filter(element => element.getClientRects().length && element.scrollWidth > element.clientWidth + 1)
+          .map(element => ({ tag: element.tagName, id: element.id, width: element.clientWidth, scroll: element.scrollWidth,
+            text: element.textContent?.slice(0, 80), font: getComputedStyle(element).font, wrap: getComputedStyle(element).overflowWrap })),
+      }));
+      await testInfo.attach(`detail-geometry-${width}-${scale}`, { body: JSON.stringify(detailGeometry), contentType: 'application/json' });
+      expect(await page.locator('#adminDetail').evaluate(node => node.scrollWidth <= node.clientWidth + 1), `${width}px / ${scale}: ${JSON.stringify(detailGeometry)}`).toBe(true);
       const title = await page.locator('#adminDetailTitle').evaluate(node => ({ height: node.getBoundingClientRect().height, lineHeight: parseFloat(getComputedStyle(node).lineHeight) }));
       expect(title.height, `${width}px / ${scale}: the two-word title must not collapse into a column of letters`).toBeLessThanOrEqual(title.lineHeight * 3 + 1);
       expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width + 1);
