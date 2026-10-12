@@ -52,6 +52,15 @@ test('each explicit operation rechecks context before and after one exact-target
   for (const call of f.calls) assert.equal(call.at(-1).signal, signal);
   assert.equal(f.calls[2][1], U); assert.equal(f.calls[2][2].expectedUserId, A);
 });
+test('real ready preview maps a legacy mock owner to a stable UUID accepted by strict requester reads', async () => {
+  const preview = createAdminPreview({ mode: 'ready', getUser: async () => ({ authenticated: true, userId: 'member_e2e_legacy' }) });
+  const captured = await preview.owner();
+  assert.equal(isRequesterId(captured.actorId), true); assert.equal((await preview.owner()).actorId, captured.actorId);
+  const result = await readRequesterAccount({ owner: captured, requesterId: U, getOwner: () => preview.owner(),
+    getContext: options => preview.read('get_site_admin_context', {}, options),
+    readUser: (id, options) => preview.read('site_admin_get_user', { target_user_id: id }, options) });
+  assert.equal(result.item.id, U); assert.equal(result.item.name, 'Preview Member 1');
+});
 for (const missing of ['operations.read', 'users.read']) for (const phase of ['pre', 'post']) {
   test(`${missing} loss at ${phase} context fails closed`, async () => {
     let contexts = 0, reads = 0;
