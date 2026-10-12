@@ -14,7 +14,8 @@ import {
 } from './theme-entitlement-state';
 import { initThemeState } from './theme-state';
 import { initThemeAssets } from './theme-assets';
-import { createAuthenticatedHeaderActions } from './shared-header-actions.js';
+import { createAuthenticatedHeaderShell } from './shared-header-shell.mjs';
+import { loadAuthenticatedHeader, HEADER_RELOAD_MESSAGE } from './shared-header-loader.mjs';
 import { shouldShowAuthenticatedHeaderActions } from './shared-header-state.mjs';
 import { closeShareComposer } from './share-composer-loader.js';
 import {
@@ -37,9 +38,48 @@ const TOPBAR_TOP_SCROLL_Y = 2;
 
 let syncTopbarScrollState = null;
 let sharedHeaderActions = null;
+let pendingHeaderShell = null;
+let menuSuspended = false;
 let currentMenuOwner = '';
 let currentTrainingOwner = '';
 let menuHydrationRequest = 0;
+function clearHeaderActions() {
+  sharedHeaderActions?.destroy();
+  sharedHeaderActions = null;
+  pendingHeaderShell?.destroy();
+  pendingHeaderShell = null;
+}
+async function refreshHeaderActions(user, owner, generation) {
+  if (sharedHeaderActions) { sharedHeaderActions.setUser(user); return true; }
+  const shell = pendingHeaderShell ||= createAuthenticatedHeaderShell(topbar);
+  const current = () => !menuSuspended && generation === menuHydrationRequest
+    && currentMenuOwner === owner && pendingHeaderShell === shell;
+  try {
+    const { createAuthenticatedHeaderActions } = await loadAuthenticatedHeader();
+    // Code may finish after logout, a new session (including A→B→A), focus
+    // hydration or pagehide. Fence before the factory can make any reads.
+    if (!current()) return false;
+    sharedHeaderActions = createAuthenticatedHeaderActions({ topbar, user, shell,
+      captureLifecycle: () => menuHydrationRequest,
+      isCurrentLifecycle: version => !menuSuspended && version === menuHydrationRequest,
+    });
+    pendingHeaderShell = null;
+    return true;
+  } catch {
+    if (!current()) return false;
+    shell.actionGroup.setAttribute('aria-busy', 'false');
+    shell.streakCount.textContent = '!';
+    for (const button of [shell.shareButton, shell.streakButton]) {
+      button.disabled = false;
+      button.title = HEADER_RELOAD_MESSAGE;
+      button.setAttribute('aria-label', `Reload to load member controls. ${HEADER_RELOAD_MESSAGE}`);
+      button.onclick = () => {
+        if (current() && window.confirm('Save any unfinished work before reloading to load member controls. Reload now?')) window.location.reload();
+      };
+    }
+    return false;
+  }
+}
 let globalMenuListenersBound = false;
 let soloFirstRunTraining = null;
 let pageTrainingControls = null;
@@ -386,7 +426,7 @@ function initTopbarStickyOffset() {
 }
 
 async function buildMenu() {
-  if (!topbar) return;
+  if (!topbar || menuSuspended) return;
 
   const requestId = ++menuHydrationRequest;
   let user = null;
@@ -507,11 +547,13 @@ async function buildMenu() {
     logout.disabled = true;
     const feedback = menu.querySelector('.global-menu-logout-feedback');
     feedback.hidden = true;
+    // Invalidate a deferred header at logout intent, before the provider call
+    // or its eventual Auth notification can settle.
+    menuHydrationRequest += 1;
     closeShareComposer('logout');
     clearFeedbackWidget();
     destroyTrainingControllers();
-    sharedHeaderActions?.destroy();
-    sharedHeaderActions = null;
+    clearHeaderActions();
     currentMenuOwner = '';
     clearThemeEntitlementState();
     try {
@@ -554,21 +596,14 @@ async function buildMenu() {
     destroyTrainingControllers();
   }
 
-  if (showMemberActions) {
-    if (sharedHeaderActions) sharedHeaderActions.setUser(user);
-    else sharedHeaderActions = createAuthenticatedHeaderActions({
-      topbar, user,
-      captureLifecycle: () => menuHydrationRequest,
-      isCurrentLifecycle: generation => generation === menuHydrationRequest,
-    });
-  } else if (sharedHeaderActions) {
+  if (!showMemberActions && (sharedHeaderActions || pendingHeaderShell)) {
     closeShareComposer('auth-change');
-    sharedHeaderActions.destroy();
-    sharedHeaderActions = null;
+    clearHeaderActions();
   }
   // The regular navigation is already interactive before this optional graph
   // loads. Public pages and visitors never download member training modules.
   currentMenuOwner = nextOwner;
+  const headerReady = showMemberActions ? refreshHeaderActions(user, nextOwner, requestId) : Promise.resolve(true);
   void refreshFeedbackWidget(user);
   // Admin readiness is independent of the optional training graph. Start its
   // existing actor-fenced refresh even if the import is delayed or fails.
@@ -582,12 +617,21 @@ async function buildMenu() {
     loadStatus.textContent = 'Loading training…';
     let controllers;
     try {
-      controllers = await loadMenuTrainingControllers();
+      // Fetch independently, but preserve the former header-before-training
+      // initialization order. A walkthrough must never describe inert targets
+      // as ready or persist a false "sharing unavailable" state.
+      const [loaded, ready] = await Promise.all([loadMenuTrainingControllers(), headerReady]);
+      if (!ready) {
+        const error = new Error(HEADER_RELOAD_MESSAGE);
+        error.code = 'SITE_TRAINING_RELOAD_REQUIRED';
+        throw error;
+      }
+      controllers = loaded;
     } catch (error) {
       if (requestId !== menuHydrationRequest || currentMenuOwner !== nextOwner) return;
       trainingLoadRecovery ||= createSiteTrainingLoadRecovery({ id: 'menu-training-load-recovery' });
       trainingLoadRecovery.record(error);
-      loadStatus.textContent = TRAINING_RELOAD_MESSAGE;
+      loadStatus.textContent = error.message === HEADER_RELOAD_MESSAGE ? HEADER_RELOAD_MESSAGE : TRAINING_RELOAD_MESSAGE;
       recoveryButton.textContent = TRAINING_RELOAD_LABEL;
       recoveryButton.hidden = false;
       recoveryButton.addEventListener('click', () => {
@@ -675,8 +719,7 @@ subscribeToAuthStateChanges(({ event, user, sessionIdentity }) => {
   menuHydrationRequest += 1;
   if (ownerChanged) {
     closeShareComposer('auth-state-change');
-    sharedHeaderActions?.destroy();
-    sharedHeaderActions = null;
+    clearHeaderActions();
     destroyTrainingControllers();
     currentMenuOwner = '';
     clearThemeEntitlementState();
@@ -696,8 +739,7 @@ window.addEventListener('storage', (event) => {
   if (['dominion:user', 'dominion:mockUserId', 'dominion:mockUserIdsByIdentity'].includes(event.key)) {
     menuHydrationRequest += 1;
     closeShareComposer('storage-account-change');
-    sharedHeaderActions?.destroy();
-    sharedHeaderActions = null;
+    clearHeaderActions();
     destroyTrainingControllers();
     currentMenuOwner = '';
     clearThemeEntitlementState();
@@ -764,15 +806,18 @@ window.addEventListener('focus', () => {
 });
 
 window.addEventListener('pagehide', () => {
+  menuSuspended = true;
   clearFeedbackWidget();
   authEntryTransition.suspend();
   menuHydrationRequest += 1;
+  clearHeaderActions();
   destroyTrainingControllers();
   closeMenu();
 });
 
 window.addEventListener('pageshow', (event) => {
   if (event.persisted) {
+    menuSuspended = false;
     authEntryTransition.restore();
     void buildMenu();
   }

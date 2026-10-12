@@ -1,5 +1,6 @@
 import { expect, test } from './support/app-test.mjs';
 import { ROUTE_BY_ID } from './support/routes.mjs';
+import { FIXED_USER_ID } from './support/fixtures.mjs';
 import { createServer } from 'node:http';
 import { fileURLToPath } from 'node:url';
 import { build } from 'vite';
@@ -9,7 +10,7 @@ import AxeBuilder from '@axe-core/playwright';
 
 const controllerRequest = /\/menu-training-controllers(?:-[\w-]+)?\.(?:mjs|js)(?:\?|$)/;
 
-for (const chunk of ['menu-training-controllers entry', 'menu-training-controllers implementation', 'site-training-ui']) {
+for (const chunk of ['shared-header-actions', 'menu-training-controllers entry', 'menu-training-controllers implementation', 'site-training-ui']) {
   test(`the full built ${chunk} graph recovers from a real HTTP503 after explicit reload`, async ({ page, app }) => {
     const artifact = await build({
       root: fileURLToPath(new URL('../..', import.meta.url)),
@@ -47,12 +48,13 @@ for (const chunk of ['menu-training-controllers entry', 'menu-training-controlle
     const presentation = trainingChunks.find((asset) => asset.name === 'site-training-ui');
     expect(controllerEntry).toBeTruthy();
     const boundaries = {
+      'shared-header-actions': artifact.output.find(asset => asset.type === 'chunk' && asset.facadeModuleId?.endsWith('/src/static/shared-header-actions.js')),
       'menu-training-controllers entry': controllerEntry,
       'menu-training-controllers implementation': controllerImplementation,
       'site-training-ui': presentation,
     };
     const target = `/${boundaries[chunk].fileName}`;
-    const optionalAsset = /\/(?:menu-training-controllers|site-training-ui)-[\w-]+\.js$/;
+    const optionalAsset = /\/(?:shared-header-actions|menu-training-controllers|site-training-ui)-[\w-]+\.js$/;
     const optionalPaths = [...new Set(Object.values(boundaries).map((asset) => `/${asset.fileName}`))];
     expect(artifact.output.filter((asset) => asset.type === 'chunk' && optionalAsset.test(`/${asset.fileName}`))
       .map((asset) => `/${asset.fileName}`).sort()).toEqual([...optionalPaths].sort());
@@ -60,6 +62,12 @@ for (const chunk of ['menu-training-controllers entry', 'menu-training-controlle
     for (const boundary of Object.values(boundaries)) {
       expectedBeforeReload[`/${boundary.fileName}`] = 1;
       if (`/${boundary.fileName}` === target) break;
+    }
+    if (chunk === 'shared-header-actions') {
+      // Both downloads start independently; only training initialization is
+      // gated by the authenticated header's readiness.
+      expectedBeforeReload[`/${controllerEntry.fileName}`] = 1;
+      expectedBeforeReload[`/${controllerImplementation.fileName}`] = 1;
     }
     let failing = true;
     const attempts = Object.fromEntries(optionalPaths.map((path) => [path, 0]));
@@ -83,7 +91,7 @@ for (const chunk of ['menu-training-controllers entry', 'menu-training-controlle
       const recovery = page.getByRole('button', { name: 'Reload to load training', exact: true });
       await expect(recovery).toBeVisible();
       expect(attempts).toEqual(expectedBeforeReload);
-      await expect(page.locator('link[rel="modulepreload"][href*="menu-training-controllers-"], link[rel="modulepreload"][href*="site-training-ui-"]')).toHaveCount(0);
+      await expect(page.locator('link[rel="modulepreload"][href*="menu-training-controllers-"], link[rel="modulepreload"][href*="site-training-ui-"], link[rel="modulepreload"][href*="shared-header-actions-"]')).toHaveCount(0);
       failing = false;
       await recovery.click();
       await expect(page.getByRole('button', { name: 'Keep editing', exact: true })).toBeFocused();
@@ -119,6 +127,43 @@ test('visitor navigation does not fetch the training catalog, controllers, or pr
     await page.keyboard.press('Escape');
   }
   expect(requests.filter((url) => /(?:menu-training-controllers|site-training-api\.(?:mjs|js)|site-training-state|site-training-registry|site-training-runtime|page-training-controls|solo-first-run-training|site-training-ui\.js)/.test(url))).toEqual([]);
+  app.assertNoRuntimeErrors();
+});
+
+for (const automatic of [false, true]) test(`a delayed header gates ${automatic ? 'automatic' : 'manual'} training against inert Share and App Streak targets`, async ({ page, app }) => {
+  let release; const held = new Promise(resolve => { release = resolve; });
+  const downloaded = [];
+  page.on('request', request => { if (controllerRequest.test(request.url())) downloaded.push(request.url()); });
+  await page.route(/\/shared-header-actions(?:-[\w-]+)?\.js(?:\?|$)/, async route => { await held; await route.continue(); });
+  await app.seed('activeSolo', 'dark');
+  if (automatic) await page.addInitScript(actorId => {
+    const value = JSON.parse(localStorage.getItem('dominion:mockChallengeActivation'))[actorId];
+    const activation = typeof value === 'string' ? JSON.parse(value) : value;
+    localStorage.setItem('dominion:soloTrainingLaunchRequests', JSON.stringify({ [actorId]: {
+      schemaVersion: 1, actorId, activationRevision: activation.revision,
+      activationStatus: activation.status, startDate: activation.startDate,
+      requestedAt: new Date().toISOString(), source: 'challenge_activation',
+    } }));
+  }, FIXED_USER_ID);
+  await page.goto('/dashboard.html', { waitUntil: 'domcontentloaded' });
+  await expect(page.locator('.shared-header-streak')).toBeDisabled();
+  await page.getByRole('button', { name: 'Open menu' }).click();
+  await expect(page.locator('.global-menu-training-load-status')).toHaveText('Loading training…');
+  await expect.poll(() => downloaded.length).toBeGreaterThan(0);
+  await expect(page.getByRole('button', { name: 'Start Training', exact: true })).toBeHidden();
+  await expect(page.getByRole('button', { name: 'Start page training', exact: true })).toBeHidden();
+  await expect(page.locator('.site-training-layer')).toHaveCount(0);
+  release();
+  if (!automatic) await page.getByRole('button', { name: 'Start Training', exact: true }).click();
+  await expect(page.locator('.site-training-layer')).toBeVisible();
+  await page.locator('[data-training-action="next"]').click();
+  await page.locator('[data-training-action="next"]').click();
+  await expect(page.locator('#siteTrainingTitle')).toHaveText('Review before you share');
+  await expect(page.locator('.shared-header-share')).toHaveClass(/site-training-target/);
+  await page.locator('[data-training-action="next"]').click();
+  await expect(page.locator('#siteTrainingTitle')).toHaveText('Check your streaks');
+  await expect(page.locator('.shared-header-streak')).toHaveClass(/site-training-target/);
+  await page.locator('[data-training-action="stop"]').click();
   app.assertNoRuntimeErrors();
 });
 

@@ -313,6 +313,190 @@ test.describe('Account-linked administrative history', () => {
   });
 });
 
+test.describe('Requester account drill-down', () => {
+  const userReads = auth => auth.reads().filter(entry => entry.path.endsWith('/site_admin_get_user'));
+  const open = async (context, page, permissions = ['operations.read', 'users.read', 'roles.manage', 'audit.read']) => {
+    const auth = await installAdminStub(context, { permissions });
+    page.__requesterAuth = auth;
+    await page.goto('/admin.html#account-requests'); await expect(page.locator('#adminRequestsRows tr')).toHaveCount(25);
+    await expect(page.locator('.admin-queue-bucket')).toHaveCount(4); return auth;
+  };
+  const button = page => page.locator('#adminRequestsRows button').first();
+  const loaded = page => expect(page.locator('#adminRequesterStatus')).toContainText('Observed');
+  test.beforeEach(async ({ page, baseURL }) => {
+    page.__requesterEvidence = { external: [], errors: [] };
+    page.on('pageerror', error => page.__requesterEvidence.errors.push(error.message));
+    await page.route('**/*', route => {
+      if (new URL(route.request().url()).origin !== new URL(baseURL).origin) {
+        page.__requesterEvidence.external.push(new URL(route.request().url()).origin); return route.abort();
+      }
+      return route.fallback();
+    });
+  });
+  test.afterEach(async ({ page }) => {
+    expect(page.__requesterEvidence).toEqual({ external: [], errors: [] });
+    if (page.__requesterAuth) {
+      expect(page.__requesterAuth.assignments()).toHaveLength(0); expect(page.__requesterAuth.denials()).toHaveLength(0);
+      expect(page.__requesterAuth.invitations()).toHaveLength(0);
+    }
+    const stored = await page.evaluate(() => JSON.stringify({ ...localStorage, ...sessionStorage })).catch(() => '');
+    expect(stored).not.toMatch(/80000000-0000-4000-8000|70000000-0000-4000-8000|PRIVATE_REQUESTER|Preview Member/);
+  });
+  test('explicit exact-ID read keeps inbox page/filters/queue and never mounts Users actions', async ({ context, page }) => {
+    const auth = await open(context, page); expect(userReads(auth)).toHaveLength(0);
+    expect(await page.locator('#adminRequestsRows').textContent()).not.toMatch(/Preview Member|example.invalid/);
+    await page.locator('#adminNextPage').click(); await expect(page.locator('#adminRequestsRows tr')).toHaveCount(3);
+    const list = await page.locator('#adminRequestsRows').textContent(); const reads = auth.reads().length;
+    const contexts = auth.requests.filter(r => r.path.endsWith('/get_site_admin_context')).length;
+    await button(page).focus(); await page.keyboard.press('Enter'); await loaded(page);
+    await expect(page.locator('#adminDetailTitle')).toHaveText('Requester account'); await expect(page.locator('#adminDetailClose')).toBeFocused();
+    await expect(page.locator('#adminRequesterFacts')).toContainText('Preview Member 26');
+    expect(userReads(auth)).toHaveLength(1); expect(userReads(auth)[0].body.target_user_id).toBe('70000000-0000-4000-8000-000000000026');
+    expect(auth.requests.filter(r => r.path.endsWith('/get_site_admin_context'))).toHaveLength(contexts + 2);
+    expect(auth.reads()).toHaveLength(reads + 1);
+    await expect(page.locator('#adminDetail .admin-review, #adminUserHistory')).toHaveCount(0);
+    await page.keyboard.press('Escape'); await expect(button(page)).toBeFocused(); await expect(page.locator('#adminDetailBody')).toBeEmpty();
+    await expect(page.locator('#adminRequestsRows')).toHaveText(list); await expect(page.locator('#adminPageLabel')).toHaveText('Page 2');
+    await expect(page.locator('#adminRequestsFilters select[name="status"]')).toHaveValue('active');
+    await expect(page.locator('.admin-queue-bucket')).toHaveCount(4);
+  });
+  test('Operations-only and removed requester have no account action or identity read', async ({ context, page }) => {
+    const auth = await open(context, page, ['operations.read']); await expect(page.locator('#adminRequestsRows button')).toHaveCount(0);
+    expect(userReads(auth)).toHaveLength(0);
+    auth.permissions(['operations.read', 'users.read']); await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+    await expect(page.locator('#adminRequestsRows button')).toHaveCount(25);
+    await page.locator('#adminRequestsFilters select[name="status"]').selectOption('all');
+    await page.locator('#adminRequestsFilters select[name="sort"]').selectOption('newest');
+    await page.locator('#adminRequestsFilters button').click(); await expect(page.locator('#adminRequestsRows tr')).toHaveCount(25);
+    const removed = page.locator('#adminRequestsRows tr').filter({ hasText: 'Account reference removed' });
+    await expect(removed).toHaveCount(1); await expect(removed.locator('button')).toHaveCount(0); expect(userReads(auth)).toHaveLength(0);
+  });
+  test('unavailable or deleted account never erases or fulfills the recorded request', async ({ context, page }) => {
+    const auth = await open(context, page); let unavailable = true;
+    await page.route('**/site_admin_get_user', route => unavailable
+      ? route.fulfill({ status: 404, contentType: 'application/json', body: JSON.stringify({ message: 'admin_record_not_found' }) }) : route.fallback());
+    const list = await page.locator('#adminRequestsRows').textContent();
+    await button(page).click(); await expect(page.locator('#adminRequesterStatus')).toContainText('no longer available');
+    await expect(page.locator('#adminRequesterFacts')).toBeEmpty(); await expect(page.locator('#adminRequestsRows')).toHaveText(list);
+    unavailable = false; auth.roleTarget('70000000-0000-4000-8000-000000000001', { deletedAt: '2026-10-01T00:00:00Z', privateNotes: 'PRIVATE_REQUESTER_NOTES' });
+    await page.locator('#adminRequesterRefresh').click(); await loaded(page); await expect(page.locator('#adminRequesterFacts')).toContainText('Deleted Auth record');
+    expect(await page.content()).not.toContain('PRIVATE_REQUESTER_NOTES'); await expect(page.locator('#adminRequestsRows')).toHaveText(list);
+  });
+  for (const malformed of ['wrong-target', 'partial']) test(`${malformed} response publishes no requester facts and manual recovery works`, async ({ context, page }) => {
+    const auth = await open(context, page); const id = '70000000-0000-4000-8000-000000000001';
+    auth.roleTarget(id, malformed === 'wrong-target' ? { id: auth.B, name: 'PRIVATE_REQUESTER_WRONG_TARGET' } : { lastSignInAt: undefined });
+    await button(page).click(); await expect(page.locator('#adminRequesterStatus')).toContainText('unavailable');
+    await expect(page.locator('#adminRequesterFacts')).toBeEmpty(); await expect(page.locator('#adminRequestsRows tr')).toHaveCount(25);
+    expect(await page.content()).not.toContain('PRIVATE_REQUESTER_WRONG_TARGET');
+    auth.roleTarget(id, {}); await page.locator('#adminRequesterRefresh').click(); await loaded(page);
+    await expect(page.locator('#adminRequesterFacts')).toContainText('Preview Member 1'); expect(userReads(auth)).toHaveLength(2);
+  });
+  test('a closed request cannot replace the newer open requester when its held response settles', async ({ context, page }) => {
+    const auth = await open(context, page); let release; let entered = false; let finished = false;
+    const held = new Promise(resolve => { release = resolve; });
+    await page.route('**/site_admin_get_user', async route => {
+      if (entered) return route.fallback();
+      entered = true; await held; await route.fallback(); finished = true;
+    });
+    try {
+      await button(page).click(); await expect.poll(() => entered).toBe(true); await page.locator('#adminDetailClose').click();
+      await page.locator('#adminRequestsRows button').nth(1).click(); await loaded(page);
+      await expect(page.locator('#adminRequesterFacts')).toContainText('Preview Member 2');
+      const current = await page.locator('#adminRequesterFacts').textContent();
+      release(); await expect.poll(() => finished).toBe(true);
+      await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+      await expect(page.locator('#adminRequesterFacts')).toHaveText(current);
+      expect(userReads(auth).map(value => value.body.target_user_id)).toContain('70000000-0000-4000-8000-000000000002');
+    } finally { release(); }
+  });
+  test('stale detached button cannot dispatch and DOM attributes cannot replace captured target', async ({ context, page }) => {
+    const auth = await open(context, page);
+    await button(page).evaluate(node => { window.__oldRequesterButton = node; node.dataset.userId = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb'; });
+    await button(page).click(); await loaded(page); expect(userReads(auth)[0].body.target_user_id).toBe('70000000-0000-4000-8000-000000000001');
+    await page.keyboard.press('Escape'); await page.locator('#adminRequestsFilters select[name="type"]').selectOption('data_export');
+    await page.evaluate(() => { window.__oldRequesterButton.click(); delete window.__oldRequesterButton; });
+    await expect(page.locator('#adminDetail')).not.toBeVisible(); expect(userReads(auth)).toHaveLength(1);
+  });
+  for (const permission of ['operations.read', 'users.read']) for (const stage of ['before', 'during']) test(`${permission} revoked ${stage} requester read clears all private data`, async ({ context, page }) => {
+    const auth = await open(context, page); const release = stage === 'during' ? auth.hold(['site_admin_get_user']) : () => {};
+    try {
+      if (stage === 'before') auth.permissions(['operations.read', 'users.read'].filter(value => value !== permission));
+      await button(page).click();
+      if (stage === 'during') { await expect.poll(() => userReads(auth).length).toBe(1); auth.permissions(['operations.read', 'users.read'].filter(value => value !== permission)); release(); }
+      await expect(page.locator('#adminWorkspace')).toBeHidden(); await expect(page.locator('#adminDetailBody')).toBeEmpty();
+      if (stage === 'before') expect(userReads(auth)).toHaveLength(0);
+    } finally { release(); }
+  });
+  for (const mode of ['close', 'filter', 'tab', 'pagehide', 'replacement', 'ABA']) test(`${mode} aborts a requester read and suppresses its late result`, async ({ context, page }) => {
+    const auth = await open(context, page); const release = auth.hold(['site_admin_get_user']);
+    try {
+      await button(page).click(); await expect.poll(() => userReads(auth).length).toBe(1);
+      if (mode === 'close') await page.locator('#adminDetailClose').click();
+      else if (mode === 'filter') await page.locator('#adminRequestsFilters select[name="type"]').evaluate(node => { node.value = 'data_export'; node.dispatchEvent(new Event('input', { bubbles: true })); });
+      else if (mode === 'tab') await page.locator('#adminUsersTab').evaluate(node => node.click());
+      else if (mode === 'pagehide') await page.evaluate(() => window.dispatchEvent(new PageTransitionEvent('pagehide')));
+      else {
+        const value = auth.session(mode === 'ABA' ? auth.B : auth.A, 'aal2', '22222222-2222-4222-8222-222222222222');
+        const change = session => { localStorage.setItem('sb-127-auth-token', JSON.stringify(session)); window.dispatchEvent(new StorageEvent('storage', { key: 'sb-127-auth-token', newValue: JSON.stringify(session) })); };
+        await page.evaluate(change, value); if (mode === 'ABA') await page.evaluate(change, auth.firstSession);
+      }
+      await expect(page.locator('#adminDetail')).not.toBeVisible(); release(); await expect(page.locator('#adminDetailBody')).toBeEmpty();
+      if (mode === 'close') { await expect(page.locator('#adminRequestsRows tr')).toHaveCount(25); await expect(button(page)).toBeFocused(); }
+    } finally { release(); }
+  });
+  test('blocked read times out in-place and only explicit refresh retries', async ({ context, page }) => {
+    const auth = await open(context, page); const release = auth.hold(['site_admin_get_user']);
+    try {
+      await button(page).click(); await expect(page.locator('#adminRequesterStatus')).toHaveText('Loading requester account…');
+      await expect(page.locator('#adminRequesterStatus')).toContainText('unavailable', { timeout: 15000 });
+      await expect(page.locator('#adminRequesterFacts')).toBeEmpty(); await expect(page.locator('#adminRequesterRefresh')).not.toHaveAttribute('aria-disabled');
+      await expect(page.locator('#adminRequestsRows tr')).toHaveCount(25); expect(userReads(auth)).toHaveLength(1);
+    } finally { release(); }
+    await page.locator('#adminRequesterRefresh').click(); await loaded(page); expect(userReads(auth)).toHaveLength(2);
+  });
+  for (const theme of ['light', 'dark', 'dominion-night', 'dominion-platinum']) test(`${theme} requester detail is keyboard accessible and fits mobile enlarged text`, async ({ context, page }, testInfo) => {
+    await open(context, page); await page.evaluate(value => document.documentElement.dataset.theme = value, theme);
+    await button(page).focus(); await page.keyboard.press('Enter'); await loaded(page); await page.evaluate(() => document.fonts.ready.then(() => undefined));
+    const baseFont = await page.locator('#adminRequesterScope').evaluate(node => parseFloat(getComputedStyle(node).fontSize));
+    for (const width of [1440, 390, 320]) {
+      await page.setViewportSize({ width, height: 1000 });
+      for (const scale of ['100%', '200%']) {
+        await page.evaluate(value => document.documentElement.style.fontSize = value, scale);
+        await expect.poll(() => page.locator('#adminRequesterScope').evaluate(node => parseFloat(getComputedStyle(node).fontSize)))
+          .toBe(baseFont * (scale === '200%' ? 2 : 1));
+        for (const selector of ['#adminDetail', '#adminRequesterDetail', '#adminRequesterScope', '#adminRequesterReference', '#adminRequesterStatus', '#adminRequesterRefresh']) {
+          const size = await page.locator(selector).evaluate(node => ({ width: node.clientWidth, scroll: node.scrollWidth }));
+          expect(size.scroll, `${theme} ${width} ${scale} ${selector}`).toBeLessThanOrEqual(size.width + 1);
+        }
+        if (scale === '100%' && width !== 320) await page.locator('#adminDetail').screenshot({ path: testInfo.outputPath(`${theme}-requester-${width}px.png`) });
+      }
+    }
+    expect((await new AxeBuilder({ page }).include('#adminDetail').analyze()).violations).toEqual([]);
+    await page.screenshot({ path: testInfo.outputPath(`${theme}-requester-detail.png`) });
+    await page.keyboard.press('Escape'); await expect(button(page)).toBeFocused();
+  });
+  for (const face of ['platform', 'wide-fallback']) for (const state of ['loading', 'unavailable']) test(`${face} ${state} requester status fits 320px settled 200% text`, async ({ context, page }, testInfo) => {
+    const auth = await open(context, page); await page.setViewportSize({ width: 320, height: 1000 });
+    const release = state === 'loading' ? auth.hold(['site_admin_get_user']) : () => {};
+    if (state === 'unavailable') await page.route('**/site_admin_get_user', route => route.fulfill({ status: 503, contentType: 'application/json', body: '{}' }));
+    try {
+      await button(page).click(); await expect(page.locator('#adminRequesterStatus')).toContainText(state === 'loading' ? 'Loading' : 'unavailable');
+      const scope = page.locator('#adminRequesterScope'); const font = await scope.evaluate(node => parseFloat(getComputedStyle(node).fontSize));
+      if (face === 'wide-fallback') await page.locator('#adminRequesterDetail').evaluate(node => node.style.fontFamily = 'Verdana, sans-serif');
+      await page.evaluate(() => document.documentElement.style.fontSize = '200%');
+      await expect.poll(() => scope.evaluate(node => parseFloat(getComputedStyle(node).fontSize))).toBe(font * 2);
+      for (const selector of ['#adminDetail', '#adminRequesterDetail', '#adminRequesterScope', '#adminRequesterReference', '#adminRequesterStatus', '#adminRequesterRefresh']) {
+        const size = await page.locator(selector).evaluate(node => ({ width: node.clientWidth, scroll: node.scrollWidth }));
+        expect(size.scroll, `${face} ${state} ${selector}`).toBeLessThanOrEqual(size.width + 1);
+      }
+      await page.locator('#adminRequesterRefresh').focus(); await expect(page.locator('#adminRequesterRefresh')).toBeInViewport();
+      await page.locator('#adminDetail').screenshot({ path: testInfo.outputPath(`requester-${face}-${state}-320px-200pct.png`) });
+      expect((await new AxeBuilder({ page }).include('#adminDetail').analyze()).violations).toEqual([]);
+      await page.keyboard.press('Escape'); await expect(button(page)).toBeFocused();
+    } finally { release(); }
+  });
+});
+
 test.describe('Account requests inbox', () => {
   test.beforeEach(async ({ page, baseURL }) => {
     page.__inboxEvidence = { external: [], errors: [] };

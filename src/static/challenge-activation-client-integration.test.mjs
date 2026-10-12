@@ -97,7 +97,7 @@ describe('challenge activation client integration', () => {
       header.indexOf("streakButton.addEventListener('click'"),
     );
 
-    assert.match(header, /const expectedUserId = currentUser\?\.userId \|\| '';[\s\S]*getChallengeActivation\(\{ expectedUserId \}\),[\s\S]*getGameSummary\(\),[\s\S]*localHeaderSnapshot\([\s\S]*activation,[\s\S]*summary\?\.gameStats/);
+    assert.match(header, /const expectedUserId = currentUser\?\.userId \|\| '';[\s\S]*getChallengeActivation\(\{ expectedUserId \}\),[\s\S]*getGameSummary\(\{ includeBadges: false \}\),[\s\S]*localHeaderSnapshot\([\s\S]*activation,[\s\S]*summary\?\.gameStats/);
     assert.match(header, /function localHeaderSnapshot\(user, storage, activation, stats\)/);
     assert.match(header, /activation: effectiveActivation/);
     assert.doesNotMatch(header, /migrateMockCheckInCache|PREVIEW_CHECK_IN_DATES_STORAGE_KEY|writePreviewUserValue/);

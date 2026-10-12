@@ -5,7 +5,7 @@ import { isCloudflarePreviewEnvironment } from './scripts/normalize-cloudflare-f
 import { renderInitialPreviewFeedback } from './src/static/preview-feedback.mjs';
 
 export function isSharedMenuModule(id) {
-  return /\/src\/static\/(?:menu\.js|reveal\.js|daily-standard-routes\.mjs|group-integration-launch\.mjs)$/.test(id)
+  return /\/src\/static\/(?:menu\.js|reveal\.js|daily-standard-routes\.mjs|group-integration-launch\.mjs|streak-summary\.mjs)$/.test(id)
     || /\/src\/assets\/(?:styles|product|dialog|menu|dominion-night|dominion-platinum)\.css$/.test(id);
 }
 
@@ -51,6 +51,12 @@ export function resolveTrainingModulePreloads(filename, dependencies, { hostType
   const photoPreparationJs = /(?:^|\/)profile-photo-preparation(?!-loader)(?:-[\w-]+)?\.js$/;
   if (hostType === 'js' && photoPreparationJs.test(filename)) {
     return dependencies.filter((dependency) => !photoPreparationJs.test(dependency));
+  }
+  // The header and its nested App Streak dialog both offer explicit reload;
+  // neither may retain a failed redundant JS preload in the next document.
+  const headerActionsJs = /(?:^|\/)(?:shared-header-actions|app-streak-dialog)(?:-[\w-]+)?\.js$/;
+  if (hostType === 'js' && headerActionsJs.test(filename)) {
+    return dependencies.filter((dependency) => !headerActionsJs.test(dependency));
   }
   return dependencies;
 }

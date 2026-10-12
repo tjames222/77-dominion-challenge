@@ -6,11 +6,12 @@ import { feedbackTestPage } from './feedback-test-dom.mjs';
 import { createAppStreakDialog } from './app-streak-dialog.mjs';
 import { normalizeChallengeStartDate } from './shared-header-state.mjs';
 import { buildStreakSummary, streakIndicatorLabel } from './streak-summary.mjs';
+import { createAuthenticatedHeaderShell } from './shared-header-shell.mjs';
 
 const source = readFileSync(new URL('./shared-header-actions.js', import.meta.url), 'utf8');
 const tick = () => new Promise(resolve => setImmediate(resolve));
 const deferred = () => { let resolve; let reject; const promise = new Promise((yes, no) => { resolve = yes; reject = no; }); return { promise, resolve, reject }; };
-function setup({ load, update, timer } = {}) {
+function setup({ load, update, timer, summary, visit } = {}) {
   const page = feedbackTestPage(); const { document } = page;
   const prototype = Object.getPrototypeOf(document.body);
   const originalMatches = prototype.matches;
@@ -29,7 +30,7 @@ function setup({ load, update, timer } = {}) {
   const create = document.createElement.bind(document);
   document.createElement = tag => decorate(create(tag));
   const topbar = document.createElement('header'); document.body.append(topbar);
-  const calls = { loads: 0, factories: 0, mutations: [], reads: 0, reloads: 0, confirmations: [] };
+  const calls = { loads: 0, factories: 0, mutations: [], reads: 0, summaries: [], visits: [], reloads: 0, confirmations: [] };
   let generation = 0; let confirmation = false;
   document.defaultView.confirm = message => { calls.confirmations.push(message); return confirmation; };
   document.defaultView.location = { reload() { calls.reloads++; } };
@@ -39,10 +40,11 @@ function setup({ load, update, timer } = {}) {
     currentInstance: { id: '11111111-1111-4111-8111-111111111111' } };
   const module = { createAppStreakDialog: options => { calls.factories++; return createAppStreakDialog(options); } };
   const runtime = {
-    ...{ buildStreakSummary, streakIndicatorLabel, normalizeChallengeStartDate },
+    ...{ buildStreakSummary, streakIndicatorLabel, normalizeChallengeStartDate, createAuthenticatedHeaderShell },
     dateKeyForTimeZone: () => '2026-09-28', isLocalDemoMode: () => false, initShareComposer() {},
-    getChallengeActivation: async () => { calls.reads++; return activation; }, recordAppVisit: async () => {},
-    getGameSummary: async () => ({ gameStats: { currentAppStreak: 6, bestAppStreak: 8 } }),
+    getChallengeActivation: async () => { calls.reads++; return activation; },
+    recordAppVisit: async input => { calls.visits.push(input); return visit?.(input); },
+    getGameSummary: async input => { calls.summaries.push(input); return summary ? summary(input) : { gameStats: { currentAppStreak: 6, bestAppStreak: 8 } }; },
     updateChallengeStartDate: async input => { calls.mutations.push(input); return update ? update(input) : { ...activation, startDate: input.startDate, revision: 5 }; },
     __load: () => { calls.loads++; return load ? load(module) : Promise.resolve(module); },
     setTimeout: timer || setTimeout, clearTimeout, Date, Intl, Error, TypeError,
@@ -58,6 +60,36 @@ function setup({ load, update, timer } = {}) {
     approveReload() { confirmation = true; }, field: () => page.find(node => node.name === 'challengeStartDate'),
     form: () => page.find(node => Object.hasOwn(node.dataset, 'globalStreakStartDateForm')) };
 }
+
+test('header requests statistics only after recording the visit and does not repeat the visit on refresh', async () => {
+  const gate = deferred(); const ui = setup({ visit: () => gate.promise }); await tick();
+  assert.equal(ui.calls.visits.length, 1); assert.equal(ui.calls.summaries.length, 0);
+  gate.resolve(); await tick(); await ui.controller.refresh();
+  assert.deepEqual(JSON.parse(JSON.stringify(ui.calls.summaries)), [{ includeBadges: false }, { includeBadges: false }]);
+  assert.equal(ui.calls.visits.length, 1); ui.controller.destroy();
+});
+test('a failed visit still falls through to the stats-only read, retaining its existing retry behavior', async () => {
+  const ui = setup({ visit: async () => { throw new Error('visit unavailable'); } }); await tick();
+  assert.equal(ui.calls.summaries.length, 1); assert.equal(ui.calls.summaries[0].includeBadges, false);
+  await ui.controller.refresh(); assert.equal(ui.calls.visits.length, 2); assert.equal(ui.calls.summaries.length, 2);
+  ui.controller.destroy();
+});
+test('a held stats-only response cannot overwrite newer account or ABA hydration', async () => {
+  const gate = deferred(); let reads = 0;
+  const ui = setup({ summary: () => ++reads === 1 ? gate.promise : { gameStats: { currentAppStreak: reads } } });
+  await tick(); ui.controller.setUser({ userId: 'B' }); await tick();
+  assert.equal(ui.button().querySelector('.shared-header-streak-count').textContent, '2');
+  ui.controller.setUser({ userId: 'A' }); await tick();
+  gate.resolve({ gameStats: { currentAppStreak: 99 } }); await tick();
+  assert.equal(ui.button().querySelector('.shared-header-streak-count').textContent, '3');
+  assert.ok(ui.calls.summaries.every(input => input.includeBadges === false)); ui.controller.destroy();
+});
+test('destroyed header never renders a held stats-only response', async () => {
+  const gate = deferred(); const ui = setup({ summary: () => gate.promise }); await tick();
+  const count = ui.button().querySelector('.shared-header-streak-count'); const before = count.textContent;
+  ui.controller.destroy(); gate.resolve({ gameStats: { currentAppStreak: 99 } }); await tick();
+  assert.equal(count.textContent, before); assert.equal(ui.button(), null);
+});
 
 test('dialog code and DOM are absent until click; repeated opens share one module and restore trigger focus', async () => {
   const ui = setup(); await tick(); assert.equal(ui.calls.loads, 0); assert.equal(ui.calls.factories, 0);
@@ -124,7 +156,7 @@ test('deferred factory has no API imports and existing menu lifecycle supplies t
   assert.doesNotMatch(view, /from ['"].*(?:api|auth-runtime)|createClient|fetch\(|localStorage|sessionStorage/);
   const menu = readFileSync(new URL('./menu.js', import.meta.url), 'utf8');
   assert.match(menu, /captureLifecycle: \(\) => menuHydrationRequest/);
-  assert.match(menu, /isCurrentLifecycle: generation => generation === menuHydrationRequest/);
+  assert.match(menu, /isCurrentLifecycle: version => !menuSuspended && version === menuHydrationRequest/);
   assert.match(menu, /subscribeToAuthStateChanges\([\s\S]*?menuHydrationRequest \+= 1/);
   assert.match(menu, /addEventListener\('pagehide'[\s\S]*?menuHydrationRequest \+= 1/);
 });

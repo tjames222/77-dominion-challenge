@@ -65,6 +65,10 @@
 .admin-requests-table .admin-request-facts { margin: 0; display: grid; gap: .65rem; line-height: 1.5; }
 .admin-requests-table dt { color: var(--text-muted); font-size: .8rem; }
 .admin-requests-table dd { margin: .15rem 0 0; }
+.admin-requests-table button { margin-top: .75rem; max-inline-size: 100%; overflow-wrap: anywhere; }
+#adminRequesterDetail > p { color: var(--text-muted); line-height: 1.6; overflow-wrap: anywhere; }
+#adminRequesterDetail button { min-inline-size: 0; max-inline-size: 100%; overflow-wrap: anywhere; }
+#adminRequesterDetail button[aria-disabled="true"] { opacity: .45; cursor: default; }
 #adminUsersPanel .admin-table { table-layout: fixed; }
 #adminUsersPanel th:first-child { width: 28%; }
 #adminUsersPanel th:nth-child(2) { width: 13%; }

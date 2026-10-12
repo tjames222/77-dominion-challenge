@@ -3300,12 +3300,12 @@ export async function recordAppVisit({ expectedUserId = '' } = {}) {
   } : null;
 }
 
-export async function getGameSummary() {
+export async function getGameSummary({ includeBadges = true } = {}) {
   if ((BUILD_SUPPORTS_LOCAL_DEMO && isLocalDemoMode())) {
     const actorId = (await getLocalOrSessionUser())?.userId;
     return withPreviewAggregate(actorId, aggregate => ({
       gameStats: mapGameStats({ ...aggregate.values['dominion:gameStats'], totalPoints: aggregate.runtime.lifetimePoints }),
-      badges: (aggregate.values[PREVIEW_BADGE_STATE_KEY]?.awards || []).map(mapBadge).filter(Boolean),
+      badges: includeBadges === false ? [] : (aggregate.values[PREVIEW_BADGE_STATE_KEY]?.awards || []).map(mapBadge).filter(Boolean),
     }));
   }
   const client = requireSupabase();
@@ -3316,7 +3316,7 @@ export async function getGameSummary() {
       .select('total_points, challenge_points, current_app_streak, best_app_streak, current_full_day_streak, best_full_day_streak, last_seen_date, last_full_day_date')
       .eq('user_id', user.id)
       .maybeSingle(),
-    client
+    includeBadges === false ? { data: [], error: null } : client
       .from('user_badges')
       .select('id, scope_key, badge_key, earned_at, entry_date, metadata, badge_definitions(name, description, category, tier, icon, requirement, retired, sort_order)')
       .eq('user_id', user.id)
