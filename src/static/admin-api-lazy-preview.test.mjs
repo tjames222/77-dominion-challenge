@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
-import { adminReadError } from './admin-read-client.mjs';
+import { adminReadError, withAdminReadDeadline } from './admin-read-client.mjs';
 import * as previewModule from './admin-preview.mjs';
 
 const source = readFileSync(new URL('./api.js', import.meta.url), 'utf8');
@@ -9,17 +9,17 @@ const factory = source.slice(source.indexOf('let adminReadClient = null;'), sour
   .replaceAll('export ', '').replace("import('./admin-preview.mjs')", 'loadPreview()');
 const actorId = '10000000-0000-4000-8000-000000000001';
 function fixture({ mocks = true, auth = false, deferred = false } = {}) {
-  let loads = 0; let creates = 0; let liveCreates = 0; let release;
+  let loads = 0; let creates = 0; let liveCreates = 0; let release; let lookups = 0;
   const held = deferred ? new Promise(resolve => { release = resolve; }) : Promise.resolve();
   const api = new Function('ENABLE_MOCKS', 'usesSupabaseAuthentication', 'loadPreview', 'getLocalOrSessionUser', 'adminReadError',
-    'createAdminReadClient', 'getAuthSession', 'authSessionIdentity', 'subscribeToAuthStateChanges', `${factory}
+    'createAdminReadClient', 'getAuthSession', 'authSessionIdentity', 'subscribeToAuthStateChanges', 'withAdminReadDeadline', `${factory}
       return { owner: getAdminSessionOwner, context: getSiteAdminContext, cancel: cancelAdminReads, subscribe: subscribeToAdminInvalidation };`)(
     mocks, () => auth, async () => { loads++; await held; return { createAdminPreview: options => { creates++; return previewModule.createAdminPreview(options); } }; },
-    async () => ({ authenticated: true, userId: actorId }), adminReadError,
+    async () => { lookups++; return { authenticated: true, userId: actorId }; }, adminReadError,
     () => { liveCreates++; return { subscribe() {}, owner: async () => ({ actorId }), read: async () => ({ actorId }) }; },
-    async () => null, () => '', () => () => {},
+    async () => null, () => '', () => () => {}, withAdminReadDeadline,
   );
-  return { api, release, counts: () => ({ loads, creates, liveCreates }) };
+  return { api, release, counts: () => ({ loads, creates, liveCreates }), lookups: () => lookups };
 }
 test('synthetic admin data is lazy and concurrent requests share exactly one preview client', async () => {
   const f = fixture(); assert.deepEqual(f.counts(), { loads: 0, creates: 0, liveCreates: 0 });
@@ -46,4 +46,11 @@ test('real Auth never imports synthetic administration, including hybrid mocks',
 test('API has no eager preview import and lifecycle invalidation fences lazy loading', () => {
   assert.doesNotMatch(source, /^import .*from '\.\/admin-preview\.mjs'/m);
   assert.match(factory, /const captured = adminClientEpoch;[\s\S]*?if \(captured !== adminClientEpoch\) throw adminReadError\('ADMIN_CHANGED'\)/);
+});
+for (const method of ['owner', 'context']) test(`API ${method} deadline covers a deferred module and never invokes a late client`, async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] }); const f = fixture({ deferred: true });
+  const pending = f.api[method](); const rejected = assert.rejects(pending, { code: 'ADMIN_UNAVAILABLE' });
+  t.mock.timers.tick(10000); await rejected; f.release();
+  for (let i = 0; i < 12; i++) await Promise.resolve();
+  assert.equal(f.lookups(), 0); await f.api[method](); assert.ok(f.lookups() > 0);
 });

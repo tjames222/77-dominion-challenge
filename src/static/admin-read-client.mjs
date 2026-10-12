@@ -17,6 +17,24 @@ export function adminReadError(code = 'ADMIN_UNAVAILABLE') {
   return Object.assign(new Error(messages[code] || messages.ADMIN_UNAVAILABLE), { code });
 }
 
+// Read-only work may be retried explicitly after a deadline. Never use this
+// helper for a mutation: a lost write response does not establish rollback.
+export async function withAdminReadDeadline(work, { signal } = {}, timeoutMs = 10000) {
+  if (!Number.isInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 10000 || signal?.aborted) throw adminReadError();
+  const controller = new AbortController(); let reject;
+  const stopped = new Promise((_, fail) => { reject = fail; });
+  const stop = () => { controller.abort(); reject(adminReadError()); };
+  const timer = setTimeout(stop, timeoutMs);
+  signal?.addEventListener('abort', stop, { once: true });
+  const assertActive = () => { if (controller.signal.aborted) throw adminReadError(); };
+  try {
+    return await Promise.race([(async () => {
+      assertActive(); const value = await work({ signal: controller.signal, assertActive });
+      assertActive(); return value;
+    })(), stopped]);
+  } finally { clearTimeout(timer); signal?.removeEventListener('abort', stop); }
+}
+
 export function normalizeAdminContext(value, actorId) {
   if (!value || value.schemaVersion !== 1 || value.actorId !== actorId || !['member', 'site_admin'].includes(value.role)
     || typeof value.adminReady !== 'boolean') throw adminReadError();
@@ -29,7 +47,8 @@ export function normalizeAdminContext(value, actorId) {
 
 // No cache or storage: the only retained identity is a non-authoritative
 // lifecycle marker. Each read obtains a verified user and fresh server decision.
-export function createAdminReadClient({ getSession, getUser, sessionIdentity, subscribe, request }) {
+export function createAdminReadClient({ getSession, getUser, sessionIdentity, subscribe, request,
+  readRequest = request, getReadUser = getUser, readTimeoutMs = 10000 }) {
   let epoch = 0; let observedIdentity; let disposed = false;
   const pending = new Set(); const listeners = new Set();
   const changed = (reason = '') => {
@@ -66,32 +85,51 @@ export function createAdminReadClient({ getSession, getUser, sessionIdentity, su
     // assurance. Never send or publish a response under the prior bearer.
     if (sessionIdentity(current) !== owner.identity || current?.access_token !== owner.token) throw adminReadError('ADMIN_CHANGED');
   }
+  // Dedicated read guards keep mutation capture/continuation semantics intact.
+  // The read's provider verification and RPC use the same captured bearer.
+  async function captureRead(expectedUserId, assertActive, signal) {
+    assertActive(); const session = await getSession(); assertActive();
+    const identity = sessionIdentity(session); const actorId = session?.user?.id; const token = session?.access_token;
+    if (!identity || !actorId || !token) throw adminReadError('ADMIN_SIGNED_OUT');
+    if (expectedUserId && actorId !== expectedUserId) throw adminReadError('ADMIN_CHANGED');
+    const user = await getReadUser(token, { signal }); assertActive();
+    const current = await getSession(); assertActive();
+    if (user?.id !== actorId || sessionIdentity(current) !== identity || current?.access_token !== token) throw adminReadError('ADMIN_CHANGED');
+    return { actorId, identity, token };
+  }
+  async function assertReadCurrent(owner, assertActive) {
+    assertActive(); const current = await getSession(); assertActive();
+    if (sessionIdentity(current) !== owner.identity || current?.access_token !== owner.token) throw adminReadError('ADMIN_CHANGED');
+  }
+  async function readOperation(work, { signal } = {}) {
+    const captured = epoch; const controller = new AbortController(); pending.add(controller);
+    const abort = () => controller.abort(); signal?.addEventListener('abort', abort, { once: true });
+    if (signal?.aborted) controller.abort();
+    try {
+      return await withAdminReadDeadline(({ signal: readSignal, assertActive }) => work({ signal: readSignal,
+        assertActive: () => { assertEpoch(captured); assertActive(); } }), { signal: controller.signal }, readTimeoutMs);
+    } catch (error) {
+      assertEpoch(captured);
+      if (['ADMIN_SIGNED_OUT', 'ADMIN_CHANGED', 'ADMIN_DENIED'].includes(error?.code)) changed(error.code);
+      throw adminReadError(error?.code);
+    } finally { pending.delete(controller); signal?.removeEventListener('abort', abort); }
+  }
   return {
-    async owner() {
-      try { const owner = await capture(); return { actorId: owner.actorId, sessionIdentity: owner.identity }; }
-      catch (error) { if (['ADMIN_SIGNED_OUT', 'ADMIN_CHANGED'].includes(error?.code)) changed(error.code); throw adminReadError(error?.code); }
+    async owner(options = {}) {
+      return readOperation(async ({ signal, assertActive }) => {
+        const owner = await captureRead('', assertActive, signal); assertActive();
+        return { actorId: owner.actorId, sessionIdentity: owner.identity };
+      }, options);
     },
     async read(name, args = {}, { expectedUserId = '', signal } = {}) {
       if (!READS.has(name)) throw adminReadError('ADMIN_INVALID_INPUT');
-      let owner;
-      try { owner = await capture(expectedUserId); }
-      catch (error) { if (['ADMIN_SIGNED_OUT', 'ADMIN_CHANGED'].includes(error?.code)) changed(error.code); throw adminReadError(error?.code); }
-      const controller = new AbortController(); pending.add(controller);
-      const abort = () => controller.abort();
-      signal?.addEventListener('abort', abort, { once: true });
-      try {
-        if (signal?.aborted) throw adminReadError();
-        const result = await request(name, { ...args, target_expected_actor_id: owner.actorId }, { token: owner.token, signal: controller.signal });
-        await assertCurrent(owner);
-        if (controller.signal.aborted) throw adminReadError();
+      return readOperation(async ({ signal: readSignal, assertActive }) => {
+        const owner = await captureRead(expectedUserId, assertActive, readSignal); assertActive();
+        const result = await readRequest(name, { ...args, target_expected_actor_id: owner.actorId }, { token: owner.token, signal: readSignal });
+        assertActive(); await assertReadCurrent(owner, assertActive); assertActive();
         if (!result || result.schemaVersion !== 1 || result.actorId !== owner.actorId) throw adminReadError();
         return name === 'get_site_admin_context' ? normalizeAdminContext(result, owner.actorId) : result;
-      } catch (error) {
-        assertEpoch(owner.epoch);
-        if (['ADMIN_DENIED', 'ADMIN_SIGNED_OUT', 'ADMIN_CHANGED'].includes(error?.code)) changed(error.code);
-        if (String(error?.code || '').startsWith('ADMIN_')) throw error;
-        throw adminReadError();
-      } finally { pending.delete(controller); signal?.removeEventListener('abort', abort); }
+      }, { signal });
     },
     async denyEarlyAccess(intent, { signal } = {}) {
       const captured = epoch;
