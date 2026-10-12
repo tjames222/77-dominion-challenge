@@ -25,6 +25,7 @@ for (const mocks of [false, true]) test(`account request view and bounded transp
     for (const name of ['admin-account-requests', 'admin-account-request-transport', 'admin-user-history', 'admin-user-history-detail'])
       assert.equal(modules.filter(id => id.endsWith(`/${name}.mjs`)).length, entry === 'admin.html' ? 1 : 0, `${entry} ownership of ${name}`);
     assert.ok(!modules.some(id => id.endsWith('/admin-account-request-preview.mjs')), `${entry} excludes synthetic request records`);
+    assert.ok(!modules.some(id => id.endsWith('/admin-read-transport.mjs')), `${entry} keeps the read stream transport deferred`);
     assert.equal(modules.filter(id => id.endsWith('/auth-runtime-core.mjs')).length, entry === 'early-access-invite.html' ? 0 : 1, `${entry} retains singleton and pre-Auth invitation boundary`);
   }
 });

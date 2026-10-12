@@ -2,6 +2,60 @@ import { test, expect } from '@playwright/test';
 import AxeBuilder from '@axe-core/playwright';
 import { installAdminStub } from './support/admin-supabase-stub.mjs';
 
+test.describe('Bounded administrative reads', () => {
+  const unavailable = page => expect(page.locator('#adminStatus')).toContainText('temporarily unavailable', { timeout: 15000 });
+  for (const stage of ['context', 'provider']) test(`${stage} stall exits the access gate and only a manual retry loads records`, async ({ context, page }) => {
+    const auth = await installAdminStub(context); let release;
+    if (stage === 'context') release = auth.hold(['get_site_admin_context']);
+    else {
+      let resume; const held = new Promise(resolve => { resume = resolve; }); release = resume;
+      await page.route('**/__admin_fixture__/auth/v1/user', async route => { await held; return route.fallback(); });
+    }
+    try {
+      await page.goto('/admin.html'); await expect(page.locator('#adminGateTitle')).toHaveText('Checking access');
+      await expect(page.locator('#adminWorkspace')).toBeHidden();
+      await expect(page.locator('#adminRetryAccess')).toBeVisible({ timeout: 15000 });
+      await expect(page.locator('#adminGateTitle')).toHaveText('Access not verified');
+      expect(auth.reads()).toHaveLength(0);
+    } finally { release(); }
+    await expect(page.locator('#adminUsersRows tr')).toHaveCount(0);
+    await page.locator('#adminRetryAccess').click(); await expect(page.locator('#adminUsersRows tr')).toHaveCount(25);
+    await expect(page.locator('#adminStatus')).not.toContainText('Loading');
+    expect(auth.assignments()).toHaveLength(0); expect(auth.denials()).toHaveLength(0); expect(auth.invitations()).toHaveLength(0);
+    await noStoredPayload(page);
+  });
+  for (const [tab, rpc, rows] of [['Users', 'site_admin_list_users', '#adminUsersRows'], ['Audit', 'site_admin_list_audit', '#adminAuditRows'],
+    ['Early Access', 'site_admin_list_early_access_requests', '#adminEarlyRows']]) test(`${tab} stalled list clears loading and enables an explicit safe retry`, async ({ context, page }) => {
+    const auth = await installAdminStub(context, { permissions: ['users.read', 'audit.read', 'operations.read'] }); await ready(page);
+    if (tab !== 'Users') await page.getByRole('tab', { name: tab, exact: true }).click();
+    await expect(page.locator(`${rows} tr`).first()).toBeVisible();
+    const count = auth.reads().filter(value => value.path.endsWith(rpc)).length; const release = auth.hold([rpc]);
+    try {
+      await page.locator('#adminRefresh').click(); await expect(page.locator('#adminRefresh')).toBeDisabled();
+      await expect(page.locator('#adminStatus')).toHaveText('Loading records…'); await expect(page.locator(`${rows} tr`)).toHaveCount(0);
+      await unavailable(page); await expect(page.locator('#adminRefresh')).toBeEnabled();
+      await expect(page.locator('#adminWorkspace')).not.toHaveAttribute('aria-busy');
+      expect(auth.reads().filter(value => value.path.endsWith(rpc))).toHaveLength(count + 1);
+    } finally { release(); }
+    await expect(page.locator(`${rows} tr`)).toHaveCount(0);
+    await page.locator('#adminRefresh').click(); await expect(page.locator(`${rows} tr`).first()).toBeVisible();
+    expect(auth.reads().filter(value => value.path.endsWith(rpc))).toHaveLength(count + 2);
+    expect(await page.content()).not.toContain('STALE PREVIOUS SESSION SNAPSHOT');
+    expect(auth.assignments()).toHaveLength(0); expect(auth.denials()).toHaveLength(0); expect(auth.invitations()).toHaveLength(0);
+    await noStoredPayload(page);
+  });
+  test('a stalled detail read closes without stale data, and refresh permits a new detail read', async ({ context, page }) => {
+    const auth = await installAdminStub(context); await ready(page); const release = auth.hold(['site_admin_get_user']);
+    try {
+      await page.locator('#adminUsersRows button').first().click(); await expect(page.locator('#adminDetailBody')).toHaveText('Loading record…');
+      await unavailable(page); await expect(page.locator('#adminDetail')).not.toBeVisible(); await expect(page.locator('#adminRefresh')).toBeEnabled();
+    } finally { release(); }
+    await expect(page.locator('#adminDetailBody')).toBeEmpty(); await page.locator('#adminRefresh').click();
+    await expect(page.locator('#adminUsersRows tr')).toHaveCount(25); await page.locator('#adminUsersRows button').first().click();
+    await expect(page.locator('#adminUserFacts')).toBeVisible(); await noStoredPayload(page);
+  });
+});
+
 test.describe('Account-linked administrative history', () => {
   const historyReads = auth => auth.reads().filter(entry => entry.path.endsWith('/site_admin_list_audit'));
   const openAccount = async page => {

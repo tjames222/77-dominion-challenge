@@ -41,6 +41,29 @@ headers; the SQL success contract also sets private/no-store. Non-success
 transport responses are consumed with the same no-store request mode and only
 fixed safe error messages are rendered.
 
+All read-only owner/context/list/detail operations now have a ten-second total
+deadline, including deferred client/transport loading, native provider verification, session
+capture, the response body and final session revalidation. A stalled read clears
+the loading state and leaves the existing explicit Check access again/Refresh
+controls available. It never retries automatically. Read provider verification
+uses a native `GET /auth/v1/user` with the same captured bearer as its RPC; an unnotified token replacement is
+rejected even when the session UUID is unchanged. Timeout, caller cancellation
+and lifecycle invalidation prevent late Auth work from dispatching an RPC or
+publishing data. Native verification projects only the provider-verified user ID
+and has no SDK session-storage hooks: a late `session_not_found` for an old bearer
+cannot clear a newer session. This cancels the caller/read continuation and native
+transport, not shared SDK session acquisition or refresh. Existing `getSession`
+and SDK refresh lifecycle behavior is unchanged and is not externally cancelled.
+
+The original eight read RPCs use a dedicated streaming JSON transport. It rejects
+non-JSON MIME types, malformed UTF-8/JSON, missing bodies and oversized responses,
+and cancels blocked/late bodies without waiting for cancellation. The previous
+262144 UTF-16-code-unit response limit is preserved, with a compatible 786432-byte
+stream ceiling. The inbox/queue transport retains its narrower 64KiB ceiling.
+Mutation capture, preflight and submission use their existing separate transport:
+these read deadlines never turn a lost write response into permission to resend
+an invitation, denial or role change. Existing uncertain-write rules are unchanged.
+
 A canonical admin at AAL1 gets the allowlisted Account Security challenge link,
 preserving the admin return route. A stale session gets explicit sign-out/login.
 MFA enrollment itself remains available separately without admin assignment.
@@ -178,7 +201,8 @@ ten-second deadline; its exact-bearer native POST also limits UTF-8 response dat
 to 64KiB. No automatic retry occurs. The existing Admin owner/epoch checks and
 row/filter/cursor scrubbing apply. All response rows validate before publishing
 any of them; malformed status, timestamps, requester, or oversized cursor causes
-the fixed unavailable state. Other Admin mutation/read transport is unchanged.
+the fixed unavailable state. Admin mutation transport is unchanged; other reads
+use the separate bounded transport described above.
 New view/transport modules stay out of every non-Admin initial graph. Synthetic
 preview data is generated only by the explicit mock adapter and is never stored.
 
@@ -190,6 +214,16 @@ text, responsive tables and axe. Separate unit tests exercise stream limits,
 malformed MIME/UTF-8, aborted/stalled fetch/body, and late module/Auth continuation
 after deadline. Exact SQL authorization and query plans are separate evidence;
 the local HTTP provider is not proof of hosted fulfillment.
+
+Read deadline regressions deterministically stall every session/Auth/RPC boundary,
+exercise immediate cancellation/invalidation, same-session bearer replacement,
+late continuations, transport stream limits and manual recovery. The browser suite
+holds real local-provider context, Users/Audit/Early Access and detail responses
+past the production deadline, then verifies empty safe error states and explicit
+manual retry in Chromium and WebKit. No mutation is submitted by those tests.
+An installed-SDK/local-provider regression also times out old native verification,
+successfully reads under a newer signed-in or silently replaced session, then
+delivers the old `session_not_found` and verifies the replacement remains intact.
 
 Run `pnpm test`, `pnpm test:e2e:admin`, and the `admin-preview.spec.mjs` Chromium
 and WebKit projects. The live-build suite uses the actual installed Supabase SDK

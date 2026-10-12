@@ -146,6 +146,49 @@ real thumbnail encoding/save, superseded selection, and real HTTP failure/reload
 recovery in Chromium and WebKit. These are local graph/functional results, not
 deployed timing or RUM. The broad FOU-1501 completion targets remain unmet.
 
+## Disabled group-integration UI pruning (October 12 checkpoint)
+
+Community and Group Settings now give the bundler an explicit proof when
+`VITE_ENABLE_GROUP_INTEGRATIONS` is exactly the string `false`. Every other value
+still uses the unchanged runtime parser, including whitespace, casing, booleans,
+missing values and noncanonical strings. No provider is enabled, no callback
+body changes, and no API, Auth, server, flag configuration or budget changes.
+
+This is the isolated pruning slice based on source
+`e8b16c66d312f7b4230415a5aecf8cec3ca45022`, before combination with the Admin
+deadline changes. Paired in-memory Node 26.4.0 / Vite 8.1.5 builds embed that same
+exact build-SHA input; the baseline removes only the two new guards in memory.
+Both production-connected and mock builds use synthetic or empty publishable
+configuration and make no provider requests.
+
+| Mode / initial JS gzip bytes | Before | After | Saved |
+| --- | ---: | ---: | ---: |
+| Real-main Community | 138142 | 135235 | 2907 |
+| Real-main Group Settings | 125386 | 121826 | 3560 |
+| Mock-develop Community | 153373 | 150485 | 2888 |
+| Mock-develop Group Settings | 140628 | 137073 | 3555 |
+
+All 29 routes retain their initial request counts, CSS bytes and singleton Auth
+boundary. The shared menu also loses the now-unused flag-parser export; other
+disabled routes have small export-alias/hash compression differences. The MFA
+and invitation-capability initial graphs retain identical normalized code.
+Both enabled-main and enabled-mock pairs have identical code and gzip totals for
+all 29 routes. Measure the current source tree with
+`node scripts/measure-group-integration-pruning.mjs e8b16c66d312f7b4230415a5aecf8cec3ca45022`.
+The embedded SHA alone does not freeze source: later combined changes produce
+updated totals, so reproducing this table requires the isolated slice's source.
+
+Compiled semantic tests compare 17 flags and 204 callback outcomes. Local browser
+tests compile the actual route/UI helpers against a synthetic API facade: they
+verify disabled Group Settings fragment scrubbing/no integration requests,
+unrelated-fragment preservation, the existing Community settings-link behavior,
+and enabled Slack/Discord setup, consent, configuration, test, disconnect and
+off-provider redirect rejection. The old Community callback reader is already
+uncalled; this slice does not activate it. Both Chromium and mobile WebKit run
+these cases in the existing required browser suite. This is not SDK, real OAuth,
+hosted integration, complete visual acceptance or deployed timing/RUM proof.
+The broader FOU-1501 completion targets remain unmet at this checkpoint.
+
 ## Changes in the first asset phase
 
 - Hashed `/assets/*` files receive one-year immutable freshness. Root HTML and

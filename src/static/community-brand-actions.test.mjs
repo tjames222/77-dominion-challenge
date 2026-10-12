@@ -58,7 +58,7 @@ describe('branded Community actions', () => {
     assert.equal(groupIntegrationsEnabled(true), true);
     assert.match(envExample, /VITE_ENABLE_GROUP_INTEGRATIONS=false/);
     assert.match(settingsHtml, /id="groupIntegrations"[^>]+hidden/);
-    assert.match(settingsJavascript, /GROUP_INTEGRATIONS_ENABLED = groupIntegrationsEnabled/);
+    assert.match(settingsJavascript, /GROUP_INTEGRATIONS_ENABLED = import\.meta\.env\.VITE_ENABLE_GROUP_INTEGRATIONS !== 'false' && groupIntegrationsEnabled/);
     assert.match(settingsJavascript, /\$\('groupIntegrations'\)\.hidden = !crew \|\| !GROUP_INTEGRATIONS_ENABLED/);
     assert.match(settingsJavascript, /if \(!GROUP_INTEGRATIONS_ENABLED \|\| !state\.crew\)/);
     assert.match(settingsJavascript, /if \(!GROUP_INTEGRATIONS_ENABLED\) return;[\s\S]*?data-connect-provider/);
