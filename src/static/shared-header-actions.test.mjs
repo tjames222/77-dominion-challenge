@@ -94,7 +94,7 @@ describe('authenticated shared header actions', () => {
     assert.match(streakDialog, /dialog\.elements\.body\.scrollTop = 0/);
     assert.match(actions, /dialog\?\.close\('replaced'\)/);
     assert.match(actions, /submitOwnerVersion !== ownerVersion/);
-    assert.match(actions, /getChallengeActivation\(\{ expectedUserId \}\),\s*getGameSummary\(\),/);
+    assert.match(actions, /getChallengeActivation\(\{ expectedUserId \}\),\s*getGameSummary\(\{ includeBadges: false \}\),/);
     assert.match(actions, /stats: stats \|\| DEFAULT_GAME_STATS/);
     assert.doesNotMatch(actions, /dominion:gameStats|dominion:checkInDates|migrateMockCheckInCache|writePreviewUserValue/);
     assert.match(composer, /shareComposerInstance\?\.reset\?\.\(reason\)/);

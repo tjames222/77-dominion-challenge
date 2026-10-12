@@ -19,6 +19,32 @@ const photoFile = () => ({ name: 'avatar.webp', mimeType: 'image/webp',
   buffer: readFileSync(new URL('../../src/assets/hero/hero-dark-480.webp', import.meta.url)) });
 const photoModulePattern = /\/profile-photo-preparation(?!-loader)(?:-[\w-]+)?\.(?:mjs|js)(?:\?|$)/;
 
+test('stats-only preview summary preserves persisted awards, points and grants for later full-summary callers', async ({ page, app }) => {
+  await app.seed('rewardsUnlocked');
+  await page.route('**/__header-summary-fixture', route => route.fulfill({
+    contentType: 'text/html', body: '<!doctype html><title>Summary preservation fixture</title>',
+  }));
+  await page.goto('/__header-summary-fixture');
+  const result = await page.evaluate(async () => {
+    const api = await import('/src/static/api.js');
+    const actorId = (await api.getLocalOrSessionUser()).userId;
+    // Exercise the real preview aggregate's legacy import and grant
+    // reconciliation; a stats-only read is not a claim of zero storage writes.
+    const lean = await api.getGameSummary({ includeBadges: false });
+    const afterLean = structuredClone(api.readPreviewAggregate(actorId));
+    const full = await api.getGameSummary();
+    const afterFull = structuredClone(api.readPreviewAggregate(actorId));
+    return { lean, full, afterLean, afterFull };
+  });
+  expect(result.lean.badges).toEqual([]);
+  expect(result.full.badges.length).toBeGreaterThan(0);
+  expect(result.lean.gameStats).toEqual(result.full.gameStats);
+  expect(result.lean.gameStats.totalPoints).toBeGreaterThan(0);
+  expect(result.afterLean.values['dominion:badgeState:v1'].awards.length).toBeGreaterThan(0);
+  expect(result.afterLean.values['dominion:mockRewardEntitlements'].length).toBeGreaterThan(0);
+  expect(result.afterFull).toEqual(result.afterLean);
+});
+
 test('profile photo preparation loads only after selection, then prepares and saves a thumbnail', async ({ page, app }) => {
   const requests = [];
   page.on('request', (request) => { if (photoModulePattern.test(request.url())) requests.push(request.url()); });

@@ -653,6 +653,34 @@ and automatic walkthrough targets plus a real HTTP503/reload of the complete
 header/training graph. These are local behavior/bundle checks, not hosted-provider,
 deployed timing or final FOU-1501 completion evidence; the ticket remains open.
 
+## Header statistics-only reads (October 12 local checkpoint)
+
+The shared header now opts into `getGameSummary({ includeBadges: false })` in
+both real and mock modes. Only the boolean `false` omits badges; the default
+and every other option value retain the full summary. The option is captured
+before the existing user lookup awaits. Dashboard and preview check-in callers
+remain unchanged, as do eager Auth, actor/lifecycle fences and the header's
+visit-before-statistics ordering. No settled cache or mutation coalescing is added.
+
+On this local slice based on `c62fde6e9c0dc5a23e65bb115b7bc2c784462586`, compiled
+Chromium and WebKit tests observe one `user_game_stats` SELECT and zero
+`user_badges` SELECTs for each initial, dialog-open and activation-event header
+refresh. The prior full-summary path remains two SELECTs in the API contract
+tests. This removes one unused badge request per header refresh; it is not an
+initial-JS, deployed-latency or overall FOU-1501 completion claim. Statistics
+failures still surface through the existing recovery UI; full-summary callers
+still receive badge failures, while an unrelated badge failure cannot block the
+statistics-only header.
+
+Real preview-aggregate browser tests preserve nonempty awards, points and grants
+across statistics-only and subsequent full reads. The existing aggregate import
+and grant reconciliation still run and may persist state; skipping returned
+badges does not mean zero preview writes. Unit tests hold user lookups and verify
+that their captured option cannot change. Both browser engines verify that held
+statistics responses cannot overwrite replacement-session, A→B→A, logout or
+pagehide/BFCache state. The unchanged 29-route performance budgets still pass
+with final targets open.
+
 ## Interim automated budgets
 
 `pnpm run check:frontend-performance` audits a freshly built canonical mock preview

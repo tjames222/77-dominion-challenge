@@ -9,10 +9,10 @@ const headerOptional = /\/shared-header-actions-[\w-]+\.js(?:\?|$)/;
 const trigger = page => page.locator('.shared-header-streak');
 const dialog = page => page.getByRole('dialog', { name: 'App Streak', exact: true });
 const json = (route, value, status = 200) => route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(value) });
-async function fixture(context, { locked = false } = {}) {
+async function fixture(context, { locked = false, badgesUnavailable = false } = {}) {
   const auth = await installAdminStub(context, { role: 'member' });
   const tokens = new Map([[auth.firstSession.access_token, auth.A]]);
-  const calls = []; let holding = null; let lost = false;
+  const calls = []; let holding = null; let lost = false; let statsUnavailable = false; let nextStats = null;
   const activations = new Map([auth.A, auth.B].map(actorId => {
     const activation = dailyBootstrapV2Fixture({ actorId, entryDate: '2026-09-28',
       instanceId: actorId === auth.A ? DAILY_INSTANCE_ID : 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb' }).activation;
@@ -27,8 +27,13 @@ async function fixture(context, { locked = false } = {}) {
     const body = request.postData() ? request.postDataJSON() : null;
     calls.push({ name, actor, body });
     if (!actor) return json(route, {}, 401);
-    if (name === 'user_game_stats') return json(route, { current_app_streak: 6, best_app_streak: 8 });
-    if (name === 'user_badges') return json(route, []);
+    if (name === 'user_game_stats') {
+      const held = nextStats; nextStats = null;
+      if (held) await held.promise;
+      return statsUnavailable ? json(route, { message: 'Statistics temporarily unavailable.' }, 503)
+        : json(route, { current_app_streak: held?.streak ?? 6, best_app_streak: 8 });
+    }
+    if (name === 'user_badges') return badgesUnavailable ? json(route, { message: 'Badges unavailable.' }, 503) : json(route, []);
     if (name === 'record_app_visit') return json(route, { current_app_streak: 6, best_app_streak: 8 });
     const activation = activations.get(actor);
     if (body.target_expected_actor_id !== actor) return json(route, { message: 'The signed-in account changed.' }, 403);
@@ -49,6 +54,8 @@ async function fixture(context, { locked = false } = {}) {
     return lost ? json(route, { message: 'Could not confirm the save.' }, 503) : json(route, activation);
   });
   return { ...auth, calls, writes: () => calls.filter(call => call.name === 'set_challenge_start_date_v2'),
+    failStats(value) { statsUnavailable = value; },
+    holdNextStats(streak = 99) { let release; const promise = new Promise(resolve => { release = resolve; }); nextStats = { promise, streak }; return release; },
     replacement(actor = auth.A) { const session = auth.session(actor, 'aal2', '22222222-2222-4222-8222-222222222222'); tokens.set(session.access_token, actor); return session; },
     hold() { let release; holding = new Promise(resolve => { release = resolve; }); return () => { release(); holding = null; }; },
     loseResponse() { lost = true; } };
@@ -79,6 +86,66 @@ test.beforeEach(async ({ context, page, baseURL }) => {
 test.afterEach(async ({ page }) => {
   expect(page.__streakExternal).toEqual([]); expect(page.__streakErrors).toEqual([]);
 });
+
+test('compiled header issues one statistics SELECT and no badge SELECT per refresh, after the existing visit', async ({ context, page }) => {
+  const auth = await fixture(context, { badgesUnavailable: true }); await ready(page);
+  const count = name => auth.calls.filter(call => call.name === name).length;
+  expect(count('user_game_stats')).toBe(1); expect(count('user_badges')).toBe(0);
+  expect(count('record_app_visit')).toBe(1);
+  expect(auth.calls.findIndex(call => call.name === 'record_app_visit')).toBeLessThan(auth.calls.findIndex(call => call.name === 'user_game_stats'));
+  await trigger(page).click(); await expect(dialog(page)).toHaveAttribute('aria-busy', 'false');
+  expect(count('user_game_stats')).toBe(2); expect(count('user_badges')).toBe(0);
+  await page.evaluate(() => window.dispatchEvent(new Event('dominion:challenge-activation-updated')));
+  await expect.poll(() => count('user_game_stats')).toBe(3);
+  await expect(dialog(page)).toHaveAttribute('aria-busy', 'false');
+  expect(count('user_badges')).toBe(0); expect(count('record_app_visit')).toBe(1);
+  await expect(dialog(page).locator('[data-global-streak-value="currentAppStreak"]')).toHaveText('6');
+  expect(auth.writes()).toHaveLength(0);
+});
+
+test('compiled statistics errors remain visible and recover on the existing refresh without badge reads', async ({ context, page }) => {
+  const auth = await fixture(context); await ready(page); auth.failStats(true);
+  await trigger(page).click();
+  await expect(dialog(page).locator('[data-global-streak-load-status]')).toHaveText('Streak details could not be refreshed.');
+  await expect(dialog(page)).toHaveAttribute('aria-busy', 'false');
+  await expect(page.locator('.shared-header-streak-count')).toHaveText('6');
+  auth.failStats(false);
+  await page.evaluate(() => window.dispatchEvent(new Event('dominion:challenge-activation-updated')));
+  await expect(dialog(page).locator('[data-global-streak-load-status]')).toBeHidden();
+  await expect(dialog(page)).toHaveAttribute('aria-busy', 'false');
+  expect(auth.calls.filter(call => call.name === 'user_badges')).toHaveLength(0);
+  expect(auth.calls.filter(call => call.name === 'record_app_visit')).toHaveLength(1);
+});
+
+for (const cause of ['same-user SID', 'A-B-A', 'logout', 'pagehide']) {
+  test(`compiled held statistics cannot render stale header state after ${cause}`, async ({ context, page }) => {
+    const auth = await fixture(context); const release = auth.holdNextStats();
+    await page.goto('/science.html');
+    await expect.poll(() => auth.calls.filter(call => call.name === 'user_game_stats').length).toBe(1);
+    if (cause === 'pagehide') await page.evaluate(() => window.dispatchEvent(new PageTransitionEvent('pagehide', { persisted: true })));
+    else if (cause === 'logout') await broadcast(page, null, 'SIGNED_OUT');
+    else {
+      await broadcast(page, auth.replacement(cause === 'A-B-A' ? auth.B : auth.A));
+      await expect(page.locator('.shared-header-streak-count')).toHaveText('6');
+      if (cause === 'A-B-A') {
+        await broadcast(page, auth.replacement(auth.A));
+        await expect.poll(() => auth.calls.filter(call => call.name === 'user_game_stats').length).toBe(3);
+        await expect(page.locator('.shared-header-streak-count')).toHaveText('6');
+      }
+    }
+    if (cause === 'logout' || cause === 'pagehide') await expect(trigger(page)).toHaveCount(0);
+    release(); await page.waitForLoadState('networkidle');
+    if (cause === 'logout' || cause === 'pagehide') await expect(trigger(page)).toHaveCount(0);
+    else await expect(page.locator('.shared-header-streak-count')).toHaveText('6');
+    if (cause === 'pagehide') {
+      await page.evaluate(() => window.dispatchEvent(new PageTransitionEvent('pageshow', { persisted: true })));
+      await expect(page.locator('.shared-header-streak-count')).toHaveText('6');
+      await expect(page.locator('.authenticated-header-actions')).toHaveCount(1);
+    }
+    expect(auth.calls.filter(call => call.name === 'user_badges')).toHaveLength(0);
+    expect(auth.writes()).toHaveLength(0);
+  });
+}
 
 test('compiled slow header reserves geometry, leaves navigation/Admin independent, and survives an open drawer', async ({ context, page }) => {
   const auth = await fixture(context); auth.role('site_admin');

@@ -197,7 +197,7 @@ export function createAuthenticatedHeaderActions({
       const expectedUserId = currentUser?.userId || '';
       const [activation, summary] = await Promise.all([
         getChallengeActivation({ expectedUserId }),
-        getGameSummary(),
+        getGameSummary({ includeBadges: false }),
       ]);
       return localHeaderSnapshot(
         currentUser,
@@ -219,7 +219,7 @@ export function createAuthenticatedHeaderActions({
       }
       await recordVisitPromise;
     }
-    const summary = await getGameSummary();
+    const summary = await getGameSummary({ includeBadges: false });
     return {
       stats: summary?.gameStats || DEFAULT_GAME_STATS,
       profile: { challengeStartDate: activation.startDate },
