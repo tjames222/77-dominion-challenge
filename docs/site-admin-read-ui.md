@@ -187,14 +187,34 @@ rendered, with no requester identity or private content. This is recorded intake
 not export delivery or complete-erasure verification. It adds no fulfillment
 actions, cleanup/integration health, SLA promise, metrics, or role permissions.
 
-Only request UUID, nullable requester UUID, request type/status, and requested,
-updated and resolved UTC timestamps are rendered. No notes, names, email
-addresses, export data, links or private content are selected or displayed. A
+The list renders only request UUID, nullable requester UUID, request type/status,
+and requested, updated and resolved UTC timestamps. No notes, names, email
+addresses, export data or private content are selected or prefetched for it. A
 removed account reference remains explicitly absent; it is not reconstructed.
 Recorded fulfilled is historical operator state, not new proof of delivery or
-complete erasure. Declined is not relabeled as a failed processor run. This slice
-does not provide account-detail links; separately opening Users still requires
-the existing `users.read` authorization.
+complete erasure. Declined is not relabeled as a failed processor run.
+
+An operator with both `operations.read` and `users.read` can explicitly choose
+View requester account for a non-null requester UUID. This opens an independent,
+read-only dialog using that exact captured UUID, not a name/email lookup or
+mutable DOM attribute. Every open or manual refresh obtains fresh guarded
+context before and after the existing account-detail read, with owner/session
+checks around the operation. All of these reads share one ten-second deadline;
+this is three RPCs (two context reads and one detail read), not a single RPC.
+Both permissions, the actor, session and complete fixed-field response must still
+validate before any account facts appear. The ordinary Users detail and its
+mutation behavior remain unchanged; this requester dialog never mounts roles,
+invitations, administrative history or lifecycle actions.
+
+The dialog reuses the existing account snapshot presentation. Missing/deleted
+accounts are not reconstructed, null snapshots remain unknown, and viewing an
+account does not process or fulfill its request. A failed or timed-out read clears
+facts and offers an explicit retry without changing the inbox page, filters or
+queue overview. Closing restores focus to the request button. Close, filter/tab
+changes, pagehide, session replacement and broad Admin invalidation abort and
+scrub the detail; late results cannot reopen it or replace a newer request.
+Permission loss clears the private workspace rather than publishing partial
+facts. Neither request nor account payloads are stored or logged.
 
 The entire new list operation, including deferred loading and Auth waits, has a
 ten-second deadline; its exact-bearer native POST also limits UTF-8 response data
@@ -206,10 +226,13 @@ use the separate bounded transport described above.
 New view/transport modules stay out of every non-Admin initial graph. Synthetic
 preview data is generated only by the explicit mock adapter and is never stored.
 
-The production-built Admin suite includes Operations-only isolation, paging and
+The production-built, local synthetic Admin suite includes Operations-only isolation, paging and
 filters, each existing status, removed requester, private-field sentinels,
 permission loss, wrong actor, same-user session replacement, A→B→A, pagehide and
-late-response rejection. Chromium/WebKit cover keyboard tabs, four themes, 200%
+late-response rejection. Requester-detail cases additionally verify explicit-only
+exact-ID reads, both fresh permission checks, absent/deleted requester handling,
+fixed-field projection, in-place timeout/manual recovery, stale-button guards,
+and no mutation dispatch or Users action mounts. Chromium/WebKit cover keyboard tabs, four themes, 200%
 text, responsive tables and axe. Separate unit tests exercise stream limits,
 malformed MIME/UTF-8, aborted/stalled fetch/body, and late module/Auth continuation
 after deadline. Exact SQL authorization and query plans are separate evidence;

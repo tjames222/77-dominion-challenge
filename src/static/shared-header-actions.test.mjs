@@ -64,9 +64,10 @@ describe('authenticated shared header actions', () => {
       read('./app-streak-dialog.mjs'),
     ]);
 
-    assert.match(actions, /shared-header-action-label', 'Share'/);
-    assert.match(actions, /shared-header-action-label', 'App Streak'/);
-    assert.match(actions, /aria-controls', 'globalStreakDetailsDialog'/);
+    const shell = await read('./shared-header-shell.mjs');
+    assert.match(shell, /shared-header-action-label', 'Share'/);
+    assert.match(shell, /shared-header-action-label', 'App Streak'/);
+    assert.match(shell, /aria-controls', 'globalStreakDetailsDialog'/);
     assert.match(actions, /streakButton\.setAttribute\('aria-expanded', 'true'\)/);
     assert.match(actions, /onClose: \(\) => streakButton\.setAttribute\('aria-expanded', 'false'\)/);
     assert.match(streakDialog, /dialog\.destroy\(\)/);
@@ -93,7 +94,7 @@ describe('authenticated shared header actions', () => {
     assert.match(streakDialog, /dialog\.elements\.body\.scrollTop = 0/);
     assert.match(actions, /dialog\?\.close\('replaced'\)/);
     assert.match(actions, /submitOwnerVersion !== ownerVersion/);
-    assert.match(actions, /getChallengeActivation\(\{ expectedUserId \}\),\s*getGameSummary\(\),/);
+    assert.match(actions, /getChallengeActivation\(\{ expectedUserId \}\),\s*getGameSummary\(\{ includeBadges: false \}\),/);
     assert.match(actions, /stats: stats \|\| DEFAULT_GAME_STATS/);
     assert.doesNotMatch(actions, /dominion:gameStats|dominion:checkInDates|migrateMockCheckInCache|writePreviewUserValue/);
     assert.match(composer, /shareComposerInstance\?\.reset\?\.\(reason\)/);

@@ -128,6 +128,7 @@ describe('site training registry', () => {
       'science.html',
       'src/static/menu.js',
       'src/static/shared-header-actions.js',
+      'src/static/shared-header-shell.mjs',
       'src/static/daily-standard-page.js',
     ].map((path) => readFileSync(new URL(`../../${path}`, import.meta.url), 'utf8')).join('\n');
     const publishedTargets = new Set(SITE_TRAINING_REGISTRY.pages.flatMap((entry) => (

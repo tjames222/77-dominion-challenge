@@ -18,6 +18,7 @@ import {
   streakIndicatorLabel,
 } from './streak-summary.mjs';
 import { normalizeChallengeStartDate } from './shared-header-state.mjs';
+import { createAuthenticatedHeaderShell } from './shared-header-shell.mjs';
 
 const DEFAULT_GAME_STATS = Object.freeze({
   currentAppStreak: 0,
@@ -25,13 +26,6 @@ const DEFAULT_GAME_STATS = Object.freeze({
   currentFullDayStreak: 0,
   bestFullDayStreak: 0,
 });
-
-function element(ownerDocument, tag, className = '', text = '') {
-  const node = ownerDocument.createElement(tag);
-  if (className) node.className = className;
-  if (text) node.textContent = text;
-  return node;
-}
 
 function localDateKey() {
   try {
@@ -82,59 +76,20 @@ export function createAuthenticatedHeaderActions({
   captureLifecycle,
   isCurrentLifecycle,
   document: ownerDocument = globalThis.document,
+  shell,
 } = {}) {
   if (!topbar || !ownerDocument?.createElement
     || typeof captureLifecycle !== 'function' || typeof isCurrentLifecycle !== 'function') {
     throw new TypeError('Authenticated header actions require a topbar and document.');
   }
 
-  topbar.classList.add('has-authenticated-header-actions');
-
-  let trailingActions = topbar.querySelector('.topbar-trailing-actions');
-  if (!trailingActions) {
-    trailingActions = element(ownerDocument, 'div', 'topbar-trailing-actions');
-    topbar.append(trailingActions);
-  }
-
-  const existingMenuButton = topbar.querySelector('.global-menu-button');
-  if (existingMenuButton && existingMenuButton.parentElement !== trailingActions) {
-    trailingActions.append(existingMenuButton);
-  }
-
-  const actionGroup = element(ownerDocument, 'div', 'authenticated-header-actions');
-  actionGroup.setAttribute('role', 'group');
-  actionGroup.setAttribute('aria-label', 'Member actions');
-
-  const shareButton = element(ownerDocument, 'button', 'shared-header-action shared-header-share');
-  shareButton.type = 'button';
-  shareButton.disabled = true;
-  shareButton.setAttribute('aria-label', 'Share progress unavailable until your challenge starts.');
+  const { actionGroup, shareButton, streakButton, streakCount, streakLabel } = shell || createAuthenticatedHeaderShell(topbar, ownerDocument);
+  actionGroup.setAttribute('aria-busy', 'false');
   shareButton.dataset.shareComposer = '';
   shareButton.dataset.shareKind = 'progress';
-  shareButton.dataset.trainingTarget = 'global-share';
-  shareButton.append(
-    element(ownerDocument, 'span', 'app-icon icon-share', ''),
-    element(ownerDocument, 'span', 'shared-header-action-label', 'Share'),
-  );
-  shareButton.querySelector('.app-icon')?.setAttribute('aria-hidden', 'true');
-
-  const streakButton = element(ownerDocument, 'button', 'shared-header-action shared-header-streak');
-  streakButton.type = 'button';
-  streakButton.setAttribute('aria-haspopup', 'dialog');
-  streakButton.setAttribute('aria-controls', 'globalStreakDetailsDialog');
-  streakButton.setAttribute('aria-expanded', 'false');
+  shareButton.setAttribute('aria-label', 'Share progress unavailable until your challenge starts.');
+  streakButton.disabled = false;
   streakButton.setAttribute('aria-label', 'App streak: loading. View streak details.');
-  streakButton.dataset.trainingTarget = 'global-app-streak';
-  const streakIcon = element(ownerDocument, 'span', 'app-icon icon-lightning');
-  streakIcon.setAttribute('aria-hidden', 'true');
-  const streakLabel = element(ownerDocument, 'span', 'shared-header-action-label', 'App Streak');
-  const streakCount = element(ownerDocument, 'strong', 'shared-header-streak-count', '—');
-  streakCount.dataset.globalAppStreakCount = '';
-  streakButton.append(streakIcon, streakLabel, streakCount);
-  actionGroup.append(shareButton, streakButton);
-
-  const menuButton = trailingActions.querySelector('.global-menu-button');
-  trailingActions.insertBefore(actionGroup, menuButton || null);
 
   let dialog = null;
   let openRequest = 0;
@@ -242,7 +197,7 @@ export function createAuthenticatedHeaderActions({
       const expectedUserId = currentUser?.userId || '';
       const [activation, summary] = await Promise.all([
         getChallengeActivation({ expectedUserId }),
-        getGameSummary(),
+        getGameSummary({ includeBadges: false }),
       ]);
       return localHeaderSnapshot(
         currentUser,
@@ -264,7 +219,7 @@ export function createAuthenticatedHeaderActions({
       }
       await recordVisitPromise;
     }
-    const summary = await getGameSummary();
+    const summary = await getGameSummary({ includeBadges: false });
     return {
       stats: summary?.gameStats || DEFAULT_GAME_STATS,
       profile: { challengeStartDate: activation.startDate },
