@@ -10,6 +10,8 @@ import { normalizeEarlyAccessRequest } from './admin-early-access-contract.mjs';
 import { mountEarlyAccessDetail } from './admin-early-access-detail.mjs';
 import { mountRoleDetail } from './admin-role-detail.mjs';
 import { mountAdminUserHistory } from './admin-user-history-detail.mjs';
+import { isRequesterId } from './admin-requester-account.mjs';
+import { mountRequesterDetail } from './admin-requester-detail.mjs';
 import { adminUserListFacts, adminUserSummary } from './admin-user-presentation.mjs';
 import { normalizeAdminAccountRequestPage, normalizeAdminAccountRequestQueueHealth, accountRequestTypeLabel, accountRequestRecordedStatus } from './admin-account-requests.mjs';
 import { readAdminAccountRequests } from './admin-account-request-transport.mjs';
@@ -145,7 +147,22 @@ function renderRows(items) {
     const row = element('tr');
     if (tab === 'requests') {
       row.setAttribute('role', 'row');
-      cell(row, 'Request and requester IDs', userFacts([['Request ID', item.id], ['Requester ID', item.userId ?? 'Account reference removed']], 'admin-request-facts'));
+      const reference = userFacts([['Request ID', item.id], ['Requester ID', item.userId ?? 'Account reference removed']], 'admin-request-facts');
+      const identity = element('div'); identity.append(reference);
+      if (permissions.includes('users.read') && permissions.includes('operations.read') && isRequesterId(item.userId)) {
+        const button = element('button', 'View requester account'); button.type = 'button';
+        button.setAttribute('aria-label', `View requester account for request ${item.id}`);
+        const captured = epoch; const query = queryEpoch; const requesterId = item.userId; const requestId = item.id;
+        button.addEventListener('click', () => {
+          // Only a current rendered row may initiate the read. Do not trust
+          // mutable DOM attributes or a detached button's retained listener.
+          if (captured !== epoch || query !== queryEpoch || tab !== 'requests' || dialog.open || !button.isConnected
+            || !row.contains(button) || row.parentElement !== byId('adminRequestsRows')) return;
+          openRequesterDetail(requesterId, requestId, button);
+        });
+        identity.append(button);
+      }
+      cell(row, 'Request and requester IDs', identity);
       cell(row, 'Type', accountRequestTypeLabel(item.requestType));
       cell(row, 'Recorded status', badge(accountRequestRecordedStatus(item.status)));
       cell(row, 'Timeline', userFacts([['Requested', date(item.requestedAt)], ['Updated', date(item.updatedAt)], ['Resolved', item.resolvedAt === null ? 'Not resolved' : date(item.resolvedAt)]], 'admin-request-facts'));
@@ -234,6 +251,18 @@ function renderAudit(item) {
   addSection('Administrative event', [['Recorded', date(item.occurredAt)], ['Action', item.action], ['Outcome', item.outcome], ['Reason code', item.reasonCode], ['Before role', item.beforeRole], ['After role', item.afterRole], ['Error code', item.errorCode]]);
   const identifiers = disclosure('Event identifiers and permission', byId('adminDetailBody'));
   addSection('Audit reference', [['Event ID', item.id], ['Actor ID', item.actorId], ['Target user ID', item.targetUserId], ['Permission', item.permission], ['Request ID', item.requestId], ['Correlation ID', item.correlationId], ['Environment', item.environment]], identifiers);
+}
+function openRequesterDetail(requesterId, requestId, button) {
+  if (!owner || suspended || tab !== 'requests' || !isRequesterId(requesterId)
+    || !permissions.includes('operations.read') || !permissions.includes('users.read')) return;
+  closeDetail({ restore: false }); detailOpener = button;
+  const captured = epoch; const detail = detailEpoch; const query = queryEpoch;
+  byId('adminDetailTitle').textContent = 'Requester account';
+  dialog.showModal(); byId('adminDetailClose').focus();
+  detailCleanup = mountRequesterDetail({ container: byId('adminDetailBody'), owner: { ...owner }, requesterId, requestId,
+    isCurrent: () => captured === epoch && detail === detailEpoch && query === queryEpoch && !suspended && tab === 'requests'
+      && permissions.includes('operations.read') && permissions.includes('users.read'),
+    renderFacts: renderUser, onError: showError });
 }
 async function openDetail(kind, id, button) {
   if (!owner || suspended) return;
