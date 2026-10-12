@@ -6,6 +6,7 @@ import { feedbackTestPage } from './feedback-test-dom.mjs';
 import { createAppStreakDialog } from './app-streak-dialog.mjs';
 import { normalizeChallengeStartDate } from './shared-header-state.mjs';
 import { buildStreakSummary, streakIndicatorLabel } from './streak-summary.mjs';
+import { createAuthenticatedHeaderShell } from './shared-header-shell.mjs';
 
 const source = readFileSync(new URL('./shared-header-actions.js', import.meta.url), 'utf8');
 const tick = () => new Promise(resolve => setImmediate(resolve));
@@ -39,7 +40,7 @@ function setup({ load, update, timer } = {}) {
     currentInstance: { id: '11111111-1111-4111-8111-111111111111' } };
   const module = { createAppStreakDialog: options => { calls.factories++; return createAppStreakDialog(options); } };
   const runtime = {
-    ...{ buildStreakSummary, streakIndicatorLabel, normalizeChallengeStartDate },
+    ...{ buildStreakSummary, streakIndicatorLabel, normalizeChallengeStartDate, createAuthenticatedHeaderShell },
     dateKeyForTimeZone: () => '2026-09-28', isLocalDemoMode: () => false, initShareComposer() {},
     getChallengeActivation: async () => { calls.reads++; return activation; }, recordAppVisit: async () => {},
     getGameSummary: async () => ({ gameStats: { currentAppStreak: 6, bestAppStreak: 8 } }),
@@ -124,7 +125,7 @@ test('deferred factory has no API imports and existing menu lifecycle supplies t
   assert.doesNotMatch(view, /from ['"].*(?:api|auth-runtime)|createClient|fetch\(|localStorage|sessionStorage/);
   const menu = readFileSync(new URL('./menu.js', import.meta.url), 'utf8');
   assert.match(menu, /captureLifecycle: \(\) => menuHydrationRequest/);
-  assert.match(menu, /isCurrentLifecycle: generation => generation === menuHydrationRequest/);
+  assert.match(menu, /isCurrentLifecycle: version => !menuSuspended && version === menuHydrationRequest/);
   assert.match(menu, /subscribeToAuthStateChanges\([\s\S]*?menuHydrationRequest \+= 1/);
   assert.match(menu, /addEventListener\('pagehide'[\s\S]*?menuHydrationRequest \+= 1/);
 });

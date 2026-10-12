@@ -595,6 +595,64 @@ compiled Chromium/WebKit MFA, recovery and invitation tests and the DEV hybrid
 Auth suite also pass. This is a local bundle/behavior checkpoint, not deployed
 timing, round-trip, RUM or final 40%/25% completion evidence. FOU-1501 remains open.
 
+## Authenticated header deferral (October 12 local checkpoint)
+
+The existing verified-user and route allowlist now admits a deferred
+`shared-header-actions` controller. A small inert shell preserves the original
+Share/App Streak touch targets and the menu toggle's slot, including while the
+drawer has lifted its toggle into the document body. The existing shared
+`streak-summary` helper stays in the menu chunk, avoiding an extra initial request
+on Dashboard. Auth initialization, observers and all session/flag decisions stay
+eager and unchanged; public guests never request the optional controller.
+
+This isolated slice was measured against menu/controller sources pinned to
+`ec006e252d6cd333c73c8b769c682421bf3b2117`, before combination with other work.
+Both sides used that embedded SHA, Node 26.4.0/Vite 8.1.5, a synthetic public key,
+Night enabled, and billing/signup/integrations disabled. These local gzip totals
+include the new eager shell, loader and lifecycle/readiness checks:
+
+| Initial JS gzip bytes | Real-main before | Real-main after | Mock-develop before | Mock-develop after |
+| --- | ---: | ---: | ---: | ---: |
+| Landing | 121147 | 119882 | 136413 | 135154 |
+| Login | 125252 | 123988 | 140515 | 139256 |
+| Dashboard | 139908 | 138637 | 155177 | 153911 |
+
+The optional controller is 2642 gzip bytes in each mode. All 29 paired routes
+retain exact initial request counts and CSS bytes; the controller is absent from
+every initial graph. Auth remains one eager runtime per route except the existing
+pre-Auth invitation entry, which has none. Security and invitation entries remain
+menu-free. No performance budgets change. Authenticated visitors fetch the extra
+controller after eligibility, so this is an initial/public transfer reduction,
+not a claim that total member traffic decreases.
+
+The code-only import coalesces, has a 30-second deadline and retains failures
+until explicit, save-first document reload. A late success/failure cannot create
+actor-owned controllers after logout intent, an Auth event/session replacement,
+an A→B→A change, newer focus hydration or pagehide. BFCache return can create one
+fresh current controller. Navigation, Admin readiness and feedback are independent.
+Training downloads in parallel, but its actual initialization waits for current
+header readiness, preserving the earlier header-before-walkthrough order. Failed
+header loading leaves truthful training recovery rather than inert tour targets.
+Only the header and nested App Streak dialog's own redundant JS preloads are
+omitted for WebKit's failed-module reload recovery; other dependencies stay intact.
+
+`node scripts/measure-header-deferral.mjs <40-character-build-sha> --pinned-baseline`
+measures the current tree against the pinned pre-slice sources in memory (that
+historical object must exist locally). Reproduce this table from the exact isolated
+slice, not later combined code. Without `--pinned-baseline`, the command and CI graph
+test compare the current tree to a synthetic eager version without reading Git
+history, so shallow checkouts work. That comparison enforces all 29 graph/budget
+invariants and no request increase; the pinned local comparison supplies the
+exact before/after production request evidence above.
+
+Compiled real-SDK/local synthetic HTTP tests cover Chromium and WebKit, held and
+failed loads, deadline/late completion, same-owner focus, session replacement,
+ABA/logout intent, BFCache, menu isolation/focus and geometry, independent feedback,
+Admin readiness and existing App Streak behavior. Mock browser tests cover manual
+and automatic walkthrough targets plus a real HTTP503/reload of the complete
+header/training graph. These are local behavior/bundle checks, not hosted-provider,
+deployed timing or final FOU-1501 completion evidence; the ticket remains open.
+
 ## Interim automated budgets
 
 `pnpm run check:frontend-performance` audits a freshly built canonical mock preview

@@ -64,9 +64,10 @@ describe('authenticated shared header actions', () => {
       read('./app-streak-dialog.mjs'),
     ]);
 
-    assert.match(actions, /shared-header-action-label', 'Share'/);
-    assert.match(actions, /shared-header-action-label', 'App Streak'/);
-    assert.match(actions, /aria-controls', 'globalStreakDetailsDialog'/);
+    const shell = await read('./shared-header-shell.mjs');
+    assert.match(shell, /shared-header-action-label', 'Share'/);
+    assert.match(shell, /shared-header-action-label', 'App Streak'/);
+    assert.match(shell, /aria-controls', 'globalStreakDetailsDialog'/);
     assert.match(actions, /streakButton\.setAttribute\('aria-expanded', 'true'\)/);
     assert.match(actions, /onClose: \(\) => streakButton\.setAttribute\('aria-expanded', 'false'\)/);
     assert.match(streakDialog, /dialog\.destroy\(\)/);
