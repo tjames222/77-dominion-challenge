@@ -20,7 +20,7 @@ import {
   isHybridAuthPreview,
 } from './auth-runtime-core.mjs';
 import { authSessionIdentity, sessionRequiresMfa } from './mfa-auth.mjs';
-import { createAdminReadClient, adminReadError } from './admin-read-client.mjs';
+import { createAdminReadClient, adminReadError, withAdminReadDeadline } from './admin-read-client.mjs';
 import { createDailyActionBootstrapClient } from './daily-action-bootstrap.mjs';
 import { previewOriginal77Progress } from './original-77-progress.mjs';
 import { normalizePreviewChallengeState, isPreviewChallengeActive, previewChallengeDate, advancePreviewStreaks } from './preview-challenge.mjs';
@@ -642,8 +642,20 @@ async function getAdminReadClient() {
   adminReadClient = createAdminReadClient({
     getSession: getAuthSession,
     getUser: async () => { const { data, error } = await supabase.auth.getUser(); if (error) throw adminReadError('ADMIN_SIGNED_OUT'); return data?.user; },
+    getReadUser: async (token, { signal }) => {
+      const { requestAdminReadUser } = await import('./admin-read-transport.mjs');
+      return requestAdminReadUser({ baseUrl: SUPABASE_URL, apiKey: SUPABASE_KEY, token, signal });
+    },
     sessionIdentity: authSessionIdentity,
     subscribe: subscribeToAuthStateChanges,
+    readRequest: async (name, args, { token, signal }) => {
+      if (name === 'site_admin_list_account_requests' || name === 'site_admin_get_account_request_queue_health') {
+        const { requestAdminAccountRequests } = await import('./admin-account-request-transport.mjs');
+        return requestAdminAccountRequests({ baseUrl: SUPABASE_URL, apiKey: SUPABASE_KEY, token, args, signal, name });
+      }
+      const { requestAdminRead } = await import('./admin-read-transport.mjs');
+      return requestAdminRead({ baseUrl: SUPABASE_URL, apiKey: SUPABASE_KEY, token, args, signal, name });
+    },
     request: async (name, args, { token, signal }) => {
       if (name === 'site_admin_list_account_requests' || name === 'site_admin_get_account_request_queue_health') {
         const { requestAdminAccountRequests } = await import('./admin-account-request-transport.mjs');
@@ -673,17 +685,24 @@ async function getAdminReadClient() {
   adminReadClient.subscribe(notifyAdminInvalidation);
   return adminReadClient;
 }
-export const getAdminSessionOwner = async () => (await getAdminReadClient()).owner();
-export const getSiteAdminContext = async (options = {}) => (await getAdminReadClient()).read('get_site_admin_context', {}, options);
-export const listSiteAdminUsers = async (args, options = {}) => (await getAdminReadClient()).read('site_admin_list_users', args, options);
-export const listSiteAdminAccountRequests = async (args, options = {}) => (await getAdminReadClient()).read('site_admin_list_account_requests', args, options);
-export const getSiteAdminAccountRequestQueueHealth = async (args = {}, options = {}) => (await getAdminReadClient()).read('site_admin_get_account_request_queue_health', args, options);
-export const getSiteAdminUser = async (id, options = {}) => (await getAdminReadClient()).read('site_admin_get_user', { target_user_id: id }, options);
-export const listSiteAdminAudit = async (args, options = {}) => (await getAdminReadClient()).read('site_admin_list_audit', args, options);
-export const getSiteAdminAuditEvent = async (id, options = {}) => (await getAdminReadClient()).read('site_admin_get_audit_event', { target_event_id: id }, options);
-export const listSiteAdminEarlyAccess = async (args, options = {}) => (await getAdminReadClient()).read('site_admin_list_early_access_requests', args, options);
-export const getSiteAdminEarlyAccess = async (id, options = {}) => (await getAdminReadClient()).read('site_admin_get_early_access_request', { target_request_id: id }, options);
-export const listSiteAdminEarlyAccessHistory = async (args, options = {}) => (await getAdminReadClient()).read('site_admin_list_early_access_history', args, options);
+export const getAdminSessionOwner = (options = {}) => withAdminReadDeadline(async ({ signal, assertActive }) => {
+  const client = await getAdminReadClient(); assertActive();
+  const owner = await client.owner({ signal }); assertActive(); return owner;
+}, options);
+const readSiteAdmin = (name, args, options = {}) => withAdminReadDeadline(async ({ signal, assertActive }) => {
+  const client = await getAdminReadClient(); assertActive();
+  const value = await client.read(name, args, { ...options, signal }); assertActive(); return value;
+}, options);
+export const getSiteAdminContext = (options = {}) => readSiteAdmin('get_site_admin_context', {}, options);
+export const listSiteAdminUsers = (args, options = {}) => readSiteAdmin('site_admin_list_users', args, options);
+export const listSiteAdminAccountRequests = (args, options = {}) => readSiteAdmin('site_admin_list_account_requests', args, options);
+export const getSiteAdminAccountRequestQueueHealth = (args = {}, options = {}) => readSiteAdmin('site_admin_get_account_request_queue_health', args, options);
+export const getSiteAdminUser = (id, options = {}) => readSiteAdmin('site_admin_get_user', { target_user_id: id }, options);
+export const listSiteAdminAudit = (args, options = {}) => readSiteAdmin('site_admin_list_audit', args, options);
+export const getSiteAdminAuditEvent = (id, options = {}) => readSiteAdmin('site_admin_get_audit_event', { target_event_id: id }, options);
+export const listSiteAdminEarlyAccess = (args, options = {}) => readSiteAdmin('site_admin_list_early_access_requests', args, options);
+export const getSiteAdminEarlyAccess = (id, options = {}) => readSiteAdmin('site_admin_get_early_access_request', { target_request_id: id }, options);
+export const listSiteAdminEarlyAccessHistory = (args, options = {}) => readSiteAdmin('site_admin_list_early_access_history', args, options);
 export const denySiteAdminEarlyAccess = async (intent, options = {}) => (await getAdminReadClient()).denyEarlyAccess(intent, options);
 export const manageSiteAdminEarlyAccessInvitation = async (intent, options = {}) => (await getAdminReadClient()).manageEarlyAccessInvitation(intent, options);
 export const assignSiteAdminRole = async (intent, options = {}) => (await getAdminReadClient()).assignRole(intent, options);
