@@ -165,7 +165,7 @@ export default defineConfig({
     },
     {
       name: 'webkit-frontend-performance-mobile',
-      testMatch: /frontend-performance\.spec\.mjs/,
+      testMatch: /(?:frontend-performance|group-integration-pruning)\.spec\.mjs/,
       metadata: { breakpoint: 'mobile', theme: 'dark', colorScheme: 'dark' },
       use: { ...devices['iPhone 13'], browserName: 'webkit', viewport: { width: 390, height: 844 } },
     },

@@ -21,7 +21,9 @@ import {
 } from './crew-experience.mjs';
 import { groupIntegrationsEnabled } from './group-integration-launch.mjs';
 
-const GROUP_INTEGRATIONS_ENABLED = groupIntegrationsEnabled(
+// Preserve the runtime parser for every noncanonical flag; only the explicit
+// release-disabled value proves these UI branches unreachable to the bundler.
+const GROUP_INTEGRATIONS_ENABLED = import.meta.env.VITE_ENABLE_GROUP_INTEGRATIONS !== 'false' && groupIntegrationsEnabled(
   import.meta.env.VITE_ENABLE_GROUP_INTEGRATIONS,
 );
 const RETURN_PATH = './group-settings.html';
