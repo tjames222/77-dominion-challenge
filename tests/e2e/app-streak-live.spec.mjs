@@ -73,6 +73,32 @@ async function broadcast(page, session, event = 'SIGNED_IN') {
     const channel = new BroadcastChannel('sb-127-auth-token'); channel.postMessage({ event, session }); channel.close();
   }, { session, event });
 }
+async function withHeldHeaderDownload(page, work) {
+  let resolve; const held = new Promise(done => { resolve = done; });
+  let attempts = 0; let continued = 0; let released = false;
+  const release = () => { released = true; resolve(); };
+  await page.route(headerOptional, async route => {
+    attempts++; await held; continued++; await route.continue();
+  });
+  const header = {
+    release,
+    attempts: () => attempts,
+    assertHeld: () => expect({ attempts, continued, released }).toEqual({ attempts: 1, continued: 0, released: false }),
+  };
+  try { await work(header); }
+  finally { release(); }
+}
+async function readyWithHeldHeader(page, header, path = '/science.html') {
+  // A deliberately held module can delay the browser's load event. Wait for
+  // the document, then prove the pending shell and intercepted download exist.
+  await page.goto(path, { waitUntil: 'domcontentloaded' });
+  await expect.poll(header.attempts).toBe(1);
+  await expect(trigger(page)).toBeVisible();
+  await expect(trigger(page)).toBeDisabled();
+  await expect(page.locator('.authenticated-header-actions')).toBeVisible();
+  await expect(page.locator('.authenticated-header-actions')).toHaveAttribute('aria-busy', 'true');
+  header.assertHeld();
+}
 test.beforeEach(async ({ context, page, baseURL }) => {
   const external = []; const errors = [];
   await context.route('**/*', route => {
@@ -149,104 +175,131 @@ for (const cause of ['same-user SID', 'A-B-A', 'logout', 'pagehide']) {
 
 test('compiled slow header reserves geometry, leaves navigation/Admin independent, and survives an open drawer', async ({ context, page }) => {
   const auth = await fixture(context); auth.role('site_admin');
-  let release; const held = new Promise(resolve => { release = resolve; }); let attempts = 0;
-  await page.route(headerOptional, async route => { attempts++; await held; await route.continue(); });
-  await page.goto('/science.html');
-  await expect(trigger(page)).toBeDisabled();
-  await expect(page.locator('.authenticated-header-actions')).toHaveAttribute('aria-busy', 'true');
-  await page.evaluate(() => document.fonts.ready.then(() => undefined));
-  const boxes = () => page.locator('.topbar').evaluate(topbar => ({ height: topbar.getBoundingClientRect().height,
-    controls: ['.shared-header-share', '.shared-header-streak', '.global-menu-button'].map(selector => {
-      const { x, y, width, height } = topbar.querySelector(selector).getBoundingClientRect(); return { x, y, width, height };
-    }) }));
-  const before = await boxes();
-  expect(auth.calls).toEqual([]);
-  await page.locator('.global-menu-button').click();
-  await expect(page.locator('[data-admin-menu-item]')).toBeVisible();
-  await expect(page.locator('.global-menu-links a').first()).toBeVisible();
-  await expect(page.locator('.global-menu-training-load-status')).toHaveText('Loading training…');
-  await expect(page.getByRole('button', { name: 'Start page training', exact: true })).toBeHidden();
-  release(); await expect(page.locator('.shared-header-streak-count')).toHaveText('6');
-  await expect(page.locator('.authenticated-header-actions')).toHaveCount(1);
-  await expect(page.locator('.topbar .global-menu-button-placeholder')).toHaveCount(1);
-  await expect(page.locator('html')).toHaveClass(/menu-scroll-locked/);
-  await expect(page.locator('.topbar').locator('xpath=ancestor-or-self::*[@inert]').first()).toHaveCount(1);
-  await page.keyboard.press('Escape');
-  await expect(page.locator('.topbar-trailing-actions > .global-menu-button')).toBeFocused();
-  const after = await boxes(); expect(after.height).toBe(before.height);
-  for (let index = 0; index < before.controls.length; index++) {
-    for (const key of ['x', 'y', 'width', 'height']) {
-      // The original dash-to-number badge has subpixel font differences.
-      expect(Math.abs(after.controls[index][key] - before.controls[index][key])).toBeLessThanOrEqual(1);
+  await withHeldHeaderDownload(page, async header => {
+    await readyWithHeldHeader(page, header);
+    await page.evaluate(() => document.fonts.ready.then(() => undefined));
+    const settleGeometry = async () => {
+      // Compare the same non-hovered state, after the real closing transform.
+      // Focus restoration is synchronous and does not settle CSS transitions.
+      await page.mouse.move(0, 0);
+      const state = await page.locator('.topbar').evaluate(async topbar => {
+        topbar.getBoundingClientRect(); // Flush pending style/layout changes.
+        const active = () => topbar.getAnimations({ subtree: true })
+          .filter(animation => animation.pending || animation.playState === 'running');
+        const animations = active();
+        const unbounded = animations.filter(animation => !Number.isFinite(animation.effect?.getComputedTiming().endTime));
+        if (unbounded.length) return { unbounded: unbounded.length, active: animations.length };
+        await Promise.all(animations.map(animation => animation.finished));
+        topbar.getBoundingClientRect();
+        return { unbounded: 0, active: active().length };
+      });
+      expect(state).toEqual({ unbounded: 0, active: 0 });
+    };
+    const boxes = () => page.locator('.topbar').evaluate(topbar => ({ height: topbar.getBoundingClientRect().height,
+      controls: ['.shared-header-share', '.shared-header-streak', '.global-menu-button'].map(selector => {
+        const { x, y, width, height } = topbar.querySelector(selector).getBoundingClientRect(); return { x, y, width, height };
+      }) }));
+    await settleGeometry(); const before = await boxes();
+    expect(auth.calls).toEqual([]);
+    await page.locator('.global-menu-button').click();
+    await expect(page.locator('[data-admin-menu-item]')).toBeVisible();
+    await expect(page.locator('.global-menu-links a').first()).toBeVisible();
+    await expect(page.locator('.global-menu-training-load-status')).toHaveText('Loading training…');
+    await expect(page.getByRole('button', { name: 'Start page training', exact: true })).toBeHidden();
+    header.assertHeld(); expect(auth.calls).toEqual([]);
+    header.release(); await expect(page.locator('.shared-header-streak-count')).toHaveText('6');
+    await expect(page.locator('.authenticated-header-actions')).toHaveCount(1);
+    await expect(page.locator('.topbar .global-menu-button-placeholder')).toHaveCount(1);
+    await expect(page.locator('html')).toHaveClass(/menu-scroll-locked/);
+    await expect(page.locator('.topbar').locator('xpath=ancestor-or-self::*[@inert]').first()).toHaveCount(1);
+    await page.keyboard.press('Escape');
+    await expect(page.locator('.topbar-trailing-actions > .global-menu-button')).toBeFocused();
+    await settleGeometry();
+    const after = await boxes(); expect(after.height).toBe(before.height);
+    for (let index = 0; index < before.controls.length; index++) {
+      for (const key of ['x', 'y', 'width', 'height']) {
+        // The original dash-to-number badge has subpixel font differences.
+        expect(Math.abs(after.controls[index][key] - before.controls[index][key])).toBeLessThanOrEqual(1);
+      }
     }
-  }
-  for (const box of before.controls) { expect(box.width).toBeGreaterThanOrEqual(44); expect(box.height).toBeGreaterThanOrEqual(44); }
-  await page.locator('.global-menu-button').click(); await page.keyboard.press('Escape');
-  await expect(page.locator('html')).not.toHaveClass(/menu-scroll-locked/);
-  await expect(page.locator('.topbar').locator('xpath=ancestor-or-self::*[@inert]')).toHaveCount(0);
-  expect(attempts).toBe(1); expect(auth.writes()).toHaveLength(0);
+    for (const box of before.controls) { expect(box.width).toBeGreaterThanOrEqual(44); expect(box.height).toBeGreaterThanOrEqual(44); }
+    await page.locator('.global-menu-button').click(); await page.keyboard.press('Escape');
+    await expect(page.locator('html')).not.toHaveClass(/menu-scroll-locked/);
+    await expect(page.locator('.topbar').locator('xpath=ancestor-or-self::*[@inert]')).toHaveCount(0);
+    expect(header.attempts()).toBe(1); expect(auth.writes()).toHaveLength(0);
+  });
 });
 
 test('compiled feedback remains usable while the member header is delayed', async ({ context, page }) => {
   const auth = await installFeedbackStub(context, { memberPages: true });
-  let release; const held = new Promise(resolve => { release = resolve; });
-  await page.route(headerOptional, async route => { await held; await route.continue(); });
-  await page.goto('/profile.html'); await expect(trigger(page)).toBeDisabled();
-  await page.locator('[data-feedback-widget]').click();
-  await expect(page.getByRole('dialog', { name: 'Send Feedback', exact: true })).toBeVisible();
-  await page.keyboard.press('Escape');
-  expect(auth.writes()).toEqual([]); release();
+  await withHeldHeaderDownload(page, async header => {
+    await readyWithHeldHeader(page, header, '/profile.html');
+    await page.locator('[data-feedback-widget]').click();
+    await expect(page.getByRole('dialog', { name: 'Send Feedback', exact: true })).toBeVisible();
+    await page.keyboard.press('Escape');
+    header.assertHeld(); expect(auth.writes()).toEqual([]);
+  });
 });
 
 for (const cause of ['same-user SID', 'A-B-A', 'focus', 'logout', 'logout intent', 'pagehide']) {
   test(`compiled pending header is fenced before controller work after ${cause}`, async ({ context, page }) => {
-    const auth = await fixture(context); let release; const held = new Promise(resolve => { release = resolve; });
-    await page.route(headerOptional, async route => { await held; await route.continue(); });
-    await page.goto('/science.html'); await expect(trigger(page)).toBeDisabled(); expect(auth.calls).toEqual([]);
-    const before = auth.requests.filter(item => item.path === '/auth/v1/user').length;
-    let releaseLogout;
-    if (cause === 'pagehide') {
-      await page.evaluate(() => {
-        window.dispatchEvent(new PageTransitionEvent('pagehide', { persisted: true }));
-        window.dispatchEvent(new Event('focus'));
-        document.dispatchEvent(new Event('visibilitychange'));
-      });
-    } else if (cause === 'logout intent') {
-      const logout = new Promise(resolve => { releaseLogout = resolve; });
-      await page.route('**/__admin_fixture__/auth/v1/logout**', async route => { await logout; await json(route, {}); });
-      await page.locator('.global-menu-button').click(); await page.getByRole('button', { name: 'Log Out', exact: true }).click();
-    } else if (cause === 'logout') await broadcast(page, null, 'SIGNED_OUT');
-    else if (cause === 'focus') {
-      await page.evaluate(() => window.dispatchEvent(new Event('focus')));
-      await expect.poll(() => auth.requests.filter(item => item.path === '/auth/v1/user').length).toBeGreaterThan(before);
-    }
-    else {
-      await broadcast(page, auth.replacement(cause === 'A-B-A' ? auth.B : auth.A));
-      await expect.poll(() => auth.requests.filter(item => item.path === '/auth/v1/user').length).toBeGreaterThan(before);
-      if (cause === 'A-B-A') {
-        const next = auth.requests.filter(item => item.path === '/auth/v1/user').length;
-        await broadcast(page, auth.replacement(auth.A));
-        await expect.poll(() => auth.requests.filter(item => item.path === '/auth/v1/user').length).toBeGreaterThan(next);
-      }
-    }
-    if (['logout', 'logout intent', 'pagehide'].includes(cause)) await expect(trigger(page)).toHaveCount(0);
-    release();
-    if (['same-user SID', 'A-B-A', 'focus'].includes(cause)) {
-      await expect(page.locator('.shared-header-streak-count')).toHaveText('6');
-      await expect(page.locator('.authenticated-header-actions')).toHaveCount(1);
-      expect(auth.calls.every(call => call.actor === auth.A)).toBe(true);
-      expect(auth.calls.filter(call => call.name === 'record_app_visit')).toHaveLength(1);
-    } else {
-      await expect.poll(() => page.evaluate(() => performance.getEntriesByType('resource').filter(entry => /shared-header-actions-/.test(entry.name)).length)).toBeGreaterThan(0);
-      expect(auth.calls).toEqual([]); await expect(trigger(page)).toHaveCount(0);
-      if (cause === 'pagehide') {
-        await page.evaluate(() => window.dispatchEvent(new PageTransitionEvent('pageshow', { persisted: true })));
-        await expect(page.locator('.shared-header-streak-count')).toHaveText('6');
-        await expect(page.locator('.authenticated-header-actions')).toHaveCount(1);
-      }
-      releaseLogout?.();
-    }
-    expect(auth.writes()).toHaveLength(0);
+    const auth = await fixture(context);
+    await withHeldHeaderDownload(page, async header => {
+      await readyWithHeldHeader(page, header); expect(auth.calls).toEqual([]);
+      const before = auth.requests.filter(item => item.path === '/auth/v1/user').length;
+      let releaseLogout;
+      try {
+        if (cause === 'pagehide') {
+          await page.evaluate(() => {
+            window.dispatchEvent(new PageTransitionEvent('pagehide', { persisted: true }));
+            window.dispatchEvent(new Event('focus'));
+            document.dispatchEvent(new Event('visibilitychange'));
+          });
+        } else if (cause === 'logout intent') {
+          const logout = new Promise(resolve => { releaseLogout = resolve; });
+          await page.route('**/__admin_fixture__/auth/v1/logout**', async route => { await logout; await json(route, {}); });
+          await page.locator('.global-menu-button').click(); await page.getByRole('button', { name: 'Log Out', exact: true }).click();
+        } else if (cause === 'logout') await broadcast(page, null, 'SIGNED_OUT');
+        else if (cause === 'focus') {
+          await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+          await expect.poll(() => auth.requests.filter(item => item.path === '/auth/v1/user').length).toBeGreaterThan(before);
+        }
+        else {
+          await broadcast(page, auth.replacement(cause === 'A-B-A' ? auth.B : auth.A));
+          await expect.poll(() => auth.requests.filter(item => item.path === '/auth/v1/user').length).toBeGreaterThan(before);
+          if (cause === 'A-B-A') {
+            const next = auth.requests.filter(item => item.path === '/auth/v1/user').length;
+            await broadcast(page, auth.replacement(auth.A));
+            await expect.poll(() => auth.requests.filter(item => item.path === '/auth/v1/user').length).toBeGreaterThan(next);
+          }
+        }
+        if (['logout', 'logout intent', 'pagehide'].includes(cause)) await expect(trigger(page)).toHaveCount(0);
+        else {
+          await expect(trigger(page)).toBeVisible(); await expect(trigger(page)).toBeDisabled();
+          await expect(page.locator('.authenticated-header-actions')).toHaveAttribute('aria-busy', 'true');
+        }
+        // Account switches and focus/logout interactions must run while the actual
+        // controller download is still intercepted, not after an accidental load.
+        header.assertHeld(); expect(auth.calls).toEqual([]);
+        header.release();
+        if (['same-user SID', 'A-B-A', 'focus'].includes(cause)) {
+          await expect(page.locator('.shared-header-streak-count')).toHaveText('6');
+          await expect(page.locator('.authenticated-header-actions')).toHaveCount(1);
+          expect(auth.calls.every(call => call.actor === auth.A)).toBe(true);
+          expect(auth.calls.filter(call => call.name === 'record_app_visit')).toHaveLength(1);
+        } else {
+          await expect.poll(() => page.evaluate(() => performance.getEntriesByType('resource').filter(entry => /shared-header-actions-/.test(entry.name)).length)).toBeGreaterThan(0);
+          expect(auth.calls).toEqual([]); await expect(trigger(page)).toHaveCount(0);
+          if (cause === 'pagehide') {
+            await page.evaluate(() => window.dispatchEvent(new PageTransitionEvent('pageshow', { persisted: true })));
+            await expect(page.locator('.shared-header-streak-count')).toHaveText('6');
+            await expect(page.locator('.authenticated-header-actions')).toHaveCount(1);
+          }
+          releaseLogout?.();
+        }
+        expect(auth.writes()).toHaveLength(0);
+      } finally { releaseLogout?.(); }
+    });
   });
 }
 
@@ -275,14 +328,14 @@ test('compiled header failure keeps navigation available, stops training, and of
 
 test('compiled header deadline remains failed even if the timed-out code later arrives', async ({ context, page }) => {
   const auth = await fixture(context); await page.clock.install();
-  let release; const held = new Promise(resolve => { release = resolve; });
-  await page.route(headerOptional, async route => { await held; await route.continue(); });
-  await page.goto('/science.html'); await expect(trigger(page)).toBeDisabled();
-  await page.clock.fastForward(30_001);
-  await expect(trigger(page)).toHaveAccessibleName(/Reload to load member controls/);
-  release(); await page.waitForLoadState('networkidle');
-  await expect(trigger(page)).toHaveAccessibleName(/Reload to load member controls/);
-  expect(auth.calls).toEqual([]); expect(auth.writes()).toEqual([]);
+  await withHeldHeaderDownload(page, async header => {
+    await readyWithHeldHeader(page, header);
+    await page.clock.fastForward(30_001);
+    await expect(trigger(page)).toHaveAccessibleName(/Reload to load member controls/);
+    header.assertHeld(); header.release(); await page.waitForLoadState('networkidle');
+    await expect(trigger(page)).toHaveAccessibleName(/Reload to load member controls/);
+    expect(auth.calls).toEqual([]); expect(auth.writes()).toEqual([]);
+  });
 });
 
 test('compiled guest/public and menu-free entrypoints never request member header code', async ({ page }) => {

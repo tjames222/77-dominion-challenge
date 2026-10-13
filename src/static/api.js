@@ -2281,6 +2281,9 @@ export async function claimChallengeUnlocks({ expectedUserId = '' } = {}) {
   return {
     claimedUnlocks: progression.challenges.filter((challenge) => claimedKeySet.has(challenge.key)),
     progression,
+    // This is the complete post-claim, actor-verified catalog already read
+    // above. Preview callers retain their canonical post-commit read path.
+    catalog,
   };
 }
 

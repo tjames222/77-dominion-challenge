@@ -681,6 +681,34 @@ statistics responses cannot overwrite replacement-session, A→B→A, logout or
 pagehide/BFCache state. The unchanged 29-route performance budgets still pass
 with final targets open.
 
+## Reuse the post-claim Rewards catalog (October 12 local checkpoint)
+
+On the slice based on `fcf653c59757e4f8317bf38fcd36454cf01adb5d`, the live
+`claimChallengeUnlocks` response now includes the complete catalog it already
+reads after the claim. Badges & Rewards reuses that exact, normalized and
+actor-verified result instead of immediately traversing the catalog again. The
+initial read, claim ordering, typed pagination/revision/snapshot checks and one
+ready render remain unchanged. Dashboard ignores the additive field. There is
+no new cache, deferred import, mutation retry or authority source.
+
+A successful Rewards hydration therefore needs two full catalog traversals
+instead of three. The separate theme-entitlement client still requests one
+catalog page: local compiled tests count three total catalog RPCs for a one-page
+catalog and nine for the four-page fixture (source-established previous flow:
+four and thirteen, respectively). Failed claims or failed post-claim reads retain
+the existing canonical fallback traversal without repeating the claim. No-claim refreshes and
+reward deep links remain read-only. Mock claims are byte-for-byte unchanged and
+do not expose their pre-commit aggregate catalog; mock/legacy missing-field
+responses keep the canonical post-commit catalog read and delivery overlay.
+
+Tests execute the installed SDK against local synthetic HTTP in Chromium and
+WebKit, including later-page failure/restart, returned post-claim facts, stable
+Start focus, silent stored-account replacement and its navigation, pagehide and
+newer-load fences. Actual load-body unit tests additionally cover retained-controller
+A→B→A generation rejection. This is request-count and local behavior evidence,
+not hosted authorization, deployed timing, initial-JS savings or completion of
+FOU-1501. Existing 29-route real/mock performance budgets remain unchanged.
+
 ## Interim automated budgets
 
 `pnpm run check:frontend-performance` audits a freshly built canonical mock preview

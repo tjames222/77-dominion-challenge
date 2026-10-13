@@ -480,9 +480,12 @@ for (const route of [ROUTE_BY_ID.landing, ROUTE_BY_ID.login, ROUTE_BY_ID.dashboa
     const share = page.locator('.shared-header-share');
     if (await share.count()) {
       await share.click();
-      await expect(page.getByRole('dialog', { name: 'Choose what you want to send' })).toBeVisible();
+      const dialog = page.getByRole('dialog', { name: 'Choose what you want to send' });
+      await expect(dialog).toBeVisible();
       expect(requests.some((url) => /\/share-composer(?!-loader)(?:-[\w-]+)?\.(?:js|css)(?:\?|$)/.test(url))).toBe(true);
+      await expect(dialog).toHaveAttribute('aria-busy', 'false');
       await page.keyboard.press('Escape');
+      await expect(dialog).toBeHidden();
       await expect(share).toBeFocused();
       if (triggerBefore) {
         expect(await bodyTrigger.evaluate((button) => ({
@@ -495,6 +498,57 @@ for (const route of [ROUTE_BY_ID.landing, ROUTE_BY_ID.login, ROUTE_BY_ID.dashboa
     app.assertNoRuntimeErrors();
   });
 }
+
+test('a held share preview keeps Escape inside the busy dialog and restores its trigger only after ready dismissal', async ({ page, app }) => {
+  const writes = [];
+  page.on('request', request => {
+    if (!['GET', 'HEAD'].includes(request.method())) writes.push(request.url());
+  });
+  await app.open(ROUTE_BY_ID.dashboard);
+  const share = page.locator('.shared-header-share');
+  await expect(share).toBeEnabled();
+  const originalTrigger = await share.elementHandle();
+  // Hold the existing actor-scoped preview lock, not a mocked dialog or timer.
+  // The real preview API must wait here before it can clear the busy state.
+  const lockName = await page.evaluate(() => new Promise(ready => {
+    const name = `dominion:badges:${localStorage.getItem('dominion:mockUserId')}`;
+    window.__sharePreviewLock = navigator.locks.request(name, () => new Promise(release => {
+      window.__releaseSharePreviewLock = release;
+      ready(name);
+    }));
+  }));
+  const dialog = page.getByRole('dialog', { name: 'Choose what you want to send' });
+  try {
+    await share.click();
+    await expect(dialog).toBeVisible();
+    await expect(dialog).toHaveAttribute('aria-busy', 'true');
+    await expect(dialog.getByText('Loading a privacy-safe preview…', { exact: true })).toBeVisible();
+    await expect(dialog.getByRole('button', { name: 'Copy share link' })).toBeDisabled();
+    await expect.poll(() => page.evaluate(async name => (
+      (await navigator.locks.query()).pending.some(lock => lock.name === name)
+    ), lockName)).toBe(true);
+    await page.keyboard.press('Escape');
+    await expect(dialog).toBeVisible();
+    await expect(dialog).toHaveAttribute('aria-busy', 'true');
+    await expect(dialog.locator('[data-share-flow]:checked')).toBeFocused();
+    await expect(share).not.toBeFocused();
+  } finally {
+    await page.evaluate(async () => {
+      window.__releaseSharePreviewLock();
+      await window.__sharePreviewLock;
+      delete window.__releaseSharePreviewLock;
+      delete window.__sharePreviewLock;
+    });
+  }
+  await expect(dialog).toHaveAttribute('aria-busy', 'false');
+  await expect(dialog.getByRole('button', { name: 'Copy share link' })).toBeEnabled();
+  await page.keyboard.press('Escape');
+  await expect(dialog).toBeHidden();
+  await expect(share).toBeFocused();
+  expect(await originalTrigger.evaluate(node => node === document.activeElement)).toBe(true);
+  expect(writes).toEqual([]);
+  app.assertNoRuntimeErrors();
+});
 
 test('extended-language text loads the original font only when needed', async ({ page, app }) => {
   const fonts = [];

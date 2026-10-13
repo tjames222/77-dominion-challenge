@@ -7,7 +7,9 @@ import { analyzeAccessibility, assertNoBlockingAxeViolations } from './support/q
 
 const json = (route, value, status = 200) => route.fulfill({ status, contentType: 'application/json',
   headers: { 'Cache-Control': 'private, no-store' }, body: JSON.stringify(value) });
-async function fixture(context, { active = false, theme = 'dark', failOnce = false, commitBeforeError = false } = {}) {
+async function fixture(context, { active = false, theme = 'dark', failOnce = false, commitBeforeError = false,
+  catalogPageSize = 0, failInitialCatalog = false, failPostClaimPage = 0,
+  postClaimPoints = 420, failClaim = false, holdPostClaimCatalog = false } = {}) {
   const auth = await installFeedbackStub(context, { active: false, memberPages: true });
   await context.addInitScript(value => localStorage.setItem('dominion:theme', value), theme);
   const today = new Date().toISOString().slice(0, 10);
@@ -20,16 +22,44 @@ async function fixture(context, { active = false, theme = 'dark', failOnce = fal
     completionEventId: active ? null : 'cccccccc-cccc-4ccc-8ccc-cccccccccccc' });
   activation.originalRepeat = { challengeKey: 'original_77', targetCount: 77, available: !active, canStart: !active, reason: active ? 'active_instance_exists' : null };
   const requests = []; const receipts = new Map(); let fail = failOnce; let hold = null;
+  const catalogRequests = []; const catalogCompletions = []; const claimRequests = []; const sequence = []; let postClaimReads = 0;
+  let releaseCatalog;
+  const heldCatalog = holdPostClaimCatalog ? new Promise(resolve => { releaseCatalog = resolve; }) : null;
+  let catalogHeld = false;
   let grantRecords = [{ key: 'seven_day_reset', status: 'available', unlockedAt: `${today}T10:00:00Z`, startedAt: null, completedAt: null, celebrationSeenAt: `${today}T10:00:00Z` }];
-  const catalog = () => buildMockRewardCatalogV2({ actorId: auth.A, revision: activation.revision, snapshotVersion: 'a'.repeat(64),
-    currentInstance: activation.currentInstance, originalRepeat: activation.originalRepeat, totalPoints: 420, trustedDailyStandardPoints: 420,
+  const catalog = () => buildMockRewardCatalogV2({ actorId: auth.A, revision: activation.revision,
+    snapshotVersion: (claimRequests.length ? 'b' : 'a').repeat(64),
+    currentInstance: activation.currentInstance, originalRepeat: activation.originalRepeat,
+    totalPoints: claimRequests.length ? postClaimPoints : 420, trustedDailyStandardPoints: 420,
     challengeRecords: grantRecords, now: `${today}T12:00:00Z` }).catalog;
   await context.route(/\/__admin_fixture__\/rest\/v1\/rpc\/(?:get_reward_catalog_v2|get_challenge_activation_v2|start_challenge_instance_v2|get_badge_collection|claim_challenge_unlocks|get_theme_preference|set_theme_preference)$/, async route => {
     const name = new URL(route.request().url()).pathname.split('/').at(-1); const body = route.request().postDataJSON();
-    if (name === 'get_reward_catalog_v2') return json(route, catalog());
+    if (name === 'get_reward_catalog_v2') {
+      catalogRequests.push(body); sequence.push(name);
+      expect([auth.A, auth.B]).toContain(body.target_expected_actor_id);
+      if (claimRequests.length) postClaimReads += 1;
+      if ((failInitialCatalog && !claimRequests.length)
+        || (failPostClaimPage && postClaimReads === failPostClaimPage)) return json(route, { message: 'Synthetic catalog read unavailable.' }, 503);
+      const complete = catalog();
+      const startIndex = body.target_after_reward_key
+        ? complete.items.findIndex(item => item.key === body.target_after_reward_key) + 1 : 0;
+      const items = catalogPageSize ? complete.items.slice(startIndex, startIndex + catalogPageSize) : complete.items;
+      const hasMore = startIndex + items.length < complete.items.length;
+      const response = { ...complete, items, page: { limit: catalogPageSize || complete.items.length,
+        totalItems: complete.items.length, hasMore,
+        nextCursor: hasMore ? { sortOrder: items.at(-1).sortOrder, key: items.at(-1).key } : null } };
+      if (heldCatalog && claimRequests.length && !catalogHeld) { catalogHeld = true; await heldCatalog; }
+      try { return await json(route, response); }
+      finally { catalogCompletions.push(body); }
+    }
     if (name === 'get_challenge_activation_v2') return json(route, activation);
     if (name === 'get_badge_collection') return json(route, { catalogVersion: 1, scopeKey: activation.currentInstance.scopeKey, items: [] });
-    if (name === 'claim_challenge_unlocks') return json(route, { claimedKeys: [], progression: { challenges: [] } });
+    if (name === 'claim_challenge_unlocks') {
+      claimRequests.push(body); sequence.push(name);
+      expect(body.target_expected_actor_id).toBe(auth.A);
+      return failClaim ? json(route, { message: 'Synthetic unlock claim unavailable.' }, 503)
+        : json(route, { claimedKeys: [], progression: { challenges: [] } });
+    }
     if (name === 'get_theme_preference' || name === 'set_theme_preference') return json(route, { theme_key: theme });
     requests.push(body);
     expect(body.target_expected_actor_id).toBe(auth.A);
@@ -61,7 +91,8 @@ async function fixture(context, { active = false, theme = 'dark', failOnce = fal
     if (fail) { fail = false; return json(route, { message: 'Synthetic start response unavailable. Try again.' }, 503); }
     return json(route, result);
   });
-  return { requests, originalId: activation.currentInstance.id, originalRevision: activation.revision, serverDate: today,
+  return { requests, catalogRequests, catalogCompletions, claimRequests, sequence, auth, releaseCatalog,
+    catalogItemCount: catalog().items.length, originalId: activation.currentInstance.id, originalRevision: activation.revision, serverDate: today,
     advanceDate() {
       activation = { ...activation, serverDate: new Date(Date.parse(`${activation.serverDate}T00:00:00Z`) + 86400000).toISOString().slice(0, 10),
         currentInstance: { ...activation.currentInstance, calendarDay: activation.currentInstance.calendarDay + 1 } };
@@ -140,3 +171,141 @@ test('uncertain Start retry reuses its date and UUID after a lost commit respons
   await expect(page.getByRole('link', { name: 'Open today’s Daily Actions' })).toBeFocused();
   expect(state.requests).toHaveLength(2); expect(state.requests[1]).toEqual(state.requests[0]);
 });
+
+for (const catalogPageSize of [0, 3]) {
+  test(`post-claim catalog reuse: ${catalogPageSize ? 'multiple pages' : 'one page'} needs two complete traversals and one claim`, async ({ context, page }) => {
+    const state = await fixture(context, { catalogPageSize, postClaimPoints: 427 }); await ready(page);
+    const pageCount = catalogPageSize ? Math.ceil(state.catalogItemCount / catalogPageSize) : 1;
+    // Theme entitlement hydration independently reads one catalog page. Keep
+    // that real consumer in the count rather than stubbing or suppressing it.
+    expect(state.catalogRequests).toHaveLength(2 * pageCount + 1);
+    expect(state.claimRequests).toHaveLength(1);
+    expect(state.sequence).toEqual([
+      ...Array(pageCount + 1).fill('get_reward_catalog_v2'), 'claim_challenge_unlocks',
+      ...Array(pageCount).fill('get_reward_catalog_v2'),
+    ]);
+    for (const [index, request] of state.catalogRequests.entries()) {
+      const first = !request.target_after_reward_key;
+      expect(request.target_expected_revision).toBe(first ? null : state.originalRevision);
+      expect(request.target_expected_catalog_version).toBe(first ? null : 2);
+      expect(request.target_expected_snapshot_version).toBe(first ? null : (index < pageCount + 1 ? 'a' : 'b').repeat(64));
+      if (first) expect(request.target_after_reward_key).toBeNull();
+      else expect(request.target_after_reward_key).toEqual(expect.any(String));
+    }
+    await expect(page.locator('[data-reward-key]:not([data-reward-key="original_77"])')).toHaveCount(state.catalogItemCount);
+    await expect(page.locator('[data-reward-key="original_77"]')).toHaveCount(1);
+    await expect(page.locator('#rewardTotalPoints')).toContainText('427');
+    const start = page.locator('[data-start-reward="seven_day_reset"]'); await start.focus();
+    await expect(start).toBeFocused();
+    expect(state.requests).toEqual([]);
+  });
+}
+
+for (const failure of ['claim', 'post-claim catalog']) {
+  test(`post-claim catalog reuse: ${failure} rejection retains one fallback traversal without repeating claim`, async ({ context, page }) => {
+    const state = await fixture(context, { failClaim: failure === 'claim', failPostClaimPage: failure === 'post-claim catalog' ? 1 : 0 });
+    await ready(page);
+    expect(state.claimRequests).toHaveLength(1);
+    expect(state.catalogRequests).toHaveLength(failure === 'claim' ? 3 : 4);
+    expect(state.sequence.at(-1)).toBe('get_reward_catalog_v2');
+    await expect(page.locator('[data-start-reward="seven_day_reset"]')).toBeEnabled();
+  });
+}
+
+test('post-claim catalog reuse: initial failure never attempts a claim', async ({ context, page }) => {
+  // Both otherwise-identical pre-claim catalog requests fail: the independent
+  // theme read and the Rewards initial read. No caller-specific markers added.
+  const state = await fixture(context, { failInitialCatalog: true });
+  await page.goto('/badges-rewards.html');
+  await expect(page.locator('#badgesRewardsError')).toBeVisible();
+  expect(state.catalogRequests).toHaveLength(2); expect(state.claimRequests).toEqual([]);
+  expect(state.requests).toEqual([]);
+});
+
+test('post-claim catalog reuse: storage-triggered no-claim refresh does one traversal and keeps Start focused after ready', async ({ context, page }) => {
+  const state = await fixture(context); await ready(page);
+  const before = state.catalogRequests.length;
+  await page.evaluate(() => window.dispatchEvent(new StorageEvent('storage', { key: 'dominion:badges' })));
+  await expect.poll(() => state.catalogRequests.length).toBe(before + 1);
+  await expect(page.locator('#rewardsList')).toHaveAttribute('aria-busy', 'false');
+  expect(state.claimRequests).toHaveLength(1);
+  const start = page.locator('[data-start-reward="seven_day_reset"]'); await start.focus(); await expect(start).toBeFocused();
+});
+
+test('post-claim catalog reuse: reward deep link stays read-only with one traversal', async ({ context, page }) => {
+  const state = await fixture(context);
+  await page.goto('/badges-rewards.html?reward=seven_day_reset');
+  await expect(page.locator('#rewardsList')).toHaveAttribute('aria-busy', 'false');
+  await expect(page.locator('#rewardDetailDialog')).toBeVisible();
+  expect(state.catalogRequests).toHaveLength(2); expect(state.claimRequests).toEqual([]);
+});
+
+test('post-claim catalog reuse: a later-page failure restarts a full pinned fallback without repeating claim', async ({ context, page }) => {
+  const state = await fixture(context, { catalogPageSize: 3, failPostClaimPage: 2, postClaimPoints: 427 }); await ready(page);
+  const pageCount = Math.ceil(state.catalogItemCount / 3);
+  expect(state.claimRequests).toHaveLength(1);
+  expect(state.catalogRequests).toHaveLength(pageCount + 1 + 2 + pageCount);
+  const fallback = state.catalogRequests.slice(pageCount + 1 + 2);
+  expect(fallback[0].target_after_reward_key).toBeNull();
+  expect(fallback[0].target_expected_snapshot_version).toBeNull();
+  for (const request of fallback.slice(1)) {
+    expect(request.target_expected_revision).toBe(state.originalRevision);
+    expect(request.target_expected_catalog_version).toBe(2);
+    expect(request.target_expected_snapshot_version).toBe('b'.repeat(64));
+  }
+  await expect(page.locator('[data-reward-key]:not([data-reward-key="original_77"])')).toHaveCount(state.catalogItemCount);
+  await expect(page.locator('[data-reward-key="original_77"]')).toHaveCount(1);
+  await expect(page.locator('#rewardTotalPoints')).toContainText('427');
+});
+
+test('post-claim catalog reuse: silent stored-account replacement rejects the old response and navigates', async ({ context, page }) => {
+  const state = await fixture(context, { holdPostClaimCatalog: true });
+  await page.goto('/badges-rewards.html');
+  await expect.poll(() => state.catalogRequests.length).toBe(3);
+  // Follow the actual replacement navigation. The installed SDK rereads its
+  // session storage for final getUser verification, so silent replacement must
+  // also reject the old response without relying on an Auth notification.
+  // Retained-controller ABA is covered by the actual load-body unit test.
+  await context.route(/\/login\.html(?:\?|$)/, route => route.request().isNavigationRequest()
+    ? route.fulfill({ status: 200, contentType: 'text/html', body: '<!doctype html><h1>Replacement session document</h1>' })
+    : route.fallback());
+  await page.evaluate(session => {
+    localStorage.setItem('sb-127-auth-token', JSON.stringify(session));
+  }, state.auth.replacement(state.auth.B));
+  state.releaseCatalog();
+  await expect(page.getByRole('heading', { name: 'Replacement session document' })).toBeVisible();
+  await expect(page).toHaveURL(/\/login\.html\?returnTo=/);
+  expect(state.auth.requests.some(request => request.path === '/auth/v1/user' && request.actor === state.auth.B)).toBe(true);
+  await expect.poll(() => state.catalogCompletions.length).toBe(state.catalogRequests.length);
+  await expect(page.locator('[data-reward-key]')).toHaveCount(0);
+  await expect(page.getByRole('heading', { name: 'Replacement session document' })).toBeVisible();
+  expect(state.claimRequests).toHaveLength(1);
+});
+
+for (const cause of ['pagehide', 'newer load']) {
+  test(`post-claim catalog reuse: late response cannot overwrite ${cause}`, async ({ context, page }) => {
+    const state = await fixture(context, { holdPostClaimCatalog: true });
+    await page.goto('/badges-rewards.html');
+    await expect.poll(() => state.catalogRequests.length).toBe(3);
+    if (cause === 'pagehide') {
+      await page.evaluate(() => window.dispatchEvent(new PageTransitionEvent('pagehide', { persisted: true })));
+    } else {
+      await page.evaluate(() => window.dispatchEvent(new StorageEvent('storage', { key: 'dominion:badges' })));
+      await expect(page.locator('#rewardsList')).toHaveAttribute('aria-busy', 'false');
+      await page.locator('[data-start-reward="seven_day_reset"]').focus();
+    }
+    // A later read/verification must settle before asserting the old load did
+    // not publish. The held HTTP response is released only after invalidation.
+    const userReads = state.auth.requests.filter(request => request.path === '/auth/v1/user').length;
+    const completed = page.waitForResponse(response => response.url().endsWith('/get_reward_catalog_v2'));
+    state.releaseCatalog(); await completed;
+    await expect.poll(() => state.auth.requests.filter(request => request.path === '/auth/v1/user').length).toBeGreaterThan(userReads);
+    // Drain the local synthetic transport, including final Auth verification,
+    // before checking the negative stale-render assertion (not UI readiness).
+    await page.waitForLoadState('networkidle');
+    if (cause === 'newer load') await expect(page.locator('[data-start-reward="seven_day_reset"]')).toBeFocused();
+    else await expect(page.locator('[data-reward-key]')).toHaveCount(0);
+    expect(state.claimRequests).toHaveLength(1);
+    if (cause === 'newer load' || cause === 'pagehide') expect(state.catalogRequests).toHaveLength(cause === 'newer load' ? 4 : 3);
+  });
+}
