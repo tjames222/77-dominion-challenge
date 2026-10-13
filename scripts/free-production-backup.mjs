@@ -21,6 +21,7 @@ import { MAX_ENCRYPTED_BYTES, POSTGRES_IMAGE, POST_ORIGINAL77_BACKUP_MODE, POST_
   selectPostRepeatableMigrationVersions, selectPost73MigrationVersions, requirePost73MigrationVersions } from './production-backup-public-contract.mjs';
 import { verifyPost73ReleaseSources } from './verify-post73-release-plan.mjs';
 import { REPEATABLE_CHALLENGE_MIGRATION_FILENAME, verifyRepeatableChallengeMigrationSource } from './verify-repeatable-challenge-cutover-plan.mjs';
+import { prepareProductionBackupImage } from './prepare-production-backup-image.mjs';
 
 export { MAX_ENCRYPTED_BYTES, POSTGRES_IMAGE, POST_ORIGINAL77_BACKUP_MODE, POST_REPEATABLE_BACKUP_MODE, PROJECT_REF };
 export const POST_ADMIN_INBOX_BACKUP_MODE = 'post-admin-inbox-67';
@@ -278,6 +279,8 @@ const safeDiagnosticCodes = new Set([
   'docker-daemon-permission', 'docker-daemon-unavailable', 'docker-mount-invalid',
   'docker-runtime-permission', 'docker-container-exists', 'docker-resource-limit',
   'docker-command-failed', 'executable-unavailable',
+  'backup-image-context', 'backup-image-daemon', 'backup-image-inspect',
+  'backup-image-pull', 'backup-image-identity',
   'credential-lifetime-contract', 'credential-lifetime-expired', 'credential-lifetime-budget',
   'credential-operation-timeout', 'credential-operation-interrupted',
   'pg-restore-error', 'pg-restore-query-error', 'pg-restore-permission',
@@ -505,9 +508,8 @@ export async function runBackup() {
     assert.equal(head, releaseCommit);
     const status = await command('git', ['status', '--porcelain', '--untracked-files=no'], { log });
     assert.equal(status, '');
-    await command('docker', ['pull', POSTGRES_IMAGE], { log });
-    const imageId = await command('docker', ['image', 'inspect', POSTGRES_IMAGE, '--format', '{{.Id}}'], { log });
-    assert.match(imageId, /^sha256:[a-f0-9]{64}$/u);
+    stage('backup-image');
+    const imageId = prepareProductionBackupImage();
     stage('temporary-credentials');
     minted = true;
     const { credentialLifetime } = await prepareProductionSupabaseDatabaseCredentials({
