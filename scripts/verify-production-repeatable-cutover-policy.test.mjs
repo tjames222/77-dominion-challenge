@@ -189,8 +189,8 @@ test('post71 release selects one fresh same-commit exact71 artifact and gates ev
   const policy=jobBlock(workflow,'repeatable-cutover-policy');
   assert.match(policy,/receipt: \$\{\{ steps\.release-boundary\.outputs\.receipt \}\}/u);
   assert.match(policy,/requires_exact71_backup: \$\{\{ steps\.release-boundary\.outputs\.requires_exact71_backup \}\}/u);
-  assert.match(policy,/backup_artifact_id: \$\{\{ steps\.post71-backup\.outputs\.artifact_id \}\}/u);
-  assert.match(policy,/backup_run_attempt: \$\{\{ steps\.post71-backup\.outputs\.run_attempt \}\}/u);
+  assert.match(policy,/backup_artifact_id: \$\{\{ steps\.post73-backup\.outputs\.artifact_id \|\| steps\.post71-backup\.outputs\.artifact_id \}\}/u);
+  assert.match(policy,/backup_run_attempt: \$\{\{ steps\.post73-backup\.outputs\.run_attempt \|\| steps\.post71-backup\.outputs\.run_attempt \}\}/u);
   const gates=policy.slice(policy.indexOf('- name: Select the fresh exact-71 encrypted backup artifact'));
   assert.equal(gates.match(/if: steps\.release-boundary\.outputs\.requires_exact71_backup == 'true'/gu)?.length,3);
   assert.match(gates,/GITHUB_SHA="\$GITHUB_SHA"[\s\S]*verify-post-repeatable-backup-evidence\.mjs --select/u);

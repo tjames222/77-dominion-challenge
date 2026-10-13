@@ -368,3 +368,39 @@ This mode does not authorize a hosted restore, database reset, worker pause,
 secret repair, migration, email, or release by itself. Production workers stay
 active during capture, so an inventory change safely stops the backup; inspect
 the boundary and retry unchanged rather than weakening the equality check.
+
+## Cleanup-monitor 73-migration checkpoint
+
+Choose `post-cleanup-monitor-73` before the reviewed Admin cleanup-health
+addition. It requires production to be exactly at migration 73,
+`20261007060519_profile_photo_cleanup_monitor_health`. The ordered JSON version
+array SHA-256 is
+`dedf8b2796a13e3fe6cd36551d555b0aacb710d7b3fad7bd6de4ea2350c17253`.
+The producer validates the complete reviewed source 74 inventory before recovery
+inputs or temporary credentials: all prior 73 source bytes are frozen, and only
+`20261013055744_site_admin_cleanup_health.sql` is admitted as the pending addition.
+This is not permission to use a 71 backup for a 73 database.
+
+Migrations 72/73 added no Vault names, worker secrets, Storage objects or recovery
+requirements. This mode uses exactly the same three existing worker inputs and
+five-name Vault reconstruction as 66/67/70/71. Schema version 3, the existing
+artifact contract, RSA-4096/AES-256-GCM envelope, exact pg_net supplement and
+external invitation-key caveat remain unchanged. Invitation ciphertext is
+preserved; invitation decryption is **not** verified. No private recovery key,
+invitation-envelope key, Resend key, Linear key or health-monitor key is read.
+
+The new exact 73 archive fixture is separate from, and does not replace, the
+historical exact 71 restore test. It verifies a full custom archive replay in an
+owned network-disabled PostgreSQL 17.6 container with background workers disabled,
+including completion provenance, immutable events, both73-era health functions,
+their ACLs, and the existing release catalog checks. This fixture does not replace
+the fresh production capture and restore rehearsal.
+
+For source 74 while production is 73, protected release scope `full` requires a
+successful backup from that same main commit within 24 hours. The release checks
+the selected artifact ID, run attempt, public recipient, encrypted bytes,
+restored checkpoint and recovery declarations before any mutable provider job,
+then checks the same selected artifact again immediately before migration.
+Frontend-only is rejected until all 74 migrations are applied. An unexpected
+history or boundary change stops the release; it is not a reason to waive backup,
+replay an old cutover, restore production, pause workers, or change PostgreSQL.

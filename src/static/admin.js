@@ -3,7 +3,7 @@ import {
   listSiteAdminAudit, getSiteAdminAuditEvent, subscribeToAdminInvalidation,
   cancelAdminReads, clearAuthSession,
   listSiteAdminEarlyAccess, getSiteAdminEarlyAccess,
-  listSiteAdminAccountRequests, getSiteAdminAccountRequestQueueHealth,
+  listSiteAdminAccountRequests, getSiteAdminAccountRequestQueueHealth, getSiteAdminCleanupHealth,
 } from './api.js';
 import { adminReadError } from './admin-read-client.mjs';
 import { normalizeEarlyAccessRequest } from './admin-early-access-contract.mjs';
@@ -16,12 +16,13 @@ import { adminUserListFacts, adminUserSummary } from './admin-user-presentation.
 import { normalizeAdminAccountRequestPage, normalizeAdminAccountRequestQueueHealth, accountRequestTypeLabel, accountRequestRecordedStatus } from './admin-account-requests.mjs';
 import { readAdminAccountRequests } from './admin-account-request-transport.mjs';
 import { mfaChallengeHref } from './mfa-navigation.mjs';
+import { mountCleanupHealth } from './admin-cleanup-health-view.mjs';
 
 const byId = (id) => document.getElementById(id);
 const workspace = byId('adminWorkspace');
 const dialog = byId('adminDetail');
 let epoch = 0; let queryEpoch = 0; let detailEpoch = 0;
-let owner = null; let permissions = []; let tab = location.hash === '#account-requests' ? 'requests' : location.hash === '#early-access' ? 'early' : 'users'; let loading = false;
+let owner = null; let permissions = []; let tab = location.hash === '#operations' ? 'operations' : location.hash === '#account-requests' ? 'requests' : location.hash === '#early-access' ? 'early' : 'users'; let loading = false;
 let cursors = [null]; let page = 0; let nextCursor = null; let detailOpener = null;
 let suspended = false; let checking = false;
 let listController = null; let detailController = null; let detailCleanup = null;
@@ -29,7 +30,11 @@ let healthController = null; let healthEpoch = 0;
 const tabs = { users: { permission: 'users.read', prefix: 'adminUsers', list: listSiteAdminUsers, get: getSiteAdminUser },
   audit: { permission: 'audit.read', prefix: 'adminAudit', list: listSiteAdminAudit, get: getSiteAdminAuditEvent },
   early: { permission: 'operations.read', prefix: 'adminEarly', list: listSiteAdminEarlyAccess, get: getSiteAdminEarlyAccess },
-  requests: { permission: 'operations.read', prefix: 'adminRequests', list: (args, options) => readAdminAccountRequests(listSiteAdminAccountRequests, args, options) } };
+  requests: { permission: 'operations.read', prefix: 'adminRequests', list: (args, options) => readAdminAccountRequests(listSiteAdminAccountRequests, args, options) },
+  operations: { permission: 'operations.read', prefix: 'adminOperations' } };
+const cleanupHealth = mountCleanupHealth({ root: byId('adminCleanupHealth'), read: getSiteAdminCleanupHealth,
+  getOwner: () => owner, isCurrent: captured => captured === owner && !suspended && tab === 'operations' && permissions.includes('operations.read'),
+  onAuthorityError: showError });
 const text = (value) => typeof value === 'string' || typeof value === 'number' ? String(value).slice(0, 2000) : 'Not recorded';
 const date = (value) => {
   if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}T/.test(value)) return 'Not recorded';
@@ -51,7 +56,7 @@ function closeDetail({ restore = true } = {}) {
 function clearRows() {
   listController?.abort(); listController = null;
   queryEpoch += 1; loading = false; nextCursor = null;
-  for (const value of Object.values(tabs)) byId(`${value.prefix}Rows`).replaceChildren();
+  for (const value of Object.values(tabs)) byId(`${value.prefix}Rows`)?.replaceChildren();
   byId('adminStatus').textContent = ''; workspace.removeAttribute('aria-busy');
   closeDetail({ restore: false }); updatePagination();
 }
@@ -97,7 +102,7 @@ function gate(title, message, action = '') {
 }
 function scrub(reason = '') {
   epoch += 1; checking = false; owner = null; permissions = []; cursors = [null]; page = 0;
-  clearRows(); clearQueueHealth(); for (const value of Object.values(tabs)) byId(`${value.prefix}Filters`).reset();
+  clearRows(); clearQueueHealth(); cleanupHealth.clear(); for (const value of Object.values(tabs)) byId(`${value.prefix}Filters`)?.reset();
   updateFilterState();
   byId('adminPreview').hidden = true;
   gate('Access needs verification', reason === 'ADMIN_SIGNED_OUT' ? 'Log in to continue. Private records have been cleared.' : 'Private records have been cleared. Check access again to continue.', reason === 'ADMIN_SIGNED_OUT' ? 'adminLogin' : 'adminRetryAccess');
@@ -109,6 +114,7 @@ function showError(error) {
   } else byId('adminStatus').textContent = adminReadError(error?.code).message;
 }
 function updatePagination() {
+  byId('adminPagination').hidden = tab === 'operations';
   byId('adminFirstPage').disabled = loading || page === 0;
   byId('adminPreviousPage').disabled = loading || page === 0;
   byId('adminNextPage').disabled = loading || !nextCursor;
@@ -204,6 +210,7 @@ function listArgs() {
 }
 function updateFilterState() {
   const form = byId(`${tabs[tab].prefix}Filters`);
+  if (!form) { byId('adminFilterSummary').textContent = ''; byId('adminFilterState').hidden = true; return; }
   const choices = [...form.elements].flatMap((control) => {
     if (control.tagName === 'SELECT') {
       const original = [...control.options].find(option => option.defaultSelected) || control.options[0];
@@ -215,7 +222,7 @@ function updateFilterState() {
   byId('adminFilterState').hidden = !choices.length;
 }
 async function loadPage() {
-  if (!owner || suspended) return;
+  if (!owner || suspended || !tabs[tab].list) return;
   clearRows(); updateFilterState(); loading = true; workspace.setAttribute('aria-busy', 'true'); updatePagination();
   byId('adminStatus').textContent = 'Loading records…';
   const captured = epoch; const query = queryEpoch; const actorId = owner.actorId;
@@ -330,10 +337,12 @@ async function openDetail(kind, id, button) {
 }
 function selectTab(next, { focus = false } = {}) {
   if (!tabs[next] || !permissions.includes(tabs[next].permission)) return;
-  clearQueueHealth(); tab = next; cursors = [null]; page = 0;
+  clearQueueHealth(); cleanupHealth.clear(); tab = next; cursors = [null]; page = 0;
   for (const node of document.querySelectorAll('[data-admin-tab]')) { const active = node.dataset.adminTab === tab; node.setAttribute('aria-selected', String(active)); node.tabIndex = active ? 0 : -1; if (active && focus) node.focus(); }
   for (const node of document.querySelectorAll('[data-admin-panel]')) node.hidden = node.dataset.adminPanel !== tab;
-  void loadPage(); if (tab === 'requests') void loadQueueHealth();
+  if (tab === 'operations') { clearRows(); updateFilterState(); cleanupHealth.clear({ ready: true }); }
+  else void loadPage();
+  if (tab === 'requests') void loadQueueHealth();
 }
 async function verifyAccess() {
   if (suspended || checking) return;

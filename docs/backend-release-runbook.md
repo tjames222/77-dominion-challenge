@@ -1174,3 +1174,43 @@ frontend release; do not redeploy or rerun migrations just to change the flag.
 After any recovery, rerun the production verification checklist and add the
 failure mode to the automated migration, RLS, RPC, or function suite before
 re-enabling the feature.
+
+## Reviewed Admin cleanup-health addition (73 to 74)
+
+The source 74 policy accepts only exact 73 with `release_scope=full`, or already
+completed 74 with `full`/`frontend-only`. It pins every historical migration byte
+and the one new cleanup-health migration. Old 70/71/72 boundaries, arbitrary
+future suffixes, name drift, and old cutover scopes fail closed.
+
+Before applying the addition:
+
+1. Complete normal protected develop/main review and CI. Capture a fresh free
+   `post-cleanup-monitor-73` backup from the same main commit. Require its
+   successful isolated restore and unchanged existing recovery limitations.
+2. Use the fixed read-only index preflight. The registry must have at most 32 MiB
+   heap, at most 128 MiB total relation size, and a known estimate no greater
+   than 100,000 rows (an actually zero-byte heap may have an unknown estimate).
+   Unknown nonempty estimates, conflicting locks, invalid indexes or preexisting
+   new index names stop the gate. These metadata checks are conservative
+   precautions, not a prediction of production runtime or a substitute for the
+   migration's lock timeout. No ANALYZE, worker pause or cleanup mutation is needed.
+3. Dispatch the full release with that backup run and `send_test_email=false`.
+   Recheck the preflight and same selected encrypted artifact before the final
+   unchanged-boundary check and apply. Any 73→74 change by another writer stops
+   this run rather than dropping its backup requirement.
+4. The three ordinary index builds and guarded read RPC are one additive
+   migration. Each lock acquisition has a 5-second timeout and each statement a
+   30-second timeout; these are not a 30-second whole-transaction bound. Ordinary
+   index builds hold write-blocking locks until commit. A timeout rolls back this
+   migration; do not silently switch to concurrent/out-of-transaction builds.
+5. Require exact completed 74 history, the existing inbox/challenge catalog
+   checks, and the new fixed cleanup catalog verifier before later backend and
+   frontend stages. Verify immutable artifact and canonical production delivery.
+
+The Operations panel is manual-refresh/read-only, requires current canonical
+`operations.read` and AAL2, and exposes no deletion controls or object identifiers.
+Counters overlap and show 1000+ when truncated; they are not a queue total.
+Cron records are ordered by allocated run identifier, not guaranteed wall-clock
+order. Bounded global history means freshness is unknown. Scheduler success only
+proves enqueueing, not an HTTP response or deletion. A failed or stale observation
+must not trigger an automatic cleanup action.

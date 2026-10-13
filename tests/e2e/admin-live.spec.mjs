@@ -1,6 +1,145 @@
 import { test, expect } from '@playwright/test';
 import AxeBuilder from '@axe-core/playwright';
 import { installAdminStub } from './support/admin-supabase-stub.mjs';
+import { previewCleanupHealth } from '../../src/static/admin-cleanup-health-preview.mjs';
+
+test.describe('Operations cleanup health', () => {
+  const rpc = 'site_admin_get_cleanup_health';
+  const reads = auth => auth.requests.filter(entry => entry.path.endsWith(`/${rpc}`));
+  async function open(context, page, options = {}) {
+    const auth = await installAdminStub(context, { permissions: ['operations.read'], ...options });
+    page.__cleanupAuth = auth; await page.goto('/admin.html#operations');
+    await expect(page.locator('#adminOperationsPanel')).toBeVisible(); return auth;
+  }
+  const refresh = async page => { await page.locator('#adminCleanupRefresh').click(); await expect(page.locator('.admin-cleanup-counter')).toHaveCount(6); };
+  test.beforeEach(async ({ page, baseURL }) => {
+    page.__cleanupEvidence = { errors: [], external: [] };
+    page.on('pageerror', error => page.__cleanupEvidence.errors.push(error.message));
+    await page.route('**/*', route => {
+      if (new URL(route.request().url()).origin !== new URL(baseURL).origin) {
+        page.__cleanupEvidence.external.push(new URL(route.request().url()).origin); return route.abort();
+      }
+      return route.fallback();
+    });
+  });
+  test.afterEach(async ({ page }) => {
+    expect(page.__cleanupEvidence).toEqual({ errors: [], external: [] });
+    const auth = page.__cleanupAuth;
+    if (auth) {
+      const allowed = ['get_site_admin_context', 'site_admin_get_cleanup_health', 'site_admin_list_users', 'site_admin_list_early_access_requests', 'site_admin_list_account_requests', 'site_admin_get_account_request_queue_health', 'get_theme_preference', 'get_reward_catalog_v2', 'get_member_access_context'];
+      expect(auth.requests.filter(entry => entry.method !== 'GET' && !allowed.some(name => entry.path.endsWith(`/${name}`)))).toEqual([]);
+    }
+    const stored = await page.evaluate(() => JSON.stringify({ ...localStorage, ...sessionStorage }));
+    expect(stored).not.toMatch(/PRIVATE_CLEANUP|failuresLastHour|lastRunsOrder|oldestEligibleAt/);
+  });
+  test('loads only on manual refresh, aggregate-only and with exact actor, no pagination or writes', async ({ context, page }) => {
+    const auth = await open(context, page); expect(reads(auth)).toHaveLength(0);
+    await expect(page.locator('#adminCleanupStatus')).toContainText('Not checked'); await expect(page.locator('#adminPagination')).toBeHidden();
+    await expect(page.locator('#adminUsersTab')).toBeHidden(); await expect(page.locator('#adminAuditTab')).toBeHidden();
+    await refresh(page); await expect(page.locator('.admin-cleanup-count')).toHaveText(['2', '3', '1', '0', '1', '1']);
+    await expect(page.locator('#adminCleanupStatus')).toContainText('Observed'); await expect(page.locator('#adminCleanupNote')).toContainText('Counts overlap');
+    await expect(page.locator('#adminCleanupScheduler')).toContainText('does not prove an HTTP response');
+    expect(reads(auth)).toHaveLength(1); expect(reads(auth)[0].body).toEqual({ target_expected_actor_id: auth.A });
+    expect(await page.locator('#adminCleanupData').textContent()).not.toMatch(/aaaaaaaa|70000000|example.test|PRIVATE/);
+    await expect(page.locator('#adminCleanupData button, #adminCleanupData a')).toHaveCount(0);
+    await page.getByRole('tab', { name: 'Account requests', exact: true }).click(); await expect(page.locator('#adminRequestsRows tr')).toHaveCount(25);
+    await expect(page.locator('#adminCleanupData')).toBeEmpty(); await expect(page.locator('#adminPagination')).toBeVisible();
+    await page.getByRole('tab', { name: 'Operations', exact: true }).click(); expect(reads(auth)).toHaveLength(1);
+    await expect(page.locator('#adminCleanupStatus')).toContainText('Not checked'); await refresh(page); expect(reads(auth)).toHaveLength(2);
+    await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+    await expect(page.locator('#adminOperationsPanel')).toBeVisible(); await expect(page.locator('#adminCleanupData')).toBeEmpty();
+    expect(reads(auth)).toHaveLength(2);
+  });
+  test('capped counts and bounded scheduler coverage never imply complete history or successful deletion', async ({ context, page }) => {
+    await open(context, page);
+    await page.route(`**/${rpc}`, route => {
+      const observedAt = '2026-10-13T12:00:00Z'; const value = previewCleanupHealth(observedAt);
+      value.counters.ready = { count: 1000, hasMore: true }; value.counters.leased = { count: 1000, hasMore: false };
+      value.cron.historyCoverage = 'bounded'; value.cron.freshness = 'unknown';
+      value.privatePath = 'PRIVATE_CLEANUP_PATH'; value.cron.command = 'PRIVATE_CLEANUP_COMMAND'; value.cron.lastRuns[0].error = 'PRIVATE_CLEANUP_ERROR';
+      return route.fulfill({ contentType: 'application/json', body: JSON.stringify({ schemaVersion: 1, actorId: route.request().postDataJSON().target_expected_actor_id, observedAt, ...value }) });
+    });
+    await refresh(page); await expect(page.locator('[data-cleanup-counter="ready"] .admin-cleanup-count')).toHaveText('1000+');
+    await expect(page.locator('[data-cleanup-counter="leased"] .admin-cleanup-count')).toHaveText('1000');
+    await expect(page.locator('#adminCleanupScheduler')).toContainText('Earlier cleanup runs may be omitted; freshness is unknown');
+    await expect(page.locator('#adminCleanupScheduler')).toContainText('not guaranteed to be latest wall-clock order');
+    expect(await page.content()).not.toMatch(/PRIVATE_CLEANUP/);
+  });
+  for (const mode of ['malformed', 'wrong actor', 'oversized', 'failure', 'offline']) test(`${mode} removes old aggregates and reports unknown without zero fallback`, async ({ context, page }) => {
+    const auth = await open(context, page); await refresh(page);
+    if (mode === 'failure') auth.fail();
+    else if (mode === 'wrong actor') auth.corrupt();
+    else await page.route(`**/${rpc}`, route => mode === 'offline' ? route.abort('internetdisconnected') : route.fulfill({ contentType: 'application/json', body: mode === 'oversized'
+      ? JSON.stringify({ padding: 'x'.repeat(65537) }) : JSON.stringify({ schemaVersion: 1, actorId: auth.A, observedAt: '2026-10-13T12:00:00Z', ...previewCleanupHealth('2026-10-13T12:00:00Z'), counters: {} }) }));
+    await page.locator('#adminCleanupRefresh').click(); await expect(page.locator('#adminCleanupData')).toBeEmpty();
+    await expect(page.locator('#adminCleanupStatus')).toContainText('Counts and scheduler health are unknown');
+    await expect(page.locator('#adminCleanupRefresh')).toBeEnabled(); await expect(page.locator('#adminCleanupHealth')).not.toHaveAttribute('aria-busy');
+    expect(await page.content()).not.toMatch(/PRIVATE RAW ERROR|PRIVATE_CLEANUP/);
+  });
+  for (const stage of ['RPC', 'provider']) test(`${stage} deadline clears loading and a late response cannot restore old data`, async ({ context, page }) => {
+    const auth = await open(context, page); await refresh(page); let release;
+    if (stage === 'RPC') release = auth.hold([rpc]);
+    else { let resume; const held = new Promise(resolve => { resume = resolve; }); release = resume;
+      await page.route('**/__admin_fixture__/auth/v1/user', async route => { await held; return route.fallback(); }); }
+    try {
+      const before = reads(auth).length; await page.locator('#adminCleanupRefresh').click();
+      await expect(page.locator('#adminCleanupHealth')).toHaveAttribute('aria-busy', 'true'); await expect(page.locator('#adminCleanupData')).toBeEmpty();
+      await expect(page.locator('#adminCleanupRefresh')).toHaveAttribute('aria-disabled', 'true');
+      await page.locator('#adminCleanupRefresh').focus(); await page.keyboard.press('Enter'); await page.keyboard.press('Space');
+      await expect(page.locator('#adminCleanupRefresh')).toBeFocused();
+      await expect(page.locator('#adminCleanupStatus')).toContainText('Counts and scheduler health are unknown', { timeout: 15000 });
+      await expect(page.locator('#adminCleanupRefresh')).toBeEnabled(); expect(reads(auth)).toHaveLength(before + (stage === 'RPC' ? 1 : 0));
+    } finally { release(); }
+    await expect(page.locator('#adminCleanupData')).toBeEmpty(); await refresh(page);
+  });
+  for (const mode of ['pagehide', 'tab change', 'replacement', 'ABA', 'permission revoked']) test(`${mode} fences held cleanup results and scrubs aggregates`, async ({ context, page }) => {
+    const auth = await open(context, page); await refresh(page);
+    if (mode === 'permission revoked') {
+      auth.permissions([]); await page.locator('#adminCleanupRefresh').click();
+      await expect(page.locator('#adminWorkspace')).toBeHidden(); await expect(page.locator('#adminCleanupData')).toBeEmpty(); return;
+    }
+    const release = auth.hold([rpc]);
+    try {
+      const before = reads(auth).length; await page.locator('#adminCleanupRefresh').click(); await expect.poll(() => reads(auth).length).toBe(before + 1);
+      if (mode === 'pagehide') await page.evaluate(() => window.dispatchEvent(new PageTransitionEvent('pagehide')));
+      else if (mode === 'tab change') await page.getByRole('tab', { name: 'Account requests', exact: true }).click();
+      else {
+        const replacement = auth.session(mode === 'ABA' ? auth.B : auth.A, 'aal2', '22222222-2222-4222-8222-222222222222');
+        const switchSession = value => { localStorage.setItem('sb-127-auth-token', JSON.stringify(value)); window.dispatchEvent(new StorageEvent('storage', { key: 'sb-127-auth-token', newValue: JSON.stringify(value) })); };
+        await page.evaluate(switchSession, replacement); if (mode === 'ABA') await page.evaluate(switchSession, auth.firstSession);
+      }
+      if (mode !== 'tab change') await expect(page.locator('#adminWorkspace')).toBeHidden();
+      await expect(page.locator('#adminCleanupData')).toBeEmpty(); release(); await expect(page.locator('#adminCleanupStatus')).toHaveText('');
+    } finally { release(); }
+  });
+  for (const [name, options] of [['member', { role: 'member' }], ['AAL1', { aal: 'aal1' }], ['missing permission', { permissions: ['users.read'] }]]) test(`${name} cannot request cleanup health`, async ({ context, page }) => {
+    const auth = await installAdminStub(context, options); page.__cleanupAuth = auth; await page.goto('/admin.html#operations');
+    if (name === 'missing permission') await expect(page.locator('#adminUsersRows tr')).toHaveCount(25);
+    else await expect(page.locator('#adminGateTitle')).not.toHaveText('Checking access');
+    await expect(page.locator('#adminOperationsTab')).toBeHidden(); await expect(page.locator('#adminCleanupData')).toBeEmpty(); expect(reads(auth)).toHaveLength(0);
+  });
+  for (const theme of ['light', 'dark', 'dominion-night', 'dominion-platinum']) test(`${theme} cleanup panel reflows and remains keyboard accessible at 320px and 200% text`, async ({ context, page }, testInfo) => {
+    await open(context, page); await refresh(page); await page.evaluate(value => { document.documentElement.dataset.theme = value; }, theme);
+    await page.evaluate(() => document.fonts.ready.then(() => undefined));
+    await page.locator('#adminOperationsTab').focus(); await page.keyboard.press('ArrowLeft'); await expect(page.locator('#adminRequestsTab')).toBeFocused();
+    await page.keyboard.press('End'); await expect(page.locator('#adminOperationsTab')).toBeFocused();
+    await page.locator('#adminCleanupRefresh').focus(); await page.keyboard.press('Enter'); await expect(page.locator('.admin-cleanup-counter')).toHaveCount(6);
+    await expect(page.locator('#adminCleanupRefresh')).toBeFocused();
+    for (const width of [1440, 320]) {
+      await page.setViewportSize({ width, height: 1000 });
+      for (const scale of ['100%', '200%']) {
+        await page.evaluate(value => { document.documentElement.style.fontSize = value; }, scale);
+        await expect.poll(() => page.locator('#adminCleanupHealth').evaluate(node => node.scrollWidth <= node.clientWidth)).toBe(true);
+        expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+        expect((await page.locator('#adminCleanupRefresh').boundingBox()).height).toBeGreaterThanOrEqual(44);
+        expect((await new AxeBuilder({ page }).include('#adminOperationsPanel').analyze()).violations).toEqual([]);
+        await page.locator('#adminCleanupHealth').screenshot({ path: testInfo.outputPath(`cleanup-${theme}-${width}-${scale.replace('%', 'pct')}.png`) });
+        await page.locator('#adminCleanupHealth').evaluate(node => window.scrollTo(0, node.getBoundingClientRect().top + scrollY - 90));
+        await page.screenshot({ path: testInfo.outputPath(`cleanup-viewport-${theme}-${width}-${scale.replace('%', 'pct')}.png`) });
+      }
+    }
+  });
+});
 
 test.describe('Bounded administrative reads', () => {
   const unavailable = page => expect(page.locator('#adminStatus')).toContainText('temporarily unavailable', { timeout: 15000 });
@@ -690,7 +829,8 @@ test.describe('Account requests inbox', () => {
     const table = page.getByRole('table', { name: /^Account requests/ });
     await expect(table.getByRole('columnheader')).toHaveCount(4); await expect(table.getByRole('row')).toHaveCount(26);
     await page.locator('#adminRequestsTab').focus(); await page.keyboard.press('Home'); await expect(page.locator('#adminEarlyTab')).toBeFocused();
-    await page.keyboard.press('End'); await expect(page.locator('#adminRequestsTab')).toBeFocused();
+    await page.keyboard.press('End'); await expect(page.locator('#adminOperationsTab')).toBeFocused();
+    await page.keyboard.press('ArrowLeft'); await expect(page.locator('#adminRequestsTab')).toBeFocused();
     await expect(page.locator('#adminRequestsRows tr')).toHaveCount(25);
     await page.evaluate(() => document.fonts.ready.then(() => undefined));
     for (const scale of ['100%', '200%']) {

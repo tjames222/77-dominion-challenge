@@ -3,7 +3,8 @@ import { before, after, test } from 'node:test';
 import { createHash } from 'node:crypto';
 import { readFile, readdir } from 'node:fs/promises';
 import { createOriginal77FullchainFixture, ISOLATED_RPC_INTEGRATIONS } from './fixtures/original77-fullchain-fixture.mjs';
-import { POST71_REVIEWED_MIGRATIONS, verifyPost71ReleaseSources } from './verify-post71-release-plan.mjs';
+import { POST71_REVIEWED_MIGRATIONS } from './verify-post71-release-plan.mjs';
+import { POST73_REVIEWED_MIGRATION, verifyPost73ReleaseSources } from './verify-post73-release-plan.mjs';
 import { REPEATABLE_CHALLENGE_MIGRATION_FILENAME, REPEATABLE_CHALLENGE_MIGRATION_SHA256 } from './verify-repeatable-challenge-cutover-plan.mjs';
 
 // Audit the registered latest-schema pgTAP tests in an owned, network-disabled,
@@ -22,9 +23,9 @@ async function readReviewedMigrationSources() {
   const entries = await Promise.all(migrationFilenames.map(async name =>
     [name, await readFile(new URL(name, migrationsDirectory))]));
   const migrationSourceHashes = Object.fromEntries(entries.map(([name, source]) => [name, digest(source)]));
-  // Pin all frozen71 bytes and exactly the two reviewed additions before any
+  // Pin all frozen73 bytes and exactly the one reviewed addition before any
   // fixture resource exists; no arbitrary later suffix is accepted or replayed.
-  verifyPost71ReleaseSources({ migrationFilenames, migrationSourceHashes });
+  verifyPost73ReleaseSources({ migrationFilenames, migrationSourceHashes });
   assert.equal(migrationSourceHashes[REPEATABLE_CHALLENGE_MIGRATION_FILENAME], REPEATABLE_CHALLENGE_MIGRATION_SHA256);
   return { sources: Object.fromEntries(entries), hashes: migrationSourceHashes };
 }
@@ -55,7 +56,7 @@ before(async () => {
     insert into supabase_migrations.schema_migrations(version,name,statements)
       values('20261001001245','repeatable_challenge_instances_v2',array[${quote(source)}]);
     commit;`);
-  for (const { filename } of POST71_REVIEWED_MIGRATIONS) {
+  for (const { filename } of [...POST71_REVIEWED_MIGRATIONS, POST73_REVIEWED_MIGRATION]) {
     const body = reviewedSources.sources[filename].toString('utf8');
     fixture.query(`begin; set local check_function_bodies=on; set local search_path=public,extensions;
       ${body}

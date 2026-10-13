@@ -4,6 +4,7 @@ import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 import { createOriginal77FullchainFixture } from './fixtures/original77-fullchain-fixture.mjs';
 import { POST71_REVIEWED_MIGRATIONS } from './verify-post71-release-plan.mjs';
+import { POST73_REVIEWED_MIGRATION } from './verify-post73-release-plan.mjs';
 import { INBOX_CATALOG_QUERY, INBOX_CATALOG_FIELDS } from './verify-production-account-request-inbox.mjs';
 import { ORIGINAL77_CATALOG_QUERY, ORIGINAL77_CATALOG_FIELDS } from './verify-production-original77.mjs';
 import { REPEATABLE_CHALLENGE_CATALOG_QUERY, REPEATABLE_CHALLENGE_CATALOG_FIELDS } from './verify-production-repeatable-challenge.mjs';
@@ -25,10 +26,10 @@ function check(fixture, expectedHistory, mutation='', expectedOverrides={}) {
   }
 }
 
-test('exact71 and source-pinned73 preserve every existing catalog Boolean; partial72/74/name drift fail history only', async () => {
+test('exact71/source-pinned73/74 preserve every catalog Boolean; partial72/unknown75/name drift fail history only', async () => {
   const fixture=await createOriginal77FullchainFixture({through:70});
   try {
-    const migrations=[{filename:REPEATABLE_CHALLENGE_MIGRATION_FILENAME,sha256:REPEATABLE_CHALLENGE_MIGRATION_SHA256},...POST71_REVIEWED_MIGRATIONS];
+    const migrations=[{filename:REPEATABLE_CHALLENGE_MIGRATION_FILENAME,sha256:REPEATABLE_CHALLENGE_MIGRATION_SHA256},...POST71_REVIEWED_MIGRATIONS,POST73_REVIEWED_MIGRATION];
     for (const [index,row] of migrations.entries()) {
       const body=await readFile(new URL(`../supabase/migrations/${row.filename}`,import.meta.url),'utf8');
       assert.equal(hash(body),row.sha256);
@@ -37,8 +38,8 @@ test('exact71 and source-pinned73 preserve every existing catalog Boolean; parti
         ${q(row.filename.slice(0,14))},${q(row.filename.slice(15,-4))},array[${q(body)}]::text[]);commit;`);
       check(fixture,index!==1);
     }
-    check(fixture,false,"insert into supabase_migrations.schema_migrations(version,name,statements) values('20261008000000','unreviewed',array[]::text[]);");
-    for (const version of ['20261007055555','20261007060519']) {
+    check(fixture,false,"insert into supabase_migrations.schema_migrations(version,name,statements) values('20261014000000','unreviewed',array[]::text[]);");
+    for (const version of ['20261007055555','20261007060519','20261013055744']) {
       check(fixture,false,`update supabase_migrations.schema_migrations set name='unreviewed' where version=${q(version)};`);
     }
     // The new history alternative must retain the inbox-specific historical

@@ -116,7 +116,7 @@ test('request projection stays deferred and the view exposes no fulfillment cont
   const api = read('./api.js');
   assert.doesNotMatch(api, /^import.*admin-account-request/m);
   assert.match(api, /await import\('\.\/admin-account-request-transport\.mjs'\)/);
-  const html = read('../../admin.html').split('id="adminRequestsPanel"')[1].split('class="admin-pagination"')[0];
+  const html = read('../../admin.html').split('id="adminRequestsPanel"')[1].split('id="adminOperationsPanel"')[0];
   assert.equal((html.match(/<button/g) || []).length, 2); assert.match(html, /Read-only intake/);
   assert.doesNotMatch(read('./admin-account-requests.mjs'), /localStorage|sessionStorage|innerHTML|console\./);
 });

@@ -16,9 +16,10 @@ import { CURRENT_PGNET_TABLES, currentBackupPgNetCaptureSql, currentBackupPgNetL
 import { POST_EARLY_ACCESS_BACKUP_MODE, postEarlyAccessVaultProofSql, postEarlyAccessLocalVaultRecoverySql,
   requirePostEarlyAccessVaultProof, requirePostEarlyAccessLocalVaultRecovery,
   postEarlyAccessVaultRecoveryManifest } from './free-backup-post-early-access-vault.mjs';
-import { MAX_ENCRYPTED_BYTES, POSTGRES_IMAGE, POST_ORIGINAL77_BACKUP_MODE, POST_REPEATABLE_BACKUP_MODE, PROJECT_REF,
+import { MAX_ENCRYPTED_BYTES, POSTGRES_IMAGE, POST_ORIGINAL77_BACKUP_MODE, POST_REPEATABLE_BACKUP_MODE, POST73_BACKUP_MODE, PROJECT_REF,
   requirePostOriginal77MigrationVersions, requirePostRepeatableMigrationVersions,
-  selectPostRepeatableMigrationVersions } from './production-backup-public-contract.mjs';
+  selectPostRepeatableMigrationVersions, selectPost73MigrationVersions, requirePost73MigrationVersions } from './production-backup-public-contract.mjs';
+import { verifyPost73ReleaseSources } from './verify-post73-release-plan.mjs';
 import { REPEATABLE_CHALLENGE_MIGRATION_FILENAME, verifyRepeatableChallengeMigrationSource } from './verify-repeatable-challenge-cutover-plan.mjs';
 
 export { MAX_ENCRYPTED_BYTES, POSTGRES_IMAGE, POST_ORIGINAL77_BACKUP_MODE, POST_REPEATABLE_BACKUP_MODE, PROJECT_REF };
@@ -30,11 +31,13 @@ const reviewedBackupModes = Object.freeze([
   POST_ADMIN_INBOX_BACKUP_MODE,
   POST_ORIGINAL77_BACKUP_MODE,
   POST_REPEATABLE_BACKUP_MODE,
+  POST73_BACKUP_MODE,
 ]);
 const usesFiveSettingVault = (mode) => mode === POST_EARLY_ACCESS_BACKUP_MODE
   || mode === POST_ADMIN_INBOX_BACKUP_MODE
   || mode === POST_ORIGINAL77_BACKUP_MODE
-  || mode === POST_REPEATABLE_BACKUP_MODE;
+  || mode === POST_REPEATABLE_BACKUP_MODE
+  || mode === POST73_BACKUP_MODE;
 export const REMOTE_BACKUP_ROLE_SQL = 'SET SESSION ROLE postgres';
 export const REMOTE_BACKUP_PREFLIGHT_SQL = `${REMOTE_BACKUP_ROLE_SQL}; BEGIN READ ONLY; SELECT (current_user = 'postgres')::text, (current_setting('transaction_read_only') = 'on')::text; ROLLBACK;`;
 export const LOCAL_RESTORE_ROLE_SNAPSHOT_SQL = "SELECT coalesce(jsonb_agg(to_jsonb(r) ORDER BY r.oid), '[]'::jsonb)::text FROM pg_catalog.pg_roles AS r;";
@@ -93,6 +96,7 @@ export async function decryptBackup(input, output, manifest, privatePem) {
 export function selectBackupMigrationCheckpoint(filenames, mode = LEGACY_BACKUP_MODE) {
   assert(reviewedBackupModes.includes(mode), 'Unknown backup mode');
   if (mode === POST_REPEATABLE_BACKUP_MODE) return selectPostRepeatableMigrationVersions(filenames);
+  if (mode === POST73_BACKUP_MODE) return selectPost73MigrationVersions(filenames);
   assert(Array.isArray(filenames));
   const versions = filenames.filter(name => typeof name === 'string' && name.endsWith('.sql')).sort().map(name => {
     assert.match(name, /^[0-9]{14}_[a-z0-9_]+\.sql$/u, 'Invalid migration filename');
@@ -126,6 +130,7 @@ export function selectBackupMigrationCheckpoint(filenames, mode = LEGACY_BACKUP_
 export function parseInventory(text, expectedVersions, mode = LEGACY_BACKUP_MODE) {
   assert(reviewedBackupModes.includes(mode), 'Unknown backup mode');
   if (mode === POST_REPEATABLE_BACKUP_MODE) requirePostRepeatableMigrationVersions(expectedVersions);
+  if (mode === POST73_BACKUP_MODE) requirePost73MigrationVersions(expectedVersions);
   if (mode === CURRENT_BACKUP_MODE) {
     assert.equal(expectedVersions.length, 61, 'Incomplete current migration checkpoint');
     assert.equal(sha256(JSON.stringify(expectedVersions)), '579aa73501df0b4b746f9128869f2fa6ea8208b560a4cf179df2893574ad5cff', 'Current migration checkpoint changed');
@@ -445,6 +450,15 @@ export async function runBackup() {
   const repository = process.cwd();
   const backupMode = process.env.BACKUP_MODE || LEGACY_BACKUP_MODE;
   const expectedVersions = selectBackupMigrationCheckpoint(await readdir(path.join(repository, 'supabase/migrations')), backupMode);
+  if (backupMode === POST73_BACKUP_MODE) {
+    const migrationFilenames = await readdir(path.join(repository, 'supabase/migrations'));
+    const migrationSourceHashes = Object.fromEntries(await Promise.all(
+      migrationFilenames.filter(name => name.endsWith('.sql')).map(async name =>
+        [name, sha256(await readFile(path.join(repository, 'supabase/migrations', name)))])));
+    // Exact reviewed source74 backs up still-exact73 before applying its one addition.
+    // Source validation precedes both secret recovery inputs and temporary credentials.
+    verifyPost73ReleaseSources({ migrationFilenames, migrationSourceHashes });
+  }
   if (backupMode === POST_REPEATABLE_BACKUP_MODE) {
     verifyRepeatableChallengeMigrationSource({ migrationSourceSha256:
       sha256(await readFile(path.join(repository, 'supabase/migrations', REPEATABLE_CHALLENGE_MIGRATION_FILENAME))) });

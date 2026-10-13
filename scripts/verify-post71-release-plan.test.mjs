@@ -6,7 +6,8 @@ import test from 'node:test';
 import { POST71_REVIEWED_MIGRATIONS, verifyPost71ReleasePlan, verifyPost71ReleaseSources } from './verify-post71-release-plan.mjs';
 import { verifyProductionRepeatableCutoverPolicy } from './verify-production-repeatable-cutover-policy.mjs';
 const directory = new URL('../supabase/migrations/', import.meta.url);
-const migrationFilenames = (await readdir(directory)).filter(name => name.endsWith('.sql')).sort();
+// Historical source73 policy remains frozen, even when the current source adds74.
+const migrationFilenames = (await readdir(directory)).filter(name => name.endsWith('.sql')).sort().slice(0, 73);
 const migrationSourceHashes = Object.fromEntries(await Promise.all(migrationFilenames.map(async name =>
   [name, createHash('sha256').update(await readFile(new URL(name,directory))).digest('hex')])));
 const source = { migrationFilenames, migrationSourceHashes };
