@@ -542,7 +542,9 @@ async function loadBadgesAndRewards({ claimUnlocks = true } = {}) {
       if (challengeClaim.status === 'fulfilled') {
         unlocks.push(...challengeClaim.value.claimedUnlocks);
       }
-      catalog = await getAllRewardCatalog({ expectedUserId });
+      catalog = challengeClaim.status === 'fulfilled' && challengeClaim.value.catalog
+        ? challengeClaim.value.catalog
+        : await getAllRewardCatalog({ expectedUserId });
       if (requestId !== loadRequestId || pageActorId !== expectedUserId) return;
     }
     // Publish one ready state. Replacing a ready list after the initial claim
