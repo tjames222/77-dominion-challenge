@@ -118,11 +118,13 @@ test('old four postflights and new75 composed postflight are exact complements, 
   const newCondition = "if: needs.repeatable-cutover-policy.outputs.mode == 'post74-additive-release' || needs.repeatable-cutover-policy.outputs.mode == 'post75-reviewed-release'";
   for (const name of ['Verify source-fixed account-request inbox catalog', 'Verify source-fixed original77 completion catalog',
     'Verify source-fixed repeatable challenge catalog', 'Verify source-fixed Admin cleanup health catalog']) {
-    const block = step(backend, name); assert(block.includes(oldCondition)); assert.doesNotMatch(block, /continue-on-error/);
+    const block = step(backend, name);
+    assert.deepEqual(block.split('\n').map(line => line.trim()).filter(line => line.startsWith('if:')), [oldCondition]);
+    assert.doesNotMatch(block, /continue-on-error|\|\| true/);
   }
   const name = 'Verify exact75 composed catalogs and guarded profile-name correction';
   const block = step(backend, name);
-  assert(block.includes(newCondition));
+  assert.deepEqual(block.split('\n').map(line => line.trim()).filter(line => line.startsWith('if:')), [newCondition]);
   assert(normalized(block).includes(cleanPattern('verify-production-post75-catalogs.mjs')));
   assert.doesNotMatch(block, /continue-on-error|\|\| true/);
   assert(backend.indexOf(name) > backend.indexOf('Require exact completed migration history'));
