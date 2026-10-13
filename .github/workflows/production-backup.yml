@@ -49,7 +49,7 @@ jobs:
         with:
           version: 2.109.0
       - name: Verify backup encryption and boundary checks
-        run: node --test scripts/free-production-backup.test.mjs scripts/free-backup-post-early-access-vault.test.mjs scripts/verify-post-original77-backup-evidence.test.mjs scripts/verify-post-repeatable-backup-evidence.test.mjs scripts/verify-post73-backup-evidence.test.mjs scripts/verify-post73-release-plan.test.mjs scripts/free-backup-post73.test.mjs
+        run: node --test scripts/free-production-backup.test.mjs scripts/prepare-production-backup-image.test.mjs scripts/free-backup-post-early-access-vault.test.mjs scripts/verify-post-original77-backup-evidence.test.mjs scripts/verify-post-repeatable-backup-evidence.test.mjs scripts/verify-post73-backup-evidence.test.mjs scripts/verify-post73-release-plan.test.mjs scripts/free-backup-post73.test.mjs
       - name: Capture and rehearse restore
         id: backup
         env:
