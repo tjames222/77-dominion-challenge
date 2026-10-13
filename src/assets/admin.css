@@ -48,6 +48,21 @@
 .admin-queue-bucket dt { color: var(--text-muted); font-size: .875rem; }
 .admin-queue-bucket dd { margin: .15rem 0 .75rem; }
 .admin-queue-bucket dl > div:first-child dd { font-size: 1.6rem; font-weight: 750; }
+.admin-cleanup-health { margin-block: 1.5rem; padding: 1rem; border: 1px solid var(--border); border-radius: 14px; background: var(--surface); overflow-wrap: anywhere; }
+.admin-cleanup-health h3, .admin-cleanup-health h4, .admin-cleanup-health h5 { margin: 0; font-size: 1.1rem; line-height: 1.5; }
+.admin-cleanup-health p { color: var(--text-muted); line-height: 1.6; }
+.admin-cleanup-health button[aria-disabled="true"] { opacity: .6; cursor: progress; }
+.admin-cleanup-counters { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 16rem), 1fr)); gap: .75rem; margin-block: 1rem; }
+.admin-cleanup-counter { min-width: 0; padding: 1rem; border: 1px solid var(--border); border-radius: 10px; background: var(--surface-elevated); }
+.admin-cleanup-counter h4 { font-size: 1rem; }
+.admin-cleanup-counter .admin-cleanup-count { margin: .25rem 0; color: var(--text); font-size: 1.8rem; font-weight: 750; }
+.admin-cleanup-counter p:last-child { margin: 0; font-size: .875rem; }
+.admin-cleanup-health dl { display: grid; gap: .8rem; margin-block: 1rem; line-height: 1.5; }
+.admin-cleanup-health dt { color: var(--text-muted); font-size: .875rem; }
+.admin-cleanup-health dd { margin: .15rem 0 0; }
+.admin-cleanup-scheduler { border-top: 1px solid var(--border); margin-top: 1rem; padding-top: 1rem; }
+.admin-cleanup-runs { display: grid; gap: .75rem; padding-left: 1.5rem; }
+.admin-cleanup-runs li { padding: .75rem; border: 1px solid var(--border); border-radius: 10px; background: var(--surface-elevated); }
 .admin-table-wrap { border: 1px solid var(--border); border-radius: 14px; overflow: auto; background: var(--surface); }
 .admin-table { width: 100%; border-collapse: collapse; text-align: left; font-size: .95rem; }
 .admin-table caption { padding: .85rem 1rem; text-align: left; font-size: .875rem; color: var(--text-muted); }

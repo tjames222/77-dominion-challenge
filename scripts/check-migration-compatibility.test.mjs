@@ -490,7 +490,7 @@ test("package, CI, and production deploy run the gate before migrations", async 
     deployWorkflow.match(
       /SUPABASE_ACCESS_TOKEN="\$SUPABASE_ACCESS_TOKEN"/gu,
     )?.length,
-    21, // Includes all three release-boundary checks plus three bounded catalog postflights.
+    25, // Six preparations, nine revocations, three boundary checks, three cleanup preflights, four catalog postflights.
   );
   const cleanReleaseBoundaryChecks = deployWorkflow.match(
     /\/usr\/bin\/env -i \\\n\s+PATH="\$PATH" \\\n\s+RELEASE_SCOPE="\$RELEASE_SCOPE" \\\n(?:\s+EXPECTED_RELEASE_BOUNDARY="\$EXPECTED_RELEASE_BOUNDARY" \\\n)?\s+SUPABASE_ACCESS_TOKEN="\$SUPABASE_ACCESS_TOKEN" \\\n\s+SUPABASE_PROJECT_REF="\$SUPABASE_PROJECT_REF" \\\n\s+node scripts\/verify-production-repeatable-cutover-policy\.mjs/gu,
@@ -509,10 +509,23 @@ test("package, CI, and production deploy run the gate before migrations", async 
     )?.length,
     1,
   );
-  const cleanCatalogPostflights = deployWorkflow.match(
-    /\/usr\/bin\/env -i \\\n\s+PATH="\$PATH" \\\n\s+SUPABASE_ACCESS_TOKEN="\$SUPABASE_ACCESS_TOKEN" \\\n\s+SUPABASE_PROJECT_REF="\$SUPABASE_PROJECT_REF" \\\n\s+node scripts\/verify-production-(?:account-request-inbox|original77|repeatable-challenge)\.mjs/gu,
+  const cleanCleanupPreflights = deployWorkflow.match(
+    /\/usr\/bin\/env -i \\\n\s+PATH="\$PATH" \\\n\s+SUPABASE_ACCESS_TOKEN="\$SUPABASE_ACCESS_TOKEN" \\\n\s+SUPABASE_PROJECT_REF="\$SUPABASE_PROJECT_REF" \\\n\s+node scripts\/verify-admin-cleanup-index-preflight\.mjs/gu,
   ) ?? [];
-  assert.equal(cleanCatalogPostflights.length, 3);
+  assert.equal(cleanCleanupPreflights.length, 3);
+  assert.equal(
+    deployWorkflow.match(/node scripts\/verify-admin-cleanup-index-preflight\.mjs/gu)?.length,
+    3,
+    "All three cleanup preflights must use the exact clean environment above.",
+  );
+  const cleanCatalogPostflights = [...deployWorkflow.matchAll(
+    /\/usr\/bin\/env -i \\\n\s+PATH="\$PATH" \\\n\s+SUPABASE_ACCESS_TOKEN="\$SUPABASE_ACCESS_TOKEN" \\\n\s+SUPABASE_PROJECT_REF="\$SUPABASE_PROJECT_REF" \\\n\s+node scripts\/verify-production-(account-request-inbox|original77|repeatable-challenge|admin-cleanup-health)\.mjs/gu,
+  )];
+  assert.deepEqual(
+    cleanCatalogPostflights.map((check) => check[1]).sort(),
+    ['account-request-inbox', 'admin-cleanup-health', 'original77', 'repeatable-challenge'],
+    "Each bounded catalog postflight must receive only the exact clean environment once.",
+  );
   assert.equal(deployWorkflow.split("--credential-only").length - 1, 6);
   assert.equal(deployWorkflow.split("--revoke-credentials").length - 1, 9);
   assert.equal(

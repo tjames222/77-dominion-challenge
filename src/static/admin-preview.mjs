@@ -67,6 +67,12 @@ export function createAdminPreview({ getUser, mode }) {
       adminReady: mode === 'ready', reason: mode === 'mfa' ? 'mfa_required' : null,
       permissions: mode === 'ready' ? ['users.read', 'audit.read', 'operations.read', 'operations.manage'] : [], stepUpRequired: false };
     if (mode !== 'ready') throw adminReadError('ADMIN_DENIED');
+    if (name === 'site_admin_get_cleanup_health') {
+      const { previewCleanupHealth } = await import('./admin-cleanup-health-preview.mjs');
+      const current = await owner();
+      if (captured !== epoch || signal?.aborted || current.actorId !== actor.actorId) throw adminReadError('ADMIN_CHANGED');
+      return { ...base, ...previewCleanupHealth(base.observedAt) };
+    }
     if (name === 'site_admin_list_account_requests' || name === 'site_admin_get_account_request_queue_health') {
       const { previewAccountRequests, previewAccountRequestQueueHealth } = await import('./admin-account-request-preview.mjs');
       const result = name === 'site_admin_list_account_requests' ? await previewAccountRequests(args, actor.actorId) : previewAccountRequestQueueHealth();

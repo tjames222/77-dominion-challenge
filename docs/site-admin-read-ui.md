@@ -162,6 +162,47 @@ role or sent to a hosted service.
 
 ## Verification and remaining scope
 
+### Read-only cleanup health
+
+The Operations tab (`/admin.html#operations`) requires `operations.read` and the
+same live actor, immutable session and verified MFA authority as other Admin
+reads. It does not fetch cleanup health when opened or after a focus/access
+recheck. **Refresh cleanup health** explicitly requests one observation; there
+is no polling, automatic retry, cleanup action or deletion control.
+
+Six aggregate counters describe expired pending uploads, ready cleanup records,
+active and expired service leases, retry backoff, and objects with a failure in
+the last hour. The counters overlap and are not a queue total. Each is capped at
+1000, with `1000+` shown only when more matching objects exist. The failure count
+is objects, not failure events. The oldest ready timestamp and observation time
+are UTC. Missing, malformed, oversized or failed responses clear previous data
+and show unknown, never invented zero counts.
+
+The scheduler view reports the fixed cleanup schedule and at most two matching
+runs from a bounded global history tail. Runs are ordered by allocated run ID,
+not latest wall-clock time. Freshness describes only the newest allocated run;
+bounded or unavailable history always displays unknown. Complete empty history
+explicitly says no recorded runs. “Enqueued” means the recorded Cron SQL command
+succeeded; it does not establish HTTP delivery, cleanup completion or deletion.
+No object paths, object/user identifiers, raw errors, commands or credentials
+are displayed. The DTO projects only the declared aggregate fields.
+
+The read uses the existing ten-second whole-operation deadline, exact captured
+bearer, native user verification and a cleanup-specific 64KiB UTF-8 response cap.
+Old Admin read limits and all mutation transports remain unchanged. Account
+replacement, A→B→A, permission loss, navigation, hidden-page invalidation and tab
+changes abort/scrub the view; late responses cannot restore it. The refresh
+control retains keyboard focus with `aria-disabled` while a guard prevents
+duplicate requests. Response data is never persisted or logged. View/DTO modules
+are Admin-only in real and mock initial build graphs; synthetic preview data is
+loaded only through the explicit mock adapter.
+
+Local production-built Chromium/WebKit cases cover these boundaries, manual
+refresh, provider/RPC deadlines and recovery, malformed/oversized/offline results,
+all four themes, 320px reflow, 200% text, keyboard tabs/focus and axe. These are
+synthetic local reads, not proof of hosted cleanup or deletion. Exact database
+authorization, query plans and hosted rollout checks are separate evidence.
+
 ### Read-only account requests inbox
 
 The Account requests tab (`/admin.html#account-requests`) independently requires
