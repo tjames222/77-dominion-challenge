@@ -178,11 +178,28 @@ test('compiled slow header reserves geometry, leaves navigation/Admin independen
   await withHeldHeaderDownload(page, async header => {
     await readyWithHeldHeader(page, header);
     await page.evaluate(() => document.fonts.ready.then(() => undefined));
+    const settleGeometry = async () => {
+      // Compare the same non-hovered state, after the real closing transform.
+      // Focus restoration is synchronous and does not settle CSS transitions.
+      await page.mouse.move(0, 0);
+      const state = await page.locator('.topbar').evaluate(async topbar => {
+        topbar.getBoundingClientRect(); // Flush pending style/layout changes.
+        const active = () => topbar.getAnimations({ subtree: true })
+          .filter(animation => animation.pending || animation.playState === 'running');
+        const animations = active();
+        const unbounded = animations.filter(animation => !Number.isFinite(animation.effect?.getComputedTiming().endTime));
+        if (unbounded.length) return { unbounded: unbounded.length, active: animations.length };
+        await Promise.all(animations.map(animation => animation.finished));
+        topbar.getBoundingClientRect();
+        return { unbounded: 0, active: active().length };
+      });
+      expect(state).toEqual({ unbounded: 0, active: 0 });
+    };
     const boxes = () => page.locator('.topbar').evaluate(topbar => ({ height: topbar.getBoundingClientRect().height,
       controls: ['.shared-header-share', '.shared-header-streak', '.global-menu-button'].map(selector => {
         const { x, y, width, height } = topbar.querySelector(selector).getBoundingClientRect(); return { x, y, width, height };
       }) }));
-    const before = await boxes();
+    await settleGeometry(); const before = await boxes();
     expect(auth.calls).toEqual([]);
     await page.locator('.global-menu-button').click();
     await expect(page.locator('[data-admin-menu-item]')).toBeVisible();
@@ -197,6 +214,7 @@ test('compiled slow header reserves geometry, leaves navigation/Admin independen
     await expect(page.locator('.topbar').locator('xpath=ancestor-or-self::*[@inert]').first()).toHaveCount(1);
     await page.keyboard.press('Escape');
     await expect(page.locator('.topbar-trailing-actions > .global-menu-button')).toBeFocused();
+    await settleGeometry();
     const after = await boxes(); expect(after.height).toBe(before.height);
     for (let index = 0; index < before.controls.length; index++) {
       for (const key of ['x', 'y', 'width', 'height']) {
