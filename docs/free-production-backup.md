@@ -38,6 +38,32 @@ without passwords. All plaintext dumps, private diagnostics, and credentials liv
 in runner tmpfs and are removed afterward. An interrupted runner is ephemeral;
 the final workflow step also attempts credential revocation.
 
+### Exact backup image acquisition
+
+Before minting temporary database credentials, the protected Linux x64 runner
+uses only the official Supabase GHCR image at manifest digest
+`sha256:ca61fd22821732cdf5c687051d39b801e3d89dc0dcfc96ca202239eb26e4b732`.
+Its verified Linux/amd64 image-config ID must be
+`sha256:b808f667e8d3a79f96befd972899ea5ca91179495a89e708863a8bfbec4a762c`.
+These are the existing reviewed `17.6.1.141` image bytes, not a PostgreSQL
+upgrade. The ECR/GHCR manifests were reviewed as byte-identical in the existing
+CI image pins; acquisition no longer depends on the rate-limited ECR tag.
+
+The helper requires the default local Docker socket and a Linux/amd64 daemon,
+validates any cached immutable reference, and pulls that one fixed digest only
+when it is absent. Wrong identity, platform, context, malformed output or a
+failed pull stops the backup before database access. There is no alternate tag,
+registry fallback, login, retagging or cache deletion. Both existing containers
+still execute the verified content-addressed ID with `--pull never`. The public
+manifest retains the historical ECR repository/version label and records the
+actual verified image ID; recovery and evidence contracts are unchanged.
+
+Failures during this stage emit only fixed diagnostic codes, never raw Docker
+output. Investigate a failed gate before another dispatch; do not weaken image
+identity or backup verification to get past a registry failure.
+
+### Temporary credential lifetime
+
 Supabase controls the temporary password lifetime; the production path accepts
 integer lifetimes of 300–7200 seconds instead of assuming a full hour. A
 monotonic deadline begins before the login request, includes setup and readiness
