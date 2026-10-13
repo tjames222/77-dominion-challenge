@@ -629,15 +629,37 @@ test('100k retained erasure custom/generic stress and both physical-size preflig
     const target = randomUUID(); const absent = randomUUID();
     const preflight = () => one(`begin read only;${catalogRow(preflightSql)}rollback;`);
     assert.equal(Object.keys(preflight()).length, 9); assert.ok(Object.values(preflight()).every(value => value === true));
-    query(`insert into private.retired_community_deletion_batches(id,reason,requested_by,requested_at,execute_after,deadline_at,subject_user_id,t0_source_sha256)
-      select md5('erasure-large:'||n)::uuid,'account_erasure','synthetic-fixture',now(),now(),now()+interval '24 hours','${target}',repeat('a',64)from generate_series(1,100000)n;
-      update private.retired_community_deletion_batches set sealed=true,source_sha256=repeat('b',64),post_count=0,comment_count=0,like_count=0,object_count=0,credential_count=0;
-      insert into private.retired_community_deletion_ledger(batch_id,event_type,actor,event_at)
-        select md5('erasure-large:'||n)::uuid,'cancelled','synthetic-fixture',now()from generate_series(1,100000)n;
-      analyze private.retired_community_deletion_batches;analyze private.retired_community_deletion_ledger;`);
-    const sizeBefore = one("select jsonb_build_object('batchHeap',pg_relation_size('private.retired_community_deletion_batches'),'batchTotal',pg_total_relation_size('private.retired_community_deletion_batches'),'ledgerHeap',pg_relation_size('private.retired_community_deletion_ledger'),'ledgerTotal',pg_total_relation_size('private.retired_community_deletion_ledger'));");
-    assert.ok(sizeBefore.batchHeap > 33554432); assert.ok(sizeBefore.ledgerHeap < 33554432);
-    assert.equal(preflight().retained_erasure_size_within_bound_ok, false, 'Only the retained batch heap exceeds the fixed cap.');
+    const sizes = () => one("select jsonb_build_object('batchHeap',pg_relation_size('private.retired_community_deletion_batches'),'batchTotal',pg_total_relation_size('private.retired_community_deletion_batches'),'ledgerHeap',pg_relation_size('private.retired_community_deletion_ledger'),'ledgerTotal',pg_total_relation_size('private.retired_community_deletion_ledger'));");
+    const batchOptions = () => one("select jsonb_build_object('reloptions',reloptions)from pg_class where oid='private.retired_community_deletion_batches'::regclass;");
+    const originalOptions = batchOptions();
+    assert.deepEqual(originalOptions, { reloptions: null }, 'The frozen exact74 batch table has default storage options.');
+    const triggers = () => one("select jsonb_agg(jsonb_build_array(tgrelid::regclass::text,tgname,tgenabled)order by tgrelid::regclass::text,tgname)from pg_trigger where tgrelid in('private.retired_community_deletion_batches'::regclass,'private.retired_community_deletion_ledger'::regclass);");
+    const originalTriggers = triggers();
+    assert.ok(originalTriggers.length > 0 && originalTriggers.every(row => row[2] === 'O'));
+    // Keep every legacy sealing/immutability/FK trigger active. Fixed setup
+    // chunks bound each statement without changing the 100k stress workload,
+    // the fixture's 20s statement limit, or its 30s process boundary.
+    for (let start = 1; start <= 100000; start += 10000) {
+      const end = start + 9999;
+      query(`insert into private.retired_community_deletion_batches(id,reason,requested_by,requested_at,execute_after,deadline_at,subject_user_id,t0_source_sha256)
+        select md5('erasure-large:'||n)::uuid,'account_erasure','synthetic-fixture',now(),now(),now()+interval '24 hours','${target}',repeat('a',64)from generate_series(${start},${end})n;
+        update private.retired_community_deletion_batches set sealed=true,source_sha256=repeat('b',64),post_count=0,comment_count=0,like_count=0,object_count=0,credential_count=0
+          where id in(select md5('erasure-large:'||n)::uuid from generate_series(${start},${end})n);
+        insert into private.retired_community_deletion_ledger(batch_id,event_type,actor,event_at)
+          select md5('erasure-large:'||n)::uuid,'cancelled','synthetic-fixture',now()from generate_series(${start},${end})n;`);
+    }
+    query('analyze private.retired_community_deletion_batches;analyze private.retired_community_deletion_ledger;');
+    const semanticState = () => one(`select jsonb_build_object(
+      'batches',(select jsonb_build_object('count',count(*),'sealed',count(*)filter(where sealed),
+        'digest',md5(string_agg(md5(to_jsonb(b)::text),''order by id)))from private.retired_community_deletion_batches b),
+      'ledger',(select jsonb_build_object('count',count(*),'terminal',count(*)filter(where event_type='cancelled'),
+        'digest',md5(string_agg(md5(to_jsonb(l)::text),''order by id)))from private.retired_community_deletion_ledger l));`);
+    const originalRows = semanticState();
+    assert.deepEqual({ batches: originalRows.batches.count, sealed: originalRows.batches.sealed,
+      ledger: originalRows.ledger.count, terminal: originalRows.ledger.terminal },
+    { batches: 100000, sealed: 100000, ledger: 100000, terminal: 100000 });
+    assert.deepEqual(triggers(), originalTriggers);
+    const sizeBefore = sizes();
     const predicate = migration.match(/exists\(select 1 from private\.retired_community_deletion_batches b where b\.reason='account_erasure'[\s\S]*?l\.event_type in \('cancelled','executed'\)\)\)/)?.[0];
     assert.ok(predicate); const costs = [];
     for (const [density, subject] of [['sparse', absent], ['dense-terminal', target]]) {
@@ -652,14 +674,28 @@ test('100k retained erasure custom/generic stress and both physical-size preflig
           sharedHits: plan.Plan['Shared Hit Blocks'] || 0, sharedReads: plan.Plan['Shared Read Blocks'] || 0 });
       }
     }
-    // Compaction is only of deliberate synthetic churn in this owned fixture;
-    // the deployment preflight never runs VACUUM or repairs either table.
-    query('vacuum full private.retired_community_deletion_batches;');
+    // Physical-boundary proof is independent of platform-dependent MVCC churn
+    // from setup commits. Only this owned scratch table is expanded/compacted;
+    // the deployment preflight never changes storage options or runs VACUUM.
+    query('alter table private.retired_community_deletion_batches set(fillfactor=40);vacuum full private.retired_community_deletion_batches;');
+    assert.deepEqual(batchOptions(), { reloptions: ['fillfactor=40'] });
+    assert.deepEqual(semanticState(), originalRows, 'Expansion preserves every batch/ledger row and count.');
+    assert.deepEqual(triggers(), originalTriggers);
+    const sizeExpanded = sizes();
+    assert.ok(sizeExpanded.batchHeap > 33554432); assert.ok(sizeExpanded.ledgerHeap < 33554432);
+    assert.ok(sizeExpanded.batchTotal <= 134217728 && sizeExpanded.ledgerTotal <= 134217728);
+    assert.equal(preflight().retained_erasure_size_within_bound_ok, false, 'Only the expanded batch heap exceeds the fixed cap.');
+    query('alter table private.retired_community_deletion_batches reset(fillfactor);vacuum full private.retired_community_deletion_batches;');
+    assert.deepEqual(batchOptions(), originalOptions, 'Restore the exact original storage options.');
+    assert.deepEqual(semanticState(), originalRows, 'Compaction preserves every batch/ledger row and count.');
+    assert.deepEqual(triggers(), originalTriggers);
+    const sizeRestored = sizes();
+    assert.ok(sizeRestored.batchHeap <= 33554432 && sizeRestored.ledgerHeap < 33554432);
     assert.equal(preflight().retained_erasure_size_within_bound_ok, true);
     query("insert into private.retired_community_deletion_ledger(batch_id,event_type,actor,event_at,details)select md5('erasure-large:'||n)::uuid,'cancelled','synthetic-fixture',now(),jsonb_build_object('synthetic',repeat('x',1100))from generate_series(1,35000)n;");
-    const sizeAfter = one("select jsonb_build_object('batchHeap',pg_relation_size('private.retired_community_deletion_batches'),'batchTotal',pg_total_relation_size('private.retired_community_deletion_batches'),'ledgerHeap',pg_relation_size('private.retired_community_deletion_ledger'),'ledgerTotal',pg_total_relation_size('private.retired_community_deletion_ledger'));");
+    const sizeAfter = sizes();
     assert.ok(sizeAfter.batchHeap <= 33554432); assert.ok(sizeAfter.ledgerHeap > 33554432);
     assert.equal(preflight().retained_erasure_size_within_bound_ok, false, 'Only the retained ledger heap now exceeds the fixed cap.');
-    t.diagnostic(`ADMIN_PROFILE_NAME_ERASURE_100K_COST ${JSON.stringify({ sizeBefore, sizeAfter, costs })}`);
+    t.diagnostic(`ADMIN_PROFILE_NAME_ERASURE_100K_COST ${JSON.stringify({ sizeBefore, sizeExpanded, sizeRestored, sizeAfter, semanticState: originalRows, costs })}`);
   } finally { await Promise.allSettled([...pending]); fixture.close(); fixture = originalFixture; }
 });
