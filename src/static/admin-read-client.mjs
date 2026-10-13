@@ -1,4 +1,5 @@
-const READS = new Set(['get_site_admin_context', 'site_admin_list_users', 'site_admin_get_user', 'site_admin_list_audit', 'site_admin_get_audit_event',
+import { runProfileNameOperation } from './admin-profile-name-operation.mjs';
+const READS = new Set(['get_site_admin_context', 'site_admin_list_users', 'site_admin_get_user', 'site_admin_get_profile_name', 'site_admin_list_audit', 'site_admin_get_audit_event',
   'site_admin_list_early_access_requests', 'site_admin_get_early_access_request', 'site_admin_list_early_access_history', 'site_admin_list_account_requests', 'site_admin_get_account_request_queue_health', 'site_admin_get_cleanup_health']);
 const PERMISSIONS = new Set(['users.read', 'users.manage', 'roles.manage', 'testing.manage', 'metrics.read', 'operations.read', 'operations.manage', 'audit.read']);
 
@@ -146,6 +147,17 @@ export function createAdminReadClient({ getSession, getUser, sessionIdentity, su
       return runEarlyAccessInvitation(intent, { signal }, {
         capture, assertCurrent, assertEpoch, changed, pending, request, adminReadError, normalizeAdminContext,
       });
+    },
+    async correctProfileName(intent, { signal, operation } = {}) {
+      const captured = epoch; const reviewed = Object.freeze({ ...intent });
+      const invoke = async (value, options) => {
+        options.operation.assertActive();
+        const { runProfileNameCorrection } = await import('./admin-profile-name-write-client.mjs');
+        options.operation.assertActive(); assertEpoch(captured);
+        return runProfileNameCorrection(value, options, { capture, assertCurrent, assertEpoch, changed, pending, request, adminReadError, normalizeAdminContext });
+      };
+      return operation ? invoke(reviewed, { signal, operation })
+        : runProfileNameOperation(reviewed, { signal }, async () => ({ correctProfileName: invoke }));
     },
     async assignRole(intent, { signal } = {}) {
       const captured = epoch;

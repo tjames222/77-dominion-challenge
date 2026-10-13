@@ -21,6 +21,7 @@ import {
 } from './auth-runtime-core.mjs';
 import { authSessionIdentity, sessionRequiresMfa } from './mfa-auth.mjs';
 import { createAdminReadClient, adminReadError, withAdminReadDeadline } from './admin-read-client.mjs';
+import { runProfileNameOperation } from './admin-profile-name-operation.mjs';
 import { createDailyActionBootstrapClient } from './daily-action-bootstrap.mjs';
 import { previewOriginal77Progress } from './original-77-progress.mjs';
 import { normalizePreviewChallengeState, isPreviewChallengeActive, previewChallengeDate, advancePreviewStreaks } from './preview-challenge.mjs';
@@ -694,6 +695,15 @@ const readSiteAdmin = (name, args, options = {}) => withAdminReadDeadline(async 
   const value = await client.read(name, args, { ...options, signal }); assertActive(); return value;
 }, options);
 export const getSiteAdminContext = (options = {}) => readSiteAdmin('get_site_admin_context', {}, options);
+export const getSiteAdminProfileName = (targetUserId, options = {}) => readSiteAdmin('site_admin_get_profile_name', { target_user_id: targetUserId }, options);
+export const correctSiteAdminProfileName = (intent, options = {}) => {
+  const captured = adminClientEpoch;
+  return runProfileNameOperation(intent, options, async () => {
+    const client = await getAdminReadClient();
+    if (captured !== adminClientEpoch) throw adminReadError('ADMIN_CHANGED');
+    return client;
+  });
+};
 export const listSiteAdminUsers = (args, options = {}) => readSiteAdmin('site_admin_list_users', args, options);
 export const listSiteAdminAccountRequests = (args, options = {}) => readSiteAdmin('site_admin_list_account_requests', args, options);
 export const getSiteAdminAccountRequestQueueHealth = (args = {}, options = {}) => readSiteAdmin('site_admin_get_account_request_queue_health', args, options);

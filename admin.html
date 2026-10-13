@@ -52,7 +52,7 @@
           <div class="admin-view-heading"><h2>Audit trail</h2><p>Recorded administrative decisions and outcomes.</p></div>
           <form id="adminAuditFilters" class="admin-filters" autocomplete="off">
             <label class="admin-search">Target user ID<input name="target" type="text" maxlength="36" placeholder="Any user" autocomplete="off" spellcheck="false" /></label>
-            <label>Action<select name="action"><option value="all">All actions</option><option value="roles.assign">Role assignment</option><option value="roles.bootstrap">Initial admin activation</option></select></label>
+            <label>Action<select name="action"><option value="all">All actions</option><option value="roles.assign">Role assignment</option><option value="roles.bootstrap">Initial admin activation</option><option value="users.display_name.correct">Display-name correction</option></select></label>
             <label>Outcome<select name="outcome"><option value="all">All outcomes</option><option value="success">Success</option><option value="failure">Failure</option></select></label>
             <button type="submit">Apply filters</button>
           </form>

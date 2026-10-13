@@ -302,7 +302,7 @@ test('native ACL pgTAP checks pass and private/service/Cron privileges and recor
 
 test('exact74 production catalog accepts source metadata and independently rejects source, privilege, index, history and column drift', async () => {
   const query=jsonCatalog(await readFile(new URL('./verify-production-admin-cleanup-health.sql',import.meta.url),'utf8'));
-  const history=(await readdir(new URL('../supabase/migrations/',import.meta.url))).filter(n=>n.endsWith('.sql')).sort();assert.equal(history.length,74);
+  const history=(await readdir(new URL('../supabase/migrations/',import.meta.url))).filter(n=>n.endsWith('.sql')).sort().slice(0,74);assert.equal(history.length,74);
   raw(`reassign owned by fixture_migration to postgres;alter function ${signature} owner to postgres;
     revoke all on private.profile_photo_objects from fixture_reader;revoke all on function private.require_site_admin(text,uuid,boolean)from fixture_reader;
     create schema supabase_migrations;create table supabase_migrations.schema_migrations(version text primary key,name text not null);

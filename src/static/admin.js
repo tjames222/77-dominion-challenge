@@ -9,6 +9,8 @@ import { adminReadError } from './admin-read-client.mjs';
 import { normalizeEarlyAccessRequest } from './admin-early-access-contract.mjs';
 import { mountEarlyAccessDetail } from './admin-early-access-detail.mjs';
 import { mountRoleDetail } from './admin-role-detail.mjs';
+import { mountProfileNameDetail } from './admin-profile-name-detail.mjs';
+import { normalizeProfileNameAudit } from './admin-profile-name-contract.mjs';
 import { mountAdminUserHistory } from './admin-user-history-detail.mjs';
 import { isRequesterId } from './admin-requester-account.mjs';
 import { mountRequesterDetail } from './admin-requester-detail.mjs';
@@ -255,7 +257,11 @@ function renderUser(item, container = byId('adminDetailBody')) {
   for (const snapshot of facts.snapshots) addSection(snapshot.title, snapshot.fields || [['Snapshot', 'Not recorded']], stored);
 }
 function renderAudit(item) {
+  if (item.action === 'users.display_name.correct') normalizeProfileNameAudit(item);
   addSection('Administrative event', [['Recorded', date(item.occurredAt)], ['Action', item.action], ['Outcome', item.outcome], ['Reason code', item.reasonCode], ['Before role', item.beforeRole], ['After role', item.afterRole], ['Error code', item.errorCode]]);
+  if (item.action === 'users.display_name.correct') addSection('Display-name correction metadata', [
+    ['Name changed', item.profileNameChanged === true ? 'Yes' : item.profileNameChanged === false ? 'No (reviewed unchanged)' : 'Not applied'],
+    ['Before version', item.beforeProfileNameVersion], ['After version', item.afterProfileNameVersion]]);
   const identifiers = disclosure('Event identifiers and permission', byId('adminDetailBody'));
   addSection('Audit reference', [['Event ID', item.id], ['Actor ID', item.actorId], ['Target user ID', item.targetUserId], ['Permission', item.permission], ['Request ID', item.requestId], ['Correlation ID', item.correlationId], ['Environment', item.environment]], identifiers);
 }
@@ -295,11 +301,13 @@ async function openDetail(kind, id, button) {
       // Install cleanup before mounting the independent mutation panel so any
       // exception or later invalidation also removes the read-only history.
       detailCleanup = clearHistory;
+      let clearName = () => {};
       const clearRole = mountRoleDetail({ container: byId('adminDetailBody'), item: result.item, owner: detailOwner, permissions: [...permissions],
         isCurrent: () => captured === epoch && detail === detailEpoch && !suspended,
         onError: showError, reload: () => void openDetail(kind, id, button),
         onFacts: (item) => { facts.replaceChildren(); renderUser(item, facts); },
         onCommitted: () => {
+          clearName();
           // Drop old facts/list immediately. An idempotent receipt can describe
           // an older successful operation; only new reads establish current role.
           facts.replaceChildren(); byId('adminUsersRows').replaceChildren();
@@ -328,7 +336,33 @@ async function openDetail(kind, id, button) {
           } });
         },
       });
-      detailCleanup = () => { clearHistory(); clearRole(); };
+      detailCleanup = () => { clearHistory(); clearRole(); clearName(); };
+      clearName = mountProfileNameDetail({ container: byId('adminDetailBody'), targetUserId: id, owner: detailOwner, permissions: [...permissions],
+        isCurrent: () => captured === epoch && detail === detailEpoch && !suspended,
+        onError: showError, reload: () => void openDetail(kind, id, button), onCommitted: () => {
+          clearRole(); clearHistory(); facts.replaceChildren(element('p', 'Reload account details for a fresh account snapshot. The receipt below describes only the original operation.'));
+          byId('adminUsersRows').replaceChildren(); cursors = [null]; page = 0; nextCursor = null; updatePagination();
+          const query = ++queryEpoch; const controller = new AbortController(); listController?.abort(); listController = controller;
+          byId('adminStatus').textContent = 'Refreshing accounts after the confirmed display-name operation…';
+          const queryArgs = listArgs();
+          void (async () => {
+            const assertListOwner = async () => {
+              const current = await getAdminSessionOwner({ signal: controller.signal });
+              if (current.actorId !== detailOwner.actorId || current.sessionIdentity !== detailOwner.sessionIdentity) throw adminReadError('ADMIN_CHANGED');
+            };
+            await assertListOwner();
+            if (captured !== epoch || query !== queryEpoch || tab !== 'users' || suspended || controller.signal.aborted) return;
+            const value = await listSiteAdminUsers(queryArgs, { expectedUserId: detailOwner.actorId, signal: controller.signal });
+            await assertListOwner();
+            if (captured !== epoch || query !== queryEpoch || tab !== 'users' || suspended || controller.signal.aborted) return;
+            if (value.nextCursor !== null && (typeof value.nextCursor !== 'object' || Array.isArray(value.nextCursor))) throw adminReadError();
+            renderRows(value.items); nextCursor = value.nextCursor; updatePagination();
+            byId('adminStatus').textContent = 'Accounts refreshed after the display-name operation. Current filter membership may have changed.';
+          })().catch(error => { if (captured === epoch && query === queryEpoch && !suspended) {
+            if (['ADMIN_CHANGED', 'ADMIN_DENIED', 'ADMIN_SIGNED_OUT'].includes(error?.code)) showError(error);
+            else byId('adminStatus').textContent = 'Display-name operation confirmed; the account list could not refresh. Use Refresh records to read it again.';
+          } });
+        } });
     } else renderAudit(result.item);
   } catch (error) {
     if (captured !== epoch || detail !== detailEpoch) return;

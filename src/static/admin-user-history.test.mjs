@@ -37,6 +37,28 @@ test('mixed linked actions, historical failures and empty results are supported'
   assert.deepEqual(normalizeAdminUserHistory(page({ items: [] }), scope).items, []);
 });
 
+test('profile corrections extend the strict history union with metadata only', () => {
+  const correction = row({ action: 'users.display_name.correct', permission: 'users.manage', reasonCode: 'profile_name_correction',
+    beforeRole: null, afterRole: null, beforeProfileNameVersion: A, afterProfileNameVersion: C, profileNameChanged: true, name: 'PRIVATE_HISTORY_SENTINEL' });
+  const normalized = normalizeAdminUserHistory(page({ items: [correction] }), scope).items[0];
+  assert.equal(normalized.actionLabel, 'Display-name correction'); assert.equal(normalized.profileNameChanged, true);
+  assert.equal(normalized.beforeProfileNameVersion, A); assert.equal(normalized.afterProfileNameVersion, C);
+  assert.equal(JSON.stringify(normalized).includes('PRIVATE_HISTORY_SENTINEL'), false);
+  for (const patch of [{ permission: 'roles.manage' }, { reasonCode: 'staff_access_review' }, { beforeRole: 'member' },
+    { afterProfileNameVersion: A }, { profileNameChanged: false }, { actorId: B }, { beforeProfileNameVersion: null },
+    { outcome: 'failure', errorCode: 'rate_limited', beforeProfileNameVersion: null, afterProfileNameVersion: null, profileNameChanged: null }]) {
+    assert.throws(() => normalizeAdminUserHistory(page({ items: [{ ...correction, ...patch }] }), scope));
+  }
+  const noOp = { ...correction, afterProfileNameVersion: A, profileNameChanged: false };
+  assert.equal(normalizeAdminUserHistory(page({ items: [noOp] }), scope).items[0].profileNameChanged, false);
+  const failure = { ...correction, outcome: 'failure', errorCode: 'revision_conflict', beforeProfileNameVersion: null, afterProfileNameVersion: null, profileNameChanged: null };
+  assert.equal(normalizeAdminUserHistory(page({ items: [failure] }), scope).items[0].errorLabel, 'Account changed during review');
+  for (const field of ['beforeProfileNameVersion', 'afterProfileNameVersion', 'profileNameChanged']) {
+    assert.throws(() => normalizeAdminUserHistory(page({ items: [row({ [field]: field === 'profileNameChanged' ? false : A })] }), scope));
+  }
+  assert.equal(normalizeAdminUserHistory(page({ items: [row({ beforeProfileNameVersion: null, afterProfileNameVersion: null, profileNameChanged: null })] }), scope).items[0].actionLabel, 'Site role review');
+});
+
 test('protected operator bootstrap has a null actor without weakening other actions', () => {
   // bootstrap_site_admin writes a NULL actor because this is an operator-only
   // action, not an authenticated browser admin acting on its own account.

@@ -55,6 +55,8 @@
     "test:site-admin-foundation-sql": "node --test scripts/site-admin-foundation.sql.test.mjs",
     "test:site-admin-reads-sql": "node --test scripts/site-admin-reads.sql.test.mjs",
     "test:site-admin-cleanup-health-sql": "node --test scripts/site-admin-cleanup-health.sql.test.mjs",
+    "test:site-admin-profile-name-sql": "node --test scripts/site-admin-profile-name.sql.test.mjs",
+    "test:post74-release": "node --test scripts/verify-post74-release-plan.test.mjs scripts/verify-post74-backup-evidence.test.mjs scripts/free-backup-post74.test.mjs scripts/post74-release-workflow.test.mjs scripts/verify-admin-profile-name-preflight.test.mjs scripts/verify-production-admin-profile-name.test.mjs scripts/verify-production-post75-catalogs.test.mjs",
     "test:post73-release": "node --test scripts/verify-post73-release-plan.test.mjs scripts/verify-post73-backup-evidence.test.mjs scripts/free-backup-post73.test.mjs scripts/post73-release-workflow.test.mjs scripts/verify-admin-cleanup-index-preflight.test.mjs scripts/verify-production-admin-cleanup-health.test.mjs",
     "test:early-access-admin-sql": "node --test scripts/early-access-admin.sql.test.mjs",
     "test:early-access-member-sql": "node --test scripts/early-access-member-authority.sql.test.mjs",
