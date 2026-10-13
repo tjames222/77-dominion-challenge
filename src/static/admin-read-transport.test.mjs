@@ -9,7 +9,7 @@ const flush = async () => { for (let i = 0; i < 12; i++) await Promise.resolve()
 const deferred = () => { let resolve; const promise = new Promise(yes => { resolve = yes; }); return { promise, resolve }; };
 const response = (body, options = {}) => new Response(body, { headers: { 'content-type': 'application/json' }, ...options });
 
-test('read transport pins exact bearer/no-store policy and only admits the eight original read RPCs', async () => {
+test('read transport pins exact bearer/no-store policy for original reads and rejects mutation RPCs', async () => {
   for (const name of ['get_site_admin_context', 'site_admin_list_users', 'site_admin_get_user', 'site_admin_list_audit', 'site_admin_get_audit_event',
     'site_admin_list_early_access_requests', 'site_admin_get_early_access_request', 'site_admin_list_early_access_history']) {
     let calls = 0;

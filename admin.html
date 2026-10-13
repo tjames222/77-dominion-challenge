@@ -30,6 +30,7 @@
           <button id="adminAuditTab" type="button" role="tab" aria-selected="false" aria-controls="adminAuditPanel" tabindex="-1" data-admin-tab="audit">Audit</button>
           <button id="adminEarlyTab" type="button" role="tab" aria-selected="false" aria-controls="adminEarlyPanel" tabindex="-1" data-admin-tab="early" hidden>Early Access</button>
           <button id="adminRequestsTab" type="button" role="tab" aria-selected="false" aria-controls="adminRequestsPanel" tabindex="-1" data-admin-tab="requests" hidden>Account requests</button>
+          <button id="adminOperationsTab" type="button" role="tab" aria-selected="false" aria-controls="adminOperationsPanel" tabindex="-1" data-admin-tab="operations" hidden>Operations</button>
         </nav>
         <p class="admin-status" id="adminStatus" role="status" aria-live="polite"></p>
         <div class="admin-filter-state" id="adminFilterState" hidden><span id="adminFilterSummary"></span><button id="adminResetFilters" type="button">Reset filters</button></div>
@@ -85,7 +86,16 @@
           <p class="admin-footnote" id="adminRequestsNote">Read-only intake. Active means requested or in progress. Recorded outcomes are not proof of export delivery or complete erasure. Fulfillment remains a separately approved operator workflow.</p>
           <div class="admin-table-wrap" tabindex="0" aria-label="Account request records"><table class="admin-table admin-requests-table" role="table" aria-describedby="adminRequestsNote"><caption>Account requests · Recorded timestamps shown in UTC</caption><thead role="rowgroup"><tr role="row"><th scope="col" role="columnheader">Request and requester IDs</th><th scope="col" role="columnheader">Type</th><th scope="col" role="columnheader">Recorded status</th><th scope="col" role="columnheader">Timeline</th></tr></thead><tbody id="adminRequestsRows" role="rowgroup"></tbody></table></div>
         </section>
-        <div class="admin-pagination" aria-label="Record pages"><button id="adminFirstPage" type="button" disabled>First page</button><button id="adminPreviousPage" type="button" disabled>Previous</button><span id="adminPageLabel">Page 1</span><button id="adminNextPage" type="button" disabled>Next</button><button id="adminRefresh" type="button">Refresh</button></div>
+        <section id="adminOperationsPanel" role="tabpanel" aria-labelledby="adminOperationsTab" data-admin-panel="operations" hidden>
+          <div class="admin-view-heading"><h2>Operations</h2><p>Read-only cleanup health. No cleanup or deletion controls.</p></div>
+          <section id="adminCleanupHealth" class="admin-cleanup-health" aria-labelledby="adminCleanupTitle" aria-describedby="adminCleanupNote">
+            <div class="admin-actions"><h3 id="adminCleanupTitle">Profile photo cleanup</h3><button id="adminCleanupRefresh" type="button">Refresh cleanup health</button></div>
+            <p id="adminCleanupNote">Counts overlap; do not add them into a queue total. Each count stops at 1000+ when more objects exist. This is a point-in-time observation, not proof of completed cleanup.</p>
+            <p id="adminCleanupStatus" role="status" aria-live="polite"></p>
+            <div id="adminCleanupData"></div>
+          </section>
+        </section>
+        <div id="adminPagination" class="admin-pagination" aria-label="Record pages"><button id="adminFirstPage" type="button" disabled>First page</button><button id="adminPreviousPage" type="button" disabled>Previous</button><span id="adminPageLabel">Page 1</span><button id="adminNextPage" type="button" disabled>Next</button><button id="adminRefresh" type="button">Refresh</button></div>
         <details class="admin-help"><summary>About this console</summary><p>Account details and Audit are read-only. Separately authorized role changes require explicit review and confirmation. Other account changes, testing grants, and metrics are not available here. Stored progress and subscription snapshots are not live access or completion decisions. Timestamps are UTC; last-seen dates retain the member's local date.</p></details>
       </section>
     </main>

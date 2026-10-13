@@ -80,6 +80,25 @@ test('Account requests preview is explicitly synthetic, read-only and scrubbed o
   app.assertNoRuntimeErrors();
 });
 
+test('cleanup preview is explicitly synthetic, manual-only and cleared when its actor changes', async ({ page, app }) => {
+  await observeRequesterPreview(page); const providerRequests = [];
+  page.on('request', request => { const path = new URL(request.url()).pathname;
+    if (/\/(?:auth|rest|functions)\/v1\//.test(path)) providerRequests.push(path); });
+  await app.open({ ...ROUTE_BY_ID.admin, path: '/admin.html?admin-preview=ready#operations' });
+  await expect(page.locator('#adminPreview')).toBeVisible(); await expect(page.locator('#adminOperationsPanel')).toBeVisible();
+  const reads = () => page.evaluate(() => window.__requesterPreviewProbe.reads.filter(call => call.name === 'site_admin_get_cleanup_health'));
+  expect(await reads()).toHaveLength(0); await expect(page.locator('#adminCleanupStatus')).toContainText('Not checked');
+  await page.locator('#adminCleanupRefresh').click(); await expect(page.locator('.admin-cleanup-counter')).toHaveCount(6);
+  const calls = await reads(); expect(calls).toHaveLength(1); expect(calls[0].actorId).toBe(calls[0].expectedActorId);
+  expect(calls[0].actorId).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i);
+  await expect(page.locator('#adminCleanupScheduler')).toContainText('does not prove an HTTP response');
+  await page.evaluate(() => { localStorage.removeItem('dominion:user'); window.dispatchEvent(new StorageEvent('storage', { key: 'dominion:user', newValue: null })); });
+  await expect(page.locator('#adminWorkspace')).toBeHidden(); await expect(page.locator('#adminCleanupData')).toBeEmpty();
+  expect(await page.evaluate(() => window.__requesterPreviewProbe.mutations)).toEqual([]); expect(providerRequests).toEqual([]);
+  expect(await page.evaluate(() => JSON.stringify({ ...localStorage, ...sessionStorage }))).not.toMatch(/failuresLastHour|oldestEligibleAt|lastRunsOrder/);
+  app.assertNoRuntimeErrors();
+});
+
 test('admin direct load and refresh never hydrate member Share or Streak controls', async ({ page, app }) => {
   await app.open({ ...ROUTE_BY_ID.admin, path: '/admin.html?admin-preview=ready' });
   await expect(page.locator('#adminUsersRows tr')).toHaveCount(25);

@@ -11,6 +11,8 @@ export const POST_ORIGINAL77_BACKUP_MODE = 'post-original77-70';
 export const POST_ORIGINAL77_VERSIONS_SHA256 = '73f5e3b0395829ec93acf1454cd212a653c5edfa19d4be641c8de792f0777f46';
 export const POST_REPEATABLE_BACKUP_MODE = 'post-repeatable-challenge-71';
 export const POST_REPEATABLE_VERSIONS_SHA256 = 'b8318e559a4d78b3f0c3d498c4970e4151fe1651ccbde3c8dc1153897b0c096f';
+export const POST73_BACKUP_MODE = 'post-cleanup-monitor-73';
+export const POST73_VERSIONS_SHA256 = 'dedf8b2796a13e3fe6cd36551d555b0aacb710d7b3fad7bd6de4ea2350c17253';
 export const POST_ORIGINAL77_VAULT_RECOVERY = Object.freeze({
   selfContained: false,
   source: 'protected-github-production-settings',
@@ -65,4 +67,23 @@ export function selectPostRepeatableMigrationVersions(filenames) {
   const names = filenames.filter(name => typeof name === 'string' && name.endsWith('.sql')).sort();
   assert.equal(names[70], '20261001001245_repeatable_challenge_instances_v2.sql');
   return requirePostRepeatableMigrationVersions(names.slice(0, 71).map(name => name.slice(0, 14)));
+}
+
+export function requirePost73MigrationVersions(versions) {
+  assert(Array.isArray(versions));
+  assert.equal(versions.length, 73, 'Incomplete post73 migration checkpoint');
+  requirePostRepeatableMigrationVersions(versions.slice(0, 71));
+  assert.equal(sha256(JSON.stringify(versions)), POST73_VERSIONS_SHA256,
+    'Post73 migration checkpoint changed');
+  return versions;
+}
+
+export function selectPost73MigrationVersions(filenames) {
+  selectPostRepeatableMigrationVersions(filenames);
+  const names = filenames.filter(name => typeof name === 'string' && name.endsWith('.sql')).sort();
+  assert.deepEqual(names.slice(71, 73), [
+    '20261007055555_site_admin_account_request_queue_health.sql',
+    '20261007060519_profile_photo_cleanup_monitor_health.sql',
+  ]);
+  return requirePost73MigrationVersions(names.slice(0, 73).map(name => name.slice(0, 14)));
 }

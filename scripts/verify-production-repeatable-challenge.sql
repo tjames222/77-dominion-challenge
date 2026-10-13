@@ -242,7 +242,18 @@ SELECT
       AND (SELECT pg_catalog.count(*)=1 FROM supabase_migrations.schema_migrations WHERE version='20261001001245' AND name='repeatable_challenge_instances_v2')
       AND (SELECT pg_catalog.count(*)=2 FROM supabase_migrations.schema_migrations WHERE (version,name) IN (
         ('20261007055555','site_admin_account_request_queue_health'),
-        ('20261007060519','profile_photo_cleanup_monitor_health'))))) AS exact_migration_history_ok,
+        ('20261007060519','profile_photo_cleanup_monitor_health'))))
+    OR (coalesce((SELECT pg_catalog.count(*)=74 AND pg_catalog.count(DISTINCT version)=74
+      AND pg_catalog.max(version::text)='20261013055744'
+      AND pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(
+        pg_catalog.string_agg(version::text,',' ORDER BY version::text COLLATE "C"),'UTF8')),'hex')
+          ='cb786c2a891bfbfd739aef4a6a2fa1c01bafad29fc8f2739e2f41342fc7de765'
+      FROM supabase_migrations.schema_migrations),false)
+      AND (SELECT pg_catalog.count(*)=1 FROM supabase_migrations.schema_migrations WHERE version='20261001001245' AND name='repeatable_challenge_instances_v2')
+      AND (SELECT pg_catalog.count(*)=3 FROM supabase_migrations.schema_migrations WHERE (version,name) IN (
+        ('20261007055555','site_admin_account_request_queue_health'),
+        ('20261007060519','profile_photo_cleanup_monitor_health'),
+        ('20261013055744','site_admin_cleanup_health'))))) AS exact_migration_history_ok,
   CASE WHEN c.pinned_search_path='pg_catalog' AND c.pinned_timezone='UTC' AND c.pinned_datestyle='ISO, YMD'
     AND c.pinned_timeout='15s' AND c.pinned_lock_timeout='5s'
     THEN pg_catalog.current_setting('transaction_read_only')='on'
