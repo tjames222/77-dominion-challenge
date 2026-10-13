@@ -14,6 +14,8 @@ import { normalizeProfileNameAudit } from './admin-profile-name-contract.mjs';
 import { mountAdminUserHistory } from './admin-user-history-detail.mjs';
 import { isRequesterId } from './admin-requester-account.mjs';
 import { mountRequesterDetail } from './admin-requester-detail.mjs';
+import { parseAdminLookupUserId } from './admin-user-lookup.mjs';
+import { mountAdminUserLookup } from './admin-user-lookup-detail.mjs';
 import { adminUserListFacts, adminUserSummary } from './admin-user-presentation.mjs';
 import { normalizeAdminAccountRequestPage, normalizeAdminAccountRequestQueueHealth, accountRequestTypeLabel, accountRequestRecordedStatus } from './admin-account-requests.mjs';
 import { readAdminAccountRequests } from './admin-account-request-transport.mjs';
@@ -54,6 +56,11 @@ function closeDetail({ restore = true } = {}) {
   byId('adminDetailBody').replaceChildren(); byId('adminDetailTitle').textContent = 'Record details';
   if (restore && detailOpener) (detailOpener.isConnected ? detailOpener : byId(`${tabs[tab].prefix}Tab`)).focus();
   detailOpener = null;
+}
+function clearUserLookup({ reset = false } = {}) {
+  if (byId('adminLookupDetail')) closeDetail({ restore: false });
+  byId('adminUserLookupStatus').textContent = ''; byId('adminUserLookupId').removeAttribute('aria-invalid');
+  if (reset) { byId('adminUserLookupForm').reset(); byId('adminUserLookup').open = false; }
 }
 function clearRows() {
   listController?.abort(); listController = null;
@@ -105,6 +112,7 @@ function gate(title, message, action = '') {
 function scrub(reason = '') {
   epoch += 1; checking = false; owner = null; permissions = []; cursors = [null]; page = 0;
   clearRows(); clearQueueHealth(); cleanupHealth.clear(); for (const value of Object.values(tabs)) byId(`${value.prefix}Filters`)?.reset();
+  clearUserLookup({ reset: true });
   updateFilterState();
   byId('adminPreview').hidden = true;
   gate('Access needs verification', reason === 'ADMIN_SIGNED_OUT' ? 'Log in to continue. Private records have been cleared.' : 'Private records have been cleared. Check access again to continue.', reason === 'ADMIN_SIGNED_OUT' ? 'adminLogin' : 'adminRetryAccess');
@@ -277,6 +285,19 @@ function openRequesterDetail(requesterId, requestId, button) {
       && permissions.includes('operations.read') && permissions.includes('users.read'),
     renderFacts: renderUser, onError: showError });
 }
+function openUserLookup(userId, button) {
+  if (!owner || suspended || tab !== 'users' || !permissions.includes('users.read')
+    || !byId('adminUserLookup').open || typeof userId !== 'string' || parseAdminLookupUserId(userId) !== userId) return;
+  closeDetail({ restore: false }); detailOpener = button;
+  const captured = epoch; const detail = detailEpoch; const query = queryEpoch; const capturedOwner = owner;
+  byId('adminDetailTitle').textContent = 'Account lookup';
+  dialog.showModal(); byId('adminDetailClose').focus();
+  detailCleanup = mountAdminUserLookup({ container: byId('adminDetailBody'), owner: { ...owner }, userId,
+    isCurrent: () => captured === epoch && detail === detailEpoch && query === queryEpoch && capturedOwner === owner
+      && !suspended && tab === 'users' && permissions.includes('users.read') && byId('adminUserLookup').open
+      && byId('adminUserLookupId').value === userId,
+    renderFacts: renderUser, onError: showError });
+}
 async function openDetail(kind, id, button) {
   if (!owner || suspended) return;
   closeDetail({ restore: false }); detailOpener = button;
@@ -371,6 +392,7 @@ async function openDetail(kind, id, button) {
 }
 function selectTab(next, { focus = false } = {}) {
   if (!tabs[next] || !permissions.includes(tabs[next].permission)) return;
+  clearUserLookup({ reset: true });
   clearQueueHealth(); cleanupHealth.clear(); tab = next; cursors = [null]; page = 0;
   for (const node of document.querySelectorAll('[data-admin-tab]')) { const active = node.dataset.adminTab === tab; node.setAttribute('aria-selected', String(active)); node.tabIndex = active ? 0 : -1; if (active && focus) node.focus(); }
   for (const node of document.querySelectorAll('[data-admin-panel]')) node.hidden = node.dataset.adminPanel !== tab;
@@ -410,6 +432,19 @@ byId('adminRetryAccess').addEventListener('click', () => void verifyAccess());
 byId('adminReauthenticate').addEventListener('click', async () => { scrub(); try { await clearAuthSession(); location.assign('./login.html?returnTo=admin.html'); } catch { gate('Sign-out unavailable', 'Try signing out again before continuing.', 'adminReauthenticate'); } });
 byId('adminDetailClose').addEventListener('click', () => closeDetail());
 dialog.addEventListener('cancel', (event) => { event.preventDefault(); closeDetail(); });
+byId('adminUserLookupForm').addEventListener('submit', (event) => {
+  event.preventDefault();
+  if (!owner || suspended || tab !== 'users' || !permissions.includes('users.read') || !byId('adminUserLookup').open) return;
+  clearUserLookup();
+  const input = byId('adminUserLookupId'); const userId = parseAdminLookupUserId(input.value);
+  if (userId === null) {
+    input.setAttribute('aria-invalid', 'true'); byId('adminUserLookupStatus').textContent = 'Enter a complete user ID in UUID format.';
+    input.focus(); return;
+  }
+  input.value = userId; openUserLookup(userId, byId('adminUserLookupSubmit'));
+});
+byId('adminUserLookupId').addEventListener('input', () => clearUserLookup());
+byId('adminUserLookup').addEventListener('toggle', () => { if (!byId('adminUserLookup').open) clearUserLookup({ reset: true }); });
 for (const node of document.querySelectorAll('[data-admin-tab]')) {
   node.addEventListener('click', () => selectTab(node.dataset.adminTab));
   node.addEventListener('keydown', (event) => {
