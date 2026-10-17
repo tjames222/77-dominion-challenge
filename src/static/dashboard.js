@@ -10,6 +10,7 @@ import {
   getChallengeActivation,
   getDailyStandardDraft,
   getDashboard,
+  initializeDashboardVisit,
   getGameSummary,
   getLocalOrSessionUser,
   hasSupabaseAuth,
@@ -1328,14 +1329,19 @@ function invalidateDashboardOwner(nextOwner = '') {
   render();
 }
 
-async function hydrateDashboardFromApi(expectedOwnerId = observedAuthOwner) {
+async function hydrateDashboardFromApi(expectedOwnerId = observedAuthOwner, { initialVisit = false } = {}) {
   if (!hasSupabaseAuth() && !localDemoMode) return;
   const requestId = ++dashboardHydrationRequestId;
   const requestStartedAt = new Date();
   const requestedOwner = String(expectedOwnerId || '');
+  const requestOwnerEpoch = authOwnerEpoch;
 
   try {
-    const dashboard = await getDashboard();
+    const dashboard = initialVisit && hasSupabaseAuth()
+      ? await initializeDashboardVisit({ expectedUserId: requestedOwner,
+        isCurrent: () => requestId === dashboardHydrationRequestId
+          && requestOwnerEpoch === authOwnerEpoch && requestedOwner === observedAuthOwner })
+      : await getDashboard();
     if (requestId !== dashboardHydrationRequestId) return;
     const dashboardOwner = String(dashboard?.profile?.userId || '');
     if (!dashboardOwner) throw new Error('Unable to verify the dashboard account.');
@@ -1957,9 +1963,9 @@ async function bootDashboard() {
   }
 
   render();
-  await hydrateDashboardFromApi(observedAuthOwner);
+  await hydrateDashboardFromApi(observedAuthOwner, { initialVisit: true });
   render();
-  if (hasSupabaseAuth() || localDemoMode) await recordDailyAppVisit();
+  if (localDemoMode) await recordDailyAppVisit();
   await recoverPendingCelebrations();
   startCountdownCard();
   startDashboardForegroundRefresh();

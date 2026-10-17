@@ -82,7 +82,8 @@ describe('challenge activation client integration', () => {
     assert.match(eventHandler, /void hydrateDashboardFromApi\(\)/);
     const hydration = dashboard.slice(dashboard.indexOf('async function hydrateDashboardFromApi('), dashboard.indexOf('async function handleDashboardAuthOwnerChange('));
     assert.match(hydration, /if \(!hasSupabaseAuth\(\) && !localDemoMode\) return/);
-    assert.match(hydration, /const dashboard = await getDashboard\(\);\s*if \(requestId !== dashboardHydrationRequestId\) return/);
+    assert.match(hydration, /: await getDashboard\(\);\s*if \(requestId !== dashboardHydrationRequestId\) return/);
+    assert.match(hydration, /initialVisit && hasSupabaseAuth\(\)[\s\S]*initializeDashboardVisit/);
     assert.match(hydration, /requestedOwner !== dashboardOwner[\s\S]*observedAuthOwner !== dashboardOwner\)\) return/);
     assert.match(hydration, /challengeActivation = dashboard\?\.activation \|\| createChallengeActivationState\('error'\)/);
     assert.doesNotMatch(hydration, /getChallengeActivation\(/);
