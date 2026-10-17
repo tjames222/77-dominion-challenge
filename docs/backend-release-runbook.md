@@ -1214,3 +1214,60 @@ Cron records are ordered by allocated run identifier, not guaranteed wall-clock
 order. Bounded global history means freshness is unknown. Scheduler success only
 proves enqueueing, not an HTTP response or deletion. A failed or stale observation
 must not trigger an automatic cleanup action.
+
+## Reviewed Admin display-name correction (74 to 75)
+
+The source 75 policy admits only the frozen 74 migration sources plus
+`20261013091749_site_admin_profile_name_correction.sql` at its reviewed digest.
+Exact 74 requires `full` and a fresh `post-admin-cleanup-health-74` encrypted
+backup from the same protected main commit. Completed 75 admits `full` or
+`frontend-only` without reapplying the addition. Earlier or later boundaries,
+changed source bytes, and old cutover scopes fail closed.
+
+Before applying the addition:
+
+1. Require normal protected develop/main review and all four required checks.
+   Capture the free exact-74 backup using the existing three worker recovery
+   inputs. Require isolated restore verification; this does not establish
+   invitation-envelope decryption or read a private recovery key.
+2. Require the fixed, nine-Boolean read-only profile-name preflight and the
+   unchanged exact-74 cleanup catalog. Preflight checks exact history, table and
+   index shapes, absent new objects, conflicting locks, and per-table physical
+   limits (32 MiB heap/128 MiB total). Profiles/audit estimates may be unknown or
+   at most 100,000; the migration enforces exact capped counts under locks.
+   Retained-erasure batch/ledger size is also bounded at this observation. Their
+   eligibility scans remain linear, not indexed or permanently growth-bounded.
+3. Dispatch `full` with that backup run and `send_test_email=false`. The workflow
+   repeats both preflights before backend provider writes and immediately before
+   selected-backup revalidation, unchanged-boundary verification, and apply.
+4. The migration takes the shared retired-account advisory lock, then EXCLUSIVE
+   on profiles and ACCESS EXCLUSIVE on audit. EXCLUSIVE permits ordinary profile
+   reads but blocks concurrent row-locking readers and writers during the UUID
+   version backfill. Five-second lock and 30-second statement timeouts fail
+   transactionally; they are not a whole-transaction timing guarantee. More than
+   100,000 profile or audit rows is rejected. Existing profile values are not
+   changed by the version backfill.
+5. Require exact 75 history and all 53 fixed catalog Booleans before later
+   function/secret/frontend stages. The new composition retains all prior
+   inbox, challenge, and cleanup predicates with explicit history-75 copies and
+   the reviewed full profile-trigger aggregate; it also checks the new private
+   version table, audit shape, function bodies and privileges. Historical SQL
+   verifiers remain unchanged. Verify immutable and canonical frontend delivery.
+
+Only another eligible existing user's canonical `public.profiles.name` can be
+corrected. The UI requires both `users.read` and `users.manage`; the server
+revalidates current live-session AAL2, recent MFA, permissions and target
+eligibility after lock waits. Auth metadata, email, roles, access, sessions,
+avatars and billing are not edited. Self-edits use the existing Profile page.
+The admin must explicitly acknowledge the current/proposed name and target.
+No optimistic write, automatic retry or persisted write intent is used.
+
+Names contain 1–120 Unicode scalar values and at most 480 UTF-8 bytes, without
+control characters, line/paragraph separators or edge whitespace; values are
+not silently trimmed or normalized. UUID versions reject stale/ABA edits.
+Idempotent retries return the original metadata receipt, not a claim about the
+current name; a separate refresh obtains current state. Audit and receipt
+records omit raw names (the intent digest is not an anonymization guarantee).
+Combined administrative write quotas, exact guards and atomic rollback remain
+enforced. Overlapping eligibility changes after the final snapshot can order
+after an edit; this is not a commit-time freeze of all account state.

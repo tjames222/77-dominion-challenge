@@ -9,9 +9,13 @@ import { adminReadError } from './admin-read-client.mjs';
 import { normalizeEarlyAccessRequest } from './admin-early-access-contract.mjs';
 import { mountEarlyAccessDetail } from './admin-early-access-detail.mjs';
 import { mountRoleDetail } from './admin-role-detail.mjs';
+import { mountProfileNameDetail } from './admin-profile-name-detail.mjs';
+import { normalizeProfileNameAudit } from './admin-profile-name-contract.mjs';
 import { mountAdminUserHistory } from './admin-user-history-detail.mjs';
 import { isRequesterId } from './admin-requester-account.mjs';
 import { mountRequesterDetail } from './admin-requester-detail.mjs';
+import { parseAdminLookupUserId } from './admin-user-lookup.mjs';
+import { mountAdminUserLookup } from './admin-user-lookup-detail.mjs';
 import { adminUserListFacts, adminUserSummary } from './admin-user-presentation.mjs';
 import { normalizeAdminAccountRequestPage, normalizeAdminAccountRequestQueueHealth, accountRequestTypeLabel, accountRequestRecordedStatus } from './admin-account-requests.mjs';
 import { readAdminAccountRequests } from './admin-account-request-transport.mjs';
@@ -52,6 +56,11 @@ function closeDetail({ restore = true } = {}) {
   byId('adminDetailBody').replaceChildren(); byId('adminDetailTitle').textContent = 'Record details';
   if (restore && detailOpener) (detailOpener.isConnected ? detailOpener : byId(`${tabs[tab].prefix}Tab`)).focus();
   detailOpener = null;
+}
+function clearUserLookup({ reset = false } = {}) {
+  if (byId('adminLookupDetail')) closeDetail({ restore: false });
+  byId('adminUserLookupStatus').textContent = ''; byId('adminUserLookupId').removeAttribute('aria-invalid');
+  if (reset) { byId('adminUserLookupForm').reset(); byId('adminUserLookup').open = false; }
 }
 function clearRows() {
   listController?.abort(); listController = null;
@@ -103,6 +112,7 @@ function gate(title, message, action = '') {
 function scrub(reason = '') {
   epoch += 1; checking = false; owner = null; permissions = []; cursors = [null]; page = 0;
   clearRows(); clearQueueHealth(); cleanupHealth.clear(); for (const value of Object.values(tabs)) byId(`${value.prefix}Filters`)?.reset();
+  clearUserLookup({ reset: true });
   updateFilterState();
   byId('adminPreview').hidden = true;
   gate('Access needs verification', reason === 'ADMIN_SIGNED_OUT' ? 'Log in to continue. Private records have been cleared.' : 'Private records have been cleared. Check access again to continue.', reason === 'ADMIN_SIGNED_OUT' ? 'adminLogin' : 'adminRetryAccess');
@@ -255,7 +265,11 @@ function renderUser(item, container = byId('adminDetailBody')) {
   for (const snapshot of facts.snapshots) addSection(snapshot.title, snapshot.fields || [['Snapshot', 'Not recorded']], stored);
 }
 function renderAudit(item) {
+  if (item.action === 'users.display_name.correct') normalizeProfileNameAudit(item);
   addSection('Administrative event', [['Recorded', date(item.occurredAt)], ['Action', item.action], ['Outcome', item.outcome], ['Reason code', item.reasonCode], ['Before role', item.beforeRole], ['After role', item.afterRole], ['Error code', item.errorCode]]);
+  if (item.action === 'users.display_name.correct') addSection('Display-name correction metadata', [
+    ['Name changed', item.profileNameChanged === true ? 'Yes' : item.profileNameChanged === false ? 'No (reviewed unchanged)' : 'Not applied'],
+    ['Before version', item.beforeProfileNameVersion], ['After version', item.afterProfileNameVersion]]);
   const identifiers = disclosure('Event identifiers and permission', byId('adminDetailBody'));
   addSection('Audit reference', [['Event ID', item.id], ['Actor ID', item.actorId], ['Target user ID', item.targetUserId], ['Permission', item.permission], ['Request ID', item.requestId], ['Correlation ID', item.correlationId], ['Environment', item.environment]], identifiers);
 }
@@ -269,6 +283,19 @@ function openRequesterDetail(requesterId, requestId, button) {
   detailCleanup = mountRequesterDetail({ container: byId('adminDetailBody'), owner: { ...owner }, requesterId, requestId,
     isCurrent: () => captured === epoch && detail === detailEpoch && query === queryEpoch && !suspended && tab === 'requests'
       && permissions.includes('operations.read') && permissions.includes('users.read'),
+    renderFacts: renderUser, onError: showError });
+}
+function openUserLookup(userId, button) {
+  if (!owner || suspended || tab !== 'users' || !permissions.includes('users.read')
+    || !byId('adminUserLookup').open || typeof userId !== 'string' || parseAdminLookupUserId(userId) !== userId) return;
+  closeDetail({ restore: false }); detailOpener = button;
+  const captured = epoch; const detail = detailEpoch; const query = queryEpoch; const capturedOwner = owner;
+  byId('adminDetailTitle').textContent = 'Account lookup';
+  dialog.showModal(); byId('adminDetailClose').focus();
+  detailCleanup = mountAdminUserLookup({ container: byId('adminDetailBody'), owner: { ...owner }, userId,
+    isCurrent: () => captured === epoch && detail === detailEpoch && query === queryEpoch && capturedOwner === owner
+      && !suspended && tab === 'users' && permissions.includes('users.read') && byId('adminUserLookup').open
+      && byId('adminUserLookupId').value === userId,
     renderFacts: renderUser, onError: showError });
 }
 async function openDetail(kind, id, button) {
@@ -295,11 +322,13 @@ async function openDetail(kind, id, button) {
       // Install cleanup before mounting the independent mutation panel so any
       // exception or later invalidation also removes the read-only history.
       detailCleanup = clearHistory;
+      let clearName = () => {};
       const clearRole = mountRoleDetail({ container: byId('adminDetailBody'), item: result.item, owner: detailOwner, permissions: [...permissions],
         isCurrent: () => captured === epoch && detail === detailEpoch && !suspended,
         onError: showError, reload: () => void openDetail(kind, id, button),
         onFacts: (item) => { facts.replaceChildren(); renderUser(item, facts); },
         onCommitted: () => {
+          clearName();
           // Drop old facts/list immediately. An idempotent receipt can describe
           // an older successful operation; only new reads establish current role.
           facts.replaceChildren(); byId('adminUsersRows').replaceChildren();
@@ -328,7 +357,33 @@ async function openDetail(kind, id, button) {
           } });
         },
       });
-      detailCleanup = () => { clearHistory(); clearRole(); };
+      detailCleanup = () => { clearHistory(); clearRole(); clearName(); };
+      clearName = mountProfileNameDetail({ container: byId('adminDetailBody'), targetUserId: id, owner: detailOwner, permissions: [...permissions],
+        isCurrent: () => captured === epoch && detail === detailEpoch && !suspended,
+        onError: showError, reload: () => void openDetail(kind, id, button), onCommitted: () => {
+          clearRole(); clearHistory(); facts.replaceChildren(element('p', 'Reload account details for a fresh account snapshot. The receipt below describes only the original operation.'));
+          byId('adminUsersRows').replaceChildren(); cursors = [null]; page = 0; nextCursor = null; updatePagination();
+          const query = ++queryEpoch; const controller = new AbortController(); listController?.abort(); listController = controller;
+          byId('adminStatus').textContent = 'Refreshing accounts after the confirmed display-name operation…';
+          const queryArgs = listArgs();
+          void (async () => {
+            const assertListOwner = async () => {
+              const current = await getAdminSessionOwner({ signal: controller.signal });
+              if (current.actorId !== detailOwner.actorId || current.sessionIdentity !== detailOwner.sessionIdentity) throw adminReadError('ADMIN_CHANGED');
+            };
+            await assertListOwner();
+            if (captured !== epoch || query !== queryEpoch || tab !== 'users' || suspended || controller.signal.aborted) return;
+            const value = await listSiteAdminUsers(queryArgs, { expectedUserId: detailOwner.actorId, signal: controller.signal });
+            await assertListOwner();
+            if (captured !== epoch || query !== queryEpoch || tab !== 'users' || suspended || controller.signal.aborted) return;
+            if (value.nextCursor !== null && (typeof value.nextCursor !== 'object' || Array.isArray(value.nextCursor))) throw adminReadError();
+            renderRows(value.items); nextCursor = value.nextCursor; updatePagination();
+            byId('adminStatus').textContent = 'Accounts refreshed after the display-name operation. Current filter membership may have changed.';
+          })().catch(error => { if (captured === epoch && query === queryEpoch && !suspended) {
+            if (['ADMIN_CHANGED', 'ADMIN_DENIED', 'ADMIN_SIGNED_OUT'].includes(error?.code)) showError(error);
+            else byId('adminStatus').textContent = 'Display-name operation confirmed; the account list could not refresh. Use Refresh records to read it again.';
+          } });
+        } });
     } else renderAudit(result.item);
   } catch (error) {
     if (captured !== epoch || detail !== detailEpoch) return;
@@ -337,6 +392,7 @@ async function openDetail(kind, id, button) {
 }
 function selectTab(next, { focus = false } = {}) {
   if (!tabs[next] || !permissions.includes(tabs[next].permission)) return;
+  clearUserLookup({ reset: true });
   clearQueueHealth(); cleanupHealth.clear(); tab = next; cursors = [null]; page = 0;
   for (const node of document.querySelectorAll('[data-admin-tab]')) { const active = node.dataset.adminTab === tab; node.setAttribute('aria-selected', String(active)); node.tabIndex = active ? 0 : -1; if (active && focus) node.focus(); }
   for (const node of document.querySelectorAll('[data-admin-panel]')) node.hidden = node.dataset.adminPanel !== tab;
@@ -376,6 +432,19 @@ byId('adminRetryAccess').addEventListener('click', () => void verifyAccess());
 byId('adminReauthenticate').addEventListener('click', async () => { scrub(); try { await clearAuthSession(); location.assign('./login.html?returnTo=admin.html'); } catch { gate('Sign-out unavailable', 'Try signing out again before continuing.', 'adminReauthenticate'); } });
 byId('adminDetailClose').addEventListener('click', () => closeDetail());
 dialog.addEventListener('cancel', (event) => { event.preventDefault(); closeDetail(); });
+byId('adminUserLookupForm').addEventListener('submit', (event) => {
+  event.preventDefault();
+  if (!owner || suspended || tab !== 'users' || !permissions.includes('users.read') || !byId('adminUserLookup').open) return;
+  clearUserLookup();
+  const input = byId('adminUserLookupId'); const userId = parseAdminLookupUserId(input.value);
+  if (userId === null) {
+    input.setAttribute('aria-invalid', 'true'); byId('adminUserLookupStatus').textContent = 'Enter a complete user ID in UUID format.';
+    input.focus(); return;
+  }
+  input.value = userId; openUserLookup(userId, byId('adminUserLookupSubmit'));
+});
+byId('adminUserLookupId').addEventListener('input', () => clearUserLookup());
+byId('adminUserLookup').addEventListener('toggle', () => { if (!byId('adminUserLookup').open) clearUserLookup({ reset: true }); });
 for (const node of document.querySelectorAll('[data-admin-tab]')) {
   node.addEventListener('click', () => selectTab(node.dataset.adminTab));
   node.addEventListener('keydown', (event) => {

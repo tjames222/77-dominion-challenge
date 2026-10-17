@@ -10,8 +10,13 @@ const body = (source, name) => {
   return source.slice(start, source.indexOf('\n}\n', start) + 2);
 };
 const claimSource = body(apiSource, 'claimChallengeUnlocks');
-const makeClaim = dependencies => new Function(...Object.keys(dependencies),
-  `${claimSource}; return claimChallengeUnlocks;`)(...Object.values(dependencies));
+const makeClaim = dependencies => {
+  const runtime = { previewBadgeEpoch: 0,
+    getAuthSession: async () => ({ user: { id: 'actor-a' }, access_token: 'synthetic-bearer-a' }),
+    authSessionIdentity: session => session?.user?.id ? `${session.user.id}:session-1` : '',
+    ...dependencies };
+  return new Function(...Object.keys(runtime), `${claimSource}; return claimChallengeUnlocks;`)(...Object.values(runtime));
+};
 const catalog = (label = 'post-claim') => ({ label, schemaVersion: 2, actorId: 'actor-a',
   revision: 4, catalogVersion: 2, snapshotVersion: 'a'.repeat(64), totalPoints: 420,
   items: [{ key: 'seven_day_reset', stateModel: 'challenge_lifecycle' },
@@ -20,21 +25,27 @@ const catalog = (label = 'post-claim') => ({ label, schemaVersion: 2, actorId: '
 test('live claim exposes the same complete verified post-claim catalog without another read', async () => {
   const calls = []; const complete = catalog();
   const claim = makeClaim({ BUILD_SUPPORTS_LOCAL_DEMO: false, requireSupabase: () => ({
-    rpc: async (name, args) => { calls.push([name, args]); return { data: { claimedKeys: ['seven_day_reset'] } }; },
+    rpc: (name, args) => ({ setHeader(key, value) {
+      assert.equal(key, 'Authorization'); assert.equal(value, 'Bearer synthetic-bearer-a');
+      calls.push([name, args]); return Promise.resolve({ data: { claimedKeys: ['seven_day_reset'] } });
+    } }),
   }), requireUser: async actor => { calls.push(['user', actor]); return { id: 'actor-a' }; },
   getAllRewardCatalog: async args => { calls.push(['catalog', args]); return complete; } });
   const result = await claim({ expectedUserId: 'actor-a' });
   assert.equal(result.catalog, complete);
   assert.deepEqual(result.claimedUnlocks, [complete.items[0]]);
   assert.deepEqual(result.progression, { challenges: [complete.items[0]], totalPoints: 420 });
-  assert.deepEqual(calls, [['user', 'actor-a'], ['claim_challenge_unlocks', { target_expected_actor_id: 'actor-a' }],
+  assert.deepEqual(calls, [['user', 'actor-a'], ['claim_challenge_unlocks', {}],
     ['user', 'actor-a'], ['catalog', { expectedUserId: 'actor-a' }]]);
 });
 
 for (const stage of ['claim', 'verification', 'catalog']) test(`live ${stage} rejection is propagated without retrying the claim`, async () => {
   const failure = new Error(stage); let userCalls = 0; let claims = 0; let reads = 0;
   const claim = makeClaim({ BUILD_SUPPORTS_LOCAL_DEMO: false, requireSupabase: () => ({
-    rpc: async () => { claims += 1; return stage === 'claim' ? { error: failure } : { data: {} }; },
+    rpc: () => ({ setHeader(key, value) {
+      assert.equal(key, 'Authorization'); assert.equal(value, 'Bearer synthetic-bearer-a');
+      claims += 1; return Promise.resolve(stage === 'claim' ? { error: failure } : { data: {} });
+    } }),
   }), requireUser: async () => { if (++userCalls === 2 && stage === 'verification') throw failure; return { id: 'actor-a' }; },
   getAllRewardCatalog: async () => { reads += 1; throw failure; } });
   await assert.rejects(claim({ expectedUserId: 'actor-a' }), error => error === failure);

@@ -36,8 +36,8 @@ const supabaseConfigPath = path.join(
 );
 // Update alongside each reviewed pgTAP addition; these exact inventory checks
 // must not silently accept missing files or fewer planned assertions.
-const expectedFileCount = 47;
-const expectedAssertionCount = 1955;
+const expectedFileCount = 48;
+const expectedAssertionCount = 1991;
 
 const fakeCliSource = `#!/usr/bin/env bash
 set -euo pipefail
@@ -191,6 +191,7 @@ test("the database inventory and latest lifecycle foundations stay complete", as
   assert.ok(inventory.includes("330_site_admin_account_requests.sql"));
   assert.ok(inventory.includes("340_original_77_live_completion.sql"));
   assert.ok(inventory.includes("340_site_admin_cleanup_health.sql"));
+  assert.ok(inventory.includes("350_site_admin_profile_name.sql"));
 
   const canonicalSchema = await readFile(
     path.join(repositoryRoot, "supabase", "schema.sql"),
@@ -216,10 +217,12 @@ test("the database inventory and latest lifecycle foundations stay complete", as
     "the canonical schema must include the Admin cleanup-health migration exactly once",
   );
   assert.deepEqual(
-    schemaMigrations.slice(-2),
+    schemaMigrations.slice(-3, -1),
     ["20261007060519_profile_photo_cleanup_monitor_health.sql", cleanupHealthMigration],
     "the Admin cleanup-health migration must append to the existing service monitor foundation",
   );
+  assert.equal(schemaMigrations.at(-1), "20261013091749_site_admin_profile_name_correction.sql");
+  assert.equal(schemaMigrations.filter(filename => filename === "20261013091749_site_admin_profile_name_correction.sql").length, 1);
 
   let plannedAssertions = 0;
   for (const filename of inventory) {
@@ -228,6 +231,9 @@ test("the database inventory and latest lifecycle foundations stay complete", as
     assert.ok(plan, `${filename} must declare a positive pgTAP plan`);
     if (filename === "340_site_admin_cleanup_health.sql") {
       assert.equal(Number.parseInt(plan[1], 10), 20, "the cleanup-health suite contributes exactly 20 reviewed assertions");
+    }
+    if (filename === "350_site_admin_profile_name.sql") {
+      assert.equal(Number.parseInt(plan[1], 10), 36, "the profile-name suite contributes exactly 36 reviewed assertions");
     }
     plannedAssertions += Number.parseInt(plan[1], 10);
   }

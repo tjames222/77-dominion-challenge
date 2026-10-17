@@ -164,3 +164,11 @@ test('foreground launcher still yields to every interaction-owning overlay', () 
   }
   assert.match(css, /visibility:\s*hidden;\s*pointer-events:\s*none;/u);
 });
+
+test('journal launcher clearance never animates under shared reduced-motion styles', () => {
+  const communityCss = readFileSync(new URL('../assets/community.css', import.meta.url), 'utf8');
+  const reserve = communityCss.match(/body\[data-feedback-mounted\] #journalCreateFormMount\s*\{([^}]+)\}/u)?.[1];
+  assert.ok(reserve, 'the journal keeps its scoped launcher clearance');
+  assert.match(reserve, /margin-inline-end:\s*calc\(44px \+ max\(0px, var\(--feedback-size, 3\.5rem\) - 56px\) \+ var\(--feedback-safe-right, 0px\)\);/u);
+  assert.match(communityCss, /^#journalCreateFormMount\s*\{\s*transition-property:\s*none;\s*\}/mu);
+});

@@ -59,8 +59,9 @@ jobs:
       mode: ${{ steps.release-boundary.outputs.mode }}
       requires_exact71_backup: ${{ steps.release-boundary.outputs.requires_exact71_backup }}
       requires_exact73_backup: ${{ steps.release-boundary.outputs.requires_exact73_backup }}
-      backup_artifact_id: ${{ steps.post73-backup.outputs.artifact_id || steps.post71-backup.outputs.artifact_id }}
-      backup_run_attempt: ${{ steps.post73-backup.outputs.run_attempt || steps.post71-backup.outputs.run_attempt }}
+      requires_exact74_backup: ${{ steps.release-boundary.outputs.requires_exact74_backup }}
+      backup_artifact_id: ${{ steps.post74-backup.outputs.artifact_id || steps.post73-backup.outputs.artifact_id || steps.post71-backup.outputs.artifact_id }}
+      backup_run_attempt: ${{ steps.post74-backup.outputs.run_attempt || steps.post73-backup.outputs.run_attempt || steps.post71-backup.outputs.run_attempt }}
     needs: validation
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -94,8 +95,9 @@ jobs:
           mode="$(jq -er '.mode' <<<"$boundary")"
           requires_exact71_backup="$(jq -er '.requiresExact71Backup | tostring' <<<"$boundary")"
           requires_exact73_backup="$(jq -er '.requiresExact73Backup // false | tostring' <<<"$boundary")"
-          case "$mode:$requires_exact71_backup:$requires_exact73_backup" in
-            repeatable-challenge-cutover:false:false|post-repeatable-challenge-cutover:false:false|post71-additive-release:true:false|post73-reviewed-release:false:false|post73-additive-release:false:true|post74-reviewed-release:false:false) ;;
+          requires_exact74_backup="$(jq -er '.requiresExact74Backup // false | tostring' <<<"$boundary")"
+          case "$mode:$requires_exact71_backup:$requires_exact73_backup:$requires_exact74_backup" in
+            repeatable-challenge-cutover:false:false:false|post-repeatable-challenge-cutover:false:false:false|post71-additive-release:true:false:false|post73-reviewed-release:false:false:false|post73-additive-release:false:true:false|post74-reviewed-release:false:false:false|post74-additive-release:false:false:true|post75-reviewed-release:false:false:false) ;;
             *) echo "::error::The release boundary receipt is invalid."; exit 1 ;;
           esac
           if [[ "$requires_exact73_backup" == "true" ]]; then
@@ -105,10 +107,29 @@ jobs:
               SUPABASE_PROJECT_REF="$SUPABASE_PROJECT_REF" \
               node scripts/verify-admin-cleanup-index-preflight.mjs
           fi
+          if [[ "$requires_exact74_backup" == "true" ]]; then
+            /usr/bin/env -i \
+              PATH="$PATH" \
+              SUPABASE_ACCESS_TOKEN="$SUPABASE_ACCESS_TOKEN" \
+              SUPABASE_PROJECT_REF="$SUPABASE_PROJECT_REF" \
+              node scripts/verify-admin-profile-name-preflight.mjs
+            /usr/bin/env -i \
+              PATH="$PATH" \
+              SUPABASE_ACCESS_TOKEN="$SUPABASE_ACCESS_TOKEN" \
+              SUPABASE_PROJECT_REF="$SUPABASE_PROJECT_REF" \
+              node scripts/verify-production-admin-cleanup-health.mjs
+          elif [[ "$mode" == "post75-reviewed-release" ]]; then
+            /usr/bin/env -i \
+              PATH="$PATH" \
+              SUPABASE_ACCESS_TOKEN="$SUPABASE_ACCESS_TOKEN" \
+              SUPABASE_PROJECT_REF="$SUPABASE_PROJECT_REF" \
+              node scripts/verify-production-post75-catalogs.mjs
+          fi
           printf 'receipt=%s\n' "$boundary" >> "$GITHUB_OUTPUT"
           printf 'mode=%s\n' "$mode" >> "$GITHUB_OUTPUT"
           printf 'requires_exact71_backup=%s\n' "$requires_exact71_backup" >> "$GITHUB_OUTPUT"
           printf 'requires_exact73_backup=%s\n' "$requires_exact73_backup" >> "$GITHUB_OUTPUT"
+          printf 'requires_exact74_backup=%s\n' "$requires_exact74_backup" >> "$GITHUB_OUTPUT"
       - name: Select the fresh exact-70 encrypted backup artifact
         if: inputs.release_scope == 'repeatable-challenge-cutover'
         id: repeatable-backup
@@ -258,6 +279,56 @@ jobs:
             PRODUCTION_BACKUP_PUBLIC_KEY="$PRODUCTION_BACKUP_PUBLIC_KEY" \
             node scripts/verify-post73-backup-evidence.mjs \
               --directory "$RUNNER_TEMP/post73-backup-evidence"
+
+      - name: Select the fresh exact-74 encrypted backup artifact
+        if: steps.release-boundary.outputs.requires_exact74_backup == 'true'
+        id: post74-backup
+        env:
+          BACKUP_RUN_ID: ${{ inputs.backup_run_id }}
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          read -r artifact_id backup_run_attempt < <(/usr/bin/env -i \
+            BACKUP_RUN_ID="$BACKUP_RUN_ID" \
+            GH_TOKEN="$GH_TOKEN" \
+            GITHUB_SHA="$GITHUB_SHA" \
+            PATH="$PATH" \
+            node scripts/verify-post74-backup-evidence.mjs --select)
+          if [[ ! "$artifact_id" =~ ^[1-9][0-9]*$ || ! "$backup_run_attempt" =~ ^[1-9][0-9]*$ ]]; then
+            echo "::error::Selected backup identity is malformed."
+            exit 1
+          fi
+          printf 'artifact_id=%s\n' "$artifact_id" >> "$GITHUB_OUTPUT"
+          printf 'run_attempt=%s\n' "$backup_run_attempt" >> "$GITHUB_OUTPUT"
+      - name: Download only the selected exact-74 encrypted backup artifact
+        if: steps.release-boundary.outputs.requires_exact74_backup == 'true'
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          artifact-ids: ${{ steps.post74-backup.outputs.artifact_id }}
+          path: ${{ runner.temp }}/post74-backup-evidence
+          merge-multiple: true
+          github-token: ${{ github.token }}
+          repository: tjames222/77-dominion-challenge
+          run-id: ${{ inputs.backup_run_id }}
+      - name: Verify encrypted exact-74 bytes and restored checkpoint
+        if: steps.release-boundary.outputs.requires_exact74_backup == 'true'
+        env:
+          BACKUP_RUN_ATTEMPT: ${{ steps.post74-backup.outputs.run_attempt }}
+          BACKUP_RUN_ID: ${{ inputs.backup_run_id }}
+          PRODUCTION_BACKUP_PUBLIC_KEY: ${{ vars.PRODUCTION_BACKUP_PUBLIC_KEY }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          set +x
+          /usr/bin/env -i \
+            BACKUP_RUN_ATTEMPT="$BACKUP_RUN_ATTEMPT" \
+            BACKUP_RUN_ID="$BACKUP_RUN_ID" \
+            GITHUB_SHA="$GITHUB_SHA" \
+            PATH="$PATH" \
+            PRODUCTION_BACKUP_PUBLIC_KEY="$PRODUCTION_BACKUP_PUBLIC_KEY" \
+            node scripts/verify-post74-backup-evidence.mjs \
+              --directory "$RUNNER_TEMP/post74-backup-evidence"
 
   backup-evidence:
     name: Verify restored encrypted production backup
@@ -785,6 +856,23 @@ jobs:
             SUPABASE_ACCESS_TOKEN="$SUPABASE_ACCESS_TOKEN" \
             SUPABASE_PROJECT_REF="$SUPABASE_PROJECT_REF" \
             node scripts/verify-admin-cleanup-index-preflight.mjs
+      - name: Recheck profile-name preflight and exact74 catalog before backend writes
+        if: needs.repeatable-cutover-policy.outputs.requires_exact74_backup == 'true'
+        timeout-minutes: 1
+        shell: bash
+        run: |
+          set -euo pipefail
+          set +x
+          /usr/bin/env -i \
+            PATH="$PATH" \
+            SUPABASE_ACCESS_TOKEN="$SUPABASE_ACCESS_TOKEN" \
+            SUPABASE_PROJECT_REF="$SUPABASE_PROJECT_REF" \
+            node scripts/verify-admin-profile-name-preflight.mjs
+          /usr/bin/env -i \
+            PATH="$PATH" \
+            SUPABASE_ACCESS_TOKEN="$SUPABASE_ACCESS_TOKEN" \
+            SUPABASE_PROJECT_REF="$SUPABASE_PROJECT_REF" \
+            node scripts/verify-production-admin-cleanup-health.mjs
       - name: Validate dedicated profile-photo health credential
         run: node scripts/verify-profile-photo-health-runtime-config.mjs
       - name: Validate the production release gate
@@ -1309,6 +1397,51 @@ jobs:
             PRODUCTION_BACKUP_PUBLIC_KEY="$PRODUCTION_BACKUP_PUBLIC_KEY" \
             node scripts/verify-post73-backup-evidence.mjs \
               --directory "$RUNNER_TEMP/post73-backup-evidence"
+      - name: Recheck profile-name preflight and exact74 catalog immediately before migration
+        if: needs.repeatable-cutover-policy.outputs.requires_exact74_backup == 'true'
+        timeout-minutes: 1
+        shell: bash
+        run: |
+          set -euo pipefail
+          set +x
+          /usr/bin/env -i \
+            PATH="$PATH" \
+            SUPABASE_ACCESS_TOKEN="$SUPABASE_ACCESS_TOKEN" \
+            SUPABASE_PROJECT_REF="$SUPABASE_PROJECT_REF" \
+            node scripts/verify-admin-profile-name-preflight.mjs
+          /usr/bin/env -i \
+            PATH="$PATH" \
+            SUPABASE_ACCESS_TOKEN="$SUPABASE_ACCESS_TOKEN" \
+            SUPABASE_PROJECT_REF="$SUPABASE_PROJECT_REF" \
+            node scripts/verify-production-admin-cleanup-health.mjs
+      - name: Download only the selected exact-74 encrypted backup artifact
+        if: needs.repeatable-cutover-policy.outputs.requires_exact74_backup == 'true'
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          artifact-ids: ${{ needs.repeatable-cutover-policy.outputs.backup_artifact_id }}
+          path: ${{ runner.temp }}/post74-backup-evidence
+          merge-multiple: true
+          github-token: ${{ github.token }}
+          repository: tjames222/77-dominion-challenge
+          run-id: ${{ inputs.backup_run_id }}
+      - name: Reverify fresh exact-74 evidence immediately before migration
+        if: needs.repeatable-cutover-policy.outputs.requires_exact74_backup == 'true'
+        env:
+          BACKUP_RUN_ATTEMPT: ${{ needs.repeatable-cutover-policy.outputs.backup_run_attempt }}
+          BACKUP_RUN_ID: ${{ inputs.backup_run_id }}
+          PRODUCTION_BACKUP_PUBLIC_KEY: ${{ vars.PRODUCTION_BACKUP_PUBLIC_KEY }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          set +x
+          /usr/bin/env -i \
+            BACKUP_RUN_ATTEMPT="$BACKUP_RUN_ATTEMPT" \
+            BACKUP_RUN_ID="$BACKUP_RUN_ID" \
+            GITHUB_SHA="$GITHUB_SHA" \
+            PATH="$PATH" \
+            PRODUCTION_BACKUP_PUBLIC_KEY="$PRODUCTION_BACKUP_PUBLIC_KEY" \
+            node scripts/verify-post74-backup-evidence.mjs \
+              --directory "$RUNNER_TEMP/post74-backup-evidence"
       - name: Recheck the approved exact migration boundary immediately before apply
         shell: bash
         run: |
@@ -1500,6 +1633,7 @@ jobs:
             --cli-history "$post_migration_history_file" \
             --require-no-pending
       - name: Verify source-fixed account-request inbox catalog
+        if: needs.repeatable-cutover-policy.outputs.mode != 'post74-additive-release' && needs.repeatable-cutover-policy.outputs.mode != 'post75-reviewed-release'
         timeout-minutes: 1
         shell: bash
         run: |
@@ -1512,6 +1646,7 @@ jobs:
             SUPABASE_PROJECT_REF="$SUPABASE_PROJECT_REF" \
             node scripts/verify-production-account-request-inbox.mjs
       - name: Verify source-fixed original77 completion catalog
+        if: needs.repeatable-cutover-policy.outputs.mode != 'post74-additive-release' && needs.repeatable-cutover-policy.outputs.mode != 'post75-reviewed-release'
         timeout-minutes: 1
         shell: bash
         run: |
@@ -1524,6 +1659,7 @@ jobs:
             SUPABASE_PROJECT_REF="$SUPABASE_PROJECT_REF" \
             node scripts/verify-production-original77.mjs
       - name: Verify source-fixed repeatable challenge catalog
+        if: needs.repeatable-cutover-policy.outputs.mode != 'post74-additive-release' && needs.repeatable-cutover-policy.outputs.mode != 'post75-reviewed-release'
         timeout-minutes: 1
         shell: bash
         run: |
@@ -1536,6 +1672,7 @@ jobs:
             SUPABASE_PROJECT_REF="$SUPABASE_PROJECT_REF" \
             node scripts/verify-production-repeatable-challenge.mjs
       - name: Verify source-fixed Admin cleanup health catalog
+        if: needs.repeatable-cutover-policy.outputs.mode != 'post74-additive-release' && needs.repeatable-cutover-policy.outputs.mode != 'post75-reviewed-release'
         timeout-minutes: 1
         shell: bash
         run: |
@@ -1547,6 +1684,19 @@ jobs:
             SUPABASE_ACCESS_TOKEN="$SUPABASE_ACCESS_TOKEN" \
             SUPABASE_PROJECT_REF="$SUPABASE_PROJECT_REF" \
             node scripts/verify-production-admin-cleanup-health.mjs
+      - name: Verify exact75 composed catalogs and guarded profile-name correction
+        if: needs.repeatable-cutover-policy.outputs.mode == 'post74-additive-release' || needs.repeatable-cutover-policy.outputs.mode == 'post75-reviewed-release'
+        timeout-minutes: 1
+        shell: bash
+        run: |
+          set -euo pipefail
+          set +x
+          ulimit -c 0
+          /usr/bin/env -i \
+            PATH="$PATH" \
+            SUPABASE_ACCESS_TOKEN="$SUPABASE_ACCESS_TOKEN" \
+            SUPABASE_PROJECT_REF="$SUPABASE_PROJECT_REF" \
+            node scripts/verify-production-post75-catalogs.mjs
       - name: Reverify exact canary continuity after migration
         if: steps.cutover-plan.outputs.mode == 'initial-cutover'
         run: |

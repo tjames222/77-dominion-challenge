@@ -13912,3 +13912,4 @@ revoke execute on function public.grant_sharing_reward_after_invite_redemption()
 \ir migrations/20261007055555_site_admin_account_request_queue_health.sql
 \ir migrations/20261007060519_profile_photo_cleanup_monitor_health.sql
 \ir migrations/20261013055744_site_admin_cleanup_health.sql
+\ir migrations/20261013091749_site_admin_profile_name_correction.sql

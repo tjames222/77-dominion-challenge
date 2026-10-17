@@ -194,7 +194,13 @@ async function launcherPlacement(page) {
       obstructed: node.hasAttribute('data-obstructed'), position: { x: rect.x, y: rect.y } };
   });
 }
-for (const width of [320, 1440]) test(`fixed-corner foreground launcher never follows page content during continuous scrolling at ${width}px`, async ({ context, page }, testInfo) => {
+// Keep DOM/source traces, explicit before/after PNGs and per-frame geometry.
+// Automatic screencast capture adds work to the rendering loop being sampled;
+// only these sustained-scroll cases omit that diagnostic capture.
+const scrollTrace = { mode: 'retain-on-failure', screenshots: false, snapshots: true, sources: true, attachments: true };
+const scrollTest = test.extend({ trace: scrollTrace });
+for (const width of [320, 1440]) scrollTest(`fixed-corner foreground launcher never follows page content during continuous scrolling at ${width}px`, async ({ context, page, trace }, testInfo) => {
+  expect(trace).toEqual(scrollTrace);
   // Linux WebKit took 57s to deliver the required real-frame samples while
   // every placement invariant passed. Leave room for setup and dialog checks.
   test.setTimeout(90_000);
@@ -409,6 +415,22 @@ for (const width of [320, 601]) test(`journal form and floating launcher stay us
   await expect(page.locator('#journalForm button[type=submit]')).toBeEnabled();
   await expect(page.locator('#journalPageError')).toBeHidden();
   expect(await page.locator('#journalCreateFormMount').evaluate(node => getComputedStyle(node).marginInlineEnd)).toBe('44px');
+  // The shared reduced-motion rule retains a tiny transition duration for
+  // transition-end consumers. The launcher's clearance must still apply in
+  // the mounting task, rather than spending its first frame at zero margin.
+  const mount = page.locator('#journalCreateFormMount');
+  await page.locator('body').evaluate(node => node.removeAttribute('data-feedback-mounted'));
+  await expect(mount).toHaveCSS('margin-inline-end', '0px');
+  expect(await mount.evaluate(node => {
+    document.body.setAttribute('data-feedback-mounted', '');
+    return getComputedStyle(node).marginInlineEnd;
+  })).toBe('44px');
+  expect(await mount.evaluate(node => {
+    document.body.removeAttribute('data-feedback-mounted');
+    const margin = getComputedStyle(node).marginInlineEnd;
+    document.body.setAttribute('data-feedback-mounted', '');
+    return margin;
+  })).toBe('0px');
   await page.evaluate(async () => { await document.fonts.ready; document.documentElement.style.fontSize = '200%'; });
   await page.waitForLoadState('networkidle');
   const form = page.locator('#journalForm');

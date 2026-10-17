@@ -21,6 +21,7 @@ import {
 } from './auth-runtime-core.mjs';
 import { authSessionIdentity, sessionRequiresMfa } from './mfa-auth.mjs';
 import { createAdminReadClient, adminReadError, withAdminReadDeadline } from './admin-read-client.mjs';
+import { runProfileNameOperation } from './admin-profile-name-operation.mjs';
 import { createDailyActionBootstrapClient } from './daily-action-bootstrap.mjs';
 import { previewOriginal77Progress } from './original-77-progress.mjs';
 import { normalizePreviewChallengeState, isPreviewChallengeActive, previewChallengeDate, advancePreviewStreaks } from './preview-challenge.mjs';
@@ -694,6 +695,15 @@ const readSiteAdmin = (name, args, options = {}) => withAdminReadDeadline(async 
   const value = await client.read(name, args, { ...options, signal }); assertActive(); return value;
 }, options);
 export const getSiteAdminContext = (options = {}) => readSiteAdmin('get_site_admin_context', {}, options);
+export const getSiteAdminProfileName = (targetUserId, options = {}) => readSiteAdmin('site_admin_get_profile_name', { target_user_id: targetUserId }, options);
+export const correctSiteAdminProfileName = (intent, options = {}) => {
+  const captured = adminClientEpoch;
+  return runProfileNameOperation(intent, options, async () => {
+    const client = await getAdminReadClient();
+    if (captured !== adminClientEpoch) throw adminReadError('ADMIN_CHANGED');
+    return client;
+  });
+};
 export const listSiteAdminUsers = (args, options = {}) => readSiteAdmin('site_admin_list_users', args, options);
 export const listSiteAdminAccountRequests = (args, options = {}) => readSiteAdmin('site_admin_list_account_requests', args, options);
 export const getSiteAdminAccountRequestQueueHealth = (args = {}, options = {}) => readSiteAdmin('site_admin_get_account_request_queue_health', args, options);
@@ -2270,14 +2280,40 @@ export async function claimChallengeUnlocks({ expectedUserId = '' } = {}) {
   }
 
   const client = requireSupabase();
-  const actor = await requireUser(expectedUserId);
-  const { data, error } = await client.rpc('claim_challenge_unlocks', {
-    target_expected_actor_id: actor.id,
-  });
-  await requireUser(actor.id);
+  const claimEpoch = previewBadgeEpoch;
+  const claimSession = await getAuthSession();
+  // The published RPC has no actor parameter. Copy session primitives before
+  // another await and pin its bearer so the SDK's delayed token lookup cannot
+  // redirect this acknowledgement to a replacement account.
+  const claimActorId = claimSession?.user?.id;
+  const claimIdentity = authSessionIdentity(claimSession);
+  const claimBearer = claimSession?.access_token;
+  const changed = () => new Error('The signed-in account changed. Try again.');
+  const assertClaimEpoch = () => {
+    if (!claimActorId || !claimIdentity || !claimBearer || claimEpoch !== previewBadgeEpoch) throw changed();
+  };
+  const verifyClaimSession = async () => {
+    assertClaimEpoch();
+    const current = await getAuthSession();
+    if (claimEpoch !== previewBadgeEpoch || current?.user?.id !== claimActorId
+      || authSessionIdentity(current) !== claimIdentity || current?.access_token !== claimBearer) throw changed();
+  };
+  assertClaimEpoch();
+  const actor = await requireUser(expectedUserId || claimActorId);
+  if (actor.id !== claimActorId) throw changed();
+  await verifyClaimSession();
+  assertClaimEpoch();
+  const { data, error } = await client.rpc('claim_challenge_unlocks', {})
+    .setHeader('Authorization', `Bearer ${claimBearer}`);
+  assertClaimEpoch();
+  await requireUser(claimActorId);
+  await verifyClaimSession();
+  assertClaimEpoch();
   if (error) throw error;
   const claimedKeySet = new Set(data?.claimedKeys || data?.claimed_keys || []);
-  const catalog = await getAllRewardCatalog({ expectedUserId: actor.id });
+  const catalog = await getAllRewardCatalog({ expectedUserId: claimActorId });
+  await verifyClaimSession();
+  assertClaimEpoch();
   const progression = { challenges: catalog.items.filter(item => item.stateModel === 'challenge_lifecycle'), totalPoints: catalog.totalPoints };
   return {
     claimedUnlocks: progression.challenges.filter((challenge) => claimedKeySet.has(challenge.key)),

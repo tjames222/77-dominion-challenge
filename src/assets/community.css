@@ -819,6 +819,9 @@
   gap: 10px;
 }
 .journal-pagination button { flex: 1 1 10rem; min-height: 44px; }
+/* Apply and remove the launcher's clearance immediately, including when the
+ * shared reduced-motion styles retain a tiny transition duration. */
+#journalCreateFormMount { transition-property: none; }
 @media (max-width: 768px) {
   /* A dense, single-column form otherwise leaves no safe vertical slot for
    * the floating launcher. Keep only its controls clear of that right edge;

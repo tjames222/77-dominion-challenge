@@ -1,4 +1,5 @@
 import { adminReadError } from './admin-read-client.mjs';
+import { normalizeProfileNameAudit } from './admin-profile-name-contract.mjs';
 
 export const USER_HISTORY_PAGE_SIZE = 10;
 const uuid = value => typeof value === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
@@ -9,6 +10,7 @@ const role = value => value === null || ['member', 'site_admin'].includes(value)
 const reasons = {
   initial_admin_bootstrap: 'Initial administrator setup', staff_access_review: 'Staff access review',
   approved_role_change: 'Approved role change', recovery_plan: 'Recovery plan', invitation_acceptance: 'Invitation acceptance',
+  profile_name_correction: 'Profile display-name correction',
 };
 const errors = {
   invalid_input: 'Invalid input', self_action_forbidden: 'Self-action not allowed', target_unavailable: 'Account unavailable',
@@ -16,8 +18,11 @@ const errors = {
   invitation_unavailable: 'Invitation unavailable', account_setup_required: 'Account setup required',
   account_unavailable: 'Account unavailable', delivery_not_ready: 'Invitation delivery not ready',
   program_unavailable: 'Early Access unavailable', already_qualified: 'Already qualified',
+  profile_unavailable: 'Profile unavailable', unsupported_legacy_name: 'Stored name format unsupported',
 };
 const rules = {
+  'users.display_name.correct': { label: 'Display-name correction', permission: 'users.manage', reasons: ['profile_name_correction'],
+    errors: ['invalid_input', 'revision_conflict', 'self_action_forbidden', 'target_unavailable', 'profile_unavailable', 'unsupported_legacy_name'] },
   'roles.bootstrap': { label: 'Initial site-admin assignment', permission: 'roles.manage', reasons: ['initial_admin_bootstrap'], errors: [] },
   'roles.assign': { label: 'Site role review', permission: 'roles.manage', reasons: ['staff_access_review', 'approved_role_change', 'recovery_plan'],
     errors: ['invalid_input', 'self_action_forbidden', 'target_unavailable', 'revision_conflict', 'target_mfa_required'] },
@@ -43,10 +48,15 @@ export function normalizeAdminUserHistory(value, { actorId, targetUserId, cursor
       || (item.action === 'early_access.accept' && (item.actorId !== targetUserId || item.beforeRole !== null || item.afterRole !== null))
       || (item.action === 'roles.bootstrap' && (item.beforeRole !== 'member' || item.afterRole !== 'site_admin'))
       || (item.action === 'roles.assign' && (item.outcome === 'success' ? item.beforeRole === null || item.afterRole === null : item.beforeRole !== item.afterRole))) throw adminReadError();
+    let nameMetadata = {};
+    if (item.action === 'users.display_name.correct') nameMetadata = normalizeProfileNameAudit(item);
+    // Older deployments omit these additive fields; new serializers emit NULL.
+    // Neither form permits profile metadata to be smuggled into another action.
+    else if (['beforeProfileNameVersion', 'afterProfileNameVersion', 'profileNameChanged'].some(key => item[key] != null)) throw adminReadError();
     previous = BigInt(item.id);
     return { id: item.id, occurredAt: item.occurredAt, action: item.action, actionLabel: rule.label,
       outcome: item.outcome, reasonLabel: reasons[item.reasonCode], errorLabel: item.errorCode === null ? null : errors[item.errorCode],
-      beforeRole: item.beforeRole, afterRole: item.afterRole };
+      beforeRole: item.beforeRole, afterRole: item.afterRole, ...nameMetadata };
   });
   let nextCursor = null;
   if (value.nextCursor !== null) {

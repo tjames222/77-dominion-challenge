@@ -45,6 +45,15 @@
             </div></details>
             <button type="submit">Apply filters</button>
           </form>
+          <details id="adminUserLookup" class="admin-user-lookup">
+            <summary>Find by user ID</summary>
+            <p class="admin-footnote" id="adminUserLookupHelp">Have an exact user ID from a support request or audit event? Open a read-only account snapshot without changing the account list.</p>
+            <form id="adminUserLookupForm" class="admin-filters" autocomplete="off" novalidate>
+              <label>User ID<input id="adminUserLookupId" name="userId" type="text" maxlength="128" autocomplete="off" autocapitalize="off" spellcheck="false" aria-describedby="adminUserLookupHelp adminUserLookupStatus" /></label>
+              <button id="adminUserLookupSubmit" type="submit">Find account</button>
+            </form>
+            <p id="adminUserLookupStatus" class="admin-status" role="status"></p>
+          </details>
           <p class="admin-footnote admin-context-note" id="adminUsersSnapshotNote">Account status and site role are separate from app access. Stored history is not current streak, access, or completion evidence.</p>
           <div class="admin-table-wrap" tabindex="0" aria-label="Account records"><table class="admin-table" role="table" aria-describedby="adminUsersSnapshotNote"><caption>Account records · Last sign-in shown in UTC</caption><thead role="rowgroup"><tr role="row"><th role="columnheader" scope="col">Member</th><th role="columnheader" scope="col">Site role</th><th role="columnheader" scope="col">Account</th><th role="columnheader" scope="col">Last sign-in</th><th role="columnheader" scope="col">Details</th></tr></thead><tbody id="adminUsersRows" role="rowgroup"></tbody></table></div>
         </section>
@@ -52,7 +61,7 @@
           <div class="admin-view-heading"><h2>Audit trail</h2><p>Recorded administrative decisions and outcomes.</p></div>
           <form id="adminAuditFilters" class="admin-filters" autocomplete="off">
             <label class="admin-search">Target user ID<input name="target" type="text" maxlength="36" placeholder="Any user" autocomplete="off" spellcheck="false" /></label>
-            <label>Action<select name="action"><option value="all">All actions</option><option value="roles.assign">Role assignment</option><option value="roles.bootstrap">Initial admin activation</option></select></label>
+            <label>Action<select name="action"><option value="all">All actions</option><option value="roles.assign">Role assignment</option><option value="roles.bootstrap">Initial admin activation</option><option value="users.display_name.correct">Display-name correction</option></select></label>
             <label>Outcome<select name="outcome"><option value="all">All outcomes</option><option value="success">Success</option><option value="failure">Failure</option></select></label>
             <button type="submit">Apply filters</button>
           </form>
