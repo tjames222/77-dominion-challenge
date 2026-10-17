@@ -409,6 +409,22 @@ for (const width of [320, 601]) test(`journal form and floating launcher stay us
   await expect(page.locator('#journalForm button[type=submit]')).toBeEnabled();
   await expect(page.locator('#journalPageError')).toBeHidden();
   expect(await page.locator('#journalCreateFormMount').evaluate(node => getComputedStyle(node).marginInlineEnd)).toBe('44px');
+  // The shared reduced-motion rule retains a tiny transition duration for
+  // transition-end consumers. The launcher's clearance must still apply in
+  // the mounting task, rather than spending its first frame at zero margin.
+  const mount = page.locator('#journalCreateFormMount');
+  await page.locator('body').evaluate(node => node.removeAttribute('data-feedback-mounted'));
+  await expect(mount).toHaveCSS('margin-inline-end', '0px');
+  expect(await mount.evaluate(node => {
+    document.body.setAttribute('data-feedback-mounted', '');
+    return getComputedStyle(node).marginInlineEnd;
+  })).toBe('44px');
+  expect(await mount.evaluate(node => {
+    document.body.removeAttribute('data-feedback-mounted');
+    const margin = getComputedStyle(node).marginInlineEnd;
+    document.body.setAttribute('data-feedback-mounted', '');
+    return margin;
+  })).toBe('0px');
   await page.evaluate(async () => { await document.fonts.ready; document.documentElement.style.fontSize = '200%'; });
   await page.waitForLoadState('networkidle');
   const form = page.locator('#journalForm');
