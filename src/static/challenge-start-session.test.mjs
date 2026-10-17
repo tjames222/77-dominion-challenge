@@ -11,7 +11,7 @@ const requestId = '44444444-4444-4444-8444-444444444444';
 const sessionA = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
 const sessionB = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
 const api = readFileSync(new URL('./api.js', import.meta.url), 'utf8');
-const source = api.slice(api.indexOf('export async function startChallenge('), api.indexOf('export async function getDashboard(')).replace(/^export /, '');
+const source = api.slice(api.indexOf('export async function startChallenge('), api.indexOf('export async function initializeDashboardVisit(')).replace(/^export /, '');
 const deferred = () => { let resolve; const promise = new Promise(done => { resolve = done; }); return { promise, resolve }; };
 const session = (id = sessionA, refresh = 0) => ({ user: { id: actorId },
   access_token: `fixture.${Buffer.from(JSON.stringify({ sub: actorId, session_id: id, refresh })).toString('base64url')}.signature` });

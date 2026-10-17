@@ -10,6 +10,7 @@ import {
   getChallengeActivation,
   getDailyStandardDraft,
   getDashboard,
+  initializeDashboardVisit,
   getGameSummary,
   getLocalOrSessionUser,
   hasSupabaseAuth,
@@ -25,7 +26,7 @@ import {
 import { badgeCatalogOrder, badgeCelebrationReason } from './badge-data-contract.mjs';
 import { createBadgeCelebrationRecovery } from './badge-celebrations.mjs';
 import { createRewardCelebrationRecovery } from './reward-celebrations.mjs';
-import { presentPermanentRewardCelebration } from './reward-celebration-view.js';
+import { loadPermanentRewardCelebration, REWARD_PRESENTATION_RELOAD_MESSAGE } from './reward-celebration-view-loader.mjs';
 import { DIFFICULTY_OPTIONS, calculateCheckInScore, normalizeWorkoutDifficulty } from './scoring.mjs';
 import { dailyStandardRoute } from './daily-standard-routes.mjs';
 import {
@@ -594,6 +595,34 @@ const permanentRewardRecovery = createRewardCelebrationRecovery({
   sessionStorage,
   isCurrentOwner: (owner) => isCurrentMutationOwner(owner),
 });
+let presentPermanentRewardCelebration;
+function showRewardPresentationFailure() {
+  let notice = $('rewardPresentationStatus');
+  if (!notice) {
+    notice = document.createElement('p');
+    notice.id = 'rewardPresentationStatus';
+    notice.className = 'check-in-status';
+    notice.setAttribute('role', 'status');
+    notice.setAttribute('aria-live', 'polite');
+    $('checkInStatus')?.after(notice);
+  }
+  notice.textContent = REWARD_PRESENTATION_RELOAD_MESSAGE;
+}
+function showCommittedCheckInStatus(owner, postedDate) {
+  if (!isCurrentMutationOwner(owner) || !hasSubmittedCheckIn(postedDate)) return;
+  const button = $('checkInButton');
+  if (button) {
+    button.textContent = 'Today’s Check-In Complete';
+    button.classList.add('is-complete');
+  }
+  const status = $('checkInStatus');
+  if (status) {
+    status.textContent = checkInNoticeDate === postedDate
+      ? checkInNotice : 'Your check-in is posted. Your rewards are loading.';
+    status.classList.add('is-complete');
+    status.setAttribute('aria-busy', 'false');
+  }
+}
 const presentCelebrationItem = (item) => {
   if (item.kind === 'reward') return showRewardToast(item.reward);
   if (item.kind === 'badge') {
@@ -1189,11 +1218,9 @@ function render() {
     checkInButton.classList.toggle('is-complete', submittedToday);
     checkInButton.textContent = committedRefreshPending
       ? 'Refreshing...'
-      : submissionPendingToday
-      ? 'Posting...'
       : submittedToday
         ? 'Today’s Check-In Complete'
-        : 'Post Check-In';
+        : submissionPendingToday ? 'Posting...' : 'Post Check-In';
   }
   if (checkInStatus) {
     const currentNotice = checkInNoticeDate === entry.date ? checkInNotice : '';
@@ -1210,7 +1237,7 @@ function render() {
       : currentNotice;
     checkInStatus.textContent = statusCopy;
     checkInStatus.classList.toggle('is-complete', submittedToday);
-    checkInStatus.setAttribute('aria-busy', String(submissionPendingToday || committedRefreshPending));
+    checkInStatus.setAttribute('aria-busy', String((submissionPendingToday && !submittedToday) || committedRefreshPending));
   }
   if (countdownCheckInButton) {
     countdownCheckInButton.disabled = !canMutateChallenge()
@@ -1313,6 +1340,7 @@ function clearDashboardUserState() {
   activeCountdownCallout = '';
   entrySaveQueue = Promise.resolve();
   celebrationSequence.clear({ forgetCompleted: true });
+  $('rewardPresentationStatus')?.remove();
   celebrationReturnFocus = null;
   stopCelebrationConfetti();
   document.querySelectorAll('.check-row-details[aria-busy="true"]')
@@ -1328,14 +1356,19 @@ function invalidateDashboardOwner(nextOwner = '') {
   render();
 }
 
-async function hydrateDashboardFromApi(expectedOwnerId = observedAuthOwner) {
+async function hydrateDashboardFromApi(expectedOwnerId = observedAuthOwner, { initialVisit = false } = {}) {
   if (!hasSupabaseAuth() && !localDemoMode) return;
   const requestId = ++dashboardHydrationRequestId;
   const requestStartedAt = new Date();
   const requestedOwner = String(expectedOwnerId || '');
+  const requestOwnerEpoch = authOwnerEpoch;
 
   try {
-    const dashboard = await getDashboard();
+    const dashboard = initialVisit && hasSupabaseAuth()
+      ? await initializeDashboardVisit({ expectedUserId: requestedOwner,
+        isCurrent: () => requestId === dashboardHydrationRequestId
+          && requestOwnerEpoch === authOwnerEpoch && requestedOwner === observedAuthOwner })
+      : await getDashboard();
     if (requestId !== dashboardHydrationRequestId) return;
     const dashboardOwner = String(dashboard?.profile?.userId || '');
     if (!dashboardOwner) throw new Error('Unable to verify the dashboard account.');
@@ -1493,7 +1526,19 @@ async function queuePermanentRewardAndChallengeCelebrations(owner, { recovery = 
   if (!isCurrentMutationOwner(owner)) return;
   const rewards = await permanentRewardRecovery.collect(owner, { recovery });
   if (!isCurrentMutationOwner(owner)) return;
-  enqueueCelebrationItems(rewards);
+  if (rewards.length) {
+    try {
+      const renderer = await loadPermanentRewardCelebration();
+      if (!isCurrentMutationOwner(owner)) return;
+      presentPermanentRewardCelebration = renderer.presentPermanentRewardCelebration;
+      enqueueCelebrationItems(rewards);
+    } catch {
+      if (!isCurrentMutationOwner(owner)) return;
+      // Unseen rewards remain recoverable. A presentation download must not
+      // acknowledge them, retry a mutation, or turn a posted check-in into failure.
+      showRewardPresentationFailure();
+    }
+  }
   // The challenge stage is appended only after reward delivery resolves. A
   // failed reward lookup returns no items and cannot block challenge recovery.
   if (canParticipateInChallenge()) await refreshChallengeProgression({ claimCelebrations: true, owner });
@@ -1891,6 +1936,9 @@ if (checkInButton) checkInButton.addEventListener('click', async () => {
       earnedBadges,
       status,
     });
+    // Publish only the confirmed status. A preview may already have advanced
+    // its logical date; keep its rendered scorecard disabled until finally.
+    if (submissionCommitted) showCommittedCheckInStatus(submissionOwner, entry.date);
     await queuePermanentRewardAndChallengeCelebrations(submissionOwner);
   } catch (error) {
     if (!isCurrentMutationOwner(submissionOwner)) {
@@ -1957,13 +2005,14 @@ async function bootDashboard() {
   }
 
   render();
-  await hydrateDashboardFromApi(observedAuthOwner);
+  await hydrateDashboardFromApi(observedAuthOwner, { initialVisit: true });
   render();
-  if (hasSupabaseAuth() || localDemoMode) await recordDailyAppVisit();
+  if (localDemoMode) await recordDailyAppVisit();
+  // Optional celebration code must not keep the authorized Dashboard hidden.
+  requestAnimationFrame(() => initReveal());
   await recoverPendingCelebrations();
   startCountdownCard();
   startDashboardForegroundRefresh();
-  requestAnimationFrame(() => initReveal());
 }
 
 bootDashboard().catch((error) => {
