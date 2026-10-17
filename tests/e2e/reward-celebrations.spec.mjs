@@ -30,6 +30,13 @@ async function seedRewards(page, app, { unseen = ['dominion_night_theme'], missi
   });
 }
 const stage = (page) => page.locator('#permanentRewardCelebration');
+const rendererRequest = /\/(?:assets\/)?reward-celebration-view(?:-[\w-]+)?\.js(?:\?|$)/;
+const rendererStyles = /\/(?:assets\/)?(?:reward-celebrations|reward-celebration-view(?:-[\w-]+)?)\.css(?:\?|$)/;
+const gate = () => {
+  let release;
+  const promise = new Promise(resolve => { release = resolve; });
+  return { promise, release };
+};
 const ownedRecords = async (page) => {
   // Observe the original fixture owner even after the account-switch test.
   // Ownership remains in its source records; delivery truth is the native
@@ -235,10 +242,12 @@ test('a duplicated tab cannot share an active reward delivery token', async ({ p
   await second.close();
 });
 
-test('check-in queues day complete, every badge, permanent reward, then a concurrent challenge without overlap', async ({ page, app }) => {
+for (const acceleratedPreview of [false, true]) test(`check-in queues day complete, every badge, permanent reward, then a concurrent challenge without overlap${acceleratedPreview ? ' during accelerated preview' : ''}`, async ({ page, app }) => {
   await seedRewards(page, app, { unseen: [], missing: ['dominion_night_theme'], points: 105 });
+  if (acceleratedPreview) await page.addInitScript(() => {
+    localStorage.setItem('dominion:previewChallengeSimulation', JSON.stringify({ enabled: true, anchorDate: '2026-02-01', day: 14 }));
+  });
   await page.goto(ROUTE_BY_ID.dashboard.path); await app.stable(); await expect(stage(page)).toHaveCount(0);
-  // Boot initializes reveal states only after its initial celebration recovery.
   // This offscreen panel may stay pending until scrolled into view.
   await expect(page.locator('.dashboard-brand-panel')).toHaveClass(/\b(?:pending-reveal|is-visible)\b/);
   await page.evaluate(owner => {
@@ -259,10 +268,41 @@ test('check-in queues day complete, every badge, permanent reward, then a concur
     new MutationObserver(() => { window.__rewardQueueMaxOverlap = Math.max(window.__rewardQueueMaxOverlap, active().length); })
       .observe(document.body, { childList: true, subtree: true, attributes: true });
   }, FIXED_USER_ID);
+  const download = gate(); let rendererRequests = 0;
+  await page.route(rendererRequest, async route => {
+    rendererRequests++;
+    await download.promise;
+    await route.continue();
+  });
+  try {
   await page.locator('#selectAllActionsButton').click(); await page.locator('#checkInButton').click();
+  await expect.poll(() => rendererRequests).toBe(1);
   await expect(page.locator('#rewardToast')).toBeVisible();
+  await expect(page.locator('#checkInButton')).toHaveText('Today’s Check-In Complete');
+  await expect(page.locator('#checkInButton')).toBeDisabled();
+  await expect(page.locator('#checkInStatus')).toHaveAttribute('aria-busy', 'false');
+  await expect(page.locator('#checkInStatus')).toContainText('posted');
+  await expect(page.locator('#selectAllActionsButton')).toBeDisabled();
+  if (acceleratedPreview) {
+    expect(await page.evaluate(() => JSON.parse(localStorage.getItem('dominion:previewChallengeSimulation')).day)).toBe(15);
+    await expect(page.locator('#scorecardCalendarDay')).toContainText('14');
+    await page.evaluate(() => {
+      window.__heldRewardCountdownUpdates = 0;
+      new MutationObserver(() => { window.__heldRewardCountdownUpdates++; })
+        .observe(document.getElementById('countdownActionsLabel'), { childList: true });
+      window.dispatchEvent(new Event('focus'));
+      document.dispatchEvent(new Event('visibilitychange'));
+    });
+    await expect.poll(() => page.evaluate(() => window.__heldRewardCountdownUpdates)).toBeGreaterThan(0);
+    await page.keyboard.press('Escape');
+    await expect(page.locator('#badgeCelebration')).toBeVisible();
+    await expect(page.locator('#scorecardCalendarDay')).toContainText('14');
+    await expect(page.locator('#selectAllActionsButton')).toBeDisabled();
+    expect(await page.locator('.check-row-toggle').evaluateAll(buttons => buttons.every(button => button.disabled))).toBe(true);
+  }
   await expect(stage(page)).toHaveCount(0); await expect(page.locator('#challengeUnlockCelebration')).not.toBeVisible();
-  await page.keyboard.press('Escape');
+  download.release();
+  if (!acceleratedPreview) await page.keyboard.press('Escape');
   let badgeCount = 0;
   const activeKind = () => page.evaluate(() => ['badgeCelebration','permanentRewardCelebration','challengeUnlockCelebration'].find((id) => {
     const node = document.getElementById(id); return node && !node.closest('[hidden]') && node.getBoundingClientRect().width > 0;
@@ -282,8 +322,135 @@ test('check-in queues day complete, every badge, permanent reward, then a concur
   await expect(page.locator('#challengeUnlockCelebration')).toContainText('7-Day Reset');
   await page.keyboard.press('Escape');
   expect(await page.evaluate(() => window.__rewardQueueMaxOverlap)).toBe(1);
+  expect(rendererRequests).toBe(1);
+  app.assertNoRuntimeErrors();
+  } finally { download.release(); }
+});
+
+test('check-in queues day complete: empty recovery does not download optional reward presentation', async ({ page, app }) => {
+  await seedRewards(page, app, { unseen: [] });
+  const requests = [];
+  page.on('request', request => { if (rendererRequest.test(request.url()) || rendererStyles.test(request.url())) requests.push(request.url()); });
+  await page.goto(ROUTE_BY_ID.dashboard.path); await app.stable();
+  await expect(page.locator('.dashboard-hero')).toHaveClass(/is-visible/);
+  await expect(stage(page)).toHaveCount(0);
+  expect(requests).toEqual([]);
+  const popupStylesLoaded = await page.evaluate(() => [...document.styleSheets].some(sheet => {
+    try { return [...sheet.cssRules].some(rule => rule.selectorText?.startsWith('.permanent-reward-celebration')); }
+    catch { return false; } // External font styles do not contain application selectors.
+  }));
+  expect(popupStylesLoaded).toBe(false);
   app.assertNoRuntimeErrors();
 });
+
+test('check-in queues day complete: delayed recovery reveals Dashboard before showing an unseen reward', async ({ page, app }) => {
+  await seedRewards(page, app);
+  const download = gate(); let requests = 0;
+  await page.route(rendererRequest, async route => { requests++; await download.promise; await route.continue(); });
+  try {
+    await page.goto(ROUTE_BY_ID.dashboard.path, { waitUntil: 'commit' });
+    await expect.poll(() => requests).toBe(1);
+    await expect(page.locator('.dashboard-hero')).toHaveClass(/is-visible/);
+    await expect(stage(page)).toHaveCount(0);
+    expect((await ownedRecords(page)).find(item => item.key === 'dominion_night_theme').celebrationSeenAt).toBeNull();
+    download.release();
+    await expect(stage(page)).toContainText('Dominion Night');
+    await stage(page).getByRole('button', { name: 'Continue' }).click();
+    await expect.poll(async () => (await ownedRecords(page)).find(item => item.key === 'dominion_night_theme').celebrationSeenAt).toBeTruthy();
+    expect(requests).toBe(1);
+    app.assertNoRuntimeErrors();
+  } finally { download.release(); }
+});
+
+for (const invalidation of ['account replacement', 'pagehide']) {
+  test(`check-in queues day complete: pending renderer cannot publish after ${invalidation}`, async ({ page, app }) => {
+    await seedRewards(page, app);
+    const download = gate(); let requests = 0;
+    await page.route(rendererRequest, async route => { requests++; await download.promise; await route.continue(); });
+    try {
+      await page.goto(ROUTE_BY_ID.dashboard.path, { waitUntil: 'commit' });
+      await expect.poll(() => requests).toBe(1);
+      await expect(page.locator('.dashboard-hero')).toHaveClass(/is-visible/);
+      await page.evaluate(kind => {
+        if (kind === 'pagehide') window.dispatchEvent(new PageTransitionEvent('pagehide'));
+        else {
+          const user = { name: 'Other Member', email: 'other.member@example.test', authenticated: true };
+          localStorage.setItem('dominion:user', JSON.stringify(user));
+          window.dispatchEvent(new StorageEvent('storage', { key: 'dominion:user', newValue: JSON.stringify(user) }));
+        }
+      }, invalidation);
+      download.release();
+      await page.waitForLoadState('networkidle');
+      await expect(stage(page)).toHaveCount(0);
+      await expect(page.locator('#rewardPresentationStatus')).toHaveCount(0);
+      expect((await ownedRecords(page)).find(item => item.key === 'dominion_night_theme').celebrationSeenAt).toBeNull();
+      expect(requests).toBe(1);
+      app.assertNoRuntimeErrors();
+    } finally { download.release(); }
+  });
+}
+
+test('a failed permanent reward lookup: real renderer timeout remains unseen and ignores late code until reload', async ({ page, app }) => {
+  await seedRewards(page, app);
+  const download = gate(); let requests = 0;
+  await page.route(rendererRequest, async route => { requests++; await download.promise; await route.continue(); });
+  try {
+    await page.goto(ROUTE_BY_ID.dashboard.path, { waitUntil: 'commit' });
+    await expect.poll(() => requests).toBe(1);
+    const heldAt = Date.now();
+    await expect(page.locator('.dashboard-hero')).toHaveClass(/is-visible/);
+    // Observe the actual loader deadline, without shortening it or changing
+    // this suite's 45-second test limit / ordinary assertion timeouts.
+    await page.evaluate(() => new Promise(resolve => {
+      const ready = () => document.getElementById('rewardPresentationStatus')?.textContent.includes('could not load');
+      if (ready()) { resolve(); return; }
+      const observer = new MutationObserver(() => {
+        if (ready()) { observer.disconnect(); resolve(); }
+      });
+      observer.observe(document.body, { childList: true, subtree: true, characterData: true });
+    }));
+    expect(Date.now() - heldAt).toBeGreaterThanOrEqual(29_000);
+    await expect(page.locator('#rewardPresentationStatus')).toContainText('reload');
+    expect((await ownedRecords(page)).find(item => item.key === 'dominion_night_theme').celebrationSeenAt).toBeNull();
+    download.release();
+    await page.waitForLoadState('networkidle');
+    await expect(stage(page)).toHaveCount(0);
+    await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+    await app.stable();
+    await expect(stage(page)).toHaveCount(0);
+    expect(requests).toBe(1);
+    expect((await ownedRecords(page)).find(item => item.key === 'dominion_night_theme').celebrationSeenAt).toBeNull();
+    await page.unroute(rendererRequest);
+    await page.reload();
+    await expect(stage(page)).toContainText('Dominion Night');
+    await stage(page).getByRole('button', { name: 'Continue' }).click();
+    await expect.poll(async () => (await ownedRecords(page)).find(item => item.key === 'dominion_night_theme').celebrationSeenAt).toBeTruthy();
+    app.assertNoRuntimeErrors();
+  } finally { download.release(); }
+});
+
+for (const [kind, pattern] of [['JS', rendererRequest], ['CSS', rendererStyles]]) {
+  test(`a failed permanent reward lookup: ${kind} presentation failure is recoverable without retry or acknowledgement`, async ({ page, app }) => {
+    await seedRewards(page, app);
+    let requests = 0;
+    await page.route(pattern, route => { requests++; return route.fulfill({ status: 503, contentType: 'text/plain', body: 'Synthetic optional presentation outage', headers: { 'cache-control': 'no-store' } }); });
+    await page.goto(ROUTE_BY_ID.dashboard.path);
+    await expect(page.locator('.dashboard-hero')).toHaveClass(/is-visible/);
+    await expect(page.locator('#rewardPresentationStatus')).toContainText('Your rewards are saved');
+    await expect(page.locator('#rewardPresentationStatus')).toContainText('reload');
+    await expect(stage(page)).toHaveCount(0);
+    expect((await ownedRecords(page)).find(item => item.key === 'dominion_night_theme').celebrationSeenAt).toBeNull();
+    await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+    await app.stable();
+    expect(requests).toBe(1);
+    await page.unroute(pattern);
+    await page.reload();
+    await expect(stage(page)).toContainText('Dominion Night');
+    await stage(page).getByRole('button', { name: 'Continue' }).click();
+    await expect.poll(async () => (await ownedRecords(page)).find(item => item.key === 'dominion_night_theme').celebrationSeenAt).toBeTruthy();
+    app.assertNoRuntimeErrors([/Failed to load resource: the server responded with a status of 503\b/]);
+  });
+}
 
 test('a remote owned grant is recovered on a storage/foreground refresh without a local point guess', async ({ page, app }) => {
   await seedRewards(page, app, { unseen: [], missing: ['dominion_night_theme'], points: 0 });

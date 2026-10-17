@@ -222,5 +222,7 @@ test('Dashboard invalidation clears only page-local optimistic state and both dr
   assert.match(dashboard, /subscribeToAuthStateChanges\(\(change\) => \{\s*void handleDashboardAuthStateChange\(change\)/);
   assert.match(authStateSource, /event !== 'INITIAL_SESSION'/);
   assert.match(authStateSource, /observedAuthSession !== nextSession/);
-  assert.match(dashboard, /setAttribute\('aria-busy', String\(submissionPendingToday \|\| committedRefreshPending\)\)/);
+  // A confirmed post may be waiting only on optional presentation. Recovery
+  // of unconfirmed committed state must still expose its busy status.
+  assert.match(dashboard, /setAttribute\('aria-busy', String\(\(submissionPendingToday && !submittedToday\) \|\| committedRefreshPending\)\)/);
 });
