@@ -430,3 +430,38 @@ then checks the same selected artifact again immediately before migration.
 Frontend-only is rejected until all 74 migrations are applied. An unexpected
 history or boundary change stops the release; it is not a reason to waive backup,
 replay an old cutover, restore production, pause workers, or change PostgreSQL.
+
+## Admin cleanup-health 74-migration checkpoint
+
+Choose `post-admin-cleanup-health-74` before the reviewed Admin display-name
+correction addition. Production must be exactly at migration 74,
+`20261013055744_site_admin_cleanup_health`; the ordered JSON version-array
+SHA-256 is
+`638d162275f5fe779660d2cf8e1cce25551f9e389cebe13e3c36f3a4ce9660ef`.
+The producer first proves the complete source 75 inventory, before reading
+worker recovery inputs, preparing the pinned image or minting credentials.
+It chains the unchanged source 74 verifier, pins the first 74 filename/hash
+pairs to
+`9af0051b2c2f47a9733ed02675166cab2197aa8aec67020592346e15a2d3ceb7`,
+and permits only the pending
+`20261013091749_site_admin_profile_name_correction.sql` with source SHA-256
+`d57754f5d0d072a8ada239e6a6d34483c3dd226fa131b208c5a17336bad7af7f`.
+The historical 70/71/73 validators retain their own exact boundaries; this
+mode does not make an older artifact valid for a database at 74.
+
+This checkpoint adds no recovery authority. Capture and isolated restore use
+the existing three worker settings, five-name Vault proof, pg_net supplement,
+PostgreSQL 17.6 image identity, RSA-4096/AES-256-GCM encryption and schema-3
+artifact contract. Invitation ciphertext is preserved but its decryption is
+not verified. No invitation-envelope key, recovery private key, health-monitor
+key, Resend key or Linear key is read. The workflow verifies the new encrypted
+evidence before uploading it with the unchanged seven-day retention.
+
+For reviewed source 75, exact remote 74 requires release scope `full` and a
+fresh exact-74 backup of the same protected main commit. Frontend-only is
+rejected at 74. Exact remote 75 admits `full` or `frontend-only` without
+replaying migration 75 or requiring a new pre-75 artifact. All other histories,
+old cutover scopes, source changes, incomplete captures and recovery-boundary
+changes fail closed. A successful local fixture is not a fresh production
+backup, and neither this mode nor its evidence authorizes a hosted restore,
+reset, worker pause, new project or unreviewed migration.

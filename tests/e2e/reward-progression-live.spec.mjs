@@ -56,7 +56,11 @@ async function fixture(context, { active = false, theme = 'dark', failOnce = fal
     if (name === 'get_badge_collection') return json(route, { catalogVersion: 1, scopeKey: activation.currentInstance.scopeKey, items: [] });
     if (name === 'claim_challenge_unlocks') {
       claimRequests.push(body); sequence.push(name);
-      expect(body.target_expected_actor_id).toBe(auth.A);
+      // Match the published zero-argument SQL signature; a fixture must not
+      // accept an invented actor argument that PostgREST would reject.
+      expect(body).toEqual({});
+      expect(route.request().method()).toBe('POST');
+      expect(route.request().headers().authorization).toBe(`Bearer ${auth.firstSession.access_token}`);
       return failClaim ? json(route, { message: 'Synthetic unlock claim unavailable.' }, 503)
         : json(route, { claimedKeys: [], progression: { challenges: [] } });
     }

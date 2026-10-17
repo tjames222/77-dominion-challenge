@@ -42,6 +42,8 @@ export function mountAdminUserHistory({ container, targetUserId, owner, permissi
         const entry = node('li'); entry.append(node('h4', item.actionLabel));
         entry.append(node('p', `${date(item.occurredAt)} · ${item.outcome === 'success' ? 'Succeeded' : 'Not applied'}`));
         if (item.action.startsWith('roles.')) entry.append(node('p', `Recorded site role: ${role(item.beforeRole)} → ${role(item.afterRole)}`));
+        if (item.action === 'users.display_name.correct') entry.append(node('p', item.outcome === 'failure' ? 'No display-name correction was applied.'
+          : item.profileNameChanged ? 'The original operation changed the profile display name. Names are not retained in this audit.' : 'The original operation reviewed an unchanged profile name.'));
         entry.append(node('p', `Reason: ${item.reasonLabel}${item.errorLabel ? ` · ${item.errorLabel}` : ''}`));
         const reference = node('details'); reference.className = 'admin-disclosure'; reference.append(node('summary', 'Event reference'), node('p', `Event ${item.id}`));
         entry.append(reference); fragment.append(entry);

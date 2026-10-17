@@ -31,7 +31,7 @@ test('API routes explicit reads separately without changing mutation context/pre
   await adapters.readRequest('get_site_admin_context', { read: true }, options);
   assert.equal(events[0][0], 'read'); assert.equal(events[0][1].token, options.token); assert.equal(events[0][1].signal, options.signal); events.length = 0;
   await adapters.readRequest('site_admin_list_account_requests', {}, options); assert.equal(events[0][0], 'inbox'); events.length = 0;
-  for (const name of ['get_site_admin_context', 'site_admin_assign_role', 'site_admin_deny_early_access_request', 'admin-early-access-invitation']) {
+  for (const name of ['get_site_admin_context', 'site_admin_assign_role', 'site_admin_correct_profile_name', 'site_admin_deny_early_access_request', 'admin-early-access-invitation']) {
     await adapters.request(name, { original: name }, options);
     const [kind, url, request] = events.pop(); assert.equal(kind, 'legacy-fetch');
     assert.equal(url, `https://provider.invalid/${name === 'admin-early-access-invitation' ? 'functions/v1' : 'rest/v1/rpc'}/${name}`);

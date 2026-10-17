@@ -3,6 +3,225 @@ import AxeBuilder from '@axe-core/playwright';
 import { installAdminStub } from './support/admin-supabase-stub.mjs';
 import { previewCleanupHealth } from '../../src/static/admin-cleanup-health-preview.mjs';
 
+test.describe('Exact user ID lookup', () => {
+  const target = '70000000-0000-4000-8000-000000000001';
+  const second = '70000000-0000-4000-8000-000000000002';
+  const reads = auth => auth.requests.filter(entry => entry.path.endsWith('/site_admin_get_user'));
+  const loaded = page => expect(page.locator('#adminLookupStatus')).toContainText('Observed');
+  async function open(context, page, options = {}) {
+    const auth = await installAdminStub(context, { permissions: ['users.read'], ...options });
+    page.__lookupAuth = auth; await page.goto('/admin.html');
+    await expect(page.locator('#adminUsersRows tr')).toHaveCount(25); return auth;
+  }
+  async function expand(page) { await page.locator('#adminUserLookup > summary').click(); }
+  async function find(page, id = target) {
+    await page.locator('#adminUserLookupId').fill(id); await page.locator('#adminUserLookupSubmit').click();
+  }
+  test.beforeEach(async ({ page, baseURL }) => {
+    page.__lookupEvidence = { errors: [], external: [] };
+    page.on('pageerror', error => page.__lookupEvidence.errors.push(error.message));
+    await page.route('**/*', route => {
+      if (new URL(route.request().url()).origin !== new URL(baseURL).origin) {
+        page.__lookupEvidence.external.push(new URL(route.request().url()).origin); return route.abort();
+      }
+      return route.fallback();
+    });
+  });
+  test.afterEach(async ({ page }) => {
+    expect(page.__lookupEvidence).toEqual({ errors: [], external: [] });
+    const auth = page.__lookupAuth;
+    if (auth) {
+      const allowed = ['get_site_admin_context', 'site_admin_list_users', 'site_admin_get_user', 'site_admin_list_audit',
+        'site_admin_list_early_access_requests', 'site_admin_list_account_requests', 'site_admin_get_account_request_queue_health', 'get_theme_preference',
+        'get_reward_catalog_v2', 'get_member_access_context'];
+      expect(auth.requests.filter(entry => entry.method !== 'GET' && !allowed.some(name => entry.path.endsWith(`/${name}`)))).toEqual([]);
+    }
+    expect(await page.evaluate(() => JSON.stringify({ ...localStorage, ...sessionStorage }))).not.toMatch(/70000000-0000-4000-8000|PRIVATE_LOOKUP|Preview Member/);
+    expect(page.url()).not.toMatch(/70000000|userId=/);
+  });
+  test('explicit users.read-only lookup preserves list page and filters, brackets the read with context, and restores keyboard focus', async ({ context, page }) => {
+    const auth = await open(context, page); await expect(page.locator('#adminUserLookup')).not.toHaveAttribute('open', '');
+    expect(reads(auth)).toHaveLength(0); await expand(page); await page.locator('#adminUserLookupId').fill(target);
+    expect(reads(auth)).toHaveLength(0); await page.locator('#adminNextPage').click(); await expect(page.locator('#adminUsersRows tr')).toHaveCount(3);
+    const list = await page.locator('#adminUsersRows').textContent(); const listCalls = auth.requests.filter(entry => entry.path.endsWith('/site_admin_list_users')).length;
+    const contexts = auth.requests.filter(entry => entry.path.endsWith('/get_site_admin_context')).length;
+    await page.locator('#adminUserLookupSubmit').focus(); await page.keyboard.press('Enter'); await loaded(page);
+    await expect(page.locator('#adminDetailTitle')).toHaveText('Account lookup'); await expect(page.locator('#adminDetailClose')).toBeFocused();
+    await expect(page.locator('#adminLookupScope')).toContainText('does not change the account');
+    await expect(page.locator('#adminLookupFacts')).toContainText('Preview Member 1');
+    await expect(page.locator('#adminLookupFacts')).toContainText('member1@example.invalid');
+    expect(reads(auth)).toHaveLength(1); expect(reads(auth)[0].body).toEqual({ target_user_id: target, target_expected_actor_id: auth.A });
+    expect(auth.requests.filter(entry => entry.path.endsWith('/get_site_admin_context'))).toHaveLength(contexts + 2);
+    expect(auth.requests.filter(entry => entry.path.endsWith('/site_admin_list_users'))).toHaveLength(listCalls);
+    await expect(page.locator('#adminDetail .admin-review, #adminUserHistory, #adminProfileNameReview, #adminRoleReview')).toHaveCount(0);
+    await page.keyboard.press('Escape'); await expect(page.locator('#adminUserLookupSubmit')).toBeFocused(); await expect(page.locator('#adminDetailBody')).toBeEmpty();
+    await expect(page.locator('#adminUsersRows')).toHaveText(list); await expect(page.locator('#adminPageLabel')).toHaveText('Page 2');
+    await expect(page.locator('#adminUsersFilters select[name="role"]')).toHaveValue('all');
+  });
+  test('invalid input never dispatches and collapse scrubs both validation and the entered ID', async ({ context, page }) => {
+    const auth = await open(context, page); await expand(page);
+    for (const value of ['', '70000000', 'not-a-user-id', ' ' + target, '00000000-0000-0000-0000-000000000000']) {
+      // Set full invalid strings without the browser maxlength silently truncating them.
+      await page.locator('#adminUserLookupId').evaluate((node, input) => { node.value = input; node.dispatchEvent(new Event('input', { bubbles: true })); }, value);
+      await page.locator('#adminUserLookupSubmit').click();
+      await expect(page.locator('#adminUserLookupStatus')).toHaveText('Enter a complete user ID in UUID format.');
+      await expect(page.locator('#adminUserLookupId')).toHaveAttribute('aria-invalid', 'true');
+      await expect(page.locator('#adminUserLookupId')).toBeFocused(); expect(reads(auth)).toHaveLength(0);
+    }
+    await page.locator('#adminUserLookupId').fill(target); await expect(page.locator('#adminUserLookupStatus')).toBeEmpty();
+    await expect(page.locator('#adminUserLookupId')).not.toHaveAttribute('aria-invalid'); await expand(page);
+    await expect(page.locator('#adminUserLookupId')).toHaveValue(''); expect(reads(auth)).toHaveLength(0);
+  });
+  test('successful full-capability lookup remains read-only and window revalidation scrubs its private snapshot', async ({ context, page }) => {
+    const auth = await open(context, page, { permissions: ['users.read', 'users.manage', 'roles.manage', 'operations.read', 'operations.manage', 'audit.read'] });
+    await expand(page); await find(page); await loaded(page);
+    await expect(page.locator('#adminLookupFacts')).toContainText('Preview Member 1');
+    await expect(page.locator('#adminLookupFacts')).toContainText('member1@example.invalid');
+    expect(reads(auth)).toHaveLength(1); expect(reads(auth)[0].body).toEqual({ target_user_id: target, target_expected_actor_id: auth.A });
+    await expect(page.locator('#adminDetail .admin-review, #adminUserHistory, #adminProfileNameReview, #adminRoleReview, #earlyAccessDenyConfirmation')).toHaveCount(0);
+    await expect(page.locator('#adminLookupDetail button')).toHaveCount(1);
+    await expect(page.locator('#adminLookupDetail button')).toHaveText('Refresh account');
+    expect(auth.assignments()).toHaveLength(0); expect(auth.denials()).toHaveLength(0); expect(auth.invitations()).toHaveLength(0);
+    expect(auth.requests.filter(entry => entry.path.endsWith('/site_admin_list_audit'))).toHaveLength(0);
+    await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+    await expect(page.locator('#adminDetail')).not.toBeVisible(); await expect(page.locator('#adminDetailBody')).toBeEmpty();
+    await expect(page.locator('#adminUserLookupId')).toHaveValue(''); await expect(page.locator('#adminUserLookup')).not.toHaveAttribute('open', '');
+    await expect(page.locator('#adminUsersRows tr')).toHaveCount(25); expect(reads(auth)).toHaveLength(1);
+  });
+  test('pasted valid UUID plus a suffix stays invalid rather than truncating into a different lookup', async ({ context, page }) => {
+    const auth = await open(context, page); await expand(page); const pasted = `${target}x`;
+    await page.locator('#adminUserLookupId').focus(); await page.keyboard.insertText(pasted);
+    await expect(page.locator('#adminUserLookupId')).toHaveValue(pasted);
+    await page.locator('#adminUserLookupSubmit').click();
+    await expect(page.locator('#adminUserLookupStatus')).toHaveText('Enter a complete user ID in UUID format.');
+    await expect(page.locator('#adminUserLookupId')).toHaveAttribute('aria-invalid', 'true');
+    expect(reads(auth)).toHaveLength(0); await expect(page.locator('#adminDetail')).not.toBeVisible();
+  });
+  test('a canonical uppercase UUID is lowercased without broadening the target or mounting mutations', async ({ context, page }) => {
+    const auth = await open(context, page, { permissions: ['users.read', 'users.manage', 'roles.manage', 'operations.manage', 'audit.read'] });
+    const id = 'abcdefab-cdef-4abc-8def-abcdefabcdef';
+    const outgoing = [];
+    await page.route('**/site_admin_get_user', route => { outgoing.push(route.request().postDataJSON());
+      return route.fulfill({ status: 404, contentType: 'application/json', body: '{"message":"admin_record_not_found"}' }); });
+    await expand(page); await find(page, id.toUpperCase()); await expect(page.locator('#adminUserLookupId')).toHaveValue(id);
+    await expect(page.locator('#adminLookupStatus')).toContainText('Account unavailable');
+    await expect(page.locator('#adminLookupFacts')).toBeEmpty(); await expect(page.locator('#adminDetail .admin-review, #adminUserHistory')).toHaveCount(0);
+    // The page-level fixture owns this response; inspect the outgoing request directly.
+    expect(outgoing).toEqual([{ target_user_id: id, target_expected_actor_id: auth.A }]);
+    expect(auth.assignments()).toHaveLength(0); expect(auth.invitations()).toHaveLength(0);
+  });
+  for (const [mode, options] of [['member', { role: 'member' }], ['AAL1', { aal: 'aal1' }], ['missing users.read', { permissions: ['operations.read'] }]]) {
+    test(`${mode} cannot use the lookup or dispatch an exact identity read`, async ({ context, page }) => {
+      const auth = await installAdminStub(context, options); page.__lookupAuth = auth; await page.goto('/admin.html');
+      if (mode === 'missing users.read') await expect(page.locator('#adminWorkspace')).toBeVisible();
+      else await expect(page.locator('#adminGateTitle')).not.toHaveText('Checking access');
+      await expect(page.locator('#adminUserLookup')).toBeHidden();
+      await page.locator('#adminUserLookupForm').evaluate(node => node.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })));
+      expect(reads(auth)).toHaveLength(0); await expect(page.locator('#adminDetail')).not.toBeVisible();
+    });
+  }
+  for (const malformed of ['wrong target', 'wrong actor', 'partial']) test(`${malformed} response fails closed and explicit refresh recovers`, async ({ context, page }) => {
+    const auth = await open(context, page); await expand(page);
+    if (malformed === 'wrong actor') auth.corrupt();
+    else auth.roleTarget(target, malformed === 'wrong target' ? { id: auth.B, name: 'PRIVATE_LOOKUP_WRONG_ACCOUNT' } : { lastSignInAt: undefined });
+    await find(page); await expect(page.locator('#adminLookupStatus')).toContainText('unavailable'); await expect(page.locator('#adminLookupFacts')).toBeEmpty();
+    expect(await page.content()).not.toContain('PRIVATE_LOOKUP'); auth.corrupt(false); auth.roleTarget(target, {});
+    await page.locator('#adminLookupRefresh').click(); await loaded(page); await expect(page.locator('#adminLookupFacts')).toContainText('Preview Member 1');
+    expect(reads(auth)).toHaveLength(2);
+  });
+  test('missing and deleted accounts are explicit and extra provider fields never render', async ({ context, page }) => {
+    const auth = await open(context, page); let missing = true;
+    await page.route('**/site_admin_get_user', route => missing ? route.fulfill({ status: 404, contentType: 'application/json', body: '{"message":"admin_record_not_found"}' }) : route.fallback());
+    await expand(page); await find(page); await expect(page.locator('#adminLookupStatus')).toContainText('No account facts are inferred');
+    await expect(page.locator('#adminLookupFacts')).toBeEmpty(); missing = false;
+    auth.roleTarget(target, { deletedAt: '2026-10-01T00:00:00Z', privateNotes: 'PRIVATE_LOOKUP_NOTES' });
+    await page.locator('#adminLookupRefresh').click(); await loaded(page); await expect(page.locator('#adminLookupFacts')).toContainText('Deleted Auth record');
+    expect(await page.content()).not.toContain('PRIVATE_LOOKUP_NOTES');
+  });
+  for (const stage of ['before', 'during']) test(`users.read revocation ${stage} lookup scrubs private state`, async ({ context, page }) => {
+    const auth = await open(context, page); await expand(page); const release = stage === 'during' ? auth.hold(['site_admin_get_user']) : () => {};
+    try {
+      if (stage === 'before') auth.permissions([]); await find(page);
+      if (stage === 'during') { await expect.poll(() => reads(auth).length).toBe(1); auth.permissions([]); release(); }
+      await expect(page.locator('#adminWorkspace')).toBeHidden(); await expect(page.locator('#adminDetailBody')).toBeEmpty();
+      await expect(page.locator('#adminUserLookupId')).toHaveValue(''); await expect(page.locator('#adminUserLookup')).not.toHaveAttribute('open', '');
+      if (stage === 'before') expect(reads(auth)).toHaveLength(0);
+    } finally { release(); }
+  });
+  for (const mode of ['close', 'input', 'collapse', 'filter', 'page', 'tab', 'pagehide', 'replacement', 'ABA']) test(`${mode} cancels a held lookup and prevents late disclosure`, async ({ context, page }) => {
+    const auth = await open(context, page, { permissions: ['users.read', 'audit.read'] }); await expand(page); const release = auth.hold(['site_admin_get_user']);
+    try {
+      await find(page); await expect.poll(() => reads(auth).length).toBe(1);
+      if (mode === 'close') await page.locator('#adminDetailClose').click();
+      else if (mode === 'input') await page.locator('#adminUserLookupId').evaluate((node, id) => { node.value = id; node.dispatchEvent(new Event('input', { bubbles: true })); }, second);
+      else if (mode === 'collapse') await page.locator('#adminUserLookup').evaluate(node => node.open = false);
+      else if (mode === 'filter') await page.locator('#adminUsersFilters select[name="role"]').evaluate(node => { node.value = 'member'; node.dispatchEvent(new Event('input', { bubbles: true })); });
+      else if (mode === 'page') await page.locator('#adminNextPage').evaluate(node => node.click());
+      else if (mode === 'tab') await page.locator('#adminAuditTab').evaluate(node => node.click());
+      else if (mode === 'pagehide') await page.evaluate(() => window.dispatchEvent(new PageTransitionEvent('pagehide')));
+      else {
+        const replacement = auth.session(mode === 'ABA' ? auth.B : auth.A, 'aal2', '22222222-2222-4222-8222-222222222222');
+        const change = value => { localStorage.setItem('sb-127-auth-token', JSON.stringify(value)); window.dispatchEvent(new StorageEvent('storage', { key: 'sb-127-auth-token', newValue: JSON.stringify(value) })); };
+        await page.evaluate(change, replacement); if (mode === 'ABA') await page.evaluate(change, auth.firstSession);
+      }
+      await expect(page.locator('#adminDetail')).not.toBeVisible(); release(); await expect(page.locator('#adminDetailBody')).toBeEmpty();
+      if (mode === 'close') await expect(page.locator('#adminUserLookupSubmit')).toBeFocused();
+      if (['collapse', 'tab', 'pagehide', 'replacement', 'ABA'].includes(mode)) {
+        await expect(page.locator('#adminUserLookupId')).toHaveValue(''); await expect(page.locator('#adminUserLookup')).not.toHaveAttribute('open', '');
+      }
+    } finally { release(); }
+  });
+  test('a closed lookup cannot replace a newer target when its old response settles', async ({ context, page }) => {
+    await open(context, page); await expand(page); let release; let entered = false; let finished = false;
+    const held = new Promise(resolve => { release = resolve; });
+    await page.route('**/site_admin_get_user', async route => { if (entered) return route.fallback(); entered = true; await held; await route.fallback(); finished = true; });
+    try {
+      await find(page); await expect.poll(() => entered).toBe(true); await page.locator('#adminDetailClose').click();
+      await find(page, second); await loaded(page); await expect(page.locator('#adminLookupFacts')).toContainText('Preview Member 2');
+      const facts = await page.locator('#adminLookupFacts').textContent(); release(); await expect.poll(() => finished).toBe(true);
+      await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+      await expect(page.locator('#adminLookupFacts')).toHaveText(facts);
+    } finally { release(); }
+  });
+  for (const stage of ['RPC', 'provider']) test(`${stage} stall respects the total deadline, has no automatic retry and cannot publish late`, async ({ context, page }) => {
+    const auth = await open(context, page); await expand(page); let release;
+    if (stage === 'RPC') release = auth.hold(['site_admin_get_user']);
+    else { let resume; const held = new Promise(resolve => { resume = resolve; }); release = resume;
+      await page.route('**/__admin_fixture__/auth/v1/user', async route => { await held; return route.fallback(); }); }
+    try {
+      await find(page); await expect(page.locator('#adminLookupStatus')).toHaveText('Loading account…');
+      await expect(page.locator('#adminLookupStatus')).toContainText('unavailable', { timeout: 15000 });
+      await expect(page.locator('#adminLookupFacts')).toBeEmpty(); await expect(page.locator('#adminLookupRefresh')).not.toHaveAttribute('aria-disabled');
+      await expect(page.locator('#adminLookupDetail')).not.toHaveAttribute('aria-busy');
+      expect(reads(auth)).toHaveLength(stage === 'RPC' ? 1 : 0); release();
+      await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+      await expect(page.locator('#adminLookupFacts')).toBeEmpty();
+    } finally { release(); }
+    await page.locator('#adminLookupRefresh').click(); await loaded(page); expect(reads(auth)).toHaveLength(stage === 'RPC' ? 2 : 1);
+  });
+  for (const theme of ['light', 'dark', 'dominion-night', 'dominion-platinum']) test(`${theme} form and read-only dialog reflow at 320px and 200% with keyboard access`, async ({ context, page }, testInfo) => {
+    await open(context, page); await page.evaluate(value => document.documentElement.dataset.theme = value, theme);
+    await page.locator('#adminUserLookup > summary').focus(); await page.keyboard.press('Enter');
+    await page.evaluate(() => document.fonts.ready.then(() => undefined));
+    for (const width of [1440, 320]) for (const scale of ['100%', '200%']) {
+      await page.setViewportSize({ width, height: 1000 }); await page.evaluate(value => document.documentElement.style.fontSize = value, scale);
+      for (const selector of ['#adminUserLookup', '#adminUserLookupForm', '#adminUserLookupId', '#adminUserLookupSubmit'])
+        await expect.poll(() => page.locator(selector).evaluate(node => node.scrollWidth <= node.clientWidth + 1)).toBe(true);
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+    }
+    await find(page); await loaded(page); await expect(page.locator('#adminDetailClose')).toBeFocused();
+    for (const selector of ['#adminDetail', '#adminLookupDetail', '#adminLookupScope', '#adminLookupStatus', '#adminLookupFacts', '#adminLookupRefresh'])
+      await expect.poll(() => page.locator(selector).evaluate(node => node.scrollWidth <= node.clientWidth + 1)).toBe(true);
+    expect((await new AxeBuilder({ page }).include('#adminDetail').analyze()).violations).toEqual([]);
+    await page.locator('#adminLookupRefresh').focus(); await page.keyboard.press('Enter'); await loaded(page);
+    await expect(page.locator('#adminLookupRefresh')).toBeFocused(); await expect(page.locator('#adminLookupRefresh')).toBeInViewport();
+    await page.locator('#adminDetail').screenshot({ path: testInfo.outputPath(`lookup-${theme}-320px-200pct.png`) });
+    await page.keyboard.press('Escape'); await expect(page.locator('#adminUserLookupSubmit')).toBeFocused();
+    expect((await new AxeBuilder({ page }).include('#adminUserLookup').analyze()).violations).toEqual([]);
+    await page.locator('#adminUserLookup').screenshot({ path: testInfo.outputPath(`lookup-form-${theme}-320px-200pct.png`) });
+  });
+});
+
 test.describe('Operations cleanup health', () => {
   const rpc = 'site_admin_get_cleanup_health';
   const reads = auth => auth.requests.filter(entry => entry.path.endsWith(`/${rpc}`));

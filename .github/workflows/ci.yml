@@ -109,6 +109,8 @@ jobs:
         run: node --test scripts/verify-repeatable-challenge-cutover-plan.test.mjs scripts/verify-production-repeatable-cutover-policy.test.mjs scripts/verify-post-original77-backup-evidence.test.mjs
       - name: Test exact post71 release sources and isolated health credential validation
         run: node --test scripts/verify-post71-release-plan.test.mjs scripts/verify-post-repeatable-backup-evidence.test.mjs scripts/verify-profile-photo-health-runtime-config.test.mjs scripts/verify-post73-release-plan.test.mjs scripts/verify-post73-backup-evidence.test.mjs scripts/free-backup-post73.test.mjs scripts/post73-release-workflow.test.mjs
+      - name: Test exact74 backup and reviewed profile-name release boundaries
+        run: pnpm run test:post74-release
       - name: Start local Supabase
         run: pnpm run supabase:start
       - name: Verify exact isolated-fixture image cache preparation
@@ -122,6 +124,12 @@ jobs:
       - name: Verify guarded Admin cleanup health and capped query plans
         timeout-minutes: 5
         run: node --test scripts/site-admin-cleanup-health.sql.test.mjs
+      - name: Verify guarded profile-name correction and migration concurrency
+        timeout-minutes: 5
+        run: pnpm run test:site-admin-profile-name-sql
+      - name: Verify exact75 composed catalogs and independent drift refusal
+        timeout-minutes: 5
+        run: node --test scripts/verify-production-post75-catalogs.sql.test.mjs
       - name: Verify isolated account-request inbox authority
         timeout-minutes: 5
         run: node --test scripts/site-admin-account-requests.sql.test.mjs
@@ -160,6 +168,9 @@ jobs:
       - name: Verify exact73 cleanup-monitor backup and full custom archive restore
         timeout-minutes: 5
         run: node --test scripts/free-backup-post73.sql.test.mjs
+      - name: Verify exact74 Admin cleanup-health backup and full custom archive restore
+        timeout-minutes: 5
+        run: node --test scripts/free-backup-post74.sql.test.mjs
       - name: Verify original challenge submission evidence and atomic completion
         timeout-minutes: 5
         run: node --test scripts/original-77-completion-evidence.sql.test.mjs scripts/original-77-live-completion.sql.test.mjs scripts/original-77-fullchain-runtime.sql.test.mjs scripts/original77-legacy-range.sql.test.mjs

@@ -3,7 +3,7 @@ import test from 'node:test';
 import main from '../../playwright.config.mjs';
 import admin from '../../playwright.admin.config.mjs';
 
-const suites = ['admin-live.spec.mjs', 'admin-early-access-live.spec.mjs', 'admin-roles-live.spec.mjs'];
+const suites = ['admin-live.spec.mjs', 'admin-early-access-live.spec.mjs', 'admin-roles-live.spec.mjs', 'admin-profile-name-live.spec.mjs'];
 const matches = (patterns, file) => [patterns].flat().filter(Boolean).some((pattern) => {
   assert.ok(pattern instanceof RegExp, 'These suite boundaries use explicit regular expressions');
   return pattern.test(file);
@@ -19,7 +19,7 @@ test('main mock-server projects exclude every production-only Admin suite', () =
   for (const file of suites) assert.ok(matches(functional.testIgnore, file), `Explicit functional exclusion required for ${file}`);
 });
 
-test('production-built Admin configuration exclusively selects the three live Admin suites', () => {
+test('production-built Admin configuration exclusively selects the registered live Admin suites', () => {
   for (const file of suites) assert.ok(matches(admin.testMatch, file), `${file} belongs to the Admin gate`);
   for (const file of ['admin-preview.spec.mjs', 'mfa-live-auth.spec.mjs', 'visual-routes.spec.mjs']) assert.equal(matches(admin.testMatch, file), false);
   assert.deepEqual(admin.projects.map((project) => project.name), ['admin-live-chromium', 'admin-live-webkit']);

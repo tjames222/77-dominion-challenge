@@ -9,7 +9,8 @@ import { POST73_BACKUP_MODE, requirePost73MigrationVersions, selectPost73Migrati
 import { selectBackupMigrationCheckpoint } from './free-production-backup.mjs';
 
 const directory = new URL('../supabase/migrations/', import.meta.url);
-const migrationFilenames = (await readdir(directory)).filter(name => name.endsWith('.sql')).sort();
+// Exercise the unchanged historical73-to74 contract against its frozen prefix.
+const migrationFilenames = (await readdir(directory)).filter(name => name.endsWith('.sql')).sort().slice(0, 74);
 const migrationSourceHashes = Object.fromEntries(await Promise.all(migrationFilenames.map(async name =>
   [name, createHash('sha256').update(await readFile(new URL(name, directory))).digest('hex')])));
 const source = { migrationFilenames, migrationSourceHashes };

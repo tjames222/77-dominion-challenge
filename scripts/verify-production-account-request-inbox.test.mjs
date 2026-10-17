@@ -119,13 +119,17 @@ test('query is source-fixed single SELECT with ordered canonical deparsing and e
 
 test('full release blocks after exact history and before remaining Edge/frontend, with no new secret bindings', async () => {
   const workflow = await readFile(new URL('../.github/workflows/deploy.yml', import.meta.url), 'utf8');
-  const step = workflow.slice(workflow.indexOf('      - name: Verify source-fixed account-request inbox catalog'),
-    workflow.indexOf('      - name: Reverify exact canary continuity after migration'));
+  const name = '      - name: Verify source-fixed account-request inbox catalog';
+  const start = workflow.indexOf(name); assert(start >= 0);
+  const end = workflow.indexOf('\n      - name:', start + name.length); assert(end > start);
+  const step = workflow.slice(start, end);
   assert.match(step, /timeout-minutes: 1/); assert.match(step, /\/usr\/bin\/env -i/);
   assert.match(step, /SUPABASE_ACCESS_TOKEN="\$SUPABASE_ACCESS_TOKEN"/);
   assert.match(step, /SUPABASE_PROJECT_REF="\$SUPABASE_PROJECT_REF"/);
   assert.match(step, /node scripts\/verify-production-account-request-inbox.mjs/);
-  assert.doesNotMatch(step, /secrets\.|continue-on-error|if:|supabase secrets|WORKER_SECRET|RESEND|LINEAR/);
+  const condition = "        if: needs.repeatable-cutover-policy.outputs.mode != 'post74-additive-release' && needs.repeatable-cutover-policy.outputs.mode != 'post75-reviewed-release'\n";
+  assert(step.includes(condition));
+  assert.doesNotMatch(step.replace(condition, ''), /secrets\.|continue-on-error|if:|supabase secrets|WORKER_SECRET|RESEND|LINEAR/);
   assert(workflow.indexOf('      - name: Require exact completed migration history') < workflow.indexOf(step));
   assert(workflow.indexOf(step) < workflow.indexOf('      - name: Synchronize Edge Function secrets'));
   assert(workflow.includes("needs.backend.result == 'success'"));

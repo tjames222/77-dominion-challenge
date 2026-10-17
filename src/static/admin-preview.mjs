@@ -1,13 +1,19 @@
 import { adminReadError } from './admin-read-client.mjs';
 
-// Synthetic, in-memory preview: accounts/audit are read-only; early-access
-// decisions change only the temporary simulated request records in this adapter.
+// Synthetic, in-memory preview: name corrections and early-access decisions
+// change only the temporary simulated records in this adapter.
 // The API selects this adapter only
 // when mocks are explicitly enabled and Supabase authentication is disabled.
 export function createAdminPreview({ getUser, mode }) {
   let epoch = 0;
   const listeners = new Set();
   let early = null;
+  let profileNames = null;
+  const nameStore = async () => {
+    const { createProfileNamePreview } = await import('./admin-profile-name-preview.mjs');
+    if (!profileNames) profileNames = createProfileNamePreview({ records, auditRows, error: adminReadError });
+    return profileNames;
+  };
   const earlyStore = async () => {
     const { createEarlyAccessPreviewStore } = await import('./admin-early-access-preview.mjs');
     if (!early) early = createEarlyAccessPreviewStore({ error: adminReadError });
@@ -41,6 +47,12 @@ export function createAdminPreview({ getUser, mode }) {
   return { owner, invalidate() { epoch += 1; for (const listener of listeners) { try { listener(); } catch { /* Continue clearing other views. */ } } },
     subscribe(listener) { listeners.add(listener); return () => listeners.delete(listener); },
     async assignRole() { throw adminReadError('ADMIN_DENIED'); },
+    async correctProfileName(intent, { signal, operation } = {}) {
+      const captured = epoch; const reviewed = Object.freeze({ ...intent }); const store = await nameStore(); const actor = await owner();
+      if (mode !== 'ready') throw adminReadError('ADMIN_DENIED');
+      if (captured !== epoch || signal?.aborted || actor.actorId !== reviewed.actorId || actor.sessionIdentity !== reviewed.sessionIdentity) throw adminReadError('ADMIN_CHANGED');
+      operation?.assertActive(); operation?.markSubmitted(); return store.correct(reviewed);
+    },
     async denyEarlyAccess(intent, { signal } = {}) {
       const captured = epoch;
       const { earlyAccessDenialArguments, normalizeEarlyAccessDenial } = await import('./admin-early-access-contract.mjs');
@@ -65,8 +77,13 @@ export function createAdminPreview({ getUser, mode }) {
     const base = { schemaVersion: 1, actorId: actor.actorId, observedAt: new Date().toISOString(), preview: true };
     if (name === 'get_site_admin_context') return { ...base, role: mode === 'member' ? 'member' : 'site_admin',
       adminReady: mode === 'ready', reason: mode === 'mfa' ? 'mfa_required' : null,
-      permissions: mode === 'ready' ? ['users.read', 'audit.read', 'operations.read', 'operations.manage'] : [], stepUpRequired: false };
+      permissions: mode === 'ready' ? ['users.read', 'users.manage', 'audit.read', 'operations.read', 'operations.manage'] : [], stepUpRequired: false };
     if (mode !== 'ready') throw adminReadError('ADMIN_DENIED');
+    if (name === 'site_admin_get_profile_name') {
+      const store = await nameStore(); const current = await owner();
+      if (captured !== epoch || signal?.aborted || current.actorId !== actor.actorId) throw adminReadError('ADMIN_CHANGED');
+      return { ...base, ...store.read(actor.actorId, args.target_user_id) };
+    }
     if (name === 'site_admin_get_cleanup_health') {
       const { previewCleanupHealth } = await import('./admin-cleanup-health-preview.mjs');
       const current = await owner();
