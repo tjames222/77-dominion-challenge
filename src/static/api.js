@@ -2280,14 +2280,40 @@ export async function claimChallengeUnlocks({ expectedUserId = '' } = {}) {
   }
 
   const client = requireSupabase();
-  const actor = await requireUser(expectedUserId);
-  const { data, error } = await client.rpc('claim_challenge_unlocks', {
-    target_expected_actor_id: actor.id,
-  });
-  await requireUser(actor.id);
+  const claimEpoch = previewBadgeEpoch;
+  const claimSession = await getAuthSession();
+  // The published RPC has no actor parameter. Copy session primitives before
+  // another await and pin its bearer so the SDK's delayed token lookup cannot
+  // redirect this acknowledgement to a replacement account.
+  const claimActorId = claimSession?.user?.id;
+  const claimIdentity = authSessionIdentity(claimSession);
+  const claimBearer = claimSession?.access_token;
+  const changed = () => new Error('The signed-in account changed. Try again.');
+  const assertClaimEpoch = () => {
+    if (!claimActorId || !claimIdentity || !claimBearer || claimEpoch !== previewBadgeEpoch) throw changed();
+  };
+  const verifyClaimSession = async () => {
+    assertClaimEpoch();
+    const current = await getAuthSession();
+    if (claimEpoch !== previewBadgeEpoch || current?.user?.id !== claimActorId
+      || authSessionIdentity(current) !== claimIdentity || current?.access_token !== claimBearer) throw changed();
+  };
+  assertClaimEpoch();
+  const actor = await requireUser(expectedUserId || claimActorId);
+  if (actor.id !== claimActorId) throw changed();
+  await verifyClaimSession();
+  assertClaimEpoch();
+  const { data, error } = await client.rpc('claim_challenge_unlocks', {})
+    .setHeader('Authorization', `Bearer ${claimBearer}`);
+  assertClaimEpoch();
+  await requireUser(claimActorId);
+  await verifyClaimSession();
+  assertClaimEpoch();
   if (error) throw error;
   const claimedKeySet = new Set(data?.claimedKeys || data?.claimed_keys || []);
-  const catalog = await getAllRewardCatalog({ expectedUserId: actor.id });
+  const catalog = await getAllRewardCatalog({ expectedUserId: claimActorId });
+  await verifyClaimSession();
+  assertClaimEpoch();
   const progression = { challenges: catalog.items.filter(item => item.stateModel === 'challenge_lifecycle'), totalPoints: catalog.totalPoints };
   return {
     claimedUnlocks: progression.challenges.filter((challenge) => claimedKeySet.has(challenge.key)),
