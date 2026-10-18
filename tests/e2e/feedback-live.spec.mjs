@@ -102,11 +102,24 @@ for (const options of [{ active: false }, { malformed: true }, { aal: 'aal1' }])
   else { await expect(page.locator('.global-menu-button')).toBeVisible(); await expect.poll(() => auth.calls.length).toBeGreaterThan(0); }
   await expect(widget(page)).toHaveCount(0); expect(auth.writes()).toEqual([]);
 });
-test('public, login, Security, Admin and invite routes never load or submit feedback', async ({ context, page }) => {
+test('public, login, Security, Admin and invite routes never load or submit feedback', async ({ context, page, baseURL }) => {
   const auth = await installFeedbackStub(context); const requested = [];
+  let loginIteration = false;
+  // A saved verified Login now resumes at Dashboard, where feedback is allowed.
+  // Isolate only that destination document so this test still proves excluded
+  // entries never load feedback, rather than testing Dashboard's eligibility.
+  await context.route(url => url.origin === baseURL && url.pathname === '/dashboard.html', route => {
+    if (!loginIteration || !route.request().isNavigationRequest()) return route.fallback();
+    return route.fulfill({ contentType: 'text/html', body: '<!doctype html><html lang="en"><title>Saved-session destination fixture</title><h1>Saved-session destination fixture</h1></html>' });
+  });
   page.on('request', request => { if (optional.test(request.url())) requested.push(request.url()); });
   for (const route of ['/index.html', '/support.html', '/login.html', '/account-security.html', '/admin.html', '/invite.html']) {
-    await page.goto(route); await page.waitForLoadState('networkidle'); await expect(widget(page)).toHaveCount(0);
+    loginIteration = route === '/login.html';
+    try {
+      await page.goto(route);
+      await expect(page).toHaveURL(baseURL + (loginIteration ? '/dashboard.html' : route));
+      await page.waitForLoadState('networkidle'); await expect(widget(page)).toHaveCount(0);
+    } finally { loginIteration = false; }
   }
   // Signed-in navigation may use the shared, read-only access RPC to choose
   // its destination. It must not load feedback code or submit anything.

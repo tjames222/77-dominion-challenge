@@ -140,8 +140,16 @@ test('refresh during a dispatched save preserves the draft and requires explicit
 });
 
 for (const mode of ['different actor', 'same actor replacement', 'ABA', 'signout']) {
-  test(`late page response cannot restore journal or draft after ${mode}`, async ({ page, context }) => {
+  test(`late page response cannot restore journal or draft after ${mode}`, async ({ page, context, baseURL }) => {
     const api = await installJournalStub(context); await ready(page); await draft(page).fill('PRIVATE DRAFT old owner');
+    if (mode === 'signout') {
+      // This fixture seeds Auth on each empty document. Isolate the replacement
+      // document so that synthetic reseeding cannot undo this test's sign-out;
+      // native Login/logout behavior is covered in the MFA browser suite.
+      await context.route(url => url.origin === baseURL && url.pathname === '/login.html', route => route.request().isNavigationRequest()
+        ? route.fulfill({ contentType: 'text/html', body: '<!doctype html><html lang="en"><title>Signed-out destination fixture</title><h1>Signed-out destination fixture</h1></html>' })
+        : route.fallback());
+    }
     const release = api.hold(); await page.locator('#journalPageOlder').click();
     await expect.poll(() => api.reads.length).toBe(2);
     if (mode === 'signout') await replaceJournalSession(page, null, 'SIGNED_OUT');
@@ -150,7 +158,10 @@ for (const mode of ['different actor', 'same actor replacement', 'ABA', 'signout
       if (mode === 'ABA') await replaceJournalSession(page, api.session(api.A, 'aal2', '33333333-3333-4333-8333-333333333333'));
     }
     release();
-    if (mode === 'signout') await expect(page).toHaveURL(/login/);
+    if (mode === 'signout') {
+      await expect(page).toHaveURL(/login/);
+      await expect(page.getByRole('heading', { name: 'Signed-out destination fixture', exact: true })).toBeVisible();
+    }
     else {
       await expect(page.locator('#journalForm button[type=submit]')).toBeEnabled();
       await expect(draft(page)).toHaveValue('');
