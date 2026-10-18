@@ -58,6 +58,12 @@ export function resolveTrainingModulePreloads(filename, dependencies, { hostType
   if (hostType === 'js' && headerActionsJs.test(filename)) {
     return dependencies.filter((dependency) => !headerActionsJs.test(dependency));
   }
+  // Reward presentation is recoverable by explicit document reload too.
+  // Keep its CSS awaited, but avoid WebKit retaining a failed JS preload.
+  const rewardPresentationJs = /(?:^|\/)reward-celebration-view(?:-[\w-]+)?\.js$/;
+  if (hostType === 'js' && rewardPresentationJs.test(filename)) {
+    return dependencies.filter((dependency) => !rewardPresentationJs.test(dependency));
+  }
   return dependencies;
 }
 

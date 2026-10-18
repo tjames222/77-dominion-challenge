@@ -22,10 +22,11 @@ for (const mocks of [false, true]) test(`account request view and bounded transp
     const visited = new Set(), pending = htmlAssetReferences(String(assets.get(entry).source)).map(path => posix.normalize(path));
     while (pending.length) { const name = pending.pop(); if (visited.has(name)) continue; visited.add(name); const asset = assets.get(name); if (asset?.type === 'chunk') pending.push(...asset.imports); }
     const modules = [...visited].map(name => assets.get(name)).filter(asset => asset?.type === 'chunk').flatMap(asset => Object.keys(asset.modules));
-    for (const name of ['admin-account-requests', 'admin-account-request-transport', 'admin-user-history', 'admin-user-history-detail', 'admin-requester-account', 'admin-requester-detail', 'admin-user-lookup', 'admin-user-lookup-detail', 'admin-cleanup-health', 'admin-cleanup-health-view'])
+    for (const name of ['admin-account-requests', 'admin-account-request-transport', 'admin-user-history', 'admin-user-history-detail', 'admin-requester-account', 'admin-requester-detail', 'admin-user-lookup', 'admin-user-lookup-detail', 'admin-cleanup-health', 'admin-cleanup-health-view', 'admin-activation-review-health', 'admin-activation-review-health-view'])
       assert.equal(modules.filter(id => id.endsWith(`/${name}.mjs`)).length, entry === 'admin.html' ? 1 : 0, `${entry} ownership of ${name}`);
     assert.ok(!modules.some(id => id.endsWith('/admin-account-request-preview.mjs')), `${entry} excludes synthetic request records`);
     assert.ok(!modules.some(id => id.endsWith('/admin-cleanup-health-preview.mjs')), `${entry} excludes synthetic cleanup health`);
+    assert.ok(!modules.some(id => id.endsWith('/admin-activation-review-health-preview.mjs')), `${entry} excludes synthetic legacy review health`);
     assert.ok(!modules.some(id => id.endsWith('/admin-read-transport.mjs')), `${entry} keeps the read stream transport deferred`);
     assert.equal(modules.filter(id => id.endsWith('/auth-runtime-core.mjs')).length, entry === 'early-access-invite.html' ? 0 : 1, `${entry} retains singleton and pre-Auth invitation boundary`);
   }

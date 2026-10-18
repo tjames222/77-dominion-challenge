@@ -207,7 +207,7 @@ test('backend verifies exact71 catalog after existing catalogs and before every 
   assert.match(step, /SUPABASE_ACCESS_TOKEN="\$SUPABASE_ACCESS_TOKEN"/u);
   assert.match(step, /SUPABASE_PROJECT_REF="\$SUPABASE_PROJECT_REF"/u);
   assert.match(step, /node scripts\/verify-production-repeatable-challenge\.mjs\s*$/u);
-  const condition = "        if: needs.repeatable-cutover-policy.outputs.mode != 'post74-additive-release' && needs.repeatable-cutover-policy.outputs.mode != 'post75-reviewed-release'\n";
+  const condition = "        if: needs.repeatable-cutover-policy.outputs.mode != 'post74-additive-release' && needs.repeatable-cutover-policy.outputs.mode != 'post75-reviewed-release' && needs.repeatable-cutover-policy.outputs.mode != 'post75-additive-release' && needs.repeatable-cutover-policy.outputs.mode != 'post76-reviewed-release'\n";
   assert(step.includes(condition));
   assert.doesNotMatch(step.replace(condition, ''), /secrets\.|continue-on-error|if:|supabase secrets|WORKER_SECRET|RESEND|LINEAR/u);
   for (const predecessor of ['Apply database migrations', 'Require exact completed migration history',

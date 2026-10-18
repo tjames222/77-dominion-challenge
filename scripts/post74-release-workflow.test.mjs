@@ -31,17 +31,18 @@ test('job extraction stops before the next job', () => {
   assert.equal(job(fixture, 'second'), '  second:\n    needs: first\n');
 });
 
-test('fixed receipt accepts only the eight explicitly reviewed mode/backup combinations', async () => {
+test('fixed receipt preserves eight historical combinations and adds only two reviewed75-to76 combinations', async () => {
   const text = job(await readFile(workflowUrl, 'utf8'), 'repeatable-cutover-policy');
   assert(text.includes('requires_exact74_backup:'));
   assert(text.includes('steps.post74-backup.outputs.artifact_id || steps.post73-backup.outputs.artifact_id || steps.post71-backup.outputs.artifact_id'));
   assert(text.includes('steps.post74-backup.outputs.run_attempt || steps.post73-backup.outputs.run_attempt || steps.post71-backup.outputs.run_attempt'));
-  const choices = text.match(/case "\$mode:\$requires_exact71_backup:\$requires_exact73_backup:\$requires_exact74_backup" in\n\s+([^\n]+)\) ;;/)?.[1].split('|');
+  const choices = text.match(/case "\$mode:\$requires_exact71_backup:\$requires_exact73_backup:\$requires_exact74_backup:\$requires_exact75_backup" in\n\s+([^\n]+)\) ;;/)?.[1].split('|');
   assert.deepEqual(choices, [
-    'repeatable-challenge-cutover:false:false:false', 'post-repeatable-challenge-cutover:false:false:false',
-    'post71-additive-release:true:false:false', 'post73-reviewed-release:false:false:false',
-    'post73-additive-release:false:true:false', 'post74-reviewed-release:false:false:false',
-    'post74-additive-release:false:false:true', 'post75-reviewed-release:false:false:false',
+    'repeatable-challenge-cutover:false:false:false:false', 'post-repeatable-challenge-cutover:false:false:false:false',
+    'post71-additive-release:true:false:false:false', 'post73-reviewed-release:false:false:false:false',
+    'post73-additive-release:false:true:false:false', 'post74-reviewed-release:false:false:false:false',
+    'post74-additive-release:false:false:true:false', 'post75-reviewed-release:false:false:false:false',
+    'post75-additive-release:false:false:false:true', 'post76-reviewed-release:false:false:false:false',
   ]);
   assert.match(text, /\*\) echo "::error::The release boundary receipt is invalid."; exit 1/);
 });
@@ -112,9 +113,9 @@ test('backend repeats both74 preflights before provider writes and immediately b
     'PRODUCTION_BACKUP_PUBLIC_KEY="$PRODUCTION_BACKUP_PUBLIC_KEY"', 'verify-post74-backup-evidence.mjs']) assert(verify.includes(text));
 });
 
-test('old four postflights and new75 composed postflight are exact complements, never fail-open', async () => {
+test('old four postflights exclude both later exact catalogs while75 retains its exact two modes', async () => {
   const backend = job(await readFile(workflowUrl, 'utf8'), 'backend');
-  const oldCondition = "if: needs.repeatable-cutover-policy.outputs.mode != 'post74-additive-release' && needs.repeatable-cutover-policy.outputs.mode != 'post75-reviewed-release'";
+  const oldCondition = "if: needs.repeatable-cutover-policy.outputs.mode != 'post74-additive-release' && needs.repeatable-cutover-policy.outputs.mode != 'post75-reviewed-release' && needs.repeatable-cutover-policy.outputs.mode != 'post75-additive-release' && needs.repeatable-cutover-policy.outputs.mode != 'post76-reviewed-release'";
   const newCondition = "if: needs.repeatable-cutover-policy.outputs.mode == 'post74-additive-release' || needs.repeatable-cutover-policy.outputs.mode == 'post75-reviewed-release'";
   for (const name of ['Verify source-fixed account-request inbox catalog', 'Verify source-fixed original77 completion catalog',
     'Verify source-fixed repeatable challenge catalog', 'Verify source-fixed Admin cleanup health catalog']) {

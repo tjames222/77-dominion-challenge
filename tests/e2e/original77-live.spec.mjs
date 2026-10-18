@@ -1,6 +1,8 @@
 import { test, expect } from '@playwright/test';
 import { installFeedbackStub } from './support/feedback-supabase-stub.mjs';
 import { dailyBootstrapV2Fixture, DAILY_INSTANCE_ID, rewardCatalogV2Fixture } from '../fixtures/daily-action-bootstrap-v2.mjs';
+import { SITE_TRAINING_REGISTRY } from '../../src/static/site-training-registry.mjs';
+import { createSiteTrainingPageProgress, normalizeSiteTrainingState } from '../../src/static/site-training-state.mjs';
 
 // Compiled production-mode client with the real SDK and synthetic local HTTP.
 // SQL authority, concurrent writes, and durable award delivery have separate
@@ -58,6 +60,7 @@ async function fixture(context, { state = 'in_progress', malformed = false, defe
       const snapshot = payload(); if (readHold) await readHold; readResponses += 1; return json(route, snapshot);
     }
     if (name === 'get_challenge_check_ins_v2') {
+      expect(body.target_expected_actor_id).toBe(actor);
       expect(body.target_expected_instance_id).toBe(DAILY_INSTANCE_ID);
       const count = activation.currentInstance.submittedCount;
       const checkIns = Array.from({ length: count }, (_, index) => {
@@ -147,6 +150,151 @@ async function complete(page) {
   await expect(page.locator('#checklist .check-row-toggle').first()).toBeDisabled();
   await expect(page.locator('#challengeCompletePanel')).toContainText('Partial check-ins count');
 }
+
+// Reuse the real-SDK member fixture above; only transport responses are
+// controlled. No app API is invoked manually and no Auth count is assumed.
+async function startupFixture(context, { failVisits = false, holdInitialHistory = false } = {}) {
+  const auth = await fixture(context);
+  const tokens = new Map([[auth.firstSession.access_token, 'original']]);
+  const calls = []; let visits = 0;
+  await context.route(/\/__admin_fixture__\/rest\/v1\/community_feed_items(?:\?|$)/, route => {
+    if (route.request().method() !== 'HEAD') return route.fallback();
+    return route.fulfill({ status: 200, headers: { 'Content-Range': '*/0', 'Content-Length': '0' }, body: '' });
+  });
+  await context.route(/\/__admin_fixture__\/rest\/v1\/rpc\/get_site_training_state$/, route => {
+    const body = route.request().postDataJSON();
+    const page = SITE_TRAINING_REGISTRY.pages.find(value => value.id === body.target_page_id);
+    const program = SITE_TRAINING_REGISTRY.programs.find(value => value.id === body.target_program_id) || null;
+    expect(page).toBeTruthy();
+    const value = createSiteTrainingPageProgress(page, body.target_expected_actor_id);
+    if (program) value.overall = { programId: program.id, programVersion: program.version, status: 'completed',
+      currentPageId: program.pages[0].pageId, currentPageContentVersion: program.pages[0].contentVersion,
+      currentPageIndex: 0, revision: 1, startedAt: '2026-01-01T00:00:00Z', stoppedAt: null,
+      completedAt: '2026-01-01T00:01:00Z', updatedAt: '2026-01-01T00:01:00Z' };
+    expect(normalizeSiteTrainingState(value, { expectedPage: page, expectedProgram: program }).contractValid).toBe(true);
+    return json(route, value);
+  });
+  await context.route(/\/__admin_fixture__\/rest\/v1\/(?:user_game_stats|user_badges|rpc\/record_app_visit)(?:\?|$)/, async route => {
+    const request = route.request(), name = new URL(request.url()).pathname.split('/').at(-1);
+    const generation = tokens.get(request.headers().authorization?.replace(/^Bearer /, ''));
+    expect(generation).toBeTruthy();
+    const call = { name, generation, visitsAtDispatch: visits }; calls.push(call);
+    if (name === 'record_app_visit') {
+      expect(request.method()).toBe('POST');
+      expect(request.postDataJSON()).toEqual({ target_expected_actor_id: auth.A });
+      if (failVisits) return route.fulfill({ status: 503, contentType: 'application/json',
+        body: JSON.stringify({ message: 'Synthetic unavailable visit transport' }) });
+      visits += 1;
+      return json(route, [{ current_app_streak: 6, best_app_streak: 8, new_badges: [] }]);
+    }
+    expect(new URL(request.url()).searchParams.get('user_id')).toBe(`eq.${auth.A}`);
+    if (name === 'user_badges') return json(route, []);
+    const today = new Date().toISOString().slice(0, 10);
+    return json(route, { total_points: 76, challenge_points: 76, current_app_streak: visits ? 6 : 5,
+      best_app_streak: 8, last_seen_date: today });
+  });
+  let enterHistory, releaseHistory, held = false;
+  const historyEntered = new Promise(resolve => { enterHistory = resolve; });
+  const historyGate = new Promise(resolve => { releaseHistory = resolve; });
+  if (holdInitialHistory) await context.route(/\/__admin_fixture__\/rest\/v1\/rpc\/get_challenge_check_ins_v2$/, async route => {
+    if (!held) { held = true; enterHistory(); await historyGate; }
+    return route.fallback();
+  });
+  return { ...auth, calls, historyEntered, releaseHistory,
+    replacement() { const session = auth.replacement(); tokens.set(session.access_token, 'replacement'); return session; },
+    count(name) { return calls.filter(call => call.name === name).length; } };
+}
+
+async function startupReady(page, streak = '6') {
+  await expect(page.locator('#challengeDay')).toHaveText('76 of 77 check-ins');
+  await expect(page.locator('#checkInButton')).toBeEnabled();
+  await expect(page.locator('.shared-header-streak-count')).toHaveText(streak);
+  // This reveal follows initial hydration, including the startup visit/read
+  // pair. Celebration recovery is intentionally not part of this barrier.
+  await expect(page.locator('.dashboard-hero')).toHaveClass(/is-visible/);
+}
+
+test('Dashboard startup naturally uses two visits, two stats reads and one badge read', async ({ context, page }) => {
+  const auth = await startupFixture(context);
+  await page.goto('/dashboard.html'); await startupReady(page);
+  expect(auth.count('record_app_visit')).toBe(2);
+  expect(auth.count('user_game_stats')).toBe(2);
+  expect(auth.count('user_badges')).toBe(1);
+  expect(auth.calls.filter(call => call.name === 'user_game_stats').every(call => call.visitsAtDispatch > 0)).toBe(true);
+});
+
+test('Dashboard startup reads its own fresh game pair after its visit when the header is settled', async ({ context, page }) => {
+  const auth = await startupFixture(context, { holdInitialHistory: true });
+  await page.goto('/dashboard.html'); await auth.historyEntered;
+  // Deliberately settle the independent header before releasing Dashboard's
+  // history response. Counts alone cannot identify which visit came first.
+  try {
+    await expect(page.locator('.shared-header-streak-count')).toHaveText('6');
+    expect(auth.count('record_app_visit')).toBe(1);
+    expect(auth.count('user_game_stats')).toBe(1);
+    expect(auth.count('user_badges')).toBe(0);
+  } finally { auth.releaseHistory(); }
+  await startupReady(page);
+  expect(auth.count('record_app_visit')).toBe(2);
+  expect(auth.count('user_game_stats')).toBe(2);
+  expect(auth.count('user_badges')).toBe(1);
+  expect(auth.calls.find(call => call.name === 'user_badges').visitsAtDispatch).toBe(2);
+  expect(auth.calls.filter(call => call.name === 'user_game_stats').map(call => call.visitsAtDispatch)).toEqual([1, 2]);
+});
+
+test('Dashboard startup keeps fresh reads after failed visits without automatic mutation retry', async ({ context, page }) => {
+  const warnings = []; page.on('console', message => { if (message.type() === 'warning') warnings.push(message.text()); });
+  const auth = await startupFixture(context, { failVisits: true, holdInitialHistory: true });
+  await page.goto('/dashboard.html'); await auth.historyEntered;
+  // The held Dashboard cannot yet visit. This first failed attempt and fresh
+  // stats response therefore belong to the independently settled header.
+  try {
+    await expect(page.locator('.shared-header-streak-count')).toHaveText('5');
+    expect(auth.count('record_app_visit')).toBe(1);
+    expect(auth.count('user_game_stats')).toBe(1);
+    expect(auth.count('user_badges')).toBe(0);
+  } finally { auth.releaseHistory(); }
+  await startupReady(page, '5');
+  expect(auth.count('record_app_visit')).toBe(2);
+  expect(auth.count('user_game_stats')).toBe(2);
+  expect(auth.count('user_badges')).toBe(1);
+  expect(auth.calls.filter(call => call.name === 'user_game_stats').every(call => call.visitsAtDispatch === 0)).toBe(true);
+  expect(auth.calls.findLastIndex(call => call.name === 'record_app_visit'))
+    .toBeLessThan(auth.calls.findIndex(call => call.name === 'user_badges'));
+  expect(warnings.some(value => value.includes('Unable to record daily app visit'))).toBe(true);
+  expect(auth.writes()).toHaveLength(0);
+});
+
+test('Dashboard startup cannot dispatch its stale visit after a same-user session replacement', async ({ context, page }) => {
+  const auth = await startupFixture(context, { holdInitialHistory: true });
+  await page.goto('/dashboard.html'); await auth.historyEntered;
+  await expect(page.locator('.shared-header-streak-count')).toHaveText('6');
+  expect(auth.count('record_app_visit')).toBe(1); // The independent header only.
+  const session = auth.replacement();
+  // Observe this Dashboard's replacement-session hydration, not a shared
+  // access-context response. The bounded access reader aborts its controller
+  // during cleanup; Chromium can then leave response.finished() pending even
+  // though the replacement Dashboard has already hydrated successfully.
+  const freshRead = page.waitForResponse(response => new URL(response.url()).pathname
+    === '/__admin_fixture__/rest/v1/rpc/get_challenge_check_ins_v2'
+    && response.request().method() === 'POST'
+    && response.request().headers().authorization === `Bearer ${session.access_token}`);
+  try {
+    await page.evaluate(value => {
+      localStorage.setItem('sb-127-auth-token', JSON.stringify(value));
+      const channel = new BroadcastChannel('sb-127-auth-token');
+      channel.postMessage({ event: 'SIGNED_IN', session: value }); channel.close();
+    }, session);
+    expect((await freshRead).status()).toBe(200);
+  } finally { auth.releaseHistory(); }
+  await startupReady(page);
+  expect(auth.calls.filter(call => call.name === 'record_app_visit')).toEqual([
+    { name: 'record_app_visit', generation: 'original', visitsAtDispatch: 0 },
+  ]);
+  expect(auth.calls.filter(call => call.name === 'user_badges').map(call => call.generation)).toEqual(['replacement']);
+  expect(auth.writes()).toHaveLength(0);
+});
+
 test('partial 77th submission on calendar day 78 completes once and remains complete on reload', async ({ context, page }, testInfo) => {
   const auth = await fixture(context); await ready(page);
   const release = auth.hold(); await page.locator('#checkInButton').click();

@@ -1,7 +1,7 @@
 import { adminReadError, withAdminReadDeadline } from './admin-read-client.mjs';
 
 const READS = new Set(['get_site_admin_context', 'site_admin_list_users', 'site_admin_get_user', 'site_admin_get_profile_name', 'site_admin_list_audit',
-  'site_admin_get_audit_event', 'site_admin_list_early_access_requests', 'site_admin_get_early_access_request', 'site_admin_list_early_access_history', 'site_admin_get_cleanup_health']);
+  'site_admin_get_audit_event', 'site_admin_list_early_access_requests', 'site_admin_get_early_access_request', 'site_admin_list_early_access_history', 'site_admin_get_cleanup_health', 'site_admin_get_activation_review_health']);
 const MAX_CHARS = 262144; // Preserve the former response.text().length limit.
 const MAX_BYTES = MAX_CHARS * 3; // Maximum valid UTF-8 bytes per UTF-16 code unit.
 
@@ -62,7 +62,7 @@ async function requestJson({ baseUrl, apiKey, token, path, args, signal, fetcher
 
 export async function requestAdminRead(options) {
   if (!READS.has(options.name)) throw adminReadError('ADMIN_INVALID_INPUT');
-  const limit = ['site_admin_get_cleanup_health', 'site_admin_get_profile_name'].includes(options.name) ? 65536 : null;
+  const limit = ['site_admin_get_cleanup_health', 'site_admin_get_profile_name', 'site_admin_get_activation_review_health'].includes(options.name) ? 65536 : null;
   return requestJson({ ...options, path: `/rest/v1/rpc/${options.name}`, identity: false,
     maxBytes: limit ?? MAX_BYTES, maxChars: limit ?? MAX_CHARS });
 }

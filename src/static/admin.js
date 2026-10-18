@@ -3,7 +3,7 @@ import {
   listSiteAdminAudit, getSiteAdminAuditEvent, subscribeToAdminInvalidation,
   cancelAdminReads, clearAuthSession,
   listSiteAdminEarlyAccess, getSiteAdminEarlyAccess,
-  listSiteAdminAccountRequests, getSiteAdminAccountRequestQueueHealth, getSiteAdminCleanupHealth,
+  listSiteAdminAccountRequests, getSiteAdminAccountRequestQueueHealth, getSiteAdminCleanupHealth, getSiteAdminActivationReviewHealth,
 } from './api.js';
 import { adminReadError } from './admin-read-client.mjs';
 import { normalizeEarlyAccessRequest } from './admin-early-access-contract.mjs';
@@ -21,6 +21,7 @@ import { normalizeAdminAccountRequestPage, normalizeAdminAccountRequestQueueHeal
 import { readAdminAccountRequests } from './admin-account-request-transport.mjs';
 import { mfaChallengeHref } from './mfa-navigation.mjs';
 import { mountCleanupHealth } from './admin-cleanup-health-view.mjs';
+import { mountActivationReviewHealth } from './admin-activation-review-health-view.mjs';
 
 const byId = (id) => document.getElementById(id);
 const workspace = byId('adminWorkspace');
@@ -37,6 +38,9 @@ const tabs = { users: { permission: 'users.read', prefix: 'adminUsers', list: li
   requests: { permission: 'operations.read', prefix: 'adminRequests', list: (args, options) => readAdminAccountRequests(listSiteAdminAccountRequests, args, options) },
   operations: { permission: 'operations.read', prefix: 'adminOperations' } };
 const cleanupHealth = mountCleanupHealth({ root: byId('adminCleanupHealth'), read: getSiteAdminCleanupHealth,
+  getOwner: () => owner, isCurrent: captured => captured === owner && !suspended && tab === 'operations' && permissions.includes('operations.read'),
+  onAuthorityError: showError });
+const activationReviewHealth = mountActivationReviewHealth({ root: byId('adminActivationReviewHealth'), read: getSiteAdminActivationReviewHealth,
   getOwner: () => owner, isCurrent: captured => captured === owner && !suspended && tab === 'operations' && permissions.includes('operations.read'),
   onAuthorityError: showError });
 const text = (value) => typeof value === 'string' || typeof value === 'number' ? String(value).slice(0, 2000) : 'Not recorded';
@@ -111,7 +115,7 @@ function gate(title, message, action = '') {
 }
 function scrub(reason = '') {
   epoch += 1; checking = false; owner = null; permissions = []; cursors = [null]; page = 0;
-  clearRows(); clearQueueHealth(); cleanupHealth.clear(); for (const value of Object.values(tabs)) byId(`${value.prefix}Filters`)?.reset();
+  clearRows(); clearQueueHealth(); cleanupHealth.clear(); activationReviewHealth.clear(); for (const value of Object.values(tabs)) byId(`${value.prefix}Filters`)?.reset();
   clearUserLookup({ reset: true });
   updateFilterState();
   byId('adminPreview').hidden = true;
@@ -393,10 +397,10 @@ async function openDetail(kind, id, button) {
 function selectTab(next, { focus = false } = {}) {
   if (!tabs[next] || !permissions.includes(tabs[next].permission)) return;
   clearUserLookup({ reset: true });
-  clearQueueHealth(); cleanupHealth.clear(); tab = next; cursors = [null]; page = 0;
+  clearQueueHealth(); cleanupHealth.clear(); activationReviewHealth.clear(); tab = next; cursors = [null]; page = 0;
   for (const node of document.querySelectorAll('[data-admin-tab]')) { const active = node.dataset.adminTab === tab; node.setAttribute('aria-selected', String(active)); node.tabIndex = active ? 0 : -1; if (active && focus) node.focus(); }
   for (const node of document.querySelectorAll('[data-admin-panel]')) node.hidden = node.dataset.adminPanel !== tab;
-  if (tab === 'operations') { clearRows(); updateFilterState(); cleanupHealth.clear({ ready: true }); }
+  if (tab === 'operations') { clearRows(); updateFilterState(); cleanupHealth.clear({ ready: true }); activationReviewHealth.clear({ ready: true }); }
   else void loadPage();
   if (tab === 'requests') void loadQueueHealth();
 }

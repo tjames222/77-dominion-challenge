@@ -490,7 +490,7 @@ test("package, CI, and production deploy run the gate before migrations", async 
     deployWorkflow.match(
       /SUPABASE_ACCESS_TOKEN="\$SUPABASE_ACCESS_TOKEN"/gu,
     )?.length,
-    33, // Existing25 plus3profile preflights,3frozen74 reattestations,2exact75 compositions.
+    41, // Existing33 plus3legacy-review preflights,3frozen75 reattestations,2exact76 compositions.
   );
   const cleanReleaseBoundaryChecks = deployWorkflow.match(
     /\/usr\/bin\/env -i \\\n\s+PATH="\$PATH" \\\n\s+RELEASE_SCOPE="\$RELEASE_SCOPE" \\\n(?:\s+EXPECTED_RELEASE_BOUNDARY="\$EXPECTED_RELEASE_BOUNDARY" \\\n)?\s+SUPABASE_ACCESS_TOKEN="\$SUPABASE_ACCESS_TOKEN" \\\n\s+SUPABASE_PROJECT_REF="\$SUPABASE_PROJECT_REF" \\\n\s+node scripts\/verify-production-repeatable-cutover-policy\.mjs/gu,
@@ -515,7 +515,9 @@ test("package, CI, and production deploy run the gate before migrations", async 
   assert.equal(cleanCleanupPreflights.length, 3);
   for (const [script, count] of [
     ['verify-admin-profile-name-preflight', 3],
-    ['verify-production-post75-catalogs', 2],
+    ['verify-production-post75-catalogs', 5],
+    ['verify-admin-activation-review-index-preflight', 3],
+    ['verify-production-post76-catalogs', 2],
   ]) {
     const cleanPattern = String.raw`/usr/bin/env -i \\\n\s+PATH="\$PATH" \\\n\s+SUPABASE_ACCESS_TOKEN="\$SUPABASE_ACCESS_TOKEN" \\\n\s+SUPABASE_PROJECT_REF="\$SUPABASE_PROJECT_REF" \\\n\s+node scripts/` + script + String.raw`\.mjs`;
     assert.equal(deployWorkflow.match(new RegExp(cleanPattern, 'gu'))?.length, count, script);
