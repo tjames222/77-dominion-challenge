@@ -145,6 +145,13 @@ test('saved AAL1 session requiring its existing authenticator goes only to MFA c
   assert.equal(f.count('mfa'), 1); assert.equal(f.count('admin'), 0); assert.equal(f.count('billing'), 0);
   assert.equal(f.count('password'), 0); assert.deepEqual(f.saved, []);
 });
+test('input while confirming a saved AAL1 session prevents its pending challenge navigation', async t => {
+  const hold = deferred();
+  const f = fixture(t, { readMfa: () => ({ verified: false, requiresChallenge: true }),
+    readSession: (n, state) => n === 2 ? hold.promise : state.session });
+  await until(() => f.count('session') === 2, 'final AAL1 session confirmation');
+  f.input(); hold.resolve(f.session); await f.done(); await flush(); f.assertStayed();
+});
 for (const [label, value] of [['missing', null], ['missing token', { user: { id: A } }], ['invalid identity', { user: { id: A }, access_token: 'synthetic.invalid.signature' }]]) {
   test(`${label} saved session leaves the explicit login usable`, async t => {
     const f = fixture(t, { session: value }); await f.done(); f.assertStayed(); assert.equal(f.count('mfa'), 0);

@@ -225,6 +225,7 @@ if (!signupPage && !callbackParams.some(hasAuthCallback) && resumeTargetAllowed
       if (current?.access_token !== session.access_token || authSessionIdentity(current) !== authSessionIdentity(session)) {
         throw mfaError('MFA_ACTOR_CHANGED');
       }
+      assertCurrent();
       if (state.requiresChallenge) {
         window.location.replace(mfaChallengeHref(returnTo, window.location.origin));
         navigationCommitted = true;
