@@ -24,7 +24,7 @@ function landingError(changed = false) {
 export async function finishAuthLanding({
   session, returnTo, getAuthSession, getSiteAdminContext, getBillingState,
   subscribeToAuthStateChanges, navigate, assertCurrent = () => {},
-  beforeNavigate = async () => {}, lifecycle,
+  beforeNavigate = async () => {}, lifecycle, signal,
 }) {
   const owner = { actorId: session?.user?.id, identity: authSessionIdentity(session), token: session?.access_token };
   if (!owner.actorId || !owner.identity || !owner.token) throw landingError(true);
@@ -37,6 +37,8 @@ export async function finishAuthLanding({
   });
   lifecycle?.addEventListener('pagehide', invalidate);
   lifecycle?.addEventListener('storage', invalidate);
+  signal?.addEventListener('abort', invalidate, { once: true });
+  if (signal?.aborted) invalidate();
   const timeout = setTimeout(() => controller.abort(), 10_000);
   const check = () => {
     assertCurrent();
@@ -87,5 +89,6 @@ export async function finishAuthLanding({
     unsubscribe();
     lifecycle?.removeEventListener('pagehide', invalidate);
     lifecycle?.removeEventListener('storage', invalidate);
+    signal?.removeEventListener('abort', invalidate);
   }
 }
