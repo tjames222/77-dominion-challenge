@@ -96,12 +96,18 @@
           <div class="admin-table-wrap" tabindex="0" aria-label="Account request records"><table class="admin-table admin-requests-table" role="table" aria-describedby="adminRequestsNote"><caption>Account requests · Recorded timestamps shown in UTC</caption><thead role="rowgroup"><tr role="row"><th scope="col" role="columnheader">Request and requester IDs</th><th scope="col" role="columnheader">Type</th><th scope="col" role="columnheader">Recorded status</th><th scope="col" role="columnheader">Timeline</th></tr></thead><tbody id="adminRequestsRows" role="rowgroup"></tbody></table></div>
         </section>
         <section id="adminOperationsPanel" role="tabpanel" aria-labelledby="adminOperationsTab" data-admin-panel="operations" hidden>
-          <div class="admin-view-heading"><h2>Operations</h2><p>Read-only cleanup health. No cleanup or deletion controls.</p></div>
+          <div class="admin-view-heading"><h2>Operations</h2><p>Read-only operational observations. No cleanup, deletion, or activation controls.</p></div>
           <section id="adminCleanupHealth" class="admin-cleanup-health" aria-labelledby="adminCleanupTitle" aria-describedby="adminCleanupNote">
             <div class="admin-actions"><h3 id="adminCleanupTitle">Profile photo cleanup</h3><button id="adminCleanupRefresh" type="button">Refresh cleanup health</button></div>
             <p id="adminCleanupNote">Counts overlap; do not add them into a queue total. Each count stops at 1000+ when more objects exist. This is a point-in-time observation, not proof of completed cleanup.</p>
             <p id="adminCleanupStatus" role="status" aria-live="polite"></p>
             <div id="adminCleanupData"></div>
+          </section>
+          <section id="adminActivationReviewHealth" class="admin-cleanup-health" aria-labelledby="adminActivationReviewTitle" aria-describedby="adminActivationReviewNote">
+            <div class="admin-actions"><h3 id="adminActivationReviewTitle">Unresolved legacy activation reviews</h3><button id="adminActivationReviewRefresh" type="button">Refresh legacy activation reviews</button></div>
+            <p id="adminActivationReviewNote">Legacy review records only, not current challenge activation blockers. A zero count does not rule out current activation problems. Counts stop at 1000+ when more records exist. This is a point-in-time observation, not proof of account repair.</p>
+            <p id="adminActivationReviewStatus" role="status" aria-live="polite"></p>
+            <div id="adminActivationReviewData"></div>
           </section>
         </section>
         <div id="adminPagination" class="admin-pagination" aria-label="Record pages"><button id="adminFirstPage" type="button" disabled>First page</button><button id="adminPreviousPage" type="button" disabled>Previous</button><span id="adminPageLabel">Page 1</span><button id="adminNextPage" type="button" disabled>Next</button><button id="adminRefresh" type="button">Refresh</button></div>

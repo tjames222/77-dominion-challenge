@@ -127,7 +127,7 @@ test('full release blocks after exact history and before remaining Edge/frontend
   assert.match(step, /SUPABASE_ACCESS_TOKEN="\$SUPABASE_ACCESS_TOKEN"/);
   assert.match(step, /SUPABASE_PROJECT_REF="\$SUPABASE_PROJECT_REF"/);
   assert.match(step, /node scripts\/verify-production-account-request-inbox.mjs/);
-  const condition = "        if: needs.repeatable-cutover-policy.outputs.mode != 'post74-additive-release' && needs.repeatable-cutover-policy.outputs.mode != 'post75-reviewed-release'\n";
+  const condition = "        if: needs.repeatable-cutover-policy.outputs.mode != 'post74-additive-release' && needs.repeatable-cutover-policy.outputs.mode != 'post75-reviewed-release' && needs.repeatable-cutover-policy.outputs.mode != 'post75-additive-release' && needs.repeatable-cutover-policy.outputs.mode != 'post76-reviewed-release'\n";
   assert(step.includes(condition));
   assert.doesNotMatch(step.replace(condition, ''), /secrets\.|continue-on-error|if:|supabase secrets|WORKER_SECRET|RESEND|LINEAR/);
   assert(workflow.indexOf('      - name: Require exact completed migration history') < workflow.indexOf(step));

@@ -40,15 +40,25 @@ jobs:
         run: node --test workers/profile-photo-cleanup-monitor/*.test.mjs
       - name: Run frontend tests and build
         run: pnpm run check:frontend
+      - name: Test production backup and restore evidence boundaries
+        run: pnpm run test:production-backup-restore
+      - name: Test production one-version reconciliation boundaries
+        run: pnpm run test:production-reconciliation
 
   database:
     name: Database
+    needs: frontend
+    if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 40
     env:
       SUPABASE_TELEMETRY_DISABLED: "1"
       SUPABASE_DB_URL: postgresql://postgres:postgres@127.0.0.1:54322/postgres
     steps:
+      - name: Require successful offline contracts and frontend checks
+        env:
+          FRONTEND_RESULT: ${{ needs.frontend.result }}
+        run: test "$FRONTEND_RESULT" = success
       - name: Checkout
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: Setup pnpm
@@ -79,16 +89,12 @@ jobs:
         run: pnpm run test:migration-compatibility
       - name: Test immutable reconciliation staging and history
         run: pnpm run test:reconciliation-stage
-      - name: Test production backup and restore evidence boundaries
-        run: pnpm run test:production-backup-restore
       - name: Test restored encrypted production backup release gate
         run: pnpm run test:free-production-backup-evidence
       - name: Test free production backup encryption and boundaries
         run: |
           pnpm run test:free-production-backup
           node --test scripts/free-backup-post-early-access-vault.test.mjs
-      - name: Test production one-version reconciliation boundaries
-        run: pnpm run test:production-reconciliation
       - name: Test production Auth canary policy guard
         run: pnpm run test:production-auth-canary-policy
       - name: Test Early Access provider and runtime provisioning boundaries
@@ -111,6 +117,8 @@ jobs:
         run: node --test scripts/verify-post71-release-plan.test.mjs scripts/verify-post-repeatable-backup-evidence.test.mjs scripts/verify-profile-photo-health-runtime-config.test.mjs scripts/verify-post73-release-plan.test.mjs scripts/verify-post73-backup-evidence.test.mjs scripts/free-backup-post73.test.mjs scripts/post73-release-workflow.test.mjs
       - name: Test exact74 backup and reviewed profile-name release boundaries
         run: pnpm run test:post74-release
+      - name: Test exact75 backup and reviewed legacy activation-review release boundaries
+        run: pnpm run test:post75-release
       - name: Start local Supabase
         run: pnpm run supabase:start
       - name: Verify exact isolated-fixture image cache preparation
@@ -130,6 +138,12 @@ jobs:
       - name: Verify exact75 composed catalogs and independent drift refusal
         timeout-minutes: 5
         run: node --test scripts/verify-production-post75-catalogs.sql.test.mjs
+      - name: Verify read-only legacy activation review health and bounded query plans
+        timeout-minutes: 5
+        run: pnpm run test:site-admin-activation-review-health-sql
+      - name: Verify exact76 composed catalogs and legacy review index preflight
+        timeout-minutes: 5
+        run: node --test scripts/verify-production-post76-catalogs.sql.test.mjs
       - name: Verify isolated account-request inbox authority
         timeout-minutes: 5
         run: node --test scripts/site-admin-account-requests.sql.test.mjs
@@ -171,6 +185,9 @@ jobs:
       - name: Verify exact74 Admin cleanup-health backup and full custom archive restore
         timeout-minutes: 5
         run: node --test scripts/free-backup-post74.sql.test.mjs
+      - name: Verify exact75 Admin profile-name backup and full custom archive restore
+        timeout-minutes: 5
+        run: node --test scripts/free-backup-post75.sql.test.mjs
       - name: Verify original challenge submission evidence and atomic completion
         timeout-minutes: 5
         run: node --test scripts/original-77-completion-evidence.sql.test.mjs scripts/original-77-live-completion.sql.test.mjs scripts/original-77-fullchain-runtime.sql.test.mjs scripts/original77-legacy-range.sql.test.mjs

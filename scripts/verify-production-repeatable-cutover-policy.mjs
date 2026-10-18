@@ -10,6 +10,7 @@ import { REPEATABLE_CHALLENGE_MIGRATION_FILENAME, REPEATABLE_CHALLENGE_MIGRATION
 import { verifyPost71ReleasePlan, verifyPost71ReleaseSources } from './verify-post71-release-plan.mjs';
 import { POST73_REVIEWED_MIGRATION, verifyPost73ReleasePlan, verifyPost73ReleaseSources } from './verify-post73-release-plan.mjs';
 import { POST74_REVIEWED_MIGRATION, verifyPost74ReleasePlan, verifyPost74ReleaseSources } from './verify-post74-release-plan.mjs';
+import { POST75_REVIEWED_MIGRATION, verifyPost75ReleasePlan, verifyPost75ReleaseSources } from './verify-post75-release-plan.mjs';
 
 const migrationsDirectory = new URL('../supabase/migrations/', import.meta.url);
 const repeatableChallengeMigration = new URL(
@@ -25,15 +26,18 @@ export function productionReleaseBoundaryReceipt(result) {
   const legacy = ['repeatable-challenge-cutover', 'post-repeatable-challenge-cutover'].includes(result.mode);
   const post73 = ['post73-additive-release', 'post74-reviewed-release'].includes(result.mode);
   const post74 = ['post74-additive-release', 'post75-reviewed-release'].includes(result.mode);
+  const post75 = ['post75-additive-release', 'post76-reviewed-release'].includes(result.mode);
   const allowedKeys = ['mode', 'requiresExact70Backup', 'migrationVersion',
     ...(legacy && !Object.hasOwn(result, 'requiresExact71Backup') ? [] : ['requiresExact71Backup']),
-    ...(post73 || post74 ? ['requiresExact73Backup'] : []),
-    ...(post74 ? ['requiresExact74Backup'] : [])].sort();
+    ...(post73 || post74 || post75 ? ['requiresExact73Backup'] : []),
+    ...(post74 || post75 ? ['requiresExact74Backup'] : []),
+    ...(post75 ? ['requiresExact75Backup'] : [])].sort();
   if (JSON.stringify(Object.keys(result).sort()) !== JSON.stringify(allowedKeys)) fail('release boundary receipt is invalid');
   const receipt = Object.freeze({ mode: result.mode, requiresExact70Backup: result.requiresExact70Backup,
     requiresExact71Backup: legacy && !Object.hasOwn(result, 'requiresExact71Backup') ? false : result.requiresExact71Backup,
-    ...(post73 || post74 ? { requiresExact73Backup: result.requiresExact73Backup } : {}),
-    ...(post74 ? { requiresExact74Backup: result.requiresExact74Backup } : {}),
+    ...(post73 || post74 || post75 ? { requiresExact73Backup: result.requiresExact73Backup } : {}),
+    ...(post74 || post75 ? { requiresExact74Backup: result.requiresExact74Backup } : {}),
+    ...(post75 ? { requiresExact75Backup: result.requiresExact75Backup } : {}),
     migrationVersion: result.migrationVersion });
   const boundaries = {
     'repeatable-challenge-cutover': [true, false, REPEATABLE_CHALLENGE_MIGRATION_VERSION],
@@ -44,12 +48,15 @@ export function productionReleaseBoundaryReceipt(result) {
     'post74-reviewed-release': [false, false, POST73_REVIEWED_MIGRATION.filename.slice(0, 14), false],
     'post74-additive-release': [false, false, POST74_REVIEWED_MIGRATION.filename.slice(0, 14), false, true],
     'post75-reviewed-release': [false, false, POST74_REVIEWED_MIGRATION.filename.slice(0, 14), false, false],
+    'post75-additive-release': [false, false, POST75_REVIEWED_MIGRATION.filename.slice(0, 14), false, false, true],
+    'post76-reviewed-release': [false, false, POST75_REVIEWED_MIGRATION.filename.slice(0, 14), false, false, false],
   };
   const expected = Object.hasOwn(boundaries, receipt.mode) && boundaries[receipt.mode];
   if (!expected || receipt.requiresExact70Backup !== expected[0] || receipt.requiresExact71Backup !== expected[1]
     || receipt.migrationVersion !== expected[2]
-    || ((post73 || post74) && receipt.requiresExact73Backup !== expected[3])
-    || (post74 && receipt.requiresExact74Backup !== expected[4])) fail('release boundary receipt is invalid');
+    || ((post73 || post74 || post75) && receipt.requiresExact73Backup !== expected[3])
+    || ((post74 || post75) && receipt.requiresExact74Backup !== expected[4])
+    || (post75 && receipt.requiresExact75Backup !== expected[5])) fail('release boundary receipt is invalid');
   return receipt;
 }
 
@@ -83,6 +90,9 @@ export function verifyProductionRepeatableCutoverPolicy({
   try { remote = parseRawMigrationHistoryResponse(rawResponse); }
   catch { fail('authoritative migration history is invalid'); }
   const sourceCount = migrationFilenames.filter(name => typeof name === 'string' && name.endsWith('.sql')).length;
+  if (sourceCount > 75) {
+    return verifyPost75ReleasePlan({ releaseScope, remote, migrationFilenames, migrationSourceHashes });
+  }
   if (sourceCount > 74) {
     return verifyPost74ReleasePlan({ releaseScope, remote, migrationFilenames, migrationSourceHashes });
   }
@@ -132,9 +142,10 @@ async function main() {
   if (migrationFilenames.filter(name => name.endsWith('.sql')).length > 71) {
     migrationSourceHashes = Object.fromEntries(await Promise.all(migrationFilenames.filter(name => name.endsWith('.sql'))
       .map(async name => [name, createHash('sha256').update(await readFile(new URL(name, migrationsDirectory))).digest('hex')])));
-    const verifySources = migrationFilenames.filter(name => name.endsWith('.sql')).length > 74
-      ? verifyPost74ReleaseSources : migrationFilenames.filter(name => name.endsWith('.sql')).length > 73
-        ? verifyPost73ReleaseSources : verifyPost71ReleaseSources;
+    const verifySources = migrationFilenames.filter(name => name.endsWith('.sql')).length > 75
+      ? verifyPost75ReleaseSources : migrationFilenames.filter(name => name.endsWith('.sql')).length > 74
+        ? verifyPost74ReleaseSources : migrationFilenames.filter(name => name.endsWith('.sql')).length > 73
+          ? verifyPost73ReleaseSources : verifyPost71ReleaseSources;
     verifySources({ migrationFilenames, migrationSourceHashes });
   }
   const rawResponse = await runReadOnlyManagementQuery({ projectRef: process.env.SUPABASE_PROJECT_REF,

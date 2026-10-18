@@ -2,6 +2,7 @@ import { test, expect } from '@playwright/test';
 import AxeBuilder from '@axe-core/playwright';
 import { installAdminStub } from './support/admin-supabase-stub.mjs';
 import { previewCleanupHealth } from '../../src/static/admin-cleanup-health-preview.mjs';
+import { previewActivationReviewHealth } from '../../src/static/admin-activation-review-health-preview.mjs';
 
 test.describe('Exact user ID lookup', () => {
   const target = '70000000-0000-4000-8000-000000000001';
@@ -357,6 +358,160 @@ test.describe('Operations cleanup health', () => {
         await page.screenshot({ path: testInfo.outputPath(`cleanup-viewport-${theme}-${width}-${scale.replace('%', 'pct')}.png`) });
       }
     }
+  });
+});
+
+test.describe('Legacy activation review health', () => {
+  const rpc = 'site_admin_get_activation_review_health';
+  const reads = auth => auth.requests.filter(entry => entry.path.endsWith(`/${rpc}`));
+  const data = '#adminActivationReviewData', status = '#adminActivationReviewStatus', button = '#adminActivationReviewRefresh';
+  async function open(context, page, options = {}) {
+    const auth = await installAdminStub(context, { permissions: ['operations.read'], ...options });
+    page.__activationReviewAuth = auth; await page.goto('/admin.html#operations');
+    await expect(page.locator('#adminOperationsPanel')).toBeVisible(); return auth;
+  }
+  async function refresh(page) {
+    await page.locator(button).click(); await expect(page.locator(status)).toContainText('Observed');
+    await expect(page.locator(`${data} .admin-cleanup-counter`)).toHaveCount(1);
+  }
+  test.beforeEach(async ({ page, baseURL }) => {
+    page.__activationReviewEvidence = { errors: [], external: [] };
+    page.on('pageerror', error => page.__activationReviewEvidence.errors.push(error.message));
+    await page.route('**/*', route => {
+      if (new URL(route.request().url()).origin !== new URL(baseURL).origin) {
+        page.__activationReviewEvidence.external.push(new URL(route.request().url()).origin); return route.abort();
+      }
+      return route.fallback();
+    });
+  });
+  test.afterEach(async ({ page }) => {
+    expect(page.__activationReviewEvidence).toEqual({ errors: [], external: [] });
+    const auth = page.__activationReviewAuth;
+    if (auth) {
+      const allowed = ['get_site_admin_context', rpc, 'site_admin_list_users', 'site_admin_list_early_access_requests',
+        'site_admin_list_account_requests', 'site_admin_get_account_request_queue_health', 'get_theme_preference', 'get_reward_catalog_v2', 'get_member_access_context'];
+      expect(auth.requests.filter(entry => entry.method !== 'GET' && !allowed.some(name => entry.path.endsWith(`/${name}`)))).toEqual([]);
+    }
+    expect(await page.evaluate(() => JSON.stringify({ ...localStorage, ...sessionStorage }))).not.toMatch(/PRIVATE_LEGACY|oldestRecordedAt|oldestRecordedState|legacy-activation-migration-reviews-only/);
+  });
+  test('manual-only aggregate read uses operations.read and the verified bearer without actions or hidden authority', async ({ context, page }) => {
+    const auth = await open(context, page); expect(reads(auth)).toHaveLength(0);
+    await expect(page.locator(status)).toContainText('Not checked'); await expect(page.locator('#adminPagination')).toBeHidden();
+    await expect(page.locator('#adminUsersTab')).toBeHidden(); await expect(page.locator('#adminAuditTab')).toBeHidden();
+    const observed = [];
+    page.on('request', request => { if (new URL(request.url()).pathname.endsWith(`/${rpc}`)) observed.push(request.headers().authorization); });
+    const nativeBefore = auth.requests.filter(entry => entry.path === '/auth/v1/user').length;
+    await refresh(page); expect(reads(auth)).toHaveLength(1); expect(reads(auth)[0].body).toEqual({ target_expected_actor_id: auth.A });
+    expect(observed).toEqual([`Bearer ${auth.firstSession.access_token}`]);
+    expect(auth.requests.filter(entry => entry.path === '/auth/v1/user').length).toBeGreaterThan(nativeBefore);
+    await expect(page.locator(`${data} .admin-cleanup-count`)).toHaveText('3');
+    await expect(page.locator('#adminActivationReviewNote')).toContainText('A zero count does not rule out current activation problems');
+    await expect(page.locator(data)).toContainText('not a count of current activation blockers');
+    expect(await page.locator(data).textContent()).not.toMatch(/aaaaaaaa|70000000|example.test|PRIVATE/);
+    await expect(page.locator(`${data} button, ${data} a`)).toHaveCount(0);
+    await page.getByRole('tab', { name: 'Account requests', exact: true }).click(); await expect(page.locator('#adminRequestsRows tr')).toHaveCount(25);
+    await expect(page.locator(data)).toBeEmpty();
+    await page.getByRole('tab', { name: 'Operations', exact: true }).click(); await expect(page.locator(status)).toContainText('Not checked');
+    expect(reads(auth)).toHaveLength(1); await refresh(page); expect(reads(auth)).toHaveLength(2);
+    await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+    await expect(page.locator('#adminOperationsPanel')).toBeVisible(); await expect(page.locator(data)).toBeEmpty();
+    expect(reads(auth)).toHaveLength(2);
+  });
+  test('zero, exact cap, capped and unknown timestamps remain distinct and strip sensitive extras', async ({ context, page }) => {
+    const auth = await open(context, page); const observedAt = '2026-10-18T12:00:00.000001Z'; let value;
+    await page.route(`**/${rpc}`, route => route.fulfill({ contentType: 'application/json', body: JSON.stringify(value) }));
+    for (const [count, hasMore, state, time] of [[0, false, 'none', null], [1000, false, 'known', observedAt], [1000, true, 'unknown', null]]) {
+      value = { schemaVersion: 1, actorId: auth.A, observedAt, ...previewActivationReviewHealth(observedAt),
+        unresolved: { count, hasMore, users: ['PRIVATE_LEGACY_USER'] }, oldestRecordedState: state, oldestRecordedAt: time,
+        reason: 'PRIVATE_LEGACY_REASON', notes: 'PRIVATE_LEGACY_NOTE', evidence: 'PRIVATE_LEGACY_EVIDENCE' };
+      await refresh(page); await expect(page.locator(`${data} .admin-cleanup-count`)).toHaveText(`${count}${hasMore ? '+' : ''}`);
+      await expect(page.locator(`${data} dd`)).toHaveText(state === 'known' ? '2026-10-18 12:00:00.000001 UTC' : state === 'unknown' ? 'Unknown' : 'No unresolved legacy review records');
+      await expect(page.locator(data)).toContainText('A recorded resolution does not prove the underlying account was repaired');
+      expect(await page.content()).not.toMatch(/PRIVATE_LEGACY/);
+    }
+  });
+  for (const mode of ['invalid calendar', 'future microsecond', 'wrong actor', 'oversized UTF-8', 'HTTP failure', 'offline']) test(`${mode} clears old data and cannot invent zero or retry automatically`, async ({ context, page }) => {
+    const auth = await open(context, page); await refresh(page);
+    await page.route(`**/${rpc}`, route => {
+      if (mode === 'offline') return route.abort('internetdisconnected');
+      const observedAt = '2026-10-18T12:00:00.000001Z';
+      const value = { schemaVersion: 1, actorId: mode === 'wrong actor' ? auth.B : auth.A, observedAt, ...previewActivationReviewHealth(observedAt) };
+      if (mode === 'invalid calendar') value.oldestRecordedAt = '2026-02-29T12:00:00Z';
+      if (mode === 'future microsecond') value.oldestRecordedAt = '2026-10-18T12:00:00.000002Z';
+      if (mode === 'oversized UTF-8') value.padding = '界'.repeat(22000);
+      return route.fulfill({ status: mode === 'HTTP failure' ? 500 : 200, contentType: 'application/json', body: JSON.stringify(value) });
+    });
+    const calls = []; page.on('request', request => { if (request.url().endsWith(`/${rpc}`)) calls.push(request); });
+    await page.locator(button).click(); await expect(page.locator(data)).toBeEmpty();
+    await expect(page.locator(status)).toContainText('Review counts and oldest recorded time are unknown');
+    await expect(page.locator(button)).not.toHaveAttribute('aria-disabled'); await expect(page.locator('#adminActivationReviewHealth')).not.toHaveAttribute('aria-busy');
+    expect(calls).toHaveLength(1); await page.unroute(`**/${rpc}`); await refresh(page); expect(calls).toHaveLength(2);
+  });
+  for (const stage of ['RPC', 'provider']) test(`${stage} deadline preserves refresh focus and drops a late response`, async ({ context, page }) => {
+    const auth = await open(context, page); await refresh(page); let release;
+    if (stage === 'RPC') release = auth.hold([rpc]);
+    else { let resume; const held = new Promise(resolve => { resume = resolve; }); release = resume;
+      await page.route('**/__admin_fixture__/auth/v1/user', async route => { await held; return route.fallback(); }); }
+    try {
+      const before = reads(auth).length; await page.locator(button).click();
+      await expect(page.locator('#adminActivationReviewHealth')).toHaveAttribute('aria-busy', 'true'); await expect(page.locator(data)).toBeEmpty();
+      await expect(page.locator(button)).toHaveAttribute('aria-disabled', 'true'); await page.locator(button).focus();
+      await page.keyboard.press('Enter'); await page.keyboard.press('Space'); await expect(page.locator(button)).toBeFocused();
+      await expect(page.locator(status)).toContainText('Review counts and oldest recorded time are unknown', { timeout: 15000 });
+      await expect(page.locator(button)).not.toHaveAttribute('aria-disabled'); expect(reads(auth)).toHaveLength(before + (stage === 'RPC' ? 1 : 0));
+    } finally { release(); }
+    await expect(page.locator(data)).toBeEmpty(); await refresh(page);
+  });
+  for (const mode of ['pagehide and BFCache', 'hidden', 'tab change', 'replacement', 'ABA', 'assurance downgrade', 'permission revoked']) test(`${mode} scrubs data and fences held results without auto-refresh`, async ({ context, page }) => {
+    const auth = await open(context, page); await refresh(page);
+    if (mode === 'permission revoked') {
+      auth.permissions([]); await page.locator(button).click(); await expect(page.locator('#adminWorkspace')).toBeHidden();
+      await expect(page.locator(data)).toBeEmpty(); return;
+    }
+    const release = auth.hold([rpc]); const before = reads(auth).length;
+    try {
+      await page.locator(button).click(); await expect.poll(() => reads(auth).length).toBe(before + 1);
+      if (mode === 'pagehide and BFCache') await page.evaluate(() => window.dispatchEvent(new PageTransitionEvent('pagehide', { persisted: true })));
+      else if (mode === 'hidden') await page.evaluate(() => { Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'hidden' }); document.dispatchEvent(new Event('visibilitychange')); });
+      else if (mode === 'tab change') await page.getByRole('tab', { name: 'Account requests', exact: true }).click();
+      else {
+        const replacement = auth.session(mode === 'ABA' ? auth.B : auth.A, mode === 'assurance downgrade' ? 'aal1' : 'aal2', '22222222-2222-4222-8222-222222222222');
+        const switchSession = value => { localStorage.setItem('sb-127-auth-token', JSON.stringify(value)); window.dispatchEvent(new StorageEvent('storage', { key: 'sb-127-auth-token', newValue: JSON.stringify(value) })); };
+        await page.evaluate(switchSession, replacement); if (mode === 'ABA') await page.evaluate(switchSession, auth.firstSession);
+      }
+      if (mode !== 'tab change') await expect(page.locator('#adminWorkspace')).toBeHidden();
+      await expect(page.locator(data)).toBeEmpty(); release(); await expect(page.locator(status)).toHaveText('');
+      if (mode === 'pagehide and BFCache') {
+        await page.evaluate(() => window.dispatchEvent(new PageTransitionEvent('pageshow', { persisted: true })));
+        await expect(page.locator('#adminOperationsPanel')).toBeVisible(); await expect(page.locator(status)).toContainText('Not checked');
+      }
+      if (mode === 'hidden') {
+        await page.evaluate(() => { delete document.visibilityState; document.dispatchEvent(new Event('visibilitychange')); });
+        await expect(page.locator('#adminOperationsPanel')).toBeVisible(); await expect(page.locator(status)).toContainText('Not checked');
+      }
+      expect(reads(auth)).toHaveLength(before + 1); await expect(page.locator(data)).toBeEmpty();
+    } finally { release(); }
+  });
+  for (const [name, options] of [['member', { role: 'member' }], ['AAL1', { aal: 'aal1' }], ['missing permission', { permissions: ['users.read'] }]]) test(`${name} cannot request legacy review health`, async ({ context, page }) => {
+    const auth = await installAdminStub(context, options); page.__activationReviewAuth = auth; await page.goto('/admin.html#operations');
+    if (name === 'missing permission') await expect(page.locator('#adminUsersRows tr')).toHaveCount(25);
+    else await expect(page.locator('#adminGateTitle')).not.toHaveText('Checking access');
+    await expect(page.locator('#adminOperationsTab')).toBeHidden(); await expect(page.locator(data)).toBeEmpty(); expect(reads(auth)).toHaveLength(0);
+  });
+  for (const theme of ['light', 'dark', 'dominion-night', 'dominion-platinum']) test(`${theme} legacy panel reflows at 320px and 200% with keyboard access`, async ({ context, page }, testInfo) => {
+    await open(context, page); await refresh(page); await page.evaluate(value => document.documentElement.dataset.theme = value, theme);
+    await page.evaluate(() => document.fonts.ready.then(() => undefined));
+    await page.locator(button).focus(); await page.keyboard.press('Enter'); await expect(page.locator(status)).toContainText('Observed');
+    await expect(page.locator(button)).toBeFocused();
+    for (const width of [1440, 320]) for (const scale of ['100%', '200%']) {
+      await page.setViewportSize({ width, height: 1000 }); await page.evaluate(value => document.documentElement.style.fontSize = value, scale);
+      for (const selector of ['#adminActivationReviewHealth', '#adminActivationReviewNote', data, button])
+        await expect.poll(() => page.locator(selector).evaluate(node => node.scrollWidth <= node.clientWidth + 1)).toBe(true);
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+      expect((await page.locator(button).boundingBox()).height).toBeGreaterThanOrEqual(44);
+      expect((await new AxeBuilder({ page }).include('#adminOperationsPanel').analyze()).violations).toEqual([]);
+    }
+    await page.locator('#adminActivationReviewHealth').screenshot({ path: testInfo.outputPath(`legacy-${theme}-320px-200pct.png`) });
   });
 });
 

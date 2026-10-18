@@ -708,6 +708,7 @@ export const listSiteAdminUsers = (args, options = {}) => readSiteAdmin('site_ad
 export const listSiteAdminAccountRequests = (args, options = {}) => readSiteAdmin('site_admin_list_account_requests', args, options);
 export const getSiteAdminAccountRequestQueueHealth = (args = {}, options = {}) => readSiteAdmin('site_admin_get_account_request_queue_health', args, options);
 export const getSiteAdminCleanupHealth = (options = {}) => readSiteAdmin('site_admin_get_cleanup_health', {}, options);
+export const getSiteAdminActivationReviewHealth = (options = {}) => readSiteAdmin('site_admin_get_activation_review_health', {}, options);
 export const getSiteAdminUser = (id, options = {}) => readSiteAdmin('site_admin_get_user', { target_user_id: id }, options);
 export const listSiteAdminAudit = (args, options = {}) => readSiteAdmin('site_admin_list_audit', args, options);
 export const getSiteAdminAuditEvent = (id, options = {}) => readSiteAdmin('site_admin_get_audit_event', { target_event_id: id }, options);
@@ -2389,7 +2390,35 @@ export async function startChallenge(challengeKey, { expectedUserId = '', expect
   return { ...data, activation };
 }
 
+// Boot only. Regular Dashboard refreshes must remain fresh, read-only reads.
+export async function initializeDashboardVisit({ expectedUserId = '', isCurrent } = {}) {
+  if ((BUILD_SUPPORTS_LOCAL_DEMO && isLocalDemoMode())) return getDashboard();
+  const epoch = previewBadgeEpoch;
+  const session = await getAuthSession();
+  const actorId = session?.user?.id;
+  const identity = authSessionIdentity(session);
+  const bearer = session?.access_token;
+  const changed = () => new Error('The signed-in account changed. Try again.');
+  const assertCurrent = () => {
+    if (!expectedUserId || actorId !== expectedUserId || !identity || !bearer
+      || epoch !== previewBadgeEpoch || typeof isCurrent !== 'function' || !isCurrent()) throw changed();
+  };
+  const verify = async () => {
+    assertCurrent();
+    const current = await getAuthSession();
+    assertCurrent();
+    if (current?.user?.id !== actorId || authSessionIdentity(current) !== identity
+      || current?.access_token !== bearer) throw changed();
+  };
+  assertCurrent();
+  return readDashboardSnapshot({ actorId, bearer, verify, assertCurrent });
+}
+
 export async function getDashboard() {
+  return readDashboardSnapshot();
+}
+
+async function readDashboardSnapshot(startup = null) {
   if ((BUILD_SUPPORTS_LOCAL_DEMO && isLocalDemoMode())) {
     const actorId = (await getLocalOrSessionUser())?.userId;
     return withPreviewAggregate(actorId, aggregate => {
@@ -2410,9 +2439,24 @@ export async function getDashboard() {
     });
   }
   const client = requireSupabase();
-  const user = await requireUser();
+  const user = await requireUser(startup?.actorId || '');
+  if (startup) await startup.verify();
   const todayBounds = localDayBounds();
-  const [profile, bootstrap, feedResult, completedTodayResult, statsResult, badgesResult] = await Promise.all([
+  const readGameSnapshot = () => {
+    const stats = client.from('user_game_stats')
+      .select('total_points, challenge_points, current_app_streak, best_app_streak, current_full_day_streak, best_full_day_streak, last_seen_date, last_full_day_date')
+      .eq('user_id', user.id).maybeSingle();
+    const badges = client.from('user_badges')
+      .select('id, scope_key, badge_key, earned_at, entry_date, metadata, badge_definitions(name, description, category, tier, icon, requirement, retired, sort_order)')
+      .eq('user_id', user.id).order('earned_at', { ascending: false }).limit(12);
+    if (startup) {
+      startup.assertCurrent();
+      stats.setHeader('Authorization', `Bearer ${startup.bearer}`);
+      badges.setHeader('Authorization', `Bearer ${startup.bearer}`);
+    }
+    return Promise.all([stats, badges]);
+  };
+  const [profile, bootstrap, feedResult, completedTodayResult, initialGameSnapshot] = await Promise.all([
     getProfile({ expectedUserId: user.id }),
     getDailyActionBootstrap({ expectedUserId: user.id, timeZone: browserTimeZone() }),
     client
@@ -2428,23 +2472,14 @@ export async function getDashboard() {
       .eq('status', 'complete')
       .gte('created_at', todayBounds.start)
       .lt('created_at', todayBounds.end),
-    client
-      .from('user_game_stats')
-      .select('total_points, challenge_points, current_app_streak, best_app_streak, current_full_day_streak, best_full_day_streak, last_seen_date, last_full_day_date')
-      .eq('user_id', user.id)
-      .maybeSingle(),
-    client
-      .from('user_badges')
-      .select('id, scope_key, badge_key, earned_at, entry_date, metadata, badge_definitions(name, description, category, tier, icon, requirement, retired, sort_order)')
-      .eq('user_id', user.id)
-      .order('earned_at', { ascending: false })
-      .limit(12),
+    startup ? null : readGameSnapshot(),
   ]);
 
+  let [statsResult, badgesResult] = initialGameSnapshot || [];
   if (feedResult.error) throw feedResult.error;
   if (completedTodayResult.error) throw completedTodayResult.error;
-  if (statsResult.error) throw statsResult.error;
-  if (badgesResult.error) throw badgesResult.error;
+  if (statsResult?.error) throw statsResult.error;
+  if (badgesResult?.error) throw badgesResult.error;
   if (bootstrap.schemaVersion !== 2 || !bootstrap.appAccess || !bootstrap.activation?.contractValid) {
     throw new Error('Your current challenge could not be confirmed. Reload to continue.');
   }
@@ -2472,6 +2507,39 @@ export async function getDashboard() {
     checkIns = data.checkIns.map(row => ({ date: row.entry_date, challengeDay: row.challenge_day, instanceId: instance.id }));
   }
   await requireUser(user.id);
+
+  if (startup) {
+    await startup.verify();
+    if (activation.canParticipate === true) {
+      // Keep the existing visit's native user validation, but bind the SDK
+      // transport to this boot's session rather than a later token lookup.
+      await requireUser(user.id);
+      await startup.verify();
+      startup.assertCurrent();
+      let transientVisitFailure = false;
+      try {
+        const response = await client.rpc('record_app_visit', { target_expected_actor_id: user.id })
+          .setHeader('Authorization', `Bearer ${startup.bearer}`);
+        if (response.error) {
+          const status = response.status ?? response.error.status;
+          transientVisitFailure = !response.error.code && (status === 0 || status >= 500);
+          throw response.error;
+        }
+      } catch (error) {
+        await startup.verify();
+        if (!transientVisitFailure && error?.name !== 'TypeError') throw error;
+        console.warn('Unable to record daily app visit', error);
+      }
+      await startup.verify();
+      // This is the existing post-visit summary validation, not an Auth cache.
+      await requireUser(user.id);
+    }
+    await startup.verify();
+    [statsResult, badgesResult] = await readGameSnapshot();
+    await startup.verify();
+    if (statsResult.error) throw statsResult.error;
+    if (badgesResult.error) throw badgesResult.error;
+  }
 
   return {
     profile,

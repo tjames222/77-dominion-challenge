@@ -27,7 +27,7 @@ const oldContracts = [
 ];
 let fixture; let sources; let old74;
 async function reviewedSources() {
-  const names = (await readdir(migrationDirectory)).filter(name => name.endsWith('.sql')).sort();
+  const names = (await readdir(migrationDirectory)).filter(name => name.endsWith('.sql')).sort().slice(0, 75);
   assert.equal(names.length, 75); assert.equal(names.at(-1), migration75);
   const pairs = await Promise.all(names.map(async name => [name, await readFile(new URL(name, migrationDirectory), 'utf8')]));
   const hashes = Object.fromEntries(pairs.map(([name, body]) => [name, sha(body)]));
