@@ -217,12 +217,19 @@ test("the database inventory and latest lifecycle foundations stay complete", as
     "the canonical schema must include the Admin cleanup-health migration exactly once",
   );
   assert.deepEqual(
-    schemaMigrations.slice(-3, -1),
+    schemaMigrations.slice(-4, -2),
     ["20261007060519_profile_photo_cleanup_monitor_health.sql", cleanupHealthMigration],
     "the Admin cleanup-health migration must append to the existing service monitor foundation",
   );
-  assert.equal(schemaMigrations.at(-1), "20261013091749_site_admin_profile_name_correction.sql");
+  assert.equal(schemaMigrations.at(-2), "20261013091749_site_admin_profile_name_correction.sql");
   assert.equal(schemaMigrations.filter(filename => filename === "20261013091749_site_admin_profile_name_correction.sql").length, 1);
+  const activationReviewHealthMigration = "20261018013111_site_admin_activation_review_health.sql";
+  assert.equal(schemaMigrations.at(-1), activationReviewHealthMigration);
+  assert.equal(
+    schemaMigrations.filter(filename => filename === activationReviewHealthMigration).length,
+    1,
+    "the canonical schema must include the Admin activation-review-health migration exactly once",
+  );
 
   let plannedAssertions = 0;
   for (const filename of inventory) {
