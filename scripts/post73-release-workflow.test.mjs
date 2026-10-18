@@ -94,7 +94,7 @@ test('source-fixed cleanup preflight is required before provider mutations and r
   assert(postflight > backend.indexOf('Verify source-fixed repeatable challenge catalog')
     && postflight < backend.indexOf('Synchronize Edge Function secrets'));
   const postflightStep = backend.slice(postflight, backend.indexOf('      - name:', postflight + 1));
-  assert.match(postflightStep, /if: needs\.repeatable-cutover-policy\.outputs\.mode != 'post74-additive-release' && needs\.repeatable-cutover-policy\.outputs\.mode != 'post75-reviewed-release'/u);
+  assert.match(postflightStep, /if: needs\.repeatable-cutover-policy\.outputs\.mode != 'post74-additive-release' && needs\.repeatable-cutover-policy\.outputs\.mode != 'post75-reviewed-release' && needs\.repeatable-cutover-policy\.outputs\.mode != 'post75-additive-release' && needs\.repeatable-cutover-policy\.outputs\.mode != 'post76-reviewed-release'\n/u);
   assert.doesNotMatch(postflightStep, /continue-on-error/u);
   assert.match(backend, /name: Verify exact75 composed catalogs and guarded profile-name correction\n        if: needs\.repeatable-cutover-policy\.outputs\.mode == 'post74-additive-release' \|\| needs\.repeatable-cutover-policy\.outputs\.mode == 'post75-reviewed-release'/u);
   assert.match(postflightStep, /node scripts\/verify-production-admin-cleanup-health\.mjs/u);
