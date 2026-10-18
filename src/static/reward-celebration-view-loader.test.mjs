@@ -124,6 +124,10 @@ for (const committedRefreshPending of [false, true]) for (const submittedToday o
 test('optional presentation cannot keep the initial authorized page hidden or alter claim APIs', () => {
   const text = source(), boot = text.slice(text.indexOf('async function bootDashboard()'));
   assert(boot.indexOf('requestAnimationFrame(() => initReveal())') < boot.indexOf('await recoverPendingCelebrations()'));
+  // Idle preview browser fixtures observe the post-recovery countdown rather
+  // than treating early reveal as completion of the awaited boot operation.
+  assert.match(boot, /await hydrateDashboardFromApi\(observedAuthOwner, \{ initialVisit: true \}\);\s*render\(\);\s*if \(localDemoMode\) await recordDailyAppVisit\(\);\s*\/\/[^\n]*\n\s*requestAnimationFrame\(\(\) => initReveal\(\)\);\s*await recoverPendingCelebrations\(\);\s*startCountdownCard\(\);\s*startDashboardForegroundRefresh\(\);/);
+  assert.equal((text.match(/\bstartCountdownCard\(\);/g) || []).length, 1);
   assert.doesNotMatch(text, /import \{ presentPermanentRewardCelebration \} from/);
   assert.match(text, /if \(submissionCommitted\) showCommittedCheckInStatus\(submissionOwner, entry.date\);\n    await queuePermanentRewardAndChallengeCelebrations\(submissionOwner\);/);
   assert.doesNotMatch(text.slice(text.indexOf('    queueCheckInCelebrations({'), text.indexOf('  } catch (error) {', text.indexOf('    queueCheckInCelebrations({'))), /\brender\(\)/);

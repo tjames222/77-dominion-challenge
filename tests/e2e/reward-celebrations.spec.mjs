@@ -5,6 +5,7 @@ import { DEFAULT_CHALLENGE_DEFINITIONS } from '../../src/static/challenge-progre
 import { analyzeAccessibility, assertNoBlockingAxeViolations } from './support/quality-gates.mjs';
 import { FIXED_NOW, FIXED_USER_ID } from './support/fixtures.mjs';
 import { deliveryRowsFor } from './support/preview-badge-browser-support.mjs';
+import { observePostRevealCountdown } from './support/dashboard-countdown-ready.mjs';
 
 const themes = ['light', 'dark', 'dominion-night', 'dominion-platinum'];
 async function seedRewards(page, app, { unseen = ['dominion_night_theme'], missing = [], theme = 'dark', points = 1200, milestones = {} } = {}) {
@@ -250,6 +251,11 @@ for (const acceleratedPreview of [false, true]) test(`check-in queues day comple
   await page.goto(ROUTE_BY_ID.dashboard.path); await app.stable(); await expect(stage(page)).toHaveCount(0);
   // This offscreen panel may stay pending until scrolled into view.
   await expect(page.locator('.dashboard-brand-panel')).toHaveClass(/\b(?:pending-reveal|is-visible)\b/);
+  // Reveal precedes boot recovery. Wait for the native post-recovery countdown
+  // before staging an unseen challenge intended only for this Check-In.
+  const countdownUpdated = await observePostRevealCountdown(page);
+  await expect.poll(countdownUpdated).toBe(true);
+  await expect(page.locator('#challengeUnlockCelebration')).not.toBeVisible();
   await page.evaluate(owner => {
     const key = 'dominion:challengeAggregateV2:' + owner;
     const aggregate = JSON.parse(localStorage.getItem(key));
