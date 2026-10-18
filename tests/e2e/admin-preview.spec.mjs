@@ -170,6 +170,26 @@ test('cleanup preview is explicitly synthetic, manual-only and cleared when its 
   app.assertNoRuntimeErrors();
 });
 
+test('legacy activation preview is explicitly synthetic, manual-only and scrubbed on actor changes', async ({ page, app }) => {
+  await observeRequesterPreview(page); const providerRequests = [];
+  page.on('request', request => { const path = new URL(request.url()).pathname;
+    if (/\/(?:auth|rest|functions)\/v1\//.test(path)) providerRequests.push(path); });
+  await app.open({ ...ROUTE_BY_ID.admin, path: '/admin.html?admin-preview=ready#operations' });
+  await expect(page.locator('#adminPreview')).toBeVisible(); await expect(page.locator('#adminOperationsPanel')).toBeVisible();
+  const reads = () => page.evaluate(() => window.__requesterPreviewProbe.reads.filter(call => call.name === 'site_admin_get_activation_review_health'));
+  expect(await reads()).toHaveLength(0); await expect(page.locator('#adminActivationReviewStatus')).toContainText('Not checked');
+  await page.locator('#adminActivationReviewRefresh').click(); await expect(page.locator('#adminActivationReviewStatus')).toContainText('Observed');
+  await expect(page.locator('#adminActivationReviewData .admin-cleanup-count')).toHaveText('3');
+  const calls = await reads(); expect(calls).toHaveLength(1); expect(calls[0].actorId).toBe(calls[0].expectedActorId);
+  expect(calls[0].actorId).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i);
+  await expect(page.locator('#adminActivationReviewNote')).toContainText('A zero count does not rule out current activation problems');
+  await page.evaluate(() => { localStorage.removeItem('dominion:user'); window.dispatchEvent(new StorageEvent('storage', { key: 'dominion:user', newValue: null })); });
+  await expect(page.locator('#adminWorkspace')).toBeHidden(); await expect(page.locator('#adminActivationReviewData')).toBeEmpty();
+  expect(await reads()).toHaveLength(1); expect(await page.evaluate(() => window.__requesterPreviewProbe.mutations)).toEqual([]); expect(providerRequests).toEqual([]);
+  expect(await page.evaluate(() => JSON.stringify({ ...localStorage, ...sessionStorage }))).not.toMatch(/oldestRecordedAt|oldestRecordedState|legacy-activation-migration-reviews-only/);
+  app.assertNoRuntimeErrors();
+});
+
 test('admin direct load and refresh never hydrate member Share or Streak controls', async ({ page, app }) => {
   await app.open({ ...ROUTE_BY_ID.admin, path: '/admin.html?admin-preview=ready' });
   await expect(page.locator('#adminUsersRows tr')).toHaveCount(25);
