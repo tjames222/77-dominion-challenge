@@ -199,6 +199,14 @@ test("the database inventory and latest lifecycle foundations stay complete", as
   );
   const schemaMigrations = [...canonicalSchema.matchAll(/^\\ir migrations\/(.+\.sql)$/gm)]
     .map((match) => match[1]);
+  const sourceMigrations = (await readdir(path.join(repositoryRoot, "supabase", "migrations")))
+    .filter((filename) => filename.endsWith(".sql"))
+    .sort();
+  assert.equal(
+    schemaMigrations.at(-1),
+    sourceMigrations.at(-1),
+    "the canonical schema must reach the newest migration in the source inventory",
+  );
   const queueHealthMigration = "20261007055555_site_admin_account_request_queue_health.sql";
   assert.equal(
     schemaMigrations.filter((filename) => filename === queueHealthMigration).length,
