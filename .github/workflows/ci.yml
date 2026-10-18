@@ -40,15 +40,25 @@ jobs:
         run: node --test workers/profile-photo-cleanup-monitor/*.test.mjs
       - name: Run frontend tests and build
         run: pnpm run check:frontend
+      - name: Test production backup and restore evidence boundaries
+        run: pnpm run test:production-backup-restore
+      - name: Test production one-version reconciliation boundaries
+        run: pnpm run test:production-reconciliation
 
   database:
     name: Database
+    needs: frontend
+    if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 40
     env:
       SUPABASE_TELEMETRY_DISABLED: "1"
       SUPABASE_DB_URL: postgresql://postgres:postgres@127.0.0.1:54322/postgres
     steps:
+      - name: Require successful offline contracts and frontend checks
+        env:
+          FRONTEND_RESULT: ${{ needs.frontend.result }}
+        run: test "$FRONTEND_RESULT" = success
       - name: Checkout
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: Setup pnpm
@@ -79,16 +89,12 @@ jobs:
         run: pnpm run test:migration-compatibility
       - name: Test immutable reconciliation staging and history
         run: pnpm run test:reconciliation-stage
-      - name: Test production backup and restore evidence boundaries
-        run: pnpm run test:production-backup-restore
       - name: Test restored encrypted production backup release gate
         run: pnpm run test:free-production-backup-evidence
       - name: Test free production backup encryption and boundaries
         run: |
           pnpm run test:free-production-backup
           node --test scripts/free-backup-post-early-access-vault.test.mjs
-      - name: Test production one-version reconciliation boundaries
-        run: pnpm run test:production-reconciliation
       - name: Test production Auth canary policy guard
         run: pnpm run test:production-auth-canary-policy
       - name: Test Early Access provider and runtime provisioning boundaries

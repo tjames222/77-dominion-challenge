@@ -362,3 +362,103 @@ test("package and CI wiring use the guarded database runner", async () => {
   );
   assert.match(workflow, /run: pnpm run test:database/);
 });
+
+const offlineContractSteps = [
+  "      - name: Test production backup and restore evidence boundaries\n        run: pnpm run test:production-backup-restore\n",
+  "      - name: Test production one-version reconciliation boundaries\n        run: pnpm run test:production-reconciliation\n",
+];
+const prerequisiteStep = "      - name: Require successful offline contracts and frontend checks\n"
+  + "        env:\n          FRONTEND_RESULT: ${{ needs.frontend.result }}\n"
+  + '        run: test "$FRONTEND_RESULT" = success\n';
+
+function verifyOfflineContractOrdering(workflow) {
+  const jobs = workflow.slice(workflow.indexOf("\njobs:\n") + 1);
+  const entries = [...jobs.matchAll(/^  ([a-z][a-z0-9-]*):\n/gm)];
+  assert.deepEqual(entries.map((entry) => entry[1]), ["frontend", "database", "functions"]);
+  const blocks = Object.fromEntries(entries.map((entry, index) => [entry[1],
+    jobs.slice(entry.index, entries[index + 1]?.index)]));
+  const header = (block) => block.slice(0, block.indexOf("    steps:\n"));
+  assert.equal(header(blocks.frontend), "  frontend:\n    name: Frontend\n"
+    + "    runs-on: ubuntu-latest\n    timeout-minutes: 15\n");
+  assert.equal(header(blocks.database), "  database:\n    name: Database\n"
+    + "    needs: frontend\n    if: always()\n    runs-on: ubuntu-latest\n"
+    + '    timeout-minutes: 40\n    env:\n      SUPABASE_TELEMETRY_DISABLED: "1"\n'
+    + "      SUPABASE_DB_URL: postgresql://postgres:postgres@127.0.0.1:54322/postgres\n");
+  assert.equal(header(blocks.functions), "  functions:\n    name: Edge Functions\n"
+    + "    runs-on: ubuntu-latest\n    timeout-minutes: 15\n    env:\n      DENO_DIR: /tmp/deno\n");
+  assert.deepEqual([...jobs.matchAll(/^    timeout-minutes: (\d+)$/gm)]
+    .map((match) => Number(match[1])), [15, 40, 15]);
+  assert.doesNotMatch(jobs, /continue-on-error:/);
+  assert.doesNotMatch(blocks.frontend, /^\s+if:/m);
+  for (const exactStep of offlineContractSteps) {
+    assert.equal(workflow.split(exactStep).length, 2);
+    const command = exactStep.split("run: ")[1].trim();
+    assert.equal(workflow.split(command).length, 2);
+    const name = exactStep.split("\n")[0];
+    const start = blocks.frontend.indexOf(name);
+    assert.ok(start >= 0);
+    const end = blocks.frontend.indexOf("      - name:", start + 1);
+    assert.equal(blocks.frontend.slice(start, end < 0 ? undefined : end).trimEnd(), exactStep.trimEnd());
+    assert.doesNotMatch(blocks.database, new RegExp(command));
+  }
+  assert.ok(blocks.database.includes("    steps:\n" + prerequisiteStep + "      - name: Checkout\n"));
+  assert.equal(workflow.split(prerequisiteStep).length, 2);
+  assert.equal(blocks.database.match(/^\s+if:/gm)?.length, 2,
+    "only the job prerequisite guard and existing always-cleanup may be conditional");
+  const compatibility = blocks.database.indexOf("run: pnpm run check:migrations");
+  const start = blocks.database.indexOf("run: pnpm run supabase:start");
+  assert.ok(compatibility >= 0 && start > compatibility);
+  return blocks;
+}
+
+test("offline contracts precede native SQL without adding jobs or raising runner limits", async () => {
+  const workflow = await readFile(path.join(repositoryRoot, ".github/workflows/ci.yml"), "utf8");
+  verifyOfflineContractOrdering(workflow);
+});
+
+test("CI ordering rejects omitted, duplicated, skipped, bypassed or expanded gates", async () => {
+  const workflow = await readFile(path.join(repositoryRoot, ".github/workflows/ci.yml"), "utf8");
+  const mutations = [
+    (text) => text.replace(offlineContractSteps[0], ""),
+    (text) => text.replace(offlineContractSteps[1], ""),
+    (text) => text.replace(offlineContractSteps[0], offlineContractSteps[0].repeat(2)),
+    (text) => text.replace(offlineContractSteps[0], offlineContractSteps[0]
+      + "      - name: Duplicate under another name\n        run: pnpm run test:production-backup-restore\n"),
+    (text) => text.replace("    name: Frontend\n", "    name: Frontend\n    if: false\n"),
+    (text) => text.replace("    name: Frontend\n", "    name: Frontend\n    continue-on-error: true\n"),
+    (text) => text.replace("        run: pnpm run test:production-backup-restore", "        if: false\n        run: pnpm run test:production-backup-restore"),
+    (text) => text.replace("    needs: frontend\n", ""),
+    (text) => text.replace("    needs: frontend\n", "    needs: functions\n"),
+    (text) => text.replace("    if: always()\n", ""),
+    (text) => text.replace(prerequisiteStep, ""),
+    (text) => text.replace(prerequisiteStep,
+      "      - name: Unchecked work before the prerequisite\n        run: true\n" + prerequisiteStep),
+    (text) => text.replace("FRONTEND_RESULT: ${{ needs.frontend.result }}", "FRONTEND_RESULT: success"),
+    (text) => text.replace('test "$FRONTEND_RESULT" = success', 'test "$FRONTEND_RESULT" != failure'),
+    (text) => text.replace("    timeout-minutes: 15", "    timeout-minutes: 16"),
+    (text) => text.replace("    timeout-minutes: 40", "    timeout-minutes: 41"),
+    (text) => text.replace("    name: Edge Functions", "    name: Other check"),
+    (text) => text.replace("      - name: Checkout", "      - name: Checkout\n        continue-on-error: true"),
+    (text) => text + "\n  extra:\n    runs-on: ubuntu-latest\n    steps: []\n",
+  ];
+  for (const [index, mutate] of mutations.entries()) {
+    const changed = mutate(workflow);
+    assert.notEqual(changed, workflow, `mutation ${index} must alter the source`);
+    assert.throws(() => verifyOfflineContractOrdering(changed), `mutation ${index} must fail closed`);
+  }
+});
+
+test("the exact Database prerequisite command accepts only successful Frontend results", async () => {
+  const workflow = await readFile(path.join(repositoryRoot, ".github/workflows/ci.yml"), "utf8");
+  verifyOfflineContractOrdering(workflow);
+  const command = prerequisiteStep.match(/^        run: (.+)$/m)[1];
+  for (const result of ["success", "failure", "cancelled", "skipped", "", "unknown"]) {
+    const child = spawnSync("bash", ["-e", "-c", command], {
+      encoding: "utf8", env: { FRONTEND_RESULT: result }, timeout: 1000,
+    });
+    assert.equal(child.error, undefined);
+    assert.equal(child.status, result === "success" ? 0 : 1, result);
+    assert.equal(child.stdout, "");
+    assert.equal(child.stderr, "");
+  }
+});
