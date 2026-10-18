@@ -21,7 +21,9 @@ function fixture() {
 }
 test('eager bridge keeps exactly the latest immutable recovery evidence for delayed reset-only controller', () => {
   const f = fixture(); const original = session(); const token = original.access_token;
+  assert.equal(f.bridge.hasPendingRecovery(), false);
   f.emit('PASSWORD_RECOVERY', original); original.user.id = other; original.access_token = 'mutated';
+  assert.equal(f.bridge.hasPendingRecovery(), true);
   const events = []; f.bridge.connect((...args) => events.push(args));
   assert.equal(events.length, 1); assert.equal(events[0][0], 'PASSWORD_RECOVERY');
   assert.equal(events[0][1].user.id, id); assert.equal(events[0][1].access_token, token);
@@ -34,6 +36,7 @@ for (const mode of ['SIGNED_OUT', 'TOKEN_REFRESHED', 'USER_UPDATED', 'MFA_CHALLE
     else if (mode === 'silent-token') f.emit('SIGNED_IN', session(id, 'new token'));
     else if (mode === 'storage') f.events.get('storage')({ key: 'sb-test-auth-token' });
     else f.emit(mode);
+    assert.equal(f.bridge.hasPendingRecovery(), false);
     const events = []; f.bridge.connect((...args) => events.push(args)); assert.equal(events.length, 0); f.bridge.destroy();
   });
 }

@@ -4,6 +4,7 @@ import { test } from 'node:test';
 import { runInNewContext } from 'node:vm';
 import { createAuthEntryTransition } from './auth-entry-transition.mjs';
 import { finishAuthLanding } from './auth-landing.mjs';
+import { authSessionIdentity, mfaError } from './mfa-auth.mjs';
 
 const source = readFileSync(new URL('./auth.js', import.meta.url), 'utf8')
   .replace(/^import[\s\S]*?from '[^']+';\n/gm, '');
@@ -28,11 +29,13 @@ for (const register of [false, true]) {
       return { session, mfaRequired: false };
     };
     runInNewContext(source, {
-      authEntryTransition: entry, finishAuthLanding, URLSearchParams,
+      authEntryTransition: entry, finishAuthLanding, authSessionIdentity, mfaError,
+      URL, URLSearchParams, AbortController, setTimeout, clearTimeout,
       document: { getElementById: id => id === 'authForm' ? form : fields[id] || null, querySelector: () => null },
       window: { location, alert() {}, addEventListener() {}, removeEventListener() {} },
       RELEASE_GATES: { publicSignupEnabled: true }, initReveal() {},
       hasSupabaseAuthentication: () => true, getAuthSession: async () => currentSession,
+      hasPendingPasswordRecovery: () => false,
       getSiteAdminContext: async () => { throw new Error('Explicit destination must not read admin context.'); },
       getBillingState: async () => { throw new Error('Explicit destination must not read billing.'); },
       subscribeToAuthStateChanges: () => () => {},

@@ -1051,6 +1051,7 @@ export async function requestPasswordRecovery(email) {
 const passwordRecoveryOwnerBridge = usesSupabaseAuthentication()
   ? createPasswordRecoveryOwnerBridge({ auth: supabase.auth, sessionIdentity: authSessionIdentity, authStorageKey: supabaseAuthStorageKey })
   : null;
+export const hasPendingPasswordRecovery = () => passwordRecoveryOwnerBridge?.hasPendingRecovery() === true;
 let passwordRecoveryController = null;
 let passwordRecoveryControllerLoad = null;
 export async function loadPasswordRecoveryController() {
