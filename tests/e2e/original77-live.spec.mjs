@@ -60,6 +60,7 @@ async function fixture(context, { state = 'in_progress', malformed = false, defe
       const snapshot = payload(); if (readHold) await readHold; readResponses += 1; return json(route, snapshot);
     }
     if (name === 'get_challenge_check_ins_v2') {
+      expect(body.target_expected_actor_id).toBe(actor);
       expect(body.target_expected_instance_id).toBe(DAILY_INSTANCE_ID);
       const count = activation.currentInstance.submittedCount;
       const checkIns = Array.from({ length: count }, (_, index) => {
@@ -208,8 +209,8 @@ async function startupReady(page, streak = '6') {
   await expect(page.locator('#challengeDay')).toHaveText('76 of 77 check-ins');
   await expect(page.locator('#checkInButton')).toBeEnabled();
   await expect(page.locator('.shared-header-streak-count')).toHaveText(streak);
-  // This reveal follows initial hydration and celebration recovery, so count
-  // assertions do not finish at the earlier, partial Dashboard render.
+  // This reveal follows initial hydration, including the startup visit/read
+  // pair. Celebration recovery is intentionally not part of this barrier.
   await expect(page.locator('.dashboard-hero')).toHaveClass(/is-visible/);
 }
 
@@ -270,7 +271,13 @@ test('Dashboard startup cannot dispatch its stale visit after a same-user sessio
   await expect(page.locator('.shared-header-streak-count')).toHaveText('6');
   expect(auth.count('record_app_visit')).toBe(1); // The independent header only.
   const session = auth.replacement();
-  const freshRead = page.waitForResponse(response => response.url().endsWith('/get_member_access_context')
+  // Observe this Dashboard's replacement-session hydration, not a shared
+  // access-context response. The bounded access reader aborts its controller
+  // during cleanup; Chromium can then leave response.finished() pending even
+  // though the replacement Dashboard has already hydrated successfully.
+  const freshRead = page.waitForResponse(response => new URL(response.url()).pathname
+    === '/__admin_fixture__/rest/v1/rpc/get_challenge_check_ins_v2'
+    && response.request().method() === 'POST'
     && response.request().headers().authorization === `Bearer ${session.access_token}`);
   try {
     await page.evaluate(value => {
@@ -278,7 +285,7 @@ test('Dashboard startup cannot dispatch its stale visit after a same-user sessio
       const channel = new BroadcastChannel('sb-127-auth-token');
       channel.postMessage({ event: 'SIGNED_IN', session: value }); channel.close();
     }, session);
-    await (await freshRead).finished();
+    expect((await freshRead).status()).toBe(200);
   } finally { auth.releaseHistory(); }
   await startupReady(page);
   expect(auth.calls.filter(call => call.name === 'record_app_visit')).toEqual([
