@@ -708,6 +708,7 @@ export const listSiteAdminUsers = (args, options = {}) => readSiteAdmin('site_ad
 export const listSiteAdminAccountRequests = (args, options = {}) => readSiteAdmin('site_admin_list_account_requests', args, options);
 export const getSiteAdminAccountRequestQueueHealth = (args = {}, options = {}) => readSiteAdmin('site_admin_get_account_request_queue_health', args, options);
 export const getSiteAdminCleanupHealth = (options = {}) => readSiteAdmin('site_admin_get_cleanup_health', {}, options);
+export const getSiteAdminActivationReviewHealth = (options = {}) => readSiteAdmin('site_admin_get_activation_review_health', {}, options);
 export const getSiteAdminUser = (id, options = {}) => readSiteAdmin('site_admin_get_user', { target_user_id: id }, options);
 export const listSiteAdminAudit = (args, options = {}) => readSiteAdmin('site_admin_list_audit', args, options);
 export const getSiteAdminAuditEvent = (id, options = {}) => readSiteAdmin('site_admin_get_audit_event', { target_event_id: id }, options);

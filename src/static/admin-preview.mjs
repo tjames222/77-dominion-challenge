@@ -90,6 +90,12 @@ export function createAdminPreview({ getUser, mode }) {
       if (captured !== epoch || signal?.aborted || current.actorId !== actor.actorId) throw adminReadError('ADMIN_CHANGED');
       return { ...base, ...previewCleanupHealth(base.observedAt) };
     }
+    if (name === 'site_admin_get_activation_review_health') {
+      const { previewActivationReviewHealth } = await import('./admin-activation-review-health-preview.mjs');
+      const current = await owner();
+      if (captured !== epoch || signal?.aborted || current.actorId !== actor.actorId) throw adminReadError('ADMIN_CHANGED');
+      return { ...base, ...previewActivationReviewHealth(base.observedAt) };
+    }
     if (name === 'site_admin_list_account_requests' || name === 'site_admin_get_account_request_queue_health') {
       const { previewAccountRequests, previewAccountRequestQueueHealth } = await import('./admin-account-request-preview.mjs');
       const result = name === 'site_admin_list_account_requests' ? await previewAccountRequests(args, actor.actorId) : previewAccountRequestQueueHealth();

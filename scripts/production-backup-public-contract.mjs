@@ -15,6 +15,8 @@ export const POST73_BACKUP_MODE = 'post-cleanup-monitor-73';
 export const POST73_VERSIONS_SHA256 = 'dedf8b2796a13e3fe6cd36551d555b0aacb710d7b3fad7bd6de4ea2350c17253';
 export const POST74_BACKUP_MODE = 'post-admin-cleanup-health-74';
 export const POST74_VERSIONS_SHA256 = '638d162275f5fe779660d2cf8e1cce25551f9e389cebe13e3c36f3a4ce9660ef';
+export const POST75_BACKUP_MODE = 'post-admin-profile-name-75';
+export const POST75_VERSIONS_SHA256 = 'd6cbbf803760a04b06aed3db2ba386bcbe16e43d59f208974b96367360618760';
 export const POST_ORIGINAL77_VAULT_RECOVERY = Object.freeze({
   selfContained: false,
   source: 'protected-github-production-settings',
@@ -104,4 +106,21 @@ export function selectPost74MigrationVersions(filenames) {
   const names = filenames.filter(name => typeof name === 'string' && name.endsWith('.sql')).sort();
   assert.equal(names[73], '20261013055744_site_admin_cleanup_health.sql');
   return requirePost74MigrationVersions(names.slice(0, 74).map(name => name.slice(0, 14)));
+}
+
+export function requirePost75MigrationVersions(versions) {
+  assert(Array.isArray(versions));
+  assert.equal(versions.length, 75, 'Incomplete post75 migration checkpoint');
+  requirePost74MigrationVersions(versions.slice(0, 74));
+  assert.equal(versions.at(-1), '20261013091749', 'Unexpected post75 migration checkpoint');
+  assert.equal(sha256(JSON.stringify(versions)), POST75_VERSIONS_SHA256,
+    'Post75 migration checkpoint changed');
+  return versions;
+}
+
+export function selectPost75MigrationVersions(filenames) {
+  selectPost74MigrationVersions(filenames);
+  const names = filenames.filter(name => typeof name === 'string' && name.endsWith('.sql')).sort();
+  assert.equal(names[74], '20261013091749_site_admin_profile_name_correction.sql');
+  return requirePost75MigrationVersions(names.slice(0, 75).map(name => name.slice(0, 14)));
 }
