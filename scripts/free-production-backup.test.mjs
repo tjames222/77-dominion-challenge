@@ -768,21 +768,21 @@ test('workflow currentmode is explicitly selected and only then receives the exi
   const workflow = await readFile(new URL('../.github/workflows/production-backup.yml', import.meta.url), 'utf8');
   assert.match(workflow, /default: legacy-thirteen-migration-cutover/);
   assert.match(workflow, /type: choice\n        options:\n          - legacy-thirteen-migration-cutover\n          - current-production-2026-09-27/);
-  assert(workflow.includes("PROFILE_PHOTO_WORKER_SECRET: ${{ (inputs.backup_mode == 'current-production-2026-09-27' || inputs.backup_mode == 'post-early-access-66' || inputs.backup_mode == 'post-admin-inbox-67' || inputs.backup_mode == 'post-original77-70' || inputs.backup_mode == 'post-repeatable-challenge-71' || inputs.backup_mode == 'post-cleanup-monitor-73' || inputs.backup_mode == 'post-admin-cleanup-health-74') && secrets.PROFILE_PHOTO_WORKER_SECRET || '' }}"));
+  assert(workflow.includes("PROFILE_PHOTO_WORKER_SECRET: ${{ (inputs.backup_mode == 'current-production-2026-09-27' || inputs.backup_mode == 'post-early-access-66' || inputs.backup_mode == 'post-admin-inbox-67' || inputs.backup_mode == 'post-original77-70' || inputs.backup_mode == 'post-repeatable-challenge-71' || inputs.backup_mode == 'post-cleanup-monitor-73' || inputs.backup_mode == 'post-admin-cleanup-health-74' || inputs.backup_mode == 'post-admin-profile-name-75') && secrets.PROFILE_PHOTO_WORKER_SECRET || '' }}"));
   assert.match(workflow, /PROFILE_PHOTO_WORKER_SECRET="\$PROFILE_PHOTO_WORKER_SECRET"/);
   assert.doesNotMatch(workflow, /root_key|VAULT_KEY|PGSODIUM_KEY/);
 });
 
-test('only exact66/67/70/71/73/74 modes receive fixed Early Access worker bindings; invitation envelope keys are never read', async () => {
+test('only exact66/67/70/71/73/74/75 modes receive fixed Early Access worker bindings; invitation envelope keys are never read', async () => {
   const workflow = await readFile(new URL('../.github/workflows/production-backup.yml', import.meta.url), 'utf8');
   for (const key of ['FEEDBACK_WORKER_SECRET', 'EARLY_ACCESS_INVITATION_WORKER_SECRET']) {
-    assert(workflow.includes(key + ": ${{ (inputs.backup_mode == 'post-early-access-66' || inputs.backup_mode == 'post-admin-inbox-67' || inputs.backup_mode == 'post-original77-70' || inputs.backup_mode == 'post-repeatable-challenge-71' || inputs.backup_mode == 'post-cleanup-monitor-73' || inputs.backup_mode == 'post-admin-cleanup-health-74') && secrets." + key + " || '' }}"));
+    assert(workflow.includes(key + ": ${{ (inputs.backup_mode == 'post-early-access-66' || inputs.backup_mode == 'post-admin-inbox-67' || inputs.backup_mode == 'post-original77-70' || inputs.backup_mode == 'post-repeatable-challenge-71' || inputs.backup_mode == 'post-cleanup-monitor-73' || inputs.backup_mode == 'post-admin-cleanup-health-74' || inputs.backup_mode == 'post-admin-profile-name-75') && secrets." + key + " || '' }}"));
     assert(workflow.includes(key + '="$' + key + '"'));
   }
   assert.match(workflow, /- current-production-2026-09-27\n          - post-early-access-66\n          - post-admin-inbox-67\n          - post-original77-70/);
   assert.doesNotMatch(workflow, /secrets\.(?:EARLY_ACCESS_INVITATION_KEY|EARLY_ACCESS_INVITATION_KEY_VERSION|RESEND_API_KEY|LINEAR_FEEDBACK_API_KEY)\b/);
   const source = await readFile(new URL('./free-production-backup.mjs', import.meta.url), 'utf8');
-  assert.match(source, /const usesFiveSettingVault = \(mode\) => mode === POST_EARLY_ACCESS_BACKUP_MODE\s*\|\| mode === POST_ADMIN_INBOX_BACKUP_MODE\s*\|\| mode === POST_ORIGINAL77_BACKUP_MODE\s*\|\| mode === POST_REPEATABLE_BACKUP_MODE\s*\|\| mode === POST73_BACKUP_MODE\s*\|\| mode === POST74_BACKUP_MODE;/);
+  assert.match(source, /const usesFiveSettingVault = \(mode\) => mode === POST_EARLY_ACCESS_BACKUP_MODE\s*\|\| mode === POST_ADMIN_INBOX_BACKUP_MODE\s*\|\| mode === POST_ORIGINAL77_BACKUP_MODE\s*\|\| mode === POST_REPEATABLE_BACKUP_MODE\s*\|\| mode === POST73_BACKUP_MODE\s*\|\| mode === POST74_BACKUP_MODE\s*\|\| mode === POST75_BACKUP_MODE;/);
   assert.match(source, /const usesPostEarlyAccessRecovery = usesFiveSettingVault\(backupMode\);/);
   assert.match(source, /const usesPgNetSupplement = backupMode === CURRENT_BACKUP_MODE \|\| usesPostEarlyAccessRecovery;/);
   assert.match(source, /const postEarlyAccessSecrets = usesPostEarlyAccessRecovery \?/);

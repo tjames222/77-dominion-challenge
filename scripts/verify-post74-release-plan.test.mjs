@@ -10,7 +10,9 @@ import { POST74_BACKUP_MODE, POST74_VERSIONS_SHA256, requirePost74MigrationVersi
 import { selectBackupMigrationCheckpoint } from './free-production-backup.mjs';
 
 const directory = new URL('../supabase/migrations/', import.meta.url);
-const migrationFilenames = (await readdir(directory)).filter(name => name.endsWith('.sql')).sort();
+// Historical contract remains exact75; the mandatory new source76 suite owns
+// the current whole-inventory gate and rejects any unreviewed later suffix.
+const migrationFilenames = (await readdir(directory)).filter(name => name.endsWith('.sql')).sort().slice(0, 75);
 const hash = value => createHash('sha256').update(value).digest('hex');
 const migrationSourceHashes = Object.fromEntries(await Promise.all(migrationFilenames.map(async name =>
   [name, hash(await readFile(new URL(name, directory)))])));

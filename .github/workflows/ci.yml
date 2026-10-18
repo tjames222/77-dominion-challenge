@@ -111,6 +111,8 @@ jobs:
         run: node --test scripts/verify-post71-release-plan.test.mjs scripts/verify-post-repeatable-backup-evidence.test.mjs scripts/verify-profile-photo-health-runtime-config.test.mjs scripts/verify-post73-release-plan.test.mjs scripts/verify-post73-backup-evidence.test.mjs scripts/free-backup-post73.test.mjs scripts/post73-release-workflow.test.mjs
       - name: Test exact74 backup and reviewed profile-name release boundaries
         run: pnpm run test:post74-release
+      - name: Test exact75 backup and reviewed legacy activation-review release boundaries
+        run: pnpm run test:post75-release
       - name: Start local Supabase
         run: pnpm run supabase:start
       - name: Verify exact isolated-fixture image cache preparation
@@ -130,6 +132,12 @@ jobs:
       - name: Verify exact75 composed catalogs and independent drift refusal
         timeout-minutes: 5
         run: node --test scripts/verify-production-post75-catalogs.sql.test.mjs
+      - name: Verify read-only legacy activation review health and bounded query plans
+        timeout-minutes: 5
+        run: pnpm run test:site-admin-activation-review-health-sql
+      - name: Verify exact76 composed catalogs and legacy review index preflight
+        timeout-minutes: 5
+        run: node --test scripts/verify-production-post76-catalogs.sql.test.mjs
       - name: Verify isolated account-request inbox authority
         timeout-minutes: 5
         run: node --test scripts/site-admin-account-requests.sql.test.mjs
@@ -171,6 +179,9 @@ jobs:
       - name: Verify exact74 Admin cleanup-health backup and full custom archive restore
         timeout-minutes: 5
         run: node --test scripts/free-backup-post74.sql.test.mjs
+      - name: Verify exact75 Admin profile-name backup and full custom archive restore
+        timeout-minutes: 5
+        run: node --test scripts/free-backup-post75.sql.test.mjs
       - name: Verify original challenge submission evidence and atomic completion
         timeout-minutes: 5
         run: node --test scripts/original-77-completion-evidence.sql.test.mjs scripts/original-77-live-completion.sql.test.mjs scripts/original-77-fullchain-runtime.sql.test.mjs scripts/original77-legacy-range.sql.test.mjs

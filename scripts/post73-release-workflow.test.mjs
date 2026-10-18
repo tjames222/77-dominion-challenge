@@ -13,7 +13,7 @@ test('exact73 evidence gate precedes all mutable jobs with exact artifact/attemp
   const workflow = await readFile(new URL('../.github/workflows/deploy.yml', import.meta.url), 'utf8');
   const policy = jobBlock(workflow, 'repeatable-cutover-policy');
   assert.match(policy, /requires_exact73_backup: \$\{\{ steps\.release-boundary\.outputs\.requires_exact73_backup \}\}/u);
-  assert.match(policy, /post73-additive-release:false:true:false\|post74-reviewed-release:false:false:false/u);
+  assert.match(policy, /post73-additive-release:false:true:false:false\|post74-reviewed-release:false:false:false:false/u);
   const gates = policy.slice(policy.indexOf('- name: Select the fresh exact-73 encrypted backup artifact'));
   assert.equal(gates.match(/if: steps\.release-boundary\.outputs\.requires_exact73_backup == 'true'/gu)?.length, 3);
   assert.match(gates, /GITHUB_SHA="\$GITHUB_SHA"[\s\S]*verify-post73-backup-evidence\.mjs --select/u);

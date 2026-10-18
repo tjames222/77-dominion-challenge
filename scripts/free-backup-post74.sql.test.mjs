@@ -32,7 +32,9 @@ let frozenSources;
 const migrationDirectory = new URL('../supabase/migrations/', import.meta.url);
 const FROZEN74_SOURCE_PAIRS_SHA256 = '9af0051b2c2f47a9733ed02675166cab2197aa8aec67020592346e15a2d3ceb7';
 async function readFrozenSources() {
-  const allNames = (await readdir(migrationDirectory)).filter(name => name.endsWith('.sql')).sort();
+  // Historical source75/recovered74 proof only; the new exact75 backup suite
+  // separately validates the full reviewed source76 candidate before replay.
+  const allNames = (await readdir(migrationDirectory)).filter(name => name.endsWith('.sql')).sort().slice(0, 75);
   const allEntries = await Promise.all(allNames.map(async name => [name, await readFile(new URL(name, migrationDirectory), 'utf8')]));
   verifyPost74ReleaseSources({ migrationFilenames: allNames,
     migrationSourceHashes: Object.fromEntries(allEntries.map(([name, text]) => [name, sha256(text)])) });

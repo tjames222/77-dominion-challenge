@@ -161,6 +161,8 @@ const receiptCases = [
   { mode:'post74-reviewed-release', requiresExact70Backup:false, requiresExact71Backup:false, requiresExact73Backup:false, migrationVersion:'20261013055744' },
   { mode:'post74-additive-release', requiresExact70Backup:false, requiresExact71Backup:false, requiresExact73Backup:false, requiresExact74Backup:true, migrationVersion:'20261013091749' },
   { mode:'post75-reviewed-release', requiresExact70Backup:false, requiresExact71Backup:false, requiresExact73Backup:false, requiresExact74Backup:false, migrationVersion:'20261013091749' },
+  { mode:'post75-additive-release', requiresExact70Backup:false, requiresExact71Backup:false, requiresExact73Backup:false, requiresExact74Backup:false, requiresExact75Backup:true, migrationVersion:'20261018013111' },
+  { mode:'post76-reviewed-release', requiresExact70Backup:false, requiresExact71Backup:false, requiresExact73Backup:false, requiresExact74Backup:false, requiresExact75Backup:false, migrationVersion:'20261018013111' },
 ];
 
 test('every repeated boundary must equal the initial full fixed receipt; no73-to71 backup bypass or concurrent apply', () => {
@@ -193,8 +195,8 @@ test('post71 release selects one fresh same-commit exact71 artifact and gates ev
   const policy=jobBlock(workflow,'repeatable-cutover-policy');
   assert.match(policy,/receipt: \$\{\{ steps\.release-boundary\.outputs\.receipt \}\}/u);
   assert.match(policy,/requires_exact71_backup: \$\{\{ steps\.release-boundary\.outputs\.requires_exact71_backup \}\}/u);
-  assert.match(policy,/backup_artifact_id: \$\{\{ steps\.post74-backup\.outputs\.artifact_id \|\| steps\.post73-backup\.outputs\.artifact_id \|\| steps\.post71-backup\.outputs\.artifact_id \}\}/u);
-  assert.match(policy,/backup_run_attempt: \$\{\{ steps\.post74-backup\.outputs\.run_attempt \|\| steps\.post73-backup\.outputs\.run_attempt \|\| steps\.post71-backup\.outputs\.run_attempt \}\}/u);
+  assert.match(policy,/backup_artifact_id: \$\{\{ steps\.post75-backup\.outputs\.artifact_id \|\| steps\.post74-backup\.outputs\.artifact_id \|\| steps\.post73-backup\.outputs\.artifact_id \|\| steps\.post71-backup\.outputs\.artifact_id \}\}/u);
+  assert.match(policy,/backup_run_attempt: \$\{\{ steps\.post75-backup\.outputs\.run_attempt \|\| steps\.post74-backup\.outputs\.run_attempt \|\| steps\.post73-backup\.outputs\.run_attempt \|\| steps\.post71-backup\.outputs\.run_attempt \}\}/u);
   const gates=policy.slice(policy.indexOf('- name: Select the fresh exact-71 encrypted backup artifact'));
   assert.equal(gates.match(/if: steps\.release-boundary\.outputs\.requires_exact71_backup == 'true'/gu)?.length,3);
   assert.match(gates,/GITHUB_SHA="\$GITHUB_SHA"[\s\S]*verify-post-repeatable-backup-evidence\.mjs --select/u);
