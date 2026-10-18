@@ -40,10 +40,20 @@ async function observeNavigationErrors(page, testInfo) {
   };
 }
 
-async function login(page, returnTo = '') {
-  await page.goto(`/login.html${returnTo ? `?returnTo=${encodeURIComponent(returnTo)}` : ''}`);
-  await page.getByLabel('Email', { exact: true }).fill('mfa.synthetic@example.test');
-  await page.getByLabel('Password', { exact: true }).fill('Synthetic-Only-Password!');
+async function login(page, returnTo = '', forcePassword = false) {
+  let release;
+  const gate = new Promise(resolve => { release = resolve; });
+  const holdSavedCheck = async route => { await gate; return route.fallback(); };
+  if (forcePassword) await page.route('**/__mfa_fixture__/auth/v1/user', holdSavedCheck);
+  try {
+    await page.goto(`/login.html${returnTo ? `?returnTo=${encodeURIComponent(returnTo)}` : ''}`);
+    // Tests that intentionally replace a saved session hold its startup check
+    // until this real input event selects an explicit password sign-in.
+    await page.getByLabel('Email', { exact: true }).fill('mfa.synthetic@example.test');
+    await page.getByLabel('Password', { exact: true }).fill('Synthetic-Only-Password!');
+  } finally {
+    release();
+  }
   await page.getByRole('button', { name: 'Go to dashboard', exact: true }).click();
 }
 async function fakeDestination(context, path) {
@@ -319,6 +329,33 @@ test('enrolled login completes MFA before default billing routing', async ({ con
   expect(auth.privateRequests().every((request) => request.aal === 'aal2')).toBe(true);
 });
 
+for (const [siteAdmin, appAccess, destination] of [[true, false, '/admin.html'], [false, true, '/dashboard.html'], [false, false, '/billing.html']]) {
+  test(`saved verified session reopens at ${destination} without another password or authenticator challenge`, async ({ context, page }) => {
+    const auth = await installMfaSupabaseStub(context, { siteAdmin, appAccess });
+    await fakeDestination(context, destination);
+    await login(page);
+    await verify(page);
+    await page.getByRole('button', { name: 'Continue', exact: true }).click();
+    await expect(page).toHaveURL(new RegExp(`${destination.replace('.', '\\.')}\$`));
+    const passwords = auth.requests.filter(request => request.path === '/auth/v1/token').length;
+    const verifications = auth.requests.filter(request => request.path.endsWith('/verify')).length;
+    const reopened = await context.newPage();
+    const errors = []; reopened.on('pageerror', error => errors.push(error.message));
+    await page.close();
+    for (let visit = 0; visit < 2; visit += 1) {
+      await reopened.goto('/login.html');
+      await expect(reopened).toHaveURL(new RegExp(`${destination.replace('.', '\\.')}\$`));
+    }
+    expect(passwords).toBe(1);
+    expect(verifications).toBe(1);
+    expect(auth.requests.filter(request => request.path === '/auth/v1/token')).toHaveLength(passwords);
+    expect(auth.requests.filter(request => request.path.endsWith('/verify'))).toHaveLength(verifications);
+    if (siteAdmin) expect(auth.requests.some(request => request.path === '/rest/v1/entitlements')).toBe(false);
+    expect(errors).toEqual([]);
+    await reopened.close();
+  });
+}
+
 for (const returnTo of ['', './dashboard.html']) {
   test(`default admin login${returnTo ? ' with a canonical dashboard return' : ''} completes MFA then opens administration without billing`, async ({ context, page }) => {
     const auth = await installMfaSupabaseStub(context, { siteAdmin: true });
@@ -391,8 +428,10 @@ for (const enrolled of [false, true]) {
       await expect.poll(() => auth.requests.filter(request => request.path === '/rest/v1/rpc/get_site_admin_context').length).toBe(1);
       auth.rotateSession();
       const other = await context.newPage(); await fakeDestination(context, '/support.html');
-      await login(other, './support.html');
+      const passwordsBefore = auth.requests.filter(request => request.path === '/auth/v1/token').length;
+      await login(other, './support.html', enrolled);
       await expect(other).toHaveURL(enrolled ? /account-security\.html\?mode=challenge/ : /\/support\.html$/);
+      expect(auth.requests.filter(request => request.path === '/auth/v1/token')).toHaveLength(passwordsBefore + 1);
       if (enrolled) await expect(page.getByRole('status')).toContainText('signed-in account changed');
       else await expect.poll(() => alerts).toEqual(['The signed-in session changed. Log in again to continue.']);
       release();

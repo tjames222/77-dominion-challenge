@@ -37,6 +37,9 @@ export function createPasswordRecoveryOwnerBridge({ auth, sessionIdentity, authS
   eventTarget?.addEventListener?.('pagehide', destroy);
   eventTarget?.addEventListener?.('storage', storage);
   return Object.freeze({
+    // Presentation only: prevents Login from resuming a callback the SDK has
+    // already consumed. It does not expose or grant password-reset authority.
+    hasPendingRecovery: () => Boolean(recovery),
     connect(listener) {
       if (disposed || typeof listener !== 'function') throw new Error('Recovery session is unavailable.');
       listeners.add(listener);
